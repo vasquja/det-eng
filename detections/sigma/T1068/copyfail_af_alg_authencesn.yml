@@ -1,0 +1,40 @@
+title: AF_ALG Socket With authencesn AEAD Followed By splice (CopyFail CVE-2026-31431)
+id: 6557cdf5-3632-4dca-9fcd-9aa6c4f6a453
+status: experimental
+description: |
+  Detects a process opening an AF_ALG (family 38) socket and shortly after
+  performing splice() — the syscall sequence used by the CopyFail
+  (CVE-2026-31431) page-cache write primitive. The actual exploit binds the
+  socket to the AEAD cipher "authencesn(hmac(sha256),cbc(aes))", but stock
+  Linux auditd does not decode sockaddr_alg.salg_name, so this rule keys on
+  the surrounding syscalls. Pair with eBPF-based tooling (e.g. Falco,
+  Tetragon) for cipher-name-level fidelity.
+
+  AF_ALG is unusual on production workloads outside specific crypto
+  daemons; AF_ALG followed by splice() from the same PID is rarer still.
+references:
+  - https://github.com/Smarttfoxx/copyfail
+author: det-eng
+date: 2026/05/15
+tags:
+  - attack.privilege_escalation
+  - attack.t1068
+  - cve.2026.31431
+logsource:
+  product: linux
+  service: auditd
+detection:
+  af_alg_socket:
+    type: SYSCALL
+    syscall: socket
+    a0: '26'  # AF_ALG = 38 decimal = 0x26 hex; auditd logs args in hex
+  splice_syscall:
+    type: SYSCALL
+    syscall: splice
+  timeframe: 5s
+  condition: af_alg_socket and splice_syscall
+falsepositives:
+  - Userland crypto frameworks (e.g. cryptsetup, kcapi-tools, some VPN clients)
+    that legitimately combine AF_ALG with file I/O. Baseline known-good
+    processes (`auid`, `comm`) before promoting to alerting.
+level: high
