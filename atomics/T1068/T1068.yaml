@@ -1,0 +1,145 @@
+attack_technique: T1068
+display_name: Exploitation for Privilege Escalation
+
+atomic_tests:
+  - name: CopyFail (CVE-2026-31431) — AF_ALG page-cache write behavioral
+    auto_generated_guid: 7b70c48d-e107-4fc6-992b-6a6e5d1eeaf9
+    description: |
+      Generates the rare Linux syscall pattern characteristic of the CopyFail
+      page-cache corruption primitive: AF_ALG socket bound to the
+      `authencesn(hmac(sha256),cbc(aes))` AEAD, followed by
+      `sendmsg(MSG_MORE)` and `splice()`. The exploit primitive completes
+      only when `recv()` triggers AEAD decryption that writes into the
+      file-backed page cache; this atomic intentionally stops before
+      `recv()`, so no page cache is corrupted. Target file is a throwaway
+      under /tmp that this test creates and cleans up.
+
+      Reference: CVE-2026-31431. Behavioral signature only — not a working
+      exploit.
+
+      Detection guidance:
+        * AF_ALG socket bind() where salg_name == "authencesn(hmac(sha256),cbc(aes))"
+        * `splice()` with one end an AF_ALG operation fd
+        * `sendmsg(MSG_MORE)` on an AF_ALG operation fd
+    supported_platforms:
+      - linux
+    input_arguments:
+      target_file:
+        description: Throwaway file to use as splice() target.
+        type: string
+        default: /tmp/copyfail_atomic_target
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1068/src
+    dependency_executor_name: bash
+    dependencies:
+      - description: gcc must be available
+        prereq_command: command -v gcc >/dev/null
+        get_prereq_command: |
+          echo "Install gcc via your package manager (apt/dnf/pacman)."
+          exit 1
+      - description: Kernel must expose AF_ALG (CONFIG_CRYPTO_USER_API)
+        prereq_command: |
+          python3 -c "import socket; socket.socket(socket.AF_ALG, socket.SOCK_SEQPACKET, 0).close()"
+        get_prereq_command: |
+          echo "Kernel lacks AF_ALG support — rebuild with CONFIG_CRYPTO_USER_API_AEAD."
+          exit 1
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        gcc -O0 -Wall -o /tmp/copyfail_behavioral #{source_dir}/copyfail_behavioral.c
+        /tmp/copyfail_behavioral #{target_file}
+      cleanup_command: |
+        rm -f /tmp/copyfail_behavioral #{target_file}
+
+  - name: DirtyFrag xfrm-ESP (CVE-2026-43284) — behavioral
+    auto_generated_guid: c1694daf-ce1a-4056-8f2e-ed2652647c3e
+    description: |
+      Generates the syscall pattern characteristic of the DirtyFrag
+      xfrm-ESP page-cache write primitive: user+network namespace unshare
+      followed by opening an AF_NETLINK / NETLINK_XFRM socket. Stops
+      before transmitting any XFRM SA configuration or ESP packet — well
+      short of the kernel path that performs the page-cache write.
+
+      Reference: CVE-2026-43284. Behavioral signature only — not a working
+      exploit.
+
+      Detection guidance:
+        * unshare(CLONE_NEWUSER | CLONE_NEWNET) by an unprivileged process
+          followed shortly by NETLINK_XFRM socket creation
+        * Sustained xfrm SA add operations from non-network-management
+          processes
+    supported_platforms:
+      - linux
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1068/src
+    dependency_executor_name: bash
+    dependencies:
+      - description: gcc must be available
+        prereq_command: command -v gcc >/dev/null
+        get_prereq_command: |
+          echo "Install gcc via your package manager (apt/dnf/pacman)."
+          exit 1
+      - description: Unprivileged user namespaces must be permitted
+        prereq_command: |
+          test "$(cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null || echo 1)" = "1"
+        get_prereq_command: |
+          echo "Unprivileged user namespaces are disabled on this host."
+          echo "Some distros (Ubuntu w/ AppArmor) block this — expected; the atomic will still emit unshare() telemetry."
+          exit 0
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        gcc -O0 -Wall -o /tmp/dirtyfrag_xfrm_behavioral #{source_dir}/dirtyfrag_xfrm_behavioral.c
+        /tmp/dirtyfrag_xfrm_behavioral
+      cleanup_command: |
+        rm -f /tmp/dirtyfrag_xfrm_behavioral
+
+  - name: DirtyFrag RxRPC (CVE-2026-43500) — behavioral
+    auto_generated_guid: b3e7394f-30d9-4e53-aec2-3fb20b73f752
+    description: |
+      Generates the high-signal syscall `socket(AF_RXRPC, SOCK_DGRAM, 0)`
+      from a non-AFS process. The socket is immediately closed — no bind,
+      no sendmsg, none of the operations on the page-cache write path.
+
+      Reference: CVE-2026-43500. Behavioral signature only — not a working
+      exploit. The rxrpc kernel module is loaded by default on Ubuntu;
+      other distributions may need `modprobe rxrpc`.
+
+      Detection guidance:
+        * `socket(AF_RXRPC, ...)` from any process not part of an AFS
+          client (kafs/openafs) is a strong indicator on most fleets
+        * Combine with rxrpc module load events for higher fidelity
+    supported_platforms:
+      - linux
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1068/src
+    dependency_executor_name: bash
+    dependencies:
+      - description: gcc must be available
+        prereq_command: command -v gcc >/dev/null
+        get_prereq_command: |
+          echo "Install gcc via your package manager (apt/dnf/pacman)."
+          exit 1
+      - description: rxrpc kernel module must be available
+        prereq_command: |
+          python3 -c "import socket; socket.socket(33, socket.SOCK_DGRAM, 0).close()"
+        get_prereq_command: |
+          modprobe rxrpc || { echo "rxrpc module unavailable"; exit 1; }
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        gcc -O0 -Wall -o /tmp/dirtyfrag_rxrpc_behavioral #{source_dir}/dirtyfrag_rxrpc_behavioral.c
+        /tmp/dirtyfrag_rxrpc_behavioral
+      cleanup_command: |
+        rm -f /tmp/dirtyfrag_rxrpc_behavioral
