@@ -1,0 +1,45 @@
+title: Namespace Unshare Followed By NETLINK_XFRM Socket (DirtyFrag xfrm-ESP CVE-2026-43284)
+id: 0dd82b3d-38dd-4739-b491-01d24e900193
+status: experimental
+description: |
+  Detects a process performing unshare(CLONE_NEWUSER | CLONE_NEWNET) and
+  then opening an AF_NETLINK socket on the NETLINK_XFRM (protocol 6)
+  channel — the setup sequence used by the DirtyFrag xfrm-ESP
+  (CVE-2026-43284) page-cache write primitive.
+
+  Unprivileged user-namespace creation followed by xfrm netlink
+  configuration is highly unusual outside container runtimes and IPsec
+  management daemons (strongswan, libreswan, NetworkManager, charon).
+  Tune by allowlisting those `comm` / `exe` values.
+references:
+  - https://github.com/V4bel/dirtyfrag
+author: det-eng
+date: 2026/05/15
+tags:
+  - attack.privilege_escalation
+  - attack.t1068
+  - cve.2026.43284
+logsource:
+  product: linux
+  service: auditd
+detection:
+  unshare_user_net:
+    type: SYSCALL
+    syscall: unshare
+    # CLONE_NEWNET (0x40000000) | CLONE_NEWUSER (0x10000000) = 0x50000000
+    a0|contains:
+      - '50000000'
+      - '40000000'  # CLONE_NEWNET alone is also part of the chain
+  netlink_xfrm_socket:
+    type: SYSCALL
+    syscall: socket
+    a0: '10'  # AF_NETLINK = 16 = 0x10
+    a2: '6'   # NETLINK_XFRM = 6
+  timeframe: 10s
+  condition: unshare_user_net and netlink_xfrm_socket
+falsepositives:
+  - IPsec management daemons (strongswan, libreswan, charon, pluto)
+  - Container runtimes performing legitimate network-namespace setup
+    in combination with IPsec policy management
+  - NetworkManager IPsec backends
+level: high

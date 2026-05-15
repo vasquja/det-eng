@@ -1,0 +1,42 @@
+title: AF_RXRPC Socket Created By Non-AFS Process (DirtyFrag RxRPC CVE-2026-43500)
+id: cccaa4ae-e053-4d94-9679-73a32bd77c65
+status: experimental
+description: |
+  Detects creation of an AF_RXRPC (family 33) socket by any process that is
+  not part of an AFS client stack. AF_RXRPC is used almost exclusively by
+  AFS implementations (kafs, OpenAFS); any other consumer is a strong
+  indicator of attempted exploitation of the DirtyFrag RxRPC page-cache
+  write primitive (CVE-2026-43500). The rxrpc kernel module is loaded by
+  default on Ubuntu, so this is reachable from any local user there
+  without prerequisites.
+references:
+  - https://github.com/V4bel/dirtyfrag
+author: det-eng
+date: 2026/05/15
+tags:
+  - attack.privilege_escalation
+  - attack.t1068
+  - cve.2026.43500
+logsource:
+  product: linux
+  service: auditd
+detection:
+  rxrpc_socket:
+    type: SYSCALL
+    syscall: socket
+    a0: '21'  # AF_RXRPC = 33 = 0x21
+  afs_processes:
+    comm:
+      - afsd
+      - dafsserver
+      - fileserver
+      - kafs-preload
+      - openafs
+      - vlserver
+      - bosserver
+  condition: rxrpc_socket and not afs_processes
+falsepositives:
+  - AFS client daemons not covered by the allowlist above — extend
+    `afs_processes` for site-specific binaries
+  - Kernel self-tests or rxrpc module diagnostics
+level: high
