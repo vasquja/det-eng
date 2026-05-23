@@ -132,7 +132,7 @@ atomic_tests:
           exit 1
       - description: rxrpc kernel module must be available
         prereq_command: |
-          python3 -c "import socket; socket.socket(33, socket.SOCK_DGRAM, 0).close()"
+          python3 -c "import socket; socket.socket(33, socket.SOCK_DGRAM, socket.AF_INET).close()"
         get_prereq_command: |
           modprobe rxrpc || { echo "rxrpc module unavailable"; exit 1; }
     executor:
