@@ -24,7 +24,9 @@
 
 int main(void)
 {
-    int fd = socket(AF_RXRPC, SOCK_DGRAM, 0);
+    /* rxrpc's create handler only accepts PF_INET/PF_INET6 as the protocol;
+     * passing 0 yields EPROTONOSUPPORT on a real kernel. */
+    int fd = socket(AF_RXRPC, SOCK_DGRAM, PF_INET);
     if (fd < 0) {
         fprintf(stderr, "socket(AF_RXRPC): %s\n", strerror(errno));
         fprintf(stderr, "[*] rxrpc kernel module may not be loaded\n");
