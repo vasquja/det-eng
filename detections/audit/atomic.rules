@@ -29,3 +29,13 @@
 
 ## memfd_create + execveat (fileless exec), ptrace (TRACEME), setns (escape)
 -a always,exit -F arch=b64 -S memfd_create -S execveat -S ptrace -S setns -k det-eng
+
+## setsockopt (AF_PACKET PACKET_RX_RING + PACKET_ADD_MEMBERSHIP/PACKET_MR_PROMISC),
+## ioctl (SIOCSIFFLAGS/IFF_PROMISC). These enrich the T1040 sniffing atomics:
+## they expose promiscuous-mode entry and packet-ring setup, which the bare
+## socket() record alone does not show.
+##
+## NOTE: setsockopt and (especially) ioctl are high-volume on a busy host.
+## These lines are for lab / validation use; on a production fleet, scope them
+## down (e.g. by -F a1=<SOL_PACKET> / -F key, or drop ioctl) before loading.
+-a always,exit -F arch=b64 -S setsockopt -S ioctl -k det-eng

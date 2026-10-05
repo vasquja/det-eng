@@ -1,0 +1,62 @@
+{
+  "trrs": [
+    {
+      "id": "TRR0001",
+      "platform": "lin",
+      "technique": "T1040",
+      "title": "Network Sniffing on Linux",
+      "status": "pilot",
+      "path": "research/trr0001/lin/README.md",
+      "procedures": [
+        "TRR0001.LIN.A",
+        "TRR0001.LIN.B",
+        "TRR0001.LIN.C",
+        "TRR0001.LIN.D"
+      ]
+    }
+  ],
+  "tests": {
+    "TRR0001.LIN.A": {
+      "name": "AF_PACKET raw socket",
+      "technique": "T1040",
+      "built": true,
+      "atomic": "atomics/T1040/src/afpacket_rawsocket_behavioral.c",
+      "atomic_guid": "f574984c-36b6-491e-9f58-02595096b4ec",
+      "detections": [
+        "detections/sigma/T1040/afpacket_raw_socket.yml"
+      ]
+    },
+    "TRR0001.LIN.B": {
+      "name": "AF_PACKET PACKET_RX_RING (TPACKET_V3) + mmap",
+      "technique": "T1040",
+      "built": true,
+      "atomic": "atomics/T1040/src/afpacket_mmap_ring_behavioral.c",
+      "atomic_guid": "bb783b5e-4c9b-47ab-a518-f629e28c6047",
+      "detections": [
+        "detections/sigma/T1040/afpacket_raw_socket.yml",
+        "detections/audit/atomic.rules"
+      ]
+    },
+    "TRR0001.LIN.C": {
+      "name": "AF_INET raw socket",
+      "technique": "T1040",
+      "built": true,
+      "atomic": "atomics/T1040/src/afinet_raw_socket_behavioral.c",
+      "atomic_guid": "5b4f0616-52cf-46fe-93fd-a5c8d4ab0dd5",
+      "detections": [
+        "detections/sigma/T1040/afinet_raw_socket.yml"
+      ]
+    },
+    "TRR0001.LIN.D": {
+      "name": "AF_XDP socket",
+      "technique": "T1040",
+      "built": true,
+      "atomic": "atomics/T1040/src/afxdp_socket_behavioral.c",
+      "atomic_guid": "0a18da73-ee76-4b26-b185-1b30893d1c44",
+      "detections": [
+        "detections/sigma/T1040/afxdp_socket.yml",
+        "detections/sigma/T1014/bpf_prog_load.yml"
+      ]
+    }
+  }
+}
