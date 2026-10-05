@@ -1,62 +1,40 @@
 {
+  "_comment": "Machine-readable index of the TRRs in this folder. Each entry's fields mirror tired-labs/techniques index.json (name, id, tactics, contributors, external_ids, platforms, procedures, pub_date, last_update, tests). NOTE: upstream index.json is a BARE top-level ARRAY of these entry objects; this file wraps them in {_comment, trrs:[]} and adds a local 'path' field for convenience. When contributing upstream, emit the entry into the top-level array and drop the wrapper and 'path'. 'id' values are LOCAL and live in the TRR9000+ band to avoid colliding with upstream's sequentially assigned IDs (upstream's TRR0001 is a reserved example and real reports climb from the low numbers). At contribution time copy to trr0000/ and let the maintainer assign the final upstream ID.",
   "trrs": [
     {
-      "id": "TRR0001",
-      "platform": "lin",
-      "technique": "T1040",
-      "title": "Network Sniffing on Linux",
-      "status": "pilot",
-      "path": "research/trr0001/lin/README.md",
-      "procedures": [
-        "TRR0001.LIN.A",
-        "TRR0001.LIN.B",
-        "TRR0001.LIN.C",
-        "TRR0001.LIN.D"
-      ]
+      "name": "Network Sniffing via Packet Capture (Linux)",
+      "id": "TRR9001",
+      "tactics": ["Credential Access", "Discovery"],
+      "contributors": ["det-eng"],
+      "external_ids": ["T1040"],
+      "platforms": ["Linux"],
+      "procedures": {
+        "A": "Raw packet socket (classic receive)",
+        "B": "Packet socket with PACKET_MMAP ring",
+        "C": "Raw IP socket",
+        "D": "eBPF / XDP frame capture"
+      },
+      "pub_date": "2026-10-05",
+      "last_update": "2026-10-05",
+      "path": "trr9001/lin/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng AF_PACKET raw-socket behavioral atomic",
+          "url": "../atomics/T1040/src/afpacket_rawsocket_behavioral.c"
+        },
+        "B": {
+          "text": "det-eng AF_PACKET PACKET_RX_RING (TPACKET_V3) + mmap behavioral atomic",
+          "url": "../atomics/T1040/src/afpacket_mmap_ring_behavioral.c"
+        },
+        "C": {
+          "text": "det-eng AF_INET/AF_INET6 raw-socket behavioral atomic",
+          "url": "../atomics/T1040/src/afinet_raw_socket_behavioral.c"
+        },
+        "D": {
+          "text": "det-eng AF_XDP socket behavioral atomic (eBPF half: T1014 bpf program-load atomic)",
+          "url": "../atomics/T1040/src/afxdp_socket_behavioral.c"
+        }
+      }
     }
-  ],
-  "tests": {
-    "TRR0001.LIN.A": {
-      "name": "AF_PACKET raw socket",
-      "technique": "T1040",
-      "built": true,
-      "atomic": "atomics/T1040/src/afpacket_rawsocket_behavioral.c",
-      "atomic_guid": "f574984c-36b6-491e-9f58-02595096b4ec",
-      "detections": [
-        "detections/sigma/T1040/afpacket_raw_socket.yml"
-      ]
-    },
-    "TRR0001.LIN.B": {
-      "name": "AF_PACKET PACKET_RX_RING (TPACKET_V3) + mmap",
-      "technique": "T1040",
-      "built": true,
-      "atomic": "atomics/T1040/src/afpacket_mmap_ring_behavioral.c",
-      "atomic_guid": "bb783b5e-4c9b-47ab-a518-f629e28c6047",
-      "detections": [
-        "detections/sigma/T1040/afpacket_raw_socket.yml",
-        "detections/audit/atomic.rules"
-      ]
-    },
-    "TRR0001.LIN.C": {
-      "name": "AF_INET raw socket",
-      "technique": "T1040",
-      "built": true,
-      "atomic": "atomics/T1040/src/afinet_raw_socket_behavioral.c",
-      "atomic_guid": "5b4f0616-52cf-46fe-93fd-a5c8d4ab0dd5",
-      "detections": [
-        "detections/sigma/T1040/afinet_raw_socket.yml"
-      ]
-    },
-    "TRR0001.LIN.D": {
-      "name": "AF_XDP socket",
-      "technique": "T1040",
-      "built": true,
-      "atomic": "atomics/T1040/src/afxdp_socket_behavioral.c",
-      "atomic_guid": "0a18da73-ee76-4b26-b185-1b30893d1c44",
-      "detections": [
-        "detections/sigma/T1040/afxdp_socket.yml",
-        "detections/sigma/T1014/bpf_prog_load.yml"
-      ]
-    }
-  }
+  ]
 }
