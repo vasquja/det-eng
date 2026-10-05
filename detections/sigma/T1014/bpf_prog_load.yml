@@ -1,0 +1,42 @@
+title: eBPF Program Load (BPF_PROG_LOAD) By Non-Allowlisted Process
+id: 24239f1c-4fac-494c-b078-61ea03ab1a17
+status: experimental
+description: |
+  Detects the `bpf(2)` syscall with command BPF_PROG_LOAD (a0 = 5) from a
+  process outside the set that normally loads eBPF. Loading a kernel-space
+  program is the first step of an eBPF rootkit or a BPF-based
+  privilege-escalation chain. Fidelity rises when a program load is followed
+  by an attach (bpf PROG_ATTACH, or perf_event_open + PERF_EVENT_IOC_SET_BPF).
+references:
+  - https://man7.org/linux/man-pages/man2/bpf.2.html
+  - https://github.com/kris-nova/boopkit
+author: det-eng
+date: 2026/10/05
+tags:
+  - attack.defense_evasion
+  - attack.t1014
+  - attack.privilege_escalation
+  - attack.t1068
+logsource:
+  product: linux
+  service: auditd
+detection:
+  bpf_prog_load:
+    type: SYSCALL
+    syscall: bpf
+    a0: '5'  # BPF_PROG_LOAD = 5
+  bpf_processes:
+    comm:
+      - systemd
+      - bpftool
+      - bpftrace
+      - cilium-agent
+      - falco
+      - tetragon
+      - node_exporter
+  condition: bpf_prog_load and not bpf_processes
+falsepositives:
+  - Observability and networking stacks that load eBPF legitimately
+    (systemd, Cilium, Falco, Tetragon, bpftrace) — baseline and extend
+    `bpf_processes` for the host
+level: medium

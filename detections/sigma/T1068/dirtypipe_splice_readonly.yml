@@ -1,0 +1,47 @@
+title: Pipe Creation Followed By splice (DirtyPipe CVE-2022-0847)
+id: 822f6d10-acf0-4d24-b1af-0713a57850fd
+status: experimental
+description: |
+  Detects a process creating a pipe (pipe/pipe2) and shortly after
+  performing splice() — the syscall sequence used by the DirtyPipe
+  (CVE-2022-0847) page-cache write primitive. The actual exploit splices
+  from a read-only file descriptor into the pipe so the spliced page
+  inherits PIPE_BUF_FLAG_CAN_MERGE, then overwrites the file's page cache
+  with a following write(). Stock Linux auditd SYSCALL records do not expose
+  descriptor types, so this rule keys on the surrounding syscalls; pair with
+  an eBPF-based sensor (Falco, Tetragon) to confirm the read-only source and
+  pipe destination for higher fidelity.
+
+  splice() is used legitimately by many servers and copy utilities, so the
+  pipe-then-splice correlation and process baselining below are what make
+  this tractable.
+references:
+  - https://dirtypipe.cm4all.com/
+  - https://nvd.nist.gov/vuln/detail/CVE-2022-0847
+author: det-eng
+date: 2026/10/05
+tags:
+  - attack.privilege_escalation
+  - attack.t1068
+  - cve.2022.0847
+logsource:
+  product: linux
+  service: auditd
+detection:
+  pipe_create:
+    type: SYSCALL
+    syscall:
+      - pipe
+      - pipe2
+  splice_syscall:
+    type: SYSCALL
+    syscall: splice
+  timeframe: 5s
+  condition: pipe_create and splice_syscall
+falsepositives:
+  - Web/media servers and proxies that combine pipes with splice() for
+    zero-copy I/O (e.g. nginx, HAProxy, some FUSE and logging daemons)
+  - Coreutils and archivers on kernels that use splice() for copying
+  - Baseline known-good `comm` / `exe` / `auid` values before promoting to
+    alerting; prefer the eBPF fd-flag signal where available
+level: medium

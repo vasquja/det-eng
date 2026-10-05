@@ -1,0 +1,29 @@
+title: userfaultfd Syscall By Non-Allowlisted Process
+id: 62eb1523-a86a-4867-a0f6-68d6ca0b0ff1
+status: experimental
+description: |
+  Detects the `userfaultfd(2)` syscall. userfaultfd lets userspace handle
+  page faults and pause the kernel mid-copy; it is a common timing primitive
+  in use-after-free and heap-spray privilege-escalation exploits. Outside a
+  small set of consumers (CRIU, QEMU post-copy migration, some databases and
+  JITs) it is very rare, so the syscall alone is a strong anchor.
+references:
+  - https://man7.org/linux/man-pages/man2/userfaultfd.2.html
+author: det-eng
+date: 2026/10/05
+tags:
+  - attack.privilege_escalation
+  - attack.t1068
+logsource:
+  product: linux
+  service: auditd
+detection:
+  userfaultfd_syscall:
+    type: SYSCALL
+    syscall: userfaultfd
+  condition: userfaultfd_syscall
+falsepositives:
+  - CRIU checkpoint/restore, QEMU live-migration, and some databases/JITs
+    that use userfaultfd legitimately — baseline and allowlist their
+    `comm` / `exe` before alerting
+level: high

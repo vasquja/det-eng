@@ -1,0 +1,35 @@
+title: io_uring Ring Setup By Non-Allowlisted Process
+id: 4004c54e-ff12-4d89-9d07-d0d50732c410
+status: experimental
+description: |
+  Detects the `io_uring_setup(2)` syscall. io_uring performs file and network
+  I/O through a shared ring rather than the classic read()/write()/openat()
+  syscalls, so a process can act while a syscall-hooking sensor sees little or
+  nothing. This rule flags ring creation from a process outside the io_uring
+  allowlist; it also serves as a coverage check — if your pipeline never
+  records io_uring_setup at all, that is the finding.
+references:
+  - https://man7.org/linux/man-pages/man2/io_uring_setup.2.html
+author: det-eng
+date: 2026/10/05
+tags:
+  - attack.defense_evasion
+  - attack.t1562.001
+  - attack.privilege_escalation
+  - attack.t1068
+logsource:
+  product: linux
+  service: auditd
+detection:
+  io_uring_setup_syscall:
+    type: SYSCALL
+    syscall: io_uring_setup
+  io_uring_enter_syscall:
+    type: SYSCALL
+    syscall: io_uring_enter
+  condition: io_uring_setup_syscall or io_uring_enter_syscall
+falsepositives:
+  - Databases, proxies, and language runtimes that use io_uring for
+    performance (recent PostgreSQL, nginx builds, Node.js, some Go/Rust
+    runtimes) — baseline and allowlist their `comm` / `exe`
+level: medium

@@ -1,0 +1,31 @@
+## det-eng — auditd syscall rules for the behavioral atomics
+##
+## The Sigma rules in detections/sigma/ all use `logsource: service: auditd`.
+## On a default auditd install the syscalls below are NOT logged, so the rules
+## would never match. Load this file first to make that telemetry exist.
+##
+## Load (root, with auditd running):
+##     auditctl -R detections/audit/atomic.rules
+## List:   auditctl -l
+## Remove: auditctl -D            # clears ALL rules; or delete by swapping -a->-d
+##
+## Every record carries key=det-eng, so you can isolate test telemetry with:
+##     ausearch -k det-eng -i
+##
+## Assumptions:
+##  * 64-bit userland (arch=b64). The atomics compile as 64-bit binaries.
+##    Add matching arch=b32 lines if you test 32-bit processes.
+##  * At most 4 syscalls per rule line (portable, conservative).
+
+## socket (CopyFail/DirtyFrag/RxRPC/AF_PACKET), splice (CopyFail/DirtyPipe),
+## unshare (DirtyFrag xfrm), pipe (DirtyPipe)
+-a always,exit -F arch=b64 -S socket -S splice -S unshare -S pipe -k det-eng
+
+## pipe2 (DirtyPipe), userfaultfd, add_key + keyctl (keyring stuffing)
+-a always,exit -F arch=b64 -S pipe2 -S userfaultfd -S add_key -S keyctl -k det-eng
+
+## perf_event_open, io_uring_setup + io_uring_enter, bpf (eBPF load)
+-a always,exit -F arch=b64 -S perf_event_open -S io_uring_setup -S io_uring_enter -S bpf -k det-eng
+
+## memfd_create + execveat (fileless exec), ptrace (TRACEME), setns (escape)
+-a always,exit -F arch=b64 -S memfd_create -S execveat -S ptrace -S setns -k det-eng

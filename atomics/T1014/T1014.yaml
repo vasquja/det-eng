@@ -1,0 +1,45 @@
+attack_technique: T1014
+display_name: Rootkit
+
+atomic_tests:
+  - name: eBPF program load (BPF_PROG_LOAD) — behavioral
+    auto_generated_guid: beff5e08-a95d-42b0-9f2d-5717c75c536c
+    description: |
+      Generates `bpf(BPF_MAP_CREATE)` followed by `bpf(BPF_PROG_LOAD)` — the
+      first steps of an eBPF rootkit or a BPF-based privilege-escalation
+      chain. The loaded program is a no-op (`r0 = 0; exit`) of type
+      SOCKET_FILTER and is NEVER attached to any hook, socket, tracepoint, or
+      kprobe; the fds are closed immediately, so nothing persists.
+
+      Reference: bpf(2); open-source eBPF rootkits (TripleCross, boopkit,
+      ebpfkit) all begin with program + map creation. Behavioral signature
+      only — not a working exploit.
+
+      Detection guidance:
+        * `bpf` syscall with cmd BPF_PROG_LOAD (a0 hex '5') from a process
+          outside the BPF-using allowlist (systemd, bpftrace, cilium,
+          falco, tetragon)
+        * Higher fidelity when paired with a following attach (bpf
+          PROG_ATTACH / perf_event_open + PERF_EVENT_IOC_SET_BPF)
+    supported_platforms:
+      - linux
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1014/src
+    dependency_executor_name: bash
+    dependencies:
+      - description: gcc must be available
+        prereq_command: command -v gcc >/dev/null
+        get_prereq_command: |
+          echo "Install gcc via your package manager (apt/dnf/pacman)."
+          exit 1
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        gcc -O0 -Wall -o /tmp/ebpf_prog_load_behavioral #{source_dir}/ebpf_prog_load_behavioral.c
+        /tmp/ebpf_prog_load_behavioral
+      cleanup_command: |
+        rm -f /tmp/ebpf_prog_load_behavioral

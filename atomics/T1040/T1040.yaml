@@ -1,0 +1,52 @@
+attack_technique: T1040
+display_name: Network Sniffing
+
+atomic_tests:
+  - name: AF_PACKET raw socket created (sniffing / packet-ring exploit surface) — behavioral
+    auto_generated_guid: f574984c-36b6-491e-9f58-02595096b4ec
+    description: |
+      Generates the high-signal syscall `socket(AF_PACKET, SOCK_RAW,
+      htons(ETH_P_ALL))`. A raw AF_PACKET socket is the entry point for both
+      network sniffing (T1040) and a repeated class of kernel
+      privilege-escalation bugs in the packet-socket ring code
+      (CVE-2016-8655, CVE-2017-7308). The socket is opened and immediately
+      closed — no `bind()` to an interface, no `recvfrom()`, and no
+      PACKET_RX_RING / PACKET_TX_RING setup — so no packets are captured and
+      the vulnerable ring path is never touched.
+
+      CAP_NET_RAW is normally required. Without it the `socket()` call returns
+      EPERM, but the syscall is still issued and recorded, so the attempt
+      itself is the telemetry this test produces.
+
+      Reference: packet(7); CVE-2016-8655; CVE-2017-7308. Behavioral signature
+      only — not a working exploit.
+
+      Detection guidance:
+        * `socket()` with domain AF_PACKET (value 17 = auditd hex 0x11 →
+          arg a0 '11') from any process outside a known sniffer / network
+          daemon allowlist (tcpdump, dumpcap, dhclient, systemd-networkd,
+          NetworkManager, nmap)
+        * Flag the EPERM attempt as well as the success — both emit the
+          syscall record
+    supported_platforms:
+      - linux
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1040/src
+    dependency_executor_name: bash
+    dependencies:
+      - description: gcc must be available
+        prereq_command: command -v gcc >/dev/null
+        get_prereq_command: |
+          echo "Install gcc via your package manager (apt/dnf/pacman)."
+          exit 1
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        gcc -O0 -Wall -o /tmp/afpacket_behavioral #{source_dir}/afpacket_rawsocket_behavioral.c
+        /tmp/afpacket_behavioral
+      cleanup_command: |
+        rm -f /tmp/afpacket_behavioral

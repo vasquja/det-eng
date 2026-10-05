@@ -1,0 +1,45 @@
+attack_technique: T1562.001
+display_name: Impair Defenses - Disable or Modify Tools
+
+atomic_tests:
+  - name: io_uring syscall-bypass ring created — behavioral
+    auto_generated_guid: 739898de-9d8c-4b09-a1e4-558aebe9e1b6
+    description: |
+      Generates `io_uring_setup(2)` and a zero-submission `io_uring_enter(2)`.
+      io_uring performs file and network I/O through a shared ring instead of
+      the classic read()/write()/openat() syscalls, which is a known blind
+      spot for syscall-hooking sensors (EDR, basic auditd). This atomic only
+      creates a ring and issues an enter with zero submissions — no file is
+      opened, read, or written — so a team can measure whether its tooling
+      observes io_uring at all.
+
+      Reference: io_uring_setup(2), io_uring_enter(2); kernel.io_uring_disabled
+      sysctl. Behavioral signature only — not a working exploit.
+
+      Detection guidance:
+        * `io_uring_setup` / `io_uring_enter` syscalls from a process outside
+          the io_uring-using allowlist (databases, proxies, some runtimes)
+        * Confirm your sensor records io_uring at all — many only hook the
+          classic I/O syscalls
+    supported_platforms:
+      - linux
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1562.001/src
+    dependency_executor_name: bash
+    dependencies:
+      - description: gcc must be available
+        prereq_command: command -v gcc >/dev/null
+        get_prereq_command: |
+          echo "Install gcc via your package manager (apt/dnf/pacman)."
+          exit 1
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        gcc -O0 -Wall -o /tmp/io_uring_bypass_behavioral #{source_dir}/io_uring_bypass_behavioral.c
+        /tmp/io_uring_bypass_behavioral
+      cleanup_command: |
+        rm -f /tmp/io_uring_bypass_behavioral

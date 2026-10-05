@@ -1,0 +1,50 @@
+title: AF_PACKET Raw Socket Created By Non-Sniffer Process
+id: d17f13f0-796d-4708-be4d-d81e40b26220
+status: experimental
+description: |
+  Detects creation of an AF_PACKET (family 17) socket by a process that is
+  not part of a known sniffer or network-management allowlist. A raw
+  AF_PACKET socket is the entry point for network sniffing (T1040) and for a
+  repeated class of packet-socket ring privilege-escalation bugs
+  (CVE-2016-8655, CVE-2017-7308). Both the successful call and the EPERM
+  attempt by an unprivileged process emit this syscall record.
+references:
+  - https://man7.org/linux/man-pages/man7/packet.7.html
+  - https://nvd.nist.gov/vuln/detail/CVE-2016-8655
+  - https://nvd.nist.gov/vuln/detail/CVE-2017-7308
+author: det-eng
+date: 2026/10/05
+tags:
+  - attack.credential_access
+  - attack.discovery
+  - attack.t1040
+  - attack.privilege_escalation
+  - attack.t1068
+  - cve.2016.8655
+  - cve.2017.7308
+logsource:
+  product: linux
+  service: auditd
+detection:
+  afpacket_socket:
+    type: SYSCALL
+    syscall: socket
+    a0: '11'  # AF_PACKET = 17 decimal = 0x11 hex; auditd logs args in hex
+  sniffer_processes:
+    comm:
+      - tcpdump
+      - dumpcap
+      - wireshark
+      - tshark
+      - dhclient
+      - dhcpcd
+      - systemd-network  # systemd-networkd (comm is truncated to 15 chars)
+      - NetworkManager
+      - nmap
+      - arpspoof
+  condition: afpacket_socket and not sniffer_processes
+falsepositives:
+  - Sniffers and network daemons not covered by the allowlist above — extend
+    `sniffer_processes` for site-specific binaries (DHCP clients, VPN
+    clients, monitoring agents, container CNI plugins)
+level: medium

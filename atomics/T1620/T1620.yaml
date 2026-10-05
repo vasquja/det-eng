@@ -1,0 +1,47 @@
+attack_technique: T1620
+display_name: Reflective Code Loading
+
+atomic_tests:
+  - name: memfd fileless execution (memfd_create + fexecve) — behavioral
+    auto_generated_guid: 7a2fc4c3-6db6-4407-beff-f400006807ce
+    description: |
+      Generates `memfd_create(2)` followed by `fexecve()` (execveat with
+      AT_EMPTY_PATH) on the anonymous fd — the fileless-execution pattern used
+      by many Linux droppers. The executed payload is a benign, already
+      present system binary (default /bin/true) copied into the memfd; no
+      attacker code runs and nothing is written to disk. The resulting process
+      shows an executable path like `/memfd:atomic (deleted)`.
+
+      Reference: memfd_create(2), execveat(2), fexecve(3). Behavioral
+      signature only — not a working exploit.
+
+      Detection guidance:
+        * `memfd_create` shortly followed by `execveat` from the same PID
+        * A running process whose /proc/<pid>/exe resolves to a `memfd:` /
+          `(deleted)` path
+    supported_platforms:
+      - linux
+    input_arguments:
+      payload_binary:
+        description: Benign binary copied into the memfd and executed.
+        type: string
+        default: /bin/true
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1620/src
+    dependency_executor_name: bash
+    dependencies:
+      - description: gcc must be available
+        prereq_command: command -v gcc >/dev/null
+        get_prereq_command: |
+          echo "Install gcc via your package manager (apt/dnf/pacman)."
+          exit 1
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        gcc -O0 -Wall -o /tmp/memfd_exec_behavioral #{source_dir}/memfd_exec_behavioral.c
+        /tmp/memfd_exec_behavioral #{payload_binary}
+      cleanup_command: |
+        rm -f /tmp/memfd_exec_behavioral
