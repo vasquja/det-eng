@@ -31,6 +31,30 @@ jobs:
           sudo systemctl start auditd || sudo service auditd start
           sudo auditctl -s
 
+      - name: Audit self-test (diagnostic)
+        shell: bash
+        run: |
+          set +e
+          echo "=== auditd.conf (relevant keys) ==="
+          grep -E 'log_file|log_format|^flush|^freq|write_logs|^disp' /etc/audit/auditd.conf
+          echo "=== /var/log/audit ==="
+          sudo ls -l /var/log/audit/ 2>&1
+          echo "=== load rules + list ==="
+          sudo auditctl -R detections/audit/atomic.rules
+          sudo auditctl -l
+          echo "=== emit a socket() syscall (should be audited under det-eng) ==="
+          sudo python3 -c "import socket; socket.socket(socket.AF_INET, socket.SOCK_DGRAM).close()"
+          sleep 3
+          echo "=== audit.log line count ==="
+          sudo wc -l /var/log/audit/audit.log 2>&1
+          echo "=== ausearch -k det-eng (raw, head) ==="
+          sudo ausearch -k det-eng 2>&1 | head -30
+          echo "=== ausearch -k det-eng -sc socket -i (tail) ==="
+          sudo ausearch -k det-eng -sc socket -i 2>&1 | tail -15
+          echo "=== journald audit? ==="
+          sudo journalctl _TRANSPORT=audit --no-pager -n 5 2>&1 | head -10
+          exit 0
+
       - name: Validate detections
         run: |
           sudo python3 detections/validate_detections.py --report | tee /tmp/val.out
