@@ -62,6 +62,16 @@ MANIFEST = [
      "atomics/T1068/src/perf_event_open_behavioral.c", []),
     ("detections/sigma/T1040/afpacket_raw_socket.yml",
      "atomics/T1040/src/afpacket_rawsocket_behavioral.c", []),
+    # TRR0001.LIN.B — the PACKET_RX_RING/mmap atomic also opens an AF_PACKET
+    # socket, so the Strategy 1 rule must fire on it too.
+    ("detections/sigma/T1040/afpacket_raw_socket.yml",
+     "atomics/T1040/src/afpacket_mmap_ring_behavioral.c", []),
+    # TRR0001.LIN.C — AF_INET raw socket, Strategy 2 rule.
+    ("detections/sigma/T1040/afinet_raw_socket.yml",
+     "atomics/T1040/src/afinet_raw_socket_behavioral.c", []),
+    # TRR0001.LIN.D — AF_XDP socket (the bpf half is covered by T1014).
+    ("detections/sigma/T1040/afxdp_socket.yml",
+     "atomics/T1040/src/afxdp_socket_behavioral.c", []),
     ("detections/sigma/T1562.001/io_uring_setup.yml",
      "atomics/T1562.001/src/io_uring_bypass_behavioral.c", []),
     ("detections/sigma/T1014/bpf_prog_load.yml",

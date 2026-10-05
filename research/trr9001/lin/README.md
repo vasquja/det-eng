@@ -247,20 +247,21 @@ the flag bits off — `(a1 & ~(SOCK_CLOEXEC|SOCK_NONBLOCK)) == 3` — or match t
 low type bits, so the flagged variants still fire. This is a separate node
 that Strategy 1 does not reach. Allowlist `ping` and `traceroute`, and set a
 lower level.
-- Status: **backlog** — rule not yet written.
+- Rule: `detections/sigma/T1040/afinet_raw_socket.yml`. Status: **built**.
 
 **Strategy 3 — fallback (covers D).**
 Key on `bpf()` with command `BPF_PROG_LOAD`, and on `socket()` where
-`a0 = 0x2c` (`AF_XDP`, 44). The `bpf` half is already covered by
-`detections/sigma/T1014/bpf_prog_load.yml`; cross-reference it from here. The
-`AF_XDP` half is **backlog**.
+`a0 = 0x2c` (`AF_XDP`, 44). The `bpf` half is covered by
+`detections/sigma/T1014/bpf_prog_load.yml`; the `AF_XDP` half is covered by
+`detections/sigma/T1040/afxdp_socket.yml`. Correlate both for a
+higher-confidence XDP-capture signal. Status: **built**.
 
 **Enrichment (raises fidelity; not a primary anchor).**
 Promiscuous-mode enable — `setsockopt(SOL_PACKET, PACKET_ADD_MEMBERSHIP,
 PACKET_MR_PROMISC)` or `ioctl(SIOCSIFFLAGS)` with `IFF_PROMISC` — strongly
 suggests wide capture. Correlate it with a Strategy 1 or 2 hit to raise
-confidence. Today `atomic.rules` does not record `setsockopt`/`ioctl`; add
-those syscalls to the ruleset to make this enrichment visible.
+confidence. `atomic.rules` now records `setsockopt` and `ioctl`, so this
+enrichment (and the `PACKET_RX_RING` ring setup) is visible.
 
 **Telemetry caveats.**
 These strategies assume the modern direct `socket(2)` syscall. Scope the
@@ -288,18 +289,18 @@ method: detect at the chokepoint first, then fill the gaps.
 
 | ID | Test | Status |
 |----|------|--------|
-| TRR9001.LIN.A | [`atomics/T1040/src/afpacket_rawsocket_behavioral.c`](../../../atomics/T1040/) | **built** |
-| TRR9001.LIN.B | `PACKET_RX_RING` ring-setup behavioral | backlog |
-| TRR9001.LIN.C | `AF_INET`/`AF_INET6` `SOCK_RAW` behavioral | backlog |
-| TRR9001.LIN.D | eBPF: [`atomics/T1014/src/ebpf_prog_load_behavioral.c`](../../../atomics/T1014/) (the `bpf` half); `AF_XDP` socket behavioral | partial |
+| TRR9001.LIN.A | [`atomics/T1040/src/afpacket_rawsocket_behavioral.c`](../../../atomics/T1040/src/afpacket_rawsocket_behavioral.c) | **built** |
+| TRR9001.LIN.B | [`atomics/T1040/src/afpacket_mmap_ring_behavioral.c`](../../../atomics/T1040/src/afpacket_mmap_ring_behavioral.c) | **built** |
+| TRR9001.LIN.C | [`atomics/T1040/src/afinet_raw_socket_behavioral.c`](../../../atomics/T1040/src/afinet_raw_socket_behavioral.c) | **built** |
+| TRR9001.LIN.D | [`atomics/T1040/src/afxdp_socket_behavioral.c`](../../../atomics/T1040/src/afxdp_socket_behavioral.c); eBPF half: [`atomics/T1014/src/ebpf_prog_load_behavioral.c`](../../../atomics/T1014/src/ebpf_prog_load_behavioral.c) | **built** |
 
 ## Detections
 
 | Strategy | Covers | Sigma rule | Audit rule |
 |----------|--------|------------|------------|
 | 1 (chokepoint) | A, B | [`detections/sigma/T1040/afpacket_raw_socket.yml`](../../../detections/sigma/T1040/afpacket_raw_socket.yml) | `socket` in [`atomic.rules`](../../../detections/audit/atomic.rules) |
-| 2 (fallback) | C | backlog (`AF_INET` raw) | `socket` in `atomic.rules` |
-| 3 (fallback) | D | [`detections/sigma/T1014/bpf_prog_load.yml`](../../../detections/sigma/T1014/bpf_prog_load.yml) (bpf half); `AF_XDP` backlog | `bpf` in `atomic.rules`; `socket` for `AF_XDP` |
+| 2 (fallback) | C | [`detections/sigma/T1040/afinet_raw_socket.yml`](../../../detections/sigma/T1040/afinet_raw_socket.yml) | `socket` in `atomic.rules` |
+| 3 (fallback) | D | [`detections/sigma/T1040/afxdp_socket.yml`](../../../detections/sigma/T1040/afxdp_socket.yml); [`detections/sigma/T1014/bpf_prog_load.yml`](../../../detections/sigma/T1014/bpf_prog_load.yml) (bpf half) | `bpf` + `socket` in `atomic.rules` |
 
 Prove the loop (Procedure A is wired into the validator today):
 

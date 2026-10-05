@@ -1,0 +1,39 @@
+title: AF_XDP Socket Created (Express Data-Path Capture Surface)
+id: c7e1b2d4-5a63-48f9-b0c1-2d8e6f3a9b47
+status: experimental
+description: |
+  Detects creation of an AF_XDP (family 44) socket. AF_XDP is the kernel's
+  express data path: a process maps a UMEM region and binds an XDP socket to a
+  queue to receive frames with near-zero copy, typically alongside a loaded
+  XDP/eBPF program. It is a modern, high-performance network-sniffing and
+  traffic-interception surface (T1040) that many sensors do not watch. Almost
+  no ordinary process opens an AF_XDP socket, so the family alone is a strong,
+  rare signal.
+
+  This rule covers the AF_XDP socket half of the primitive. The eBPF
+  program-load half (`bpf(BPF_PROG_LOAD)`) that an XDP capture pipeline also
+  performs is covered by detections/sigma/T1014/bpf_prog_load.yml; correlate the
+  two for higher-confidence detection of an XDP capture/redirect pipeline.
+references:
+  - https://www.kernel.org/doc/html/latest/networking/af_xdp.html
+  - https://man7.org/linux/man-pages/man2/socket.2.html
+author: det-eng
+date: 2026/10/05
+tags:
+  - attack.credential_access
+  - attack.discovery
+  - attack.t1040
+logsource:
+  product: linux
+  service: auditd
+detection:
+  afxdp_socket:
+    type: SYSCALL
+    syscall: socket
+    a0: '2c'  # AF_XDP = 44 decimal = 0x2c hex; auditd logs args in hex
+  condition: afxdp_socket
+falsepositives:
+  - High-performance packet processors and load balancers built on AF_XDP
+    (DPDK AF_XDP PMD, Cilium, Katran, xdp-tools). Allowlist those binaries by
+    `comm` after baselining your fleet.
+level: medium

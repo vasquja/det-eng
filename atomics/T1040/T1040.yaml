@@ -50,3 +50,168 @@ atomic_tests:
         /tmp/afpacket_behavioral
       cleanup_command: |
         rm -f /tmp/afpacket_behavioral
+
+  - name: AF_PACKET PACKET_RX_RING (TPACKET_V3) ring set up and mmapped — behavioral
+    auto_generated_guid: bb783b5e-4c9b-47ab-a518-f629e28c6047
+    description: |
+      Generates the syscall chain a high-rate packet sniffer issues before it
+      starts to capture: `socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))`, then
+      `setsockopt(SOL_PACKET, PACKET_VERSION, TPACKET_V3)`, then
+      `setsockopt(SOL_PACKET, PACKET_RX_RING, &tpacket_req3, ...)`, then an
+      `mmap()` of that socket to map the kernel RX ring buffer.
+
+      The PACKET_RX_RING path is the fast, zero-copy capture interface used by
+      tcpdump/libpcap (T1040) and the code path behind a repeated class of
+      packet-socket ring kernel bugs (e.g. CVE-2017-7308, a TPACKET_V3 ring
+      overflow). The combination AF_PACKET socket + PACKET_RX_RING setsockopt +
+      mmap of the socket is a stronger, more specific signal than the bare
+      `socket()` call alone.
+
+      The test STOPS before capture: no `bind()` to an interface and no
+      `poll()`/`recvfrom()` loop, so the ring is never armed against a live
+      link and no packets are read. The ring memory is unmapped and the socket
+      is closed on exit.
+
+      CAP_NET_RAW is normally required. Without it `socket()` returns EPERM, but
+      the syscall is still issued and recorded, so the attempt itself is the
+      telemetry this test produces.
+
+      Reference: packet(7); CVE-2017-7308. Behavioral signature only — not a
+      working exploit.
+
+      Detection guidance:
+        * The Strategy 1 rule (AF_PACKET socket, `socket()` arg a0 '11') fires
+          on this test as it does on the bare-socket test.
+        * Enrich with the PACKET_RX_RING / PACKET_VERSION `setsockopt()` and the
+          `mmap()` of the packet socket to separate a true ring-capture setup
+          from a socket that is opened and closed. Load the `setsockopt` audit
+          rule (detections/audit/atomic.rules) to make that visible.
+    supported_platforms:
+      - linux
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1040/src
+    dependency_executor_name: bash
+    dependencies:
+      - description: gcc must be available
+        prereq_command: command -v gcc >/dev/null
+        get_prereq_command: |
+          echo "Install gcc via your package manager (apt/dnf/pacman)."
+          exit 1
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        gcc -O0 -Wall -o /tmp/afpacket_mmap_ring_behavioral #{source_dir}/afpacket_mmap_ring_behavioral.c
+        /tmp/afpacket_mmap_ring_behavioral
+      cleanup_command: |
+        rm -f /tmp/afpacket_mmap_ring_behavioral
+
+  - name: AF_INET raw socket created (raw IP sniff / craft surface) — behavioral
+    auto_generated_guid: 5b4f0616-52cf-46fe-93fd-a5c8d4ab0dd5
+    description: |
+      Generates the syscall `socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)`. A raw IP
+      socket lets a process read and write whole IP packets, bypassing the
+      kernel transport layer. It is used to sniff/craft traffic (T1040) and as
+      a building block for spoofing and covert channels.
+
+      Unlike the link-layer AF_PACKET socket, the AF_INET raw socket is the
+      classic BSD-sockets raw interface — the same one `ping` and `traceroute`
+      use — so detection leans on process context, not the family alone.
+
+      The socket is opened and immediately closed — no `bind()`, no
+      `connect()`, no `sendto()`/`recvfrom()` — so no packet is read or written.
+
+      CAP_NET_RAW is normally required. Without it `socket()` returns EPERM, but
+      the syscall is still issued and recorded, so the attempt itself is the
+      telemetry this test produces.
+
+      Reference: raw(7); ip(7). Behavioral signature only — not a working
+      exploit.
+
+      Detection guidance:
+        * `socket()` with domain AF_INET (2 = auditd hex 0x2) or AF_INET6
+          (10 = 0xa) AND a SOCK_RAW type (low bits 3; the arg may also carry
+          SOCK_CLOEXEC 0x80000 / SOCK_NONBLOCK 0x800, so match the masked type,
+          not a1 == 0x3 exactly).
+        * Allowlist `ping` / `traceroute`, which legitimately open raw sockets;
+          flag raw sockets from any other process (see
+          detections/sigma/T1040/afinet_raw_socket.yml).
+    supported_platforms:
+      - linux
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1040/src
+    dependency_executor_name: bash
+    dependencies:
+      - description: gcc must be available
+        prereq_command: command -v gcc >/dev/null
+        get_prereq_command: |
+          echo "Install gcc via your package manager (apt/dnf/pacman)."
+          exit 1
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        gcc -O0 -Wall -o /tmp/afinet_raw_socket_behavioral #{source_dir}/afinet_raw_socket_behavioral.c
+        /tmp/afinet_raw_socket_behavioral
+      cleanup_command: |
+        rm -f /tmp/afinet_raw_socket_behavioral
+
+  - name: AF_XDP socket created (express data-path sniff surface) — behavioral
+    auto_generated_guid: 0a18da73-ee76-4b26-b185-1b30893d1c44
+    description: |
+      Generates the syscall `socket(AF_XDP, SOCK_RAW, 0)` (AF_XDP = 44 = auditd
+      hex 0x2c). AF_XDP is the kernel's express data path: a process maps a
+      UMEM region and binds an XDP socket to a queue to receive frames with
+      near-zero copy, usually alongside a loaded XDP/eBPF program. It is a
+      modern, high-performance sniffing and interception surface (T1040) that
+      many sensors do not watch. Almost no ordinary process opens an AF_XDP
+      socket, so the family alone is a strong, rare signal.
+
+      This is the AF_XDP *socket* half of the primitive. The eBPF program-load
+      half (`bpf(BPF_PROG_LOAD)`) that an XDP capture pipeline also performs is
+      already covered by detections/sigma/T1014/bpf_prog_load.yml and its
+      paired atomic — this test deliberately does not load a program.
+
+      The socket is opened and immediately closed — no `setsockopt(XDP_UMEM_REG)`,
+      no `bind()` to a queue, no ring `mmap()` — so no frames are received.
+
+      AF_XDP needs CAP_NET_RAW and a kernel built with CONFIG_XDP_SOCKETS.
+      Where it is missing, `socket()` returns EAFNOSUPPORT; without the
+      capability it returns EPERM. Either way the syscall is issued and
+      recorded, so the attempt itself is the telemetry this test produces.
+
+      Reference: AF_XDP kernel documentation (Documentation/networking/af_xdp).
+      Behavioral signature only — not a working exploit.
+
+      Detection guidance:
+        * `socket()` with domain AF_XDP (arg a0 '2c') from any process is
+          unusual; pair with the eBPF program-load signal (T1014) when an XDP
+          program is also loaded. See detections/sigma/T1040/afxdp_socket.yml.
+    supported_platforms:
+      - linux
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1040/src
+    dependency_executor_name: bash
+    dependencies:
+      - description: gcc must be available
+        prereq_command: command -v gcc >/dev/null
+        get_prereq_command: |
+          echo "Install gcc via your package manager (apt/dnf/pacman)."
+          exit 1
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        gcc -O0 -Wall -o /tmp/afxdp_socket_behavioral #{source_dir}/afxdp_socket_behavioral.c
+        /tmp/afxdp_socket_behavioral
+      cleanup_command: |
+        rm -f /tmp/afxdp_socket_behavioral

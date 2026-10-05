@@ -1,0 +1,51 @@
+title: AF_INET Raw Socket Created By Non-Ping/Traceroute Process
+id: 3f6d2a94-8c1e-4b0a-9d2e-7c5a1f0b4e8d
+status: experimental
+description: |
+  Detects creation of an AF_INET (family 2) or AF_INET6 (family 10) raw socket
+  (SOCK_RAW) by a process that is not a known raw-socket user such as `ping` or
+  `traceroute`. A raw IP socket reads and writes whole IP packets, bypassing the
+  kernel transport layer, and is a building block for network sniffing (T1040),
+  spoofing, and covert channels.
+
+  Unlike the link-layer AF_PACKET rule, this keys on the BSD-sockets raw
+  interface, so the detection depends on process context. The socket type arg
+  is matched on its masked SOCK_RAW value (low bits 3) and tolerates the
+  SOCK_CLOEXEC (0x80000) and SOCK_NONBLOCK (0x800) flags that libraries often
+  OR in — it does NOT require a1 to equal 0x3 exactly.
+references:
+  - https://man7.org/linux/man-pages/man7/raw.7.html
+  - https://man7.org/linux/man-pages/man7/ip.7.html
+author: det-eng
+date: 2026/10/05
+tags:
+  - attack.credential_access
+  - attack.discovery
+  - attack.t1040
+logsource:
+  product: linux
+  service: auditd
+detection:
+  afinet_raw_socket:
+    type: SYSCALL
+    syscall: socket
+    a0:
+      - '2'   # AF_INET  = 2  = 0x2  hex; auditd logs args in hex
+      - 'a'   # AF_INET6 = 10 = 0xa  hex
+    a1:
+      - '3'       # SOCK_RAW
+      - '803'     # SOCK_RAW | SOCK_NONBLOCK (0x800)
+      - '80003'   # SOCK_RAW | SOCK_CLOEXEC (0x80000)
+      - '80803'   # SOCK_RAW | SOCK_CLOEXEC | SOCK_NONBLOCK
+  allowed_processes:
+    comm:
+      - ping
+      - ping6
+      - traceroute
+      - traceroute6
+  condition: afinet_raw_socket and not allowed_processes
+falsepositives:
+  - Diagnostic tooling that legitimately opens raw IP sockets (mtr, fping, nmap,
+    hping3, some monitoring agents). Extend `allowed_processes` for site-specific
+    binaries after baselining.
+level: medium

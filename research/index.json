@@ -19,14 +19,20 @@
       "path": "trr9001/lin/README.md",
       "tests": {
         "A": {
-          "text": "det-eng AF_PACKET behavioral atomic",
+          "text": "det-eng AF_PACKET raw-socket behavioral atomic",
           "url": "../atomics/T1040/src/afpacket_rawsocket_behavioral.c"
         },
-        "B": null,
-        "C": null,
+        "B": {
+          "text": "det-eng AF_PACKET PACKET_RX_RING (TPACKET_V3) + mmap behavioral atomic",
+          "url": "../atomics/T1040/src/afpacket_mmap_ring_behavioral.c"
+        },
+        "C": {
+          "text": "det-eng AF_INET/AF_INET6 raw-socket behavioral atomic",
+          "url": "../atomics/T1040/src/afinet_raw_socket_behavioral.c"
+        },
         "D": {
-          "text": "det-eng eBPF program-load behavioral atomic (bpf half)",
-          "url": "../atomics/T1014/src/ebpf_prog_load_behavioral.c"
+          "text": "det-eng AF_XDP socket behavioral atomic (eBPF half: T1014 bpf program-load atomic)",
+          "url": "../atomics/T1040/src/afxdp_socket_behavioral.c"
         }
       }
     }
