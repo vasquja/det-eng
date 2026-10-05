@@ -1,0 +1,47 @@
+name: validate-detections
+
+# Proves the atomic -> auditd -> Sigma loop on a real GitHub-hosted VM.
+# A standard ubuntu-latest runner is a full VM (not a container), so the
+# Linux audit subsystem is available to root. The job installs auditd, loads
+# detections/audit/atomic.rules, runs each atomic, and checks the paired
+# Sigma rule's SYSCALL selections match the resulting audit events.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install audit and build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y auditd gcc python3 python3-yaml
+
+      - name: Start auditd
+        run: |
+          sudo systemctl start auditd || sudo service auditd start
+          sudo auditctl -s
+
+      - name: Validate detections
+        run: |
+          sudo python3 detections/validate_detections.py --report | tee /tmp/val.out
+
+      - name: Publish results to job summary
+        if: always()
+        run: |
+          {
+            echo '## Detection validation (atomic -> auditd -> Sigma)'
+            echo ''
+            echo '```'
+            cat /tmp/val.out 2>/dev/null || echo '(no output captured)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

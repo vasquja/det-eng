@@ -42,13 +42,30 @@ hosts that have no auditd. It needs `gcc` always, and `auditctl`, `ausearch`,
   allowlist, so the allowlist never changes the "does it fire" answer. Tuning
   the allowlist against your own fleet is a separate, operational step.
 
+## Continuous validation (CI)
+
+`.github/workflows/validate-detections.yml` runs this loop on every push and
+pull request. A standard `ubuntu-latest` runner is a full VM, so the audit
+subsystem is available to root. The job installs auditd, loads the rules, and
+runs the validator with `--report`. In `--report` mode only a compile or parse
+ERROR fails the job; a detection that does not fire (for example because the
+runner kernel has io_uring or AF_ALG turned off) is reported in the job
+summary, not treated as a defect. On a public repository the run is free.
+
 ## Manual run
 
 ```
-auditctl -R detections/audit/atomic.rules      # load (root)
+sudo auditctl -R detections/audit/atomic.rules   # load (root)
 # ... run an atomic from atomics/<TECH>/ ...
-ausearch -k det-eng -i                          # read the telemetry
+sudo grep 'key="det-eng"' /var/log/audit/audit.log   # read the telemetry
+# or, where ausearch resolves its log path:
+sudo ausearch -if /var/log/audit/audit.log -k det-eng -i
 ```
+
+Note: the validator reads `/var/log/audit/audit.log` directly instead of
+calling `ausearch`. On some hosts (GitHub-hosted runners among them)
+`ausearch` resolves its default log path to nothing and reports no matches
+even though the records are present in the file.
 
 ## Status
 
