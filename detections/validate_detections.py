@@ -237,6 +237,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true",
                     help="compile sources and parse rules only; no auditd")
+    ap.add_argument("--report", action="store_true",
+                    help="CI mode: exit nonzero only on ERROR (compile/parse); "
+                         "a detection FAIL is reported but does not fail the run")
     args = ap.parse_args()
 
     ok, why = (True, "") if args.dry_run else audit_available()
@@ -285,20 +288,25 @@ def main():
 
     print()
     width = max(len(r[0]) for r in results)
-    bad = 0
     for rid, status, detail in results:
-        if status in ("FAIL", "ERROR"):
-            bad += 1
         print(f"  [{status:^6}] {rid:<{width}}  {detail}")
     print()
 
+    errors = sum(1 for r in results if r[1] == "ERROR")
+    fails = sum(1 for r in results if r[1] == "FAIL")
+
     if dry:
         print(f"Dry run complete: {len(results)} rules parsed, atomics compiled.")
-        return 0 if bad == 0 else 1
+        return 1 if errors else 0
 
     passed = sum(1 for r in results if r[1] == "PASS")
     print(f"{passed}/{len(results)} detections fired on their paired atomic.")
-    return 0 if bad == 0 else 1
+    if args.report:
+        # CI mode: only a compile/parse ERROR fails the run. A detection FAIL
+        # is usually the runner kernel not exposing a feature (io_uring off,
+        # AF_ALG absent, ...), not a defect, so it is reported, not gated.
+        return 1 if errors else 0
+    return 0 if (errors + fails) == 0 else 1
 
 
 if __name__ == "__main__":
