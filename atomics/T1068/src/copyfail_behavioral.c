@@ -5,10 +5,17 @@
  *   socket(AF_ALG) + bind() to authencesn(hmac(sha256),cbc(aes))
  *   + sendmsg(MSG_MORE) + splice()
  *
+ * The real CopyFail precondition is the authencesn AEAD. Kernels that lack
+ * that specific algorithm fail the bind()/accept(), so to keep the full
+ * socket(AF_ALG) + sendmsg(MSG_MORE) + splice() signature on stock kernels
+ * this falls back to a universally-available transform (hash:sha256) for the
+ * operation fd, and always issues the splice() regardless (a failed splice()
+ * still emits the syscall record the rule keys on).
+ *
  * Intentionally does NOT call recv() — that is the step that triggers
- * decryption and writes into the page cache. Without recv(), no page
- * cache corruption occurs. Target is a throwaway file under /tmp that
- * this program creates and the atomic cleans up.
+ * decryption and writes into the page cache. Without recv(), no page cache
+ * corruption occurs. Target is a throwaway file under /tmp that this program
+ * creates and the atomic cleans up.
  *
  * Not a working exploit. For detection validation only.
  */
@@ -50,14 +57,24 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    struct sockaddr_alg sa = {
+    /* Prefer the real CopyFail AEAD; fall back to hash(sha256) so the
+     * accept()+sendmsg()+splice path still runs where that AEAD is absent. */
+    struct sockaddr_alg sa_aead = {
         .salg_family = AF_ALG,
         .salg_type   = "aead",
         .salg_name   = "authencesn(hmac(sha256),cbc(aes))",
     };
-    if (bind(alg_fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
-        fprintf(stderr, "bind(authencesn): %s (telemetry still emitted)\n",
+    struct sockaddr_alg sa_hash = {
+        .salg_family = AF_ALG,
+        .salg_type   = "hash",
+        .salg_name   = "sha256",
+    };
+    if (bind(alg_fd, (struct sockaddr *)&sa_aead, sizeof(sa_aead)) < 0) {
+        fprintf(stderr, "bind(authencesn): %s; falling back to hash(sha256)\n",
                 strerror(errno));
+        if (bind(alg_fd, (struct sockaddr *)&sa_hash, sizeof(sa_hash)) < 0)
+            fprintf(stderr, "bind(sha256): %s (telemetry still emitted)\n",
+                    strerror(errno));
     }
 
     int op_fd = accept(alg_fd, NULL, NULL);
@@ -66,16 +83,25 @@ int main(int argc, char **argv)
         struct iovec iov = { .iov_base = aad, .iov_len = sizeof(aad) };
         struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1 };
         (void)sendmsg(op_fd, &msg, MSG_MORE);
-
-        int pipefd[2];
-        if (pipe(pipefd) == 0) {
-            (void)splice(target_fd, NULL, pipefd[1], NULL, 16, 0);
-            close(pipefd[0]);
-            close(pipefd[1]);
-        }
-        close(op_fd);
     }
 
+    /* splice() is always issued. Prefer one end being the AF_ALG operation fd
+     * (as in the real primitive); otherwise splice file->pipe so the
+     * syscall-level signature (AF_ALG socket + splice) is still present. */
+    int pipefd[2];
+    if (pipe(pipefd) == 0) {
+        if (op_fd >= 0) {
+            (void)write(pipefd[1], pad, 16);
+            (void)splice(pipefd[0], NULL, op_fd, NULL, 16, 0);
+        } else {
+            (void)splice(target_fd, NULL, pipefd[1], NULL, 16, 0);
+        }
+        close(pipefd[0]);
+        close(pipefd[1]);
+    }
+
+    if (op_fd >= 0)
+        close(op_fd);
     close(alg_fd);
     close(target_fd);
     printf("[+] copyfail behavioral pattern emitted against %s\n", target_path);
