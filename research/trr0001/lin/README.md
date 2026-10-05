@@ -80,12 +80,12 @@ eBPF sensor, is the detection opportunity.
 
 ## Procedures
 
-| Procedure | ID | Name | Entry point |
-|-----------|----|------|-------------|
-| A | TRR0001.LIN.A | Raw packet socket (classic receive) | `socket(AF_PACKET, SOCK_RAW\|SOCK_DGRAM, ETH_P_ALL)` + `recvfrom()` |
-| B | TRR0001.LIN.B | Packet socket with `PACKET_MMAP` ring | `socket(AF_PACKET, ...)` + `setsockopt(PACKET_RX_RING)` + `mmap()` |
-| C | TRR0001.LIN.C | Raw IP socket | `socket(AF_INET\|AF_INET6, SOCK_RAW, protocol)` |
-| D | TRR0001.LIN.D | eBPF / XDP frame capture | `bpf(BPF_PROG_LOAD)` + XDP/`tc` attach, or `socket(AF_XDP, ...)` |
+| ID | Title | Tactic | Entry point |
+|----|-------|--------|-------------|
+| TRR0001.LIN.A | Raw packet socket (classic receive) | Credential Access, Discovery | `socket(AF_PACKET, SOCK_RAW\|SOCK_DGRAM, ETH_P_ALL)` + `recvfrom()` |
+| TRR0001.LIN.B | Packet socket with `PACKET_MMAP` ring | Credential Access, Discovery | `socket(AF_PACKET, ...)` + `setsockopt(PACKET_RX_RING)` + `mmap()` |
+| TRR0001.LIN.C | Raw IP socket | Credential Access, Discovery | `socket(AF_INET\|AF_INET6, SOCK_RAW, protocol)` |
+| TRR0001.LIN.D | eBPF / XDP frame capture | Credential Access, Discovery | `bpf(BPF_PROG_LOAD)` + XDP/`tc` attach, or `socket(AF_XDP, ...)` |
 
 > Tool is not procedure. `tcpdump`, `tshark`, Wireshark/`dumpcap`, and a
 > hand-written C sniffer all open an `AF_PACKET` socket. Modern `libpcap`
@@ -118,9 +118,9 @@ flowchart LR
     S -->|creates| K["Packet socket (fd)"]
     P -->|invokes| R["recvfrom(fd)"]
     R -->|drains frames from| K
-    P -. optional .->|"setsockopt / ioctl"| M["Interface in<br/>promiscuous mode"]
+    P -.->|"setsockopt / ioctl (optional)"| M["Interface in<br/>promiscuous mode"]
     S ==>|recorded as| T["auditd SYSCALL record<br/>a0=0x11 (AF_PACKET)<br/>★ CHOKEPOINT"]
-    M -. optional .->|recorded as| T2["auditd SYSCALL record<br/>setsockopt / ioctl<br/>(enrichment)"]
+    M -.->|"recorded as (optional)"| T2["auditd SYSCALL record<br/>setsockopt / ioctl<br/>(enrichment)"]
 ```
 
 **DDM summary.** The strong node is the `socket()` event with `a0=0x11`
@@ -152,7 +152,7 @@ flowchart LR
     P -->|"setsockopt(SOL_PACKET,<br/>PACKET_RX_RING)"| K
     P -->|"mmap(fd)"| K
     S ==>|recorded as| T["auditd SYSCALL record<br/>a0=0x11 (AF_PACKET)<br/>★ CHOKEPOINT (shared with A)"]
-    P -. enrichment .->|recorded as| T2["auditd SYSCALL record<br/>setsockopt PACKET_RX_RING"]
+    P -.->|"recorded as (enrichment)"| T2["auditd SYSCALL record<br/>setsockopt PACKET_RX_RING"]
 ```
 
 **DDM summary.** The same `socket(AF_PACKET, ...)` node starts this procedure.
@@ -195,8 +195,9 @@ an XDP or `tc` hook that copies frames to user space, or it opens an `AF_XDP`
 socket (`socket(AF_XDP, ...)`) for a kernel-bypass capture path. These are
 modern interfaces. Many host sensors still do not watch them.
 
-- **Prerequisites:** `CAP_BPF` / `CAP_NET_ADMIN` (XDP), or `CAP_NET_RAW`
-  (`AF_XDP`).
+- **Prerequisites:** XDP/`tc` path — `CAP_BPF` **and** `CAP_NET_ADMIN`
+  together (kernel >= 5.8; `CAP_SYS_ADMIN` on older kernels). `AF_XDP`-socket
+  path — `CAP_NET_RAW`.
 - **Impact:** high-speed capture that misses sensors hooked only on classic
   socket paths.
 
@@ -231,8 +232,13 @@ sniffers. This is the primary detection.
 
 **Strategy 2 — fallback (covers C).**
 Key on the `socket()` syscall where `a0 ∈ {0x2 (AF_INET), 0xa (AF_INET6)}`
-**and** type `a1 = 0x3` (`SOCK_RAW`). This is a separate node that Strategy 1
-does not reach. Allowlist `ping` and `traceroute`, and set a lower level.
+**and** the type carries `SOCK_RAW` (3) in its low bits. Do **not** match
+`a1 = 0x3` exactly: the type may be OR'd with `SOCK_CLOEXEC` (`0x80000`) or
+`SOCK_NONBLOCK` (`0x800`), so `SOCK_RAW|SOCK_CLOEXEC` logs `a1=0x80003`. Mask
+the flag bits off — `(a1 & ~(SOCK_CLOEXEC|SOCK_NONBLOCK)) == 3` — or match the
+low type bits, so the flagged variants still fire. This is a separate node
+that Strategy 1 does not reach. Allowlist `ping` and `traceroute`, and set a
+lower level.
 - Status: **backlog** — rule not yet written.
 
 **Strategy 3 — fallback (covers D).**
@@ -247,6 +253,15 @@ PACKET_MR_PROMISC)` or `ioctl(SIOCSIFFLAGS)` with `IFF_PROMISC` — strongly
 suggests wide capture. Correlate it with a Strategy 1 or 2 hit to raise
 confidence. Today `atomic.rules` does not record `setsockopt`/`ioctl`; add
 those syscalls to the ruleset to make this enrichment visible.
+
+**Telemetry caveats.**
+These strategies assume the modern direct `socket(2)` syscall. Scope the
+audit rules to both architectures (`-F arch=b64` and `-F arch=b32`) so a
+32-bit process is still recorded. On legacy i386 systems that route socket
+creation through the `socketcall(2)` multiplexer, `auditd` records
+`syscall=socketcall` with `a0=SYS_SOCKET` and a pointer in `a1` — not
+`a0=domain` — so a `socket` + `a0` match never fires there; add a separate
+`socketcall` rule or scope the detection to modern direct-syscall hosts.
 
 **Coverage summary.**
 
@@ -263,12 +278,12 @@ method: detect at the chokepoint first, then fill the gaps.
 
 ## Available Emulation Tests
 
-| Procedure | Test | Status |
-|-----------|------|--------|
-| A | [`atomics/T1040/src/afpacket_rawsocket_behavioral.c`](../../../atomics/T1040/) | **built** |
-| B | `PACKET_RX_RING` ring-setup behavioral | backlog |
-| C | `AF_INET`/`AF_INET6` `SOCK_RAW` behavioral | backlog |
-| D | eBPF: [`atomics/T1014/src/ebpf_prog_load_behavioral.c`](../../../atomics/T1014/) (the `bpf` half); `AF_XDP` socket behavioral | partial |
+| ID | Test | Status |
+|----|------|--------|
+| TRR0001.LIN.A | [`atomics/T1040/src/afpacket_rawsocket_behavioral.c`](../../../atomics/T1040/) | **built** |
+| TRR0001.LIN.B | `PACKET_RX_RING` ring-setup behavioral | backlog |
+| TRR0001.LIN.C | `AF_INET`/`AF_INET6` `SOCK_RAW` behavioral | backlog |
+| TRR0001.LIN.D | eBPF: [`atomics/T1014/src/ebpf_prog_load_behavioral.c`](../../../atomics/T1014/) (the `bpf` half); `AF_XDP` socket behavioral | partial |
 
 ## Detections
 

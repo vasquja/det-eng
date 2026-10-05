@@ -6,8 +6,13 @@ graph, then export the JSON back here. Export a PNG beside the JSON (same base
 name, `.png`) for the TRR and for the upstream pull request.
 
 The TRR README also inlines each DDM as a Mermaid diagram, so the graphs
-render on GitHub without a PNG. The JSON here is the canonical, editable
-source.
+render on GitHub without a PNG.
+
+For this report the **inline Mermaid is the canonical DDM** for every
+procedure. Procedure A also ships an Arrows JSON export below as the worked
+exemplar of the format; add JSON exports for B, C, and D when a procedure's
+graph grows past what the inline Mermaid shows, or before an upstream
+contribution that asks for the JSON.
 
 | File | Procedure | Chokepoint node |
 |------|-----------|-----------------|
