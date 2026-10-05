@@ -21,6 +21,10 @@ interfaces (io_uring, eBPF, userfaultfd) that many sensors still do not watch.
 **Before you build any idea, do the checklist step:** confirm the test is
 still absent from the current ART index and from other public collections.
 
+**Implemented so far:** #5 DirtyPipe (`atomics/T1068/`) and #10 AF_PACKET
+(`atomics/T1040/`), each with a C source and a Sigma rule. The rest remain
+open.
+
 ## Summary
 
 | # | Title | ATT&CK | Core telemetry (benign stub) | Gap vs. ART |

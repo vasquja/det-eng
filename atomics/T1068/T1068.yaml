@@ -143,3 +143,52 @@ atomic_tests:
         /tmp/dirtyfrag_rxrpc_behavioral
       cleanup_command: |
         rm -f /tmp/dirtyfrag_rxrpc_behavioral
+
+  - name: DirtyPipe (CVE-2022-0847) — splice read-only precondition behavioral
+    auto_generated_guid: 9a7ebf67-fdae-42c8-acfb-fc0bff934c5f
+    description: |
+      Generates the syscall pattern characteristic of the DirtyPipe
+      page-cache write primitive: create a pipe, fill then drain it so its
+      buffers retain PIPE_BUF_FLAG_CAN_MERGE, open a file `O_RDONLY`, and
+      `splice()` one byte from the read-only file into the pipe. The exploit
+      completes only when a following `write()` to the pipe overwrites the
+      read-only file's page cache; this atomic intentionally stops before
+      that `write()`, and only ever touches a throwaway file it creates under
+      /tmp, so nothing is modified.
+
+      Reference: CVE-2022-0847. Behavioral signature only — not a working
+      exploit.
+
+      Detection guidance:
+        * `pipe()` / `pipe2()` shortly followed by `splice()` from the same
+          PID, where `splice` fd_in is a read-only regular file and fd_out is
+          a pipe
+        * Plain auditd SYSCALL records do not expose fd types; pair with an
+          eBPF sensor (Falco, Tetragon) to confirm the read-only source and
+          pipe destination
+    supported_platforms:
+      - linux
+    input_arguments:
+      target_file:
+        description: Throwaway file the test creates, reads, and removes.
+        type: string
+        default: /tmp/dirtypipe_atomic_target
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1068/src
+    dependency_executor_name: bash
+    dependencies:
+      - description: gcc must be available
+        prereq_command: command -v gcc >/dev/null
+        get_prereq_command: |
+          echo "Install gcc via your package manager (apt/dnf/pacman)."
+          exit 1
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        gcc -O0 -Wall -o /tmp/dirtypipe_behavioral #{source_dir}/dirtypipe_behavioral.c
+        /tmp/dirtypipe_behavioral #{target_file}
+      cleanup_command: |
+        rm -f /tmp/dirtypipe_behavioral #{target_file}
