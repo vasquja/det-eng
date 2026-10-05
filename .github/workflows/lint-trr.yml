@@ -1,0 +1,41 @@
+name: lint-trr
+
+# Structural/semantic lint for Technique Research Reports under research/.
+# Checks required sections and their order, the Metadata table, procedure-ID
+# format (TRRID.PLATFORM.LETTER), that every procedure has a Detection Data
+# Model with a well-formed mermaid diagram, that referenced DDM JSON exists
+# and parses, and that research/index.json agrees with each report.
+# Pure stdlib Python — no dependencies, fully offline, deterministic.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trr-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Lint TRRs
+        run: python3 .github/scripts/trr_lint.py | tee /tmp/trr-lint.out
+
+      - name: Publish results to job summary
+        if: always()
+        run: |
+          {
+            echo '## TRR lint (format + Detection Data Models)'
+            echo ''
+            echo '```'
+            cat /tmp/trr-lint.out 2>/dev/null || echo '(no output captured)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

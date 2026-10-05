@@ -1,0 +1,34 @@
+{
+  "_comment": "Machine-readable index of the TRRs in this folder. Each entry's fields mirror tired-labs/techniques index.json (name, id, tactics, contributors, external_ids, platforms, procedures, pub_date, last_update, tests). NOTE: upstream index.json is a BARE top-level ARRAY of these entry objects; this file wraps them in {_comment, trrs:[]} and adds a local 'path' field for convenience. When contributing upstream, emit the entry into the top-level array and drop the wrapper and 'path'. 'id' values are LOCAL and live in the TRR9000+ band to avoid colliding with upstream's sequentially assigned IDs (upstream's TRR0001 is a reserved example and real reports climb from the low numbers). At contribution time copy to trr0000/ and let the maintainer assign the final upstream ID.",
+  "trrs": [
+    {
+      "name": "Network Sniffing via Packet Capture (Linux)",
+      "id": "TRR9001",
+      "tactics": ["Credential Access", "Discovery"],
+      "contributors": ["det-eng"],
+      "external_ids": ["T1040"],
+      "platforms": ["Linux"],
+      "procedures": {
+        "A": "Raw packet socket (classic receive)",
+        "B": "Packet socket with PACKET_MMAP ring",
+        "C": "Raw IP socket",
+        "D": "eBPF / XDP frame capture"
+      },
+      "pub_date": "2026-10-05",
+      "last_update": "2026-10-05",
+      "path": "trr9001/lin/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng AF_PACKET behavioral atomic",
+          "url": "../atomics/T1040/src/afpacket_rawsocket_behavioral.c"
+        },
+        "B": null,
+        "C": null,
+        "D": {
+          "text": "det-eng eBPF program-load behavioral atomic (bpf half)",
+          "url": "../atomics/T1014/src/ebpf_prog_load_behavioral.c"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "_comment": "Detection Data Model skeleton in Arrows app (https://arrows.app) export format. Import this into Arrows, edit the graph, then export the JSON back to ddms/trrNNNN_<platform>_<letter>.json and export a PNG alongside it. Nodes are telemetry events or objects; relationships are the causal/temporal edges between them. Mark the node that is the best detection opportunity (the chokepoint candidate) in its properties.",
+  "nodes": [
+    {
+      "id": "n0",
+      "position": { "x": 0, "y": 0 },
+      "caption": "Process",
+      "labels": ["Actor"],
+      "properties": { "comm": "<process name>" },
+      "style": {}
+    },
+    {
+      "id": "n1",
+      "position": { "x": 300, "y": 0 },
+      "caption": "syscall()",
+      "labels": ["Event", "Syscall"],
+      "properties": { "a0": "<arg>", "detection_opportunity": "true" },
+      "style": {}
+    },
+    {
+      "id": "n2",
+      "position": { "x": 600, "y": 0 },
+      "caption": "Kernel object",
+      "labels": ["Object"],
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "n3",
+      "position": { "x": 300, "y": 220 },
+      "caption": "auditd SYSCALL record",
+      "labels": ["Telemetry"],
+      "properties": { "sensor": "auditd", "key": "det-eng" },
+      "style": {}
+    }
+  ],
+  "relationships": [
+    { "id": "r0", "type": "INVOKES", "fromId": "n0", "toId": "n1", "properties": {}, "style": {} },
+    { "id": "r1", "type": "CREATES", "fromId": "n1", "toId": "n2", "properties": {}, "style": {} },
+    { "id": "r2", "type": "RECORDED_AS", "fromId": "n1", "toId": "n3", "properties": {}, "style": {} }
+  ],
+  "style": {}
+}
