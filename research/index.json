@@ -1,0 +1,34 @@
+{
+  "_comment": "Machine-readable index of the TRRs in this folder. Shape mirrors tired-labs/techniques index.json so an entry is ready to contribute upstream. 'id' values are local to this repository until a maintainer assigns the upstream ID.",
+  "trrs": [
+    {
+      "name": "Network Sniffing via Packet Capture (Linux)",
+      "id": "TRR0001",
+      "tactics": ["Credential Access", "Discovery"],
+      "contributors": ["det-eng"],
+      "external_ids": ["T1040"],
+      "platforms": ["Linux"],
+      "procedures": {
+        "A": "Raw packet socket (classic receive)",
+        "B": "Packet socket with PACKET_MMAP ring",
+        "C": "Raw IP socket",
+        "D": "eBPF / XDP frame capture"
+      },
+      "pub_date": "2026-10-05",
+      "last_update": "2026-10-05",
+      "path": "trr0001/lin/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng AF_PACKET behavioral atomic",
+          "url": "../atomics/T1040/src/afpacket_rawsocket_behavioral.c"
+        },
+        "B": null,
+        "C": null,
+        "D": {
+          "text": "det-eng eBPF program-load behavioral atomic (bpf half)",
+          "url": "../atomics/T1014/src/ebpf_prog_load_behavioral.c"
+        }
+      }
+    }
+  ]
+}

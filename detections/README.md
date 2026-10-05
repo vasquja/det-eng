@@ -3,6 +3,13 @@
 Sigma rules for the behavioral atomics, plus the pieces that prove each rule
 fires on its paired atomic.
 
+> **Source of truth:** each rule here should trace back to a detection
+> strategy in a Technique Research Report under [`../research/`](../research/README.md).
+> A rule keys on an invariant chokepoint when one exists (one rule, many
+> procedures); it falls back to a per-procedure rule only where no chokepoint
+> covers the procedure. See the worked example:
+> [`research/trr0001/lin`](../research/trr0001/lin/README.md).
+
 ## The three layers
 
 1. **Atomic** (`atomics/<TECH>/`) — the stimulus. It emits the syscall

@@ -1,0 +1,71 @@
+{
+  "_comment": "Detection Data Model for TRR0001.LIN.A (raw AF_PACKET socket). Arrows app (https://arrows.app) export format. Import to edit; export a PNG beside this file for the TRR and for upstream contribution. The node n1 (socket AF_PACKET) is the chokepoint shared with TRR0001.LIN.B.",
+  "nodes": [
+    {
+      "id": "n0",
+      "position": { "x": 0, "y": 0 },
+      "caption": "Process",
+      "labels": ["Actor"],
+      "properties": { "comm": "not in sniffer allowlist" },
+      "style": {}
+    },
+    {
+      "id": "n1",
+      "position": { "x": 340, "y": 0 },
+      "caption": "socket(AF_PACKET, SOCK_RAW, ETH_P_ALL)",
+      "labels": ["Event", "Syscall"],
+      "properties": { "a0": "0x11", "chokepoint": "true", "shared_with": "TRR0001.LIN.B" },
+      "style": {}
+    },
+    {
+      "id": "n2",
+      "position": { "x": 720, "y": 0 },
+      "caption": "Packet socket (fd)",
+      "labels": ["Object"],
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "n3",
+      "position": { "x": 340, "y": 220 },
+      "caption": "auditd SYSCALL record",
+      "labels": ["Telemetry"],
+      "properties": { "sensor": "auditd", "key": "det-eng", "match": "syscall=socket a0=11", "detection_opportunity": "PRIMARY" },
+      "style": {}
+    },
+    {
+      "id": "n4",
+      "position": { "x": 340, "y": -220 },
+      "caption": "recvfrom(fd)",
+      "labels": ["Event", "Syscall"],
+      "properties": { "note": "high volume, low signal" },
+      "style": {}
+    },
+    {
+      "id": "n5",
+      "position": { "x": 720, "y": -220 },
+      "caption": "Interface in promiscuous mode",
+      "labels": ["Object", "Optional"],
+      "properties": { "via": "setsockopt PACKET_MR_PROMISC or ioctl SIOCSIFFLAGS IFF_PROMISC" },
+      "style": {}
+    },
+    {
+      "id": "n6",
+      "position": { "x": 720, "y": 220 },
+      "caption": "auditd SYSCALL record (enrichment)",
+      "labels": ["Telemetry", "Optional"],
+      "properties": { "sensor": "auditd", "match": "setsockopt / ioctl", "detection_opportunity": "ENRICHMENT" },
+      "style": {}
+    }
+  ],
+  "relationships": [
+    { "id": "r0", "type": "INVOKES", "fromId": "n0", "toId": "n1", "properties": {}, "style": {} },
+    { "id": "r1", "type": "CREATES", "fromId": "n1", "toId": "n2", "properties": {}, "style": {} },
+    { "id": "r2", "type": "RECORDED_AS", "fromId": "n1", "toId": "n3", "properties": { "primary": "true" }, "style": {} },
+    { "id": "r3", "type": "INVOKES", "fromId": "n0", "toId": "n4", "properties": {}, "style": {} },
+    { "id": "r4", "type": "DRAINS_FRAMES_FROM", "fromId": "n4", "toId": "n2", "properties": {}, "style": {} },
+    { "id": "r5", "type": "OPTIONALLY_ENABLES", "fromId": "n0", "toId": "n5", "properties": { "optional": "true" }, "style": {} },
+    { "id": "r6", "type": "RECORDED_AS", "fromId": "n5", "toId": "n6", "properties": { "optional": "true" }, "style": {} }
+  ],
+  "style": {}
+}
