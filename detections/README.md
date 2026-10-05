@@ -55,10 +55,17 @@ summary, not treated as a defect. On a public repository the run is free.
 ## Manual run
 
 ```
-auditctl -R detections/audit/atomic.rules      # load (root)
+sudo auditctl -R detections/audit/atomic.rules   # load (root)
 # ... run an atomic from atomics/<TECH>/ ...
-ausearch -k det-eng -i                          # read the telemetry
+sudo grep 'key="det-eng"' /var/log/audit/audit.log   # read the telemetry
+# or, where ausearch resolves its log path:
+sudo ausearch -if /var/log/audit/audit.log -k det-eng -i
 ```
+
+Note: the validator reads `/var/log/audit/audit.log` directly instead of
+calling `ausearch`. On some hosts (GitHub-hosted runners among them)
+`ausearch` resolves its default log path to nothing and reports no matches
+even though the records are present in the file.
 
 ## Status
 

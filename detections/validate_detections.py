@@ -150,7 +150,7 @@ def have(cmd):
 def audit_available():
     if os.geteuid() != 0:
         return False, "not root"
-    for c in ("auditctl", "ausearch", "ausyscall", "gcc"):
+    for c in ("auditctl", "ausyscall", "gcc"):
         if not have(c):
             return False, f"missing tool: {c}"
     r = subprocess.run(["auditctl", "-s"], capture_output=True, text=True)
@@ -199,22 +199,36 @@ def name_to_nr_map(selections):
     return m
 
 
-def read_events(since_ts):
-    """Parse SYSCALL records from `ausearch -k det-eng` since since_ts."""
-    r = subprocess.run(
-        ["ausearch", "-k", "det-eng", "-ts", since_ts],
-        capture_output=True, text=True,
-    )
+AUDIT_LOG = "/var/log/audit/audit.log"
+
+
+def audit_log_lines():
+    """All lines of the audit log, or None if it cannot be read.
+
+    We read the file directly rather than shelling out to `ausearch`: on some
+    hosts (notably GitHub-hosted runners) `ausearch` resolves its default log
+    path to nothing and reports no matches even though the records are present
+    in /var/log/audit/audit.log. Reading the file removes that dependency.
+    """
+    try:
+        with open(AUDIT_LOG, errors="replace") as f:
+            return f.readlines()
+    except OSError:
+        return None
+
+
+def parse_syscalls(lines):
+    """SYSCALL records keyed det-eng from raw audit lines -> [{nr, args}]."""
     recs = []
-    for line in r.stdout.splitlines():
-        if "type=SYSCALL" not in line:
+    for line in lines:
+        if "type=SYSCALL" not in line or 'key="det-eng"' not in line:
             continue
         nr = re.search(r"\bsyscall=(\d+)", line)
         if not nr:
             continue
         rec = {"nr": int(nr.group(1)), "args": {}}
         for i in range(4):
-            a = re.search(rf"\ba{i}=([0-9a-fA-F]+)", line)
+            a = re.search(rf"\ba{i}=([0-9a-fA-F]+)\b", line)
             if a:
                 rec["args"][i] = a.group(1).lower()
         recs.append(rec)
@@ -297,10 +311,12 @@ def main():
                                 f"{len(selections)} sel ({mode}) -> {syscalls}"))
                 continue
 
-            since = time.strftime("%H:%M:%S")
+            before = audit_log_lines() or []
+            start = len(before)
             subprocess.run([binary] + run_args, capture_output=True, text=True)
             time.sleep(1.5)  # let auditd flush to the log
-            recs = read_events(since)
+            after = audit_log_lines() or []
+            recs = parse_syscalls(after[start:])  # only this test's window
             nmap = name_to_nr_map(selections)
             hit = [bool([r for r in recs if sel.matches(r, nmap)])
                    for sel in selections]

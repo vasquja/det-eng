@@ -31,29 +31,6 @@ jobs:
           sudo systemctl start auditd || sudo service auditd start
           sudo auditctl -s
 
-      - name: Audit self-test (diagnostic)
-        shell: bash
-        run: |
-          set +e
-          echo "=== kernel + audit_enabled ==="
-          uname -r; cat /proc/sys/kernel/audit_enabled 2>&1
-          echo "=== load rules + list ==="
-          sudo auditctl -R detections/audit/atomic.rules
-          sudo auditctl -l
-          echo "=== emit socket()/setns probes ==="
-          sudo python3 -c "import socket; socket.socket(socket.AF_INET, socket.SOCK_DGRAM).close()"
-          sudo python3 -c "import ctypes,os; ctypes.CDLL(None).setns(os.open('/proc/1/ns/mnt',0),0)" 2>&1 | head -1
-          sleep 3
-          echo "=== record types present in audit.log ==="
-          sudo awk '{for(i=1;i<=NF;i++) if($i ~ /^type=/) print $i}' /var/log/audit/audit.log | sort | uniq -c | sort -rn | head
-          echo "=== count of type=SYSCALL ==="
-          sudo grep -c "type=SYSCALL" /var/log/audit/audit.log 2>&1
-          echo "=== ausearch -sc socket (NO key filter) ==="
-          sudo ausearch -sc socket -i 2>&1 | tail -12
-          echo "=== tail of audit.log ==="
-          sudo tail -15 /var/log/audit/audit.log 2>&1
-          exit 0
-
       - name: Validate detections
         run: |
           sudo python3 detections/validate_detections.py --report | tee /tmp/val.out
