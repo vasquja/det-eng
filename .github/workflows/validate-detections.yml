@@ -45,3 +45,60 @@ jobs:
             cat /tmp/val.out 2>/dev/null || echo '(no output captured)'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  sigma-lint:
+    # Lints the Sigma rules with the official pySigma validators (sigma-cli).
+    # Parse/condition ERRORS fail the job; best-practice ISSUES are reported
+    # in the summary, not gated (several are expected for auditd rules).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install sigma-cli
+        run: |
+          python3 -m venv /tmp/sigmaenv
+          /tmp/sigmaenv/bin/pip install --quiet --upgrade pip
+          /tmp/sigmaenv/bin/pip install --quiet sigma-cli
+
+      - name: Sigma check
+        run: |
+          # Exclude the three validators that fetch external taxonomies over
+          # the network (ATT&CK, D3FEND, CAR) so the gate stays offline and
+          # deterministic. Default behaviour: FAIL on parse/condition errors,
+          # REPORT (not fail) on best-practice issues.
+          /tmp/sigmaenv/bin/sigma check \
+            -x attacktag -x d3_fendtag -x cartag \
+            detections/sigma/ | tee /tmp/sigma.out
+
+      - name: Publish results to job summary
+        if: always()
+        run: |
+          {
+            echo '## Sigma rule lint (pySigma validators)'
+            echo ''
+            echo 'Parse/condition errors fail the job; best-practice issues are reported only.'
+            echo 'Expected issue: NumberAsString — auditd arg values (e.g. `a0: "11"`) are hex strings by design.'
+            echo ''
+            echo '```'
+            cat /tmp/sigma.out 2>/dev/null || echo '(no output captured)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  markdown-links:
+    # Verifies every relative Markdown link in the repo points at a file or
+    # directory that exists. Offline and deterministic (no external URLs are
+    # network-checked). Template dirs are skipped (they hold placeholder links).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Check relative Markdown links
+        run: python3 .github/scripts/check_md_links.py
