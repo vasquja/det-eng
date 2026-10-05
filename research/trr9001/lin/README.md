@@ -7,7 +7,7 @@
 
 | Key          | Value |
 |--------------|-------|
-| ID           | TRR0001 |
+| ID           | TRR9001 |
 | External IDs | T1040 |
 | Tactics      | Credential Access, Discovery |
 | Platforms    | Linux |
@@ -82,17 +82,17 @@ eBPF sensor, is the detection opportunity.
 
 | ID | Title | Tactic | Entry point |
 |----|-------|--------|-------------|
-| TRR0001.LIN.A | Raw packet socket (classic receive) | Credential Access, Discovery | `socket(AF_PACKET, SOCK_RAW\|SOCK_DGRAM, ETH_P_ALL)` + `recvfrom()` |
-| TRR0001.LIN.B | Packet socket with `PACKET_MMAP` ring | Credential Access, Discovery | `socket(AF_PACKET, ...)` + `setsockopt(PACKET_RX_RING)` + `mmap()` |
-| TRR0001.LIN.C | Raw IP socket | Credential Access, Discovery | `socket(AF_INET\|AF_INET6, SOCK_RAW, protocol)` |
-| TRR0001.LIN.D | eBPF / XDP frame capture | Credential Access, Discovery | `bpf(BPF_PROG_LOAD)` + XDP/`tc` attach, or `socket(AF_XDP, ...)` |
+| TRR9001.LIN.A | Raw packet socket (classic receive) | Credential Access, Discovery | `socket(AF_PACKET, SOCK_RAW\|SOCK_DGRAM, ETH_P_ALL)` + `recvfrom()` |
+| TRR9001.LIN.B | Packet socket with `PACKET_MMAP` ring | Credential Access, Discovery | `socket(AF_PACKET, ...)` + `setsockopt(PACKET_RX_RING)` + `mmap()` |
+| TRR9001.LIN.C | Raw IP socket | Credential Access, Discovery | `socket(AF_INET\|AF_INET6, SOCK_RAW, protocol)` |
+| TRR9001.LIN.D | eBPF / XDP frame capture | Credential Access, Discovery | `bpf(BPF_PROG_LOAD)` + XDP/`tc` attach, or `socket(AF_XDP, ...)` |
 
 > Tool is not procedure. `tcpdump`, `tshark`, Wireshark/`dumpcap`, and a
 > hand-written C sniffer all open an `AF_PACKET` socket. Modern `libpcap`
 > defaults to the `PACKET_MMAP` ring. So those tools are Procedure A or
 > Procedure B — not a procedure each.
 
-### Procedure A: Raw packet socket (classic receive)  (`TRR0001.LIN.A`)
+### Procedure A: Raw packet socket (classic receive)  (`TRR9001.LIN.A`)
 
 The program calls `socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))`. This gives
 a descriptor that returns full Ethernet frames. The program then calls
@@ -107,9 +107,9 @@ first put the interface in promiscuous mode to see all traffic on the segment.
 - **Tools on this path:** `tcpdump` (when the ring is not used), simple custom
   sniffers, `libpcap` fall-back mode.
 
-#### Detection Data Model — `TRR0001.LIN.A`
+#### Detection Data Model — `TRR9001.LIN.A`
 
-Canonical graph: [`ddms/trr0001_lin_a.json`](ddms/trr0001_lin_a.json) (Arrows
+Canonical graph: [`ddms/trr9001_lin_a.json`](ddms/trr9001_lin_a.json) (Arrows
 app export). Inline view:
 
 ```mermaid
@@ -131,7 +131,7 @@ poor anchor. The promiscuous-mode node is high-fidelity but optional, so it is
 an enrichment, not the primary anchor. The `socket()` node is shared with
 Procedure B — this makes it a chokepoint candidate.
 
-### Procedure B: Packet socket with `PACKET_MMAP` ring  (`TRR0001.LIN.B`)
+### Procedure B: Packet socket with `PACKET_MMAP` ring  (`TRR9001.LIN.B`)
 
 The program opens the same `AF_PACKET` socket as Procedure A. It then sets up
 a shared ring buffer: `setsockopt(SOL_PACKET, PACKET_RX_RING, ...)` (often
@@ -144,7 +144,7 @@ behind a default `tcpdump`, `tshark`, and `dumpcap`.
 - **Mechanics:** zero-copy capture through a memory-mapped ring.
 - **Impact:** the same as Procedure A, but at line rate.
 
-#### Detection Data Model — `TRR0001.LIN.B`
+#### Detection Data Model — `TRR9001.LIN.B`
 
 ```mermaid
 flowchart LR
@@ -162,7 +162,7 @@ This is the key finding: **A and B share one invariant node.** The
 from classic capture, but it is not needed to detect the procedure — the
 shared `socket()` node already covers it.
 
-### Procedure C: Raw IP socket  (`TRR0001.LIN.C`)
+### Procedure C: Raw IP socket  (`TRR9001.LIN.C`)
 
 The program calls `socket(AF_INET, SOCK_RAW, protocol)` (or `AF_INET6`). It
 reads packets at the IP layer. This path does not see the link header and is
@@ -174,7 +174,7 @@ own entry syscall.
 - **Note:** common benign users exist — `ping` and `traceroute` open raw IP
   sockets — so this path is noisier than `AF_PACKET`.
 
-#### Detection Data Model — `TRR0001.LIN.C`
+#### Detection Data Model — `TRR9001.LIN.C`
 
 ```mermaid
 flowchart LR
@@ -189,7 +189,7 @@ flowchart LR
 cover it, so Procedure C needs its own rule. The benign `ping`/`traceroute`
 users mean this rule needs an allowlist and lower confidence.
 
-### Procedure D: eBPF / XDP frame capture  (`TRR0001.LIN.D`)
+### Procedure D: eBPF / XDP frame capture  (`TRR9001.LIN.D`)
 
 The program loads an eBPF program with `bpf(BPF_PROG_LOAD)` and attaches it to
 an XDP or `tc` hook that copies frames to user space, or it opens an `AF_XDP`
@@ -202,7 +202,7 @@ modern interfaces. Many host sensors still do not watch them.
 - **Impact:** high-speed capture that misses sensors hooked only on classic
   socket paths.
 
-#### Detection Data Model — `TRR0001.LIN.D`
+#### Detection Data Model — `TRR9001.LIN.D`
 
 ```mermaid
 flowchart LR
@@ -288,10 +288,10 @@ method: detect at the chokepoint first, then fill the gaps.
 
 | ID | Test | Status |
 |----|------|--------|
-| TRR0001.LIN.A | [`atomics/T1040/src/afpacket_rawsocket_behavioral.c`](../../../atomics/T1040/) | **built** |
-| TRR0001.LIN.B | `PACKET_RX_RING` ring-setup behavioral | backlog |
-| TRR0001.LIN.C | `AF_INET`/`AF_INET6` `SOCK_RAW` behavioral | backlog |
-| TRR0001.LIN.D | eBPF: [`atomics/T1014/src/ebpf_prog_load_behavioral.c`](../../../atomics/T1014/) (the `bpf` half); `AF_XDP` socket behavioral | partial |
+| TRR9001.LIN.A | [`atomics/T1040/src/afpacket_rawsocket_behavioral.c`](../../../atomics/T1040/) | **built** |
+| TRR9001.LIN.B | `PACKET_RX_RING` ring-setup behavioral | backlog |
+| TRR9001.LIN.C | `AF_INET`/`AF_INET6` `SOCK_RAW` behavioral | backlog |
+| TRR9001.LIN.D | eBPF: [`atomics/T1014/src/ebpf_prog_load_behavioral.c`](../../../atomics/T1014/) (the `bpf` half); `AF_XDP` socket behavioral | partial |
 
 ## Detections
 

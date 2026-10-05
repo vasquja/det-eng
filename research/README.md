@@ -47,7 +47,7 @@ Every artifact names the procedure it serves. The procedure ID ties the
 research, the test, and the rule together.
 
 Procedure ID format (VanVleet): `TRRID.PLATFORM.LETTER` — for example
-`TRR0001.LIN.A`.
+`TRR9001.LIN.A`.
 
 A procedure is a **distinct execution path**. The same path in a different
 tool or a different language is the **same** procedure. For example, `tcpdump`
@@ -90,16 +90,22 @@ Platform codes (from tired-labs `platforms.json`): `lin` Linux, `win` Windows,
 
 ## TRR IDs here vs. upstream
 
-This repository assigns its own `TRRNNNN` IDs, starting at `TRR0001`. They are
-local to this repository. When you open a pull request to
-`tired-labs/techniques`, copy the folder to `trr0000/` and use `TRR0000`
-in the text. The upstream maintainers assign the final ID on merge.
+This repository assigns its own local `TRRNNNN` IDs in the **`TRR9000+`
+band** (the pilot is `TRR9001`). Upstream `tired-labs/techniques` assigns
+IDs sequentially from the low numbers (its `TRR0001` is a reserved example;
+real reports start higher and keep climbing), so the `9000+` band keeps a
+local ID from ever colliding with a real upstream one, and it reads clearly
+as "local, not an assigned upstream ID".
+
+When you open a pull request to `tired-labs/techniques`, copy the folder to
+`trr0000/` and use `TRR0000` in the text. The upstream maintainers assign the
+final ID on merge.
 
 ## Index
 
 | Local ID | ATT&CK | Technique | Platform | Folder |
 |----------|--------|-----------|----------|--------|
-| TRR0001  | T1040  | Network Sniffing | Linux | [`trr0001/lin`](trr0001/lin/README.md) |
+| TRR9001  | T1040  | Network Sniffing | Linux | [`trr9001/lin`](trr9001/lin/README.md) |
 
 ## How to start a new TRR
 

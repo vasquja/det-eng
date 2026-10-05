@@ -5,7 +5,7 @@
   Write prose in Simplified Technical English (ASD-STE100) where practical.
   Keep technical names (syscalls, CVE IDs, ATT&CK IDs, kernel symbols) as-is.
 
-  Procedure ID format: TRRID.PLATFORM.LETTER  (e.g. TRR0001.LIN.A)
+  Procedure ID format: TRRID.PLATFORM.LETTER  (e.g. TRR9001.LIN.A)
   A procedure is a DISTINCT EXECUTION PATH. Same path, different tool or
   language = the SAME procedure.
 -->

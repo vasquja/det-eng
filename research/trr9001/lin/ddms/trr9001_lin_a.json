@@ -1,5 +1,5 @@
 {
-  "_comment": "Detection Data Model for TRR0001.LIN.A (raw AF_PACKET socket). Arrows app (https://arrows.app) export format. Import to edit; export a PNG beside this file for the TRR and for upstream contribution. The node n1 (socket AF_PACKET) is the chokepoint shared with TRR0001.LIN.B.",
+  "_comment": "Detection Data Model for TRR9001.LIN.A (raw AF_PACKET socket). Arrows app (https://arrows.app) export format. Import to edit; export a PNG beside this file for the TRR and for upstream contribution. The node n1 (socket AF_PACKET) is the chokepoint shared with TRR9001.LIN.B.",
   "nodes": [
     {
       "id": "n0",
@@ -14,7 +14,7 @@
       "position": { "x": 340, "y": 0 },
       "caption": "socket(AF_PACKET, SOCK_RAW, ETH_P_ALL)",
       "labels": ["Event", "Syscall"],
-      "properties": { "a0": "0x11", "chokepoint": "true", "shared_with": "TRR0001.LIN.B" },
+      "properties": { "a0": "0x11", "chokepoint": "true", "shared_with": "TRR9001.LIN.B" },
       "style": {}
     },
     {

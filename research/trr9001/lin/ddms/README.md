@@ -1,4 +1,4 @@
-# Detection Data Models — TRR0001.LIN
+# Detection Data Models — TRR9001.LIN
 
 Each `*.json` file is an [Arrows app](https://arrows.app) export of one
 procedure's DDM. To edit a model, open Arrows, import the JSON, change the
@@ -16,4 +16,4 @@ contribution that asks for the JSON.
 
 | File | Procedure | Chokepoint node |
 |------|-----------|-----------------|
-| `trr0001_lin_a.json` | TRR0001.LIN.A — raw packet socket | `socket(AF_PACKET)` (shared with B) |
+| `trr9001_lin_a.json` | TRR9001.LIN.A — raw packet socket | `socket(AF_PACKET)` (shared with B) |

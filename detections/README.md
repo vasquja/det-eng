@@ -8,7 +8,7 @@ fires on its paired atomic.
 > A rule keys on an invariant chokepoint when one exists (one rule, many
 > procedures); it falls back to a per-procedure rule only where no chokepoint
 > covers the procedure. See the worked example:
-> [`research/trr0001/lin`](../research/trr0001/lin/README.md).
+> [`research/trr9001/lin`](../research/trr9001/lin/README.md).
 
 ## The three layers
 

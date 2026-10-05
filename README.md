@@ -23,7 +23,7 @@ project.
                  rules to SigmaHQ/sigma.
 ```
 
-The procedure ID (for example `TRR0001.LIN.A`) is the spine: the research, the
+The procedure ID (for example `TRR9001.LIN.A`) is the spine: the research, the
 test, and the rule all name it.
 
 | Folder | Role |
@@ -34,7 +34,7 @@ test, and the rule all name it.
 
 ### Worked example
 
-[`research/trr0001/lin`](research/trr0001/lin/README.md) — Network Sniffing
+[`research/trr9001/lin`](research/trr9001/lin/README.md) — Network Sniffing
 (T1040, Linux). It shows the full loop: four procedures, a detection data
 model for each, and a chokepoint rule (`AF_PACKET` socket) that covers the two
 common procedures, with fallbacks for the rest.
