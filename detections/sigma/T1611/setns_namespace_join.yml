@@ -16,7 +16,7 @@ tags:
   - attack.privilege_escalation
   - attack.t1611
   - attack.defense_evasion
-  - cve.2022.0492
+  - cve.2022-0492
 logsource:
   product: linux
   service: auditd

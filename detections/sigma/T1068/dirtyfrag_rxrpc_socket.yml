@@ -16,7 +16,7 @@ date: 2026/05/15
 tags:
   - attack.privilege_escalation
   - attack.t1068
-  - cve.2026.43500
+  - cve.2026-43500
 logsource:
   product: linux
   service: auditd
