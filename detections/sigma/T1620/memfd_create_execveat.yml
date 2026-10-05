@@ -27,7 +27,9 @@ detection:
   execveat_syscall:
     type: SYSCALL
     syscall: execveat
-  timeframe: 10s
+  # Co-occurrence window (~10s) is the intent; a bare timeframe is inert in
+  # classic Sigma (no aggregation), so it is omitted. Express the window as a
+  # Sigma correlation rule (type: temporal) if/when a backend needs it.
   condition: memfd_create_syscall and execveat_syscall
 falsepositives:
   - Language runtimes and packagers that legitimately exec from memfd

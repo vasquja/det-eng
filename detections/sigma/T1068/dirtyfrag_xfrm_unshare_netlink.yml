@@ -18,7 +18,7 @@ date: 2026/05/15
 tags:
   - attack.privilege_escalation
   - attack.t1068
-  - cve.2026.43284
+  - cve.2026-43284
 logsource:
   product: linux
   service: auditd
@@ -35,7 +35,9 @@ detection:
     syscall: socket
     a0: '10'  # AF_NETLINK = 16 = 0x10
     a2: '6'   # NETLINK_XFRM = 6
-  timeframe: 10s
+  # Co-occurrence window (~10s) is the intent; a bare timeframe is inert in
+  # classic Sigma (no aggregation), so it is omitted. Express the window as a
+  # Sigma correlation rule (type: temporal) if/when a backend needs it.
   condition: unshare_user_net and netlink_xfrm_socket
 falsepositives:
   - IPsec management daemons (strongswan, libreswan, charon, pluto)

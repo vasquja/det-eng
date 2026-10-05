@@ -15,7 +15,7 @@ date: 2026/10/05
 tags:
   - attack.privilege_escalation
   - attack.t1068
-  - cve.2013.2094
+  - cve.2013-2094
 logsource:
   product: linux
   service: auditd

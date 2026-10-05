@@ -23,7 +23,7 @@ date: 2026/10/05
 tags:
   - attack.privilege_escalation
   - attack.t1068
-  - cve.2022.0847
+  - cve.2022-0847
 logsource:
   product: linux
   service: auditd
@@ -36,7 +36,9 @@ detection:
   splice_syscall:
     type: SYSCALL
     syscall: splice
-  timeframe: 5s
+  # Co-occurrence window (~5s) is the intent; a bare timeframe is inert in
+  # classic Sigma (no aggregation), so it is omitted. Express the window as a
+  # Sigma correlation rule (type: temporal) if/when a backend needs it.
   condition: pipe_create and splice_syscall
 falsepositives:
   - Web/media servers and proxies that combine pipes with splice() for

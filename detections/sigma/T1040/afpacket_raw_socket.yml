@@ -20,8 +20,8 @@ tags:
   - attack.t1040
   - attack.privilege_escalation
   - attack.t1068
-  - cve.2016.8655
-  - cve.2017.7308
+  - cve.2016-8655
+  - cve.2017-7308
 logsource:
   product: linux
   service: auditd
