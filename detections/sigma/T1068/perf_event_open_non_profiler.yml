@@ -1,0 +1,38 @@
+title: perf_event_open Syscall By Non-Profiler Process
+id: 0373c270-8b11-434b-be94-ab1ab2ff9bf3
+status: experimental
+description: |
+  Detects the `perf_event_open(2)` syscall from a process that is not a known
+  profiler. perf_event_open has been a repeated local privilege-escalation
+  surface (CVE-2013-2094, perf_swevent). Outside profiling tools and some APM
+  agents most endpoints never issue it, so the syscall from an unexpected
+  process is notable.
+references:
+  - https://man7.org/linux/man-pages/man2/perf_event_open.2.html
+  - https://nvd.nist.gov/vuln/detail/CVE-2013-2094
+author: det-eng
+date: 2026/10/05
+tags:
+  - attack.privilege_escalation
+  - attack.t1068
+  - cve.2013.2094
+logsource:
+  product: linux
+  service: auditd
+detection:
+  perf_syscall:
+    type: SYSCALL
+    syscall: perf_event_open
+  profiler_processes:
+    comm:
+      - perf
+      - sysdig
+      - bpftrace
+      - datadog-agent
+      - otelcol
+      - node_exporter
+  condition: perf_syscall and not profiler_processes
+falsepositives:
+  - Profilers, APM agents, and language runtimes/JITs that sample with
+    perf — baseline and extend `profiler_processes` before alerting
+level: medium

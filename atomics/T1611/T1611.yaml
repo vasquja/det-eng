@@ -1,0 +1,51 @@
+attack_technique: T1611
+display_name: Escape to Host
+
+atomic_tests:
+  - name: setns join of pid-1 mount namespace (container-escape pattern) — behavioral
+    auto_generated_guid: 777a77a3-cd47-400a-bf04-5afcfd9c34b8
+    description: |
+      Generates open("/proc/<pid>/ns/mnt") followed by `setns(2)` — the
+      syscall pattern of a container-escape primitive. The default target is
+      pid 1, whose mount namespace is the container init's (inside a
+      container) or the one this process already belongs to (on a bare host);
+      either way joining it crosses no privilege boundary. Without
+      CAP_SYS_ADMIN the `setns()` call returns EPERM, and the attempt itself
+      is the telemetry.
+
+      Reference: setns(2), nsenter(1); CVE-2022-0492 (cgroups release_agent);
+      runc escape write-ups. Behavioral signature only — not a working
+      exploit.
+
+      Detection guidance:
+        * open/openat of a `/proc/<pid>/ns/*` path followed by `setns`,
+          from a process outside the container-runtime allowlist (runc, crun,
+          containerd, dockerd, nsenter, systemd)
+        * Inside a container, any `setns` toward a host-pid namespace fd is a
+          strong escape indicator
+    supported_platforms:
+      - linux
+    input_arguments:
+      target_pid:
+        description: PID whose mount namespace to open (default safe pid 1).
+        type: string
+        default: '1'
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1611/src
+    dependency_executor_name: bash
+    dependencies:
+      - description: gcc must be available
+        prereq_command: command -v gcc >/dev/null
+        get_prereq_command: |
+          echo "Install gcc via your package manager (apt/dnf/pacman)."
+          exit 1
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        gcc -O0 -Wall -o /tmp/setns_namespace_join_behavioral #{source_dir}/setns_namespace_join_behavioral.c
+        /tmp/setns_namespace_join_behavioral #{target_pid}
+      cleanup_command: |
+        rm -f /tmp/setns_namespace_join_behavioral

@@ -1,0 +1,30 @@
+title: ptrace PTRACE_TRACEME Self-Trace (Anti-Debug)
+id: 7a451bec-03d6-45ce-8164-d700f76eee3b
+status: experimental
+description: |
+  Detects the `ptrace(2)` syscall with request PTRACE_TRACEME (a0 = 0). A
+  process that traces itself blocks a later debugger or EDR from attaching,
+  since only one tracer is allowed; this is a common anti-analysis technique
+  and appears in some SUID privilege-escalation tricks. Distinct from
+  PTRACE_ATTACH (a0 hex 10) used for process injection.
+references:
+  - https://man7.org/linux/man-pages/man2/ptrace.2.html
+author: det-eng
+date: 2026/10/05
+tags:
+  - attack.defense_evasion
+  - attack.t1622
+  - attack.t1055.008
+logsource:
+  product: linux
+  service: auditd
+detection:
+  ptrace_traceme:
+    type: SYSCALL
+    syscall: ptrace
+    a0: '0'  # PTRACE_TRACEME = 0
+  condition: ptrace_traceme
+falsepositives:
+  - Crash handlers and sandboxes that self-trace (some browsers, Electron
+    apps, test harnesses) — baseline `comm` / `exe` before alerting
+level: medium

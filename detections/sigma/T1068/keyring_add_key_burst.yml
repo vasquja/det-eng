@@ -1,0 +1,40 @@
+title: add_key Syscall By Non-Allowlisted Process (Keyring Stuffing)
+id: 77682671-f1f7-446d-a2af-4db7845ea9d3
+status: experimental
+description: |
+  Detects `add_key(2)` syscalls from a process outside the set that normally
+  uses the kernel keyring. A burst of add_key calls is the setup for several
+  kernel keyring privilege-escalation bugs (CVE-2016-0728, CVE-2022-1998).
+  Correlate volume per-PID where your pipeline supports it; a single add_key
+  from gnome-keyring or gssproxy is benign, a rapid burst from a shell tool
+  is not.
+references:
+  - https://man7.org/linux/man-pages/man2/add_key.2.html
+  - https://nvd.nist.gov/vuln/detail/CVE-2016-0728
+author: det-eng
+date: 2026/10/05
+tags:
+  - attack.privilege_escalation
+  - attack.t1068
+  - cve.2016.0728
+logsource:
+  product: linux
+  service: auditd
+detection:
+  add_key_syscall:
+    type: SYSCALL
+    syscall: add_key
+  keyring_processes:
+    comm:
+      - gnome-keyring-d
+      - gssproxy
+      - rpc.gssd
+      - nfsidmap
+      - request-key
+      - systemd
+      - sshd
+  condition: add_key_syscall and not keyring_processes
+falsepositives:
+  - Kerberos/GSSAPI and NFS idmapping components not covered by the allowlist
+  - eCryptfs and fscrypt key setup — extend `keyring_processes` for the host
+level: medium

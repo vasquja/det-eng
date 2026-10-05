@@ -1,0 +1,42 @@
+attack_technique: T1622
+display_name: Debugger Evasion
+
+atomic_tests:
+  - name: PTRACE_TRACEME self-trace (anti-debug) — behavioral
+    auto_generated_guid: f3e76d2d-7aaa-43e8-8d46-d26664831c2e
+    description: |
+      Generates `ptrace(PTRACE_TRACEME)` from a child that then execs a
+      harmless command — the classic anti-debug pattern. Because only one
+      tracer may attach to a process, a process that traces itself blocks a
+      later debugger or EDR from attaching. The parent acts as the minimal
+      tracer so the child (/bin/true) runs to completion.
+
+      Reference: ptrace(2) PTRACE_TRACEME; kernel.yama.ptrace_scope sysctl.
+      Behavioral signature only — not a working exploit.
+
+      Detection guidance:
+        * `ptrace` syscall with request PTRACE_TRACEME (a0 '0'), especially
+          followed by execve/execveat from the same PID
+        * Distinct from PTRACE_ATTACH (a0 hex '10') used for process injection
+    supported_platforms:
+      - linux
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1622/src
+    dependency_executor_name: bash
+    dependencies:
+      - description: gcc must be available
+        prereq_command: command -v gcc >/dev/null
+        get_prereq_command: |
+          echo "Install gcc via your package manager (apt/dnf/pacman)."
+          exit 1
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        gcc -O0 -Wall -o /tmp/ptrace_traceme_behavioral #{source_dir}/ptrace_traceme_behavioral.c
+        /tmp/ptrace_traceme_behavioral
+      cleanup_command: |
+        rm -f /tmp/ptrace_traceme_behavioral

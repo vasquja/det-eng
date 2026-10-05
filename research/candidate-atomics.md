@@ -21,9 +21,24 @@ interfaces (io_uring, eBPF, userfaultfd) that many sensors still do not watch.
 **Before you build any idea, do the checklist step:** confirm the test is
 still absent from the current ART index and from other public collections.
 
-**Implemented so far:** #5 DirtyPipe (`atomics/T1068/`) and #10 AF_PACKET
-(`atomics/T1040/`), each with a C source and a Sigma rule. The rest remain
-open.
+**Status: all 10 implemented.** Each candidate now ships a behavioral C
+source, an atomic YAML entry, and an auditd Sigma rule:
+
+| # | Idea | Technique folder |
+|---|------|------------------|
+| 1 | userfaultfd | `T1068` |
+| 2 | io_uring | `T1562.001` |
+| 3 | eBPF program load | `T1014` |
+| 4 | memfd fileless exec | `T1620` |
+| 5 | DirtyPipe | `T1068` |
+| 6 | keyring stuffing | `T1068` |
+| 7 | PTRACE_TRACEME | `T1622` |
+| 8 | setns | `T1611` |
+| 9 | perf_event_open | `T1068` |
+| 10 | AF_PACKET | `T1040` |
+
+Re-verify each against the current Atomic Red Team index before relying on
+the uniqueness claim — ART adds content continuously.
 
 ## Summary
 

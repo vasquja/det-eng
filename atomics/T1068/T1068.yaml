@@ -192,3 +192,123 @@ atomic_tests:
         /tmp/dirtypipe_behavioral #{target_file}
       cleanup_command: |
         rm -f /tmp/dirtypipe_behavioral #{target_file}
+
+  - name: userfaultfd heap-grooming primitive — behavioral
+    auto_generated_guid: ecb8124a-1ef2-416b-a402-6973818a3af9
+    description: |
+      Generates the rare `userfaultfd(2)` syscall plus a UFFDIO_REGISTER
+      ioctl. userfaultfd lets userspace pause the kernel mid-copy and is a
+      common timing primitive for use-after-free and heap-spray privilege
+      escalation. This atomic creates a userfaultfd, registers one anonymous
+      page, and STOPS — it never faults the page and never runs a race.
+
+      Reference: userfaultfd(2); vm.unprivileged_userfaultfd sysctl.
+      Behavioral signature only — not a working exploit.
+
+      Detection guidance:
+        * `userfaultfd` syscall from any process outside a small allowlist
+          (CRIU, QEMU post-copy migration, some databases/JITs)
+    supported_platforms:
+      - linux
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1068/src
+    dependency_executor_name: bash
+    dependencies:
+      - description: gcc must be available
+        prereq_command: command -v gcc >/dev/null
+        get_prereq_command: |
+          echo "Install gcc via your package manager (apt/dnf/pacman)."
+          exit 1
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        gcc -O0 -Wall -o /tmp/userfaultfd_behavioral #{source_dir}/userfaultfd_behavioral.c
+        /tmp/userfaultfd_behavioral
+      cleanup_command: |
+        rm -f /tmp/userfaultfd_behavioral
+
+  - name: Kernel keyring stuffing (add_key burst) — behavioral
+    auto_generated_guid: 992c42e5-6b88-4769-a492-e1f94fa813d6
+    description: |
+      Generates a burst of `add_key(2)` syscalls — the setup used by several
+      kernel keyring privilege-escalation bugs (CVE-2016-0728, CVE-2022-1998).
+      All keys are tiny and harmless and go into the caller's PRIVATE process
+      keyring (KEY_SPEC_PROCESS_KEYRING), which is discarded when the process
+      exits; the user's session/user keyrings are never touched. The keyring
+      is also cleared before exit.
+
+      Reference: add_key(2), keyctl(2); CVE-2016-0728. Behavioral signature
+      only — not a working exploit.
+
+      Detection guidance:
+        * High volume of `add_key` syscalls from a single PID in a short
+          window, from a process outside the keyring-using allowlist
+          (gnome-keyring, systemd, sshd, gssproxy, nfsidmap)
+    supported_platforms:
+      - linux
+    input_arguments:
+      key_count:
+        description: Number of keys to add (1-1000).
+        type: string
+        default: '100'
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1068/src
+    dependency_executor_name: bash
+    dependencies:
+      - description: gcc must be available
+        prereq_command: command -v gcc >/dev/null
+        get_prereq_command: |
+          echo "Install gcc via your package manager (apt/dnf/pacman)."
+          exit 1
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        gcc -O0 -Wall -o /tmp/keyring_stuffing_behavioral #{source_dir}/keyring_stuffing_behavioral.c
+        /tmp/keyring_stuffing_behavioral #{key_count}
+      cleanup_command: |
+        rm -f /tmp/keyring_stuffing_behavioral
+
+  - name: perf_event_open from non-profiler process — behavioral
+    auto_generated_guid: c816247b-fac9-4b04-a5fc-3a6101427c25
+    description: |
+      Generates the `perf_event_open(2)` syscall from a non-profiler process.
+      perf_event_open has been a repeated local privilege-escalation surface
+      (CVE-2013-2094, perf_swevent). This atomic opens one benign software
+      counter (task-clock) that monitors only itself, never enables it, never
+      reads samples, and closes it.
+
+      Reference: perf_event_open(2); CVE-2013-2094; kernel.perf_event_paranoid
+      sysctl. Behavioral signature only — not a working exploit.
+
+      Detection guidance:
+        * `perf_event_open` syscall from a process outside the profiler
+          allowlist (perf, sysdig, APM agents, some language runtimes)
+    supported_platforms:
+      - linux
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1068/src
+    dependency_executor_name: bash
+    dependencies:
+      - description: gcc must be available
+        prereq_command: command -v gcc >/dev/null
+        get_prereq_command: |
+          echo "Install gcc via your package manager (apt/dnf/pacman)."
+          exit 1
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        gcc -O0 -Wall -o /tmp/perf_event_open_behavioral #{source_dir}/perf_event_open_behavioral.c
+        /tmp/perf_event_open_behavioral
+      cleanup_command: |
+        rm -f /tmp/perf_event_open_behavioral

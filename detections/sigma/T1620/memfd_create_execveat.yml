@@ -1,0 +1,35 @@
+title: memfd_create Followed By execveat (Fileless Execution)
+id: cb4a25e6-1af2-4217-bc91-cb6d528b7ebb
+status: experimental
+description: |
+  Detects a process creating an anonymous file with `memfd_create(2)` and
+  shortly after executing it with `execveat(2)` (fexecve with AT_EMPTY_PATH)
+  — the fileless-execution pattern used by many Linux droppers. No file is
+  written to disk; the process runs directly from the in-memory fd. On
+  endpoints with /proc visibility, a running process whose exe path resolves
+  to `memfd:` / `(deleted)` is the same signal.
+references:
+  - https://man7.org/linux/man-pages/man2/memfd_create.2.html
+  - https://man7.org/linux/man-pages/man2/execveat.2.html
+author: det-eng
+date: 2026/10/05
+tags:
+  - attack.defense_evasion
+  - attack.t1620
+  - attack.t1055
+logsource:
+  product: linux
+  service: auditd
+detection:
+  memfd_create_syscall:
+    type: SYSCALL
+    syscall: memfd_create
+  execveat_syscall:
+    type: SYSCALL
+    syscall: execveat
+  timeframe: 10s
+  condition: memfd_create_syscall and execveat_syscall
+falsepositives:
+  - Language runtimes and packagers that legitimately exec from memfd
+    (some JITs, container image tools) — rare; baseline before alerting
+level: high
