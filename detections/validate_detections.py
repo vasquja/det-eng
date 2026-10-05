@@ -160,17 +160,33 @@ def audit_available():
 
 
 _NR_CACHE = {}
+_DUMP = None
+
+
+def _dump_syscalls():
+    """name -> number for the running arch, from `ausyscall --dump` (one call)."""
+    global _DUMP
+    if _DUMP is not None:
+        return _DUMP
+    _DUMP = {}
+    r = subprocess.run(["ausyscall", "--dump"], capture_output=True, text=True)
+    for line in r.stdout.splitlines():
+        m = re.match(r"\s*(\d+)\s+(\S+)", line)  # "41\tsocket"; skips header
+        if m:
+            _DUMP[m.group(2)] = int(m.group(1))
+    return _DUMP
 
 
 def syscall_nr(name):
     if name in _NR_CACHE:
         return _NR_CACHE[name]
-    r = subprocess.run(["ausyscall", name], capture_output=True, text=True)
-    nr = None
-    if r.returncode == 0:
-        m = re.search(r"(\d+)", r.stdout)
-        if m:
-            nr = int(m.group(1))
+    nr = _dump_syscalls().get(name)
+    if nr is None:  # fall back to a per-name lookup
+        r = subprocess.run(["ausyscall", name], capture_output=True, text=True)
+        if r.returncode == 0:
+            m = re.search(r"\b(\d+)\b", r.stdout)
+            if m:
+                nr = int(m.group(1))
     _NR_CACHE[name] = nr
     return nr
 
@@ -220,7 +236,18 @@ def compile_atomic(src, workdir):
 
 
 def load_audit_rules():
-    subprocess.run(["auditctl", "-R", AUDIT_RULES], capture_output=True, text=True)
+    r = subprocess.run(["auditctl", "-R", AUDIT_RULES], capture_output=True, text=True)
+    print(f"[diag] auditctl -R rc={r.returncode}")
+    if r.stdout.strip():
+        print(f"[diag]   -R stdout: {r.stdout.strip()[:300]}")
+    if r.stderr.strip():
+        print(f"[diag]   -R stderr: {r.stderr.strip()[:300]}")
+    listed = subprocess.run(["auditctl", "-l"], capture_output=True, text=True)
+    rules = [ln for ln in listed.stdout.splitlines() if ln.strip().startswith("-")]
+    dump = _dump_syscalls()
+    print(f"[diag] auditctl -l: {len(rules)} rules loaded; "
+          f"ausyscall mapped {len(dump)} syscalls "
+          f"(socket={dump.get('socket')}, setns={dump.get('setns')})")
 
 
 def unload_audit_rules():
@@ -272,14 +299,15 @@ def main():
 
             since = time.strftime("%H:%M:%S")
             subprocess.run([binary] + run_args, capture_output=True, text=True)
-            time.sleep(1.0)  # let auditd flush
+            time.sleep(1.5)  # let auditd flush to the log
             recs = read_events(since)
             nmap = name_to_nr_map(selections)
             hit = [bool([r for r in recs if sel.matches(r, nmap)])
                    for sel in selections]
             fired = any(hit) if mode == "any" else all(hit)
-            detail = ", ".join(f"{s.name}={'yes' if h else 'NO'}"
-                               for s, h in zip(selections, hit))
+            detail = f"recs={len(recs)}; " + ", ".join(
+                f"{s.name}={'yes' if h else 'NO'}"
+                for s, h in zip(selections, hit))
             results.append((rid, "PASS" if fired else "FAIL", detail))
     finally:
         if not dry:
