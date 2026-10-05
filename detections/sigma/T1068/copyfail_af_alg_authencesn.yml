@@ -19,7 +19,7 @@ date: 2026/05/15
 tags:
   - attack.privilege_escalation
   - attack.t1068
-  - cve.2026.31431
+  - cve.2026-31431
 logsource:
   product: linux
   service: auditd
@@ -31,7 +31,9 @@ detection:
   splice_syscall:
     type: SYSCALL
     syscall: splice
-  timeframe: 5s
+  # Co-occurrence window (~5s) is the intent; a bare timeframe is inert in
+  # classic Sigma (no aggregation), so it is omitted. Express the window as a
+  # Sigma correlation rule (type: temporal) if/when a backend needs it.
   condition: af_alg_socket and splice_syscall
 falsepositives:
   - Userland crypto frameworks (e.g. cryptsetup, kcapi-tools, some VPN clients)
