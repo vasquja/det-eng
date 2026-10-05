@@ -114,17 +114,18 @@ app export). Inline view:
 
 ```mermaid
 flowchart LR
-    P["Process<br/>(not an allowed sniffer)"] -->|invokes| S["socket(AF_PACKET,<br/>SOCK_RAW, ETH_P_ALL)"]
+    P["Process<br/>(not an allowed sniffer)"] -->|invokes| S["socket(AF_PACKET,<br/>SOCK_RAW, ETH_P_ALL)<br/>★ CHOKEPOINT"]
     S -->|creates| K["Packet socket (fd)"]
     P -->|invokes| R["recvfrom(fd)"]
     R -->|drains frames from| K
     P -.->|"setsockopt / ioctl (optional)"| M["Interface in<br/>promiscuous mode"]
-    S ==>|recorded as| T["auditd SYSCALL record<br/>a0=0x11 (AF_PACKET)<br/>★ CHOKEPOINT"]
+    S ==>|recorded as| T["auditd SYSCALL record<br/>a0=0x11 (AF_PACKET)<br/>PRIMARY detection opportunity"]
     M -.->|"recorded as (optional)"| T2["auditd SYSCALL record<br/>setsockopt / ioctl<br/>(enrichment)"]
 ```
 
 **DDM summary.** The strong node is the `socket()` event with `a0=0x11`
-(the double arrow, marked ★). It is unavoidable: Procedure A cannot start
+(marked ★ CHOKEPOINT); its `auditd` record (the double-arrow target) is the
+primary detection opportunity. It is unavoidable: Procedure A cannot start
 without it. The `recvfrom()` loop is high-volume and low-signal, so it is a
 poor anchor. The promiscuous-mode node is high-fidelity but optional, so it is
 an enrichment, not the primary anchor. The `socket()` node is shared with
@@ -147,11 +148,11 @@ behind a default `tcpdump`, `tshark`, and `dumpcap`.
 
 ```mermaid
 flowchart LR
-    P["Process<br/>(not an allowed sniffer)"] -->|invokes| S["socket(AF_PACKET, ...)"]
+    P["Process<br/>(not an allowed sniffer)"] -->|invokes| S["socket(AF_PACKET, ...)<br/>★ CHOKEPOINT (shared with A)"]
     S -->|creates| K["Packet socket (fd)"]
     P -->|"setsockopt(SOL_PACKET,<br/>PACKET_RX_RING)"| K
     P -->|"mmap(fd)"| K
-    S ==>|recorded as| T["auditd SYSCALL record<br/>a0=0x11 (AF_PACKET)<br/>★ CHOKEPOINT (shared with A)"]
+    S ==>|recorded as| T["auditd SYSCALL record<br/>a0=0x11 (AF_PACKET)<br/>PRIMARY detection opportunity"]
     P -.->|"recorded as (enrichment)"| T2["auditd SYSCALL record<br/>setsockopt PACKET_RX_RING"]
 ```
 
@@ -224,11 +225,18 @@ entry node. So the plan is one chokepoint rule plus two fallbacks.
 **Strategy 1 — chokepoint (covers A + B).**
 Key on the `socket()` syscall where domain `a0 = 0x11` (`AF_PACKET`, 17). A
 process cannot capture link-layer frames without it, whatever tool or library
-it uses. This single rule covers the great majority of real Linux sniffing:
-`tcpdump`, `tshark`, Wireshark/`dumpcap`, and most custom and malicious
-sniffers. This is the primary detection.
+it uses — `tcpdump`, `tshark`, Wireshark/`dumpcap`, custom sniffers, and
+malware all pass through this one syscall. That is the invariant.
+The rule then **allowlists the known-benign sniffers by `comm`** (`tcpdump`,
+`tshark`, `wireshark`, `dumpcap`, and the network daemons), so it does not
+alert on those tools; it fires on any *non-allowlisted* process that opens an
+`AF_PACKET` socket — which is where unexpected or malicious sniffing shows up.
+So the chokepoint covers the A+B syscall path for every tool, and the rule
+turns that into a low-noise alert by excluding the baseline sniffers. Tune the
+allowlist for your fleet. This is the primary detection.
 - Sensor: `auditd` `socket` rule (already in `atomic.rules`).
-- Rule: `detections/sigma/T1040/afpacket_raw_socket.yml`.
+- Rule: `detections/sigma/T1040/afpacket_raw_socket.yml`
+  (`socket a0=0x11 and not sniffer_processes`).
 
 **Strategy 2 — fallback (covers C).**
 Key on the `socket()` syscall where `a0 ∈ {0x2 (AF_INET), 0xa (AF_INET6)}`
