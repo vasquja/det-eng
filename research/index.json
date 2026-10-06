@@ -35,6 +35,25 @@
           "url": "../atomics/T1040/src/afxdp_socket_behavioral.c"
         }
       }
+    },
+    {
+      "name": "Command Execution in a Running Container (Kubernetes)",
+      "id": "TRR9002",
+      "tactics": ["Execution"],
+      "contributors": ["det-eng"],
+      "external_ids": ["T1609"],
+      "platforms": ["Kubernetes"],
+      "procedures": {
+        "A": "Exec through the API server",
+        "B": "Attach through the API server",
+        "C": "Ephemeral debug container",
+        "D": "Exec through the API server node proxy",
+        "E": "Exec directly through the kubelet API"
+      },
+      "pub_date": "2026-10-06",
+      "last_update": "2026-10-06",
+      "path": "trr9002/k8s/README.md",
+      "tests": {}
     }
   ]
 }

@@ -1,0 +1,168 @@
+{
+  "_comment": "Detection Data Model for TRR9002.K8S.A (exec through the API server). Arrows app (https://arrows.app) export format. Import to edit; export a PNG beside this file for the TRR and for upstream contribution. Node n2 (the pods/exec audit event) is the chokepoint shared with TRR9002.K8S.B and the attach step of TRR9002.K8S.C.",
+  "nodes": [
+    {
+      "id": "n0",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "caption": "Identity",
+      "labels": [
+        "Actor"
+      ],
+      "properties": {
+        "kind": "user or service account"
+      },
+      "style": {}
+    },
+    {
+      "id": "n1",
+      "position": {
+        "x": 340,
+        "y": 0
+      },
+      "caption": "API server",
+      "labels": [
+        "Component"
+      ],
+      "properties": {
+        "checks": "authentication, authorization, admission"
+      },
+      "style": {}
+    },
+    {
+      "id": "n2",
+      "position": {
+        "x": 340,
+        "y": 220
+      },
+      "caption": "Audit event",
+      "labels": [
+        "Telemetry"
+      ],
+      "properties": {
+        "sensor": "API server audit log",
+        "objectRef.resource": "pods",
+        "objectRef.subresource": "exec",
+        "verb": "create (SPDY) or get (WebSocket)",
+        "chokepoint": "true",
+        "shared_with": "TRR9002.K8S.B, TRR9002.K8S.C (attach step)",
+        "detection_opportunity": "PRIMARY"
+      },
+      "style": {}
+    },
+    {
+      "id": "n3",
+      "position": {
+        "x": 680,
+        "y": 0
+      },
+      "caption": "kubelet /exec endpoint",
+      "labels": [
+        "Component"
+      ],
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "n4",
+      "position": {
+        "x": 1020,
+        "y": 0
+      },
+      "caption": "Container runtime",
+      "labels": [
+        "Component"
+      ],
+      "properties": {
+        "call": "CRI Exec"
+      },
+      "style": {}
+    },
+    {
+      "id": "n5",
+      "position": {
+        "x": 1360,
+        "y": 0
+      },
+      "caption": "New process in the target container",
+      "labels": [
+        "Object"
+      ],
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "n6",
+      "position": {
+        "x": 1360,
+        "y": 220
+      },
+      "caption": "Node runtime sensor event",
+      "labels": [
+        "Telemetry"
+      ],
+      "properties": {
+        "sensor": "runtime security agent or EDR",
+        "detection_opportunity": "enrichment"
+      },
+      "style": {}
+    }
+  ],
+  "relationships": [
+    {
+      "id": "r0",
+      "type": "SENDS_EXEC_REQUEST",
+      "fromId": "n0",
+      "toId": "n1",
+      "properties": {
+        "transport": "SPDY POST or WebSocket GET"
+      },
+      "style": {}
+    },
+    {
+      "id": "r1",
+      "type": "RECORDS",
+      "fromId": "n1",
+      "toId": "n2",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r2",
+      "type": "FORWARDS_STREAM_TO",
+      "fromId": "n1",
+      "toId": "n3",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r3",
+      "type": "CALLS",
+      "fromId": "n3",
+      "toId": "n4",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r4",
+      "type": "STARTS",
+      "fromId": "n4",
+      "toId": "n5",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r5",
+      "type": "RECORDED_AS",
+      "fromId": "n5",
+      "toId": "n6",
+      "properties": {
+        "optional": "true"
+      },
+      "style": {}
+    }
+  ],
+  "style": {}
+}
