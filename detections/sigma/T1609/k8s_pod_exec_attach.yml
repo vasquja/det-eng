@@ -1,0 +1,43 @@
+title: Command Execution or Attach In a Kubernetes Pod
+id: b943feaf-1a81-4e6a-a731-aa44e042554f
+status: experimental
+description: |
+  Detects a request to run a command in a container (pods/exec) or to attach to
+  a running container (pods/attach) through the Kubernetes API server. This is
+  the TRR9002 Strategy 1 chokepoint: it covers Procedure A (exec) and Procedure
+  B (attach), and the attach step of Procedure C.
+
+  The rule does NOT filter on verb. An exec over the SPDY protocol is recorded
+  with verb=create; an exec over the WebSocket protocol is recorded with
+  verb=get. kubectl has used WebSocket by default since v1.31, so a rule that
+  matches only verb=create misses a current kubectl. Matching the subresource
+  regardless of verb is the invariant.
+
+  This is normal administration when a known operator or CI identity does it, so
+  triage on identity, source, client, target namespace, and the command in
+  requestURI rather than on the event alone.
+references:
+  - https://attack.mitre.org/techniques/T1609/
+  - https://kubernetes.io/blog/2024/08/20/websockets-transition/
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+author: det-eng
+date: 2026/10/06
+tags:
+  - attack.execution
+  - attack.t1609
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_exec_attach:
+    objectRef.resource: 'pods'
+    objectRef.subresource:
+      - 'exec'
+      - 'attach'
+  condition: select_exec_attach
+falsepositives:
+  - Operators and support staff debugging live pods.
+  - CI/CD jobs and operators that exec into pods as part of normal automation.
+    Baseline the identities (user.username / service accounts) that legitimately
+    exec, and filter those.
+level: medium

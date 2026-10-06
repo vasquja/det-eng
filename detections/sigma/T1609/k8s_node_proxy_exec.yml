@@ -1,0 +1,40 @@
+title: Command Execution Through the Kubernetes Node Proxy
+id: 4698f139-0538-4a87-b444-a6ea6b0a328c
+status: experimental
+description: |
+  Detects command execution forwarded to a kubelet through the API server node
+  proxy (nodes/proxy), where the request path names the kubelet /exec, /run, or
+  /attach endpoint. This is TRR9002 Strategy 3, covering Procedure D.
+
+  The audit record for this path shows objectRef.resource=nodes,
+  subresource=proxy — NOT pods/exec — so the Strategy 1 rule does not see it.
+  nodes/proxy is a powerful permission that many monitoring tools request to
+  read metrics, and it is enough to run a command in any pod on the node. The
+  subresource alone is high volume (metrics and stats scraping), so the rule
+  also requires an exec path in requestURI.
+references:
+  - https://attack.mitre.org/techniques/T1609/
+  - https://kubernetes.io/docs/reference/access-authn-authz/kubelet-authn-authz/
+author: det-eng
+date: 2026/10/06
+tags:
+  - attack.execution
+  - attack.t1609
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_node_proxy:
+    objectRef.resource: 'nodes'
+    objectRef.subresource: 'proxy'
+  select_exec_path:
+    requestURI|contains:
+      - '/exec/'
+      - '/run/'
+      - '/attach/'
+  condition: select_node_proxy and select_exec_path
+falsepositives:
+  - Rare. Legitimate use of the node proxy to reach kubelet exec/run/attach is
+    unusual; triage every hit. Routine nodes/proxy traffic to /metrics and
+    /stats does not match because of the requestURI path filter.
+level: high

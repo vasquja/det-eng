@@ -53,7 +53,28 @@
       "pub_date": "2026-10-06",
       "last_update": "2026-10-06",
       "path": "trr9002/k8s/README.md",
-      "tests": {}
+      "tests": {
+        "A": {
+          "text": "det-eng kubectl exec behavioral emulation (WebSocket + SPDY)",
+          "url": "../atomics/T1609/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng kubectl attach behavioral emulation",
+          "url": "../atomics/T1609/src/emulate.sh"
+        },
+        "C": {
+          "text": "det-eng ephemeral debug container behavioral emulation",
+          "url": "../atomics/T1609/src/emulate.sh"
+        },
+        "D": {
+          "text": "det-eng node-proxy exec behavioral emulation",
+          "url": "../atomics/T1609/src/emulate.sh"
+        },
+        "E": {
+          "text": "det-eng direct-kubelet detection-gap demonstration",
+          "url": "../atomics/T1609/src/emulate.sh"
+        }
+      }
     }
   ]
 }

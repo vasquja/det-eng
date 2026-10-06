@@ -74,6 +74,35 @@ calling `ausearch`. On some hosts (GitHub-hosted runners among them)
 `ausearch` resolves its default log path to nothing and reports no matches
 even though the records are present in the file.
 
+## Kubernetes detections (TRR9002)
+
+The Kubernetes rules (`sigma/T1609/`) key on the API server **audit log**, not
+on syscalls, so they have their own layer stack and validator:
+
+1. **Emulation** (`atomics/T1609/`) — `emulate.sh` runs the benign command `id`
+   through each control path (exec, attach, ephemeral container, node proxy,
+   direct kubelet).
+2. **Audit policy** (`k8s/audit-policy.yaml`) — makes the telemetry exist. A
+   default cluster writes no audit log, so a rule has nothing to match. The
+   `k8s/kind-audit-cluster.yaml` config mounts it into a `kind` cluster.
+3. **Sigma rule** (`sigma/T1609/`) — what to look for in the audit events.
+
+Validate the loop (emulate -> audit -> rule fires):
+
+```
+# Parse the rules only — no cluster needed:
+python3 detections/validate_k8s_detections.py --dry-run
+
+# Full run against an audit log you collected from the cluster:
+python3 detections/validate_k8s_detections.py \
+  --audit-log /tmp/kube-apiserver-audit.log
+```
+
+`.github/workflows/validate-k8s-detections.yml` runs the whole loop on a `kind`
+cluster for every change to the TRR9002 files. Unlike the auditd workflow it
+runs the validator strict: a rule that does not fire fails the job, because the
+`kind` emulation is deterministic (there is no "kernel feature off" excuse).
+
 ## Status
 
 All Sigma rules are `status: experimental`. Levels are set by how rare the
