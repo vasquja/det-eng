@@ -52,7 +52,7 @@ REQUIRED_SECTIONS = [
     "## References",
 ]
 META_ROWS = ["ID", "External IDs", "Tactics", "Platforms", "Contributors"]
-PROC_ID_RE = re.compile(r"\bTRR\d{4}\.[A-Z]{2,4}\.[A-Z]\b")
+PROC_ID_RE = re.compile(r"\bTRR\d{4}\.[A-Z0-9]{2,4}\.[A-Z]\b")
 FENCE_RE = re.compile(r"^\s*```(\w*)")
 
 

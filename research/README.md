@@ -106,6 +106,7 @@ final ID on merge.
 | Local ID | ATT&CK | Technique | Platform | Folder |
 |----------|--------|-----------|----------|--------|
 | TRR9001  | T1040  | Network Sniffing | Linux | [`trr9001/lin`](trr9001/lin/README.md) |
+| TRR9002  | T1609  | Command Execution in a Running Container | Kubernetes | [`trr9002/k8s`](trr9002/k8s/README.md) |
 
 ## How to start a new TRR
 
