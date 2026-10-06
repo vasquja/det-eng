@@ -1,5 +1,4 @@
 {
-  "_comment": "Detection Data Model skeleton in Arrows app (https://arrows.app) format, styled like the tired-labs/techniques DDMs. Nodes are operations (verb + object). Border colour = who performs the operation (e.g. green #68bc00 user-space process or client, blue #0062b1 kernel or control plane, purple #653294 node component, black abstract step). 'labels' = telemetry that records the operation (drawn as pills). 'properties' = the details a rule can match. Fill the primary detection node with node-color #fff2a8. Relationship 'type' is an optional edge label such as 'optional'. Save as ddms/trrNNNN_<platform>_<letter>.json and render the PNG with research/tools/render_ddm.py. Remove this _comment key if you import into Arrows.",
   "style": {
     "font-family": "sans-serif",
     "background-color": "#ffffff",
@@ -60,11 +59,12 @@
         "x": 0,
         "y": 0
       },
-      "caption": "Call syscall()",
+      "caption": "Call socket()",
       "labels": [],
       "properties": {
-        "Process": "<who>",
-        "Arg": "<value>"
+        "Process": "any",
+        "Family": "AF_INET or AF_INET6",
+        "Type": "SOCK_RAW"
       },
       "style": {
         "border-color": "#68bc00",
@@ -83,13 +83,15 @@
         "x": 270,
         "y": 0
       },
-      "caption": "Create Object",
+      "caption": "Create Raw IP Socket",
       "labels": [
         "auditd SYSCALL"
       ],
       "properties": {
-        "a0": "<value> (<name>)",
-        "Requires": "<capability>"
+        "a0": "0x2 (AF_INET) or 0xa (AF_INET6)",
+        "a1": "0x3 (SOCK_RAW)",
+        "Requires": "CAP_NET_RAW",
+        "Benign": "ping, traceroute"
       },
       "style": {
         "border-color": "#0062b1",
@@ -109,9 +111,11 @@
         "x": 540,
         "y": 0
       },
-      "caption": "Use Object",
+      "caption": "Call recvfrom()",
       "labels": [],
-      "properties": {},
+      "properties": {
+        "Calls": "one per packet"
+      },
       "style": {
         "border-color": "#68bc00",
         "border-width": 3,
@@ -129,10 +133,10 @@
         "x": 810,
         "y": 0
       },
-      "caption": "Kernel Effect",
+      "caption": "Copy Packets",
       "labels": [],
       "properties": {
-        "Note": "<detail>"
+        "Layer": "IP (no link header)"
       },
       "style": {
         "border-color": "#0062b1",

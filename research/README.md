@@ -76,11 +76,13 @@ research/
   candidate-atomics.md       <- backlog of future behavioral atomics
   templates/
     TRR-TEMPLATE.md          <- copy this to start a new TRR
-    ddm-template.json        <- Arrows app export skeleton for a DDM
+    ddm-template.json        <- Arrows app JSON skeleton for a DDM
+  tools/
+    render_ddm.py            <- renders a DDM JSON to the PNG the TRR shows
   trrNNNN/
     <platform>/              <- platform code from tired-labs platforms.json
       README.md              <- the TRR (always README.md)
-      ddms/                  <- Detection Data Models (Arrows JSON + PNG)
+      ddms/                  <- Detection Data Models (Arrows JSON + rendered PNG)
       images/                <- other figures
 ```
 
@@ -112,7 +114,8 @@ final ID on merge.
 
 1. Copy `templates/TRR-TEMPLATE.md` to `trrNNNN/<platform>/README.md`.
 2. Make `trrNNNN/<platform>/ddms/` and `trrNNNN/<platform>/images/`.
-3. Fill the template. Build one DDM per procedure.
+3. Fill the template. Build one DDM per procedure: write the Arrows JSON in
+   `ddms/`, then render its PNG with `python3 research/tools/render_ddm.py`.
 4. Find the chokepoint. Write the Detection Strategy section.
 5. Add a row to `index.json` and to the table above.
 6. Build the atomics and Sigma rules the TRR calls for. Link them back by

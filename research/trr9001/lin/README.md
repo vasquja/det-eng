@@ -92,6 +92,14 @@ eBPF sensor, is the detection opportunity.
 > defaults to the `PACKET_MMAP` ring. So those tools are Procedure A or
 > Procedure B — not a procedure each.
 
+**Reading the DDMs.** Each DDM is a PNG in the style of the
+`tired-labs/techniques` reports, rendered from the Arrows app JSON beside it.
+Green borders are operations the sniffing process performs in user space. Blue
+borders are operations the kernel performs. A black border is an abstract
+step. The pill on a node names the telemetry that records it, and the
+`Key: value` lines are the details a rule can match. The shaded node is the
+procedure's primary detection opportunity.
+
 ### Procedure A: Raw packet socket (classic receive)  (`TRR9001.LIN.A`)
 
 The program calls `socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))`. This gives
@@ -109,23 +117,13 @@ first put the interface in promiscuous mode to see all traffic on the segment.
 
 #### Detection Data Model — `TRR9001.LIN.A`
 
-Canonical graph: [`ddms/trr9001_lin_a.json`](ddms/trr9001_lin_a.json) (Arrows
-app export). Inline view:
+![DDM - Raw packet socket (classic receive)](ddms/trr9001_lin_a.png)
 
-```mermaid
-flowchart LR
-    P["Process<br/>(not an allowed sniffer)"] -->|invokes| S["socket(AF_PACKET,<br/>SOCK_RAW, ETH_P_ALL)<br/>★ CHOKEPOINT"]
-    S -->|creates| K["Packet socket (fd)"]
-    P -->|invokes| R["recvfrom(fd)"]
-    R -->|drains frames from| K
-    P -.->|"setsockopt / ioctl (optional)"| M["Interface in<br/>promiscuous mode"]
-    S ==>|recorded as| T["auditd SYSCALL record<br/>a0=0x11 (AF_PACKET)<br/>PRIMARY detection opportunity"]
-    M -.->|"recorded as (optional)"| T2["auditd SYSCALL record<br/>setsockopt / ioctl<br/>(enrichment)"]
-```
+Source: [`ddms/trr9001_lin_a.json`](ddms/trr9001_lin_a.json) (Arrows app format).
 
 **DDM summary.** The strong node is the `socket()` event with `a0=0x11`
-(marked ★ CHOKEPOINT); its `auditd` record (the double-arrow target) is the
-primary detection opportunity. It is unavoidable: Procedure A cannot start
+(*Create Packet Socket*, shaded); its `auditd` record is the primary
+detection opportunity. It is unavoidable: Procedure A cannot start
 without it. The `recvfrom()` loop is high-volume and low-signal, so it is a
 poor anchor. The promiscuous-mode node is high-fidelity but optional, so it is
 an enrichment, not the primary anchor. The `socket()` node is shared with
@@ -146,15 +144,9 @@ behind a default `tcpdump`, `tshark`, and `dumpcap`.
 
 #### Detection Data Model — `TRR9001.LIN.B`
 
-```mermaid
-flowchart LR
-    P["Process<br/>(not an allowed sniffer)"] -->|invokes| S["socket(AF_PACKET, ...)<br/>★ CHOKEPOINT (shared with A)"]
-    S -->|creates| K["Packet socket (fd)"]
-    P -->|"setsockopt(SOL_PACKET,<br/>PACKET_RX_RING)"| K
-    P -->|"mmap(fd)"| K
-    S ==>|recorded as| T["auditd SYSCALL record<br/>a0=0x11 (AF_PACKET)<br/>PRIMARY detection opportunity"]
-    P -.->|"recorded as (enrichment)"| T2["auditd SYSCALL record<br/>setsockopt PACKET_RX_RING"]
-```
+![DDM - Packet socket with PACKET_MMAP ring](ddms/trr9001_lin_b.png)
+
+Source: [`ddms/trr9001_lin_b.json`](ddms/trr9001_lin_b.json) (Arrows app format).
 
 **DDM summary.** The same `socket(AF_PACKET, ...)` node starts this procedure.
 This is the key finding: **A and B share one invariant node.** The
@@ -176,13 +168,9 @@ own entry syscall.
 
 #### Detection Data Model — `TRR9001.LIN.C`
 
-```mermaid
-flowchart LR
-    P["Process"] -->|invokes| S["socket(AF_INET/AF_INET6,<br/>SOCK_RAW, protocol)"]
-    S -->|creates| K["Raw IP socket (fd)"]
-    P -->|"recvfrom(fd)"| K
-    S ==>|recorded as| T["auditd SYSCALL record<br/>a0=0x2/0xa, a1=0x3 (SOCK_RAW)<br/>★ separate anchor"]
-```
+![DDM - Raw IP socket](ddms/trr9001_lin_c.png)
+
+Source: [`ddms/trr9001_lin_c.json`](ddms/trr9001_lin_c.json) (Arrows app format).
 
 **DDM summary.** The anchor node is a **different** `socket()` event
 (`a0=AF_INET/AF_INET6`, `a1=SOCK_RAW`). The `AF_PACKET` chokepoint does not
@@ -204,13 +192,9 @@ modern interfaces. Many host sensors still do not watch them.
 
 #### Detection Data Model — `TRR9001.LIN.D`
 
-```mermaid
-flowchart LR
-    P["Process"] -->|invokes| B["bpf(BPF_PROG_LOAD)"]
-    P -->|or invokes| X["socket(AF_XDP, ...)"]
-    B ==>|recorded as| T1["auditd SYSCALL record<br/>bpf cmd=BPF_PROG_LOAD<br/>★ separate anchor"]
-    X ==>|recorded as| T2["auditd SYSCALL record<br/>a0=0x2c (AF_XDP)<br/>★ separate anchor"]
-```
+![DDM - eBPF / XDP frame capture](ddms/trr9001_lin_d.png)
+
+Source: [`ddms/trr9001_lin_d.json`](ddms/trr9001_lin_d.json) (Arrows app format).
 
 **DDM summary.** Two separate anchors, neither covered by the `AF_PACKET`
 chokepoint. The `bpf(BPF_PROG_LOAD)` anchor is already modeled in this
