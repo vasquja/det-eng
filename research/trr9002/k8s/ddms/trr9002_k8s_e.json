@@ -1,5 +1,4 @@
 {
-  "_comment": "Detection Data Model skeleton in Arrows app (https://arrows.app) format, styled like the tired-labs/techniques DDMs. Nodes are operations (verb + object). Border colour = who performs the operation (e.g. green #68bc00 user-space process or client, blue #0062b1 kernel or control plane, purple #653294 node component, black abstract step). 'labels' = telemetry that records the operation (drawn as pills). 'properties' = the details a rule can match. Fill the primary detection node with node-color #fff2a8. Relationship 'type' is an optional edge label such as 'optional'. Save as ddms/trrNNNN_<platform>_<letter>.json and render the PNG with research/tools/render_ddm.py. Remove this _comment key if you import into Arrows.",
   "style": {
     "font-family": "sans-serif",
     "background-color": "#ffffff",
@@ -60,14 +59,40 @@
         "x": 0,
         "y": 0
       },
-      "caption": "Call syscall()",
-      "labels": [],
+      "caption": "Connect to kubelet",
+      "labels": [
+        "Network Flow"
+      ],
       "properties": {
-        "Process": "<who>",
-        "Arg": "<value>"
+        "Port": "TCP 10250",
+        "Path": "/exec, /run, or /attach",
+        "Source": "not the API server or monitoring"
       },
       "style": {
         "border-color": "#68bc00",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top",
+        "node-color": "#fff2a8"
+      }
+    },
+    {
+      "id": "n1",
+      "position": {
+        "x": 270,
+        "y": 0
+      },
+      "caption": "Authorize Request",
+      "labels": [],
+      "properties": {
+        "Mode": "AlwaysAllow or Webhook"
+      },
+      "style": {
+        "border-color": "#653294",
         "border-width": 3,
         "caption-font-size": 16,
         "label-position": "outside",
@@ -78,42 +103,18 @@
       }
     },
     {
-      "id": "n1",
-      "position": {
-        "x": 270,
-        "y": 0
-      },
-      "caption": "Create Object",
-      "labels": [
-        "auditd SYSCALL"
-      ],
-      "properties": {
-        "a0": "<value> (<name>)",
-        "Requires": "<capability>"
-      },
-      "style": {
-        "border-color": "#0062b1",
-        "border-width": 3,
-        "caption-font-size": 16,
-        "label-position": "outside",
-        "label-font-size": 14,
-        "label-border-width": 2,
-        "property-font-size": 14,
-        "outside-position": "bottom",
-        "node-color": "#fff2a8"
-      }
-    },
-    {
       "id": "n2",
       "position": {
         "x": 540,
         "y": 0
       },
-      "caption": "Use Object",
+      "caption": "Call CRI Exec",
       "labels": [],
-      "properties": {},
+      "properties": {
+        "Host": "kubelet"
+      },
       "style": {
-        "border-color": "#68bc00",
+        "border-color": "#653294",
         "border-width": 3,
         "caption-font-size": 16,
         "label-position": "outside",
@@ -129,10 +130,61 @@
         "x": 810,
         "y": 0
       },
-      "caption": "Kernel Effect",
+      "caption": "Start Process",
+      "labels": [
+        "Runtime Sensor"
+      ],
+      "properties": {
+        "Where": "target container"
+      },
+      "style": {
+        "border-color": "#653294",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top",
+        "node-color": "#fff2a8"
+      }
+    },
+    {
+      "id": "n4",
+      "position": {
+        "x": 270,
+        "y": 300
+      },
+      "caption": "Send Access Review",
       "labels": [],
       "properties": {
-        "Note": "<detail>"
+        "Object": "SubjectAccessReview",
+        "When": "Webhook mode, not cached"
+      },
+      "style": {
+        "border-color": "#653294",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "bottom"
+      }
+    },
+    {
+      "id": "n5",
+      "position": {
+        "x": 540,
+        "y": 300
+      },
+      "caption": "Review Access",
+      "labels": [
+        "K8s Audit Log"
+      ],
+      "properties": {
+        "Resource": "nodes/proxy",
+        "Use": "enrichment (partial)"
       },
       "style": {
         "border-color": "#0062b1",
@@ -167,6 +219,22 @@
       "id": "r2",
       "fromId": "n2",
       "toId": "n3",
+      "type": "",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r3",
+      "fromId": "n1",
+      "toId": "n4",
+      "type": "if Webhook",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r4",
+      "fromId": "n4",
+      "toId": "n5",
       "type": "",
       "properties": {},
       "style": {}

@@ -204,6 +204,14 @@ container, and with which command.
 > Procedure A. The protocol (SPDY or WebSocket) changes the verb in the audit
 > record. It does not change the path.
 
+**Reading the DDMs.** Each DDM is a PNG in the style of the
+`tired-labs/techniques` reports, rendered from the Arrows app JSON beside it.
+Green borders are operations the client performs. Blue borders are
+operations the API server performs. Purple borders are operations on the
+node: the kubelet and the container runtime. The pill on a node names the
+telemetry that records it, and the `Key: value` lines are the details a rule
+can match. A shaded node is a primary detection opportunity.
+
 ### Procedure A: Exec through the API server  (`TRR9002.K8S.A`)
 
 The client sends an exec request for one container in one pod. The API server
@@ -225,21 +233,12 @@ container.
 
 #### Detection Data Model — `TRR9002.K8S.A`
 
-Canonical graph: [`ddms/trr9002_k8s_a.json`](ddms/trr9002_k8s_a.json) (Arrows
-app export). Inline view:
+![DDM - Exec through the API server](ddms/trr9002_k8s_a.png)
 
-```mermaid
-flowchart LR
-    I["Identity<br/>user or service account"] -->|"exec request<br/>SPDY POST or WebSocket GET"| API["API server<br/>authentication, authorization"]
-    API ==>|"records"| AU["Audit event<br/>objectRef.resource=pods<br/>objectRef.subresource=exec<br/>verb=create or get<br/>★ CHOKEPOINT"]
-    API -->|"forwards stream to"| KL["kubelet<br/>/exec endpoint"]
-    KL -->|"CRI Exec"| RT["Container runtime"]
-    RT -->|"starts"| PR["New process in the<br/>target container"]
-    PR -.->|"recorded as - optional"| NS["Node runtime sensor event<br/>exec session in a container<br/>enrichment"]
-```
+Source: [`ddms/trr9002_k8s_a.json`](ddms/trr9002_k8s_a.json) (Arrows app format).
 
 **DDM summary.** The audit event for `pods/exec` is the primary detection
-opportunity (★ CHOKEPOINT). The API server writes it before the command
+opportunity (*Authorize Exec*, shaded). The API server writes it before the command
 starts. The client cannot avoid it, because the API server is the only path
 to the kubelet in this procedure. The event has the identity, the client
 address, the client program, the target pod, and the command. The `verb`
@@ -266,14 +265,9 @@ process that is already there.
 
 #### Detection Data Model — `TRR9002.K8S.B`
 
-```mermaid
-flowchart LR
-    I["Identity"] -->|"attach request"| API["API server"]
-    API ==>|"records"| AU["Audit event<br/>objectRef.resource=pods<br/>objectRef.subresource=attach<br/>verb=create or get<br/>★ CHOKEPOINT - shared with A"]
-    API -->|"forwards stream to"| KL["kubelet<br/>/attach endpoint"]
-    KL -->|"CRI Attach"| RT["Container runtime"]
-    RT -->|"connects stream to"| P1["Existing main process<br/>no new process"]
-```
+![DDM - Attach through the API server](ddms/trr9002_k8s_b.png)
+
+Source: [`ddms/trr9002_k8s_b.json`](ddms/trr9002_k8s_b.json) (Arrows app format).
 
 **DDM summary.** The anchor is the same type of audit event as Procedure A.
 Only the subresource is different: `attach`, not `exec`. One rule can match
@@ -299,14 +293,9 @@ container, or reads its output from the container log.
 
 #### Detection Data Model — `TRR9002.K8S.C`
 
-```mermaid
-flowchart LR
-    I["Identity"] -->|"PATCH or PUT"| API["API server"]
-    API ==>|"records"| AU1["Audit event<br/>objectRef.subresource=ephemeralcontainers<br/>verb=patch or update<br/>★ separate anchor"]
-    API -->|"changes"| POD["Pod object<br/>spec.ephemeralContainers"]
-    POD -->|"kubelet starts"| EC["Ephemeral container<br/>in the existing pod"]
-    I -.->|"then attaches - optional"| AU2["Audit event<br/>objectRef.subresource=attach<br/>★ CHOKEPOINT - shared with A"]
-```
+![DDM - Ephemeral debug container](ddms/trr9002_k8s_c.png)
+
+Source: [`ddms/trr9002_k8s_c.json`](ddms/trr9002_k8s_c.json) (Arrows app format).
 
 **DDM summary.** This procedure has its own anchor: a `patch` or `update` on
 `pods/ephemeralcontainers`. The adversary cannot add the container without
@@ -332,14 +321,9 @@ kubelet runs the command in the container.
 
 #### Detection Data Model — `TRR9002.K8S.D`
 
-```mermaid
-flowchart LR
-    I["Identity with<br/>nodes/proxy permission"] -->|"request to nodes/NAME/proxy<br/>path /exec, /run, or /attach"| API["API server"]
-    API ==>|"records"| AU["Audit event<br/>objectRef.resource=nodes<br/>objectRef.subresource=proxy<br/>requestURI has /exec/, /run/, or /attach/<br/>★ separate anchor"]
-    API -->|"forwards to"| KL["kubelet API"]
-    KL -->|"CRI Exec"| RT["Container runtime"]
-    RT -->|"starts"| PR["New process in the<br/>target container"]
-```
+![DDM - Exec through the API server node proxy](ddms/trr9002_k8s_d.png)
+
+Source: [`ddms/trr9002_k8s_d.json`](ddms/trr9002_k8s_d.json) (Arrows app format).
 
 **DDM summary.** The audit event shows `nodes/proxy`, not `pods/exec`. So the
 Procedure A rule does not see it. The anchor is the combination of the
@@ -370,16 +354,9 @@ container.
 
 #### Detection Data Model — `TRR9002.K8S.E`
 
-```mermaid
-flowchart LR
-    I["Client with kubelet access"] -->|"connects to TCP 10250"| KL["kubelet API<br/>/exec, /run, or /attach"]
-    I -.->|"recorded as - network"| NF["Network flow to node port 10250<br/>from an unexpected source<br/>★ separate anchor"]
-    KL -.->|"Webhook mode, not cached"| SAR["SubjectAccessReview<br/>sent by the kubelet<br/>nodes/proxy"]
-    SAR -.->|"recorded if the policy logs it"| AU["API server audit event<br/>partial, enrichment"]
-    KL -->|"CRI Exec"| RT["Container runtime"]
-    RT -->|"starts"| PR["New process in the<br/>target container"]
-    PR ==>|"recorded as"| NS["Node runtime sensor event<br/>exec session in a container<br/>★ separate anchor"]
-```
+![DDM - Exec directly through the kubelet API](ddms/trr9002_k8s_e.png)
+
+Source: [`ddms/trr9002_k8s_e.json`](ddms/trr9002_k8s_e.json) (Arrows app format).
 
 **DDM summary.** This procedure does not go through the API server, so the
 audit log rules for Procedures A to D do not see it. Two anchors remain. The

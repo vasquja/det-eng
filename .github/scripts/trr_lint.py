@@ -18,18 +18,19 @@ For every research/trr*/<platform>/README.md it checks:
   3. Procedure IDs use the TRRID.PLATFORM.LETTER form and agree with the
      folder's ID and platform.
   4. DDMs are PRESENT: every procedure has a "Detection Data Model" subsection
-     that contains a ```mermaid diagram.
-  5. DDMs WORK (structurally): each mermaid block has balanced quotes,
-     brackets and pipes, at least one edge, and no dotted link that carries
-     both inline text and a pipe label (`-. text .->|label|`) — the exact
-     construct that silently fails to render on GitHub.
+     that embeds a ddms/*.png image (the tired-labs/techniques format).
+  5. Any ```mermaid block left in a report is structurally sound: balanced
+     quotes, brackets and pipes, at least one edge, and no dotted link that
+     carries both inline text and a pipe label (`-. text .->|label|`) — the
+     exact construct that silently fails to render on GitHub.
   6. Every referenced ddms/*.json exists and parses, and every *.json in the
-     folder's ddms/ parses.
+     folder's ddms/ parses. Every embedded ddms/*.png exists, has a JSON
+     source beside it, and was rendered from that exact JSON (the renderer,
+     research/tools/render_ddm.py, stamps the JSON's hash into the PNG).
   7. research/index.json has a matching entry (id, platform, procedure keys).
 
-NOTE: check 5 is a STRUCTURAL check, not a full render. It catches the class
-of error that broke rendering in practice; a full mermaid-cli render could be
-added later as a heavier, optional step.
+NOTE: check 6 compares hashes; it does not render. Rendering needs a browser,
+so it stays a local step (research/tools/render_ddm.py).
 
 Exit 0 if every TRR passes; exit 1 with a report otherwise.
 """
@@ -43,6 +44,9 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RESEARCH = os.path.join(REPO, "research")
 
+sys.path.insert(0, os.path.join(RESEARCH, "tools"))
+from render_ddm import check as ddm_png_problem  # noqa: E402
+
 REQUIRED_SECTIONS = [
     "## Metadata",
     "## Technique Overview",
@@ -52,6 +56,7 @@ REQUIRED_SECTIONS = [
     "## References",
 ]
 META_ROWS = ["ID", "External IDs", "Tactics", "Platforms", "Contributors"]
+DDM_PNG_RE = re.compile(r"!\[[^\]]*\]\(\s*(ddms/[^)\s]+\.png)\s*\)")
 PROC_ID_RE = re.compile(r"\bTRR\d{4}\.[A-Z0-9]{2,4}\.[A-Z]\b")
 FENCE_RE = re.compile(r"^\s*```(\w*)")
 
@@ -160,7 +165,7 @@ def lint_report(path, index):
         if pl != exp_plat:
             errs.append(f"procedure {pid}: platform != {exp_plat}")
 
-    # 4 + 5. each procedure has a DDM subsection with a valid mermaid block
+    # 4. each procedure has a DDM subsection that embeds a ddms/*.png
     #        (split doc into '### ' subsections and inspect each procedure's)
     sub = re.split(r"\n(?=### )", text)
     proc_sections = {}
@@ -177,11 +182,10 @@ def lint_report(path, index):
             continue
         if "Detection Data Model" not in chunk:
             errs.append(f"procedure .{letter}: no 'Detection Data Model' heading")
-        blocks = list(mermaid_blocks(chunk.splitlines()))
-        if not blocks:
-            errs.append(f"procedure .{letter}: DDM has no ```mermaid diagram")
+        if not DDM_PNG_RE.search(chunk):
+            errs.append(f"procedure .{letter}: DDM has no ddms/*.png image")
 
-    # 5. validate ALL mermaid blocks in the file structurally
+    # 5. validate any mermaid blocks left in the file structurally
     for start, body in mermaid_blocks(lines):
         for p in check_mermaid(body):
             errs.append(f"mermaid block at line {start}: {p}")
@@ -196,6 +200,22 @@ def lint_report(path, index):
             json.load(open(jp, encoding="utf-8"))
         except Exception as e:  # noqa: BLE001
             errs.append(f"DDM json does not parse: {os.path.basename(jp)}: {e}")
+    #    embedded PNGs exist and match their JSON source
+    for ref in DDM_PNG_RE.findall(text):
+        pp = os.path.join(folder, ref)
+        jp = os.path.splitext(pp)[0] + ".json"
+        if not os.path.exists(pp):
+            errs.append(f"embedded DDM png missing: {ref}")
+        elif not os.path.exists(jp):
+            errs.append(f"DDM png has no JSON source beside it: {ref}")
+        else:
+            try:
+                problem = ddm_png_problem(jp)
+            except ValueError as e:
+                problem = str(e)
+            if problem:
+                errs.append(f"DDM png {ref}: {problem}; re-render with "
+                            f"research/tools/render_ddm.py")
 
     # 7. index.json consistency
     if index is not None:

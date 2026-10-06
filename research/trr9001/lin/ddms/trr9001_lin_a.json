@@ -1,71 +1,244 @@
 {
-  "_comment": "Detection Data Model for TRR9001.LIN.A (raw AF_PACKET socket). Arrows app (https://arrows.app) export format. Import to edit; export a PNG beside this file for the TRR and for upstream contribution. The node n1 (socket AF_PACKET) is the chokepoint shared with TRR9001.LIN.B.",
+  "style": {
+    "font-family": "sans-serif",
+    "background-color": "#ffffff",
+    "background-image": "",
+    "background-size": "100%",
+    "node-color": "#ffffff",
+    "border-width": 4,
+    "border-color": "#000000",
+    "radius": 50,
+    "node-padding": 5,
+    "node-margin": 2,
+    "outside-position": "auto",
+    "node-icon-image": "",
+    "node-background-image": "",
+    "icon-position": "inside",
+    "icon-size": 64,
+    "caption-position": "inside",
+    "caption-max-width": 200,
+    "caption-color": "#000000",
+    "caption-font-size": 16,
+    "caption-font-weight": "normal",
+    "label-position": "outside",
+    "label-display": "pill",
+    "label-color": "#000000",
+    "label-background-color": "#ffffff",
+    "label-border-color": "#000000",
+    "label-border-width": 2,
+    "label-font-size": 14,
+    "label-padding": 5,
+    "label-margin": 4,
+    "directionality": "directed",
+    "detail-position": "inline",
+    "detail-orientation": "parallel",
+    "arrow-width": 5,
+    "arrow-color": "#000000",
+    "margin-start": 5,
+    "margin-end": 5,
+    "margin-peer": 20,
+    "attachment-start": "normal",
+    "attachment-end": "normal",
+    "relationship-icon-image": "",
+    "type-color": "#000000",
+    "type-background-color": "#ffffff",
+    "type-border-color": "#000000",
+    "type-border-width": 0,
+    "type-font-size": 16,
+    "type-padding": 5,
+    "property-position": "outside",
+    "property-alignment": "colon",
+    "property-color": "#000000",
+    "property-font-size": 16,
+    "property-font-weight": "normal"
+  },
   "nodes": [
     {
       "id": "n0",
-      "position": { "x": 0, "y": 0 },
-      "caption": "Process",
-      "labels": ["Actor"],
-      "properties": { "comm": "not in sniffer allowlist" },
-      "style": {}
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "caption": "Call socket()",
+      "labels": [],
+      "properties": {
+        "Process": "any (not an allowed sniffer)",
+        "Family": "AF_PACKET",
+        "Type": "SOCK_RAW",
+        "Protocol": "ETH_P_ALL"
+      },
+      "style": {
+        "border-color": "#68bc00",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "bottom"
+      }
     },
     {
       "id": "n1",
-      "position": { "x": 340, "y": 0 },
-      "caption": "socket(AF_PACKET, SOCK_RAW, ETH_P_ALL)",
-      "labels": ["Event", "Syscall"],
-      "properties": { "a0": "0x11", "chokepoint": "true", "shared_with": "TRR9001.LIN.B" },
-      "style": {}
+      "position": {
+        "x": 270,
+        "y": 0
+      },
+      "caption": "Create Packet Socket",
+      "labels": [
+        "auditd SYSCALL"
+      ],
+      "properties": {
+        "a0": "0x11 (AF_PACKET)",
+        "a1": "0x3 (SOCK_RAW)",
+        "Requires": "CAP_NET_RAW",
+        "Shared with": "TRR9001.LIN.B"
+      },
+      "style": {
+        "border-color": "#0062b1",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top",
+        "node-color": "#fff2a8"
+      }
     },
     {
       "id": "n2",
-      "position": { "x": 720, "y": 0 },
-      "caption": "Packet socket (fd)",
-      "labels": ["Object"],
+      "position": {
+        "x": 540,
+        "y": 0
+      },
+      "caption": "Call recvfrom()",
+      "labels": [],
+      "properties": {
+        "Calls": "one per frame"
+      },
+      "style": {
+        "border-color": "#68bc00",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top"
+      }
+    },
+    {
+      "id": "n3",
+      "position": {
+        "x": 810,
+        "y": 0
+      },
+      "caption": "Copy Frames",
+      "labels": [],
+      "properties": {
+        "From": "socket receive queue",
+        "Signal": "high volume, low signal"
+      },
+      "style": {
+        "border-color": "#0062b1",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top"
+      }
+    },
+    {
+      "id": "n4",
+      "position": {
+        "x": 540,
+        "y": 260
+      },
+      "caption": "Call setsockopt() or ioctl()",
+      "labels": [],
+      "properties": {
+        "setsockopt": "PACKET_ADD_MEMBERSHIP (PACKET_MR_PROMISC)",
+        "ioctl": "SIOCSIFFLAGS (IFF_PROMISC)"
+      },
+      "style": {
+        "border-color": "#68bc00",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "bottom"
+      }
+    },
+    {
+      "id": "n5",
+      "position": {
+        "x": 850,
+        "y": 260
+      },
+      "caption": "Enable Promiscuous Mode",
+      "labels": [
+        "auditd SYSCALL"
+      ],
+      "properties": {
+        "Use": "enrichment"
+      },
+      "style": {
+        "border-color": "#0062b1",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "right"
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "id": "r0",
+      "fromId": "n0",
+      "toId": "n1",
+      "type": "",
       "properties": {},
       "style": {}
     },
     {
-      "id": "n3",
-      "position": { "x": 340, "y": 220 },
-      "caption": "auditd SYSCALL record",
-      "labels": ["Telemetry"],
-      "properties": { "sensor": "auditd", "key": "det-eng", "match": "syscall=socket a0=11", "detection_opportunity": "PRIMARY" },
+      "id": "r1",
+      "fromId": "n1",
+      "toId": "n2",
+      "type": "",
+      "properties": {},
       "style": {}
     },
     {
-      "id": "n4",
-      "position": { "x": 340, "y": -220 },
-      "caption": "recvfrom(fd)",
-      "labels": ["Event", "Syscall"],
-      "properties": { "note": "high volume, low signal" },
+      "id": "r2",
+      "fromId": "n2",
+      "toId": "n3",
+      "type": "",
+      "properties": {},
       "style": {}
     },
     {
-      "id": "n5",
-      "position": { "x": 720, "y": -220 },
-      "caption": "Interface in promiscuous mode",
-      "labels": ["Object", "Optional"],
-      "properties": { "via": "setsockopt PACKET_MR_PROMISC or ioctl SIOCSIFFLAGS IFF_PROMISC" },
+      "id": "r3",
+      "fromId": "n1",
+      "toId": "n4",
+      "type": "optional",
+      "properties": {},
       "style": {}
     },
     {
-      "id": "n6",
-      "position": { "x": 720, "y": 220 },
-      "caption": "auditd SYSCALL record (enrichment)",
-      "labels": ["Telemetry", "Optional"],
-      "properties": { "sensor": "auditd", "match": "setsockopt / ioctl", "detection_opportunity": "ENRICHMENT" },
+      "id": "r4",
+      "fromId": "n4",
+      "toId": "n5",
+      "type": "",
+      "properties": {},
       "style": {}
     }
-  ],
-  "relationships": [
-    { "id": "r0", "type": "INVOKES", "fromId": "n0", "toId": "n1", "properties": {}, "style": {} },
-    { "id": "r1", "type": "CREATES", "fromId": "n1", "toId": "n2", "properties": {}, "style": {} },
-    { "id": "r2", "type": "RECORDED_AS", "fromId": "n1", "toId": "n3", "properties": { "primary": "true" }, "style": {} },
-    { "id": "r3", "type": "INVOKES", "fromId": "n0", "toId": "n4", "properties": {}, "style": {} },
-    { "id": "r4", "type": "DRAINS_FRAMES_FROM", "fromId": "n4", "toId": "n2", "properties": {}, "style": {} },
-    { "id": "r5", "type": "OPTIONALLY_ENABLES", "fromId": "n0", "toId": "n5", "properties": { "optional": "true" }, "style": {} },
-    { "id": "r6", "type": "RECORDED_AS", "fromId": "n5", "toId": "n6", "properties": { "optional": "true" }, "style": {} }
-  ],
-  "style": {}
+  ]
 }

@@ -1,5 +1,4 @@
 {
-  "_comment": "Detection Data Model skeleton in Arrows app (https://arrows.app) format, styled like the tired-labs/techniques DDMs. Nodes are operations (verb + object). Border colour = who performs the operation (e.g. green #68bc00 user-space process or client, blue #0062b1 kernel or control plane, purple #653294 node component, black abstract step). 'labels' = telemetry that records the operation (drawn as pills). 'properties' = the details a rule can match. Fill the primary detection node with node-color #fff2a8. Relationship 'type' is an optional edge label such as 'optional'. Save as ddms/trrNNNN_<platform>_<letter>.json and render the PNG with research/tools/render_ddm.py. Remove this _comment key if you import into Arrows.",
   "style": {
     "font-family": "sans-serif",
     "background-color": "#ffffff",
@@ -58,13 +57,32 @@
       "id": "n0",
       "position": {
         "x": 0,
+        "y": 150
+      },
+      "caption": "Capture Frames",
+      "labels": [],
+      "properties": {},
+      "style": {
+        "border-color": "#000000",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14
+      }
+    },
+    {
+      "id": "n1",
+      "position": {
+        "x": 270,
         "y": 0
       },
-      "caption": "Call syscall()",
+      "caption": "Call bpf()",
       "labels": [],
       "properties": {
-        "Process": "<who>",
-        "Arg": "<value>"
+        "Cmd": "BPF_PROG_LOAD",
+        "Requires": "CAP_BPF + CAP_NET_ADMIN"
       },
       "style": {
         "border-color": "#68bc00",
@@ -78,18 +96,111 @@
       }
     },
     {
-      "id": "n1",
+      "id": "n2",
       "position": {
-        "x": 270,
+        "x": 540,
         "y": 0
       },
-      "caption": "Create Object",
+      "caption": "Load Program",
       "labels": [
         "auditd SYSCALL"
       ],
       "properties": {
-        "a0": "<value> (<name>)",
-        "Requires": "<capability>"
+        "a0": "0x5 (BPF_PROG_LOAD)",
+        "Prog type": "XDP or tc (sched_cls)",
+        "Rule": "shared with T1014"
+      },
+      "style": {
+        "border-color": "#0062b1",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top",
+        "node-color": "#fff2a8"
+      }
+    },
+    {
+      "id": "n3",
+      "position": {
+        "x": 810,
+        "y": 0
+      },
+      "caption": "Attach Hook",
+      "labels": [],
+      "properties": {
+        "Hook": "XDP or tc ingress"
+      },
+      "style": {
+        "border-color": "#0062b1",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top"
+      }
+    },
+    {
+      "id": "n4",
+      "position": {
+        "x": 1080,
+        "y": 0
+      },
+      "caption": "Copy Frames",
+      "labels": [],
+      "properties": {
+        "To": "user space via BPF map"
+      },
+      "style": {
+        "border-color": "#0062b1",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top"
+      }
+    },
+    {
+      "id": "n5",
+      "position": {
+        "x": 270,
+        "y": 300
+      },
+      "caption": "Call socket()",
+      "labels": [],
+      "properties": {
+        "Family": "AF_XDP",
+        "Requires": "CAP_NET_RAW"
+      },
+      "style": {
+        "border-color": "#68bc00",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "bottom"
+      }
+    },
+    {
+      "id": "n6",
+      "position": {
+        "x": 540,
+        "y": 300
+      },
+      "caption": "Create XDP Socket",
+      "labels": [
+        "auditd SYSCALL"
+      ],
+      "properties": {
+        "a0": "0x2c (AF_XDP)"
       },
       "style": {
         "border-color": "#0062b1",
@@ -104,38 +215,18 @@
       }
     },
     {
-      "id": "n2",
-      "position": {
-        "x": 540,
-        "y": 0
-      },
-      "caption": "Use Object",
-      "labels": [],
-      "properties": {},
-      "style": {
-        "border-color": "#68bc00",
-        "border-width": 3,
-        "caption-font-size": 16,
-        "label-position": "outside",
-        "label-font-size": 14,
-        "label-border-width": 2,
-        "property-font-size": 14,
-        "outside-position": "top"
-      }
-    },
-    {
-      "id": "n3",
+      "id": "n7",
       "position": {
         "x": 810,
-        "y": 0
+        "y": 300
       },
-      "caption": "Kernel Effect",
+      "caption": "Read Frames",
       "labels": [],
       "properties": {
-        "Note": "<detail>"
+        "Via": "UMEM shared memory (kernel bypass)"
       },
       "style": {
-        "border-color": "#0062b1",
+        "border-color": "#68bc00",
         "border-width": 3,
         "caption-font-size": 16,
         "label-position": "outside",
@@ -151,7 +242,7 @@
       "id": "r0",
       "fromId": "n0",
       "toId": "n1",
-      "type": "",
+      "type": "XDP / tc",
       "properties": {},
       "style": {}
     },
@@ -167,6 +258,38 @@
       "id": "r2",
       "fromId": "n2",
       "toId": "n3",
+      "type": "",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r3",
+      "fromId": "n3",
+      "toId": "n4",
+      "type": "",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r4",
+      "fromId": "n0",
+      "toId": "n5",
+      "type": "AF_XDP",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r5",
+      "fromId": "n5",
+      "toId": "n6",
+      "type": "",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r6",
+      "fromId": "n6",
+      "toId": "n7",
       "type": "",
       "properties": {},
       "style": {}

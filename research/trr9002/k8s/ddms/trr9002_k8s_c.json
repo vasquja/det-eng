@@ -1,5 +1,4 @@
 {
-  "_comment": "Detection Data Model skeleton in Arrows app (https://arrows.app) format, styled like the tired-labs/techniques DDMs. Nodes are operations (verb + object). Border colour = who performs the operation (e.g. green #68bc00 user-space process or client, blue #0062b1 kernel or control plane, purple #653294 node component, black abstract step). 'labels' = telemetry that records the operation (drawn as pills). 'properties' = the details a rule can match. Fill the primary detection node with node-color #fff2a8. Relationship 'type' is an optional edge label such as 'optional'. Save as ddms/trrNNNN_<platform>_<letter>.json and render the PNG with research/tools/render_ddm.py. Remove this _comment key if you import into Arrows.",
   "style": {
     "font-family": "sans-serif",
     "background-color": "#ffffff",
@@ -60,11 +59,11 @@
         "x": 0,
         "y": 0
       },
-      "caption": "Call syscall()",
+      "caption": "Patch Pod",
       "labels": [],
       "properties": {
-        "Process": "<who>",
-        "Arg": "<value>"
+        "Method": "PATCH or PUT",
+        "Path": ".../pods/POD/ephemeralcontainers"
       },
       "style": {
         "border-color": "#68bc00",
@@ -83,13 +82,14 @@
         "x": 270,
         "y": 0
       },
-      "caption": "Create Object",
+      "caption": "Authorize Patch",
       "labels": [
-        "auditd SYSCALL"
+        "K8s Audit Log"
       ],
       "properties": {
-        "a0": "<value> (<name>)",
-        "Requires": "<capability>"
+        "objectRef.resource": "pods",
+        "objectRef.subresource": "ephemeralcontainers",
+        "verb": "patch or update"
       },
       "style": {
         "border-color": "#0062b1",
@@ -109,11 +109,13 @@
         "x": 540,
         "y": 0
       },
-      "caption": "Use Object",
+      "caption": "Update Pod Spec",
       "labels": [],
-      "properties": {},
+      "properties": {
+        "Field": "spec.ephemeralContainers"
+      },
       "style": {
-        "border-color": "#68bc00",
+        "border-color": "#0062b1",
         "border-width": 3,
         "caption-font-size": 16,
         "label-position": "outside",
@@ -129,10 +131,58 @@
         "x": 810,
         "y": 0
       },
-      "caption": "Kernel Effect",
+      "caption": "Start Container",
       "labels": [],
       "properties": {
-        "Note": "<detail>"
+        "Where": "existing pod",
+        "Image": "chosen by the client"
+      },
+      "style": {
+        "border-color": "#653294",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top"
+      }
+    },
+    {
+      "id": "n4",
+      "position": {
+        "x": 810,
+        "y": 300
+      },
+      "caption": "Send Attach Request",
+      "labels": [],
+      "properties": {
+        "Path": ".../pods/POD/attach"
+      },
+      "style": {
+        "border-color": "#68bc00",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "bottom"
+      }
+    },
+    {
+      "id": "n5",
+      "position": {
+        "x": 540,
+        "y": 300
+      },
+      "caption": "Authorize Attach",
+      "labels": [
+        "K8s Audit Log"
+      ],
+      "properties": {
+        "objectRef.subresource": "attach",
+        "Shared with": "TRR9002.K8S.A"
       },
       "style": {
         "border-color": "#0062b1",
@@ -167,6 +217,22 @@
       "id": "r2",
       "fromId": "n2",
       "toId": "n3",
+      "type": "",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r3",
+      "fromId": "n3",
+      "toId": "n4",
+      "type": "optional",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r4",
+      "fromId": "n4",
+      "toId": "n5",
       "type": "",
       "properties": {},
       "style": {}

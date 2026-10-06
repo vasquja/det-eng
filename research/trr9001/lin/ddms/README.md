@@ -1,19 +1,24 @@
 # Detection Data Models — TRR9001.LIN
 
-Each `*.json` file is an [Arrows app](https://arrows.app) export of one
-procedure's DDM. To edit a model, open Arrows, import the JSON, change the
-graph, then export the JSON back here. Export a PNG beside the JSON (same base
-name, `.png`) for the TRR and for the upstream pull request.
+One DDM per procedure. Each `*.json` file is the source: an
+[Arrows app](https://arrows.app) graph in the style of the
+[tired-labs/techniques](https://github.com/tired-labs/techniques) DDMs. Each
+`*.png` beside it is the picture the TRR shows, rendered from the JSON:
 
-The TRR README also inlines each DDM as a Mermaid diagram, so the graphs
-render on GitHub without a PNG.
+```sh
+python3 research/tools/render_ddm.py research/trr9001/lin/ddms/*.json
+```
 
-For this report the **inline Mermaid is the canonical DDM** for every
-procedure. Procedure A also ships an Arrows JSON export below as the worked
-exemplar of the format; add JSON exports for B, C, and D when a procedure's
-graph grows past what the inline Mermaid shows, or before an upstream
-contribution that asks for the JSON.
+To edit a model, change the JSON (by hand, or import it into Arrows and export
+it back), then render again. The TRR linter fails when a PNG is missing or
+older than its JSON.
 
-| File | Procedure | Chokepoint node |
-|------|-----------|-----------------|
-| `trr9001_lin_a.json` | TRR9001.LIN.A — raw packet socket | `socket(AF_PACKET)` (shared with B) |
+Colours: green = the sniffing process (user space), blue = the kernel, black =
+an abstract step. Shaded = the primary detection node.
+
+| File | Procedure | Primary detection node |
+|------|-----------|------------------------|
+| `trr9001_lin_a` | TRR9001.LIN.A — raw packet socket | `socket(AF_PACKET)` (chokepoint, shared with B) |
+| `trr9001_lin_b` | TRR9001.LIN.B — `PACKET_MMAP` ring | `socket(AF_PACKET)` (chokepoint, shared with A) |
+| `trr9001_lin_c` | TRR9001.LIN.C — raw IP socket | `socket(AF_INET/AF_INET6, SOCK_RAW)` |
+| `trr9001_lin_d` | TRR9001.LIN.D — eBPF / XDP capture | `bpf(BPF_PROG_LOAD)` and `socket(AF_XDP)` |

@@ -56,17 +56,20 @@
 
 #### Detection Data Model — `TRR0000.XXX.A`
 
-<!-- The DDM is a graph. Nodes are telemetry events / objects. Edges are
-     relations. Build it in the Arrows app (https://arrows.app), export the
-     JSON to ddms/trr0000_xxx_a.json, and export a PNG to ddms/ or images/.
-     You may ALSO inline a Mermaid version below so it renders on GitHub. -->
+<!-- The DDM is a graph, drawn the way tired-labs/techniques TRRs draw it:
+     circle nodes are operations (verb + object, e.g. "Call socket()"),
+     border colour says who performs it (say what each colour means in the
+     report), pill labels name the telemetry that records it, and Key: value
+     properties hold what a rule can match. Shade the primary detection node.
+     Write the graph as Arrows app JSON (https://arrows.app) in
+     ddms/trr0000_xxx_a.json (start from templates/ddm-template.json), then
+     render the PNG beside it:
+         python3 research/tools/render_ddm.py ddms/trr0000_xxx_a.json
+     The linter fails if the PNG is missing or older than the JSON. -->
 
-```mermaid
-flowchart LR
-    P["Process"] -->|invokes| S["<syscall>()"]
-    S -->|creates/affects| O["<kernel object>"]
-    S -->|recorded as| T["auditd SYSCALL record<br/>(the detection node)"]
-```
+![DDM - <procedure name>](ddms/trr0000_xxx_a.png)
+
+Source: [`ddms/trr0000_xxx_a.json`](ddms/trr0000_xxx_a.json) (Arrows app format).
 
 <!-- DDM summary: name the interesting nodes/edges. Which node is the best
      detection opportunity? Which sensor sees it (auditd, eBPF, EDR)? Is this
