@@ -397,7 +397,7 @@ does not detect an exec from a current `kubectl`. Each exec makes up to three
 events, one for each stage. Count one event for each `auditID`.
 
 - Sensor: API server audit log.
-- Rule (backlog): `detections/sigma/T1609/k8s_pod_exec_attach.yml`.
+- Rule: `detections/sigma/T1609/k8s_pod_exec_attach.yml` (built).
 
 **Strategy 2 — fallback (covers C).**
 Match audit events where `objectRef.resource` is `pods`,
@@ -407,7 +407,7 @@ low-noise. The attach step of `kubectl debug` also triggers Strategy 1.
 Correlate the two events on the pod name for a stronger signal.
 
 - Sensor: API server audit log.
-- Rule (backlog): `detections/sigma/T1609/k8s_pod_ephemeral_container.yml`.
+- Rule: `detections/sigma/T1609/k8s_pod_ephemeral_container.yml` (built).
 
 **Strategy 3 — fallback (covers D).**
 Match audit events where `objectRef.resource` is `nodes`,
@@ -417,7 +417,7 @@ tools read `/metrics` and `/stats` through `nodes/proxy` all the time. An
 exec path through the node proxy is very rare, so set a high level.
 
 - Sensor: API server audit log.
-- Rule (backlog): `detections/sigma/T1609/k8s_node_proxy_exec.yml`.
+- Rule: `detections/sigma/T1609/k8s_node_proxy_exec.yml` (built).
 
 **Strategy 4 — fallback (covers E; confirms A and D).**
 All exec paths end at the container runtime. The runtime starts a new process
@@ -430,8 +430,10 @@ no matching audit event, so correlate with Strategies 1 and 3. A node exec
 with no audit event in the same time window is a strong signal.
 
 - Sensor: a runtime security agent or an EDR agent on each node.
-- Rule (backlog): depends on the sensor. Sigma has no common log source for
-  this event.
+- Rule: none at the audit-log layer, by design. The signal depends on the
+  sensor, and Sigma has no common log source for a container runtime exec
+  event. The `emulate.sh e` test documents the gap: it shows a direct kubelet
+  call leaves no API server audit event.
 
 **Network fallback for E.**
 Alert on connections to TCP 10250 on nodes from sources other than the
@@ -474,29 +476,42 @@ that avoids the API server.
 
 ## Available Emulation Tests
 
-All tests need a lab cluster, for example `kind`, with an audit policy that
-records the subresources above.
+The tests run in a lab cluster with an audit policy that records the
+subresources above. The lab is a `kind` cluster; its config and audit policy
+are in [`detections/k8s/`](../../../detections/k8s/). Each test runs the benign
+command `id` through one control path. One script drives them all:
+[`atomics/T1609/src/emulate.sh`](../../../atomics/T1609/src/emulate.sh), with an
+Atomic Red Team wrapper in
+[`atomics/T1609/T1609.yaml`](../../../atomics/T1609/T1609.yaml).
 
 | ID | Test | Status |
 |----|------|--------|
-| TRR9002.K8S.A | Run a command in a test pod with `kubectl exec`. Do it once with WebSocket and once with SPDY. Confirm that the audit log shows `verb: get` and `verb: create`. | backlog |
-| TRR9002.K8S.B | Start a test pod with `stdin: true` and attach to it with `kubectl attach`. | backlog |
-| TRR9002.K8S.C | Add an ephemeral container to a test pod with `kubectl debug`. | backlog |
-| TRR9002.K8S.D | Send a request through `nodes/proxy` to the kubelet `/run` endpoint for a test pod, with a test service account. | backlog |
-| TRR9002.K8S.E | Send a request directly to the kubelet `/run` endpoint for a test pod, with a test credential. Confirm that the API server records no exec event. | backlog |
+| TRR9002.K8S.A | `emulate.sh a` — `kubectl exec` with `id`, once over WebSocket and once over SPDY. Confirms the audit log shows `verb: get` and `verb: create`. | **built** |
+| TRR9002.K8S.B | `emulate.sh b` — attach to the target pod with `kubectl attach`. | **built** |
+| TRR9002.K8S.C | `emulate.sh c` — add an ephemeral container with `kubectl debug`. | **built** |
+| TRR9002.K8S.D | `emulate.sh d` — run `id` through `nodes/proxy` to the kubelet `/run` endpoint. | **built** |
+| TRR9002.K8S.E | `emulate.sh e` — call the kubelet directly (read-only), from inside the control-plane node. Shows the API server records no event. | **built** |
 
 ## Detections
 
 | Strategy | Covers | Sigma rule | Sensor |
 |----------|--------|------------|--------|
-| 1 (chokepoint) | A, B, C (attach step) | `detections/sigma/T1609/k8s_pod_exec_attach.yml` (backlog) | API server audit log |
-| 2 (fallback) | C | `detections/sigma/T1609/k8s_pod_ephemeral_container.yml` (backlog) | API server audit log |
-| 3 (fallback) | D | `detections/sigma/T1609/k8s_node_proxy_exec.yml` (backlog) | API server audit log |
+| 1 (chokepoint) | A, B, C (attach step) | [`detections/sigma/T1609/k8s_pod_exec_attach.yml`](../../../detections/sigma/T1609/k8s_pod_exec_attach.yml) | API server audit log |
+| 2 (fallback) | C | [`detections/sigma/T1609/k8s_pod_ephemeral_container.yml`](../../../detections/sigma/T1609/k8s_pod_ephemeral_container.yml) | API server audit log |
+| 3 (fallback) | D | [`detections/sigma/T1609/k8s_node_proxy_exec.yml`](../../../detections/sigma/T1609/k8s_node_proxy_exec.yml) | API server audit log |
 | 4 (fallback) | E; confirms A, D | none; depends on the sensor | node runtime sensor |
 
-The existing validator (`detections/validate_detections.py`) replays atomics
-under `auditd`. It cannot test these rules. A Kubernetes test needs a lab
-cluster and a check of the audit log. This is backlog work.
+The auditd validator (`detections/validate_detections.py`) replays syscall
+atomics and cannot test these rules. The Kubernetes loop has its own validator,
+[`detections/validate_k8s_detections.py`](../../../detections/validate_k8s_detections.py):
+it reads the API server audit log the emulation produced and asserts each Sigma
+rule above matches. The workflow
+[`validate-k8s-detections.yml`](../../../.github/workflows/validate-k8s-detections.yml)
+runs the whole loop on a `kind` cluster for every change to these files.
+
+Strategy 4 (Procedure E) has no audit-log rule by design: a direct kubelet
+request never reaches the API server, so the `emulate.sh e` test documents the
+gap rather than feeding a rule. A node runtime sensor covers it.
 
 Upstream: propose a change to the SigmaHQ rule
 `kubernetes_audit_exec_into_container.yml` so that it matches `verb: get` as

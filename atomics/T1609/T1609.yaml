@@ -1,0 +1,138 @@
+attack_technique: T1609
+display_name: Container Administration Command (Kubernetes)
+
+# Behavioral emulation for TRR9002. Each test drives one control path that runs
+# a command in a container, so the API server writes the audit events the paired
+# Sigma rules key on. Every test runs the benign command `id`. These need a
+# reachable Kubernetes cluster with audit logging on (see
+# detections/k8s/kind-audit-cluster.yaml) and the TRR9002 target pod applied.
+
+atomic_tests:
+  - name: "TRR9002.K8S.A — exec through the API server (WebSocket and SPDY)"
+    auto_generated_guid: 3b1e7a2c-0d44-4e6a-9b11-5c2f7a0e9d01
+    description: |
+      Runs `id` in the target container twice: once over the WebSocket protocol
+      (the kubectl default since v1.31, recorded in the audit log as verb=get)
+      and once over SPDY (recorded as verb=create). The two verbs for the same
+      action are the key finding of TRR9002: a rule that matches only
+      verb=create misses a current kubectl.
+
+      Detection: objectRef.resource=pods, objectRef.subresource=exec, any verb.
+      Rule: detections/sigma/T1609/k8s_pod_exec_attach.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh a
+      cleanup_command: |
+        true
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1609/src
+
+  - name: "TRR9002.K8S.B — attach through the API server"
+    auto_generated_guid: 9f5c8d13-6b27-4a90-8e3d-1a7b4c2e6f02
+    description: |
+      Attaches to the running main process of the target container. No new
+      process starts; the stream connects to the existing shell. Produces an
+      audit event with objectRef.subresource=attach.
+
+      Detection: objectRef.resource=pods, objectRef.subresource=attach.
+      Rule: detections/sigma/T1609/k8s_pod_exec_attach.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh b
+      cleanup_command: |
+        true
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1609/src
+
+  - name: "TRR9002.K8S.C — ephemeral debug container"
+    auto_generated_guid: 2d6a9e44-7c18-4b53-9f0a-8e1c3b5d7a03
+    description: |
+      Adds an ephemeral debug container to the running target pod with
+      `kubectl debug`, then runs `id` in it. Produces an audit event with
+      objectRef.subresource=ephemeralcontainers (verb patch/update).
+
+      Detection: objectRef.resource=pods, subresource=ephemeralcontainers.
+      Rule: detections/sigma/T1609/k8s_pod_ephemeral_container.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh c
+      cleanup_command: |
+        true
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1609/src
+
+  - name: "TRR9002.K8S.D — exec through the API server node proxy"
+    auto_generated_guid: 7e0b1c55-3a92-4d61-8c24-6f9a2d4b8e04
+    description: |
+      Runs `id` through the API server node proxy: a request to
+      nodes/<node>/proxy that names the kubelet /run endpoint. The audit record
+      shows objectRef.resource=nodes, subresource=proxy, with the exec path in
+      requestURI — not pods/exec. Many monitoring service accounts hold
+      nodes/proxy, so this path bypasses a pods/exec rule.
+
+      Detection: objectRef.resource=nodes, subresource=proxy, requestURI
+      containing /exec/, /run/, or /attach/.
+      Rule: detections/sigma/T1609/k8s_node_proxy_exec.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh d
+      cleanup_command: |
+        true
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1609/src
+
+  - name: "TRR9002.K8S.E — direct kubelet access (detection-gap demonstration)"
+    auto_generated_guid: 5a4d2f66-8b03-4e72-9d15-7c0b3e6a1f05
+    description: |
+      Calls the kubelet's read-only /pods endpoint directly, from inside the
+      kind control-plane node, using the node's existing kubelet client
+      certificate. This request does not go through the API server, so the API
+      server audit log never records it. A command-execution call to the same
+      kubelet API would be just as invisible. This test documents the gap: there
+      is no API server audit event to match, which is why Strategy 4 needs a
+      node-level runtime sensor (for example Falco), not the audit log.
+
+      Detection: node runtime sensor; API server audit log cannot see this.
+      Rule: none (audit-log layer); see TRR9002 Detection Strategy 4.
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh e
+      cleanup_command: |
+        true
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1609/src

@@ -1,0 +1,36 @@
+title: Ephemeral Container Added To a Kubernetes Pod
+id: d1fbe60b-382e-40be-8519-14617c7cd5f2
+status: experimental
+description: |
+  Detects an ephemeral container added to a running pod through the
+  pods/ephemeralcontainers subresource. This is TRR9002 Strategy 2, covering
+  Procedure C.
+
+  `kubectl debug` uses this path to inject a debug container into a running pod,
+  choosing its own image and command, optionally sharing the process namespace
+  of a target container. It is the modern alternative to pods/exec: it does not
+  need a shell in the target image, and a pods/exec rule does not see the inject
+  step. Ephemeral containers are rare in production, so this is low volume.
+references:
+  - https://attack.mitre.org/techniques/T1609/
+  - https://kubernetes.io/docs/concepts/workloads/pods/ephemeral-containers/
+author: det-eng
+date: 2026/10/06
+tags:
+  - attack.execution
+  - attack.t1609
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_ephemeral:
+    objectRef.resource: 'pods'
+    objectRef.subresource: 'ephemeralcontainers'
+    verb:
+      - 'patch'
+      - 'update'
+  condition: select_ephemeral
+falsepositives:
+  - Operators debugging a pod that has no shell or tools, using `kubectl debug`.
+    Baseline the identities that legitimately do this.
+level: medium

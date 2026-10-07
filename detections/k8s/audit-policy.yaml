@@ -1,0 +1,67 @@
+# API server audit policy for the TRR9002 lab.
+#
+# Purpose: make the telemetry that the T1609 Sigma rules key on exist, while
+# keeping the log small enough to read in CI. This is the Kubernetes equivalent
+# of detections/audit/atomic.rules: on a default cluster the API server writes
+# NO audit log at all, so a detection has nothing to match. Load this first.
+#
+# Rules are evaluated top to bottom; the FIRST match wins. So the targeted
+# command-execution subresources come first at Metadata, then the high-volume
+# read traffic is dropped, then a catch-all keeps everything else at Metadata
+# (never None) so nothing security-relevant is silently lost.
+#
+# Metadata level is enough for this technique: it records user, sourceIPs,
+# userAgent, verb, objectRef (resource/subresource/namespace/name), requestURI
+# (which carries the exec command and container as query parameters), and
+# responseStatus.code. It does NOT record request or response bodies.
+apiVersion: audit.k8s.io/v1
+kind: Policy
+
+# Drop the RequestReceived stage everywhere. Each request would otherwise emit
+# an event at RequestReceived AND again at ResponseStarted/ResponseComplete
+# (same auditID). One stage is enough to detect the call and halves the log.
+omitStages:
+  - "RequestReceived"
+
+rules:
+  # --- Targeted: command execution in a container (the TRR9002 procedures) ---
+  # Procedures A and B: exec / attach on a pod. Logged whatever the verb
+  # (create for SPDY, get for WebSocket) — that distinction is the point.
+  - level: Metadata
+    resources:
+      - group: ""
+        resources: ["pods/exec", "pods/attach"]
+
+  # Procedure C: an ephemeral debug container added to a running pod.
+  - level: Metadata
+    resources:
+      - group: ""
+        resources: ["pods/ephemeralcontainers"]
+
+  # Procedure D: command execution forwarded through the API server node proxy.
+  - level: Metadata
+    resources:
+      - group: ""
+        resources: ["nodes/proxy", "nodes"]
+
+  # --- Noise reduction: drop high-volume read traffic from the controllers ---
+  - level: None
+    verbs: ["get", "list", "watch"]
+    resources:
+      - group: ""
+        resources:
+          ["endpoints", "events", "nodes/status", "pods/status",
+           "configmaps", "leases"]
+      - group: "coordination.k8s.io"
+        resources: ["leases"]
+      - group: "discovery.k8s.io"
+        resources: ["endpointslices"]
+
+  # Drop the kube-system service accounts' own chatter.
+  - level: None
+    users: ["system:apiserver", "system:kube-scheduler",
+            "system:kube-controller-manager"]
+    verbs: ["get", "list", "watch"]
+
+  # --- Catch-all: keep everything else at Metadata (never None) ---
+  - level: Metadata
