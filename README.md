@@ -1,5 +1,7 @@
 # det-eng — Detection Engineering Research
 
+[![lint-trr](https://github.com/vasquja/det-eng/actions/workflows/lint-trr.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/lint-trr.yml) [![validate-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-detections.yml)
+
 Detection research, worked in the open. This repository is where I study a
 MITRE ATT&CK technique end to end: understand how it works, model where it can
 be seen, build a test that triggers it, write a rule that catches it, and then
