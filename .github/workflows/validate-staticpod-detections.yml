@@ -1,0 +1,128 @@
+name: validate-staticpod-detections
+
+# Proves the TRR9003 (static pod, T1543.005) loop on a real Kubernetes cluster:
+#   drop a static pod manifest on the node -> kubelet runs it + registers a
+#   mirror pod -> API server audit event -> Strategy 2 Sigma rule fires.
+# It also exercises the evasion variant, which demonstrates the detection gap:
+# an invalid-namespace static pod runs on the node but leaves no audit event.
+#
+# A kind cluster (Kubernetes in Docker) runs on the ubuntu-latest runner with API
+# server audit logging on. The job runs the benign emulation (a harmless busybox
+# static pod), copies the audit log off the node, and asserts the mirror-pod rule
+# matches. On a public repo the run is free.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'detections/k8s/audit-policy-staticpod.yaml'
+      - 'detections/k8s/kind-staticpod-cluster.yaml'
+      - 'detections/sigma/T1543.005/**'
+      - 'detections/validate_staticpod_detections.py'
+      - 'atomics/T1543.005/**'
+      - '.github/workflows/validate-staticpod-detections.yml'
+  pull_request:
+    paths:
+      - 'detections/k8s/audit-policy-staticpod.yaml'
+      - 'detections/k8s/kind-staticpod-cluster.yaml'
+      - 'detections/sigma/T1543.005/**'
+      - 'detections/validate_staticpod_detections.py'
+      - 'atomics/T1543.005/**'
+      - '.github/workflows/validate-staticpod-detections.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  KIND_VERSION: v0.27.0
+  KUBECTL_VERSION: v1.32.2
+  CLUSTER_NAME: trr9003
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install PyYAML
+        run: pip install --quiet pyyaml
+
+      - name: Install kind and kubectl (pinned)
+        shell: bash
+        run: |
+          curl -fsSLo ./kind \
+            "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind
+          curl -fsSLo ./kubectl \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x ./kubectl && sudo mv ./kubectl /usr/local/bin/kubectl
+          kind version
+          kubectl version --client
+
+      - name: Create kind cluster with audit logging
+        shell: bash
+        run: |
+          # Run from the repo root so the relative extraMounts path resolves.
+          kind create cluster \
+            --name "${CLUSTER_NAME}" \
+            --config detections/k8s/kind-staticpod-cluster.yaml \
+            --wait 150s
+
+      - name: Confirm audit logging is active
+        shell: bash
+        run: |
+          docker exec "${CLUSTER_NAME}-control-plane" \
+            cat /etc/kubernetes/manifests/kube-apiserver.yaml | grep -- --audit- \
+            || { echo "::error::audit flags not set on the API server"; exit 1; }
+
+      - name: Emulate T1543.005 static pods (benign busybox)
+        shell: bash
+        run: |
+          bash atomics/T1543.005/src/emulate.sh all
+
+      - name: Collect the API server audit log
+        shell: bash
+        run: |
+          # Give the mirror-pod create event a moment to flush.
+          sleep 3
+          docker exec "${CLUSTER_NAME}-control-plane" \
+            cat /var/log/kubernetes/kube-apiserver-audit.log \
+            > /tmp/kube-apiserver-audit.log
+          echo "Collected $(wc -l < /tmp/kube-apiserver-audit.log) audit lines."
+
+      - name: Validate detections (static pod -> audit -> Sigma)
+        shell: bash
+        run: |
+          # shell: bash enables pipefail, so tee does not mask the exit code.
+          python3 detections/validate_staticpod_detections.py \
+            --audit-log /tmp/kube-apiserver-audit.log | tee /tmp/spval.out
+
+      - name: Publish results to job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## TRR9003 static-pod detection validation (static pod -> audit -> Sigma)'
+            echo ''
+            echo '```'
+            cat /tmp/spval.out 2>/dev/null || echo '(no validator output captured)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the audit log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kube-apiserver-audit-log-staticpod
+          path: /tmp/kube-apiserver-audit.log
+          if-no-files-found: ignore
+
+      - name: Delete the cluster
+        if: always()
+        shell: bash
+        run: kind delete cluster --name "${CLUSTER_NAME}" || true
