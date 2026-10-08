@@ -64,9 +64,11 @@ survives a restart.
 
 The pod can also be hard to see. The kubelet normally registers a read-only
 "mirror pod" in the API server so an administrator can list the static pod with
-`kubectl`. If the manifest names a namespace that does not exist, the kubelet
-cannot register the mirror pod. The static pod still runs. It just never appears
-in the API at all. Only a tool on the node, such as `crictl`, shows it.
+`kubectl`. If the manifest names a namespace that does not exist, the API server
+rejects the mirror pod, so no pod object is stored and `kubectl get pods` cannot
+see it. The static pod still runs on the node, where only a tool such as
+`crictl` shows it. (The kubelet's rejected mirror-pod attempt is still written
+to the audit log, as a failed request; what no record shows is the pod running.)
 
 This technique uses a control path that the control plane does not see. A
 detection cannot rely on the API server audit log alone. It must use a sensor on
@@ -149,7 +151,7 @@ API identity for them. An adversary reaches cluster secrets by other means, for
 example a `hostPath` mount of node files or the service account token of a
 normal pod.
 
-### The one audit-log trace, and how it disappears
+### The one audit-log trace, and its limits
 
 On a cluster with an audit policy, the only API server record of this technique
 is the mirror pod create:
@@ -160,27 +162,34 @@ is the mirror pod create:
 | `objectRef.resource` | `pods` |
 | `user.username` | `system:node:<nodeName>` |
 | `objectRef.namespace`, `objectRef.name` | the static pod's namespace and `<pod-name>-<nodeName>` |
+| `responseStatus.code` | `2xx` when the mirror pod is stored; `4xx` when the namespace does not exist |
 
 At the `Metadata` audit level the event has the fields above, but not the pod
 object, so it does not show the `config.source` or `config.mirror` annotation.
 The `Request` level adds the object and those annotations.
 
-This record is weak for two reasons. First, the control-plane components produce
-the same event — a mirror pod create by `system:node:<nodeName>` — every time a
-kubelet starts. So the event is not rare; an administrator must separate the
-adversary's mirror pod from the control-plane ones by namespace, name, and node.
-Second, the adversary removes the event entirely by naming a namespace that does
-not exist. Then the kubelet cannot create the mirror pod, so there is no create
-to audit, and the pod still runs.
+This record is weak for three reasons. First, it records the mirror-pod
+*attempt*, not the running workload: the audit log never shows the pod actually
+start on the node. Second, the control-plane components produce the same event —
+a mirror pod create by `system:node:<nodeName>` — every time a kubelet starts, so
+the event is not rare; an administrator must separate the adversary's mirror pod
+from the control-plane ones by namespace, name, and node. Third, an adversary who
+names a namespace that does not exist stops the mirror pod *object* from being
+stored — so `kubectl get pods` and anything watching pod objects are blind — but
+the kubelet's attempt is still audited, now as a **failed** create (a non-`2xx`
+`responseStatus.code`). A node creating a pod into a namespace that does not
+exist is, if anything, higher signal than a normal mirror create. What no audit
+event ever shows is the pod running; only a node runtime sensor sees that.
 
 ### Why the technique works
 
 The kubelet is built to run node-local manifests without the control plane,
 because that is how the control plane starts. The feature is an API-server
-bypass by design. The control plane cannot authorize, admit, or audit a pod it
-never receives. So the authoritative record of a static pod is on the node: the
-manifest file, the kubelet, and the container runtime. A detection must read
-from there.
+bypass by design. The control plane cannot authorize, admit, or schedule a pod
+it never receives, and the audit log sees only the kubelet's mirror-pod attempt,
+never the running workload. So the authoritative record of a static pod is on
+the node: the manifest file, the kubelet, and the container runtime. A detection
+must read from there.
 
 ## Procedures
 
@@ -234,9 +243,11 @@ Source: [`ddms/trr9003_k8s_a.json`](ddms/trr9003_k8s_a.json) (Arrows app format)
 sensor sees it, and the attacker cannot avoid it — the pod must start to run. The
 *Write Pod Manifest* node is a second node opportunity: a file create in the
 static-pod directory, seen by a node file monitor. The *Create Mirror Pod* node
-is the only API-server-side opportunity, and it is a fallback: it is absent when
-the attacker names an invalid namespace, and the control plane produces the same
-event at every kubelet start.
+is the only API-server-side opportunity, and it is a fallback: it records the
+mirror *attempt*, not the running pod; the attacker's invalid-namespace variant
+turns it into a *failed* create (which is still audited, and is higher signal)
+while removing the pod object; and the control plane produces the same event at
+every kubelet start.
 
 ### Procedure B: Reconfigure the kubelet static source  (`TRR9003.K8S.B`)
 
@@ -280,13 +291,15 @@ Compare the two DDMs. Both end at the same node: the kubelet starts a pod the
 API server never scheduled. That node is the invariant chokepoint, and it is on
 the node, not in the control plane. The upstream nodes differ — a file write to a
 watched directory for A, a kubelet reconfiguration for B — and each gives a
-node-level fallback. The one API-server record, the mirror pod create, is weak
-and evadable.
+node-level fallback. The one API-server record, the mirror pod create, is weak:
+it records the mirror *attempt*, not the running pod, and it is noisy at
+bootstrap.
 
 So the plan has four parts, and only one of them lives in the API server audit
-log. The audit log carries just the evadable fallback. The strong, evasion-proof
-anchor is a node runtime sensor. This is the same shape as TRR9002: the path that
-avoids the API server needs a node sensor, and the audit log cannot replace it.
+log. The audit log carries just that fallback. The strong, evasion-proof anchor
+is a node runtime sensor — it is the only thing that sees the pod actually
+running. This is the same shape as TRR9002: the path that avoids the API server
+needs a node sensor, and the audit log cannot replace it.
 
 **Telemetry note.** Strategy 2 needs the API server audit policy to record
 `pods` create at `Metadata` level or higher. Strategies 1, 3, and 4 need node
@@ -305,19 +318,24 @@ namespace and whatever the source. This is the only evasion-proof anchor.
 
 - Sensor: a runtime security agent or an EDR agent on each node.
 - Rule: none at the audit-log layer, by design. The `emulate.sh` evasion variant
-  documents the gap: an invalid-namespace static pod runs on the node and
-  produces no API server audit event at all.
+  shows the limit of the audit log: an invalid-namespace static pod runs on the
+  node, the audit log records only the kubelet's *failed* mirror-pod attempt (not
+  the running pod), and no pod object is stored — so only a node runtime sensor
+  sees the workload itself.
 
-**Strategy 2 — fallback (covers A and B when the mirror pod is created).**
+**Strategy 2 — fallback (covers A and B).**
 Match audit events where `verb` is `create`, `objectRef.resource` is `pods`, and
 `user.username` is a node identity (`system:node:...`). Normally a node creates a
-pod only to register a mirror pod for a static pod, so this is a narrow signal.
-It is a fallback, not the anchor, for two reasons: an invalid namespace removes
-the event, and the control-plane components produce the same event at every
-kubelet start. Triage on namespace, pod name, and node: the control-plane mirror
-pods are in `kube-system` with known names (`kube-apiserver-*`, `etcd-*`,
-`kube-controller-manager-*`, `kube-scheduler-*`). A node-created pod outside
-`kube-system`, or a `kube-system` pod that is not one of those, is the signal.
+pod only to register a mirror pod for a static pod, so this is a narrow signal,
+and it fires for the invalid-namespace variant too (as a failed create). It is a
+fallback, not the anchor, for two reasons: it records the mirror *attempt*, not
+the running pod, and the control-plane components produce the same event at every
+kubelet start. Triage on namespace, pod name, node, and `responseStatus.code`:
+the control-plane mirror pods are in `kube-system` with known names
+(`kube-apiserver-*`, `etcd-*`, `kube-controller-manager-*`, `kube-scheduler-*`)
+and succeed. A node-created pod outside `kube-system`, a `kube-system` pod that
+is not one of those, or any node pod-create with a non-`2xx` status (the
+invalid-namespace evasion), is the signal.
 
 - Sensor: API server audit log.
 - Rule: [`detections/sigma/T1543.005/k8s_static_pod_mirror_create.yml`](../../../detections/sigma/T1543.005/k8s_static_pod_mirror_create.yml) (built).
@@ -348,23 +366,29 @@ Sigma audit rule covers them.
   `privileged: true`. A static pod with node-level access is higher risk.
 - **Namespace.** The static pod is in `kube-system` or another system namespace,
   to blend with the control-plane static pods, or in a namespace that does not
-  exist, to suppress the mirror pod.
+  exist, to suppress the mirror pod *object*.
+- **Failed node create.** A `create pods` by a node identity with a non-`2xx`
+  `responseStatus.code` — a node creating a pod into a namespace that does not
+  exist — is the invalid-namespace evasion variant, and is high fidelity.
 - **Image and command.** The image is not a cluster component. The command names
   a shell, a download tool, or a reverse-shell pattern.
-- **Visibility gap.** A pod runs on the node (seen with `crictl`) with no pod or
-  mirror pod in the API for it. A reconciliation between node runtime inventory
-  and the API server surfaces this directly.
+- **Visibility gap.** A pod runs on the node (seen with `crictl`) with no pod
+  object in the API for it. A reconciliation between node runtime inventory and
+  the API server surfaces this directly, and catches the invalid-namespace case
+  that leaves only a failed create in the audit log.
 
 **Coverage summary.**
 
 | Procedure | Covered by | How |
 |-----------|-----------|-----|
-| A | Strategy 1 (chokepoint); Strategy 3; Strategy 2 if a mirror pod is created | kubelet starts a `config.source: file` pod; file write to `staticPodPath`; mirror pod create by a node |
-| B | Strategy 1 (chokepoint); Strategy 4; Strategy 2 if a mirror pod is created | kubelet starts a `config.source: file`/`http` pod; kubelet config change + restart, or outbound manifest fetch; mirror pod create by a node |
+| A | Strategy 1 (chokepoint); Strategy 3; Strategy 2 (mirror attempt) | kubelet starts a `config.source: file` pod; file write to `staticPodPath`; mirror pod create by a node (success, or a failed create for an invalid namespace) |
+| B | Strategy 1 (chokepoint); Strategy 4; Strategy 2 (mirror attempt) | kubelet starts a `config.source: file`/`http` pod; kubelet config change + restart, or outbound manifest fetch; mirror pod create by a node |
 
-One node runtime rule covers both procedures and resists evasion. The audit-log
-rule covers the common, non-evasive case but is noisy and avoidable. Two node
-rules cover the upstream file and configuration changes.
+One node runtime rule covers both procedures and resists evasion — it is the only
+sensor that sees the pod running. The audit-log rule catches the mirror-pod
+attempt (including the invalid-namespace variant, as a failed create) but records
+the attempt, not the workload, and is noisy at bootstrap. Two node rules cover
+the upstream file and configuration changes.
 
 ## Available Emulation Tests
 
@@ -381,7 +405,7 @@ up the manifest it wrote.
 | ID | Test | Status |
 |----|------|--------|
 | TRR9003.K8S.A | `emulate.sh a` — write a benign static pod manifest to `/etc/kubernetes/manifests` on the node; confirm the kubelet starts it and registers a mirror pod (`create pods` by `system:node:...`). | **built** |
-| TRR9003.K8S.A (evasion) | `emulate.sh gap` — write a manifest with a namespace that does not exist; show the pod runs on the node (`crictl`) but never appears in `kubectl get pods -A` and produces no mirror-pod audit event. | **built** |
+| TRR9003.K8S.A (evasion) | `emulate.sh gap` — write a manifest with a namespace that does not exist; show the pod runs on the node (`crictl`) and never appears as an object in `kubectl get pods -A`. The kubelet's mirror-pod attempt is audited as a *failed* create, while the running pod itself is not — only the node sensor sees it. | **built** |
 | TRR9003.K8S.B | `emulate.sh b` — read-only demonstration of the kubelet static-source configuration (`staticPodPath` / `staticPodURL`); shows the reconfiguration point without restarting the kubelet, to keep the lab stable. | **built (read-only)** |
 
 ## Detections
@@ -389,22 +413,25 @@ up the manifest it wrote.
 | Strategy | Covers | Sigma rule | Sensor |
 |----------|--------|------------|--------|
 | 1 (chokepoint) | A, B | none; depends on the sensor | node runtime sensor |
-| 2 (fallback) | A, B (mirror pod created) | [`detections/sigma/T1543.005/k8s_static_pod_mirror_create.yml`](../../../detections/sigma/T1543.005/k8s_static_pod_mirror_create.yml) | API server audit log |
+| 2 (fallback) | A, B (mirror-pod attempt) | [`detections/sigma/T1543.005/k8s_static_pod_mirror_create.yml`](../../../detections/sigma/T1543.005/k8s_static_pod_mirror_create.yml) | API server audit log |
 | 3 (fallback) | A | [`detections/sigma/T1543.005/linux_static_pod_manifest_write.yml`](../../../detections/sigma/T1543.005/linux_static_pod_manifest_write.yml) | node file integrity / EDR |
 | 4 (fallback) | B | none; documented | node config + flow telemetry |
 
 The Kubernetes loop has its own validator,
 [`detections/validate_staticpod_detections.py`](../../../detections/validate_staticpod_detections.py):
 it reads the API server audit log the emulation produced and asserts the
-Strategy 2 Sigma rule matches the mirror-pod create. The workflow
+Strategy 2 Sigma rule matches the mirror-pod create (it also separates the
+injected static pod from the control-plane baseline and reports the
+invalid-namespace variant as a failed create). The workflow
 [`validate-staticpod-detections.yml`](../../../.github/workflows/validate-staticpod-detections.yml)
 runs the whole loop on a `kind` cluster for every change to these files.
 
-Strategy 1 (the chokepoint) has no audit-log rule by design: a static pod never
-reaches the API server, so the `emulate.sh gap` test documents the gap rather
-than feeding a rule. A node runtime sensor covers it. Strategy 3's rule is a node
-file-event rule; it parses in the validator but the audit-log loop does not
-exercise it, because it needs node file telemetry, not the API server audit log.
+Strategy 1 (the chokepoint) has no audit-log rule by design: the running
+workload never reaches the API server (only the kubelet's mirror-pod attempt
+does), so the `emulate.sh gap` test documents the gap rather than feeding a rule.
+A node runtime sensor covers it. Strategy 3's rule is a node file-event rule; it
+parses in the validator but the audit-log loop does not exercise it, because it
+needs node file telemetry, not the API server audit log.
 
 This technique is not covered by `tired-labs/techniques` (no Kubernetes TRR
 exists there), by the SigmaHQ Kubernetes audit rules (there is no static-pod or

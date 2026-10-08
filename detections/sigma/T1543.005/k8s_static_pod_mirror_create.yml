@@ -10,18 +10,24 @@ description: |
   API-server trace of it. This is the TRR9003 Strategy 2 fallback, covering
   Procedure A (manifest drop) and Procedure B (reconfigured static source).
 
-  This is a FALLBACK, not the chokepoint. It is evadable and noisy:
-    - An attacker who names a namespace that does not exist stops the kubelet
-      from creating the mirror pod, so there is NO event, yet the static pod
-      still runs on the node.
+  This is a FALLBACK, not the chokepoint. It records the mirror-pod ATTEMPT, not
+  the running pod, and it is noisy:
+    - An attacker who names a namespace that does not exist stops the mirror pod
+      OBJECT from being stored (kubectl get pods is blind to it), but the
+      kubelet's create attempt is still audited — as a FAILED create (a non-2xx
+      responseStatus.code, the namespace not found). This rule matches it, and a
+      node creating a pod into a non-existent namespace is in fact higher signal.
+      What no audit event ever records is the pod actually RUNNING on the node;
+      only a node runtime sensor sees that (TRR9003 Strategy 1).
     - The control-plane components are themselves static pods, so a kubelet
       produces this same event for kube-apiserver, etcd, kube-controller-manager,
       and kube-scheduler at every start.
-  Triage on namespace, name, and node. The control-plane mirror pods are in
-  kube-system with known names (kube-apiserver-*, etcd-*, kube-controller-manager-*,
-  kube-scheduler-*). A node-created pod OUTSIDE kube-system, or a kube-system pod
-  that is not one of those, is the signal. The evasion-proof anchor is the node
-  runtime sensor (TRR9003 Strategy 1), not this audit event.
+  Triage on namespace, name, node, and responseStatus.code. The control-plane
+  mirror pods are in kube-system with known names (kube-apiserver-*, etcd-*,
+  kube-controller-manager-*, kube-scheduler-*) and succeed (2xx). A node-created
+  pod OUTSIDE kube-system, a kube-system pod that is not one of those, or any
+  node pod-create with a non-2xx status (the invalid-namespace evasion), is the
+  signal. The evasion-proof anchor is the node runtime sensor, not this event.
 references:
   - https://attack.mitre.org/techniques/T1543/005/
   - https://kubernetes.io/docs/tasks/configure-pod-container/static-pod/

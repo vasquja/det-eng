@@ -116,12 +116,14 @@ procedure_gap() {
   log "gap: the node runtime SEES the pod sandbox (crictl):"
   node_sh "crictl pods --name '$GHOST_NAME' 2>/dev/null || true" || true
 
-  log "gap: the API server does NOT — no pod in any namespace:"
+  log "gap: the API server has NO pod OBJECT for it (kubectl get pods -A):"
   if kubectl get pods -A 2>/dev/null | grep -q "$GHOST_NAME"; then
-    log "gap: UNEXPECTED — a '$GHOST_NAME' pod is visible in the API"
+    log "gap: UNEXPECTED — a '$GHOST_NAME' pod object is visible in the API"
   else
-    log "gap: confirmed — '$GHOST_NAME' is absent from 'kubectl get pods -A'"
-    log "gap: and there is no mirror-pod create to audit. The audit log is blind."
+    log "gap: confirmed — '$GHOST_NAME' has no pod object in 'kubectl get pods -A'"
+    log "gap: the kubelet's mirror-pod ATTEMPT is still audited (as a FAILED create,"
+    log "gap: non-2xx, namespace not found) — but the RUNNING pod above is not."
+    log "gap: only the node runtime sees the workload; the audit log sees the attempt."
   fi
 
   log "gap: clean up — remove the manifest"

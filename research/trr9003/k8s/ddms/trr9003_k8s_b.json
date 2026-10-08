@@ -165,7 +165,7 @@
       "properties": {
         "verb": "create",
         "user.username": "system:node:NODE",
-        "Suppressed if": "invalid namespace"
+        "responseStatus": "201, or 4xx (bad ns)"
       },
       "style": {
         "border-color": "#0062b1",

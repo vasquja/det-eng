@@ -152,14 +152,20 @@ def dedup_by_audit_id(matches):
 
 
 def node_created_pods(events):
-    """(name, namespace) for each create-pods by a system:node identity."""
+    """(name, namespace, user, code) for each create-pods by a system:node identity.
+
+    `code` is responseStatus.code: 2xx for a mirror pod that was stored, non-2xx
+    for a mirror-create the API server rejected (e.g. an invalid-namespace
+    evasion static pod). The create attempt is audited either way.
+    """
     out = []
     for e in events:
         ref = e.get("objectRef") or {}
         user = (e.get("user") or {}).get("username", "")
         if (e.get("verb") == "create" and ref.get("resource") == "pods"
                 and "system:node:" in str(user)):
-            out.append((ref.get("name"), ref.get("namespace"), user))
+            code = (e.get("responseStatus") or {}).get("code")
+            out.append((ref.get("name"), ref.get("namespace"), user, code))
     return out
 
 
@@ -230,20 +236,22 @@ def main():
             misses += 1
             print(f"MISS  [{proc}] {fname}: no event matched")
 
-    # Separate the emulation's own static pod from the control-plane baseline.
+    # Separate the emulation's own static pods from the control-plane baseline.
     created = node_created_pods(events)
     injected = [p for p in created if (p[0] or "").startswith(INJECTED_PREFIX)]
     baseline = [p for p in created
                 if (p[0] or "").startswith(CONTROL_PLANE_PREFIXES)]
-    other = [p for p in created if p not in injected and p not in baseline]
+    evasion = [p for p in created if (p[0] or "").startswith(GHOST_NAME)]
+    classified = set(injected) | set(baseline) | set(evasion)
+    other = [p for p in created if p not in classified]
     print()
-    print(f"Node-created pods (mirror pods) seen: {len(created)}")
+    print(f"Node-created pods (mirror-pod creates) seen: {len(created)}")
     if baseline:
         print(f"  baseline (control-plane static pods): "
-              f"{', '.join(sorted(n for n, _, _ in baseline))}")
+              f"{', '.join(sorted({n for n, _, _, _ in baseline}))}")
     if injected:
-        for name, ns, user in injected:
-            print(f"  INJECTED (Procedure A): {name} in ns={ns} by {user}")
+        for name, ns, user, code in injected:
+            print(f"  INJECTED (Procedure A): {name} in ns={ns} by {user} (code={code})")
         print("  -> the emulated static pod produced the Strategy 2 audit event.")
     else:
         print("  note: no 'trr9003-static-*' mirror pod seen. If Procedure A ran, "
@@ -251,20 +259,33 @@ def main():
               "not record pods create.")
     if other:
         print(f"  other node-created pods (triage): "
-              f"{', '.join(sorted(n for n, _, _ in other))}")
+              f"{', '.join(sorted(n for n, _, _, _ in other))}")
 
-    # Gap report (informational, never gated): the evasion static pod leaves no
-    # successful mirror-pod create, so it never appears as a node-created pod.
-    ghost_seen = any((n or "").startswith(GHOST_NAME) for n, _, _ in created)
-    print("\nDetection gap (Strategy 1, chokepoint):")
-    if ghost_seen:
-        print(f"  UNEXPECTED — a '{GHOST_NAME}' mirror pod create is in the audit "
-              f"log. The invalid-namespace evasion should produce none.")
+    # Evasion variant and the chokepoint (informational, never gated). The
+    # invalid-namespace static pod does NOT evade the audit log: the kubelet still
+    # ATTEMPTS the mirror-pod create, which is audited as a FAILED (non-2xx)
+    # create. What it evades is the pod OBJECT store (kubectl get pods is blind)
+    # and, crucially, any record that the pod is actually RUNNING — only a node
+    # runtime sensor sees that.
+    print("\nEvasion variant (invalid namespace) and the Strategy 1 chokepoint:")
+    if evasion:
+        codes = sorted({str(c) for _, _, _, c in evasion})
+        failed = [p for p in evasion
+                  if not (isinstance(p[3], int) and 200 <= p[3] < 300)]
+        print(f"  the invalid-namespace static pod ('{GHOST_NAME}') appears as a "
+              f"mirror-create by the node, responseStatus code(s): {', '.join(codes)}.")
+        if failed:
+            print("  that create FAILED (non-2xx): the API server rejected the mirror "
+                  "pod because the namespace does not exist, so NO pod object was "
+                  "stored and 'kubectl get pods -A' is blind to it. But the attempt "
+                  "is still audited, and the Strategy 2 rule matches it — a node "
+                  "creating a pod into a non-existent namespace is high signal.")
+        print("  What NO audit event records is the pod actually RUNNING on the node "
+              "(the audit log sees the mirror attempt, not the workload). That is the "
+              "gap Strategy 1 fills, and only a node runtime sensor is evasion-proof.")
     else:
-        print(f"  confirmed — the invalid-namespace static pod ('{GHOST_NAME}') "
-              f"produced NO mirror-pod create in the audit log.")
-        print("  The API server (and every Sigma audit rule) is blind to it; "
-              "Strategy 1 needs a node runtime sensor.")
+        print(f"  note: no '{GHOST_NAME}' events seen (the evasion test may not have "
+              "run, or the audit policy did not record failed pods create).")
 
     print()
     if parse_errors:

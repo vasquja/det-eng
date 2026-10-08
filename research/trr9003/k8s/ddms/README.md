@@ -29,5 +29,7 @@ plane is not in this path.
 
 The *Create Mirror Pod* node (blue) is the one audit-log opportunity: the
 kubelet registers a mirror pod as `system:node:<node>`. It is a fallback, not
-the anchor — an attacker suppresses it by naming an invalid namespace, and the
+the anchor — it records the mirror *attempt*, not the running pod. An attacker
+who names an invalid namespace removes the mirror pod *object* (the audited
+create then fails with a non-`2xx` status, which is still high signal), and the
 control-plane components produce the same event at every kubelet start.

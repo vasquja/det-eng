@@ -7,12 +7,15 @@
 # server. But when the kubelet tries to register the mirror pod, the API server
 # rejects it, because the namespace does not exist. So:
 #   - the pod runs on the node (visible with `crictl pods` / `crictl ps`), and
-#   - it NEVER appears in `kubectl get pods -A`, and
-#   - there is NO successful mirror-pod create in the API server audit log.
+#   - it NEVER appears as a pod object in `kubectl get pods -A`, and
+#   - the kubelet's mirror-pod attempt is audited as a FAILED create (non-2xx,
+#     namespace not found) — not a successful one, so no pod object is stored.
 #
-# This demonstrates the detection gap: the API server audit log (and therefore
-# every Sigma audit rule) is blind to this static pod. Only a node runtime sensor
-# sees it. The emulation removes this file afterward.
+# This demonstrates the LIMIT of the audit log: it records the kubelet's mirror
+# ATTEMPT, never the pod actually running. A node creating a pod into a namespace
+# that does not exist is itself high signal (the Strategy 2 rule matches it), but
+# only a node runtime sensor sees the running workload. The emulation removes this
+# file afterward.
 apiVersion: v1
 kind: Pod
 metadata:
