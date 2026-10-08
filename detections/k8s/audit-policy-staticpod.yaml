@@ -1,0 +1,53 @@
+# API server audit policy for the TRR9003 (static pod) lab.
+#
+# Purpose: make the one API-server trace of a static pod exist — the mirror-pod
+# create a kubelet performs as system:node:<nodeName> — while keeping the log
+# small enough to read in CI. On a default cluster the API server writes NO audit
+# log at all, so a detection has nothing to match. Load this first.
+#
+# Rules are evaluated top to bottom; the FIRST match wins. The targeted pod
+# create/delete comes first at Metadata, then the high-volume read and status
+# traffic is dropped, then a catch-all keeps everything else at Metadata (never
+# None) so nothing security-relevant is silently lost.
+#
+# Metadata level is enough for the Strategy 2 rule: it records user (the
+# system:node identity), verb, objectRef (resource/namespace/name), sourceIPs,
+# and responseStatus.code. It does NOT record the pod object, so it does not
+# carry the kubernetes.io/config.source annotation; raise pods create to Request
+# level if you want that annotation for higher-fidelity triage.
+apiVersion: audit.k8s.io/v1
+kind: Policy
+
+# Drop the RequestReceived stage everywhere; one stage per request is enough and
+# halves the log.
+omitStages:
+  - "RequestReceived"
+
+rules:
+  # --- Targeted: pod create/delete (the TRR9003 Strategy 2 mirror-pod anchor) ---
+  # A kubelet creates a pod only to register a mirror pod for a static pod, so a
+  # `create pods` by system:node:<nodeName> is the static-pod trace. Keep delete
+  # too, so teardown is visible.
+  - level: Metadata
+    verbs: ["create", "delete"]
+    resources:
+      - group: ""
+        resources: ["pods"]
+
+  # --- Noise reduction: drop high-volume read and status/heartbeat traffic ---
+  - level: None
+    verbs: ["get", "list", "watch"]
+
+  - level: None
+    resources:
+      - group: ""
+        resources:
+          ["pods/status", "nodes/status", "endpoints", "events",
+           "configmaps", "leases"]
+      - group: "coordination.k8s.io"
+        resources: ["leases"]
+      - group: "discovery.k8s.io"
+        resources: ["endpointslices"]
+
+  # --- Catch-all: keep everything else at Metadata (never None) ---
+  - level: Metadata

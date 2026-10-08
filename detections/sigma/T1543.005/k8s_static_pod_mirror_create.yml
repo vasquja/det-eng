@@ -1,0 +1,59 @@
+title: Kubernetes Pod Created By a Node Identity (Static Pod Mirror)
+id: b1c4036d-cbb9-4bac-a2bd-0e71289239e0
+status: experimental
+description: |
+  Detects a pod creation in the Kubernetes API server performed by a node
+  identity (user.username system:node:<nodeName>). A kubelet creates a pod only
+  to register a "mirror pod" for a static pod it runs from a node-local manifest
+  or a manifest URL. A static pod never passes through the API server's
+  authorization, admission, or scheduling, so this mirror-pod create is the only
+  API-server trace of it. This is the TRR9003 Strategy 2 fallback, covering
+  Procedure A (manifest drop) and Procedure B (reconfigured static source).
+
+  This is a FALLBACK, not the chokepoint. It records the mirror-pod ATTEMPT, not
+  the running pod, and it is noisy:
+    - An attacker who names a namespace that does not exist stops the mirror pod
+      OBJECT from being stored (kubectl get pods is blind to it), but the
+      kubelet's create attempt is still audited — as a FAILED create (a non-2xx
+      responseStatus.code, the namespace not found). This rule matches it, and a
+      node creating a pod into a non-existent namespace is in fact higher signal.
+      What no audit event ever records is the pod actually RUNNING on the node;
+      only a node runtime sensor sees that (TRR9003 Strategy 1).
+    - The control-plane components are themselves static pods, so a kubelet
+      produces this same event for kube-apiserver, etcd, kube-controller-manager,
+      and kube-scheduler at every start.
+  Triage on namespace, name, node, and responseStatus.code. The control-plane
+  mirror pods are in kube-system with known names (kube-apiserver-*, etcd-*,
+  kube-controller-manager-*, kube-scheduler-*) and succeed (2xx). A node-created
+  pod OUTSIDE kube-system, a kube-system pod that is not one of those, or any
+  node pod-create with a non-2xx status (the invalid-namespace evasion), is the
+  signal. The evasion-proof anchor is the node runtime sensor, not this event.
+references:
+  - https://attack.mitre.org/techniques/T1543/005/
+  - https://kubernetes.io/docs/tasks/configure-pod-container/static-pod/
+  - https://kubernetes.io/docs/concepts/security/api-server-bypass-risks/
+  - https://kubernetes.io/docs/reference/access-authn-authz/node/
+author: det-eng
+date: 2026/10/08
+tags:
+  - attack.persistence
+  - attack.t1543.005
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_pod_create:
+    verb: 'create'
+    objectRef.resource: 'pods'
+  select_node_identity:
+    user.username|contains: 'system:node:'
+  condition: select_pod_create and select_node_identity
+falsepositives:
+  - Control-plane static pods. On a kubeadm-style cluster the control plane runs
+    as static pods, so each kubelet registers mirror pods (kube-apiserver-*,
+    etcd-*, kube-controller-manager-*, kube-scheduler-*) in kube-system at start.
+    Baseline these by node, namespace, and name.
+  - Other node-managed system static pods that an operator installs deliberately
+    (for example a CNI or a storage agent delivered as a static pod). Baseline
+    the known set per cluster.
+level: medium

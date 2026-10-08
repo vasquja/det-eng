@@ -1,0 +1,96 @@
+attack_technique: T1543.005
+display_name: "Create or Modify System Process: Container Service (Kubernetes Static Pods)"
+
+# Behavioral emulation for TRR9003. A static pod is a pod the kubelet runs from a
+# node-local manifest (or a URL) WITHOUT the API server — a persistence primitive
+# that needs node file access, not a Kubernetes permission, and survives restarts.
+# Each test runs a HARMLESS busybox pod (it only sleeps) and removes the manifest
+# it wrote. These need a reachable kind cluster whose node runs as a Docker
+# container, with audit logging on (see detections/k8s/kind-staticpod-cluster.yaml).
+
+atomic_tests:
+  - name: "TRR9003.K8S.A — drop a static pod manifest on a node"
+    auto_generated_guid: 56b3402e-8284-4b45-b48e-47fe9a8d36bb
+    description: |
+      Writes a benign busybox static pod manifest into the kubelet's
+      staticPodPath directory (/etc/kubernetes/manifests) on the node. The kubelet
+      starts the pod directly through the container runtime — no API server
+      scheduling, authorization, or admission — and registers a read-only mirror
+      pod. The mirror-pod create is the one API-server trace.
+
+      Detection (Strategy 2, fallback): verb=create, objectRef.resource=pods,
+      user.username containing system:node:.
+      Rule: detections/sigma/T1543.005/k8s_static_pod_mirror_create.yml
+      Chokepoint (Strategy 1): the kubelet starts a pod with config.source=file;
+      a node runtime sensor sees it. No audit-log rule can.
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh a
+      cleanup_command: |
+        true
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1543.005/src
+
+  - name: "TRR9003.K8S.A (evasion) — invalid-namespace static pod (detection gap)"
+    auto_generated_guid: 4b8df7d8-fb34-424f-bf5a-7880792f3eb2
+    description: |
+      Writes a static pod manifest whose namespace does not exist. The kubelet
+      still runs the pod on the node, but the API server rejects the mirror pod,
+      so the pod never appears as an object in `kubectl get pods -A`. The
+      kubelet's mirror-pod attempt is still audited — as a FAILED create (non-2xx)
+      — but the running pod itself is not: the node runtime sees it (crictl) while
+      the API object store is blind. This documents why Strategy 1 needs a node
+      runtime sensor: the audit log records the mirror attempt, not the workload.
+
+      Detection: node runtime sensor sees the running pod; the audit log records
+      only the (failed) mirror-create attempt. See TRR9003 Detection Strategy 1.
+      Rule: none (audit-log layer) for the running pod.
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh gap
+      cleanup_command: |
+        true
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1543.005/src
+
+  - name: "TRR9003.K8S.B — reconfigure the kubelet static source (read-only)"
+    auto_generated_guid: 2af0d8ba-efcf-46fb-bc62-b0855dea9a04
+    description: |
+      Read-only demonstration of the kubelet static-source configuration
+      (staticPodPath / staticPodURL) and the watched manifest directory. An
+      attacker with write access to the kubelet config would point it at an
+      attacker directory or URL and restart the kubelet. This test does NOT
+      restart the kubelet, to keep the single-node lab stable — the same
+      safe-demonstration approach as TRR9002 Procedure E. The resulting pod start
+      is the same chokepoint as Procedure A (config.source file/http).
+
+      Detection: node config + flow telemetry; see TRR9003 Detection Strategy 4.
+      Rule: none (audit-log layer).
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh b
+      cleanup_command: |
+        true
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1543.005/src

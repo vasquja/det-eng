@@ -109,6 +109,7 @@ final ID on merge.
 |----------|--------|-----------|----------|--------|
 | TRR9001  | T1040  | Network Sniffing | Linux | [`trr9001/lin`](trr9001/lin/README.md) |
 | TRR9002  | T1609  | Command Execution in a Running Container | Kubernetes | [`trr9002/k8s`](trr9002/k8s/README.md) |
+| TRR9003  | T1543.005 | Static Pod Persistence | Kubernetes | [`trr9003/k8s`](trr9003/k8s/README.md) |
 
 ## How to start a new TRR
 

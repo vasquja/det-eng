@@ -1,0 +1,55 @@
+title: Kubernetes Static Pod Manifest Written on a Node
+id: 054e28aa-63e8-41ba-bb0d-fc3bb151eeb2
+status: experimental
+description: |
+  Detects a file create or write in a kubelet static-pod manifest directory on a
+  node (the staticPodPath, /etc/kubernetes/manifests by default). The kubelet
+  runs any pod manifest in that directory directly through the container runtime,
+  with no API server involvement, so a write here is a persistence primitive:
+  TRR9003 Procedure A (Static Pod Persistence, T1543.005), Strategy 3.
+
+  This is a NODE sensor rule. It needs host file-event telemetry (file integrity
+  monitoring, auditd, or an EDR agent). It is NOT an API server audit rule, and
+  the TRR9003 audit-log validation loop does not exercise it; the node runtime
+  chokepoint (Strategy 1) and this file-event rule cover the paths the control
+  plane cannot see.
+
+  Almost nothing writes to this directory after install, so a write by anything
+  other than the package manager or kubeadm is high signal. Pair with the
+  Strategy 2 audit rule (k8s_static_pod_mirror_create.yml): a manifest write with
+  a matching mirror-pod create is a confirmed static pod; a manifest write with
+  NO mirror-pod create suggests an invalid-namespace, API-invisible static pod.
+references:
+  - https://attack.mitre.org/techniques/T1543/005/
+  - https://kubernetes.io/docs/tasks/configure-pod-container/static-pod/
+  - https://www.elastic.co/guide/en/security/current/kubernetes-static-pod-manifest-file-access.html
+author: det-eng
+date: 2026/10/08
+tags:
+  - attack.persistence
+  - attack.t1543.005
+logsource:
+  product: linux
+  category: file_event
+detection:
+  selection_dir:
+    TargetFilename|contains: '/etc/kubernetes/manifests/'
+  filter_install:
+    Image|endswith:
+      - '/kubeadm'
+      - '/kubelet'
+      - '/dpkg'
+      - '/apt'
+      - '/apt-get'
+      - '/yum'
+      - '/dnf'
+      - '/rpm'
+  condition: selection_dir and not filter_install
+falsepositives:
+  - Cluster install and upgrade. kubeadm and the package manager write the
+    control-plane manifests here during bootstrap and upgrades; these are
+    filtered by process image.
+  - Configuration management (Ansible, Puppet, Chef) that manages control-plane
+    static pods. Baseline the managing process per cluster and add it to the
+    filter.
+level: high

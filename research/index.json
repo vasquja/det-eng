@@ -75,6 +75,31 @@
           "url": "../atomics/T1609/src/emulate.sh"
         }
       }
+    },
+    {
+      "name": "Static Pod Persistence (Kubernetes)",
+      "id": "TRR9003",
+      "tactics": ["Persistence"],
+      "contributors": ["det-eng"],
+      "external_ids": ["T1543.005"],
+      "platforms": ["Kubernetes"],
+      "procedures": {
+        "A": "Drop a manifest in the static-pod directory",
+        "B": "Reconfigure the kubelet static source"
+      },
+      "pub_date": "2026-10-08",
+      "last_update": "2026-10-08",
+      "path": "trr9003/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng static pod manifest-drop behavioral emulation (+ invalid-namespace detection-gap demonstration)",
+          "url": "../atomics/T1543.005/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng kubelet static-source reconfiguration (read-only demonstration)",
+          "url": "../atomics/T1543.005/src/emulate.sh"
+        }
+      }
     }
   ]
 }

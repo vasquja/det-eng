@@ -1,0 +1,51 @@
+# kind cluster for the TRR9003 (static pod) lab, with API server audit logging on.
+#
+# kind ("Kubernetes in Docker") runs a whole cluster as Docker containers. Each
+# node is one container. This config follows the kind auditing guide
+# (https://kind.sigs.k8s.io/docs/user/auditing/): it mounts the audit policy into
+# the control-plane node and passes the two audit flags to the API server.
+#
+# A single control-plane node is both control plane and worker here. It is enough:
+# the node already runs its control plane as static pods (kubeadm writes them to
+# /etc/kubernetes/manifests), so the static-pod mechanism is present, and the
+# emulation writes one more manifest to the same directory.
+#
+# Create it (from the repo root, so the relative extraMounts path resolves):
+#
+#   kind create cluster --name trr9003 \
+#     --config detections/k8s/kind-staticpod-cluster.yaml
+#
+# Read the audit log afterward:
+#
+#   docker exec trr9003-control-plane \
+#     cat /var/log/kubernetes/kube-apiserver-audit.log
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: ClusterConfiguration
+        apiServer:
+          extraArgs:
+            audit-log-path: /var/log/kubernetes/kube-apiserver-audit.log
+            audit-policy-file: /etc/kubernetes/policies/audit-policy.yaml
+            # Keep the whole log for the run; rotation would hide early events.
+            audit-log-maxbackup: "1"
+            audit-log-maxsize: "100"
+          extraVolumes:
+            - name: audit-policies
+              hostPath: /etc/kubernetes/policies
+              mountPath: /etc/kubernetes/policies
+              readOnly: true
+              pathType: DirectoryOrCreate
+            - name: audit-logs
+              hostPath: /var/log/kubernetes
+              mountPath: /var/log/kubernetes
+              readOnly: false
+              pathType: DirectoryOrCreate
+    extraMounts:
+      # Path is relative to the working directory of `kind create cluster`.
+      - hostPath: ./detections/k8s/audit-policy-staticpod.yaml
+        containerPath: /etc/kubernetes/policies/audit-policy.yaml
+        readOnly: true

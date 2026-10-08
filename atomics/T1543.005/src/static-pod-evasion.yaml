@@ -1,0 +1,43 @@
+# Evasion-variant static pod manifest for the TRR9003 emulation (the gap test).
+#
+# This manifest is identical to static-pod.yaml except for its name and its
+# namespace: trr9003-nonexistent, a namespace that does NOT exist in the cluster.
+#
+# The kubelet still runs this pod on the node — a static pod never asks the API
+# server. But when the kubelet tries to register the mirror pod, the API server
+# rejects it, because the namespace does not exist. So:
+#   - the pod runs on the node (visible with `crictl pods` / `crictl ps`), and
+#   - it NEVER appears as a pod object in `kubectl get pods -A`, and
+#   - the kubelet's mirror-pod attempt is audited as a FAILED create (non-2xx,
+#     namespace not found) — not a successful one, so no pod object is stored.
+#
+# This demonstrates the LIMIT of the audit log: it records the kubelet's mirror
+# ATTEMPT, never the pod actually running. A node creating a pod into a namespace
+# that does not exist is itself high signal (the Strategy 2 rule matches it), but
+# only a node runtime sensor sees the running workload. The emulation removes this
+# file afterward.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: trr9003-ghost
+  namespace: trr9003-nonexistent
+  labels:
+    app: trr9003-ghost
+spec:
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: pause
+      image: busybox:1.36
+      command: ["sh", "-c", "sleep 3600"]
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "16Mi"
+        limits:
+          cpu: "100m"
+          memory: "64Mi"
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: false
+        capabilities:
+          drop: ["ALL"]
