@@ -1,41 +1,51 @@
 #!/usr/bin/env python3
 """
-Validate the TRR9003 (static pod, T1543.005) detection loop on the API server
-audit log that the emulation produced. Sibling of validate_k8s_detections.py.
+Validate the TRR9003 (static pod, T1543.005) detection loop on the telemetry the
+emulation produced. Sibling of validate_k8s_detections.py.
 
-The loop this proves:
+Two rules are match-gated, one per sensor:
 
-    drop a static pod manifest on a node -> the kubelet runs it and registers a
-    mirror pod -> the API server writes a `create pods` event by a node identity
-    -> the Strategy 2 Sigma rule, run by a real Sigma backend, matches it
+  * Strategy 1, the chokepoint — node runtime sensor (CRI pod sandboxes):
+        drop a static pod manifest on a node -> the kubelet starts the pod with
+        `kubernetes.io/config.source: file` -> the CRI rule matches the sandbox.
+    It must match the emulation's injected static pod AND the invalid-namespace
+    variant (`trr9003-ghost`), the pod that runs on the node while the API
+    server stores no object for it. That second match is the gap this rule
+    closes.
 
-The Strategy 2 rule also matches the control-plane mirror pods every kubeadm
-node registers at start, by design (a documented false positive). So a match
-alone proves nothing about the emulation: the rule PASSES only if it matches the
-emulation's own static pod (`trr9003-static-*`). The validator reports the
-baseline matches separately.
+  * Strategy 2, the fallback — API server audit log:
+        the kubelet registers a mirror pod -> the API server writes a
+        `create pods` event by a node identity -> the audit rule matches it.
 
-It also reports the detection GAP that defines this technique: the chokepoint
-(the kubelet starting a pod the API server never scheduled) leaves NO audit
-event. The evasion test (an invalid-namespace static pod) still produces a
-failed mirror-create, but the pod RUNNING is invisible to the audit log and
-needs a node runtime sensor. The validator cannot assert a node-sensor rule, so
-it reports the gap rather than gating on it.
+Both rules also match the control-plane static pods every kubeadm node starts,
+by design (a documented false positive). So a match alone proves nothing about
+the emulation: a rule PASSES only if it matches the emulation's own pods. The
+validator reports the baseline separately. For the CRI rule it also runs a
+false-positive control: the rule must not match any sandbox the API server
+scheduled (`config.source: api`), and there must be some in the log, so the
+control is not vacuous.
 
-It parses the audit log (JSON lines), flattens each event to dotted field names,
-and runs each rule's pySigma-compiled query over them (see sigma_eval.py).
+Each log is flattened to dotted field names and each rule runs through its
+pySigma-compiled query (see sigma_eval.py).
+
+Logs:
+    --audit-log PATH   API server audit log (JSON lines).
+    --cri-log PATH     node runtime sensor log: one `crictl pods -o json`
+                       snapshot per line, as detections/k8s/cri-pod-sensor.sh
+                       writes it. Each sandbox counts once, at first sighting.
 
 Modes:
     python3 detections/validate_staticpod_detections.py --dry-run
         Compile the rules only. No cluster or log needed.
 
-    python3 detections/validate_staticpod_detections.py --audit-log PATH
-        Full validation against the given audit log. Default strict: no
-        emulation event matching the Strategy 2 rule fails the run (exit 1).
+    python3 detections/validate_staticpod_detections.py --audit-log A --cri-log C
+        Full validation. Default strict: a rule that misses a required
+        emulation pod, or a failed control, fails the run (exit 1). A rule whose
+        log is not given is skipped.
 
     ... --expect-miss
-        Negative control, for a log captured BEFORE the emulation ran: exit 1
-        if any rule passes. Proves the baseline mirror pods alone cannot pass.
+        Negative control, for logs captured BEFORE the emulation ran: exit 1 if
+        any rule passes. Proves the baseline alone cannot pass.
 
     ... --report
         Report misses in the summary instead of failing on them.
@@ -57,17 +67,29 @@ RULES_DIR = os.path.join(REPO, "detections", "sigma", "T1543.005")
 INJECTED_PREFIX = "trr9003-static"
 GHOST_NAME = "trr9003-ghost"
 
-# Only the audit-log rule is match-gated. The Strategy 3 file-event rule in the
-# same folder is a NODE sensor rule; it is compiled but not exercised here,
-# because it needs host file telemetry, not the API server audit log.
+CONFIG_SOURCE = "annotations.kubernetes.io/config.source"
+
+
+def _starts(field, prefix):
+    return lambda e: (e.get(field) or "").startswith(prefix)
+
+
+# Each match-gated rule: the log it reads, the procedures it covers, a note, and
+# the emulation events it must match (all of them). The Strategy 3 file-event
+# rule in the same folder needs node file telemetry; it is compiled, not gated.
 MANIFEST = [
-    ("k8s_static_pod_mirror_create.yml", "A/B",
+    ("k8s_cri_static_pod_start.yml", "cri", "A/B",
+     "kubelet starts a pod from a non-API source (Strategy 1 chokepoint)",
+     [("injected static pod", _starts("metadata.name", INJECTED_PREFIX)),
+      ("invalid-namespace static pod (the audit-log gap)",
+       _starts("metadata.name", GHOST_NAME))]),
+    ("k8s_static_pod_mirror_create.yml", "audit", "A/B",
      "mirror pod create by a node identity (Strategy 2 fallback)",
-     lambda e: (e.get("objectRef.name") or "").startswith(INJECTED_PREFIX)),
+     [("injected static pod", _starts("objectRef.name", INJECTED_PREFIX))]),
 ]
 
-# Control-plane static pods a kubeadm/kind node registers at start — the baseline
-# that the Strategy 2 rule also matches, by design.
+# Control-plane static pods a kubeadm/kind node starts — the baseline both rules
+# also match, by design.
 CONTROL_PLANE_PREFIXES = ("kube-apiserver-", "etcd-", "kube-controller-manager-",
                           "kube-scheduler-")
 
@@ -84,6 +106,32 @@ def load_events(audit_log):
             except json.JSONDecodeError:
                 continue
     return events
+
+
+def load_cri(cri_log):
+    """CRI pod sandboxes, flattened, one per sandbox id (its first sighting).
+
+    Each line is a `crictl pods -o json` snapshot ({"items": [...]}) or a single
+    sandbox object. A sandbox shows up in every snapshot while it exists; a
+    runtime sensor reports it once, when it starts.
+    """
+    seen, sandboxes = set(), []
+    with open(cri_log, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                doc = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # e.g. a snapshot cut off mid-write
+            for sandbox in (doc.get("items") or []) if "items" in doc else [doc]:
+                sid = sandbox.get("id")
+                if sid in seen:
+                    continue
+                seen.add(sid)
+                sandboxes.append(sigma_eval.flatten(sandbox))
+    return sandboxes
 
 
 def dedup_by_audit_id(matches):
@@ -115,10 +163,87 @@ def node_created_pods(events):
     return out
 
 
+def classify(name):
+    name = name or ""
+    if name.startswith(INJECTED_PREFIX):
+        return "injected"
+    if name.startswith(GHOST_NAME):
+        return "ghost"
+    if name.startswith(CONTROL_PLANE_PREFIXES):
+        return "baseline"
+    return "other"
+
+
+def report_audit(events):
+    """Separate the emulation's mirror-pod creates from the control-plane baseline."""
+    created = node_created_pods(events)
+    kinds = {k: [p for p in created if classify(p[0]) == k]
+             for k in ("baseline", "injected", "ghost", "other")}
+    print(f"\nAudit log — node-created pods (mirror-pod creates) seen: {len(created)}")
+    if kinds["baseline"]:
+        print(f"  baseline (control-plane static pods): "
+              f"{', '.join(sorted({p[0] for p in kinds['baseline']}))}")
+    for name, ns, user, code in kinds["injected"]:
+        print(f"  INJECTED (Procedure A): {name} in ns={ns} by {user} (code={code})")
+    if not kinds["injected"]:
+        print("  note: no 'trr9003-static-*' mirror pod seen.")
+    if kinds["other"]:
+        print(f"  other node-created pods (triage): "
+              f"{', '.join(sorted(p[0] or '?' for p in kinds['other']))}")
+    ghost = kinds["ghost"]
+    if ghost:
+        codes = sorted({str(p[3]) for p in ghost})
+        print(f"  EVASION ({GHOST_NAME}): mirror-create attempted, responseStatus "
+              f"code(s) {', '.join(codes)}. A non-2xx create means the API server "
+              "rejected the mirror pod (namespace not found): no pod object, but "
+              "the attempt is audited and the Strategy 2 rule matches it. The pod "
+              "RUNNING is not in the audit log; the CRI rule sees that.")
+    else:
+        print(f"  note: no '{GHOST_NAME}' mirror-create seen.")
+
+
+def report_cri(sandboxes, cri_hits):
+    """The static sandboxes the sensor saw, and the API-pod false-positive control.
+
+    Returns a list of control failures (empty when the control holds).
+    """
+    static = [s for s in sandboxes if s.get(CONFIG_SOURCE) in ("file", "http")]
+    api = [s for s in sandboxes if s.get(CONFIG_SOURCE) == "api"]
+    print(f"\nNode runtime sensor — pod sandboxes seen: {len(sandboxes)} "
+          f"({len(static)} from file/http, {len(api)} from the API server)")
+    for kind, label in (("baseline", "baseline (control-plane static pods)"),
+                        ("injected", "INJECTED (Procedure A)"),
+                        ("ghost", "EVASION (invalid namespace, no API object)"),
+                        ("other", "other static pods (triage)")):
+        names = sorted({f"{s.get('metadata.name')} in ns={s.get('metadata.namespace')}"
+                        for s in static if classify(s.get("metadata.name")) == kind})
+        if names:
+            print(f"  {label}: {', '.join(names)}")
+
+    failures = []
+    api_hits = [s for s in cri_hits if s.get(CONFIG_SOURCE) == "api"]
+    if not api:
+        failures.append("no API-scheduled sandbox (config.source=api) in the CRI "
+                        "log, so the false-positive control proves nothing; does "
+                        "the sensor record carry the pod annotations?")
+    if api_hits:
+        failures.append("the CRI rule matched API-scheduled sandbox(es): "
+                        + ", ".join(sorted(s.get("metadata.name") or "?" for s in api_hits)))
+    if failures:
+        for f in failures:
+            print(f"  CONTROL FAILED: {f}")
+    else:
+        print(f"  control held: the CRI rule matched none of the {len(api)} "
+              "API-scheduled sandbox(es).")
+    return failures
+
+
 def main():
     ap = argparse.ArgumentParser(description="Validate TRR9003 static-pod detections.")
     ap.add_argument("--audit-log", default="/tmp/kube-apiserver-audit.log",
                     help="Path to the API server audit log (JSON lines).")
+    ap.add_argument("--cri-log",
+                    help="Path to the node runtime sensor log (crictl pods snapshots).")
     ap.add_argument("--dry-run", action="store_true",
                     help="Compile rules only; no cluster or log needed.")
     ap.add_argument("--expect-miss", action="store_true",
@@ -130,10 +255,10 @@ def main():
     # Compile the rules first; a compile error always fails.
     queries = {}
     parse_errors = 0
-    for fname, proc, note, _ in MANIFEST:
+    for fname, source, proc, note, _ in MANIFEST:
         try:
             queries[fname] = sigma_eval.compile_rule(os.path.join(RULES_DIR, fname))
-            print(f"OK (compile)  {fname}  [{proc}] {note}")
+            print(f"OK (compile)  {fname}  [{proc}, {source}] {note}")
         except Exception as e:  # noqa: BLE001
             parse_errors += 1
             print(f"ERROR compile {fname}: {e}")
@@ -142,7 +267,7 @@ def main():
         if os.path.basename(path) not in queries:
             try:
                 sigma_eval.compile_rule(path)
-                print(f"OK (compile)  {os.path.basename(path)}  [node sensor] "
+                print(f"OK (compile)  {os.path.basename(path)}  [node file sensor] "
                       f"not match-gated here")
             except Exception as e:  # noqa: BLE001
                 parse_errors += 1
@@ -156,107 +281,84 @@ def main():
         print(f"Dry run OK: {len(queries)} match-gated rule(s) compile with pySigma.")
         return 0
 
-    if not os.path.exists(args.audit_log):
+    logs = {}
+    if os.path.exists(args.audit_log):
+        logs["audit"] = load_events(args.audit_log)
+        print(f"\nLoaded {len(logs['audit'])} audit event(s) from {args.audit_log}")
+    else:
         print(f"\nAudit log not found: {args.audit_log}")
-        print("SKIP: no audit log to validate against (exit 0).")
+    if args.cri_log:
+        if not os.path.exists(args.cri_log):
+            print(f"ERROR: CRI sensor log not found: {args.cri_log}")
+            return 1
+        logs["cri"] = load_cri(args.cri_log)
+        print(f"Loaded {len(logs['cri'])} pod sandbox(es) from {args.cri_log}")
+    if not logs:
+        print("SKIP: no log to validate against (exit 0).")
         return 0 if not parse_errors else 1
+    print()
 
-    events = load_events(args.audit_log)
-    print(f"\nLoaded {len(events)} audit event(s) from {args.audit_log}\n")
-
-    passes = misses = 0
-    for fname, proc, note, from_emulation in MANIFEST:
+    passes = misses = skipped = 0
+    hits_by_source = {}
+    for fname, source, proc, note, required in MANIFEST:
         if fname not in queries:
             continue
-        matched = dedup_by_audit_id(
-            [hit[0] for hit in sigma_eval.evaluate(queries[fname], events)])
-        ours = [e for e in matched if from_emulation(e)]
-        other = len(matched) - len(ours)
-        if ours:
+        if source not in logs:
+            skipped += 1
+            print(f"SKIP  [{proc}] {fname}: no {source} log given")
+            continue
+        matched = [hit[0] for hit in sigma_eval.evaluate(queries[fname], logs[source])]
+        if source == "audit":
+            matched = dedup_by_audit_id(matched)
+        hits_by_source[source] = matched
+        found = [(label, [e for e in matched if pred(e)]) for label, pred in required]
+        ours = sum(len(events) for _, events in found)
+        other = len(matched) - ours
+        if all(events for _, events in found):
             passes += 1
-            print(f"PASS  [{proc}] {fname}: {len(ours)} emulation event(s) match "
+            print(f"PASS  [{proc}] {fname}: matched every emulation pod "
                   f"(+{other} other, e.g. control-plane baseline)")
-            sample = ours[0]
-            print(f"        e.g. verb={sample.get('verb')} "
-                  f"resource={sample.get('objectRef.resource')} "
-                  f"name={sample.get('objectRef.name')} "
-                  f"ns={sample.get('objectRef.namespace')} "
-                  f"user={sample.get('user.username')}")
         else:
             misses += 1
-            print(f"MISS  [{proc}] {fname}: no emulation event matched"
+            print(f"MISS  [{proc}] {fname}: missed an emulation pod"
                   + (f" ({other} baseline/unrelated match(es) ignored)" if other else ""))
+        for label, events in found:
+            mark = "ok  " if events else "MISS"
+            print(f"        {mark} {label}: {len(events)} match(es)")
 
-    # Separate the emulation's own static pods from the control-plane baseline.
-    created = node_created_pods(events)
-    injected = [p for p in created if (p[0] or "").startswith(INJECTED_PREFIX)]
-    baseline = [p for p in created
-                if (p[0] or "").startswith(CONTROL_PLANE_PREFIXES)]
-    evasion = [p for p in created if (p[0] or "").startswith(GHOST_NAME)]
-    classified = set(injected) | set(baseline) | set(evasion)
-    other = [p for p in created if p not in classified]
-    print()
-    print(f"Node-created pods (mirror-pod creates) seen: {len(created)}")
-    if baseline:
-        print(f"  baseline (control-plane static pods): "
-              f"{', '.join(sorted({n for n, _, _, _ in baseline}))}")
-    if injected:
-        for name, ns, user, code in injected:
-            print(f"  INJECTED (Procedure A): {name} in ns={ns} by {user} (code={code})")
-        print("  -> the emulated static pod produced the Strategy 2 audit event.")
-    else:
-        print("  note: no 'trr9003-static-*' mirror pod seen. If Procedure A ran, "
-              "the kubelet may not have flushed it yet, or the audit policy did "
-              "not record pods create.")
-    if other:
-        print(f"  other node-created pods (triage): "
-              f"{', '.join(sorted(n for n, _, _, _ in other))}")
-
-    # Evasion variant and the chokepoint (informational, never gated). The
-    # invalid-namespace static pod does NOT evade the audit log: the kubelet still
-    # ATTEMPTS the mirror-pod create, which is audited as a FAILED (non-2xx)
-    # create. What it evades is the pod OBJECT store (kubectl get pods is blind)
-    # and, crucially, any record that the pod is actually RUNNING — only a node
-    # runtime sensor sees that.
-    print("\nEvasion variant (invalid namespace) and the Strategy 1 chokepoint:")
-    if evasion:
-        codes = sorted({str(c) for _, _, _, c in evasion})
-        failed = [p for p in evasion
-                  if not (isinstance(p[3], int) and 200 <= p[3] < 300)]
-        print(f"  the invalid-namespace static pod ('{GHOST_NAME}') appears as a "
-              f"mirror-create by the node, responseStatus code(s): {', '.join(codes)}.")
-        if failed:
-            print("  that create FAILED (non-2xx): the API server rejected the mirror "
-                  "pod because the namespace does not exist, so NO pod object was "
-                  "stored and 'kubectl get pods -A' is blind to it. But the attempt "
-                  "is still audited, and the Strategy 2 rule matches it — a node "
-                  "creating a pod into a non-existent namespace is high signal.")
-        print("  What NO audit event records is the pod actually RUNNING on the node "
-              "(the audit log sees the mirror attempt, not the workload). That is the "
-              "gap Strategy 1 fills, and only a node runtime sensor is evasion-proof.")
-    else:
-        print(f"  note: no '{GHOST_NAME}' events seen (the evasion test may not have "
-              "run, or the audit policy did not record failed pods create).")
+    controls = []
+    if "audit" in logs:
+        report_audit(logs["audit"])
+    if "cri" in logs:
+        controls = report_cri(logs["cri"], hits_by_source.get("cri", []))
 
     print()
     if parse_errors:
         print(f"FAILED: {parse_errors} compile error(s).")
         return 1
+    if controls:
+        print(f"FAILED: {len(controls)} control(s) failed.")
+        return 1
     if args.expect_miss:
         if passes:
-            print(f"NEGATIVE CONTROL FAILED: {passes} rule(s) passed on a log "
+            print(f"NEGATIVE CONTROL FAILED: {passes} rule(s) passed on logs "
                   "captured before the emulation ran.")
             return 1
-        print("Negative control held: the baseline alone does not pass the rule.")
+        print("Negative control held: the baseline alone does not pass any rule.")
         return 0
     if misses and not args.report:
-        print(f"FAILED: {misses} rule(s) did not fire. "
+        print(f"FAILED: {misses} rule(s) missed an emulation pod. "
               f"(Use --report to treat misses as non-fatal.)")
         return 1
     if misses:
         print(f"Reported {misses} miss(es); not gated (--report).")
         return 0
-    print("All TRR9003 match-gated detections fired on the emulated telemetry.")
+    if skipped:
+        print(f"The rule(s) with a log fired on the emulated telemetry; {skipped} "
+              "rule(s) skipped for lack of a log.")
+        return 0
+    print("All TRR9003 match-gated detections fired on the emulated telemetry, "
+          "including the invalid-namespace pod the audit log cannot see running.")
     return 0
 
 

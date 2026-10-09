@@ -158,9 +158,38 @@ captures the audit log before the emulation and runs the validator on it with
 `--expect-miss`, so a pass that does not depend on the emulation fails the job.
 `validate_staticpod_detections.py` and
 `.github/workflows/validate-staticpod-detections.yml` do the same for TRR9003
-(T1543.005), where the gate matters most: the mirror-pod rule also matches the
-control-plane static pods every node registers at start, so only the injected
-static pod's event counts.
+(T1543.005), where the gate matters most: both of its rules also match the
+control-plane static pods every node starts, so only the emulation's own pods
+count.
+
+### Node runtime sensor (TRR9003 Strategy 1)
+
+A static pod never passes through the API server, and the invalid-namespace
+variant leaves no pod object at all, so the chokepoint rule
+(`sigma/T1543.005/k8s_cri_static_pod_start.yml`) reads the node's container
+runtime instead: a pod sandbox whose `kubernetes.io/config.source` annotation is
+`file` or `http`, which the kubelet sets itself on every pod it runs (`api` for
+a scheduled pod).
+
+- **Log source.** Sigma has none for this, so the rule declares
+  `product: kubernetes`, `service: cri`: one record per pod sandbox with the CRI
+  `PodSandbox` fields, flattened to dotted names (`metadata.name`,
+  `metadata.namespace`, `state`, `labels.*`,
+  `annotations.kubernetes.io/config.source`, ...). A runtime security or EDR
+  agent with container context reports these when a sandbox starts; map its
+  field names to these.
+- **Lab sensor.** `k8s/cri-pod-sensor.sh` polls `crictl pods -o json` on the
+  node and appends one snapshot per line; the validator keeps each sandbox's
+  first sighting. It is a stand-in for a real agent, good enough to prove the
+  rule on real runtime data.
+- **Validation.** The CRI rule must match both the injected static pod and the
+  invalid-namespace pod, and must match none of the API-scheduled sandboxes in
+  the same log:
+
+```
+python3 detections/validate_staticpod_detections.py \
+  --audit-log /tmp/kube-apiserver-audit.log --cri-log /tmp/cri-pods.jsonl
+```
 
 ## Status
 
