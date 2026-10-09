@@ -9,7 +9,10 @@ name: validate-staticpod-detections
 # A kind cluster (Kubernetes in Docker) runs on the ubuntu-latest runner with API
 # server audit logging on. The job runs the benign emulation (a harmless busybox
 # static pod), copies the audit log off the node, and asserts the mirror-pod rule
-# matches. On a public repo the run is free.
+# matches the INJECTED static pod. The rule also matches the control-plane mirror
+# pods every node registers at start, so as a negative control the job runs the
+# validator on the audit log captured BEFORE the emulation (baseline only), where
+# it must not pass. On a public repo the run is free.
 
 on:
   push:
@@ -19,6 +22,8 @@ on:
       - 'detections/k8s/kind-staticpod-cluster.yaml'
       - 'detections/sigma/T1543.005/**'
       - 'detections/validate_staticpod_detections.py'
+      - 'detections/sigma_eval.py'
+      - 'detections/requirements.txt'
       - 'atomics/T1543.005/**'
       - '.github/workflows/validate-staticpod-detections.yml'
   pull_request:
@@ -27,6 +32,8 @@ on:
       - 'detections/k8s/kind-staticpod-cluster.yaml'
       - 'detections/sigma/T1543.005/**'
       - 'detections/validate_staticpod_detections.py'
+      - 'detections/sigma_eval.py'
+      - 'detections/requirements.txt'
       - 'atomics/T1543.005/**'
       - '.github/workflows/validate-staticpod-detections.yml'
   workflow_dispatch:
@@ -49,8 +56,8 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install PyYAML
-        run: pip install --quiet pyyaml
+      - name: Install validator requirements
+        run: pip install --quiet -r detections/requirements.txt
 
       - name: Install kind and kubectl (pinned)
         shell: bash
@@ -80,6 +87,19 @@ jobs:
             cat /etc/kubernetes/manifests/kube-apiserver.yaml | grep -- --audit- \
             || { echo "::error::audit flags not set on the API server"; exit 1; }
 
+      - name: Capture the audit log before the emulation (negative control)
+        shell: bash
+        run: |
+          # Wait for the control-plane mirror pods, so the baseline the rule also
+          # matches is in this log.
+          kubectl -n kube-system wait --for=condition=Ready pod \
+            -l tier=control-plane --timeout=120s
+          sleep 3
+          docker exec "${CLUSTER_NAME}-control-plane" \
+            cat /var/log/kubernetes/kube-apiserver-audit.log \
+            > /tmp/pre-emulation-audit.log
+          echo "Captured $(wc -l < /tmp/pre-emulation-audit.log) pre-emulation audit lines."
+
       - name: Emulate T1543.005 static pods (benign busybox)
         shell: bash
         run: |
@@ -102,6 +122,12 @@ jobs:
           python3 detections/validate_staticpod_detections.py \
             --audit-log /tmp/kube-apiserver-audit.log | tee /tmp/spval.out
 
+      - name: Negative control (the baseline alone may not pass)
+        shell: bash
+        run: |
+          python3 detections/validate_staticpod_detections.py \
+            --audit-log /tmp/pre-emulation-audit.log --expect-miss | tee /tmp/spneg.out
+
       - name: Publish results to job summary
         if: always()
         shell: bash
@@ -112,6 +138,12 @@ jobs:
             echo '```'
             cat /tmp/spval.out 2>/dev/null || echo '(no validator output captured)'
             echo '```'
+            echo ''
+            echo '### Negative control (audit log captured before the emulation)'
+            echo ''
+            echo '```'
+            cat /tmp/spneg.out 2>/dev/null || echo '(no negative-control output captured)'
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the audit log
@@ -119,7 +151,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kube-apiserver-audit-log-staticpod
-          path: /tmp/kube-apiserver-audit.log
+          path: |
+            /tmp/kube-apiserver-audit.log
+            /tmp/pre-emulation-audit.log
           if-no-files-found: ignore
 
       - name: Delete the cluster

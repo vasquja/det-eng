@@ -11,14 +11,43 @@ description: |
   configuration is highly unusual outside container runtimes and IPsec
   management daemons (strongswan, libreswan, NetworkManager, charon).
   Tune by allowlisting those `comm` / `exe` values.
+
+  Each syscall is a separate audit event, so this is a Sigma correlation
+  rule: the two base rules below each match one event, and the correlation
+  fires when both occur for the same pid within 10 seconds. A plain
+  `unshare_user_net and netlink_xfrm_socket` condition is evaluated against a
+  single event and can never match.
 references:
   - https://github.com/V4bel/dirtyfrag
 author: det-eng
 date: 2026/05/15
+modified: 2026/10/09
 tags:
   - attack.privilege_escalation
   - attack.t1068
   - cve.2026-43284
+correlation:
+  type: temporal
+  rules:
+    - dirtyfrag_xfrm_unshare_user_net
+    - dirtyfrag_xfrm_netlink_xfrm_socket
+  group-by:
+    - pid
+  timespan: 10s
+falsepositives:
+  - IPsec management daemons (strongswan, libreswan, charon, pluto)
+  - Container runtimes performing legitimate network-namespace setup
+    in combination with IPsec policy management
+  - NetworkManager IPsec backends
+level: high
+---
+title: Network Namespace Unshare (DirtyFrag xfrm Base Event)
+id: 6b1b441f-1bdc-4655-9468-cb0c706a7ae3
+name: dirtyfrag_xfrm_unshare_user_net
+status: experimental
+description: Base event for the DirtyFrag xfrm correlation above. Not an alert on its own.
+author: det-eng
+date: 2026/10/09
 logsource:
   product: linux
   service: auditd
@@ -30,18 +59,24 @@ detection:
     a0|contains:
       - '50000000'
       - '40000000'  # CLONE_NEWNET alone is also part of the chain
+  condition: unshare_user_net
+level: informational
+---
+title: NETLINK_XFRM Socket (DirtyFrag xfrm Base Event)
+id: d2d6a466-46f7-448f-b968-377c372c5397
+name: dirtyfrag_xfrm_netlink_xfrm_socket
+status: experimental
+description: Base event for the DirtyFrag xfrm correlation above. Not an alert on its own.
+author: det-eng
+date: 2026/10/09
+logsource:
+  product: linux
+  service: auditd
+detection:
   netlink_xfrm_socket:
     type: SYSCALL
     syscall: socket
     a0: '10'  # AF_NETLINK = 16 = 0x10
     a2: '6'   # NETLINK_XFRM = 6
-  # Co-occurrence window (~10s) is the intent; a bare timeframe is inert in
-  # classic Sigma (no aggregation), so it is omitted. Express the window as a
-  # Sigma correlation rule (type: temporal) if/when a backend needs it.
-  condition: unshare_user_net and netlink_xfrm_socket
-falsepositives:
-  - IPsec management daemons (strongswan, libreswan, charon, pluto)
-  - Container runtimes performing legitimate network-namespace setup
-    in combination with IPsec policy management
-  - NetworkManager IPsec backends
-level: high
+  condition: netlink_xfrm_socket
+level: informational

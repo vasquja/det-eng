@@ -1,0 +1,6 @@
+# Validator dependencies. pySigma's SQLite backend compiles each rule (plain or
+# correlation) to the query a real Sigma backend would run; the validators
+# execute that query instead of re-implementing Sigma matching by hand.
+PyYAML>=6.0.3,<7
+pySigma==1.5.1
+pySigma-backend-sqlite==2.0.0

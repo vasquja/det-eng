@@ -15,15 +15,45 @@ description: |
   splice() is used legitimately by many servers and copy utilities, so the
   pipe-then-splice correlation and process baselining below are what make
   this tractable.
+
+  Each syscall is a separate audit event, so this is a Sigma correlation
+  rule: the two base rules below each match one event, and the correlation
+  fires when both occur for the same pid within 5 seconds. A plain
+  `pipe_create and splice_syscall` condition is evaluated against a single
+  event and can never match.
 references:
   - https://dirtypipe.cm4all.com/
   - https://nvd.nist.gov/vuln/detail/CVE-2022-0847
 author: det-eng
 date: 2026/10/05
+modified: 2026/10/09
 tags:
   - attack.privilege_escalation
   - attack.t1068
   - cve.2022-0847
+correlation:
+  type: temporal
+  rules:
+    - dirtypipe_pipe_create
+    - dirtypipe_splice
+  group-by:
+    - pid
+  timespan: 5s
+falsepositives:
+  - Web/media servers and proxies that combine pipes with splice() for
+    zero-copy I/O (e.g. nginx, HAProxy, some FUSE and logging daemons)
+  - Coreutils and archivers on kernels that use splice() for copying
+  - Baseline known-good `comm` / `exe` / `auid` values before promoting to
+    alerting; prefer the eBPF fd-flag signal where available
+level: medium
+---
+title: Pipe Creation (DirtyPipe Base Event)
+id: 5b78b196-b4c2-4933-b08b-12ae14a56a21
+name: dirtypipe_pipe_create
+status: experimental
+description: Base event for the DirtyPipe correlation above. Not an alert on its own.
+author: det-eng
+date: 2026/10/09
 logsource:
   product: linux
   service: auditd
@@ -33,17 +63,22 @@ detection:
     syscall:
       - pipe
       - pipe2
+  condition: pipe_create
+level: informational
+---
+title: splice Syscall (DirtyPipe Base Event)
+id: 563182b9-6db4-46a8-bb0a-5786959273f8
+name: dirtypipe_splice
+status: experimental
+description: Base event for the DirtyPipe correlation above. Not an alert on its own.
+author: det-eng
+date: 2026/10/09
+logsource:
+  product: linux
+  service: auditd
+detection:
   splice_syscall:
     type: SYSCALL
     syscall: splice
-  # Co-occurrence window (~5s) is the intent; a bare timeframe is inert in
-  # classic Sigma (no aggregation), so it is omitted. Express the window as a
-  # Sigma correlation rule (type: temporal) if/when a backend needs it.
-  condition: pipe_create and splice_syscall
-falsepositives:
-  - Web/media servers and proxies that combine pipes with splice() for
-    zero-copy I/O (e.g. nginx, HAProxy, some FUSE and logging daemons)
-  - Coreutils and archivers on kernels that use splice() for copying
-  - Baseline known-good `comm` / `exe` / `auid` values before promoting to
-    alerting; prefer the eBPF fd-flag signal where available
-level: medium
+  condition: splice_syscall
+level: informational

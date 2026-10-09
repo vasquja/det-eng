@@ -8,15 +8,47 @@ description: |
   written to disk; the process runs directly from the in-memory fd. On
   endpoints with /proc visibility, a running process whose exe path resolves
   to `memfd:` / `(deleted)` is the same signal.
+
+  Each syscall is a separate audit event, so this is a Sigma correlation
+  rule: the two base rules below each match one event, and the correlation
+  fires when both occur for the same pid within 10 seconds (a successful
+  execveat keeps the pid). A plain `memfd_create_syscall and
+  execveat_syscall` condition is evaluated against a single event and can
+  never match.
+
+  Coverage gap: a dropper that calls memfd_create in a parent and fexecve in
+  a forked child splits the two syscalls across pids, so this correlation
+  does not see it. The `/memfd:` exe-path signal above still does.
 references:
   - https://man7.org/linux/man-pages/man2/memfd_create.2.html
   - https://man7.org/linux/man-pages/man2/execveat.2.html
 author: det-eng
 date: 2026/10/05
+modified: 2026/10/09
 tags:
   - attack.defense_evasion
   - attack.t1620
   - attack.t1055
+correlation:
+  type: temporal
+  rules:
+    - memfd_exec_memfd_create
+    - memfd_exec_execveat
+  group-by:
+    - pid
+  timespan: 10s
+falsepositives:
+  - Language runtimes and packagers that legitimately exec from memfd
+    (some JITs, container image tools) — rare; baseline before alerting
+level: high
+---
+title: memfd_create Syscall (Fileless Execution Base Event)
+id: d482665c-e2c7-4ba2-b206-bed15cc00f32
+name: memfd_exec_memfd_create
+status: experimental
+description: Base event for the memfd_create -> execveat correlation above. Not an alert on its own.
+author: det-eng
+date: 2026/10/09
 logsource:
   product: linux
   service: auditd
@@ -24,14 +56,22 @@ detection:
   memfd_create_syscall:
     type: SYSCALL
     syscall: memfd_create
+  condition: memfd_create_syscall
+level: informational
+---
+title: execveat Syscall (Fileless Execution Base Event)
+id: 113b3575-21ba-403a-9378-742d7bb05da2
+name: memfd_exec_execveat
+status: experimental
+description: Base event for the memfd_create -> execveat correlation above. Not an alert on its own.
+author: det-eng
+date: 2026/10/09
+logsource:
+  product: linux
+  service: auditd
+detection:
   execveat_syscall:
     type: SYSCALL
     syscall: execveat
-  # Co-occurrence window (~10s) is the intent; a bare timeframe is inert in
-  # classic Sigma (no aggregation), so it is omitted. Express the window as a
-  # Sigma correlation rule (type: temporal) if/when a backend needs it.
-  condition: memfd_create_syscall and execveat_syscall
-falsepositives:
-  - Language runtimes and packagers that legitimately exec from memfd
-    (some JITs, container image tools) — rare; baseline before alerting
-level: high
+  condition: execveat_syscall
+level: informational

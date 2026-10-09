@@ -7,27 +7,35 @@ The loop this proves:
 
     drop a static pod manifest on a node -> the kubelet runs it and registers a
     mirror pod -> the API server writes a `create pods` event by a node identity
-    -> assert the Strategy 2 Sigma rule matches that event
+    -> the Strategy 2 Sigma rule, run by a real Sigma backend, matches it
+
+The Strategy 2 rule also matches the control-plane mirror pods every kubeadm
+node registers at start, by design (a documented false positive). So a match
+alone proves nothing about the emulation: the rule PASSES only if it matches the
+emulation's own static pod (`trr9003-static-*`). The validator reports the
+baseline matches separately.
 
 It also reports the detection GAP that defines this technique: the chokepoint
 (the kubelet starting a pod the API server never scheduled) leaves NO audit
-event, so the evasion test (an invalid-namespace static pod) is invisible to the
-audit log and must be caught by a node runtime sensor. The validator cannot
-assert a node-sensor rule, so it reports the gap rather than gating on it — the
-same design as validate_k8s_detections.py Procedure E.
+event. The evasion test (an invalid-namespace static pod) still produces a
+failed mirror-create, but the pod RUNNING is invisible to the audit log and
+needs a node runtime sensor. The validator cannot assert a node-sensor rule, so
+it reports the gap rather than gating on it.
 
-It parses the audit log (JSON lines), then for each rule in MANIFEST checks that
-at least one event matches the rule's `detection:` selection. It understands the
-small slice of Sigma these rules use: plain equality, a list of values (OR), the
-`|contains` modifier, and an `A and B` condition over named selections.
+It parses the audit log (JSON lines), flattens each event to dotted field names,
+and runs each rule's pySigma-compiled query over them (see sigma_eval.py).
 
 Modes:
     python3 detections/validate_staticpod_detections.py --dry-run
-        Parse and sanity-check the rules only. No cluster or log needed.
+        Compile the rules only. No cluster or log needed.
 
     python3 detections/validate_staticpod_detections.py --audit-log PATH
-        Full validation against the given audit log. Default strict: the Strategy
-        2 rule with zero matching events fails the run (exit 1).
+        Full validation against the given audit log. Default strict: no
+        emulation event matching the Strategy 2 rule fails the run (exit 1).
+
+    ... --expect-miss
+        Negative control, for a log captured BEFORE the emulation ran: exit 1
+        if any rule passes. Proves the baseline mirror pods alone cannot pass.
 
     ... --report
         Report misses in the summary instead of failing on them.
@@ -39,90 +47,29 @@ import json
 import os
 import sys
 
-try:
-    import yaml
-except ImportError:
-    sys.exit("PyYAML is required: pip install pyyaml")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import sigma_eval  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RULES_DIR = os.path.join(REPO, "detections", "sigma", "T1543.005")
-
-# Only the audit-log rule is match-gated. The Strategy 3 file-event rule in the
-# same folder is a NODE sensor rule; it is parse-linted but not exercised here,
-# because it needs host file telemetry, not the API server audit log.
-MANIFEST = [
-    ("k8s_static_pod_mirror_create.yml", "A/B",
-     "mirror pod create by a node identity (Strategy 2 fallback)"),
-]
 
 # The emulation's own static pod (Procedure A) and its evasion variant (the gap).
 INJECTED_PREFIX = "trr9003-static"
 GHOST_NAME = "trr9003-ghost"
 
+# Only the audit-log rule is match-gated. The Strategy 3 file-event rule in the
+# same folder is a NODE sensor rule; it is compiled but not exercised here,
+# because it needs host file telemetry, not the API server audit log.
+MANIFEST = [
+    ("k8s_static_pod_mirror_create.yml", "A/B",
+     "mirror pod create by a node identity (Strategy 2 fallback)",
+     lambda e: (e.get("objectRef.name") or "").startswith(INJECTED_PREFIX)),
+]
+
 # Control-plane static pods a kubeadm/kind node registers at start — the baseline
 # that the Strategy 2 rule also matches, by design.
 CONTROL_PLANE_PREFIXES = ("kube-apiserver-", "etcd-", "kube-controller-manager-",
                           "kube-scheduler-")
-
-
-def get_field(event, dotted):
-    cur = event
-    for part in dotted.split("."):
-        if isinstance(cur, dict) and part in cur:
-            cur = cur[part]
-        else:
-            return None
-    return cur
-
-
-def match_field(event, field_spec, value_spec):
-    name, _, mod = field_spec.partition("|")
-    actual = get_field(event, name)
-    if actual is None:
-        return False
-    actual_s = str(actual)
-    candidates = value_spec if isinstance(value_spec, list) else [value_spec]
-    for v in candidates:
-        v = str(v)
-        if mod == "":
-            if actual_s == v:
-                return True
-        elif mod == "contains":
-            if v in actual_s:
-                return True
-        else:
-            raise ValueError(f"unsupported Sigma modifier: |{mod}")
-    return False
-
-
-def match_selection(event, selection):
-    return all(match_field(event, f, v) for f, v in selection.items())
-
-
-def rule_matches(event, detection):
-    """Evaluate the rule condition (supports `A` and `A and B`)."""
-    cond = str(detection["condition"]).strip()
-    names = [t.strip() for t in cond.split(" and ")]
-    for n in names:
-        if n not in detection:
-            raise ValueError(f"condition names unknown selection: {n}")
-        if not match_selection(event, detection[n]):
-            return False
-    return True
-
-
-def load_rule(path):
-    with open(path, encoding="utf-8") as fh:
-        doc = yaml.safe_load(fh)
-    if "detection" not in doc or "condition" not in doc["detection"]:
-        raise ValueError("rule has no detection/condition")
-    det = doc["detection"]
-    for key, val in det.items():
-        if key == "condition":
-            continue
-        if not isinstance(val, dict):
-            raise ValueError(f"selection '{key}' is not a mapping")
-    return doc
 
 
 def load_events(audit_log):
@@ -133,7 +80,7 @@ def load_events(audit_log):
             if not line:
                 continue
             try:
-                events.append(json.loads(line))
+                events.append(sigma_eval.flatten(json.loads(line)))
             except json.JSONDecodeError:
                 continue
     return events
@@ -160,12 +107,11 @@ def node_created_pods(events):
     """
     out = []
     for e in events:
-        ref = e.get("objectRef") or {}
-        user = (e.get("user") or {}).get("username", "")
-        if (e.get("verb") == "create" and ref.get("resource") == "pods"
+        user = e.get("user.username") or ""
+        if (e.get("verb") == "create" and e.get("objectRef.resource") == "pods"
                 and "system:node:" in str(user)):
-            code = (e.get("responseStatus") or {}).get("code")
-            out.append((ref.get("name"), ref.get("namespace"), user, code))
+            out.append((e.get("objectRef.name"), e.get("objectRef.namespace"),
+                        user, e.get("responseStatus.code")))
     return out
 
 
@@ -174,39 +120,40 @@ def main():
     ap.add_argument("--audit-log", default="/tmp/kube-apiserver-audit.log",
                     help="Path to the API server audit log (JSON lines).")
     ap.add_argument("--dry-run", action="store_true",
-                    help="Parse rules only; no cluster or log needed.")
+                    help="Compile rules only; no cluster or log needed.")
+    ap.add_argument("--expect-miss", action="store_true",
+                    help="Negative control: fail if any rule passes.")
     ap.add_argument("--report", action="store_true",
                     help="Report misses instead of failing on them.")
     args = ap.parse_args()
 
-    # Load and parse the rules first; a parse error always fails.
-    rules = {}
+    # Compile the rules first; a compile error always fails.
+    queries = {}
     parse_errors = 0
-    for fname, proc, note in MANIFEST:
-        path = os.path.join(RULES_DIR, fname)
+    for fname, proc, note, _ in MANIFEST:
         try:
-            rules[fname] = load_rule(path)
-            print(f"OK (parse)  {fname}  [{proc}] {note}")
+            queries[fname] = sigma_eval.compile_rule(os.path.join(RULES_DIR, fname))
+            print(f"OK (compile)  {fname}  [{proc}] {note}")
         except Exception as e:  # noqa: BLE001
             parse_errors += 1
-            print(f"ERROR parse {fname}: {e}")
-    # Lint any other rule in the folder too (e.g. the Strategy 3 node rule).
+            print(f"ERROR compile {fname}: {e}")
+    # Compile any other rule in the folder too (e.g. the Strategy 3 node rule).
     for path in sorted(glob.glob(os.path.join(RULES_DIR, "*.yml"))):
-        if os.path.basename(path) not in rules:
+        if os.path.basename(path) not in queries:
             try:
-                load_rule(path)
-                print(f"OK (parse)  {os.path.basename(path)}  [node sensor] "
+                sigma_eval.compile_rule(path)
+                print(f"OK (compile)  {os.path.basename(path)}  [node sensor] "
                       f"not match-gated here")
             except Exception as e:  # noqa: BLE001
                 parse_errors += 1
-                print(f"ERROR parse {os.path.basename(path)}: {e}")
+                print(f"ERROR compile {os.path.basename(path)}: {e}")
 
     if args.dry_run:
         print()
         if parse_errors:
-            print(f"Dry run FAILED: {parse_errors} parse error(s).")
+            print(f"Dry run FAILED: {parse_errors} compile error(s).")
             return 1
-        print(f"Dry run OK: {len(rules)} match-gated rule(s) parse and are well-formed.")
+        print(f"Dry run OK: {len(queries)} match-gated rule(s) compile with pySigma.")
         return 0
 
     if not os.path.exists(args.audit_log):
@@ -217,24 +164,28 @@ def main():
     events = load_events(args.audit_log)
     print(f"\nLoaded {len(events)} audit event(s) from {args.audit_log}\n")
 
-    misses = 0
-    for fname, proc, note in MANIFEST:
-        doc = rules.get(fname)
-        if doc is None:
+    passes = misses = 0
+    for fname, proc, note, from_emulation in MANIFEST:
+        if fname not in queries:
             continue
-        det = doc["detection"]
-        matched = dedup_by_audit_id([e for e in events if rule_matches(e, det)])
-        if matched:
-            print(f"PASS  [{proc}] {fname}: {len(matched)} event(s) match")
-            sample = matched[0]
-            ref = sample.get("objectRef") or {}
+        matched = dedup_by_audit_id(
+            [hit[0] for hit in sigma_eval.evaluate(queries[fname], events)])
+        ours = [e for e in matched if from_emulation(e)]
+        other = len(matched) - len(ours)
+        if ours:
+            passes += 1
+            print(f"PASS  [{proc}] {fname}: {len(ours)} emulation event(s) match "
+                  f"(+{other} other, e.g. control-plane baseline)")
+            sample = ours[0]
             print(f"        e.g. verb={sample.get('verb')} "
-                  f"resource={ref.get('resource')} "
-                  f"name={ref.get('name')} ns={ref.get('namespace')} "
-                  f"user={(sample.get('user') or {}).get('username')}")
+                  f"resource={sample.get('objectRef.resource')} "
+                  f"name={sample.get('objectRef.name')} "
+                  f"ns={sample.get('objectRef.namespace')} "
+                  f"user={sample.get('user.username')}")
         else:
             misses += 1
-            print(f"MISS  [{proc}] {fname}: no event matched")
+            print(f"MISS  [{proc}] {fname}: no emulation event matched"
+                  + (f" ({other} baseline/unrelated match(es) ignored)" if other else ""))
 
     # Separate the emulation's own static pods from the control-plane baseline.
     created = node_created_pods(events)
@@ -289,8 +240,15 @@ def main():
 
     print()
     if parse_errors:
-        print(f"FAILED: {parse_errors} parse error(s).")
+        print(f"FAILED: {parse_errors} compile error(s).")
         return 1
+    if args.expect_miss:
+        if passes:
+            print(f"NEGATIVE CONTROL FAILED: {passes} rule(s) passed on a log "
+                  "captured before the emulation ran.")
+            return 1
+        print("Negative control held: the baseline alone does not pass the rule.")
+        return 0
     if misses and not args.report:
         print(f"FAILED: {misses} rule(s) did not fire. "
               f"(Use --report to treat misses as non-fatal.)")

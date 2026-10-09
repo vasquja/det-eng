@@ -505,9 +505,12 @@ The auditd validator (`detections/validate_detections.py`) replays syscall
 atomics and cannot test these rules. The Kubernetes loop has its own validator,
 [`detections/validate_k8s_detections.py`](../../../detections/validate_k8s_detections.py):
 it reads the API server audit log the emulation produced and asserts each Sigma
-rule above matches. The workflow
+rule above matches an event from the emulation itself (one naming the target
+pod). The workflow
 [`validate-k8s-detections.yml`](../../../.github/workflows/validate-k8s-detections.yml)
-runs the whole loop on a `kind` cluster for every change to these files.
+runs the whole loop on a `kind` cluster for every change to these files, and
+runs the validator as a negative control on the audit log captured before the
+emulation (it must not pass there).
 
 Strategy 4 (Procedure E) has no audit-log rule by design: a direct kubelet
 request never reaches the API server, so the `emulate.sh e` test documents the

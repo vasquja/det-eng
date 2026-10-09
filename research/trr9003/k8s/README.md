@@ -420,11 +420,14 @@ up the manifest it wrote.
 The Kubernetes loop has its own validator,
 [`detections/validate_staticpod_detections.py`](../../../detections/validate_staticpod_detections.py):
 it reads the API server audit log the emulation produced and asserts the
-Strategy 2 Sigma rule matches the mirror-pod create (it also separates the
-injected static pod from the control-plane baseline and reports the
-invalid-namespace variant as a failed create). The workflow
+Strategy 2 Sigma rule matches the mirror-pod create of the *injected* static
+pod. The rule also matches the control-plane baseline by design, so a baseline
+match alone does not pass; the validator reports the baseline separately and
+reports the invalid-namespace variant as a failed create. The workflow
 [`validate-staticpod-detections.yml`](../../../.github/workflows/validate-staticpod-detections.yml)
-runs the whole loop on a `kind` cluster for every change to these files.
+runs the whole loop on a `kind` cluster for every change to these files, and
+runs the validator as a negative control on the audit log captured before the
+emulation (it must not pass there).
 
 Strategy 1 (the chokepoint) has no audit-log rule by design: the running
 workload never reaches the API server (only the kubelet's mirror-pod attempt
