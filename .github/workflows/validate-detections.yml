@@ -3,8 +3,10 @@ name: validate-detections
 # Proves the atomic -> auditd -> Sigma loop on a real GitHub-hosted VM.
 # A standard ubuntu-latest runner is a full VM (not a container), so the
 # Linux audit subsystem is available to root. The job installs auditd, loads
-# detections/audit/atomic.rules, runs each atomic, and checks the paired
-# Sigma rule's SYSCALL selections match the resulting audit events.
+# detections/audit/atomic.rules, runs each atomic, and checks that the paired
+# Sigma rule, compiled by pySigma, fires on the atomic's own successful
+# syscalls. Then it runs controls (no-op, mutants, allowlisted names) that
+# must NOT pass. Strict: a detection FAIL or a broken control fails the job.
 
 on:
   push:
@@ -21,10 +23,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install audit and build tools
+      - name: Install audit, build tools and validator requirements
         run: |
           sudo apt-get update
-          sudo apt-get install -y auditd gcc python3 python3-yaml
+          sudo apt-get install -y auditd gcc python3-venv
+          # A venv on the system Python runs cleanly under sudo (no
+          # LD_LIBRARY_PATH needed, unlike a setup-python interpreter).
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip install --quiet -r detections/requirements.txt
 
       - name: Start auditd
         run: |
@@ -32,14 +38,18 @@ jobs:
           sudo auditctl -s
 
       - name: Validate detections
+        shell: bash
         run: |
-          sudo python3 detections/validate_detections.py --report | tee /tmp/val.out
+          # shell: bash enables pipefail, so tee does not mask the exit code.
+          # --require-audit makes a broken audit setup fail instead of skip.
+          sudo /tmp/venv/bin/python detections/validate_detections.py \
+            --require-audit | tee /tmp/val.out
 
       - name: Publish results to job summary
         if: always()
         run: |
           {
-            echo '## Detection validation (atomic -> auditd -> Sigma)'
+            echo '## Detection validation (atomic -> auditd -> pySigma) + controls'
             echo ''
             echo '```'
             cat /tmp/val.out 2>/dev/null || echo '(no output captured)'

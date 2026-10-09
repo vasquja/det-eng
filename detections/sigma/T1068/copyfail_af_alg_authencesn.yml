@@ -12,14 +12,42 @@ description: |
 
   AF_ALG is unusual on production workloads outside specific crypto
   daemons; AF_ALG followed by splice() from the same PID is rarer still.
+
+  Each syscall is a separate audit event, so this is a Sigma correlation
+  rule: the two base rules below each match one event, and the correlation
+  fires when both occur for the same pid within 5 seconds. A plain
+  `af_alg_socket and splice_syscall` condition is evaluated against a single
+  event and can never match.
 references:
   - https://github.com/Smarttfoxx/copyfail
 author: det-eng
 date: 2026/05/15
+modified: 2026/10/09
 tags:
   - attack.privilege_escalation
   - attack.t1068
   - cve.2026-31431
+correlation:
+  type: temporal
+  rules:
+    - copyfail_af_alg_socket
+    - copyfail_splice
+  group-by:
+    - pid
+  timespan: 5s
+falsepositives:
+  - Userland crypto frameworks (e.g. cryptsetup, kcapi-tools, some VPN clients)
+    that legitimately combine AF_ALG with file I/O. Baseline known-good
+    processes (`auid`, `comm`) before promoting to alerting.
+level: high
+---
+title: AF_ALG Socket (CopyFail Base Event)
+id: 07366f9d-bee5-4e1d-93a1-3588300abd27
+name: copyfail_af_alg_socket
+status: experimental
+description: Base event for the CopyFail correlation above. Not an alert on its own.
+author: det-eng
+date: 2026/10/09
 logsource:
   product: linux
   service: auditd
@@ -28,15 +56,22 @@ detection:
     type: SYSCALL
     syscall: socket
     a0: '26'  # AF_ALG = 38 decimal = 0x26 hex; auditd logs args in hex
+  condition: af_alg_socket
+level: informational
+---
+title: splice Syscall (CopyFail Base Event)
+id: 61eaeb46-aa77-4d42-83c0-82747f754c16
+name: copyfail_splice
+status: experimental
+description: Base event for the CopyFail correlation above. Not an alert on its own.
+author: det-eng
+date: 2026/10/09
+logsource:
+  product: linux
+  service: auditd
+detection:
   splice_syscall:
     type: SYSCALL
     syscall: splice
-  # Co-occurrence window (~5s) is the intent; a bare timeframe is inert in
-  # classic Sigma (no aggregation), so it is omitted. Express the window as a
-  # Sigma correlation rule (type: temporal) if/when a backend needs it.
-  condition: af_alg_socket and splice_syscall
-falsepositives:
-  - Userland crypto frameworks (e.g. cryptsetup, kcapi-tools, some VPN clients)
-    that legitimately combine AF_ALG with file I/O. Baseline known-good
-    processes (`auid`, `comm`) before promoting to alerting.
-level: high
+  condition: splice_syscall
+level: informational

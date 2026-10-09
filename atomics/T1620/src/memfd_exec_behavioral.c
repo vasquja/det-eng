@@ -5,8 +5,9 @@
  * AT_EMPTY_PATH) on the anonymous fd — the fileless-execution pattern used
  * by many Linux droppers. The executed payload is a benign, already-present
  * system binary (default /bin/true), copied into the memfd; no attacker code
- * runs and no file is written to disk. The resulting process shows an
- * executable path like `/memfd:atomic (deleted)`.
+ * runs and no file is written to disk. The process replaces itself, so both
+ * syscalls come from the same PID (what the paired correlation rule groups
+ * on), and it then shows an executable path like `/memfd:atomic (deleted)`.
  *
  * Not a working exploit. For detection validation only. Safe to run.
  */
@@ -18,7 +19,6 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/mman.h>
-#include <sys/wait.h>
 
 int main(int argc, char **argv)
 {
@@ -54,24 +54,16 @@ int main(int argc, char **argv)
     }
     close(src);
 
-    pid_t pid = fork();
-    if (pid == 0) {
-        char *cargv[] = { (char *)"atomic-memfd", NULL };
-        char *cenv[] = { NULL };
-        fexecve(mfd, cargv, cenv);
-        fprintf(stderr, "fexecve: %s\n", strerror(errno));
-        _exit(127);
-    } else if (pid > 0) {
-        int st;
-        waitpid(pid, &st, 0);
-        fprintf(stderr,
-                "[memfd-behavioral] fileless exec of %s via memfd (child "
-                "exited); exe path was /memfd:atomic (deleted). Safe.\n",
-                payload);
-    } else {
-        fprintf(stderr, "fork: %s\n", strerror(errno));
-    }
-
+    /* Exec from the memfd in THIS process (no fork), so memfd_create and
+     * execveat share a PID. On success this call does not return. */
+    fprintf(stderr,
+            "[memfd-behavioral] fileless exec of %s via memfd; exe path "
+            "becomes /memfd:atomic (deleted). Safe.\n",
+            payload);
+    char *cargv[] = { (char *)"atomic-memfd", NULL };
+    char *cenv[] = { NULL };
+    fexecve(mfd, cargv, cenv);
+    fprintf(stderr, "fexecve: %s\n", strerror(errno));
     close(mfd);
-    return 0;
+    return 1;
 }

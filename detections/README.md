@@ -24,40 +24,84 @@ behavior visible; the validator below checks that layer 3 matches it.
 
 ## Validate (atomic -> telemetry -> rule fires)
 
-The validator runs each atomic and asserts that its paired Sigma rule's
-SYSCALL selections match the resulting audit events.
+The validator runs each atomic, turns the resulting audit records into events,
+and runs the paired Sigma rule over them **with a real Sigma backend**: pySigma
+compiles the rule (plain or correlation) to SQL with its SQLite backend, and
+the validator executes that query (see `sigma_eval.py`). It does not
+re-implement Sigma matching by hand.
 
 ```
-# Real validation — needs root and a running auditd:
+pip install -r detections/requirements.txt   # pySigma + SQLite backend, PyYAML
+
+# Real validation + controls — needs root and a running auditd:
 sudo python3 detections/validate_detections.py
 
-# Parse rules and compile atomics only — no auditd needed:
+# Compile the rules (pySigma) and the atomics only — no auditd needed:
 python3 detections/validate_detections.py --dry-run
 ```
 
-Without root or auditd the script SKIPS (exit 0), so it is safe in CI on
-hosts that have no auditd. It needs `gcc` always, and `auditctl`, `ausearch`,
-`ausyscall` for a real run.
+Without root or auditd the script SKIPS (exit 0), unless `--require-audit` is
+given (CI passes it, so a broken audit setup fails instead of passing). It
+needs `gcc` always, and `auditctl` and `ausyscall` for a real run.
 
-### What the validator checks
+### What a PASS means
 
-- It confirms the **positive** match: the required syscall(s) and their
-  `a0`/`a1`/`a2` argument values appear in the audit log for the process that
-  ran the atomic.
-- It does **not** re-apply a rule's process allowlist (`... and not comm`).
-  The validator's binaries use a `deteng_` process name that is in no
-  allowlist, so the allowlist never changes the "does it fire" answer. Tuning
-  the allowlist against your own fleet is a separate, operational step.
+A case passes only if all three hold:
+
+1. **The rule matches, as Sigma defines it.** The backend evaluates the full
+   condition, including the `not <allowlist>` filters and correlation windows.
+2. **The match came from the atomic.** Every event behind the hit belongs to
+   the atomic's process tree, so nothing else running in the window (the
+   validator itself included) can satisfy the rule.
+3. **The syscalls succeeded** (`success=yes`). A syscall the kernel rejected is
+   an attempt, not an execution of the technique.
+
+A miss is a **SKIP** only when an independent kernel-feature probe, run before
+the test, shows the kernel lacks what the technique needs (no AF_ALG or
+AF_RXRPC, io_uring disabled, Yama ptrace_scope 3, ...). Every other miss is a
+**FAIL** and fails the run.
+
+### Controls: testing the test
+
+After the detections, the validator runs stimuli that must **not** pass. If one
+does, the check above is unsound and the run fails:
+
+- **No-op** (`controls/noop.c`), evaluated against every rule.
+- **Mutants** (`controls/*.c`) that keep the surface of a technique but break
+  it: a `splice()` with no `pipe()` of its own, `memfd_create` and `fexecve`
+  in different processes, a `bpf(BPF_PROG_LOAD)` the kernel rejects, and a
+  `SOCK_STREAM` socket against the raw-socket rule.
+- **Allowlisted names**: each atomic whose rule has a `not <allowlist>` filter
+  is re-run under a process name from that allowlist (e.g. `tcpdump`), and the
+  filter must suppress it.
+
+### Event schema the rules assume
+
+One event per auditd `SYSCALL` record: `type`, `syscall` (the **name**),
+`success`, `exit`, `a0`..`a3` (raw hex, exactly as auditd logs them), `pid`,
+`ppid`, `comm`, `exe`, `timestamp`. auditd's `ENRICHED` log format carries the
+syscall name (`SYSCALL=`); with `RAW` format the validator resolves it with
+`ausyscall`. Neither raw `audit.log` (`syscall=41`) nor `ausearch -i` output
+(`a0=packet`) has this shape as-is, so the log pipeline that feeds these rules
+to a SIEM must normalize to it, or add a pySigma field-mapping pipeline.
+
+### Correlation rules
+
+A Sigma condition such as `A and B` is evaluated against **one** event, and an
+auditd event records one syscall. So a two-syscall pattern (CopyFail,
+DirtyFrag xfrm, DirtyPipe, memfd -> execveat) is written as a Sigma
+correlation rule: each file holds a `type: temporal` correlation grouped by
+`pid` plus the base rules it references. A backend without correlation support
+cannot run these four rules.
 
 ## Continuous validation (CI)
 
 `.github/workflows/validate-detections.yml` runs this loop on every push and
 pull request. A standard `ubuntu-latest` runner is a full VM, so the audit
-subsystem is available to root. The job installs auditd, loads the rules, and
-runs the validator with `--report`. In `--report` mode only a compile or parse
-ERROR fails the job; a detection that does not fire (for example because the
-runner kernel has io_uring or AF_ALG turned off) is reported in the job
-summary, not treated as a defect. On a public repository the run is free.
+subsystem is available to root. The job installs auditd and the Python
+requirements, then runs the validator with `--require-audit`. It is strict: a
+detection FAIL or a broken control fails the job; only a probe-confirmed SKIP
+does not. On a public repository the run is free.
 
 ## Manual run
 
@@ -90,18 +134,33 @@ on syscalls, so they have their own layer stack and validator:
 Validate the loop (emulate -> audit -> rule fires):
 
 ```
-# Parse the rules only — no cluster needed:
+# Compile the rules only — no cluster needed:
 python3 detections/validate_k8s_detections.py --dry-run
 
 # Full run against an audit log you collected from the cluster:
 python3 detections/validate_k8s_detections.py \
   --audit-log /tmp/kube-apiserver-audit.log
+
+# Negative control, on a log collected BEFORE the emulation ran:
+python3 detections/validate_k8s_detections.py \
+  --audit-log /tmp/pre-emulation-audit.log --expect-miss
 ```
 
+The audit log is flattened to the dotted field names the rules use
+(`objectRef.resource`, `user.username`, ...) and each rule runs through the
+same pySigma backend as the auditd rules. A rule passes only on an event from
+the emulation itself (one naming the target pod), not on any event in the log.
+
 `.github/workflows/validate-k8s-detections.yml` runs the whole loop on a `kind`
-cluster for every change to the TRR9002 files. Unlike the auditd workflow it
-runs the validator strict: a rule that does not fire fails the job, because the
-`kind` emulation is deterministic (there is no "kernel feature off" excuse).
+cluster for every change to the TRR9002 files, strict: a rule that does not
+fire fails the job, because the `kind` emulation is deterministic. It also
+captures the audit log before the emulation and runs the validator on it with
+`--expect-miss`, so a pass that does not depend on the emulation fails the job.
+`validate_staticpod_detections.py` and
+`.github/workflows/validate-staticpod-detections.yml` do the same for TRR9003
+(T1543.005), where the gate matters most: the mirror-pod rule also matches the
+control-plane static pods every node registers at start, so only the injected
+static pod's event counts.
 
 ## Status
 

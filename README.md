@@ -96,9 +96,11 @@ back to a per-procedure rule only where no chokepoint covers it.
 
 A test and a rule sitting next to each other prove nothing. The validator
 ([`detections/validate_detections.py`](detections/validate_detections.py))
-runs each atomic and asserts that its paired Sigma rule's selections actually
-match the resulting telemetry. This runs in CI on every push (see
-[Continuous validation](#continuous-validation)).
+runs each atomic, compiles its paired Sigma rule with a real Sigma backend
+(pySigma), and asserts the rule matches telemetry *the atomic itself*
+produced, on syscalls that succeeded. Controls then test the test: a no-op, a
+set of broken mutants, and allowlisted process names must all fail. This runs
+in CI on every push (see [Continuous validation](#continuous-validation)).
 
 ### 5. Contribute upstream
 
@@ -178,23 +180,30 @@ Proving the loop is automated:
 - **Linux / auditd** —
   [`.github/workflows/validate-detections.yml`](.github/workflows/validate-detections.yml)
   loads the audit rules and runs the validator on an `ubuntu-latest` runner
-  (a full VM, so root has the audit subsystem). In `--report` mode only a
-  compile/parse error fails the job; a rule that cannot fire because a kernel
-  feature is off (io_uring, AF_ALG …) is reported, not failed.
+  (a full VM, so root has the audit subsystem). It is strict: a rule that does
+  not fire, or a control that does, fails the job. A rule is skipped only when
+  an independent kernel-feature probe shows the kernel lacks what the
+  technique needs (no AF_ALG, io_uring disabled …).
 - **Kubernetes** —
   [`.github/workflows/validate-k8s-detections.yml`](.github/workflows/validate-k8s-detections.yml)
-  spins up a `kind` cluster and runs the emulation strict: a rule that does not
-  fire *does* fail the job, because the emulation is deterministic.
+  and
+  [`.github/workflows/validate-staticpod-detections.yml`](.github/workflows/validate-staticpod-detections.yml)
+  spin up a `kind` cluster and run the emulation strict: a rule that does not
+  fire on the emulation's own events fails the job. Each also runs the
+  validator on the audit log captured *before* the emulation, where it must
+  not pass.
 - **Lint** — [`.github/workflows/lint-trr.yml`](.github/workflows/lint-trr.yml)
   checks TRR structure, DDM PNG freshness, and markdown links.
 
 Run the Linux loop locally:
 
 ```bash
+pip install -r detections/requirements.txt   # pySigma + its SQLite backend
+
 # Real validation — needs root and a running auditd:
 sudo python3 detections/validate_detections.py
 
-# Parse rules and compile atomics only — no auditd needed:
+# Compile rules and atomics only — no auditd needed:
 python3 detections/validate_detections.py --dry-run
 ```
 
@@ -241,7 +250,8 @@ less research/README.md
 # Start a new TRR from the template.
 cp research/templates/TRR-TEMPLATE.md research/trrNNNN/<platform>/README.md
 
-# Compile the atomics and parse the rules without needing auditd.
+# Compile the atomics and the rules without needing auditd.
+pip install -r detections/requirements.txt
 python3 detections/validate_detections.py --dry-run
 ```
 

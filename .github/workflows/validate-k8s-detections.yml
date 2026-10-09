@@ -6,7 +6,10 @@ name: validate-k8s-detections
 # A kind cluster (Kubernetes in Docker) runs on the ubuntu-latest runner with
 # API server audit logging turned on. The job runs the benign emulation
 # (each procedure runs `id`), copies the audit log off the control-plane node,
-# and asserts each paired Sigma rule matches. On a public repo the run is free.
+# and asserts each paired Sigma rule, run by pySigma, matches an event from the
+# emulation itself. As a negative control it also runs the validator on the
+# audit log captured BEFORE the emulation, where no rule may pass. On a public
+# repo the run is free.
 
 on:
   push:
@@ -15,6 +18,8 @@ on:
       - 'detections/k8s/**'
       - 'detections/sigma/T1609/**'
       - 'detections/validate_k8s_detections.py'
+      - 'detections/sigma_eval.py'
+      - 'detections/requirements.txt'
       - 'atomics/T1609/**'
       - '.github/workflows/validate-k8s-detections.yml'
   pull_request:
@@ -22,6 +27,8 @@ on:
       - 'detections/k8s/**'
       - 'detections/sigma/T1609/**'
       - 'detections/validate_k8s_detections.py'
+      - 'detections/sigma_eval.py'
+      - 'detections/requirements.txt'
       - 'atomics/T1609/**'
       - '.github/workflows/validate-k8s-detections.yml'
   workflow_dispatch:
@@ -44,8 +51,8 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install PyYAML
-        run: pip install --quiet pyyaml
+      - name: Install validator requirements
+        run: pip install --quiet -r detections/requirements.txt
 
       - name: Install kind and kubectl (pinned)
         shell: bash
@@ -81,6 +88,15 @@ jobs:
           kubectl apply -f atomics/T1609/src/target-pod.yaml
           kubectl wait --for=condition=Ready pod/trr9002-target --timeout=120s
 
+      - name: Capture the audit log before the emulation (negative control)
+        shell: bash
+        run: |
+          sleep 3
+          docker exec "${CLUSTER_NAME}-control-plane" \
+            cat /var/log/kubernetes/kube-apiserver-audit.log \
+            > /tmp/pre-emulation-audit.log
+          echo "Captured $(wc -l < /tmp/pre-emulation-audit.log) pre-emulation audit lines."
+
       - name: Emulate T1609 procedures (benign `id`)
         shell: bash
         run: |
@@ -103,6 +119,12 @@ jobs:
           python3 detections/validate_k8s_detections.py \
             --audit-log /tmp/kube-apiserver-audit.log | tee /tmp/k8sval.out
 
+      - name: Negative control (no rule may pass without the emulation)
+        shell: bash
+        run: |
+          python3 detections/validate_k8s_detections.py \
+            --audit-log /tmp/pre-emulation-audit.log --expect-miss | tee /tmp/k8sneg.out
+
       - name: Publish results to job summary
         if: always()
         shell: bash
@@ -113,6 +135,12 @@ jobs:
             echo '```'
             cat /tmp/k8sval.out 2>/dev/null || echo '(no validator output captured)'
             echo '```'
+            echo ''
+            echo '### Negative control (audit log captured before the emulation)'
+            echo ''
+            echo '```'
+            cat /tmp/k8sneg.out 2>/dev/null || echo '(no negative-control output captured)'
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the audit log
@@ -120,7 +148,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kube-apiserver-audit-log
-          path: /tmp/kube-apiserver-audit.log
+          path: |
+            /tmp/kube-apiserver-audit.log
+            /tmp/pre-emulation-audit.log
           if-no-files-found: ignore
 
       - name: Delete the cluster
