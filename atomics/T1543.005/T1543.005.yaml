@@ -23,6 +23,7 @@ atomic_tests:
       Rule: detections/sigma/T1543.005/k8s_static_pod_mirror_create.yml
       Chokepoint (Strategy 1): the kubelet starts a pod with config.source=file;
       a node runtime sensor sees it. No audit-log rule can.
+      Rule: detections/sigma/T1543.005/k8s_cri_static_pod_start.yml
     supported_platforms:
       - containers
     executor:
@@ -51,7 +52,8 @@ atomic_tests:
 
       Detection: node runtime sensor sees the running pod; the audit log records
       only the (failed) mirror-create attempt. See TRR9003 Detection Strategy 1.
-      Rule: none (audit-log layer) for the running pod.
+      Rule (running pod, node runtime sensor):
+      detections/sigma/T1543.005/k8s_cri_static_pod_start.yml
     supported_platforms:
       - containers
     executor:

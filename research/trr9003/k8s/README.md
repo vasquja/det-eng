@@ -305,8 +305,10 @@ needs a node sensor, and the audit log cannot replace it.
 `pods` create at `Metadata` level or higher. Strategies 1, 3, and 4 need node
 sensors (a runtime security agent, file integrity monitoring, and configuration
 or flow telemetry). Sigma has no common log source for a container runtime
-`RunPodSandbox`, so the chokepoint rule is stated as a node-sensor rule, not a
-Sigma audit rule — by design, not by omission.
+`RunPodSandbox`, so the chokepoint rule declares its own: `product: kubernetes`,
+`service: cri`, one record per pod sandbox with the CRI `PodSandbox` fields
+(`metadata.*`, `state`, `labels`, `annotations`). Map it to your node sensor's
+fields.
 
 **Strategy 1 — chokepoint (covers A and B).**
 Alert when the kubelet starts a pod whose source is not the API server:
@@ -317,11 +319,18 @@ The attacker cannot avoid this node: the pod must start to run, whatever the
 namespace and whatever the source. This is the only evasion-proof anchor.
 
 - Sensor: a runtime security agent or an EDR agent on each node.
-- Rule: none at the audit-log layer, by design. The `emulate.sh` evasion variant
-  shows the limit of the audit log: an invalid-namespace static pod runs on the
-  node, the audit log records only the kubelet's *failed* mirror-pod attempt (not
-  the running pod), and no pod object is stored — so only a node runtime sensor
-  sees the workload itself.
+- Rule: [`detections/sigma/T1543.005/k8s_cri_static_pod_start.yml`](../../../detections/sigma/T1543.005/k8s_cri_static_pod_start.yml)
+  (built; node runtime sensor). The `emulate.sh` evasion variant shows why it is
+  the anchor: an invalid-namespace static pod runs on the node, the audit log
+  records only the kubelet's *failed* mirror-pod attempt (not the running pod),
+  and no pod object is stored. The CRI rule matches that pod's sandbox like any
+  other static pod.
+- Baseline: the control-plane static pods start from `file` too, at node boot
+  and on control-plane upgrade. Suppress each by its exact name together with
+  `kubernetes.io/config.hash` (the kubelet's hash of the manifest) per node, not
+  by name prefix, namespace or labels: the manifest sets those, and blending into
+  `kube-system` with a control-plane-like name is an evasion this anchor must
+  survive.
 
 **Strategy 2 — fallback (covers A and B).**
 Match audit events where `verb` is `create`, `objectRef.resource` is `pods`, and
@@ -405,36 +414,42 @@ up the manifest it wrote.
 | ID | Test | Status |
 |----|------|--------|
 | TRR9003.K8S.A | `emulate.sh a` — write a benign static pod manifest to `/etc/kubernetes/manifests` on the node; confirm the kubelet starts it and registers a mirror pod (`create pods` by `system:node:...`). | **built** |
-| TRR9003.K8S.A (evasion) | `emulate.sh gap` — write a manifest with a namespace that does not exist; show the pod runs on the node (`crictl`) and never appears as an object in `kubectl get pods -A`. The kubelet's mirror-pod attempt is audited as a *failed* create, while the running pod itself is not — only the node sensor sees it. | **built** |
+| TRR9003.K8S.A (evasion) | `emulate.sh gap` — write a manifest with a namespace that does not exist; show the pod runs on the node (`crictl`) and never appears as an object in `kubectl get pods -A`. The kubelet's mirror-pod attempt is audited as a *failed* create, while the running pod itself is not — only the node sensor sees it, and the Strategy 1 rule fires on it. | **built** |
 | TRR9003.K8S.B | `emulate.sh b` — read-only demonstration of the kubelet static-source configuration (`staticPodPath` / `staticPodURL`); shows the reconfiguration point without restarting the kubelet, to keep the lab stable. | **built (read-only)** |
 
 ## Detections
 
 | Strategy | Covers | Sigma rule | Sensor |
 |----------|--------|------------|--------|
-| 1 (chokepoint) | A, B | none; depends on the sensor | node runtime sensor |
+| 1 (chokepoint) | A, B | [`detections/sigma/T1543.005/k8s_cri_static_pod_start.yml`](../../../detections/sigma/T1543.005/k8s_cri_static_pod_start.yml) | node runtime sensor (CRI pod sandboxes) |
 | 2 (fallback) | A, B (mirror-pod attempt) | [`detections/sigma/T1543.005/k8s_static_pod_mirror_create.yml`](../../../detections/sigma/T1543.005/k8s_static_pod_mirror_create.yml) | API server audit log |
 | 3 (fallback) | A | [`detections/sigma/T1543.005/linux_static_pod_manifest_write.yml`](../../../detections/sigma/T1543.005/linux_static_pod_manifest_write.yml) | node file integrity / EDR |
 | 4 (fallback) | B | none; documented | node config + flow telemetry |
 
 The Kubernetes loop has its own validator,
-[`detections/validate_staticpod_detections.py`](../../../detections/validate_staticpod_detections.py):
-it reads the API server audit log the emulation produced and asserts the
-Strategy 2 Sigma rule matches the mirror-pod create of the *injected* static
-pod. The rule also matches the control-plane baseline by design, so a baseline
-match alone does not pass; the validator reports the baseline separately and
-reports the invalid-namespace variant as a failed create. The workflow
+[`detections/validate_staticpod_detections.py`](../../../detections/validate_staticpod_detections.py),
+which checks one rule per sensor on the telemetry the emulation produced:
+
+- **Strategy 1, node runtime sensor.** In the lab a small CRI poller on the node,
+  [`detections/k8s/cri-pod-sensor.sh`](../../../detections/k8s/cri-pod-sensor.sh),
+  stands in for a runtime security agent: it records every pod sandbox the
+  container runtime reports, with its annotations. The CRI rule must match both
+  the injected static pod *and* the invalid-namespace pod, the one the API
+  server never stores. It must also match none of the sandboxes the API server
+  scheduled (`config.source: api`), which the lab always has.
+- **Strategy 2, API server audit log.** The audit rule must match the
+  mirror-pod create of the injected static pod.
+
+Both rules also match the control-plane static pods by design, so a baseline
+match alone does not pass; the validator reports the baseline separately. The
+workflow
 [`validate-staticpod-detections.yml`](../../../.github/workflows/validate-staticpod-detections.yml)
 runs the whole loop on a `kind` cluster for every change to these files, and
-runs the validator as a negative control on the audit log captured before the
-emulation (it must not pass there).
+runs the validator as a negative control on the logs captured before the
+emulation (no rule may pass there).
 
-Strategy 1 (the chokepoint) has no audit-log rule by design: the running
-workload never reaches the API server (only the kubelet's mirror-pod attempt
-does), so the `emulate.sh gap` test documents the gap rather than feeding a rule.
-A node runtime sensor covers it. Strategy 3's rule is a node file-event rule; it
-parses in the validator but the audit-log loop does not exercise it, because it
-needs node file telemetry, not the API server audit log.
+Strategy 3's rule is a node file-event rule; it compiles in the validator but
+the lab does not exercise it, because it needs node file telemetry.
 
 This technique is not covered by `tired-labs/techniques` (no Kubernetes TRR
 exists there), by the SigmaHQ Kubernetes audit rules (there is no static-pod or

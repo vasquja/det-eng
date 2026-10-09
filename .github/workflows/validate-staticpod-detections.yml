@@ -1,18 +1,22 @@
 name: validate-staticpod-detections
 
-# Proves the TRR9003 (static pod, T1543.005) loop on a real Kubernetes cluster:
-#   drop a static pod manifest on the node -> kubelet runs it + registers a
-#   mirror pod -> API server audit event -> Strategy 2 Sigma rule fires.
-# It also exercises the evasion variant, which demonstrates the detection gap:
-# an invalid-namespace static pod runs on the node but leaves no audit event.
+# Proves the TRR9003 (static pod, T1543.005) loop on a real Kubernetes cluster,
+# with one rule per sensor:
+#   - Strategy 1 (chokepoint), node runtime sensor: the kubelet starts a pod with
+#     config.source=file -> CRI pod sandbox record -> the CRI Sigma rule fires.
+#   - Strategy 2 (fallback), API server audit log: the kubelet registers a
+#     mirror pod -> `create pods` by a node identity -> the audit rule fires.
+# The evasion variant (an invalid-namespace static pod) runs on the node with no
+# pod object in the API; the CRI rule must catch it, which closes that gap.
 #
 # A kind cluster (Kubernetes in Docker) runs on the ubuntu-latest runner with API
-# server audit logging on. The job runs the benign emulation (a harmless busybox
-# static pod), copies the audit log off the node, and asserts the mirror-pod rule
-# matches the INJECTED static pod. The rule also matches the control-plane mirror
-# pods every node registers at start, so as a negative control the job runs the
-# validator on the audit log captured BEFORE the emulation (baseline only), where
-# it must not pass. On a public repo the run is free.
+# server audit logging on, and a small CRI poller on the node stands in for a
+# runtime security agent (detections/k8s/cri-pod-sensor.sh). The job runs the
+# benign emulation (a harmless busybox static pod), collects both logs, and
+# asserts each rule matches the emulation's own pods. Both rules also match the
+# control-plane static pods by design, so as a negative control the job runs the
+# validator on logs captured BEFORE the emulation, where no rule may pass. On a
+# public repo the run is free.
 
 on:
   push:
@@ -20,6 +24,7 @@ on:
     paths:
       - 'detections/k8s/audit-policy-staticpod.yaml'
       - 'detections/k8s/kind-staticpod-cluster.yaml'
+      - 'detections/k8s/cri-pod-sensor.sh'
       - 'detections/sigma/T1543.005/**'
       - 'detections/validate_staticpod_detections.py'
       - 'detections/sigma_eval.py'
@@ -30,6 +35,7 @@ on:
     paths:
       - 'detections/k8s/audit-policy-staticpod.yaml'
       - 'detections/k8s/kind-staticpod-cluster.yaml'
+      - 'detections/k8s/cri-pod-sensor.sh'
       - 'detections/sigma/T1543.005/**'
       - 'detections/validate_staticpod_detections.py'
       - 'detections/sigma_eval.py'
@@ -100,12 +106,33 @@ jobs:
             > /tmp/pre-emulation-audit.log
           echo "Captured $(wc -l < /tmp/pre-emulation-audit.log) pre-emulation audit lines."
 
+      - name: Start the node runtime sensor (CRI pod sandboxes)
+        shell: bash
+        run: |
+          # Stand-in for a runtime security agent on the node: record every pod
+          # sandbox the container runtime reports, with its annotations.
+          NODE="${CLUSTER_NAME}-control-plane"
+          docker cp detections/k8s/cri-pod-sensor.sh "${NODE}:/usr/local/bin/cri-pod-sensor.sh"
+          # One snapshot now: the negative-control input, beside the audit log above.
+          docker exec "${NODE}" sh /usr/local/bin/cri-pod-sensor.sh once \
+            > /tmp/pre-emulation-cri.jsonl
+          docker exec -d "${NODE}" \
+            sh /usr/local/bin/cri-pod-sensor.sh watch /var/log/cri-pods.jsonl 1
+          # Wait for the first snapshot, so the sensor is live before the emulation.
+          for _ in $(seq 1 15); do
+            docker exec "${NODE}" test -s /var/log/cri-pods.jsonl && break
+            sleep 1
+          done
+          docker exec "${NODE}" test -s /var/log/cri-pods.jsonl \
+            || { echo "::error::the CRI sensor wrote nothing"; exit 1; }
+          echo "Sensor live; pre-emulation snapshot is $(wc -c < /tmp/pre-emulation-cri.jsonl) bytes."
+
       - name: Emulate T1543.005 static pods (benign busybox)
         shell: bash
         run: |
           bash atomics/T1543.005/src/emulate.sh all
 
-      - name: Collect the API server audit log
+      - name: Collect the audit log and the node sensor log
         shell: bash
         run: |
           # Give the mirror-pod create event a moment to flush.
@@ -114,46 +141,53 @@ jobs:
             cat /var/log/kubernetes/kube-apiserver-audit.log \
             > /tmp/kube-apiserver-audit.log
           echo "Collected $(wc -l < /tmp/kube-apiserver-audit.log) audit lines."
+          docker exec "${CLUSTER_NAME}-control-plane" \
+            cat /var/log/cri-pods.jsonl > /tmp/cri-pods.jsonl
+          echo "Collected $(wc -l < /tmp/cri-pods.jsonl) CRI sensor snapshots."
 
-      - name: Validate detections (static pod -> audit -> Sigma)
+      - name: Validate detections (static pod -> audit log + node sensor -> Sigma)
         shell: bash
         run: |
           # shell: bash enables pipefail, so tee does not mask the exit code.
           python3 detections/validate_staticpod_detections.py \
-            --audit-log /tmp/kube-apiserver-audit.log | tee /tmp/spval.out
+            --audit-log /tmp/kube-apiserver-audit.log \
+            --cri-log /tmp/cri-pods.jsonl | tee /tmp/spval.out
 
       - name: Negative control (the baseline alone may not pass)
         shell: bash
         run: |
           python3 detections/validate_staticpod_detections.py \
-            --audit-log /tmp/pre-emulation-audit.log --expect-miss | tee /tmp/spneg.out
+            --audit-log /tmp/pre-emulation-audit.log \
+            --cri-log /tmp/pre-emulation-cri.jsonl --expect-miss | tee /tmp/spneg.out
 
       - name: Publish results to job summary
         if: always()
         shell: bash
         run: |
           {
-            echo '## TRR9003 static-pod detection validation (static pod -> audit -> Sigma)'
+            echo '## TRR9003 static-pod detection validation (audit log + node runtime sensor -> Sigma)'
             echo ''
             echo '```'
             cat /tmp/spval.out 2>/dev/null || echo '(no validator output captured)'
             echo '```'
             echo ''
-            echo '### Negative control (audit log captured before the emulation)'
+            echo '### Negative control (logs captured before the emulation)'
             echo ''
             echo '```'
             cat /tmp/spneg.out 2>/dev/null || echo '(no negative-control output captured)'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload the audit log
+      - name: Upload the audit and node sensor logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: kube-apiserver-audit-log-staticpod
+          name: staticpod-telemetry
           path: |
             /tmp/kube-apiserver-audit.log
             /tmp/pre-emulation-audit.log
+            /tmp/cri-pods.jsonl
+            /tmp/pre-emulation-cri.jsonl
           if-no-files-found: ignore
 
       - name: Delete the cluster

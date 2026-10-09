@@ -1,0 +1,58 @@
+title: Kubelet Started A Pod The API Server Never Scheduled (Static Pod)
+id: f0242f4d-f1cc-45b4-933c-fdde6bdd1af3
+status: experimental
+description: |
+  Detects the kubelet starting a pod whose source is not the API server: a pod
+  sandbox whose `kubernetes.io/config.source` annotation is `file` (a manifest
+  in staticPodPath) or `http` (a manifest fetched from staticPodURL). This is
+  the TRR9003 Strategy 1 chokepoint, covering Procedure A (manifest drop) and
+  Procedure B (reconfigured static source).
+
+  The kubelet sets `config.source` itself on every pod it runs (`api` for a
+  scheduled pod) and passes the pod's annotations to the container runtime when
+  it creates the sandbox, so a manifest cannot change it. The pod has to start
+  to run, so this sees what the API server audit log cannot: the workload
+  itself, including the invalid-namespace variant whose mirror pod is rejected
+  and never stored as an object.
+
+  Log source: the container runtime's (CRI) record of each pod sandbox, with the
+  CRI PodSandbox fields `id`, `metadata.name`, `metadata.namespace`,
+  `metadata.uid`, `state`, `labels` and `annotations` — what `crictl pods -o
+  json` returns, and what a runtime security or EDR agent with container
+  context reports when a sandbox starts. Sigma has no standard log source for
+  it, so this rule declares `product: kubernetes`, `service: cri`; map those
+  fields to your node sensor's.
+references:
+  - https://attack.mitre.org/techniques/T1543/005/
+  - https://kubernetes.io/docs/tasks/configure-pod-container/static-pod/
+  - https://kubernetes.io/docs/concepts/security/api-server-bypass-risks/
+  - https://kubernetes.io/docs/concepts/architecture/cri/
+author: det-eng
+date: 2026/10/09
+tags:
+  - attack.persistence
+  - attack.t1543.005
+logsource:
+  product: kubernetes
+  service: cri
+  definition: 'One record per pod sandbox the container runtime runs on a node, with the CRI PodSandbox fields (metadata.*, state, labels, annotations), from a node runtime sensor'
+detection:
+  select_static_source:
+    annotations.kubernetes.io/config.source:
+      - 'file'
+      - 'http'
+  condition: select_static_source
+falsepositives:
+  - Control-plane static pods. On a kubeadm-style control-plane node,
+    kube-apiserver, etcd, kube-controller-manager and kube-scheduler start from
+    files when the node boots or the control plane is upgraded. Suppress each
+    one by its exact `metadata.name` together with its
+    `annotations.kubernetes.io/config.hash` (the kubelet's hash of the
+    manifest, which changes only when the manifest does), per node. Do not
+    suppress by name prefix, namespace or labels alone; the manifest sets
+    those, and blending into kube-system with a control-plane-like name is a
+    known evasion.
+  - Distributions or operators that deliberately run other components as
+    static pods (for example kube-proxy or etcd on RKE2). Baseline the known set
+    per node the same way.
+level: medium
