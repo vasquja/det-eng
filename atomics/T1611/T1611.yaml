@@ -49,3 +49,148 @@ atomic_tests:
         /tmp/setns_namespace_join_behavioral #{target_pid}
       cleanup_command: |
         rm -f /tmp/setns_namespace_join_behavioral
+
+  # --- Kubernetes pod-spec escape surface (TRR9007) -------------------------------
+  # These emulate the admission-time host-access request a pod spec can make. Every
+  # container only runs 'sleep 3600' -- the host access is requested, never used.
+  # They need a reachable cluster (kubectl) with a namespace that has no restrictive
+  # Pod Security Admission (the kind default namespace), and audit logging at Request
+  # level (see detections/k8s/kind-apiserver-cluster.yaml).
+
+  - name: "TRR9007.K8S.A — privileged container (Kubernetes)"
+    auto_generated_guid: c595aeed-17f1-4452-a241-e67a38a8b626
+    description: |
+      Creates a pod with a privileged container (securityContext.privileged=true).
+      A privileged container can reach the node. The container only sleeps.
+      Chokepoint: objectRef.resource=pods, a write verb, requestObject.spec with a
+      dangerous field (Request level).
+      Rule: detections/sigma/T1611/k8s_podspec_host_access.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_k8s.sh a
+      cleanup_command: |
+        kubectl -n default delete pod trr9007-priv --force --grace-period=0 --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1611/src
+
+  - name: "TRR9007.K8S.B — hostPath mount of the node root (Kubernetes)"
+    auto_generated_guid: d61176f7-bd34-4c2f-8dcb-8816bdea6b9f
+    description: |
+      Creates a pod that mounts the node root (/) as a hostPath volume, read-only.
+      A hostPath mount of a sensitive node directory is a path to the host. The
+      volume is never read.
+      Rule: detections/sigma/T1611/k8s_podspec_host_access.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_k8s.sh b
+      cleanup_command: |
+        kubectl -n default delete pod trr9007-hostpath --force --grace-period=0 --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1611/src
+
+  - name: "TRR9007.K8S.C — host namespaces (Kubernetes)"
+    auto_generated_guid: c495495d-d0ed-4e52-bf6c-963be2b056a3
+    description: |
+      Creates a pod that shares the node's PID and IPC namespaces (hostPID, hostIPC).
+      hostNetwork is omitted so the single-node lab keeps its ports. The container
+      only sleeps.
+      Rule: detections/sigma/T1611/k8s_podspec_host_access.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_k8s.sh c
+      cleanup_command: |
+        kubectl -n default delete pod trr9007-hostns --force --grace-period=0 --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1611/src
+
+  - name: "TRR9007.K8S.D — added dangerous capabilities (Kubernetes)"
+    auto_generated_guid: c80c4e5d-6ca3-4ae1-8062-b71ba5b6d0fa
+    description: |
+      Creates a pod whose container adds SYS_ADMIN and SYS_PTRACE capabilities.
+      Powerful capabilities are a path to the host. They are granted but never used.
+      Rule: detections/sigma/T1611/k8s_podspec_host_access.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_k8s.sh d
+      cleanup_command: |
+        kubectl -n default delete pod trr9007-caps --force --grace-period=0 --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1611/src
+
+  - name: "TRR9007.K8S — host access through a workload controller (Kubernetes)"
+    auto_generated_guid: f022e75f-dde0-416d-9ce1-8a3f91229e84
+    description: |
+      Creates a Deployment whose Pod template requests a privileged container. The
+      Deployment create is the adversary's real admission-moment event (explicit
+      name, real identity); the controller fallback rule keys on it. The container
+      only sleeps.
+      Rule: detections/sigma/T1611/k8s_podspec_controller_host_access.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_k8s.sh ctrl
+      cleanup_command: |
+        kubectl -n default delete deployment trr9007-depl --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1611/src
+
+  - name: "TRR9007.K8S — dangerous static pod (delivery variant, Kubernetes)"
+    auto_generated_guid: 044a92b5-db44-495c-82c6-5f70e5070986
+    description: |
+      Writes a dangerous static pod manifest (privileged + hostPath / + hostPID) to
+      the kubelet's static-pod directory on the node. The kubelet runs it straight
+      through the container runtime, then registers a mirror pod so the API shows it.
+      The node runtime sensor sees the running container; the mirror create is
+      audited as a system:node pods-create carrying the spec, so at Request level the
+      chokepoint catches it too (links to TRR9003). Under a Metadata-only audit
+      policy the spec is hidden and only the node sensor sees the container. The
+      container only sleeps. Needs node access (docker exec on kind), as TRR9003 does.
+      Node-sensor rule: detections/sigma/T1543.005/k8s_cri_static_pod_start.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_k8s.sh gap
+      cleanup_command: |
+        true
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1611/src

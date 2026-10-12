@@ -4,10 +4,19 @@
     {
       "name": "Network Sniffing via Packet Capture (Linux)",
       "id": "TRR9001",
-      "tactics": ["Credential Access", "Discovery"],
-      "contributors": ["det-eng"],
-      "external_ids": ["T1040"],
-      "platforms": ["Linux"],
+      "tactics": [
+        "Credential Access",
+        "Discovery"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1040"
+      ],
+      "platforms": [
+        "Linux"
+      ],
       "procedures": {
         "A": "Raw packet socket (classic receive)",
         "B": "Packet socket with PACKET_MMAP ring",
@@ -39,10 +48,18 @@
     {
       "name": "Command Execution in a Running Container (Kubernetes)",
       "id": "TRR9002",
-      "tactics": ["Execution"],
-      "contributors": ["det-eng"],
-      "external_ids": ["T1609"],
-      "platforms": ["Kubernetes"],
+      "tactics": [
+        "Execution"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1609"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
       "procedures": {
         "A": "Exec through the API server",
         "B": "Attach through the API server",
@@ -79,10 +96,18 @@
     {
       "name": "Static Pod Persistence (Kubernetes)",
       "id": "TRR9003",
-      "tactics": ["Persistence"],
-      "contributors": ["det-eng"],
-      "external_ids": ["T1543.005"],
-      "platforms": ["Kubernetes"],
+      "tactics": [
+        "Persistence"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1543.005"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
       "procedures": {
         "A": "Drop a manifest in the static-pod directory",
         "B": "Reconfigure the kubelet static source"
@@ -98,6 +123,191 @@
         "B": {
           "text": "det-eng kubelet static-source reconfiguration (read-only demonstration)",
           "url": "../atomics/T1543.005/src/emulate.sh"
+        }
+      }
+    },
+    {
+      "name": "Additional Container Cluster Roles (Kubernetes)",
+      "id": "TRR9004",
+      "tactics": [
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1098.006"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "ClusterRoleBinding to a powerful ClusterRole",
+        "B": "Namespaced RoleBinding to a ClusterRole",
+        "C": "Write a wildcard or escalate/bind role",
+        "D": "Bind a built-in group (mass grant)",
+        "E": "Patch an existing binding or role"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9004/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng ClusterRoleBinding behavioral emulation (binds read-only view)",
+          "url": "../atomics/T1098.006/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng namespaced RoleBinding behavioral emulation",
+          "url": "../atomics/T1098.006/src/emulate.sh"
+        },
+        "C": {
+          "text": "det-eng wildcard role write behavioral emulation (never bound)",
+          "url": "../atomics/T1098.006/src/emulate.sh"
+        },
+        "D": {
+          "text": "det-eng group-subject binding behavioral emulation (throwaway group)",
+          "url": "../atomics/T1098.006/src/emulate.sh"
+        },
+        "E": {
+          "text": "det-eng role patch behavioral emulation",
+          "url": "../atomics/T1098.006/src/emulate.sh"
+        }
+      }
+    },
+    {
+      "name": "Container Orchestration Job (Kubernetes)",
+      "id": "TRR9005",
+      "tactics": [
+        "Execution",
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1053.007"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "Create a CronJob (recurring persistence)",
+        "B": "Create a one-shot Job (execution)",
+        "C": "Privileged or host-mounting Job/CronJob",
+        "D": "Modify an existing CronJob/Job"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9005/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng CronJob behavioral emulation (never-firing schedule)",
+          "url": "../atomics/T1053.007/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng one-shot Job behavioral emulation (runs id; node sensor)",
+          "url": "../atomics/T1053.007/src/emulate.sh"
+        },
+        "C": {
+          "text": "det-eng host-access Job behavioral emulation (privileged + hostPath)",
+          "url": "../atomics/T1053.007/src/emulate.sh"
+        },
+        "D": {
+          "text": "det-eng CronJob modification behavioral emulation (suspend)",
+          "url": "../atomics/T1053.007/src/emulate.sh"
+        }
+      }
+    },
+    {
+      "name": "Unsecured Credentials: Container API (Kubernetes)",
+      "id": "TRR9006",
+      "tactics": [
+        "Credential Access"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1552.007"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "List Secrets",
+        "B": "Get a specific Secret",
+        "C": "Watch Secrets",
+        "D": "Mint a token via TokenRequest",
+        "E": "Read a mounted token off disk (the gap)"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9006/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng Secret list behavioral emulation",
+          "url": "../atomics/T1552.007/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng Secret get behavioral emulation",
+          "url": "../atomics/T1552.007/src/emulate.sh"
+        },
+        "C": {
+          "text": "det-eng Secret watch behavioral emulation",
+          "url": "../atomics/T1552.007/src/emulate.sh"
+        },
+        "D": {
+          "text": "det-eng TokenRequest behavioral emulation (throwaway SA)",
+          "url": "../atomics/T1552.007/src/emulate.sh"
+        },
+        "E": {
+          "text": "det-eng mounted-token file read (detection-gap demonstration)",
+          "url": "../atomics/T1552.007/src/emulate.sh"
+        }
+      }
+    },
+    {
+      "name": "Escape to Host via a Dangerous Pod Spec (Kubernetes)",
+      "id": "TRR9007",
+      "tactics": [
+        "Privilege Escalation"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1611"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "Privileged container",
+        "B": "hostPath mount of a sensitive node directory",
+        "C": "Host namespace (hostPID/hostNetwork/hostIPC)",
+        "D": "Added dangerous capabilities"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9007/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng privileged-container pod-spec behavioral emulation (sleep-only)",
+          "url": "../atomics/T1611/src/emulate_k8s.sh"
+        },
+        "B": {
+          "text": "det-eng hostPath pod-spec behavioral emulation (sleep-only)",
+          "url": "../atomics/T1611/src/emulate_k8s.sh"
+        },
+        "C": {
+          "text": "det-eng host-namespace pod-spec behavioral emulation (sleep-only)",
+          "url": "../atomics/T1611/src/emulate_k8s.sh"
+        },
+        "D": {
+          "text": "det-eng added-capabilities pod-spec behavioral emulation (sleep-only)",
+          "url": "../atomics/T1611/src/emulate_k8s.sh"
         }
       }
     }

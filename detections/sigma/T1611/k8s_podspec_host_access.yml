@@ -1,0 +1,90 @@
+title: Kubernetes Pod Requests Host Access (Escape Surface)
+id: 2cfa4756-b65b-4166-81fd-f9247663cd10
+status: experimental
+description: |
+  Detects a pod write whose specification requests host access: a privileged
+  container, a hostPath volume, a host namespace (hostPID/hostNetwork/hostIPC), or
+  a dangerous Linux capability. This is the TRR9007 Strategy 1 chokepoint, covering
+  Procedure A (privileged), B (hostPath), C (host namespace), and D (capabilities).
+  A pod with any of these can reach the node and every other pod on it, with no
+  kernel exploit -- Kubernetes hands over the host because the pod spec asked.
+
+  Every path puts its dangerous field in the pod spec, and the pod spec is the
+  request body the API server records, so one admission-time rule covers all four.
+  It also catches a privileged ephemeral container
+  (requestObject.spec.ephemeralContainers), and an attempt that admission REJECTS,
+  because requestObject is logged with the 403 as well.
+
+  The rule needs audit level Request (or higher): requestObject is absent at
+  Metadata, so a Metadata-only policy makes this rule blind. The host-namespace
+  fields (hostPID/hostNetwork/hostIPC) are top-level booleans; the container and
+  volume fields are in JSON-serialized arrays, matched with |contains, and listed
+  in both the spaced (Request-body) and compact (Go) forms so the rule is portable
+  across a det-eng audit log and a production SIEM. The capability names use the
+  short form (no CAP_ prefix) that the PodSpec serializes.
+
+  This is noisy without baselining: kube-proxy, the CNI DaemonSet (kindnet,
+  Calico, Cilium), and other infrastructure legitimately request host access.
+  Baseline those by EXACT pod name, image, and identity -- never by the dangerous
+  field (an attacker uses the same fields) and never by namespace (an attacker
+  hides in kube-system). A companion rule (k8s_podspec_controller_host_access.yml)
+  catches the same request made through a workload controller.
+references:
+  - https://attack.mitre.org/techniques/T1611/
+  - https://kubernetes.io/docs/concepts/security/pod-security-standards/
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.privilege-escalation
+  - attack.t1611
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  selection_pod:
+    objectRef.resource: 'pods'
+    verb:
+      - 'create'
+      - 'update'
+      - 'patch'
+  sel_privileged:
+    requestObject.spec.containers|contains:
+      - '"privileged": true'
+      - '"privileged":true'
+  sel_privileged_init:
+    requestObject.spec.initContainers|contains:
+      - '"privileged": true'
+      - '"privileged":true'
+  sel_privileged_ephem:
+    requestObject.spec.ephemeralContainers|contains:
+      - '"privileged": true'
+      - '"privileged":true'
+  sel_caps:
+    requestObject.spec.containers|contains:
+      - '"SYS_ADMIN"'
+      - '"SYS_PTRACE"'
+      - '"SYS_MODULE"'
+      - '"DAC_READ_SEARCH"'
+      - '"SYS_BOOT"'
+      - '"SYS_RAWIO"'
+      - '"NET_ADMIN"'
+      - '"BPF"'
+      - '"SYSLOG"'
+  sel_hostpath:
+    requestObject.spec.volumes|contains: '"hostPath"'
+  sel_hostpid:
+    requestObject.spec.hostPID: true
+  sel_hostnet:
+    requestObject.spec.hostNetwork: true
+  sel_hostipc:
+    requestObject.spec.hostIPC: true
+  condition: selection_pod and (sel_privileged or sel_privileged_init or sel_privileged_ephem or sel_caps or sel_hostpath or sel_hostpid or sel_hostnet or sel_hostipc)
+falsepositives:
+  - Infrastructure that legitimately needs host access. kube-proxy runs privileged
+    and hostNetwork; the CNI DaemonSet (kindnet, Calico, Cilium) runs privileged
+    with hostPath mounts; monitoring and storage agents mount host paths. Baseline
+    these by exact pod name, image, and identity -- not by the dangerous field or
+    the namespace.
+  - Operators debugging with a privileged pod. Baseline the known identities.
+level: high

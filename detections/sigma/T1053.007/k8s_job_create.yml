@@ -1,0 +1,64 @@
+title: Kubernetes Job or CronJob Written
+id: cf252566-a5d1-4d01-a44a-25d7731695ad
+status: experimental
+description: |
+  Detects a write (create, update, patch, delete) to a Kubernetes batch workload
+  object: a Job or a CronJob in the batch API group. This is the TRR9005 Strategy
+  1 chokepoint, covering all four procedures: a recurring CronJob (A), a one-shot
+  Job (B), a privileged or host-mounting Job/CronJob (C), and a modification of an
+  existing one (D). Every one is an authenticated write to a batch/v1 object that
+  the API server records; the technique has no API-server bypass (that is what
+  separates it from static pods, T1543.005), so one rule covers it.
+
+  The rule excludes the two built-in controllers, system:serviceaccount:kube-
+  system:cronjob-controller and system:serviceaccount:kube-system:job-controller.
+  A CronJob fires by having the cronjob controller create a Job, which has the job
+  controller create Pods; without this filter the rule alerts on every scheduled
+  run of every legitimate CronJob in the cluster. Excluding the controllers keeps
+  the rule on the human or service identity that set the schedule up -- the
+  adversary's own entry. The cost is that the recurring executions themselves are
+  not seen here; the node runtime fallback (k8s_cri_job_pod.yml) covers those.
+
+  There is no separate replace audit verb: an HTTP PUT is recorded as
+  verb=update, so the four verbs here are complete. A privileged or host-mounting
+  batch object (Procedure C) also matches the TRR9007 controller rule
+  (k8s_podspec_controller_host_access.yml), which grades the embedded Pod template
+  -- the same write, two lenses; dedup by auditID.
+references:
+  - https://attack.mitre.org/techniques/T1053/007/
+  - https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/
+  - https://kubernetes.io/docs/concepts/workloads/controllers/job/
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.execution
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1053.007
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_batch_write:
+    objectRef.apiGroup: 'batch'
+    objectRef.resource:
+      - 'jobs'
+      - 'cronjobs'
+    verb:
+      - 'create'
+      - 'update'
+      - 'patch'
+      - 'delete'
+  filter_controllers:
+    user.username:
+      - 'system:serviceaccount:kube-system:cronjob-controller'
+      - 'system:serviceaccount:kube-system:job-controller'
+  condition: select_batch_write and not filter_controllers
+falsepositives:
+  - Legitimate batch work. Backups, report generation, and batch processing run
+    as Jobs and CronJobs all the time. Baseline the identities (users and service
+    accounts) that legitimately create batch objects, and the known schedules.
+  - GitOps and CI (Argo CD, Flux, Helm) that deploy Jobs or CronJobs. Baseline the
+    automation identities per cluster.
+level: medium

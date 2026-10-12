@@ -1,0 +1,76 @@
+title: Kubernetes RBAC Grant of Dangerous Permissions
+id: ea752dfd-d6f6-4916-b193-f06cb9fc2e31
+status: experimental
+description: |
+  Detects a Kubernetes RBAC write that grants dangerous power, by inspecting the
+  request body (requestObject, which needs audit level Request or higher). This
+  is the TRR9004 severity layer on top of the chokepoint rule
+  (k8s_rbac_write.yml): the chokepoint fires on every RBAC write, this rule picks
+  out the ones that matter. It matches when any of the following is true:
+
+    - the binding grants a powerful built-in ClusterRole (roleRef.name is
+      cluster-admin, admin, or edit);
+    - a subject is a built-in group that covers many principals at once
+      (system:authenticated, system:unauthenticated, or system:anonymous) -- a
+      mass grant;
+    - the written role carries a wildcard rule ("*") or one of the escalation
+      verbs escalate, bind, or impersonate.
+
+  The group-subject and rule matches use |contains against the JSON-serialized
+  subjects and rules arrays and list both the spaced (CI) and compact (Go) forms,
+  because the audit backend stores an array field as JSON text. roleRef is an
+  object, not an array, so it flattens to dotted scalar fields matched by
+  equality.
+
+  Metadata level cannot feed this rule: roleRef, subjects, and rules all live in
+  requestObject. Without Request level a binding to view and a binding to
+  cluster-admin are byte-for-byte identical, so the chokepoint fires but severity
+  cannot be graded. Raising the RBAC audit rule to Request closes that gap.
+references:
+  - https://attack.mitre.org/techniques/T1098/006/
+  - https://kubernetes.io/docs/reference/access-authn-authz/rbac/
+  - https://kubernetes.io/docs/concepts/security/rbac-good-practices/
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1098.006
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_rbac_write:
+    objectRef.apiGroup: 'rbac.authorization.k8s.io'
+    verb:
+      - 'create'
+      - 'update'
+      - 'patch'
+  sel_powerful_roleref:
+    requestObject.roleRef.name:
+      - 'cluster-admin'
+      - 'admin'
+      - 'edit'
+  sel_group_subject:
+    requestObject.subjects|contains:
+      - '"name": "system:authenticated"'
+      - '"name":"system:authenticated"'
+      - '"name": "system:unauthenticated"'
+      - '"name":"system:unauthenticated"'
+      - '"name": "system:anonymous"'
+      - '"name":"system:anonymous"'
+  sel_dangerous_rules:
+    requestObject.rules|contains:
+      - '"\*"'
+      - '"escalate"'
+      - '"bind"'
+      - '"impersonate"'
+  condition: select_rbac_write and (sel_powerful_roleref or sel_group_subject or sel_dangerous_rules)
+falsepositives:
+  - Legitimate administration that genuinely needs power, for example an operator
+    install that creates a ClusterRole with a wildcard rule, or a platform team
+    binding admin in a tenant namespace. Triage every hit; baseline the known
+    automation identities that do this.
+  - A role with apiGroups ["*"] but narrow verbs is common and matches the
+    wildcard clause. Confirm the matched rule before escalating.
+level: high

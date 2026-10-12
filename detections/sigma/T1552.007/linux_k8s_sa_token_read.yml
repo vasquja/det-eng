@@ -1,0 +1,57 @@
+title: Kubernetes Service Account Token Read From a Pod Filesystem
+id: 8f2b9d41-0c7e-4a6b-9f3a-2d5e7c1b6a04
+status: experimental
+description: |
+  Detects a read of the Kubernetes service-account token file from a container or
+  node filesystem: the projected/mounted token at
+  /var/run/secrets/kubernetes.io/serviceaccount/token (inside the container), or
+  on the node under /var/lib/kubelet/pods/<uid>/volumes/kubernetes.io~projected/.
+  This is the TRR9006 Strategy 3 rule, covering Procedure E — the detection gap.
+
+  Kubernetes auto-mounts a service-account token into almost every pod, so a
+  compromised workload usually starts with a usable API credential already on
+  disk. Reading it is an ordinary open()/read() on local disk. No request reaches
+  the API server, so there is NO audit event of any kind: the API-server
+  chokepoint (k8s_secret_access.yml) and the TokenRequest fallback
+  (k8s_secret_token_request.yml) are both blind to it. Only node file-event
+  telemetry (file integrity monitoring, auditd, or an EDR/runtime agent with
+  container context) sees the read.
+
+  This is a NODE sensor rule. It needs host file-event telemetry; it is NOT an API
+  server audit rule, and the TRR9006 audit-log validation loop does not exercise
+  it (the loop demonstrates the gap instead). Pair it with detection-by-absence:
+  an identity that authenticates to the API server with a token for which no
+  preceding get-secret and no TokenRequest create event exists must have obtained
+  the token from a file read.
+
+  The workload's own runtime reads this file at start, so baseline the expected
+  reader; a read by a shell, an interpreter, or a network tool is the signal.
+references:
+  - https://attack.mitre.org/techniques/T1552/007/
+  - https://kubernetes.io/docs/concepts/storage/projected-volumes/
+  - https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.credential-access
+  - attack.t1552.007
+logsource:
+  product: linux
+  category: file_event
+detection:
+  selection:
+    TargetFilename|contains:
+      - '/var/run/secrets/kubernetes.io/serviceaccount/token'
+      - 'kubernetes.io~projected/'
+  filter_expected:
+    Image|endswith:
+      - '/kubelet'
+      - '/mount'
+      - '/umount'
+  condition: selection and not filter_expected
+falsepositives:
+  - The workload's own runtime and client libraries read the token at start.
+    Baseline the expected reader process per image.
+  - The kubelet and mount helpers write and manage the projected token. These are
+    filtered by process image.
+level: high

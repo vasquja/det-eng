@@ -1,0 +1,219 @@
+name: validate-apiserver-detections
+
+# Proves the TRR9004-9007 loops on a real Kubernetes cluster, on ONE kind cluster
+# that all four techniques share (they all key on the same API server audit log):
+#   - TRR9004 (RBAC, T1098.006):        rbac write        -> audit -> Sigma
+#   - TRR9005 (Jobs/CronJobs, T1053.007): batch write      -> audit -> Sigma,
+#                                         and the executed job pod -> node sensor
+#   - TRR9006 (Secrets, T1552.007):     secret read / token -> audit -> Sigma
+#   - TRR9007 (dangerous pod spec, T1611): pod/controller requestObject -> audit -> Sigma
+#
+# A kind cluster runs on the ubuntu-latest runner with API server audit logging on
+# (pods, controllers and RBAC at Request level; Secrets and tokens at Metadata), and
+# a small CRI poller on the node stands in for a runtime security agent
+# (detections/k8s/cri-pod-sensor.sh). The job captures a BEFORE snapshot (negative
+# control), runs the four benign emulations, collects both logs, and asserts each
+# match-gated Sigma rule matches a record the emulation itself produced (named with
+# that technique's unique marker). The shipped rules are generic and a fresh kind
+# cluster is full of baseline matches (bootstrap RBAC, controller jobs, controller
+# secret reads, kube-proxy/kindnet privileged pods), so the negative control proves
+# a pass depends on the emulation, not the baseline. On a public repo the run is free.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'detections/k8s/audit-policy-apiserver.yaml'
+      - 'detections/k8s/kind-apiserver-cluster.yaml'
+      - 'detections/k8s/cri-pod-sensor.sh'
+      - 'detections/sigma/T1098.006/**'
+      - 'detections/sigma/T1053.007/**'
+      - 'detections/sigma/T1552.007/**'
+      - 'detections/sigma/T1611/**'
+      - 'detections/validate_apiserver_detections.py'
+      - 'detections/sigma_eval.py'
+      - 'detections/requirements.txt'
+      - 'atomics/T1098.006/**'
+      - 'atomics/T1053.007/**'
+      - 'atomics/T1552.007/**'
+      - 'atomics/T1611/**'
+      - '.github/workflows/validate-apiserver-detections.yml'
+  pull_request:
+    paths:
+      - 'detections/k8s/audit-policy-apiserver.yaml'
+      - 'detections/k8s/kind-apiserver-cluster.yaml'
+      - 'detections/k8s/cri-pod-sensor.sh'
+      - 'detections/sigma/T1098.006/**'
+      - 'detections/sigma/T1053.007/**'
+      - 'detections/sigma/T1552.007/**'
+      - 'detections/sigma/T1611/**'
+      - 'detections/validate_apiserver_detections.py'
+      - 'detections/sigma_eval.py'
+      - 'detections/requirements.txt'
+      - 'atomics/T1098.006/**'
+      - 'atomics/T1053.007/**'
+      - 'atomics/T1552.007/**'
+      - 'atomics/T1611/**'
+      - '.github/workflows/validate-apiserver-detections.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  KIND_VERSION: v0.27.0
+  KUBECTL_VERSION: v1.32.2
+  CLUSTER_NAME: apiserver
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install validator requirements
+        run: pip install --quiet -r detections/requirements.txt
+
+      - name: Install kind and kubectl (pinned)
+        shell: bash
+        run: |
+          curl -fsSLo ./kind \
+            "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind
+          curl -fsSLo ./kubectl \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x ./kubectl && sudo mv ./kubectl /usr/local/bin/kubectl
+          kind version
+          kubectl version --client
+
+      - name: Create kind cluster with audit logging
+        shell: bash
+        run: |
+          # Run from the repo root so the relative extraMounts path resolves.
+          kind create cluster \
+            --name "${CLUSTER_NAME}" \
+            --config detections/k8s/kind-apiserver-cluster.yaml \
+            --wait 150s
+
+      - name: Confirm audit logging is active
+        shell: bash
+        run: |
+          docker exec "${CLUSTER_NAME}-control-plane" \
+            cat /etc/kubernetes/manifests/kube-apiserver.yaml | grep -- --audit- \
+            || { echo "::error::audit flags not set on the API server"; exit 1; }
+
+      - name: Start the node runtime sensor (CRI pod sandboxes)
+        shell: bash
+        run: |
+          # Stand-in for a runtime security agent on the node: record every pod
+          # sandbox the container runtime reports (used by the TRR9005 job-pod rule).
+          NODE="${CLUSTER_NAME}-control-plane"
+          docker cp detections/k8s/cri-pod-sensor.sh "${NODE}:/usr/local/bin/cri-pod-sensor.sh"
+          docker exec "${NODE}" sh /usr/local/bin/cri-pod-sensor.sh once \
+            > /tmp/pre-emulation-cri.jsonl
+          docker exec -d "${NODE}" \
+            sh /usr/local/bin/cri-pod-sensor.sh watch /var/log/cri-pods.jsonl 1
+          for _ in $(seq 1 15); do
+            docker exec "${NODE}" test -s /var/log/cri-pods.jsonl && break
+            sleep 1
+          done
+          docker exec "${NODE}" test -s /var/log/cri-pods.jsonl \
+            || { echo "::error::the CRI sensor wrote nothing"; exit 1; }
+
+      - name: Capture the logs before the emulation (negative control)
+        shell: bash
+        run: |
+          # Wait for the baseline privileged workloads (kube-proxy, kindnet) so the
+          # pre-emulation log carries the matches the gate must exclude.
+          kubectl wait --for=condition=Ready nodes --all --timeout=120s || true
+          sleep 5
+          docker exec "${CLUSTER_NAME}-control-plane" \
+            cat /var/log/kubernetes/kube-apiserver-audit.log \
+            > /tmp/pre-emulation-audit.log
+          echo "Captured $(wc -l < /tmp/pre-emulation-audit.log) pre-emulation audit lines."
+
+      - name: Emulate TRR9004 (RBAC, benign view bindings)
+        shell: bash
+        run: bash atomics/T1098.006/src/emulate.sh all
+
+      - name: Emulate TRR9005 (Jobs/CronJobs, benign id)
+        shell: bash
+        run: bash atomics/T1053.007/src/emulate.sh all
+
+      - name: Emulate TRR9006 (Secrets, benign reads + token)
+        shell: bash
+        env:
+          TRR9006_NODE: apiserver-control-plane
+        run: bash atomics/T1552.007/src/emulate.sh all
+
+      - name: Emulate TRR9007 (dangerous pod specs, sleep-only)
+        shell: bash
+        env:
+          TRR9007_NODE: apiserver-control-plane
+        run: bash atomics/T1611/src/emulate_k8s.sh all
+
+      - name: Collect the audit log and the node sensor log
+        shell: bash
+        run: |
+          # Give the final events a moment to flush.
+          sleep 3
+          docker exec "${CLUSTER_NAME}-control-plane" \
+            cat /var/log/kubernetes/kube-apiserver-audit.log \
+            > /tmp/kube-apiserver-audit.log
+          echo "Collected $(wc -l < /tmp/kube-apiserver-audit.log) audit lines."
+          docker exec "${CLUSTER_NAME}-control-plane" \
+            cat /var/log/cri-pods.jsonl > /tmp/cri-pods.jsonl
+          echo "Collected $(wc -l < /tmp/cri-pods.jsonl) CRI sensor snapshots."
+
+      - name: Validate detections (emulate -> audit + node sensor -> Sigma)
+        shell: bash
+        run: |
+          python3 detections/validate_apiserver_detections.py \
+            --audit-log /tmp/kube-apiserver-audit.log \
+            --cri-log /tmp/cri-pods.jsonl | tee /tmp/apival.out
+
+      - name: Negative control (no rule may pass without the emulation)
+        shell: bash
+        run: |
+          python3 detections/validate_apiserver_detections.py \
+            --audit-log /tmp/pre-emulation-audit.log \
+            --cri-log /tmp/pre-emulation-cri.jsonl --expect-miss | tee /tmp/apineg.out
+
+      - name: Publish results to job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## TRR9004-9007 API server detection validation (emulate -> audit + node sensor -> Sigma)'
+            echo ''
+            echo '```'
+            cat /tmp/apival.out 2>/dev/null || echo '(no validator output captured)'
+            echo '```'
+            echo ''
+            echo '### Negative control (logs captured before the emulation)'
+            echo ''
+            echo '```'
+            cat /tmp/apineg.out 2>/dev/null || echo '(no negative-control output captured)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the audit and node sensor logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apiserver-telemetry
+          path: |
+            /tmp/kube-apiserver-audit.log
+            /tmp/pre-emulation-audit.log
+            /tmp/cri-pods.jsonl
+            /tmp/pre-emulation-cri.jsonl
+          if-no-files-found: ignore
+
+      - name: Delete the cluster
+        if: always()
+        shell: bash
+        run: kind delete cluster --name "${CLUSTER_NAME}" || true
