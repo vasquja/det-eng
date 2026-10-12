@@ -1,0 +1,49 @@
+[
+  {
+    "time": "2026-10-12T14:32:07.812Z",
+    "resourceId": "/tenants/8f3b2c1a-9d4e-4f6a-b1c2-3d4e5f6a7b8c/providers/Microsoft.aadiam",
+    "operationName": "Update application",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "8f3b2c1a-9d4e-4f6a-b1c2-3d4e5f6a7b8c",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "198.51.100.23",
+    "correlationId": "d1e2f3a4-5566-4778-99aa-bbccddeeff00",
+    "Level": "Informational",
+    "properties": {
+      "id": "Directory_d1e2f3a4-5566-4778-99aa-bbccddeeff00",
+      "category": "ApplicationManagement",
+      "correlationId": "d1e2f3a4-5566-4778-99aa-bbccddeeff00",
+      "result": "success",
+      "resultReason": "",
+      "activityDisplayName": "Update application",
+      "activityDateTime": "2026-10-12T14:32:07.812Z",
+      "loggedByService": "Core Directory",
+      "operationType": "Update",
+      "initiatedBy": {
+        "user": {
+          "id": "a1b2c3d4-e5f6-4071-8a9b-0c1d2e3f4a5b",
+          "displayName": "p.devops",
+          "userPrincipalName": "p.devops@trr9013-corp.onmicrosoft.com",
+          "ipAddress": "198.51.100.23"
+        }
+      },
+      "targetResources": [
+        {
+          "id": "99887766-5544-3322-1100-ffeeddccbbaa",
+          "displayName": "trr9013-ci-app",
+          "type": "Application",
+          "modifiedProperties": [
+            {
+              "displayName": "FederatedIdentityCredentials",
+              "oldValue": "[]",
+              "newValue": "[{\"Id\": \"7b5a1e4c-3d2f-4a9b-8c1e-2f3a4b5c6d7e\", \"Name\": \"github-prod-deploy\", \"Audiences\": [\"api://AzureADTokenExchange\"], \"Issuer\": \"https://token.actions.githubusercontent.com\", \"Subject\": \"repo:trr9013-corp/deploy-pipeline:environment:Production\", \"Description\": \"trr9013 emulated FIC\"}]"
+            }
+          ]
+        }
+      ],
+      "additionalDetails": []
+    }
+  }
+]

@@ -1,0 +1,71 @@
+attack_technique: T1098.001
+display_name: "Account Manipulation: Additional Cloud Credentials (OIDC federation backdoors)"
+
+# Behavioral emulation for TRR9013 (Entra federated identity credential backdoor) and
+# TRR9015 (AWS GitHub-OIDC role-trust abuse). Both abuse OIDC workload-identity
+# federation to add additional cloud credentials. The live tests create throwaway
+# objects in your own tenant/account and clean up (guarded by *_LIVE=1); NOT run in CI.
+# CI validation runs the paired Sigma rules over the committed fixtures in
+# detections/cloud/fixtures/trr9013/ and trr9015/ via detections/validate_cloud_detections.py.
+
+atomic_tests:
+  - name: "TRR9013.AZR.A — add a federated identity credential to an Entra app"
+    auto_generated_guid: 8f2a1b90-9013-4c4d-9e12-1a2b3c4d5e61
+    description: |
+      Adds a FIC that trusts an attacker-controlled OIDC issuer to a throwaway Entra
+      app registration, then deletes it.
+      Chokepoint: Entra audit 'Update application' + modifiedProperty
+      FederatedIdentityCredentials, issuer not on the approved allowlist.
+      Rule: detections/sigma/T1098.001/entra_app_federated_credential_backdoor.yml
+    supported_platforms:
+      - iaas:azure
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_entra.sh a
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1098.001/src
+
+  - name: "TRR9013.AZR.C — add a federated identity credential to a managed identity"
+    auto_generated_guid: 8f2a1b90-9013-4d5e-8f23-2b3c4d5e6f72
+    description: |
+      Adds a FIC to a user-assigned managed identity via ARM (Azure Activity Log,
+      not the Entra audit log).
+      Rule: detections/sigma/T1098.001/azure_managed_identity_federated_credential_backdoor.yml
+    supported_platforms:
+      - iaas:azure
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_entra.sh c
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1098.001/src
+
+  - name: "TRR9015.AWS.A — over-broad GitHub-OIDC role trust policy"
+    auto_generated_guid: 9c3b2a10-9015-4e6f-9a34-3c4d5e6f7a83
+    description: |
+      Creates a throwaway IAM role trusting the GitHub Actions OIDC provider with an
+      over-broad subject (repo:org/*) and then deletes it.
+      Chokepoint: CloudTrail iam:UpdateAssumeRolePolicy / iam:CreateRole whose decoded
+      trust policy trusts token.actions.githubusercontent.com with a wildcard/absent sub.
+      Rule: detections/sigma/T1098.001/aws_github_oidc_role_trust_abuse.yml
+    supported_platforms:
+      - iaas:aws
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_aws_oidc.sh a
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1098.001/src

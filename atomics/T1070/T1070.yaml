@@ -1,0 +1,119 @@
+attack_technique: T1070
+display_name: "Indicator Removal (Kubernetes Events and Workload Records)"
+
+# Behavioral emulation for TRR9010. Each test destroys evidence through the API
+# server, so the delete/deletecollection audit events the paired detections key on
+# exist. Everything happens in a throwaway namespace trr9010 with uniquely named
+# objects, so a validator matches the emulation's own events. A delete is audited
+# even when the object does not exist, so the telemetry exists regardless. These need
+# a reachable cluster and audit logging (see detections/k8s/kind-apiserver-cluster.yaml).
+
+atomic_tests:
+  - name: "TRR9010.K8S.A — delete a single Kubernetes Event (core group)"
+    auto_generated_guid: 37db7bec-4477-4a1a-8506-fe7a881bc086
+    description: |
+      Creates a harmless core v1 Event and deletes it. Deleting Events destroys the
+      record of what happened in the cluster.
+      Chokepoint: objectRef.resource=events, verb delete or deletecollection.
+      Rule: detections/sigma/T1070/k8s_events_deleted.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh a
+      cleanup_command: |
+        kubectl delete namespace trr9010 --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1070/src
+
+  - name: "TRR9010.K8S.B — bulk-wipe Events with deletecollection"
+    auto_generated_guid: f229b08f-6503-4be7-a075-6339ed3afad4
+    description: |
+      Issues a collection DELETE on Events in the throwaway namespace (via kubectl proxy
+      and a raw DELETE), recorded as verb=deletecollection. This is the mass cover-up the
+      upstream delete-only rule misses.
+      Rule: detections/sigma/T1070/k8s_events_deleted.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh b
+      cleanup_command: |
+        kubectl delete namespace trr9010 --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1070/src
+
+  - name: "TRR9010.K8S.C — delete an Event via the events.k8s.io group"
+    auto_generated_guid: 6722d8d9-7445-4459-8251-dd8e3af653a9
+    description: |
+      Creates a harmless events.k8s.io/v1 Event and deletes it. The same objectRef.resource
+      =events in a second API group, which the chokepoint covers by not pinning apiGroup.
+      Rule: detections/sigma/T1070/k8s_events_deleted.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh c
+      cleanup_command: |
+        kubectl delete namespace trr9010 --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1070/src
+
+  - name: "TRR9010.K8S.D — delete a Pod to destroy the workload record"
+    auto_generated_guid: 5913985c-392b-46cb-bcfb-bf300b773752
+    description: |
+      Creates a harmless busybox pod (sleep only) and deletes it, to remove the record of
+      what ran. Low fidelity (pod deletion is routine); the rule is a correlation anchor,
+      the inverse of TRR9005 (Job creation for execution).
+      Rule: detections/sigma/T1070/k8s_workload_deleted_evidence.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh d
+      cleanup_command: |
+        kubectl delete namespace trr9010 --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1070/src
+
+  - name: "TRR9010.K8S — node-local audit-log clearing (detection gap)"
+    auto_generated_guid: dc47a964-afc9-4ac2-8e98-749f4e4079b1
+    description: |
+      Read-only demonstration that clearing or truncating the API server audit log file on
+      the node, or disabling the audit sink, destroys evidence with no API call, so the
+      audit layer is structurally blind; a node file-integrity sensor and an audit-pipeline
+      continuity check cover it. Needs node access (docker exec on kind).
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh gap
+      cleanup_command: |
+        true
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1070/src

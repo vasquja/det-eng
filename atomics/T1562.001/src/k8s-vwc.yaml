@@ -1,0 +1,27 @@
+# TRR9008 Procedure A target — a harmless, no-op ValidatingWebhookConfiguration.
+# failurePolicy Ignore (so it is fail-open and harms nothing even if it fired),
+# rules scoped to a bogus apiGroup/resource that no real request ever matches, and
+# a clientConfig pointing at a service that does not exist. The emulation deletes
+# it. NEVER edit a real policy webhook.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: trr9008-vwc
+  labels: {app: trr9008}
+webhooks:
+  - name: w.trr9008.example.com
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Ignore
+    clientConfig:
+      service:
+        namespace: trr9008
+        name: trr9008-nosvc
+        path: /nope
+        port: 443
+    rules:
+      - apiGroups: ["trr9008.example.com"]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["widgets"]
+        scope: Namespaced

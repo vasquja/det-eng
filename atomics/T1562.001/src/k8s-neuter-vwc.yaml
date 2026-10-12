@@ -1,0 +1,27 @@
+# TRR9008 Procedure C target — a webhook configuration that starts "enforcing"
+# (failurePolicy Fail) but is still harmless, because its rules only match a bogus
+# apiGroup/resource that no real request uses. The emulation then NEUTERS it in
+# place (patches failurePolicy to Ignore and rules to []), which is the telemetry
+# the severity rule grades. The emulation deletes it afterward.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: trr9008-neuter
+  labels: {app: trr9008}
+webhooks:
+  - name: w.trr9008.example.com
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        namespace: trr9008
+        name: trr9008-nosvc
+        path: /nope
+        port: 443
+    rules:
+      - apiGroups: ["trr9008.example.com"]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["widgets"]
+        scope: Namespaced

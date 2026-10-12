@@ -310,6 +310,309 @@
           "url": "../atomics/T1611/src/emulate_k8s.sh"
         }
       }
+    },
+    {
+      "name": "Disabling Admission Control (Kubernetes)",
+      "id": "TRR9008",
+      "tactics": [
+        "Defense Evasion"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1562.001"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "Delete a ValidatingWebhookConfiguration",
+        "B": "Delete a MutatingWebhookConfiguration",
+        "C": "Neuter a webhook configuration in place",
+        "D": "Remove the enforcer's workload"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9008/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng validating-webhook delete behavioral emulation (no-op webhook)",
+          "url": "../atomics/T1562.001/src/emulate_k8s.sh"
+        },
+        "B": {
+          "text": "det-eng mutating-webhook delete behavioral emulation",
+          "url": "../atomics/T1562.001/src/emulate_k8s.sh"
+        },
+        "C": {
+          "text": "det-eng webhook neuter behavioral emulation (failurePolicy Ignore, rules [])",
+          "url": "../atomics/T1562.001/src/emulate_k8s.sh"
+        },
+        "D": {
+          "text": "det-eng enforcer-workload removal behavioral emulation (scale-to-zero + delete)",
+          "url": "../atomics/T1562.001/src/emulate_k8s.sh"
+        }
+      }
+    },
+    {
+      "name": "User Impersonation (Kubernetes)",
+      "id": "TRR9009",
+      "tactics": [
+        "Defense Evasion",
+        "Privilege Escalation"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1134"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "Impersonate a user",
+        "B": "Impersonate a group",
+        "C": "Impersonate a service account",
+        "D": "Impersonate a uid or extras"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9009/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng user-impersonation behavioral emulation (--as)",
+          "url": "../atomics/T1134/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng group-impersonation behavioral emulation (--as-group, incl. system:masters)",
+          "url": "../atomics/T1134/src/emulate.sh"
+        },
+        "C": {
+          "text": "det-eng service-account impersonation behavioral emulation",
+          "url": "../atomics/T1134/src/emulate.sh"
+        },
+        "D": {
+          "text": "det-eng uid-impersonation behavioral emulation (--as-uid)",
+          "url": "../atomics/T1134/src/emulate.sh"
+        }
+      }
+    },
+    {
+      "name": "Indicator Removal (Kubernetes)",
+      "id": "TRR9010",
+      "tactics": [
+        "Defense Evasion"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1070",
+        "T1070.004"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "Delete a single Event (core group)",
+        "B": "Bulk-wipe Events (deletecollection)",
+        "C": "Delete an Event (events.k8s.io group)",
+        "D": "Delete a Pod or Job (workload record)",
+        "E": "Clear the audit log on the node (the gap)"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9010/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng core Event delete behavioral emulation",
+          "url": "../atomics/T1070/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng Event deletecollection (bulk wipe) behavioral emulation",
+          "url": "../atomics/T1070/src/emulate.sh"
+        },
+        "C": {
+          "text": "det-eng events.k8s.io Event delete behavioral emulation",
+          "url": "../atomics/T1070/src/emulate.sh"
+        },
+        "D": {
+          "text": "det-eng Pod delete (workload-record removal) behavioral emulation",
+          "url": "../atomics/T1070/src/emulate.sh"
+        },
+        "E": {
+          "text": "det-eng node audit-log clearing detection-gap demonstration",
+          "url": "../atomics/T1070/src/emulate.sh"
+        }
+      }
+    },
+    {
+      "name": "EC2 Instance Metadata Credential Theft Used Off-Instance (AWS)",
+      "id": "TRR9011",
+      "tactics": [
+        "Credential Access"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1552.005"
+      ],
+      "platforms": [
+        "AWS"
+      ],
+      "procedures": {
+        "A": "SSRF to IMDSv1, then off-instance use",
+        "B": "SSRF to IMDSv2, then off-instance use",
+        "C": "On-host IMDS read, then off-instance use",
+        "D": "Retrieval via SSM, then off-instance use",
+        "E": "Off-instance use from another AWS account (InsideAWS)"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9011/aws/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1552.005/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1552.005/src/emulate.sh"
+        }
+      }
+    },
+    {
+      "name": "Initial Access with a Leaked Long-Term Access Key (AWS)",
+      "id": "TRR9012",
+      "tactics": [
+        "Initial Access"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1078.004"
+      ],
+      "platforms": [
+        "AWS"
+      ],
+      "procedures": {
+        "A": "Direct API use + enumeration",
+        "B": "Data-plane recon with the key",
+        "C": "STS pivot to temporary creds"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9012/aws/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1078.004/src/emulate.sh"
+        }
+      }
+    },
+    {
+      "name": "Federated Identity Credential Backdoor on an Entra Application (Azure)",
+      "id": "TRR9013",
+      "tactics": [
+        "Persistence"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1098.001"
+      ],
+      "platforms": [
+        "Azure"
+      ],
+      "procedures": {
+        "A": "Add a FIC to an app registration",
+        "B": "Repoint an existing app FIC",
+        "C": "Add a FIC to a managed identity",
+        "D": "Use the backdoor (token exchange)"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9013/azr/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.001/src/emulate_entra.sh"
+        },
+        "C": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.001/src/emulate_entra.sh"
+        }
+      }
+    },
+    {
+      "name": "Public IAM Exposure via allUsers / allAuthenticatedUsers (GCP)",
+      "id": "TRR9014",
+      "tactics": [
+        "Persistence"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1098.003"
+      ],
+      "platforms": [
+        "GCP"
+      ],
+      "procedures": {
+        "A": "Public grant via the delta path",
+        "B": "Public grant via the request path",
+        "C": "Public exposure without an IAM binding"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9014/gcp/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.003/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.003/src/emulate.sh"
+        }
+      }
+    },
+    {
+      "name": "GitHub Actions OIDC Role-Trust Abuse (AWS)",
+      "id": "TRR9015",
+      "tactics": [
+        "Persistence"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1098.001"
+      ],
+      "platforms": [
+        "AWS"
+      ],
+      "procedures": {
+        "A": "Over-broad sub grant (wildcard)",
+        "B": "Missing-condition grant (no sub)",
+        "C": "Create-time grant",
+        "D": "Create the GitHub OIDC provider",
+        "E": "Use of the federated trust"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9015/aws/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.001/src/emulate_aws_oidc.sh"
+        }
+      }
     }
   ]
 }

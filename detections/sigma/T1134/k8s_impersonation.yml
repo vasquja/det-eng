@@ -1,0 +1,51 @@
+title: Kubernetes User Impersonation
+id: 564e67ba-b2a4-4ced-9e30-a977c4b2e040
+status: experimental
+description: |
+  Detects a Kubernetes API request made under impersonation: any audit event that
+  carries an impersonatedUser. This is the TRR9009 chokepoint, covering Procedure A
+  (impersonate a user), B (impersonate a group), C (impersonate a service account),
+  and D (impersonate a uid or extra attributes). The API server authenticates the
+  real caller, checks the caller's RBAC impersonate permission, then runs the
+  request AS the impersonated identity and stamps impersonatedUser onto the audit
+  record. Impersonation lets a subject act as another identity -- up to
+  system:masters or cluster-admin -- and the downstream action is attributed to the
+  borrowed identity, which both escalates privilege and evades attribution.
+
+  The anchor is the PRESENCE of impersonatedUser, regardless of the verb, resource,
+  or outcome that follows: Impersonate-User is mandatory for every variant (group,
+  uid, and extra all require it). This is stronger than the upstream Elastic rule,
+  which matches only a hard-coded list of privileged impersonated identities and
+  only when the request was allowed: that misses impersonation of an arbitrary user
+  or an unlisted-but-powerful service account, and misses a denied impersonation
+  probe. This rule fires on all impersonation; the companion
+  (k8s_impersonation_privileged.yml) raises severity on powerful targets.
+
+  Metadata level is enough: impersonatedUser is a top-level audit event field.
+  Request/RequestResponse are not needed. There is no node-sensor fallback:
+  impersonation is implemented wholly inside the API server, so the audit log is the
+  sole sensor -- if audit is off or at level None, coverage is zero.
+references:
+  - https://attack.mitre.org/techniques/T1134/
+  - https://kubernetes.io/docs/reference/access-authn-authz/user-impersonation/
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.defense-evasion
+  - attack.privilege-escalation
+  - attack.t1134
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_impersonation:
+    impersonatedUser.username: '*'
+  condition: select_impersonation
+falsepositives:
+  - Tools that legitimately impersonate the logged-in user, such as the Kubernetes
+    Dashboard and other UIs, kubectl-sudo, oauth2-proxy gateways, and GitOps or CI
+    that impersonates a target service account. Baseline by the REAL actor
+    (user.username and user.groups), never by the impersonated identity.
+  - Cloud break-glass and admin tooling. Baseline the known callers per cluster.
+level: medium

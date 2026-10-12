@@ -1,0 +1,122 @@
+attack_technique: T1134
+display_name: "Access Token Manipulation (Kubernetes User Impersonation)"
+
+# Behavioral emulation for TRR9009. Each test makes a read-only API request under
+# impersonation, so the API server stamps impersonatedUser onto the audit event the
+# paired detections key on. Every borrowed identity carries the token 'trr9009' that
+# no real principal uses, so a validator matches the emulation's own events. Nothing
+# is changed; the service account impersonated in test C holds no RBAC. These need a
+# reachable cluster with impersonate rights (the lab cluster-admin has them) and
+# audit logging (see detections/k8s/kind-apiserver-cluster.yaml).
+
+atomic_tests:
+  - name: "TRR9009.K8S.A — impersonate a user"
+    auto_generated_guid: 82b05992-d82b-4837-9eb1-db18e076c27f
+    description: |
+      Lists namespaces while impersonating a throwaway user (--as=trr9009-impersonated).
+      The audit event carries user.username (the real caller) and impersonatedUser.username
+      (the borrowed user).
+      Chokepoint: impersonatedUser.username present.
+      Rule: detections/sigma/T1134/k8s_impersonation.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh a
+      cleanup_command: |
+        true
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1134/src
+
+  - name: "TRR9009.K8S.B — impersonate a group (incl. system:masters)"
+    auto_generated_guid: 51e9fb12-1420-4cce-b007-e2c160df74ef
+    description: |
+      Lists namespaces impersonating a throwaway group, then impersonating system:masters
+      to exercise the privileged-target severity rule (read-only, so the borrowed
+      cluster-admin does nothing but list).
+      Chokepoint rule: detections/sigma/T1134/k8s_impersonation.yml
+      Severity rule: detections/sigma/T1134/k8s_impersonation_privileged.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh b
+      cleanup_command: |
+        true
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1134/src
+
+  - name: "TRR9009.K8S.C — impersonate a service account"
+    auto_generated_guid: 78fe9e11-5b83-4d2d-853b-bc9b4cb7edf9
+    description: |
+      Lists namespaces impersonating a throwaway service account that holds no RBAC
+      (--as=system:serviceaccount:trr9009:trr9009-sa). The borrowed token grants nothing.
+      Rule: detections/sigma/T1134/k8s_impersonation.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh c
+      cleanup_command: |
+        kubectl delete namespace trr9009 --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1134/src
+
+  - name: "TRR9009.K8S.D — impersonate a uid"
+    auto_generated_guid: 6680c9a7-b95b-48d7-9817-8825e7488bed
+    description: |
+      Lists namespaces impersonating a user and a uid (--as-uid). The username is always
+      present, so the chokepoint fires.
+      Rule: detections/sigma/T1134/k8s_impersonation.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh d
+      cleanup_command: |
+        true
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1134/src
+
+  - name: "TRR9009.K8S — forbidden impersonation (still stamped)"
+    auto_generated_guid: 209ebf96-ab1b-4091-954d-5334528ff094
+    description: |
+      A forbidden impersonated read (get secrets as a throwaway user with no rights). The
+      caller may impersonate, so impersonatedUser is stamped, but the borrowed identity is
+      denied (decision=forbid). The presence chokepoint catches it where an allow-only rule
+      would not. Read-only and harmless.
+      Rule: detections/sigma/T1134/k8s_impersonation.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh gap
+      cleanup_command: |
+        true
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1134/src

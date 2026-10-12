@@ -1,0 +1,48 @@
+attack_technique: T1552.005
+display_name: "Unsecured Credentials: Cloud Instance Metadata API (off-instance use, AWS)"
+
+# Behavioral emulation for TRR9011. The detectable step is the OFF-INSTANCE USE of
+# EC2 instance-role credentials (the IMDS theft leaves no CloudTrail). The live tests
+# are READ-ONLY and need your own AWS account (not run in CI). CI validation runs the
+# paired Sigma rule over the committed CloudTrail fixtures in
+# detections/cloud/fixtures/trr9011/ via detections/validate_cloud_detections.py.
+
+atomic_tests:
+  - name: "TRR9011.AWS.A — off-instance use of IMDSv1-delivered instance-role creds"
+    auto_generated_guid: 6d9f0d8a-9011-4a1e-b3c1-7a2e5c0d11a1
+    description: |
+      Uses EC2 instance-role credentials off the instance (sts:GetCallerIdentity,
+      ec2:DescribeInstances) after an SSRF/IMDSv1 theft. Read-only.
+      Chokepoint: CloudTrail AssumedRole session, ec2RoleDelivery present,
+      sourceIPAddress outside the account's egress.
+      Rule: detections/sigma/T1552.005/aws_imds_creds_used_off_instance.yml
+    supported_platforms:
+      - iaas:aws
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh a
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1552.005/src
+
+  - name: "TRR9011.AWS.B — off-instance use of IMDSv2-delivered instance-role creds"
+    auto_generated_guid: 6d9f0d8a-9011-4b2f-8c4d-9b3f6d1e22b2
+    description: |
+      Same off-instance use, for an IMDSv2-delivered session (ec2RoleDelivery 2.0).
+      Rule: detections/sigma/T1552.005/aws_imds_creds_used_off_instance.yml
+    supported_platforms:
+      - iaas:aws
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh b
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1552.005/src

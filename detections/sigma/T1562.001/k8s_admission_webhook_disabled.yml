@@ -1,0 +1,54 @@
+title: Kubernetes Admission Webhook or Policy Disabled
+id: 1f30ff44-6a0c-4a2d-b63e-d0b0487223b9
+status: experimental
+description: |
+  Detects a write that removes or disarms Kubernetes dynamic admission control: a
+  delete, deletecollection, update, or patch of an object in the
+  admissionregistration.k8s.io API group (ValidatingWebhookConfiguration,
+  MutatingWebhookConfiguration, and the CEL ValidatingAdmissionPolicy and
+  ValidatingAdmissionPolicyBinding). This is the TRR9008 Strategy 1 chokepoint,
+  covering Procedure A (delete a validating webhook config), B (delete a mutating
+  webhook config), and C (neuter one in place). Admission webhooks are how
+  OPA/Gatekeeper, Kyverno, image-signature verifiers, and Falco admission paths
+  enforce policy, so removing or disarming them clears the way for the next
+  malicious pod, unsigned image, or privilege grab.
+
+  create is deliberately EXCLUDED: creating a malicious webhook is persistence
+  (Event Triggered Execution), a different technique. There is no replace audit
+  verb either: an HTTP PUT (kubectl replace, or apply sent as PUT) is recorded as
+  verb=update. So the four verbs here are the complete disabling set.
+
+  The rule fires at Metadata (verb, apiGroup, and objectRef.name are enough to see
+  a delete or flag a patch/update). It cannot tell a benign webhook edit from a
+  neuter; the companion rule (k8s_admission_webhook_neutered.yml) grades that at
+  Request level. Baseline the ACTOR, not the object: suppress the policy engine's
+  own service account, GitOps/Helm identities, and system:kube-controller-manager
+  by user.username and user.groups -- an attacker touches the same objects.
+references:
+  - https://attack.mitre.org/techniques/T1562/001/
+  - https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.defense-evasion
+  - attack.t1562.001
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_adm_write:
+    objectRef.apiGroup: 'admissionregistration.k8s.io'
+    verb:
+      - 'delete'
+      - 'deletecollection'
+      - 'update'
+      - 'patch'
+  condition: select_adm_write
+falsepositives:
+  - The policy engine's own controller reconciling its webhook configuration
+    (Gatekeeper, Kyverno), and GitOps or Helm upgrades that replace a webhook
+    config. Baseline these identities by user.username and user.groups.
+  - Cluster upgrades that update the built-in admission configurations. Baseline
+    the upgrade tooling.
+level: medium

@@ -110,6 +110,18 @@ final ID on merge.
 | TRR9001  | T1040  | Network Sniffing | Linux | [`trr9001/lin`](trr9001/lin/README.md) |
 | TRR9002  | T1609  | Command Execution in a Running Container | Kubernetes | [`trr9002/k8s`](trr9002/k8s/README.md) |
 | TRR9003  | T1543.005 | Static Pod Persistence | Kubernetes | [`trr9003/k8s`](trr9003/k8s/README.md) |
+| TRR9004  | T1098.006 | Additional Container Cluster Roles | Kubernetes | [`trr9004/k8s`](trr9004/k8s/README.md) |
+| TRR9005  | T1053.007 | Container Orchestration Job | Kubernetes | [`trr9005/k8s`](trr9005/k8s/README.md) |
+| TRR9006  | T1552.007 | Unsecured Credentials: Container API | Kubernetes | [`trr9006/k8s`](trr9006/k8s/README.md) |
+| TRR9007  | T1611  | Escape to Host via a Dangerous Pod Spec | Kubernetes | [`trr9007/k8s`](trr9007/k8s/README.md) |
+| TRR9008  | T1562.001 | Disabling Admission Control | Kubernetes | [`trr9008/k8s`](trr9008/k8s/README.md) |
+| TRR9009  | T1134  | User Impersonation | Kubernetes | [`trr9009/k8s`](trr9009/k8s/README.md) |
+| TRR9010  | T1070  | Indicator Removal | Kubernetes | [`trr9010/k8s`](trr9010/k8s/README.md) |
+| TRR9011  | T1552.005 | IMDS Credential Theft Used Off-Instance | AWS | [`trr9011/aws`](trr9011/aws/README.md) |
+| TRR9012  | T1078.004 | Leaked Long-Term Access Key | AWS | [`trr9012/aws`](trr9012/aws/README.md) |
+| TRR9013  | T1098.001 | Federated Identity Credential Backdoor | Azure | [`trr9013/azr`](trr9013/azr/README.md) |
+| TRR9014  | T1098.003 | Public IAM Exposure (allUsers) | GCP | [`trr9014/gcp`](trr9014/gcp/README.md) |
+| TRR9015  | T1098.001 | GitHub Actions OIDC Role-Trust Abuse | AWS | [`trr9015/aws`](trr9015/aws/README.md) |
 
 ## How to start a new TRR
 

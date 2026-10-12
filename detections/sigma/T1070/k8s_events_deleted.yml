@@ -1,0 +1,48 @@
+title: Kubernetes Events Deleted
+id: 67c14a73-a9fe-49d6-97ae-611d1c3ce88b
+status: experimental
+description: |
+  Detects deletion of Kubernetes Events through the API server: an audit event
+  whose objectRef.resource is events and whose verb is delete or deletecollection.
+  This is the TRR9010 chokepoint, covering Procedure A (delete one Event in the core
+  group), B (bulk-wipe with deletecollection), and C (delete an Event in the
+  events.k8s.io group). Kubernetes Events record what happened in the cluster -- a
+  pod scheduled, an image pulled, a policy denied -- so deleting them destroys
+  evidence of an intrusion.
+
+  Two things make this broader than the upstream SigmaHQ rule. It matches
+  deletecollection, not just delete, so it catches the bulk cover-up (the SigmaHQ
+  rule matches verb=delete only and misses the mass wipe). And it does not pin
+  objectRef.apiGroup, so it catches both the core group and events.k8s.io, which
+  record the same objectRef.resource=events.
+
+  Metadata level is enough (verb, resource, namespace, name, and identity are all
+  present; no requestObject needed). Routine event turnover is not a false positive:
+  Events expire at the etcd storage layer via the API server event-ttl, which is not
+  an API delete and writes no audit event. Baseline the system identities and any
+  known event-exporter service accounts by user.username.
+references:
+  - https://attack.mitre.org/techniques/T1070/
+  - https://attack.mitre.org/techniques/T1070/004/
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.defense-evasion
+  - attack.t1070
+  - attack.t1070.004
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_event_delete:
+    objectRef.resource: 'events'
+    verb:
+      - 'delete'
+      - 'deletecollection'
+  condition: select_event_delete
+falsepositives:
+  - Operators or event-exporter tools that deliberately prune Events. Baseline the
+    known identities by user.username. The kube-system controllers create Events
+    but do not delete them, so controller baseline deletion is near zero.
+level: medium

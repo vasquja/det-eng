@@ -1,0 +1,86 @@
+title: AWS Leaked Long-Term Access Key Orientation and Enumeration
+id: f70357d8-9107-408c-8e63-ad2b47e7d047
+status: experimental
+description: |
+  Detects the initial-access signature of a leaked long-term IAM-user access key:
+  a long-term key (userIdentity.type IAMUser) performing the canonical orientation
+  call (sts:GetCallerIdentity), an account-enumeration call
+  (iam:GetAccountAuthorizationDetails/ListUsers/ListRoles/GetAccountSummary/GetUser/
+  ListAttachedUserPolicies/ListAccessKeys, s3:ListBuckets, ec2:DescribeInstances), or
+  the STS pivot (sts:GetSessionToken/GetFederationToken) from a source outside the
+  organisation's known-good egress. This is the TRR9012 chokepoint (Procedure A, and
+  the Procedure C STS pivot's first call, which is signed by the leaked key).
+
+  The identity is type IAMUser with a long-term key: accessKeyId begins AKIA, OR (when
+  AWS omits/blanks accessKeyId, as it documents it may) principalId begins AIDA. That
+  identity is shared with legitimate IAM-user automation -- audit tools, IaC, backup
+  agents -- so it is NOT an alert on its own. This rule is single-event: it flags each
+  such call, scoped to the orientation/enumeration/pivot verbs AND excluding the org's
+  known egress CIDRs. The real discriminator is behavioural -- a previously-unseen
+  source for THIS key -- which a single-event rule cannot express; this approximates it
+  with the egress allowlist, and PRODUCTION USE REQUIRES a first-seen/new-terms overlay
+  (keyed on accessKeyId -> {sourceIPAddress, ASN, userAgent}) and an allowlist of
+  automation principals by ARN/userName before alerting. A lone GetCallerIdentity will
+  otherwise fire; the enumeration burst raises confidence but is expressed as the
+  overlay, not in this stateless rule.
+
+  Excludes temporary credentials (type AssumedRole/FederatedUser, accessKeyId ASIA)
+  and root. Blind spots (see the TRR): data-plane-only use (Procedure B) needs
+  CloudTrail data events; the Procedure C pivot's downstream calls flip to ASIA and
+  need sessionIssuer correlation; userAgent is spoofable so it is never keyed on alone;
+  add the org's IPv6 egress to the allowlist or IPv6 use looks foreign.
+references:
+  - https://attack.mitre.org/techniques/T1078/004/
+  - https://docs.aws.amazon.com/STS/latest/APIReference/API_GetAccessKeyInfo.html
+  - https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-event-reference-user-identity.html
+  - https://www.rapid7.com/blog/post/tr-crimson-collective-a-new-threat-group-observed-operating-in-the-cloud/
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.initial-access
+  - attack.persistence
+  - attack.t1078.004
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_iam_user:
+    userIdentity.type: 'IAMUser'
+  id_akia:
+    userIdentity.accessKeyId|startswith: 'AKIA'
+  id_aida:
+    userIdentity.principalId|startswith: 'AIDA'
+  selection_orientation_or_enum:
+    eventName:
+      - 'GetCallerIdentity'
+      - 'GetAccountAuthorizationDetails'
+      - 'ListUsers'
+      - 'ListRoles'
+      - 'GetAccountSummary'
+      - 'ListBuckets'
+      - 'DescribeInstances'
+      - 'ListAccessKeys'
+      - 'GetUser'
+      - 'ListAttachedUserPolicies'
+      - 'GetSessionToken'       # Procedure C STS pivot (signed by the leaked key)
+      - 'GetFederationToken'    # Procedure C STS pivot
+  filter_known_egress:
+    sourceIPAddress|cidr:
+      - '10.0.0.0/8'
+      - '172.16.0.0/12'
+      - '192.168.0.0/16'
+      # PLACEHOLDERS: replace 203.0.113.0/24 with your org's known-good egress CIDRs
+      # (corporate NAT, VPN, CI/CD runner ranges), and 2001:db8::/32 with your IPv6
+      # egress prefixes.
+      - '203.0.113.0/24'
+      - '2001:db8::/32'
+  condition: selection_iam_user and (id_akia or id_aida) and selection_orientation_or_enum and not filter_known_egress
+falsepositives:
+  - Long-term IAM-user keys legitimately used from a new IP -- CI/CD runners and
+    serverless with rotating egress, developers on travel/VPN, new SaaS integrations,
+    and audit/IaC tooling (enumerate-iam-style describes) that emit the exact
+    identity+verb set. Allowlist automation principals by ARN/userName (not only by
+    source CIDR) and require the new-source overlay before alerting.
+  - sts:GetCallerIdentity is extremely high-volume; pair the new-source overlay with
+    the enumeration burst before alerting.
+level: medium

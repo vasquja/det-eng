@@ -1,0 +1,19 @@
+# TRR9010 Procedure C target — a harmless events.k8s.io/v1 Event the emulation
+# creates and then deletes. The delete is the detection telemetry; if creation is
+# skipped the delete attempt is still audited with objectRef.name=trr9010-evt-c.
+apiVersion: events.k8s.io/v1
+kind: Event
+metadata:
+  name: trr9010-evt-c
+  namespace: trr9010
+eventTime: "2026-10-12T00:00:00.000000Z"
+reportingController: trr9010-emulation
+reportingInstance: trr9010
+action: Benign
+reason: Trr9010Benign
+regarding:
+  apiVersion: v1
+  kind: Namespace
+  name: trr9010
+note: benign TRR9010 indicator-removal emulation
+type: Normal

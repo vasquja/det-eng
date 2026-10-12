@@ -1,6 +1,6 @@
 # det-eng — Detection Engineering Research
 
-[![lint-trr](https://github.com/vasquja/det-eng/actions/workflows/lint-trr.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/lint-trr.yml) [![validate-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-detections.yml) [![validate-apiserver-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-apiserver-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-apiserver-detections.yml)
+[![lint-trr](https://github.com/vasquja/det-eng/actions/workflows/lint-trr.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/lint-trr.yml) [![validate-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-detections.yml) [![validate-apiserver-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-apiserver-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-apiserver-detections.yml) [![validate-cloud-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-cloud-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-cloud-detections.yml)
 
 Detection research, worked in the open. This repository is where I study a
 MITRE ATT&CK technique end to end: understand how it works, model where it can
@@ -112,6 +112,9 @@ When a report is done, it goes where it belongs:
 | Tests    | [redcanaryco/atomic-red-team](https://github.com/redcanaryco/atomic-red-team) |
 | Rules    | [SigmaHQ/sigma](https://github.com/SigmaHQ/sigma) |
 
+See [`UPSTREAM.md`](UPSTREAM.md) for the full mapping, the per-gate conformance
+checks (`sigma check` passes with 0 errors), and the submission steps.
+
 ---
 
 ## The methodologies
@@ -190,14 +193,23 @@ Proving the loop is automated:
   [`.github/workflows/validate-staticpod-detections.yml`](.github/workflows/validate-staticpod-detections.yml)
   (TRR9003 static pods), and
   [`.github/workflows/validate-apiserver-detections.yml`](.github/workflows/validate-apiserver-detections.yml)
-  (TRR9004–9007: RBAC, Jobs/CronJobs, Secrets, and dangerous pod specs, on one
-  shared `kind` cluster) spin up a `kind` cluster and run the emulation strict:
+  (TRR9004–9010: RBAC, Jobs/CronJobs, Secrets, dangerous pod specs, disabling
+  admission control, impersonation, and indicator removal, on one shared `kind`
+  cluster) spin up a `kind` cluster and run the emulation strict:
   a rule that does not fire on the emulation's own events fails the job. Each
   also runs the validator on the audit log captured *before* the emulation,
   where it must not pass — and the API server loop proves the rules fire on the
   emulation's own records even though a fresh cluster is full of baseline
   matches (bootstrap RBAC, controller Jobs, controller Secret reads,
   kube-proxy and kindnet privileged pods).
+- **External cloud (AWS / Azure / GCP)** —
+  [`.github/workflows/validate-cloud-detections.yml`](.github/workflows/validate-cloud-detections.yml)
+  (TRR9011–9015: IMDS creds used off-instance, leaked access keys, Entra
+  federated-identity backdoors, public GCP IAM exposure, and GitHub-OIDC
+  role-trust abuse). Cloud has no free CI target, so the loop runs the same
+  pySigma backend over committed, schema-faithful **recorded** attack/benign log
+  fixtures: every rule must fire on its attack fixture and match nothing in a hard
+  benign baseline. Pure Python — no cluster, no cloud account.
 - **Lint** — [`.github/workflows/lint-trr.yml`](.github/workflows/lint-trr.yml)
   checks TRR structure, DDM PNG freshness, and markdown links.
 
@@ -268,6 +280,47 @@ is copied to `trr0000/` and the maintainer assigns the final ID.
   Privileged, hostPath, host-namespace, and capability requests, caught at
   admission in the audit `requestObject` (Request level). A controller-template
   fallback and a static-pod gap round it out.
+
+- **[TRR9008 — Disabling Admission Control (T1562.001, Kubernetes)](research/trr9008/k8s/README.md)**
+  Deleting or neutering admission webhooks (OPA/Gatekeeper, Kyverno, Falco). One
+  chokepoint on `admissionregistration.k8s.io` writes, a Request-level rule that
+  grades a fail-open neuter, and an enforcer-workload-removal fallback.
+
+- **[TRR9009 — User Impersonation (T1134, Kubernetes)](research/trr9009/k8s/README.md)**
+  Acting as another user, group, or service account via the `impersonate` verb.
+  One presence rule on `impersonatedUser` catches every variant, including a
+  denied probe, where an allow-list rule does not.
+
+- **[TRR9010 — Indicator Removal (T1070, Kubernetes)](research/trr9010/k8s/README.md)**
+  Deleting Kubernetes Events (including the bulk `deletecollection` wipe upstream
+  misses) and the workloads that ran, with the node audit-log clearing as the
+  documented gap.
+
+- **[TRR9011 — IMDS Credential Theft Used Off-Instance (T1552.005, AWS)](research/trr9011/aws/README.md)**
+  SSRF or on-host theft of EC2 instance-role credentials, then used off-instance.
+  The theft leaves no trace; the chokepoint is the instance-role session making a
+  CloudTrail call from a source the instance does not own (GuardDuty's approach as
+  a provider-agnostic rule), with the InsideAWS variant as the gap.
+
+- **[TRR9012 — Leaked Long-Term Access Key (T1078.004, AWS)](research/trr9012/aws/README.md)**
+  Using a leaked `AKIA` key from outside: the `whoami` + enumeration burst from a
+  new source. Unemulated by Stratus/ART; the composite (IAMUser + AKIA + new source
+  + enumeration) is the novel detection.
+
+- **[TRR9013 — Federated Identity Credential Backdoor (T1098.001, Azure)](research/trr9013/azr/README.md)**
+  Adding an OIDC federated credential to an Entra app that trusts an attacker's
+  issuer. One Entra-audit chokepoint on the FIC write with an unapproved issuer, and
+  a companion rule for the managed-identity (Azure Activity Log) variant.
+
+- **[TRR9014 — Public IAM Exposure (T1098.003, GCP)](research/trr9014/gcp/README.md)**
+  Granting `allUsers`/`allAuthenticatedUsers` to expose a resource to the internet.
+  One cross-service chokepoint unifying the two Cloud-Audit-Log shapes (policy delta
+  vs full request) and both public principals; ACL/invoker-disable paths as gaps.
+
+- **[TRR9015 — GitHub Actions OIDC Role-Trust Abuse (T1098.001, AWS)](research/trr9015/aws/README.md)**
+  An IAM role trust policy trusting GitHub OIDC with an over-broad or absent subject,
+  so any repo/fork can assume it. The grant is the baseline-free chokepoint; the use
+  path and pre-existing-wildcard case are documented gaps.
 
 See [`research/index.json`](research/index.json) for the machine-readable index.
 

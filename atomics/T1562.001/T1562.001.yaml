@@ -43,3 +43,121 @@ atomic_tests:
         /tmp/io_uring_bypass_behavioral
       cleanup_command: |
         rm -f /tmp/io_uring_bypass_behavioral
+
+  # --- Kubernetes admission-control disabling (TRR9008) ---------------------------
+  # These disable harmless, throwaway admission objects (never a real policy webhook)
+  # so the API server audit events exist for the paired detections. They need a
+  # reachable cluster (kubectl) with rights to write admissionregistration and apps
+  # objects, and audit logging at Request level (detections/k8s/kind-apiserver-cluster.yaml).
+
+  - name: "TRR9008.K8S.A — delete a ValidatingWebhookConfiguration (Kubernetes)"
+    auto_generated_guid: 14758b1b-d47d-4825-ac6d-be3c18aaf56d
+    description: |
+      Applies a harmless no-op ValidatingWebhookConfiguration (failurePolicy Ignore,
+      bogus rules) and deletes it. Deleting a validating webhook config stops admission
+      validation for the resources it covered.
+      Chokepoint: objectRef.apiGroup=admissionregistration.k8s.io, a disabling verb.
+      Rule: detections/sigma/T1562.001/k8s_admission_webhook_disabled.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_k8s.sh a
+      cleanup_command: |
+        kubectl delete validatingwebhookconfiguration trr9008-vwc --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1562.001/src
+
+  - name: "TRR9008.K8S.B — delete a MutatingWebhookConfiguration (Kubernetes)"
+    auto_generated_guid: 5f8985cf-d1be-484b-bb87-fa1d85a333eb
+    description: |
+      Applies a harmless no-op MutatingWebhookConfiguration and deletes it.
+      Rule: detections/sigma/T1562.001/k8s_admission_webhook_disabled.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_k8s.sh b
+      cleanup_command: |
+        kubectl delete mutatingwebhookconfiguration trr9008-mwc --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1562.001/src
+
+  - name: "TRR9008.K8S.C — neuter a webhook configuration in place (Kubernetes)"
+    auto_generated_guid: 7a722e03-05e4-4c7e-b5e7-7a526ca63203
+    description: |
+      Applies an enforcing (failurePolicy Fail) but harmless webhook config, then
+      merge-patches it to failurePolicy Ignore with an empty rules list, so the request
+      body carries the neuter markers the severity rule grades (verb=patch).
+      Chokepoint rule: detections/sigma/T1562.001/k8s_admission_webhook_disabled.yml
+      Severity rule: detections/sigma/T1562.001/k8s_admission_webhook_neutered.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_k8s.sh c
+      cleanup_command: |
+        kubectl delete validatingwebhookconfiguration trr9008-neuter --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1562.001/src
+
+  - name: "TRR9008.K8S.D — remove the enforcer workload (Kubernetes)"
+    auto_generated_guid: 685c887d-91a9-47ee-b2d8-71f7fd8693d6
+    description: |
+      In a throwaway namespace, creates a harmless pause Deployment as a stand-in for a
+      policy engine, scales it to zero (patch replicas 0), then deletes it. Removing or
+      scaling down the enforcer removes the webhook endpoint; with failurePolicy Ignore,
+      admission then fails open. Never touches a real Gatekeeper/Kyverno/Falco workload.
+      Rule: detections/sigma/T1562.001/k8s_security_tool_workload_removed.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_k8s.sh d
+      cleanup_command: |
+        kubectl delete namespace trr9008 --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1562.001/src
+
+  - name: "TRR9008.K8S — node-local admission bypass (detection gap, Kubernetes)"
+    auto_generated_guid: 9597a1ca-7b5d-4310-bfd4-2c792b4d1545
+    description: |
+      Read-only demonstration that an attacker with control-plane node access can disable
+      admission without any admissionregistration write (editing the kube-apiserver static
+      manifest to drop admission plugins, or tampering with the webhook TLS material). None
+      of that is an API write, so the audit chokepoint is blind; a node file-integrity sensor
+      covers it. Needs node access (docker exec on kind), as TRR9003 does.
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_k8s.sh gap
+      cleanup_command: |
+        true
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1562.001/src
