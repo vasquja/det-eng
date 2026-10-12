@@ -1,0 +1,138 @@
+title: AWS Resource-Based Policy Grants Public Access
+id: f7805e3e-eb2a-4e83-b4ae-8317be891f1c
+status: experimental
+description: |
+  Detects a resource-based policy write that grants access to the public principal
+  ("*" / {"AWS":"*"}) with no scoping condition -- exposing an AWS resource to the whole
+  internet. This is the TRR9019 Family-A chokepoint, unified across the services that
+  carry a resource policy: S3 (PutBucketPolicy), ECR (SetRepositoryPolicy), KMS
+  (PutKeyPolicy), Secrets Manager (PutResourcePolicy), SNS (SetTopicAttributes),
+  SQS (SetQueueAttributes), and Lambda (AddPermission*, whose principal is a top-level
+  field). All are default-logged management events.
+
+  It fires when the policy document names an Allow + Principal "*" (string or
+  {"AWS":"*"}) AND no scoping condition (aws:PrincipalOrgID / aws:SourceArn /
+  aws:SourceAccount / aws:SourceVpce / aws:SourceVpc) is present -- that condition is
+  what separates a truly public wildcard from a safely-scoped one (the negative control).
+  For Lambda, public = requestParameters.principal "*" with no sourceArn.
+
+  Encoding note (see the TRR): S3 requestParameters.bucketPolicy is a nested JSON object,
+  while the KMS/SQS/SNS/ECR/Secrets policies are JSON-encoded strings; this rule matches
+  the public-principal and the scoping-condition tokens as text across both
+  representations (compact and spaced). A production pipeline should JSON-decode the
+  string policies and evaluate the scoping condition PER-STATEMENT (a policy can mix one
+  org-scoped statement with a second unconditioned Principal:* statement). It does not
+  cover object-level ACLs (an S3 data event) -- see the Block-Public-Access and
+  bucket-ACL paths and the TRR gaps.
+references:
+  - https://attack.mitre.org/techniques/T1537/
+  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-policy-language-overview.html
+  - https://docs.aws.amazon.com/lambda/latest/api/API_AddPermission.html
+  - https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_condition-keys.html
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.exfiltration
+  - attack.t1537
+  - attack.persistence
+  - attack.t1098
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_policy_write:
+    eventName:
+      - 'PutBucketPolicy'
+      - 'SetRepositoryPolicy'
+      - 'PutKeyPolicy'
+      - 'PutResourcePolicy'
+      - 'SetTopicAttributes'
+      - 'SetQueueAttributes'
+  public_principal:
+    # Both encodings everywhere: S3 bucketPolicy is a nested object (spaced after JSON
+    # re-encode); the KMS/ECR/SNS/SQS/Secrets policies are escaped JSON STRINGS that may
+    # arrive compact or spaced, so match both for each.
+    - requestParameters.bucketPolicy.Statement|contains:
+        - '"Principal":"*"'
+        - '"AWS":"*"'
+        - '"Principal": "*"'
+        - '"AWS": "*"'
+    - requestParameters.policy|contains:
+        - '"Principal":"*"'
+        - '"AWS":"*"'
+        - '"Principal": "*"'
+        - '"AWS": "*"'
+    - requestParameters.policyText|contains:
+        - '"Principal":"*"'
+        - '"AWS":"*"'
+        - '"Principal": "*"'
+        - '"AWS": "*"'
+    - requestParameters.resourcePolicy|contains:
+        - '"Principal":"*"'
+        - '"AWS":"*"'
+        - '"Principal": "*"'
+        - '"AWS": "*"'
+    - requestParameters.attributeValue|contains:
+        - '"Principal":"*"'
+        - '"AWS":"*"'
+        - '"Principal": "*"'
+        - '"AWS": "*"'
+    - requestParameters.attributes.Policy|contains:
+        - '"Principal":"*"'
+        - '"AWS":"*"'
+        - '"Principal": "*"'
+        - '"AWS": "*"'
+  filter_scoped:
+    # 'aws:SourceVpc' is a prefix of 'aws:SourceVpce', so this one token matches both the
+    # VPC-endpoint and the VPC scoping conditions. Applied to every policy representation,
+    # not just S3.
+    - requestParameters.bucketPolicy.Statement|contains:
+        - 'aws:PrincipalOrgID'
+        - 'aws:SourceArn'
+        - 'aws:SourceAccount'
+        - 'aws:SourceVpc'
+    - requestParameters.policy|contains:
+        - 'aws:PrincipalOrgID'
+        - 'aws:SourceArn'
+        - 'aws:SourceAccount'
+        - 'aws:SourceVpc'
+    - requestParameters.policyText|contains:
+        - 'aws:PrincipalOrgID'
+        - 'aws:SourceArn'
+        - 'aws:SourceAccount'
+        - 'aws:SourceVpc'
+    - requestParameters.resourcePolicy|contains:
+        - 'aws:PrincipalOrgID'
+        - 'aws:SourceArn'
+        - 'aws:SourceAccount'
+        - 'aws:SourceVpc'
+    - requestParameters.attributeValue|contains:
+        - 'aws:PrincipalOrgID'
+        - 'aws:SourceArn'
+        - 'aws:SourceAccount'
+        - 'aws:SourceVpc'
+    - requestParameters.attributes.Policy|contains:
+        - 'aws:PrincipalOrgID'
+        - 'aws:SourceArn'
+        - 'aws:SourceAccount'
+        - 'aws:SourceVpc'
+  selection_lambda:
+    eventName|startswith: 'AddPermission'
+    requestParameters.principal: '\*'
+  filter_lambda_scoped:
+    # A Lambda wildcard grant scoped by an org ID or a source ARN is not public.
+    - requestParameters.sourceArn: '*'
+    - requestParameters.principalOrgID: '*'
+  filter_failed:
+    # Denied / failed mutating calls carry an errorCode and did not change state.
+    errorCode: '*'
+  condition: ((selection_policy_write and public_principal and not filter_scoped) or (selection_lambda and not filter_lambda_scoped)) and not filter_failed
+falsepositives:
+  - Intentionally public static-website buckets, public datasets, and public container
+    images; allowlist by resource name.
+  - A wildcard Principal scoped by aws:PrincipalOrgID / aws:SourceArn / aws:SourceAccount,
+    or a grant to an AWS service principal with a SourceArn, is not public and is excluded.
+  - CloudFront OAC/OAI bucket policies (service principal cloudfront.amazonaws.com).
+  - An Allow+Deny pair both naming "*" where the Deny negates exposure needs per-statement
+    parsing to clear (match by exact Principal value, not a loose substring).
+level: high

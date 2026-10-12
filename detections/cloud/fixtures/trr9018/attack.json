@@ -1,0 +1,101 @@
+[
+  {
+    "insertId": "trr9018aa01",
+    "logName": "projects/trr9018-prod/logs/cloudaudit.googleapis.com%2Factivity",
+    "severity": "NOTICE",
+    "resource": {
+      "type": "service_account",
+      "labels": {
+        "project_id": "trr9018-prod",
+        "unique_id": "114986983450123456789",
+        "email_id": "trr9018-deployer@trr9018-prod.iam.gserviceaccount.com"
+      }
+    },
+    "protoPayload": {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      "serviceName": "iam.googleapis.com",
+      "methodName": "google.iam.admin.v1.SetIAMPolicy",
+      "resourceName": "projects/trr9018-prod/serviceAccounts/trr9018-deployer@trr9018-prod.iam.gserviceaccount.com",
+      "authenticationInfo": {
+        "principalEmail": "mallory@example.com"
+      },
+      "requestMetadata": {
+        "callerIp": "198.51.100.23",
+        "callerSuppliedUserAgent": "google-cloud-sdk gcloud/478.0.0"
+      },
+      "authorizationInfo": [
+        {
+          "resource": "projects/trr9018-prod/serviceAccounts/114986983450123456789",
+          "permission": "iam.serviceAccounts.setIamPolicy",
+          "granted": true
+        }
+      ],
+      "serviceData": {
+        "@type": "type.googleapis.com/google.iam.v1.logging.AuditData",
+        "policyDelta": {
+          "bindingDeltas": [
+            {
+              "action": "ADD",
+              "role": "roles/iam.workloadIdentityUser",
+              "member": "principalSet://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/trr9018-ext-pool/*"
+            }
+          ]
+        }
+      }
+    },
+    "timestamp": "2026-10-12T16:58:02.998Z",
+    "receiveTimestamp": "2026-10-12T16:58:03.112Z"
+  },
+  {
+    "insertId": "trr9018patt",
+    "logName": "projects/trr9018-prod/logs/cloudaudit.googleapis.com%2Factivity",
+    "severity": "NOTICE",
+    "resource": {
+      "type": "audited_resource",
+      "labels": {
+        "project_id": "trr9018-prod",
+        "service": "iam.googleapis.com",
+        "method": "google.iam.v1.WorkloadIdentityPools.CreateWorkloadIdentityPoolProvider"
+      }
+    },
+    "operation": {
+      "id": "op-trr9018-att",
+      "producer": "iam.googleapis.com",
+      "first": true
+    },
+    "protoPayload": {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      "serviceName": "iam.googleapis.com",
+      "methodName": "google.iam.v1.WorkloadIdentityPools.CreateWorkloadIdentityPoolProvider",
+      "resourceName": "projects/123456789012/locations/global/workloadIdentityPools/trr9018-ext-pool/providers/gh",
+      "authenticationInfo": {
+        "principalEmail": "mallory@example.com"
+      },
+      "requestMetadata": {
+        "callerIp": "198.51.100.23",
+        "callerSuppliedUserAgent": "google-cloud-sdk gcloud/478.0.0"
+      },
+      "authorizationInfo": [
+        {
+          "permission": "iam.workloadIdentityPoolProviders.create",
+          "granted": true
+        }
+      ],
+      "request": {
+        "@type": "type.googleapis.com/google.iam.v1.CreateWorkloadIdentityPoolProviderRequest",
+        "workloadIdentityPoolProvider": {
+          "displayName": "trr9018-gh",
+          "oidc": {
+            "issuerUri": "https://token.actions.githubusercontent.com"
+          },
+          "attributeMapping": {
+            "google.subject": "assertion.sub"
+          },
+          "attributeCondition": ""
+        }
+      }
+    },
+    "timestamp": "2026-10-12T16:50:00.1Z",
+    "receiveTimestamp": "2026-10-12T16:50:00.3Z"
+  }
+]

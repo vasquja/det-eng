@@ -1,10 +1,12 @@
 attack_technique: T1078.004
-display_name: "Valid Accounts: Cloud Accounts (leaked long-term access key, AWS)"
+display_name: "Valid Accounts: Cloud Accounts (leaked long-term access key + Cognito guest identities, AWS)"
 
-# Behavioral emulation for TRR9012. The live test is READ-ONLY (whoami + enumeration)
-# with a throwaway long-term IAM-user key in your own AWS account; NOT run in CI. CI
-# validation runs the paired Sigma rule over the committed CloudTrail fixtures in
-# detections/cloud/fixtures/trr9012/ via detections/validate_cloud_detections.py.
+# Behavioral emulation for TRR9012 (leaked long-term access key) and TRR9016 (Amazon
+# Cognito unauthenticated identity-pool abuse). The live tests run in your own AWS account
+# and clean up (the 9012 test is READ-ONLY; the 9016 test creates and deletes a throwaway
+# identity pool); NOT run in CI. CI validation runs the paired Sigma rules over the
+# committed CloudTrail fixtures in detections/cloud/fixtures/trr9012/ and trr9016/ via
+# detections/validate_cloud_detections.py.
 
 atomic_tests:
   - name: "TRR9012.AWS.A — leaked long-term key: whoami + account enumeration"
@@ -22,6 +24,30 @@ atomic_tests:
       elevation_required: false
       command: |
         bash #{source_dir}/emulate.sh a
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1078.004/src
+
+  - name: "TRR9016.AWS.D — Cognito identity pool allows unauthenticated identities"
+    auto_generated_guid: 6d4b2f10-9016-4a1b-9c21-1a2b3c4d5e61
+    description: |
+      Creates a throwaway Cognito identity pool with AllowUnauthenticatedIdentities=true
+      (and AllowClassicFlow=true), requests a guest identity with no logins, then deletes
+      the pool.
+      Chokepoint: CloudTrail CreateIdentityPool with requestParameters
+      allowUnauthenticatedIdentities=true (the enabling misconfiguration, default trail),
+      plus the downstream AssumedRole use (sessionIssuer.userName Cognito_*Unauth_Role).
+      Rules: detections/sigma/T1078.004/aws_cognito_identity_pool_unauth_enabled.yml ;
+             detections/sigma/T1078.004/aws_cognito_unauthenticated_identity_use.yml
+    supported_platforms:
+      - iaas:aws
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_aws_cognito.sh d
     input_arguments:
       source_dir:
         description: Path to the atomic source directory.

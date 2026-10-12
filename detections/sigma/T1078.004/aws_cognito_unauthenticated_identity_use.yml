@@ -1,0 +1,59 @@
+title: AWS Cognito Unauthenticated Identity Pool Credentials Used
+id: febf253d-c4e3-45cb-944a-d5f756806d08
+status: experimental
+description: |
+  Detects use of credentials issued by an Amazon Cognito identity pool to an
+  UNAUTHENTICATED (guest) caller -- the control-plane signature of a misconfigured
+  pool (AllowUnauthenticatedIdentities=true) that hands AWS IAM credentials to anyone
+  on the internet. This is the TRR9016 chokepoint, keyed on the DEFAULT trail so it
+  works even when the Cognito issuance data events are off.
+
+  Two surfaces, OR'd: (1) DOWNSTREAM USE (Procedure C) -- a CloudTrail event whose
+  userIdentity.type is AssumedRole and whose session was issued by the pool's
+  unauthenticated role (sessionContext.sessionIssuer.userName matching the
+  Cognito-generated Cognito_<pool>Unauth_Role, corroborated by
+  sessionContext.webIdFederationData.federatedProvider cognito-identity.amazonaws.com);
+  and (2) CLASSIC-FLOW ISSUANCE (Procedure B, requires AllowClassicFlow=true) -- an
+  sts:AssumeRoleWithWebIdentity call with userIdentity.identityProvider
+  cognito-identity.amazonaws.com assuming the unauth role directly (a management event
+  in the default trail).
+
+  The unauthenticated role is identified by the Cognito default name pattern
+  (contains "Unauth"); baseline and replace this if your pool uses a site-specific
+  guest-role name, or the downstream rule misses it. The enhanced-flow issuance
+  (GetCredentialsForIdentity, userIdentity.type Unknown) is a Cognito DATA event
+  (off by default) whose authenticated-vs-guest discriminator (requestParameters.logins
+  absent) needs a field-mapping pipeline to express -- see the companion
+  enabling-config rule and the TRR for that surface and its gaps.
+references:
+  - https://attack.mitre.org/techniques/T1078/004/
+  - https://docs.aws.amazon.com/cognito/latest/developerguide/understanding-amazon-cognito-entries.html
+  - https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-event-reference-user-identity.html
+  - https://hackingthe.cloud/aws/exploitation/cognito_identity_pools/
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.initial-access
+  - attack.t1078.004
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  downstream_unauth_session:
+    userIdentity.type: 'AssumedRole'
+    userIdentity.sessionContext.sessionIssuer.userName|contains: 'Unauth'
+    userIdentity.sessionContext.webIdFederationData.federatedProvider: 'cognito-identity.amazonaws.com'
+  classic_flow_assume:
+    eventName: 'AssumeRoleWithWebIdentity'
+    userIdentity.identityProvider: 'cognito-identity.amazonaws.com'
+  classic_flow_unauth_role:
+    requestParameters.roleArn|contains: 'Unauth'
+  condition: downstream_unauth_session or (classic_flow_assume and classic_flow_unauth_role)
+falsepositives:
+  - Legitimate guest access (anonymous analytics, public content, mobile first-launch
+    bootstrap) issues real unauthenticated-role sessions; this fires on every such use.
+    Pair with a first-seen/new-terms overlay (new pool, new source IP/ASN, unexpected
+    userAgent) before alerting.
+  - A pool whose unauthenticated role is renamed away from the Cognito_*Unauth_Role
+    pattern is missed by the downstream rule; add the site-specific role name.
+level: medium

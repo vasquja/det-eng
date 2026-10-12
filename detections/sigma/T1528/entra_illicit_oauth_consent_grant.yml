@@ -1,0 +1,84 @@
+title: Entra Illicit OAuth Consent Grant to High-Privilege Scopes
+id: b8ef9d19-62cd-44b0-83a3-7e0332d29819
+status: experimental
+description: |
+  Detects an OAuth consent or permission grant to a Microsoft Entra application that
+  obtains high-privilege Microsoft Graph access -- the control-plane signature of
+  illicit-consent ("consent phishing") where a user or admin is tricked into granting
+  a malicious app delegated or application permissions. This is the TRR9017 chokepoint
+  (Procedures A/B/C/E).
+
+  Structural gate: an Entra audit event with properties.category ApplicationManagement,
+  loggedByService Core Directory, result success, and activityDisplayName one of
+  "Consent to application", "Add delegated permission grant", or "Add app role
+  assignment to service principal". That gate alone fires on routine SSO consent, so
+  the discriminator is the granted scope/role: a high-privilege permission inside
+  properties.targetResources[].modifiedProperties[] (newValue of ConsentAction.Permissions
+  / DelegatedPermissionGrant.Scope / AppRole.Value). Those nested values are searchable
+  as text here (the newValue is a JSON-encoded string with a space-separated Scope
+  list), so the rule matches the high-risk scope tokens with |contains.
+
+  Implementation note: a production pipeline should parse the scope list and apply a
+  known-good app-ID allowlist (legitimate SaaS onboarding requests the same scopes).
+  Match the modifiedProperty by displayName, never by array index. Device-code phishing
+  is a SEPARATE signal in the sign-in log -- see the companion device-code rule.
+references:
+  - https://attack.mitre.org/techniques/T1528/
+  - https://learn.microsoft.com/entra/identity/enterprise-apps/app-perms-audit-logs
+  - https://learn.microsoft.com/entra/architecture/security-operations-applications
+  - https://learn.microsoft.com/graph/api/resources/oauth2permissiongrant?view=graph-rest-1.0
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.credential-access
+  - attack.t1528
+logsource:
+  product: azure
+  service: auditlogs
+detection:
+  selection_grant:
+    properties.category: 'ApplicationManagement'
+    properties.loggedByService: 'Core Directory'
+    properties.result: 'success'
+    properties.activityDisplayName:
+      - 'Consent to application'
+      - 'Add delegated permission grant'
+      - 'Add app role assignment to service principal'
+  selection_high_privilege_scope:
+    properties.targetResources|contains:
+      # Mailbox / files / chat data scopes (delegated or application).
+      - 'Mail.Read'
+      - 'Mail.ReadWrite'
+      - 'Mail.Send'
+      - 'MailboxSettings'
+      - 'Files.Read.All'
+      - 'Files.ReadWrite.All'
+      - 'Sites.ReadWrite.All'
+      - 'Chat.Read'
+      - 'EWS.AccessAsUser.All'
+      - 'full_access_as_app'
+      # Tenant-wide read-all / write-all application permissions (mass access /
+      # directory recon): Directory.Read.All, User.Read.All, Group.Read.All,
+      # *.ReadWrite.All, etc. NOTE: offline_access is deliberately NOT a standalone
+      # token -- it is a refresh token requested by almost every app and co-occurs with
+      # routine SSO consent, so on its own it is a false-positive magnet. It is only
+      # risky WITH one of the data/directory scopes above, which already fire.
+      - '.Read.All'
+      - '.ReadWrite.All'
+      - 'RoleManagement.ReadWrite.Directory'
+      - 'AppRoleAssignment.ReadWrite.All'
+      # Tenant-wide (admin) consent: AllPrincipals appears in ConsentAction.Permissions
+      # AND in DelegatedPermissionGrant.ConsentType -- match the bare token so either
+      # representation triggers.
+      - 'AllPrincipals'
+  condition: selection_grant and selection_high_privilege_scope
+falsepositives:
+  - Legitimate high-privilege SaaS onboarding (backup/migration/CRM/security tools)
+    requests the same scopes, and admins legitimately grant tenant-wide (AllPrincipals)
+    consent. Maintain a known-good app-ID allowlist and layer first-seen / initiator-risk.
+  - Low-risk SSO consent (openid/profile/email/User.Read, and offline_access on its own)
+    is routine and is excluded by the scope discriminator.
+  - Coverage gap -- resource-specific consent (RSC) is logged as "Grant contextual consent
+    to application" under properties.category GroupManagement, so it is NOT matched by the
+    ApplicationManagement gate here. Add that activity/category for RSC coverage.
+level: high

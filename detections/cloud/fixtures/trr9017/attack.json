@@ -1,0 +1,59 @@
+[
+  {
+    "time": "2026-10-12T15:04:22.517Z",
+    "resourceId": "/tenants/8f3b2c1a-9d4e-4f6a-b1c2-3d4e5f6a7b8c/providers/Microsoft.aadiam",
+    "operationName": "Consent to application",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "8f3b2c1a-9d4e-4f6a-b1c2-3d4e5f6a7b8c",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "203.0.113.66",
+    "correlationId": "a17c0ff3-11aa-4bb2-8cc3-99ddeeff0011",
+    "Level": "Informational",
+    "properties": {
+      "id": "Directory_a17c0ff3-11aa-4bb2-8cc3-99ddeeff0011_TRR9017",
+      "category": "ApplicationManagement",
+      "correlationId": "a17c0ff3-11aa-4bb2-8cc3-99ddeeff0011",
+      "result": "success",
+      "resultReason": "",
+      "activityDisplayName": "Consent to application",
+      "activityDateTime": "2026-10-12T15:04:22.517Z",
+      "loggedByService": "Core Directory",
+      "operationType": "Assign",
+      "initiatedBy": {
+        "user": {
+          "id": "a1b2c3d4-e5f6-4071-8a9b-0c1d2e3f4a5b",
+          "displayName": "v.ictim",
+          "userPrincipalName": "v.ictim@trr9017-corp.onmicrosoft.com",
+          "ipAddress": "203.0.113.66"
+        }
+      },
+      "targetResources": [
+        {
+          "id": "c4d5e6f7-8899-4a0b-9c1d-2e3f4a5b6c7d",
+          "displayName": "trr9017-illicit-consent-app",
+          "type": "ServicePrincipal",
+          "modifiedProperties": [
+            {
+              "displayName": "ConsentContext.IsAdminConsent",
+              "oldValue": "",
+              "newValue": "\"False\""
+            },
+            {
+              "displayName": "ConsentAction.Permissions",
+              "oldValue": "",
+              "newValue": "\"[] => [[Id: grantA, ClientId: c4d5e6f7-8899-4a0b-9c1d-2e3f4a5b6c7d, PrincipalId: a1b2c3d4-e5f6-4071-8a9b-0c1d2e3f4a5b, ResourceId: 11112222-3333-4444-5555-666677778888, ConsentType: Principal, Scope: offline_access Mail.ReadWrite Files.ReadWrite.All User.Read, CreatedDateTime: , LastModifiedDateTime ]]; \""
+            },
+            {
+              "displayName": "TargetId.ServicePrincipalNames",
+              "oldValue": "",
+              "newValue": "\"c4d5e6f7-8899-4a0b-9c1d-2e3f4a5b6c7d\""
+            }
+          ]
+        }
+      ],
+      "additionalDetails": []
+    }
+  }
+]

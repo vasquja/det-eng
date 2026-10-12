@@ -1,0 +1,78 @@
+attack_technique: T1537
+display_name: "Transfer Data to Cloud Account (public / cross-account AWS resource exposure)"
+
+# Behavioral emulation for TRR9019. The live test performs one throwaway exposure in your
+# own AWS account and immediately reverts it (guarded by TRR9019_LIVE=1); NOT run in CI.
+# CI validation runs the paired Sigma rules over the committed CloudTrail fixtures in
+# detections/cloud/fixtures/trr9019/ via detections/validate_cloud_detections.py.
+#
+# Novelty: Atomic Red Team ships NO T1537 atomics. Stratus Red Team exercises only the
+# account-to-account variants (s3-backdoor-bucket-policy, ec2-share-ami/-ebs-snapshot,
+# rds-share-snapshot use a specific foreign account; lambda-backdoor-function is the one
+# public case). The public form (Principal "*" / group=all), the BPA-weakening family,
+# and ECR/KMS/SNS/SQS/Secrets Manager policy exposure are new emulation+detection ground.
+
+atomic_tests:
+  - name: "TRR9019.AWS.A — S3 bucket policy grants public access"
+    auto_generated_guid: b2e8d4c1-9019-4a1b-9c21-1a2b3c4d5e61
+    description: |
+      Disables Block Public Access on a throwaway bucket, applies a bucket policy granting
+      s3:GetObject to Principal "*" with no scoping Condition, then reverts both.
+      Chokepoint: CloudTrail PutBucketPolicy whose statement names Principal "*" and has no
+      aws:PrincipalOrgID/SourceArn/SourceAccount Condition.
+      Rule: detections/sigma/T1537/aws_resource_policy_made_public.yml
+    supported_platforms:
+      - iaas:aws
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_aws_public_exposure.sh a
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1537/src
+
+  - name: "TRR9019.AWS.B — share an AMI/snapshot with the public group"
+    auto_generated_guid: b2e8d4c1-9019-4b2c-8d32-2b3c4d5e6f72
+    description: |
+      Shares a disk image or snapshot with group=all (public). Documented; the live path
+      needs an existing throwaway AMI/snapshot you own.
+      Chokepoint: CloudTrail ModifyImageAttribute/ModifySnapshotAttribute with
+      launchPermission/createVolumePermission add items group=all, or
+      ModifyDBSnapshotAttribute valuesToAdd "all".
+      Rule: detections/sigma/T1537/aws_snapshot_or_ami_made_public.yml
+    supported_platforms:
+      - iaas:aws
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_aws_public_exposure.sh b
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1537/src
+
+  - name: "TRR9019.AWS.C — disable S3 Block Public Access"
+    auto_generated_guid: b2e8d4c1-9019-4c3d-9e43-3c4d5e6f7a83
+    description: |
+      Turns off one or more S3 Block Public Access controls on a throwaway bucket, then
+      re-enables them.
+      Chokepoint: CloudTrail PutBucketPublicAccessBlock/PutAccountPublicAccessBlock with a
+      PublicAccessBlockConfiguration flag=false, or DeletePublicAccessBlock.
+      Rule: detections/sigma/T1537/aws_s3_block_public_access_disabled.yml
+    supported_platforms:
+      - iaas:aws
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_aws_public_exposure.sh c
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1537/src

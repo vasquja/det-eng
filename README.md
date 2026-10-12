@@ -204,12 +204,14 @@ Proving the loop is automated:
   kube-proxy and kindnet privileged pods).
 - **External cloud (AWS / Azure / GCP)** —
   [`.github/workflows/validate-cloud-detections.yml`](.github/workflows/validate-cloud-detections.yml)
-  (TRR9011–9015: IMDS creds used off-instance, leaked access keys, Entra
-  federated-identity backdoors, public GCP IAM exposure, and GitHub-OIDC
-  role-trust abuse). Cloud has no free CI target, so the loop runs the same
-  pySigma backend over committed, schema-faithful **recorded** attack/benign log
-  fixtures: every rule must fire on its attack fixture and match nothing in a hard
-  benign baseline. Pure Python — no cluster, no cloud account.
+  (TRR9011–9019: IMDS creds used off-instance, leaked access keys, Entra
+  federated-identity backdoors, public GCP IAM exposure, GitHub-OIDC role-trust
+  abuse, Cognito unauthenticated identity-pool abuse, Entra illicit OAuth consent
+  and device-code phishing, GCP Workload Identity Federation abuse, and public /
+  cross-account AWS resource exposure). Cloud has no free CI target, so the loop
+  runs the same pySigma backend over committed, schema-faithful **recorded**
+  attack/benign log fixtures: every rule must fire on its attack fixture and match
+  nothing in a hard benign baseline. Pure Python — no cluster, no cloud account.
 - **Lint** — [`.github/workflows/lint-trr.yml`](.github/workflows/lint-trr.yml)
   checks TRR structure, DDM PNG freshness, and markdown links.
 
@@ -321,6 +323,29 @@ is copied to `trr0000/` and the maintainer assigns the final ID.
   An IAM role trust policy trusting GitHub OIDC with an over-broad or absent subject,
   so any repo/fork can assume it. The grant is the baseline-free chokepoint; the use
   path and pre-existing-wildcard case are documented gaps.
+
+- **[TRR9016 — Cognito Unauthenticated Identity Pool Abuse (T1078.004, AWS)](research/trr9016/aws/README.md)**
+  A Cognito identity pool that allows guest identities hands AWS creds to any anonymous
+  caller. Unemulated by Stratus/ART; covers the classic-flow `AssumeRoleWithWebIdentity`
+  and downstream `Cognito_*Unauth_Role` session in the default trail, plus the enabling
+  misconfiguration — with the data-event issuance path as the documented gap.
+
+- **[TRR9017 — Illicit OAuth Consent + Device-Code Phishing (T1528, Azure)](research/trr9017/azr/README.md)**
+  Tricking a user or admin into consenting a malicious app to high-privilege Graph scopes,
+  and the separate device-code-flow signal in the sign-in log. First emulation + CI fixtures
+  for T1528 consent/device-code; the granted-token data-plane use is the gap.
+
+- **[TRR9018 — Workload Identity Federation Abuse (T1098.001, GCP)](research/trr9018/gcp/README.md)**
+  Trusting an external OIDC/AWS/SAML issuer and binding its `principalSet` to a service
+  account so an outside identity can impersonate it. Two always-on Admin-Activity
+  chokepoints (provider trust + SA binding), discriminated from benign GKE Workload
+  Identity; the data-plane token exchange is the gap.
+
+- **[TRR9019 — Public / Cross-Account Resource Exposure (T1537, AWS)](research/trr9019/aws/README.md)**
+  Exposing a resource with a `Principal:*` policy, a `group=all` snapshot/AMI share, or by
+  disabling Block Public Access — unified across seven resource-policy services plus the
+  snapshot and BPA families. The public form is new ground vs Stratus's account-to-account
+  variants; object-level ACLs are the data-event gap.
 
 See [`research/index.json`](research/index.json) for the machine-readable index.
 

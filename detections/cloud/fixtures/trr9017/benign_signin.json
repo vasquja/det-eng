@@ -1,0 +1,25 @@
+[
+  {
+    "time": "2026-10-12T15:06:00Z",
+    "resourceId": "/tenants/8f3b2c1a-9d4e-4f6a-b1c2-3d4e5f6a7b8c/providers/Microsoft.aadiam",
+    "operationName": "Sign-in activity",
+    "category": "NonInteractiveUserSignInLogs",
+    "tenantId": "8f3b2c1a-9d4e-4f6a-b1c2-3d4e5f6a7b8c",
+    "callerIpAddress": "198.51.100.23",
+    "correlationId": "5190111a-2222-4333-8444-555566667777",
+    "Level": "Informational",
+    "properties": {
+      "id": "signin_5190111a-2222-4333-8444-555566667777_TRR9017",
+      "authenticationProtocol": "none",
+      "originalTransferMethod": "none",
+      "appDisplayName": "Microsoft Azure CLI",
+      "appId": "04b07795-8ddb-461a-bbee-02f9e1bf7b46",
+      "userPrincipalName": "v.ictim@trr9017-corp.onmicrosoft.com",
+      "ipAddress": "198.51.100.23",
+      "status": {
+        "errorCode": 0
+      },
+      "resultType": "0"
+    }
+  }
+]

@@ -1,0 +1,82 @@
+title: AWS S3 Block Public Access Disabled or Deleted
+id: 6976e14e-a025-4972-af4e-a852b5507ef9
+status: experimental
+description: |
+  Detects weakening or removal of S3 Block Public Access (BPA) -- the account-wide or
+  per-bucket guardrail that overrides any public bucket policy or ACL. This is the TRR9019
+  companion chokepoint: an attacker who wants a PutBucketPolicy / PutBucketAcl grant to
+  actually expose data must first turn BPA off, because while BPA is on a public policy is
+  silently ineffective. Disabling it is therefore an enabling precondition for public
+  exposure, and on its own is a strong signal.
+
+  It fires on three default-logged management events under s3.amazonaws.com /
+  s3-control.amazonaws.com:
+    - PutBucketPublicAccessBlock        (per-bucket)
+    - PutAccountPublicAccessBlock       (account-wide, blast radius = every bucket)
+    - DeletePublicAccessBlock           (removes the config entirely -> all four controls off)
+  For the two Put* calls it requires at least one of the four controls
+  (BlockPublicAcls / IgnorePublicAcls / BlockPublicPolicy / RestrictPublicBuckets) set to
+  false; DeletePublicAccessBlock is unconditional because deleting the config disables all
+  four. A Put* that sets every control true is a hardening action and is excluded (the
+  benign control).
+
+  Field-model note: the four controls flatten to booleans
+  (requestParameters.PublicAccessBlockConfiguration.<name>); this rule matches the false
+  value directly. Pair with the actor and whether a public bucket policy follows (the
+  resource-policy rule) to confirm intent.
+references:
+  - https://attack.mitre.org/techniques/T1537/
+  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_control_PutPublicAccessBlock.html
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_control_DeletePublicAccessBlock.html
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.exfiltration
+  - attack.t1537
+  - attack.defense-evasion
+  - attack.t1562.007
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_put_weakened:
+    eventName:
+      - 'PutBucketPublicAccessBlock'
+      - 'PutAccountPublicAccessBlock'
+    requestParameters.PublicAccessBlockConfiguration.BlockPublicAcls: false
+  selection_put_weakened_ignore:
+    eventName:
+      - 'PutBucketPublicAccessBlock'
+      - 'PutAccountPublicAccessBlock'
+    requestParameters.PublicAccessBlockConfiguration.IgnorePublicAcls: false
+  selection_put_weakened_policy:
+    eventName:
+      - 'PutBucketPublicAccessBlock'
+      - 'PutAccountPublicAccessBlock'
+    requestParameters.PublicAccessBlockConfiguration.BlockPublicPolicy: false
+  selection_put_weakened_restrict:
+    eventName:
+      - 'PutBucketPublicAccessBlock'
+      - 'PutAccountPublicAccessBlock'
+    requestParameters.PublicAccessBlockConfiguration.RestrictPublicBuckets: false
+  selection_delete:
+    eventName: 'DeletePublicAccessBlock'
+  filter_failed:
+    # A denied / failed call carries an errorCode and changed nothing.
+    errorCode: '*'
+  condition: (selection_put_weakened or selection_put_weakened_ignore or selection_put_weakened_policy or selection_put_weakened_restrict or selection_delete) and not filter_failed
+falsepositives:
+  - Legitimately public static-website or public-dataset buckets whose owners intentionally
+    relax BPA; allowlist by bucket/account and pair with a change-management record.
+  - A Put* that sets all four controls to true is hardening, not exposure, and is excluded.
+  - End-state rather than delta -- Put* carries the full desired configuration, and
+    CloudTrail does not record the prior state. An IaC run that re-applies a long-standing
+    partial config (some controls already false) fires even though nothing changed this
+    time. Correlate with the actor/tooling (Terraform/CloudFormation userAgent) and change
+    management.
+  - Known limitation, a false negative -- a Put* that OMITS a control sets it to false by
+    default, but this rule only matches a control EXPLICITLY set to false. A partial config
+    that silently drops a control is missed. A pipeline that fills omitted controls with
+    their effective false value closes this gap.
+level: high

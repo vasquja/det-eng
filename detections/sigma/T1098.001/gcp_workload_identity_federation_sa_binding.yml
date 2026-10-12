@@ -1,0 +1,54 @@
+title: GCP Service Account Bound to a Workload Identity Federation PrincipalSet
+id: a60403d9-45a6-42ef-bc2d-c9221bbdd8c6
+status: experimental
+description: |
+  Detects a GCP IAM policy change that binds an external Workload Identity Federation
+  principal to a service account, letting an identity from an external OIDC/AWS/SAML
+  provider impersonate that SA -- the GCP twin of AWS GitHub-OIDC trust abuse. This is
+  the TRR9018 primary chokepoint (Procedures A/C): impersonation is impossible without
+  this binding.
+
+  It keys on a Cloud Audit Log (Admin Activity, always on) google.iam.admin.v1.SetIAMPolicy
+  on a service account whose authoritative policy delta
+  (protoPayload.serviceData.policyDelta.bindingDeltas) adds, in one binding, the role
+  roles/iam.workloadIdentityUser or roles/iam.serviceAccountTokenCreator to a member
+  that is a workload-identity-pool principal -- member containing /workloadIdentityPools/
+  (both the set form principalSet:// and the single-subject form principal://). The three
+  conditions are required on the SAME delta object (a regex with lookaheads bounded to
+  one {...} element), so a REMOVE, or an unrelated ADD elsewhere in the policy, does not
+  fire.
+
+  The discriminator vs benign GKE Workload Identity is the member: GKE binds the same
+  role/action with member serviceAccount:<project-id>.svc.id.goog[ns/ksa] (project ID,
+  no principalSet, no /workloadIdentityPools/). Field-model note: this targets a
+  normalised event where the delta array is searchable as text; on a structured backend,
+  evaluate the bindingDeltas element-wise. The policy delta may also appear under
+  protoPayload.metadata in some entries. Legitimate CI/CD onboarding also creates these
+  bindings -- enrich with the pool's provider trust, actor, and SA privilege before paging.
+references:
+  - https://attack.mitre.org/techniques/T1098/001/
+  - https://cloud.google.com/iam/docs/workload-identity-federation
+  - https://cloud.google.com/iam/docs/audit-logging
+  - https://github.com/HackTricks-wiki/hacktricks-cloud/blob/master/src/pentesting-cloud/gcp-security/gcp-persistence/gcp-workload-identity-federation-persistence.md
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1098.001
+  - attack.t1199
+logsource:
+  product: gcp
+  service: gcp.audit
+detection:
+  selection_setiam:
+    protoPayload.serviceName: 'iam.googleapis.com'
+    protoPayload.methodName: 'google.iam.admin.v1.SetIAMPolicy'
+  selection_wif_binding_added:
+    protoPayload.serviceData.policyDelta.bindingDeltas|re: '\{(?=[^}]*"action": "ADD")(?=[^}]*/workloadIdentityPools/)(?=[^}]*(?:roles/iam\.workloadIdentityUser|roles/iam\.serviceAccountTokenCreator))'
+  condition: selection_setiam and selection_wif_binding_added
+falsepositives:
+  - Legitimate CI/CD onboarding (GitHub Actions, GitLab, AWS/Azure OIDC) and IaC create
+    real principalSet workload-identity bindings. Enrich with the provider's issuer /
+    attributeCondition, the actor, and the privilege of the target SA.
+level: high
