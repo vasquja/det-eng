@@ -2,14 +2,14 @@
 
 [![lint-trr](https://github.com/vasquja/det-eng/actions/workflows/lint-trr.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/lint-trr.yml) [![validate-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-detections.yml) [![validate-apiserver-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-apiserver-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-apiserver-detections.yml) [![validate-cloud-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-cloud-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-cloud-detections.yml)
 
-**AI-driven detection engineering, held to a proof standard.**
+**Detection at scale, held to a proof standard.**
 
-Attackers already use AI to find and weaponize weaknesses faster than a human
-team can review them. Defenders cannot answer that one hand-written rule at a
-time. This repository is an experiment in the other side of that equation:
-an AI agent does the heavy lifting of detection engineering — research,
-emulation, rule writing — and a strict, automated validation loop decides what
-is allowed to count as done.
+Attackers already use AI to find and weaponize weaknesses at scale, faster
+than a human team can review them. Defenders cannot answer exploitation at
+scale one hand-written rule at a time; they need **detection at scale**. This
+repository is an experiment in what that takes: an AI agent does the heavy
+lifting of detection engineering — research, emulation, rule writing — and a
+strict, automated validation loop decides what is allowed to count as done.
 
 > **Not production.** Nothing here is meant for production use. Rules are
 > `status: experimental` and need baselining before they alert. Finished work
@@ -17,7 +17,7 @@ is allowed to count as done.
 
 ---
 
-## Why AI, and why it is not enough by itself
+## Detection at scale, and why AI alone is not enough
 
 Coverage is a volume problem. ATT&CK has hundreds of techniques, each with
 several execution paths, across Linux, Kubernetes, and three major clouds. A
