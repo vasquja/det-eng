@@ -1,0 +1,89 @@
+attack_technique: T1053.007
+display_name: "Scheduled Task/Job: Container Orchestration Job (Kubernetes Jobs and CronJobs)"
+
+# Behavioral emulation for TRR9005. Each procedure performs a HARMLESS write to a
+# batch/v1 Job or CronJob through the API server, so the audit event each paired
+# detection keys on exists. Every object is named trr9005-* so a validator matches
+# the emulation's own events, not the Jobs and Pods the controllers create for
+# legitimate CronJobs. The CronJob uses a never-firing schedule (no child pods);
+# the one-shot Job runs id; the host-access Job runs /bin/true. These need a
+# reachable cluster with batch write rights and audit logging at Request level
+# (see detections/k8s/kind-apiserver-cluster.yaml).
+
+atomic_tests:
+  - name: "TRR9005.K8S.A — create a CronJob (recurring persistence)"
+    auto_generated_guid: cbc8d052-569f-4ab0-bcce-f8c5977ab638
+    description: |
+      Creates a CronJob with a never-firing schedule (0 0 31 2 *, Feb 31). A real
+      adversary schedules a recurring container for persistence; the cluster
+      re-launches it on every tick. The never-firing schedule means no child Job
+      or Pod is created, so the emulation produces exactly one gate-matchable
+      event.
+      Chokepoint: objectRef.apiGroup=batch, resource=cronjobs, a write verb.
+      Rule: detections/sigma/T1053.007/k8s_job_create.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh a
+      cleanup_command: |
+        kubectl -n default delete cronjob trr9005-cron --ignore-not-found
+
+  - name: "TRR9005.K8S.B — create a one-shot Job (immediate execution)"
+    auto_generated_guid: baa0280d-ac80-4c14-98fb-ae10bc10dd38
+    description: |
+      Creates a one-shot Job that runs the harmless command id and sleeps briefly.
+      The Job controller creates a Pod to run it; the pod sandbox carries the label
+      batch.kubernetes.io/job-name=trr9005-job, which the node runtime fallback
+      keys on. This proves the node sensor catches the executed pod even when the
+      audit rule excludes the controllers or the batch group is dropped from the
+      audit policy.
+      Chokepoint rule: detections/sigma/T1053.007/k8s_job_create.yml
+      Node fallback rule: detections/sigma/T1053.007/k8s_cri_job_pod.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh b
+      cleanup_command: |
+        kubectl -n default delete job trr9005-job --cascade=foreground --ignore-not-found
+
+  - name: "TRR9005.K8S.C — create a host-access Job (privileged + hostPath)"
+    auto_generated_guid: 051d4f8d-4f56-4151-a108-ad9acd0a13cf
+    description: |
+      Creates a Job whose Pod template requests host access (privileged container,
+      hostPID, read-only hostPath to /tmp) but whose command is /bin/true -- no
+      exploit is run. The privileged/hostPath fields appear in the Request-level
+      audit event for triage. This same batch write is also graded by the TRR9007
+      controller rule (k8s_podspec_controller_host_access.yml).
+      Rule: detections/sigma/T1053.007/k8s_job_create.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh c
+      cleanup_command: |
+        kubectl -n default delete job trr9005-hostjob --cascade=foreground --ignore-not-found
+
+  - name: "TRR9005.K8S.D — modify an existing CronJob (tamper)"
+    auto_generated_guid: da4fd0f7-fbe8-4562-92df-34ad824a9ad0
+    description: |
+      Patches the CronJob from Procedure A to suspend it (a harmless change), the
+      modification path (verb=patch, not create) that detections watching only
+      create miss.
+      Rule: detections/sigma/T1053.007/k8s_job_create.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh d
+      cleanup_command: |
+        kubectl -n default delete cronjob trr9005-cron --ignore-not-found

@@ -1,0 +1,48 @@
+title: Kubernetes Job Pod Observed On a Node (Runtime Sensor)
+id: 67e4ed55-8f2f-4ce9-9ed0-8c805bb7584c
+status: experimental
+description: |
+  Detects a pod that belongs to a Kubernetes Job running on a node: a pod sandbox
+  the container runtime reports whose labels carry batch.kubernetes.io/job-name
+  (the label the Job controller stamps on every Pod it creates). This is the
+  TRR9005 Strategy 2 node-runtime fallback. It sees the EXECUTED pod, which the
+  API server chokepoint rule (k8s_job_create.yml) does not, for two reasons: that
+  rule excludes the job and cronjob controllers to survive the fan-out noise, so
+  the recurring executions a CronJob drives never match it; and if an operator
+  trims the batch group out of the audit policy, the create is not logged at all.
+  The running pod is visible regardless.
+
+  Because it fires on every Job pod, this is a hunting and correlation anchor, not
+  a standalone alert on a busy cluster: correlate it with the chokepoint write
+  (same job name) to confirm a CronJob is live-firing, and baseline the known
+  recurring Jobs.
+
+  Log source: the container runtime's (CRI) record of each pod sandbox, with the
+  CRI PodSandbox fields metadata.* and labels -- what `crictl pods -o json`
+  returns and what a runtime security or EDR agent with container context reports
+  when a sandbox starts. Sigma has no standard log source for it, so this rule
+  declares product: kubernetes, service: cri; map those fields to your node
+  sensor's.
+references:
+  - https://attack.mitre.org/techniques/T1053/007/
+  - https://kubernetes.io/docs/concepts/workloads/controllers/job/
+  - https://kubernetes.io/docs/concepts/architecture/cri/
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.execution
+  - attack.persistence
+  - attack.t1053.007
+logsource:
+  product: kubernetes
+  service: cri
+  definition: 'One record per pod sandbox the container runtime runs on a node, with the CRI PodSandbox fields (metadata.*, state, labels, annotations), from a node runtime sensor'
+detection:
+  select_job_pod:
+    labels.batch.kubernetes.io/job-name|exists: true
+  condition: select_job_pod
+falsepositives:
+  - Every legitimate Job and CronJob execution produces a Job pod and matches this
+    rule. It is high volume by design; use it for correlation and hunting, and
+    baseline the known recurring Jobs per namespace.
+level: low

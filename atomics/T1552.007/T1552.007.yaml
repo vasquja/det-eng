@@ -1,0 +1,99 @@
+attack_technique: T1552.007
+display_name: "Unsecured Credentials: Container API (Kubernetes Secrets and Tokens)"
+
+# Behavioral emulation for TRR9006. Procedures A-D perform a HARMLESS
+# credential-access action through the API server, so the audit event each paired
+# detection keys on exists. Procedure E reads an already-mounted token off the
+# node to show the detection gap (no API call, so no audit event). A FIXED
+# namespace trr9006 and unique names let a validator gate on the namespace and the
+# non-system caller. The Secret holds a benign literal; the minted token is for a
+# throwaway SA with no RBAC. These need a reachable cluster with Secret-read and
+# token-mint rights and audit logging (see detections/k8s/kind-apiserver-cluster.yaml).
+
+atomic_tests:
+  - name: "TRR9006.K8S.A — list Secrets"
+    auto_generated_guid: cfbc9379-0ec0-4c66-b920-42ae9e705e70
+    description: |
+      Lists the Secrets in the namespace (verb=list). An adversary lists Secrets to
+      dump every credential in a namespace (or, cluster-wide, everywhere) in one
+      request. A list event carries objectRef.namespace but no objectRef.name.
+      Chokepoint: objectRef.resource=secrets, verb in {get,list,watch}.
+      Rule: detections/sigma/T1552.007/k8s_secret_access.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh a
+      cleanup_command: |
+        kubectl delete namespace trr9006 --ignore-not-found
+
+  - name: "TRR9006.K8S.B — get a specific Secret"
+    auto_generated_guid: 234a5fe4-576e-40b9-b36d-2e7d6d0accc7
+    description: |
+      Reads one Secret by name (verb=get). The returned value is the benign literal
+      the test created. A get event carries objectRef.name.
+      Rule: detections/sigma/T1552.007/k8s_secret_access.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh b
+      cleanup_command: |
+        kubectl delete namespace trr9006 --ignore-not-found
+
+  - name: "TRR9006.K8S.C — watch Secrets"
+    auto_generated_guid: 4fd86794-e16b-4037-857c-6bc69c2cef07
+    description: |
+      Opens a streaming watch on Secrets for 5 seconds (verb=watch), the path a
+      create-only or list-only rule misses.
+      Rule: detections/sigma/T1552.007/k8s_secret_access.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh c
+      cleanup_command: |
+        kubectl delete namespace trr9006 --ignore-not-found
+
+  - name: "TRR9006.K8S.D — mint a service-account token (TokenRequest)"
+    auto_generated_guid: c1dabe34-ff46-4e09-8d6f-20713002e289
+    description: |
+      Mints a short-lived token for a throwaway service account via the TokenRequest
+      API (verb=create, objectRef.resource=serviceaccounts, subresource=token). An
+      adversary mints a token for a more powerful SA to impersonate it. The SA here
+      holds no RBAC, so the token grants nothing, and it expires on its own.
+      Rule: detections/sigma/T1552.007/k8s_secret_token_request.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh d
+      cleanup_command: |
+        kubectl delete namespace trr9006 --ignore-not-found
+
+  - name: "TRR9006.K8S.E — read a mounted token off the node (detection gap)"
+    auto_generated_guid: 5fe659a8-a6bf-4b94-8735-253a0b7f0877
+    description: |
+      Reads the first bytes of an already-mounted/projected service-account token off
+      the node filesystem, read-only. No API call is made, so the API server audit
+      log gains no event: the audit-log chokepoint is blind to it. Only a node
+      file-event sensor (or detection-by-absence) catches it. Demonstrates the gap
+      the same way TRR9002 Procedure E documents the direct-kubelet gap.
+      Node-sensor rule: detections/sigma/T1552.007/linux_k8s_sa_token_read.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh e
+      cleanup_command: |
+        true

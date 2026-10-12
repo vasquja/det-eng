@@ -1,0 +1,107 @@
+title: Kubernetes Workload Controller Requests Host Access (Escape Surface)
+id: fd55aee1-dda1-42e2-8c8d-e385bd1119fe
+status: experimental
+description: |
+  Detects a workload controller write (Deployment, DaemonSet, StatefulSet,
+  ReplicaSet, ReplicationController, Job, or CronJob) whose embedded Pod template
+  requests host access: a privileged container, a hostPath volume, a host
+  namespace, or a dangerous capability. This is the TRR9007 Strategy 2 fallback.
+
+  A pod created through a controller has the dangerous fields one (or, for a
+  CronJob, two) levels deeper in the spec, and the eventual pods create is
+  performed by the controller service account after admission, with a generated
+  pod name. The pod-level chokepoint (k8s_podspec_host_access.yml) still sees that
+  generated pod, but this rule catches the adversary's OWN create -- the controller
+  object -- at the admission moment, with the real identity and the chosen name.
+
+  The fields are matched under requestObject.spec.template.spec.* for most
+  controllers and under requestObject.spec.jobTemplate.spec.template.spec.* for a
+  CronJob. Host-namespace fields are top-level booleans at that depth; container
+  and volume fields are JSON-serialized arrays matched with |contains, in both the
+  spaced and compact forms. A privileged Job or CronJob also matches the TRR9005
+  chokepoint (k8s_job_create.yml); that is the same write seen through two lenses
+  (scheduled-workload vs host-access). Dedup by auditID.
+
+  Needs audit level Request so requestObject is present. Baseline the
+  infrastructure controllers (the CNI DaemonSet, kube-proxy) by exact name, image,
+  and identity, not by the dangerous field or the namespace.
+references:
+  - https://attack.mitre.org/techniques/T1611/
+  - https://kubernetes.io/docs/concepts/security/pod-security-standards/
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.privilege-escalation
+  - attack.t1611
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  selection_ctrl:
+    objectRef.resource:
+      - 'deployments'
+      - 'daemonsets'
+      - 'statefulsets'
+      - 'replicasets'
+      - 'replicationcontrollers'
+      - 'jobs'
+      - 'cronjobs'
+    verb:
+      - 'create'
+      - 'update'
+      - 'patch'
+  sel_priv_tmpl:
+    requestObject.spec.template.spec.containers|contains:
+      - '"privileged": true'
+      - '"privileged":true'
+  sel_caps_tmpl:
+    requestObject.spec.template.spec.containers|contains:
+      - '"SYS_ADMIN"'
+      - '"SYS_PTRACE"'
+      - '"SYS_MODULE"'
+      - '"DAC_READ_SEARCH"'
+      - '"SYS_BOOT"'
+      - '"SYS_RAWIO"'
+      - '"NET_ADMIN"'
+      - '"BPF"'
+      - '"SYSLOG"'
+  sel_hostpath_tmpl:
+    requestObject.spec.template.spec.volumes|contains: '"hostPath"'
+  sel_hostpid_tmpl:
+    requestObject.spec.template.spec.hostPID: true
+  sel_hostnet_tmpl:
+    requestObject.spec.template.spec.hostNetwork: true
+  sel_hostipc_tmpl:
+    requestObject.spec.template.spec.hostIPC: true
+  sel_priv_cj:
+    requestObject.spec.jobTemplate.spec.template.spec.containers|contains:
+      - '"privileged": true'
+      - '"privileged":true'
+  sel_caps_cj:
+    requestObject.spec.jobTemplate.spec.template.spec.containers|contains:
+      - '"SYS_ADMIN"'
+      - '"SYS_PTRACE"'
+      - '"SYS_MODULE"'
+      - '"DAC_READ_SEARCH"'
+      - '"SYS_BOOT"'
+      - '"SYS_RAWIO"'
+      - '"NET_ADMIN"'
+      - '"BPF"'
+      - '"SYSLOG"'
+  sel_hostpath_cj:
+    requestObject.spec.jobTemplate.spec.template.spec.volumes|contains: '"hostPath"'
+  sel_hostpid_cj:
+    requestObject.spec.jobTemplate.spec.template.spec.hostPID: true
+  sel_hostnet_cj:
+    requestObject.spec.jobTemplate.spec.template.spec.hostNetwork: true
+  sel_hostipc_cj:
+    requestObject.spec.jobTemplate.spec.template.spec.hostIPC: true
+  condition: selection_ctrl and (sel_priv_tmpl or sel_caps_tmpl or sel_hostpath_tmpl or sel_hostpid_tmpl or sel_hostnet_tmpl or sel_hostipc_tmpl or sel_priv_cj or sel_caps_cj or sel_hostpath_cj or sel_hostpid_cj or sel_hostnet_cj or sel_hostipc_cj)
+falsepositives:
+  - Infrastructure controllers that legitimately need host access (the CNI
+    DaemonSet, kube-proxy, node-exporter, CSI drivers). Baseline these by exact
+    controller name, image, and identity.
+  - Operators deploying a privileged agent deliberately. Baseline the known
+    automation identities.
+level: high

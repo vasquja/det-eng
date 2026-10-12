@@ -1,6 +1,6 @@
 # det-eng — Detection Engineering Research
 
-[![lint-trr](https://github.com/vasquja/det-eng/actions/workflows/lint-trr.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/lint-trr.yml) [![validate-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-detections.yml)
+[![lint-trr](https://github.com/vasquja/det-eng/actions/workflows/lint-trr.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/lint-trr.yml) [![validate-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-detections.yml) [![validate-apiserver-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-apiserver-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-apiserver-detections.yml)
 
 Detection research, worked in the open. This repository is where I study a
 MITRE ATT&CK technique end to end: understand how it works, model where it can
@@ -186,12 +186,18 @@ Proving the loop is automated:
   technique needs (no AF_ALG, io_uring disabled …).
 - **Kubernetes** —
   [`.github/workflows/validate-k8s-detections.yml`](.github/workflows/validate-k8s-detections.yml)
-  and
+  (TRR9002 exec),
   [`.github/workflows/validate-staticpod-detections.yml`](.github/workflows/validate-staticpod-detections.yml)
-  spin up a `kind` cluster and run the emulation strict: a rule that does not
-  fire on the emulation's own events fails the job. Each also runs the
-  validator on the audit log captured *before* the emulation, where it must
-  not pass.
+  (TRR9003 static pods), and
+  [`.github/workflows/validate-apiserver-detections.yml`](.github/workflows/validate-apiserver-detections.yml)
+  (TRR9004–9007: RBAC, Jobs/CronJobs, Secrets, and dangerous pod specs, on one
+  shared `kind` cluster) spin up a `kind` cluster and run the emulation strict:
+  a rule that does not fire on the emulation's own events fails the job. Each
+  also runs the validator on the audit log captured *before* the emulation,
+  where it must not pass — and the API server loop proves the rules fire on the
+  emulation's own records even though a fresh cluster is full of baseline
+  matches (bootstrap RBAC, controller Jobs, controller Secret reads,
+  kube-proxy and kindnet privileged pods).
 - **Lint** — [`.github/workflows/lint-trr.yml`](.github/workflows/lint-trr.yml)
   checks TRR structure, DDM PNG freshness, and markdown links.
 
@@ -236,6 +242,32 @@ is copied to `trr0000/` and the maintainer assigns the final ID.
   Five control paths (exec, attach, ephemeral container, node proxy, direct
   kubelet), audit-log telemetry via a `kind` cluster, and a demonstrated
   detection gap on the direct-kubelet path.
+
+- **[TRR9003 — Static Pod Persistence (T1543.005, Kubernetes)](research/trr9003/k8s/README.md)**
+  A pod the kubelet runs from a node-local manifest, bypassing the API server.
+  A node runtime chokepoint (the CRI sees a pod the API never scheduled) plus a
+  mirror-pod audit fallback, with the invalid-namespace variant as the gap.
+
+- **[TRR9004 — Additional Container Cluster Roles (T1098.006, Kubernetes)](research/trr9004/k8s/README.md)**
+  Five RBAC paths (bind a powerful role, namespaced binding to a cluster role,
+  write a wildcard/escalate role, bind a group, patch an existing object), all
+  on one audit chokepoint, with a Request-level severity rule that grades the
+  grant.
+
+- **[TRR9005 — Container Orchestration Job (T1053.007, Kubernetes)](research/trr9005/k8s/README.md)**
+  CronJobs and Jobs for persistence and execution. One batch-write chokepoint
+  (with the controller fan-out excluded), plus a node-runtime fallback that
+  catches the executed pod by its Job label.
+
+- **[TRR9006 — Unsecured Credentials: Container API (T1552.007, Kubernetes)](research/trr9006/k8s/README.md)**
+  Reading Secrets (get/list/watch) and minting tokens, on one audit chokepoint
+  plus a TokenRequest fallback, with the already-mounted token read off disk as
+  the demonstrated gap the API server never sees.
+
+- **[TRR9007 — Escape to Host via a Dangerous Pod Spec (T1611, Kubernetes)](research/trr9007/k8s/README.md)**
+  Privileged, hostPath, host-namespace, and capability requests, caught at
+  admission in the audit `requestObject` (Request level). A controller-template
+  fallback and a static-pod gap round it out.
 
 See [`research/index.json`](research/index.json) for the machine-readable index.
 

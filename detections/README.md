@@ -191,6 +191,46 @@ python3 detections/validate_staticpod_detections.py \
   --audit-log /tmp/kube-apiserver-audit.log --cri-log /tmp/cri-pods.jsonl
 ```
 
+## Kubernetes API server detections (TRR9004–9007)
+
+Four more Kubernetes techniques key on the same API server **audit log**, so one
+shared `kind` cluster, one audit policy (`k8s/audit-policy-apiserver.yaml`), one
+validator (`validate_apiserver_detections.py`), and one workflow
+(`.github/workflows/validate-apiserver-detections.yml`) cover them all:
+
+| TRR | Technique | Chokepoint rule(s) | Audit level |
+|-----|-----------|--------------------|-------------|
+| TRR9004 | RBAC (T1098.006) | `sigma/T1098.006/k8s_rbac_write.yml` + a Request-level severity rule | Request |
+| TRR9005 | Jobs/CronJobs (T1053.007) | `sigma/T1053.007/k8s_job_create.yml` + a node-runtime job-pod rule | Request |
+| TRR9006 | Secrets (T1552.007) | `sigma/T1552.007/k8s_secret_access.yml` + a TokenRequest rule | Metadata |
+| TRR9007 | Dangerous pod spec (T1611) | `sigma/T1611/k8s_podspec_host_access.yml` + a controller rule | Request |
+
+The audit **level** is per technique: pods, workload controllers, and RBAC are
+logged at `Request` so `requestObject` carries the privileged/hostPath fields,
+the bound role, and the group subject; Secrets and `serviceaccounts/token` stay
+at `Metadata`, never higher, because `RequestResponse` would copy the Secret data
+and the signed token into the log.
+
+These rules are intentionally generic, and a fresh `kind` cluster is full of
+baseline matches: bootstrap RBAC writes, controller-created Jobs and Pods,
+controller Secret reads, and the kube-proxy and kindnet privileged pods. So the
+validator gates each rule on the emulation's own marker — a `trr9004-`/`trr9005-`
+/`trr9007-` object name, the `trr9006` namespace with a non-system caller, or a
+`trr9005-` Job label on the node sensor — and the negative control proves a pass
+depends on the emulation, not the baseline.
+
+```
+python3 detections/validate_apiserver_detections.py --dry-run     # compile only
+python3 detections/validate_apiserver_detections.py \
+  --audit-log /tmp/kube-apiserver-audit.log --cri-log /tmp/cri-pods.jsonl
+```
+
+TRR9006 Procedure E (reading an already-mounted token off disk) and the TRR9007
+static-pod delivery bypass the API server, so they leave no audit event. Their
+rules (`sigma/T1552.007/linux_k8s_sa_token_read.yml`, and TRR9003's CRI rule for
+the static pod) are compiled but not match-gated here; the emulations document the
+gaps the way TRR9002 Procedure E does.
+
 ## Status
 
 All Sigma rules are `status: experimental`. Levels are set by how rare the

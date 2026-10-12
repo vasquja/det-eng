@@ -1,0 +1,93 @@
+# API server audit policy for the TRR9004-9007 lab (RBAC, Jobs/CronJobs, Secrets,
+# dangerous pod specs).
+#
+# Purpose: make the telemetry the four techniques' Sigma rules key on exist, while
+# keeping the log small enough to read in CI. On a default cluster the API server
+# writes NO audit log at all, so a detection has nothing to match. Load this first.
+#
+# Rules are evaluated top to bottom; the FIRST match wins. So the targeted write
+# and read surfaces come first (at the level each technique needs), then the
+# high-volume read traffic is dropped, then a catch-all keeps everything else at
+# Metadata (never None) so nothing security-relevant is silently lost.
+#
+# Audit-LEVEL choices, per technique:
+#   * Pods and workload controllers (TRR9007 escape, TRR9005 jobs): Request level,
+#     so requestObject.spec.* (privileged / hostPath / host namespaces / caps /
+#     the schedule) is present. Metadata would make those rules blind.
+#   * RBAC (TRR9004): Request level, so requestObject (roleRef / subjects / rules)
+#     is present to grade a dangerous grant.
+#   * Secrets and serviceaccounts/token (TRR9006): Metadata level, NEVER Request or
+#     RequestResponse -- those copy the Secret's base64 data and the signed token
+#     into the log, turning the log itself into a credential store.
+apiVersion: audit.k8s.io/v1
+kind: Policy
+
+# Drop the RequestReceived stage everywhere; one event per request is enough and
+# halves the log. A long-running watch still emits at ResponseStarted.
+omitStages:
+  - "RequestReceived"
+
+rules:
+  # --- TRR9007: pods and ephemeral containers at Request (requestObject.spec) ---
+  - level: Request
+    verbs: ["create", "update", "patch"]
+    resources:
+      - group: ""
+        resources: ["pods", "pods/ephemeralcontainers"]
+
+  # --- TRR9005 + TRR9007: workload controllers at Request (embedded templates) ---
+  # TRR9005 keys on batch writes; TRR9007 grades the embedded pod template. Keep
+  # delete too, so TRR9005 teardown is visible.
+  - level: Request
+    verbs: ["create", "update", "patch", "delete"]
+    resources:
+      - group: "apps"
+        resources: ["deployments", "daemonsets", "statefulsets", "replicasets"]
+      - group: "batch"
+        resources: ["jobs", "cronjobs"]
+      - group: ""
+        resources: ["replicationcontrollers"]
+
+  # --- TRR9004: RBAC writes at Request (requestObject roleRef/subjects/rules) ---
+  - level: Request
+    verbs: ["create", "update", "patch", "delete"]
+    resources:
+      - group: "rbac.authorization.k8s.io"
+        resources: ["roles", "clusterroles", "rolebindings", "clusterrolebindings"]
+
+  # --- TRR9006: Secret reads at Metadata (NEVER Request/RequestResponse) ---
+  # Above every None rule, so a secret read is always recorded. Metadata carries
+  # verb, objectRef, identity, source, client, and code -- but not the data.
+  - level: Metadata
+    resources:
+      - group: ""
+        resources: ["secrets"]
+
+  # --- TRR9006: service-account token minting at Metadata (NEVER higher) ---
+  - level: Metadata
+    verbs: ["create"]
+    resources:
+      - group: ""
+        resources: ["serviceaccounts", "serviceaccounts/token"]
+
+  # --- Noise reduction: drop high-volume read traffic. Does NOT touch secrets ---
+  - level: None
+    verbs: ["get", "list", "watch"]
+    resources:
+      - group: ""
+        resources:
+          ["endpoints", "events", "nodes/status", "pods/status",
+           "configmaps", "leases"]
+      - group: "coordination.k8s.io"
+        resources: ["leases"]
+      - group: "discovery.k8s.io"
+        resources: ["endpointslices"]
+
+  # Drop the kube-system control-plane service accounts' own read chatter.
+  - level: None
+    users: ["system:apiserver", "system:kube-scheduler",
+            "system:kube-controller-manager"]
+    verbs: ["get", "list", "watch"]
+
+  # --- Catch-all: keep everything else at Metadata (never None) ---
+  - level: Metadata
