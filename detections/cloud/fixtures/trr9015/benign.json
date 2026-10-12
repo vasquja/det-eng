@@ -20,8 +20,8 @@
       "policyDocument": "%7B%22Version%22%3A%222012-10-17%22%2C%22Statement%22%3A%5B%7B%22Effect%22%3A%22Allow%22%2C%22Principal%22%3A%7B%22Federated%22%3A%22arn%3Aaws%3Aiam%3A%3A123456789012%3Aoidc-provider%2Ftoken.actions.githubusercontent.com%22%7D%2C%22Action%22%3A%22sts%3AAssumeRoleWithWebIdentity%22%2C%22Condition%22%3A%7B%22StringEquals%22%3A%7B%22token.actions.githubusercontent.com%3Aaud%22%3A%22sts.amazonaws.com%22%2C%22token.actions.githubusercontent.com%3Asub%22%3A%22repo%3Atrr9015-example%2Fdeploy%3Aref%3Arefs%2Fheads%2Fmain%22%7D%7D%7D%5D%7D"
     },
     "responseElements": null,
-    "requestID": "b4f1c2a9-9015-4b2e-9a1c-updateassume",
-    "eventID": "7a6c5d4e-9015-4098-8765-updateassume",
+    "requestID": "base0001-9015-req",
+    "eventID": "base0001-9015-evt",
     "readOnly": false,
     "eventType": "AwsApiCall",
     "managementEvent": true,
@@ -54,8 +54,66 @@
       ]
     },
     "responseElements": null,
-    "requestID": "b4f1c2a9-9015-4b2e-9a1c-createopenid",
-    "eventID": "7a6c5d4e-9015-4098-8765-createopenid",
+    "requestID": "oidcprov-9015-req",
+    "eventID": "oidcprov-9015-evt",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management"
+  },
+  {
+    "eventVersion": "1.09",
+    "userIdentity": {
+      "type": "IAMUser",
+      "principalId": "AIDA1EXAMPLETRR90152",
+      "arn": "arn:aws:iam::123456789012:user/trr9015-terraform",
+      "accountId": "123456789012",
+      "accessKeyId": "AKIA1EXAMPLETRR9015B",
+      "userName": "trr9015-terraform"
+    },
+    "eventTime": "2026-10-12T15:20:00Z",
+    "eventSource": "iam.amazonaws.com",
+    "eventName": "UpdateAssumeRolePolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "198.51.100.23",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.5 terraform-provider-aws/5.70.0",
+    "requestParameters": {
+      "roleName": "trr9015-github-deploy-arrayaud",
+      "policyDocument": "%7B%22Version%22%3A%222012-10-17%22%2C%22Statement%22%3A%5B%7B%22Effect%22%3A%22Allow%22%2C%22Principal%22%3A%7B%22Federated%22%3A%22arn%3Aaws%3Aiam%3A%3A123456789012%3Aoidc-provider%2Ftoken.actions.githubusercontent.com%22%7D%2C%22Action%22%3A%22sts%3AAssumeRoleWithWebIdentity%22%2C%22Condition%22%3A%7B%22StringEquals%22%3A%7B%22token.actions.githubusercontent.com%3Aaud%22%3A%5B%22sts.amazonaws.com%22%5D%2C%22token.actions.githubusercontent.com%3Asub%22%3A%22repo%3Atrr9015-example%2Fdeploy%3Aref%3Arefs%2Fheads%2Fmain%22%7D%7D%7D%5D%7D"
+    },
+    "responseElements": null,
+    "requestID": "updateas-9015-req",
+    "eventID": "updateas-9015-evt",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management"
+  },
+  {
+    "eventVersion": "1.09",
+    "userIdentity": {
+      "type": "IAMUser",
+      "principalId": "AIDA1EXAMPLETRR90152",
+      "arn": "arn:aws:iam::123456789012:user/trr9015-terraform",
+      "accountId": "123456789012",
+      "accessKeyId": "AKIA1EXAMPLETRR9015B",
+      "userName": "trr9015-terraform"
+    },
+    "eventTime": "2026-10-12T15:25:00Z",
+    "eventSource": "iam.amazonaws.com",
+    "eventName": "UpdateAssumeRolePolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "198.51.100.23",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.5 terraform-provider-aws/5.70.0",
+    "requestParameters": {
+      "roleName": "trr9015-github-deploy-reposcoped",
+      "policyDocument": "%7B%22Version%22%3A%222012-10-17%22%2C%22Statement%22%3A%5B%7B%22Effect%22%3A%22Allow%22%2C%22Principal%22%3A%7B%22Federated%22%3A%22arn%3Aaws%3Aiam%3A%3A123456789012%3Aoidc-provider%2Ftoken.actions.githubusercontent.com%22%7D%2C%22Action%22%3A%22sts%3AAssumeRoleWithWebIdentity%22%2C%22Condition%22%3A%7B%22StringEquals%22%3A%7B%22token.actions.githubusercontent.com%3Aaud%22%3A%22sts.amazonaws.com%22%2C%22token.actions.githubusercontent.com%3Arepository%22%3A%22trr9015-example%2Fdeploy%22%7D%7D%7D%5D%7D"
+    },
+    "responseElements": null,
+    "requestID": "updateas-9015-req",
+    "eventID": "updateas-9015-evt",
     "readOnly": false,
     "eventType": "AwsApiCall",
     "managementEvent": true,

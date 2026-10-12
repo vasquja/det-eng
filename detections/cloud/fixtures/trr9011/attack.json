@@ -17,7 +17,7 @@
         },
         "webIdFederationData": {},
         "attributes": {
-          "creationDate": "2026-10-12T14:02:11Z",
+          "creationDate": "2026-10-12T14:07:11Z",
           "mfaAuthenticated": "false"
         },
         "ec2RoleDelivery": "1.0"
@@ -31,8 +31,6 @@
     "userAgent": "aws-cli/2.15.30 Python/3.11.6 Linux/6.1.0 source/x86_64 trr9011-offinstance",
     "requestParameters": null,
     "responseElements": null,
-    "requestID": "a1b2c3d4-9011-4e5f-8a7b-0c1d2e3f4a5b",
-    "eventID": "b379479b-9011-4c3c-af4b-cbd43acf9011",
     "readOnly": true,
     "eventType": "AwsApiCall",
     "managementEvent": true,
@@ -42,16 +40,18 @@
       "tlsVersion": "TLSv1.3",
       "cipherSuite": "TLS_AES_128_GCM_SHA256",
       "clientProvidedHostHeader": "sts.us-east-1.amazonaws.com"
-    }
+    },
+    "requestID": "a1b2c3d4-9011-aaaa-req-0000-0000-000",
+    "eventID": "a1b2c3d4-9011-aaaa-evt-0000-0000-000"
   },
   {
     "eventVersion": "1.08",
     "userIdentity": {
       "type": "AssumedRole",
-      "principalId": "AROATRR9011EXAMPLEID0:i-0b7e3f9a2c1d4e5f6",
-      "arn": "arn:aws:sts::123456789012:assumed-role/trr9011-ssrf-demo-role/i-0b7e3f9a2c1d4e5f6",
+      "principalId": "AROATRR9011EXAMPLEID0:ssrf-session-01",
+      "arn": "arn:aws:sts::123456789012:assumed-role/trr9011-ssrf-demo-role/ssrf-session-01",
       "accountId": "123456789012",
-      "accessKeyId": "ASIATRR9011EXAMPLE12",
+      "accessKeyId": "ASIATRR9011EXAMPLE22",
       "sessionContext": {
         "sessionIssuer": {
           "type": "Role",
@@ -62,13 +62,13 @@
         },
         "webIdFederationData": {},
         "attributes": {
-          "creationDate": "2026-10-12T14:02:11Z",
+          "creationDate": "2026-10-12T14:09:05Z",
           "mfaAuthenticated": "false"
         },
         "ec2RoleDelivery": "2.0"
       }
     },
-    "eventTime": "2026-10-12T14:07:43Z",
+    "eventTime": "2026-10-12T14:09:05Z",
     "eventSource": "ec2.amazonaws.com",
     "eventName": "DescribeInstances",
     "awsRegion": "us-east-1",
@@ -76,8 +76,6 @@
     "userAgent": "aws-cli/2.15.30 Python/3.11.6 Linux/6.1.0 source/x86_64 trr9011-offinstance",
     "requestParameters": null,
     "responseElements": null,
-    "requestID": "a1b2c3d4-9011-4e5f-8a7b-0c1d2e3f4a5b",
-    "eventID": "b379479b-9011-4c3c-af4b-cbd43acf9011",
     "readOnly": true,
     "eventType": "AwsApiCall",
     "managementEvent": true,
@@ -87,6 +85,52 @@
       "tlsVersion": "TLSv1.3",
       "cipherSuite": "TLS_AES_128_GCM_SHA256",
       "clientProvidedHostHeader": "ec2.us-east-1.amazonaws.com"
-    }
+    },
+    "requestID": "b2c3d4e5-9011-bbbb-req-0000-0000-000",
+    "eventID": "b2c3d4e5-9011-bbbb-evt-0000-0000-000"
+  },
+  {
+    "eventVersion": "1.08",
+    "userIdentity": {
+      "type": "AssumedRole",
+      "principalId": "AROATRR9011EXAMPLEID0:i-0b7e3f9a2c1d4e5f6",
+      "arn": "arn:aws:sts::123456789012:assumed-role/trr9011-ssrf-demo-role/i-0b7e3f9a2c1d4e5f6",
+      "accountId": "123456789012",
+      "accessKeyId": "ASIATRR9011EXAMPLE32",
+      "sessionContext": {
+        "sessionIssuer": {
+          "type": "Role",
+          "principalId": "AROATRR9011EXAMPLEID0",
+          "arn": "arn:aws:iam::123456789012:role/trr9011-ssrf-demo-role",
+          "accountId": "123456789012",
+          "userName": "trr9011-ssrf-demo-role"
+        },
+        "webIdFederationData": {},
+        "attributes": {
+          "creationDate": "2026-10-12T14:10:20Z",
+          "mfaAuthenticated": "false"
+        }
+      }
+    },
+    "eventTime": "2026-10-12T14:10:20Z",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "ListBuckets",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "198.51.100.23",
+    "userAgent": "aws-cli/2.15.30 Python/3.11.6 Linux/6.1.0 source/x86_64 trr9011-offinstance",
+    "requestParameters": null,
+    "responseElements": null,
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+      "tlsVersion": "TLSv1.3",
+      "cipherSuite": "TLS_AES_128_GCM_SHA256",
+      "clientProvidedHostHeader": "s3.us-east-1.amazonaws.com"
+    },
+    "requestID": "c3d4e5f6-9011-cccc-req-0000-0000-000",
+    "eventID": "c3d4e5f6-9011-cccc-evt-0000-0000-000"
   }
 ]

@@ -61,8 +61,14 @@ keys. The signal is the **behaviour on top of it**: the key is used from a
 source (`sourceIPAddress` / `userAgent`) it has not been seen from before, opening with
 `sts:GetCallerIdentity` and continuing into an enumeration burst
 (`iam:GetAccountAuthorizationDetails`, `ListUsers`, `ListRoles`, `GetAccountSummary`,
-`s3:ListBuckets`, `ec2:DescribeInstances`), often with a spray of `AccessDenied` as the
-attacker probes what the key can do.
+`GetUser`, `ListAttachedUserPolicies`, `ListAccessKeys`, `s3:ListBuckets`,
+`ec2:DescribeInstances`), often with a spray of `AccessDenied` as the attacker probes
+what the key can do. The Procedure C pivot (`sts:GetSessionToken` /
+`GetFederationToken`) is signed by the leaked key too, so it is in the same verb set
+the rule watches. The rule matches each such call from a foreign source; the "burst"
+is expressed as the stateful new-source overlay in production, not in the single-event
+rule, so a lone `GetCallerIdentity` from an unknown IP will fire until that overlay is
+added.
 
 ### Stateless vs. stateful
 

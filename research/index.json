@@ -480,18 +480,6 @@
         "B": {
           "text": "det-eng behavioral emulation / recorded fixtures",
           "url": "../atomics/T1552.005/src/emulate.sh"
-        },
-        "C": {
-          "text": "det-eng behavioral emulation / recorded fixtures",
-          "url": "../atomics/T1552.005/src/emulate.sh"
-        },
-        "D": {
-          "text": "det-eng behavioral emulation / recorded fixtures",
-          "url": "../atomics/T1552.005/src/emulate.sh"
-        },
-        "E": {
-          "text": "det-eng behavioral emulation / recorded fixtures",
-          "url": "../atomics/T1552.005/src/emulate.sh"
         }
       }
     },
@@ -520,14 +508,6 @@
       "path": "trr9012/aws/README.md",
       "tests": {
         "A": {
-          "text": "det-eng behavioral emulation / recorded fixtures",
-          "url": "../atomics/T1078.004/src/emulate.sh"
-        },
-        "B": {
-          "text": "det-eng behavioral emulation / recorded fixtures",
-          "url": "../atomics/T1078.004/src/emulate.sh"
-        },
-        "C": {
           "text": "det-eng behavioral emulation / recorded fixtures",
           "url": "../atomics/T1078.004/src/emulate.sh"
         }
@@ -562,15 +542,7 @@
           "text": "det-eng behavioral emulation / recorded fixtures",
           "url": "../atomics/T1098.001/src/emulate_entra.sh"
         },
-        "B": {
-          "text": "det-eng behavioral emulation / recorded fixtures",
-          "url": "../atomics/T1098.001/src/emulate_entra.sh"
-        },
         "C": {
-          "text": "det-eng behavioral emulation / recorded fixtures",
-          "url": "../atomics/T1098.001/src/emulate_entra.sh"
-        },
-        "D": {
           "text": "det-eng behavioral emulation / recorded fixtures",
           "url": "../atomics/T1098.001/src/emulate_entra.sh"
         }
@@ -607,10 +579,6 @@
         "B": {
           "text": "det-eng behavioral emulation / recorded fixtures",
           "url": "../atomics/T1098.003/src/emulate.sh"
-        },
-        "C": {
-          "text": "det-eng behavioral emulation / recorded fixtures",
-          "url": "../atomics/T1098.003/src/emulate.sh"
         }
       }
     },
@@ -641,22 +609,6 @@
       "path": "trr9015/aws/README.md",
       "tests": {
         "A": {
-          "text": "det-eng behavioral emulation / recorded fixtures",
-          "url": "../atomics/T1098.001/src/emulate_aws_oidc.sh"
-        },
-        "B": {
-          "text": "det-eng behavioral emulation / recorded fixtures",
-          "url": "../atomics/T1098.001/src/emulate_aws_oidc.sh"
-        },
-        "C": {
-          "text": "det-eng behavioral emulation / recorded fixtures",
-          "url": "../atomics/T1098.001/src/emulate_aws_oidc.sh"
-        },
-        "D": {
-          "text": "det-eng behavioral emulation / recorded fixtures",
-          "url": "../atomics/T1098.001/src/emulate_aws_oidc.sh"
-        },
-        "E": {
           "text": "det-eng behavioral emulation / recorded fixtures",
           "url": "../atomics/T1098.001/src/emulate_aws_oidc.sh"
         }

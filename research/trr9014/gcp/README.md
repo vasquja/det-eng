@@ -182,9 +182,11 @@ when present; allowlist intentionally-public resources by `resourceName` + role.
 **Demonstrated gaps (companion rules, not this chokepoint).** Legacy GCS ACLs; Cloud
 Run `--no-invoker-iam-check` (`google.cloud.run.v2.Services.UpdateService` with the
 invoker-iam-disabled annotation); BigQuery legacy dataset access (`DatasetService.*`
-with `specialGroup` `allAuthenticatedUsers` — BigQuery supports only
-`allAuthenticatedUsers`, never `allUsers`, at the dataset level). The public *data
-access* that follows the grant is in Data Access logs, off by default.
+with an access entry whose `specialGroup` is `allAuthenticatedUsers` — the legacy
+`specialGroup` enum offers only `allAuthenticatedUsers`, not `allUsers`, though a
+dataset can still be exposed to `allUsers` via an access entry's `iamMember` field or
+via dataset-level IAM, neither of which emits a set-IAM-policy delta this rule sees).
+The public *data access* that follows the grant is in Data Access logs, off by default.
 
 **Coverage summary.**
 

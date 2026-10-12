@@ -76,8 +76,10 @@ Inside the decoded policy, a GitHub-OIDC statement has `Principal.Federated` end
 
 - the subject condition `token.actions.githubusercontent.com:sub` uses a wildcard
   (`*`) in the org/repo/ref position (a `StringLike` such as `repo:org/*`);
-- there is **no** subject condition at all (only `aud`, or no `Condition`) — AWS warns
-  this lets any GitHub repository in the world assume the role; or
+- there is **no** GitHub-OIDC scoping claim at all (only `aud`, or no `Condition`) —
+  AWS warns this lets any GitHub repository in the world assume the role. A trust
+  scoped by another claim instead of `sub` (e.g. `:repository` or `:environment`) is
+  **not** over-broad, so the detection treats any scoping claim as scoped; or
 - the audience `token.actions.githubusercontent.com:aud` is not pinned with
   `StringEquals` to `sts.amazonaws.com`.
 
@@ -218,10 +220,15 @@ log pipeline.
 **Strategy 1 — grant chokepoint (covers A, B, C).**
 Match `iam:UpdateAssumeRolePolicy`/`iam:CreateRole` whose trust policy (in
 `policyDocument` or `assumeRolePolicyDocument`) trusts `token.actions.githubusercontent.com`
-and is over-broad: a wildcard in the sub, no GitHub-OIDC sub condition, or an unpinned
-aud. The shipped rule uses the substring fallback (anchor on the host; wildcard via the
-encoded `%2A`; missing-sub and unpinned-aud via absence tests); a production pipeline
-should decode-and-parse for a precise sub judgement.
+and is over-broad: a wildcard **inside the sub value**, or **no GitHub-OIDC scoping
+claim at all** (no `sub`, `repository`, `environment`, ...). The shipped rule is a
+regex approximation over the URL-encoded text (the wildcard check is scoped to the sub
+value, and any scoping claim counts as scoped), so a trust pinned by `sub`, or scoped
+by `:repository`/`:environment`, is suppressed. It is **not** serialization-independent
+— a JSON array, extra whitespace, or an unexpected key order can change the match — and
+it does **not** test the audience pin (absence of a literal `aud":"sts` substring is not
+evidence of an unpinned aud). A production pipeline should URL-decode and JSON-parse the
+trust policy to judge the sub and aud precisely.
 
 - Sensor: CloudTrail.
 - Rule: [`detections/sigma/T1098.001/aws_github_oidc_role_trust_abuse.yml`](../../../detections/sigma/T1098.001/aws_github_oidc_role_trust_abuse.yml) (built).
@@ -272,10 +279,14 @@ creation precursor, which must not fire).
 The validator
 [`detections/validate_cloud_detections.py`](../../../detections/validate_cloud_detections.py)
 runs the rule over the attack set (all three grants must fire, carrying a `trr9015-`
-marker) and the benign baseline (nothing fires). The benign baseline is a correctly-
-scoped trust — same event, same provider, same action, differing only in the pinned
-`StringEquals` sub — plus the OIDC-provider creation, so the pass proves the rule keys
-on the over-broad subject and not on the presence of GitHub OIDC.
+marker) and the benign baseline (nothing fires). The baseline is four records: a
+correctly-scoped `StringEquals` trust, the OIDC-provider creation precursor, a trust
+whose `aud` is a JSON array, and a trust scoped by `:repository` with no `sub` — the
+last two are the false-positive cases the review surfaced. The pass demonstrates the
+rule separates these from the over-broad grants **for this fixture's serialization**;
+it does not prove serialization-independent soundness (a differently-encoded policy can
+still fool the substring approximation), which is why a decode-and-parse pipeline is
+recommended for production.
 
 Prior art is pre-deploy IaC static analysis (which flags the identical marker in
 Terraform), not CloudTrail runtime detection; Stratus `aws.persistence.iam-backdoor-role`

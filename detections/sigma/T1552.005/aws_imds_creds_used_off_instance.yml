@@ -8,23 +8,24 @@ description: |
   access and then used off-instance. This is the TRR9011 chokepoint (Procedures A,
   B, C, D).
 
-  The in-record provenance is three invariants: userIdentity.type is AssumedRole,
+  The in-record provenance is: userIdentity.type is AssumedRole,
   userIdentity.sessionContext.sessionIssuer.type is Role, and the session is
   EC2-delivered -- sessionContext.ec2RoleDelivery is present (1.0 = IMDSv1, 2.0 =
-  IMDSv2) and, as a fallback when that field is absent, userIdentity.arn carries the
-  instance-ID session name (contains "/i-"). Those three alone are NOT a detection:
-  they match ~100% of benign instance-role activity. The discriminator is the
-  off-instance leg -- sourceIPAddress is not an address the instance/account owns.
-  That cannot be judged from a single CloudTrail record, so this rule APPROXIMATES
-  it with a source-IP allowlist (RFC1918 plus the account's own NAT/Elastic-IP
-  egress CIDRs, which you must baseline). GuardDuty does the enrichment natively and
-  is the authoritative signal: UnauthorizedAccess:IAMUser/
+  IMDSv2) OR, as a fallback for older records where that field is absent,
+  userIdentity.arn ends with the instance-ID session name (anchored
+  /i-<instanceid>). Those are provenance, not a detection: they match ~100% of
+  benign instance-role activity. The discriminator is the off-instance leg --
+  sourceIPAddress is not an address the instance/account owns. That cannot be judged
+  from a single CloudTrail record, so this rule APPROXIMATES it with a source-IP
+  allowlist (RFC1918, plus the account's own NAT/Elastic-IP egress CIDRs AND its IPv6
+  egress prefixes, which you must baseline). GuardDuty does the enrichment natively
+  and is the authoritative signal: UnauthorizedAccess:IAMUser/
   InstanceCredentialExfiltration.OutsideAWS (external IP) and .InsideAWS (another AWS
-  account). Deploy this as a provider-agnostic backstop to GuardDuty, not a
-  replacement.
+  account). Deploy this as a provider-agnostic backstop to GuardDuty.
 
   Blind spots (see the TRR): the IMDS fetch itself emits no CloudTrail (data-plane);
-  role chaining drops the markers after one hop; the InsideAWS variant (Procedure E)
+  role chaining and ECS task-role sessions carry NEITHER ec2RoleDelivery NOR the
+  /i- instance-ID name, so they are not matched; the InsideAWS variant (Procedure E)
   shows an AWS-owned sourceIPAddress and is missed by the public-IP approximation
   (GuardDuty .InsideAWS covers it); data-plane-only use needs CloudTrail data events.
 references:
@@ -47,20 +48,32 @@ detection:
   provenance_ec2_role_delivery:
     userIdentity.sessionContext.ec2RoleDelivery: '*'
   provenance_instance_session_name:
-    userIdentity.arn|contains: '/i-'
+    # Anchored to the real instance-ID shape at the end of the ARN, so an assumed-role
+    # session merely named "i-something" does not match.
+    userIdentity.arn|re: '/i-[0-9a-f]{8,17}$'
   filter_account_owned_source:
     sourceIPAddress|cidr:
       - '10.0.0.0/8'
       - '172.16.0.0/12'
       - '192.168.0.0/16'
       - '100.64.0.0/10'
-      # PLACEHOLDER: replace 203.0.113.0/24 with your account's own NAT-gateway and
-      # Elastic-IP egress CIDRs (and any Outposts/DirectConnect/VPN gateway CIDRs).
+      # PLACEHOLDERS: replace with your account's own egress ranges --
+      # NAT-gateway / Elastic-IP IPv4 CIDRs (203.0.113.0/24 here), any
+      # Outposts/DirectConnect/VPN gateway CIDRs, AND your IPv6 egress prefixes
+      # (2001:db8::/32 here). Instances that egress over IPv6 or from a public
+      # subnet's auto-assigned public IPv4 will otherwise look off-instance.
       - '203.0.113.0/24'
+      - '2001:db8::/32'
   condition: selection_assumed_role and (provenance_ec2_role_delivery or provenance_instance_session_name) and not filter_account_owned_source
 falsepositives:
   - NAT-gateway or Elastic-IP egress for instances in private subnets; allowlist the
     account's own NAT/EIP CIDRs.
+  - Instances in a PUBLIC subnet with an auto-assigned public IPv4 reach AWS APIs
+    through the Internet Gateway as their own public IP (not RFC1918, not an EIP, and
+    rotated on stop/start), so they cannot be cleanly allowlisted by CIDR -- prefer VPC
+    endpoints / private subnets, or exclude these instances by role/principalId.
+  - IPv6 egress (dual-stack or egress-only internet gateway) needs the account's IPv6
+    egress prefixes in the allowlist, or every IPv6 instance-role call looks foreign.
   - Hybrid egress via Outposts, Direct Connect, VPN or Transit Gateway makes
     instance-role calls appear from on-prem/public IPs; suppress on the gateway CIDR.
   - Backup or monitoring agents that legitimately use instance credentials off-box.

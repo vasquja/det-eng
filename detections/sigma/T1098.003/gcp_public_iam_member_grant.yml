@@ -20,10 +20,15 @@ description: |
   Manager/Artifact Registry/service accounts, which emit no serviceData delta).
 
   These are ADMIN_WRITE operations in the Admin Activity audit log, which is on by
-  default and free -- the technique's strength. Caveats (see the TRR): the request
-  path carries the full replaced policy, so a pre-existing public binding merely
-  re-submitted over-fires (the delta path with action ADD is higher fidelity, prefer
-  it when present). Documented gaps covered by companion rules, not this one: legacy
+  default and free -- the technique's strength. The delta path is matched with a regex
+  that requires the public member inside an action==ADD delta object (so revoking a
+  public binding -- action REMOVE -- does NOT fire). Field-model note: this rule targets
+  a normalised event where the delta/bindings arrays are searchable as text; on a
+  structured, field-mapped GCP backend, add a pipeline that exposes bindingDeltas and
+  request.policy.bindings members. Caveats (see the TRR): the request path carries the
+  full replaced policy, so a pre-existing public binding merely re-submitted over-fires
+  (the delta path is higher fidelity; prefer it when present). Documented gaps covered
+  by companion rules, not this one: legacy
   GCS ACLs (storage.setBucketAcl / predefinedAcl publicRead), Cloud Run
   --no-invoker-iam-check (UpdateService), and BigQuery legacy dataset access
   (specialGroup allAuthenticatedUsers) -- none emit a set-IAM-policy event.
@@ -46,15 +51,17 @@ detection:
     protoPayload.methodName|endswith:
       - 'setiampolicy'
       - 'setiampermissions'
-  public_in_delta:
-    protoPayload.serviceData.policyDelta.bindingDeltas|contains:
-      - '"allUsers"'
-      - '"allAuthenticatedUsers"'
+  public_added_in_delta:
+    # A public member inside an action==ADD delta object (order-independent lookaheads,
+    # bounded to one {...} object), so a REMOVE of a public member does not fire.
+    protoPayload.serviceData.policyDelta.bindingDeltas|re: '\{(?=[^}]*"action":\s*"ADD")(?=[^}]*"(?:allUsers|allAuthenticatedUsers)")'
   public_in_request:
+    # The request path carries the full replaced policy (no action), so this is
+    # presence of a public member; it can over-fire on an unrelated policy rewrite.
     protoPayload.request.policy.bindings|contains:
       - '"allUsers"'
       - '"allAuthenticatedUsers"'
-  condition: selection_set_iam and (public_in_delta or public_in_request)
+  condition: selection_set_iam and (public_added_in_delta or public_in_request)
 falsepositives:
   - Intentionally public assets -- static-website/public-download buckets, public
     container images, public Cloud Run/Functions endpoints, public datasets.

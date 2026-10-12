@@ -15,17 +15,19 @@ description: |
   requestParameters.policyDocument (UpdateAssumeRolePolicy) or
   requestParameters.assumeRolePolicyDocument (CreateRole). The rule anchors on the
   issuer host, which is percent-encoding-invariant (letters and dots are not encoded),
-  then flags over-broad trust by substring: a wildcard in the sub (encoded '%2A'), OR
-  no GitHub-OIDC sub condition at all, OR no pinned aud (StringEquals
-  sts.amazonaws.com). A correctly-scoped trust -- StringEquals on an exact
-  repo:ORG/REPO:ref:... or :environment:NAME sub, aud pinned -- is suppressed.
+  then flags over-broad trust: a wildcard ('%2A') WITHIN the sub value (scoped by regex
+  to the sub, so a wildcard on another claim does not trigger it), OR no GitHub-OIDC
+  scoping claim at all (no sub, repository, environment, ...). A trust scoped by an
+  exact sub, or by :repository / :environment, is suppressed.
 
-  Implementation note: this is the substring fallback the research recommends when a
-  pipeline cannot decode the policy. The wildcard case is only approximate over the
-  encoded string (it cannot tell a wildcard in the org/repo position from one in the
-  ref/branch position); a production pipeline should URL-decode and JSON-parse the
-  policy to judge the sub precisely. The missing-sub and unpinned-aud cases are sound
-  over substrings.
+  Implementation note: this is the substring/regex approximation the research
+  recommends when a pipeline cannot decode the policy; it operates on the URL-encoded
+  text and is NOT serialization-independent (a JSON array, added whitespace, or a key
+  order it does not anticipate can change the match). A production pipeline should
+  URL-decode and JSON-parse the trust policy and judge the sub precisely. The aud pin
+  is intentionally NOT tested here -- the absence of a literal `aud":"sts` substring is
+  not evidence of an unpinned audience (aud is commonly a JSON array), so an aud test
+  belongs only in a decode-and-parse pipeline.
 
   Blind spots (see the TRR): exploiting a PRE-EXISTING over-broad trust emits only the
   use event (sts:AssumeRoleWithWebIdentity) and no grant -- catchable only with a
@@ -56,23 +58,22 @@ detection:
     requestParameters.policyDocument|contains: 'token.actions.githubusercontent.com'
   oidc_create:
     requestParameters.assumeRolePolicyDocument|contains: 'token.actions.githubusercontent.com'
+  # Wildcard '*' (encoded %2A) INSIDE the sub value only -- not anywhere else in the
+  # policy (a wildcard on job_workflow_ref etc. is not a broad sub).
   sub_wildcard_update:
-    requestParameters.policyDocument|contains: '%2A'
+    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(?:(?!%22).)*?%2A'
   sub_wildcard_create:
-    requestParameters.assumeRolePolicyDocument|contains: '%2A'
-  has_sub_update:
-    requestParameters.policyDocument|contains: 'githubusercontent.com%3Asub'
-  has_sub_create:
-    requestParameters.assumeRolePolicyDocument|contains: 'githubusercontent.com%3Asub'
-  has_pinned_aud_update:
-    requestParameters.policyDocument|contains: 'githubusercontent.com%3Aaud%22%3A%22sts.amazonaws.com'
-  has_pinned_aud_create:
-    requestParameters.assumeRolePolicyDocument|contains: 'githubusercontent.com%3Aaud%22%3A%22sts.amazonaws.com'
+    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(?:(?!%22).)*?%2A'
+  # ANY GitHub-OIDC scoping claim present (sub, repository, environment, ...), so a
+  # trust scoped by :repository or :environment without a :sub is NOT "worldwide".
+  scoping_claim_update:
+    requestParameters.policyDocument|re: 'githubusercontent\.com%3A(?:sub|repository|repository_owner|repository_id|environment|actor|ref|workflow_ref|job_workflow_ref)%22'
+  scoping_claim_create:
+    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3A(?:sub|repository|repository_owner|repository_id|environment|actor|ref|workflow_ref|job_workflow_ref)%22'
   condition: >
     selection_grant and (oidc_update or oidc_create) and
     (sub_wildcard_update or sub_wildcard_create
-     or not (has_sub_update or has_sub_create)
-     or not (has_pinned_aud_update or has_pinned_aud_create))
+     or not (scoping_claim_update or scoping_claim_create))
 falsepositives:
   - Orgs that deliberately use an org-wide StringLike repo:org/* for shared or
     self-hosted runners or monorepos -- a policy-hygiene finding to review, not

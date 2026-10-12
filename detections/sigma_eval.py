@@ -71,6 +71,13 @@ def evaluate(sql, events):
     exactly as it would in a log store that never saw the field.
     """
     db = sqlite3.connect(":memory:")
+    # pySigma's SQLite backend compiles a `|re` match to the SQL `REGEXP` operator,
+    # which SQLite leaves unimplemented by default. Register it with Python's `re`
+    # (full syntax, including look-around) so `|re` rules evaluate. `X REGEXP Y`
+    # calls regexp(Y, X), i.e. regexp(pattern, value).
+    db.create_function(
+        "regexp", 2,
+        lambda pattern, value: 1 if value is not None and re.search(pattern, str(value)) else 0)
     columns = sorted({k for e in events for k in e} - {_ROWID})
     db.execute(f"CREATE TABLE logs ({_ROWID} INTEGER PRIMARY KEY"
                + "".join(f", {_quote(c)}" for c in columns) + ")")

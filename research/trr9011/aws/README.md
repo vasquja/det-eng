@@ -64,9 +64,17 @@ When code uses instance-role credentials, CloudTrail records the call with a
 - the session was delivered by IMDS. The decisive in-record marker is
   `userIdentity.sessionContext.ec2RoleDelivery`: present only for IMDS-delivered
   instance-role sessions, with value `1.0` (IMDSv1) or `2.0` (IMDSv2). As a fallback
-  when that field is absent (older records, role chaining, ECS task roles), the role
-  session name is the instance ID, so `userIdentity.arn` ends `.../i-<instanceid>` and
-  `userIdentity.principalId` is `AROA...:i-<instanceid>`.
+  for some older records where that field is absent, the role session name is the
+  instance ID, so `userIdentity.arn` ends `.../i-<instanceid>` (matched with an
+  anchored `/i-[0-9a-f]{8,17}$`) and `userIdentity.principalId` is
+  `AROA...:i-<instanceid>`.
+
+  Two session kinds carry **neither** marker and are therefore **not** matched by this
+  rule: a role-chained session (one `sts:AssumeRole` hop takes a caller-supplied
+  session name, not the instance ID) and an ECS task-role session (its credentials come
+  from the ECS task credential endpoint `169.254.170.2`, not IMDS, and its session name
+  is the task GUID). Both are real false negatives, consistent with the Demonstrated
+  gaps below.
 
 These three are **provenance, not a detection**. They are true of essentially every
 benign instance-role API call, so on their own they match ~100% of normal fleet
@@ -312,10 +320,14 @@ benign baseline is hard: it is the same instance role doing the same `GetCallerI
 from the account's own NAT egress IP, so the pass proves the rule keys on the
 off-instance source and not on the identity alone.
 
-Prior detection art (Elastic's "EC2 Instance Console Login via Assumed Role" and the
-new-source `GetCallerIdentity` rules) keys on the `/i-<instanceid>` session name,
-confirming the approach; neither keys on `ec2RoleDelivery` nor pairs the SSRF-retrieval
-and off-instance-use with an emulation and a synthetic-log fixture.
+The off-instance-use detection idea is not new to vendors: GuardDuty's
+`InstanceCredentialExfiltration.*` findings are the authoritative form, and vendor
+rules key on it (Elastic's instance-role session rules on the `/i-<instanceid>` name;
+Panther's "IMDS credential usage outside expected services"). The contribution here is
+narrower and specific: a provider-agnostic Sigma rule that keys on `ec2RoleDelivery`
+(which those vendor rules do not), paired with a runnable emulation and a recorded
+CloudTrail fixture for the SSRF-retrieval-then-off-instance-use chain -- which neither
+Stratus Red Team nor Atomic Red Team ships.
 
 ## References
 

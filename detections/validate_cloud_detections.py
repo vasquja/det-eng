@@ -32,8 +32,15 @@ The loop this proves, for each rule:
 The benign baseline is the control, and it is built to be HARD: it hits the same
 log source / method / structural fields as the attack and differs only on the
 discriminating field (the off-instance source IP, the identity type, the FIC issuer,
-the public vs specific principal), so a PASS proves the rule keys on the technique's
-chokepoint and not on the fixture's shape or marker.
+the public vs specific principal, the pinned vs wildcard OIDC subject), so a PASS
+proves the rule keys on the technique's chokepoint and not on the fixture's shape or
+marker.
+
+One exception: the TRR9013 managed-identity FIC rule reads the Azure Activity Log,
+which carries no issuer/subject, so that rule is a broad signal with no field to
+discriminate on. Its benign baseline is therefore a different administrative operation
+on the same identity (proving the rule is specific to the FIC-write operationName, not
+that it separates a good issuer from a bad one), not an "issuer differs only" control.
 
 Modes:
     --dry-run       Compile every cloud rule; no fixtures needed.

@@ -195,10 +195,17 @@ Log for Procedure C. Service-principal sign-in logs for Procedure D.
 **Strategy 1 — chokepoint (covers A, B).**
 Match Entra audit events with `properties.category` `ApplicationManagement`,
 `loggedByService` `Core Directory`, `result` `success`, and a modified property
-`FederatedIdentityCredentials`, where the FIC issuer is **not** on the approved-issuer
-allowlist. Match the modified property over any element (not index 0), and do not
-hard-require `targetResources.type` `Application` (a service-principal-object FIC is
-`ServicePrincipal`).
+`FederatedIdentityCredentials`, where an FIC **issuer that is not on the approved-issuer
+allowlist is present**. The rule expresses this as a regex for an `Issuer:
+"https://<host>` whose host is not approved, **not** as "suppress when an approved
+issuer appears anywhere" — the latter fails open on any app that already holds a
+legitimate FIC (its approved issuer sits in `oldValue`). This covers Procedure B
+(a repoint **to** an unapproved issuer makes that issuer appear in `newValue`). Match
+the modified property over any element (not index 0), and do not hard-require
+`targetResources.type` `Application` (a service-principal-object FIC is
+`ServicePrincipal`). Caveat: the matched text spans `oldValue` and `newValue`, so
+repointing or removing an already-present unapproved issuer (a benign remediation) can
+also fire; a decode-and-parse pipeline that reads only `newValue` avoids this.
 
 - Sensor: Entra ID audit log.
 - Rule: [`detections/sigma/T1098.001/entra_app_federated_credential_backdoor.yml`](../../../detections/sigma/T1098.001/entra_app_federated_credential_backdoor.yml) (built).
