@@ -1,0 +1,43 @@
+title: Entra Device Code Authentication Flow
+id: f08e2586-26d2-40a6-8b91-659108640652
+status: experimental
+description: |
+  Detects a successful Microsoft Entra sign-in that used the OAuth 2.0 device
+  authorization grant (device code flow) -- properties.authenticationProtocol
+  "deviceCode" in the Entra sign-in logs. This is the TRR9017 companion signal
+  (Procedure D): device-code phishing, where an attacker starts the device flow, sends
+  the victim the user_code + microsoft.com/devicelogin link, and captures the resulting
+  access + refresh tokens. It is a SEPARATE stream from the consent audit event and
+  does not appear in the audit log.
+
+  The rule unions the interactive and non-interactive sign-in categories, because
+  device-code sign-ins land predominantly in NonInteractiveUserSignInLogs. Device code
+  is legitimate for input-constrained devices (TVs, headless CLI, PowerShell), so this
+  is noisy on its own -- baseline per app/user, and correlate with an illicit-consent
+  grant or an anomalous location/app for high confidence.
+references:
+  - https://attack.mitre.org/techniques/T1528/
+  - https://learn.microsoft.com/azure/azure-monitor/reference/tables/signinlogs
+  - https://learn.microsoft.com/graph/api/resources/signin?view=graph-rest-beta
+  - https://learn.microsoft.com/entra/architecture/security-operations-applications
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.credential-access
+  - attack.t1528
+  - attack.t1566.002
+logsource:
+  product: azure
+  service: signinlogs
+detection:
+  selection:
+    category:
+      - 'SignInLogs'
+      - 'NonInteractiveUserSignInLogs'
+    properties.authenticationProtocol: 'deviceCode'
+  condition: selection
+falsepositives:
+  - Legitimate device-code sign-ins from input-constrained devices (smart TVs, IoT,
+    headless CLI, Azure CLI / Microsoft Graph PowerShell). Baseline per app and user and
+    correlate with consent or anomalous sign-in properties before alerting.
+level: medium

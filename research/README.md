@@ -122,6 +122,10 @@ final ID on merge.
 | TRR9013  | T1098.001 | Federated Identity Credential Backdoor | Azure | [`trr9013/azr`](trr9013/azr/README.md) |
 | TRR9014  | T1098.003 | Public IAM Exposure (allUsers) | GCP | [`trr9014/gcp`](trr9014/gcp/README.md) |
 | TRR9015  | T1098.001 | GitHub Actions OIDC Role-Trust Abuse | AWS | [`trr9015/aws`](trr9015/aws/README.md) |
+| TRR9016  | T1078.004 | Cognito Unauthenticated Identity Pool Abuse | AWS | [`trr9016/aws`](trr9016/aws/README.md) |
+| TRR9017  | T1528  | Illicit OAuth Consent Grant + Device-Code Phishing | Azure | [`trr9017/azr`](trr9017/azr/README.md) |
+| TRR9018  | T1098.001 | Workload Identity Federation Abuse | GCP | [`trr9018/gcp`](trr9018/gcp/README.md) |
+| TRR9019  | T1537  | Public / Cross-Account Resource Exposure | AWS | [`trr9019/aws`](trr9019/aws/README.md) |
 
 ## How to start a new TRR
 

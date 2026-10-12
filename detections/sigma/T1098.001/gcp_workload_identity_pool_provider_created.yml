@@ -1,0 +1,49 @@
+title: GCP Workload Identity Pool Provider Created or Updated Without an Attribute Condition
+id: df0f3701-52aa-42ff-8848-dcdaddea8143
+status: experimental
+description: |
+  Detects creation or modification of a GCP Workload Identity Pool PROVIDER that trusts
+  an external OIDC/AWS/SAML issuer with NO attribute condition restricting which external
+  tokens are accepted. This is the TRR9018 companion chokepoint (Procedures A/B): the
+  external-trust half of a workload-identity-federation backdoor, where an attribute
+  condition is the guardrail that limits who can federate in, and an empty/absent one
+  (CEL "" = no restriction) admits any token the attribute mapping matches.
+
+  It keys on a Cloud Audit Log (Admin Activity, always on)
+  google.iam.v1.WorkloadIdentityPools.CreateWorkloadIdentityPoolProvider or
+  UpdateWorkloadIdentityPoolProvider under serviceName iam.googleapis.com, suppressed
+  when protoPayload.request.workloadIdentityPoolProvider.attributeCondition carries a
+  real CEL guard (it references assertion.*). Legitimate CI/CD onboarding creates real
+  providers, so pair with the issuerUri (an unexpected external issuer), the actor, and
+  whether a principalSet from this pool is bound to a privileged SA (the companion
+  binding rule). Provider create/update are long-running operations that emit two Admin
+  Activity entries -- read the operation.first entry, which carries the request body.
+references:
+  - https://attack.mitre.org/techniques/T1098/001/
+  - https://cloud.google.com/iam/docs/workload-identity-federation
+  - https://cloud.google.com/iam/docs/audit-logging
+  - https://github.com/panther-labs/panther-analysis/blob/develop/rules/gcp_audit_rules/gcp_workload_identity_pool_created_or_updated.yml
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1098.001
+  - attack.t1199
+logsource:
+  product: gcp
+  service: gcp.audit
+detection:
+  selection_provider_write:
+    protoPayload.serviceName: 'iam.googleapis.com'
+    protoPayload.methodName:
+      - 'google.iam.v1.WorkloadIdentityPools.CreateWorkloadIdentityPoolProvider'
+      - 'google.iam.v1.WorkloadIdentityPools.UpdateWorkloadIdentityPoolProvider'
+  filter_has_attribute_condition:
+    protoPayload.request.workloadIdentityPoolProvider.attributeCondition|contains: 'assertion'
+  condition: selection_provider_write and not filter_has_attribute_condition
+falsepositives:
+  - Legitimate federation onboarding that intentionally uses a broad or no attribute
+    condition (rare but valid). Confirm the issuerUri and that pool principals are only
+    bound to appropriately-scoped service accounts.
+level: medium

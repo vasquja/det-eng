@@ -1,0 +1,186 @@
+[
+  {
+    "eventVersion": "1.09",
+    "userIdentity": {
+      "type": "IAMUser",
+      "principalId": "AIDAEXAMPLE9019OPER",
+      "arn": "arn:aws:iam::123456789012:user/trr9019-operator",
+      "accountId": "123456789012",
+      "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+      "userName": "trr9019-operator"
+    },
+    "eventTime": "2026-10-12T18:22:41Z",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutBucketPolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "198.51.100.23",
+    "userAgent": "[aws-cli/2.15.17 Python/3.11.6 Linux/6.2.0]",
+    "requestParameters": {
+      "bucketName": "trr9019-exposed-bucket",
+      "Host": "trr9019-exposed-bucket.s3.amazonaws.com",
+      "bucketPolicy": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Sid": "trr9019-A1",
+            "Effect": "Allow",
+            "Principal": "*",
+            "Action": [
+              "s3:GetObject",
+              "s3:ListBucket"
+            ],
+            "Resource": [
+              "arn:aws:s3:::trr9019-exposed-bucket",
+              "arn:aws:s3:::trr9019-exposed-bucket/*"
+            ]
+          }
+        ]
+      }
+    },
+    "responseElements": null,
+    "additionalEventData": {
+      "SignatureVersion": "SigV4",
+      "CipherSuite": "TLS_AES_128_GCM_SHA256",
+      "AuthenticationMethod": "AuthHeader"
+    },
+    "requestID": "8RE9019A1",
+    "eventID": "a1b2c3d4-5678-90ab-cdef-exmplA19019",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+      "tlsVersion": "TLSv1.3",
+      "cipherSuite": "TLS_AES_128_GCM_SHA256",
+      "clientProvidedHostHeader": "trr9019-exposed-bucket.s3.amazonaws.com"
+    }
+  },
+  {
+    "eventVersion": "1.09",
+    "userIdentity": {
+      "type": "IAMUser",
+      "principalId": "AIDAEXAMPLE9019OPER",
+      "arn": "arn:aws:iam::123456789012:user/trr9019-operator",
+      "accountId": "123456789012",
+      "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+      "userName": "trr9019-operator"
+    },
+    "eventTime": "2026-10-12T18:24:00Z",
+    "eventSource": "lambda.amazonaws.com",
+    "eventName": "AddPermission20150331v2",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "198.51.100.23",
+    "userAgent": "aws-cli/2.15.17",
+    "requestParameters": {
+      "functionName": "trr9019-fn",
+      "statementId": "trr9019-A2",
+      "action": "lambda:InvokeFunction",
+      "principal": "*"
+    },
+    "responseElements": {
+      "statement": "{\"Sid\": \"trr9019-A2\", \"Effect\": \"Allow\", \"Principal\": {\"AWS\": \"*\"}, \"Action\": \"lambda:InvokeFunction\", \"Resource\": \"arn:aws:lambda:us-east-1:123456789012:function:trr9019-fn\"}"
+    },
+    "requestID": "lam9019A2",
+    "eventID": "b2c3d4e5-6789-40ab-cdef-exmplA29019",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+      "tlsVersion": "TLSv1.3",
+      "cipherSuite": "TLS_AES_128_GCM_SHA256",
+      "clientProvidedHostHeader": "lambda.us-east-1.amazonaws.com"
+    }
+  },
+  {
+    "eventVersion": "1.09",
+    "userIdentity": {
+      "type": "IAMUser",
+      "principalId": "AIDAEXAMPLE9019OPER",
+      "arn": "arn:aws:iam::123456789012:user/trr9019-operator",
+      "accountId": "123456789012",
+      "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+      "userName": "trr9019-operator"
+    },
+    "eventTime": "2026-10-12T18:26:00Z",
+    "eventSource": "ec2.amazonaws.com",
+    "eventName": "ModifyImageAttribute",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "198.51.100.23",
+    "userAgent": "aws-cli/2.15.17",
+    "requestParameters": {
+      "imageId": "ami-trr9019example",
+      "attributeType": "launchPermission",
+      "launchPermission": {
+        "add": {
+          "items": [
+            {
+              "group": "all"
+            }
+          ]
+        }
+      }
+    },
+    "responseElements": {
+      "_return": true
+    },
+    "requestID": "ami9019A3",
+    "eventID": "c3d4e5f6-7890-40ab-cdef-exmplA39019",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+      "tlsVersion": "TLSv1.3",
+      "cipherSuite": "TLS_AES_128_GCM_SHA256",
+      "clientProvidedHostHeader": "ec2.us-east-1.amazonaws.com"
+    }
+  },
+  {
+    "eventVersion": "1.09",
+    "userIdentity": {
+      "type": "IAMUser",
+      "principalId": "AIDAEXAMPLE9019OPER",
+      "arn": "arn:aws:iam::123456789012:user/trr9019-operator",
+      "accountId": "123456789012",
+      "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+      "userName": "trr9019-operator"
+    },
+    "eventTime": "2026-10-12T18:28:00Z",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutBucketPublicAccessBlock",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "198.51.100.23",
+    "userAgent": "[aws-cli/2.15.17]",
+    "requestParameters": {
+      "bucketName": "trr9019-exposed-bucket",
+      "Host": "trr9019-exposed-bucket.s3.amazonaws.com",
+      "PublicAccessBlockConfiguration": {
+        "BlockPublicAcls": false,
+        "IgnorePublicAcls": false,
+        "BlockPublicPolicy": false,
+        "RestrictPublicBuckets": false
+      }
+    },
+    "responseElements": null,
+    "additionalEventData": {
+      "SignatureVersion": "SigV4",
+      "AuthenticationMethod": "AuthHeader"
+    },
+    "requestID": "bpa9019A4",
+    "eventID": "d4e5f6a7-8901-40ab-cdef-exmplA49019",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+      "tlsVersion": "TLSv1.3",
+      "cipherSuite": "TLS_AES_128_GCM_SHA256",
+      "clientProvidedHostHeader": "trr9019-exposed-bucket.s3.amazonaws.com"
+    }
+  }
+]

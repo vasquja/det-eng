@@ -1,6 +1,6 @@
 name: validate-cloud-detections
 
-# Proves the external-cloud detection loops (TRR9011-9015) without a live cloud:
+# Proves the external-cloud detection loops (TRR9011-9019) without a live cloud:
 #   a recorded, schema-faithful attack log -> the paired Sigma rule, run by pySigma,
 #   matches it; and the benign baseline -> the same rule matches nothing.
 #
@@ -20,6 +20,8 @@ on:
       - 'detections/sigma/T1078.004/**'
       - 'detections/sigma/T1098.001/**'
       - 'detections/sigma/T1098.003/**'
+      - 'detections/sigma/T1528/**'
+      - 'detections/sigma/T1537/**'
       - 'detections/validate_cloud_detections.py'
       - 'detections/sigma_eval.py'
       - 'detections/requirements.txt'
@@ -27,6 +29,8 @@ on:
       - 'atomics/T1078.004/**'
       - 'atomics/T1098.001/**'
       - 'atomics/T1098.003/**'
+      - 'atomics/T1528/**'
+      - 'atomics/T1537/**'
       - '.github/workflows/validate-cloud-detections.yml'
   pull_request:
     paths:
@@ -35,6 +39,8 @@ on:
       - 'detections/sigma/T1078.004/**'
       - 'detections/sigma/T1098.001/**'
       - 'detections/sigma/T1098.003/**'
+      - 'detections/sigma/T1528/**'
+      - 'detections/sigma/T1537/**'
       - 'detections/validate_cloud_detections.py'
       - 'detections/sigma_eval.py'
       - 'detections/requirements.txt'
@@ -42,6 +48,8 @@ on:
       - 'atomics/T1078.004/**'
       - 'atomics/T1098.001/**'
       - 'atomics/T1098.003/**'
+      - 'atomics/T1528/**'
+      - 'atomics/T1537/**'
       - '.github/workflows/validate-cloud-detections.yml'
   workflow_dispatch:
 

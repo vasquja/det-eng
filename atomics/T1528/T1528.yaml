@@ -1,0 +1,77 @@
+attack_technique: T1528
+display_name: "Steal Application Access Token (Entra illicit OAuth consent + device-code phishing)"
+
+# Behavioral emulation for TRR9017. The live tests register a throwaway Entra app and
+# request high-privilege delegated scopes (or run a device-code sign-in) in your own
+# tenant and clean up (guarded by TRR9017_LIVE=1); NOT run in CI. CI validation runs the
+# paired Sigma rules over the committed Entra audit/sign-in fixtures in
+# detections/cloud/fixtures/trr9017/ via detections/validate_cloud_detections.py.
+#
+# Novelty: neither Stratus Red Team nor Atomic Red Team ships an executable test for
+# OAuth consent-grant or device-code phishing (ART's two T1528 atomics are Azure
+# Functions managed-identity token theft; its azure-ad/o365 indexes list T1528 only as a
+# [CONTRIBUTE A TEST] placeholder).
+
+atomic_tests:
+  - name: "TRR9017.AZR.A — end-user illicit OAuth consent to high-privilege scopes"
+    auto_generated_guid: a1f7c3d2-9017-4a1b-9c21-1d2e3f4a5b61
+    description: |
+      Registers a throwaway Entra app, requests delegated consent for high-privilege
+      scopes (offline_access + Mail.ReadWrite/Mail.Send/Files.ReadWrite.All), then deletes it.
+      Chokepoint: Entra audit 'Consent to application' + 'Add delegated permission grant'
+      whose granted Scope list carries a high-risk permission.
+      Rule: detections/sigma/T1528/entra_illicit_oauth_consent_grant.yml
+    supported_platforms:
+      - iaas:azure
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_entra_consent.sh a
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1528/src
+
+  - name: "TRR9017.AZR.C — application-permission (app role) grant to a service principal"
+    auto_generated_guid: a1f7c3d2-9017-4b2c-8d32-2e3f4a5b6c72
+    description: |
+      Grants an application permission (app role) to a throwaway app's service principal,
+      then removes it.
+      Chokepoint: Entra audit 'Add app role assignment to service principal' with a
+      high-privilege AppRole.Value.
+      Rule: detections/sigma/T1528/entra_illicit_oauth_consent_grant.yml
+    supported_platforms:
+      - iaas:azure
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_entra_consent.sh c
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1528/src
+
+  - name: "TRR9017.AZR.D — device-code phishing sign-in"
+    auto_generated_guid: a1f7c3d2-9017-4c3d-9e43-3f4a5b6c7d83
+    description: |
+      Starts an OAuth 2.0 device-authorization-grant sign-in (a first-party app) to
+      produce the device-code signal in the Entra sign-in log.
+      Chokepoint: sign-in log properties.authenticationProtocol=deviceCode, category in
+      {SignInLogs, NonInteractiveUserSignInLogs}.
+      Rule: detections/sigma/T1528/entra_device_code_authentication.yml
+    supported_platforms:
+      - iaas:azure
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_entra_consent.sh d
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1528/src

@@ -1,0 +1,40 @@
+title: AWS Cognito Identity Pool Allows Unauthenticated Identities
+id: ef465e2a-13f3-491c-b765-b24e2839e8e0
+status: experimental
+description: |
+  Detects creation or modification of an Amazon Cognito identity pool that enables
+  unauthenticated (guest) access -- requestParameters.allowUnauthenticatedIdentities
+  set to true on cognito-identity CreateIdentityPool / UpdateIdentityPool
+  (and allowClassicFlow=true, which removes Cognito's automatic guest scope-down
+  ceiling). This is the TRR9016 enabling-misconfiguration precondition (Procedure D):
+  a management event in the default trail that turns on the exposure the
+  unauthenticated-identity-use rule then detects.
+
+  Guest access is a legitimate Cognito feature (public content, anonymous analytics),
+  so this is a posture/precondition signal, not an intrusion on its own -- correlate
+  it with the pool's unauthenticated-role permissions (an over-permissioned guest role
+  is the real risk) and with subsequent unauthenticated-identity use.
+references:
+  - https://attack.mitre.org/techniques/T1078/004/
+  - https://docs.aws.amazon.com/cognitoidentity/latest/APIReference/API_CreateIdentityPool.html
+  - https://hackingthe.cloud/aws/exploitation/cognito_identity_pools/
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.persistence
+  - attack.t1078.004
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventSource: 'cognito-identity.amazonaws.com'
+    eventName:
+      - 'CreateIdentityPool'
+      - 'UpdateIdentityPool'
+    requestParameters.allowUnauthenticatedIdentities: true
+  condition: selection
+falsepositives:
+  - Legitimate pools that intentionally offer guest access. The risk is an
+    over-permissioned unauthenticated role, not the flag itself; review the role.
+level: low

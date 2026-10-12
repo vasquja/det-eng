@@ -1,0 +1,64 @@
+title: AWS EBS Snapshot, AMI, or RDS Snapshot Shared Publicly
+id: 1d9740f4-2e0e-45a1-aeed-8f1dc2cff5a2
+status: experimental
+description: |
+  Detects an AWS "modify attribute" call that shares a disk image or snapshot with the
+  public "all" group -- making a copy of the underlying data retrievable by any AWS
+  account on earth. This is the TRR9019 Family-B chokepoint: data exfiltration via a
+  public resource-sharing attribute rather than a resource-based policy. It is the AWS
+  analogue of Stratus Red Team's "ec2-share-ebs-snapshot" and the Scattered Spider /
+  ShinyHunters snapshot-sharing pattern.
+
+  It unifies the four services whose "add to public" is a distinct attribute, all
+  default-logged management events:
+    - EC2 AMI  -- ModifyImageAttribute, launchPermission.add.items contains {"group":"all"}
+    - EC2 EBS  -- ModifySnapshotAttribute, createVolumePermission.add.items {"group":"all"}
+    - RDS DB   -- ModifyDBSnapshotAttribute, valuesToAdd contains "all" (attributeName restore)
+    - RDS Aurora -- ModifyDBClusterSnapshotAttribute, valuesToAdd contains "all"
+
+  The discriminator vs a benign same-API share to a specific partner account is the "all"
+  group / "all" value: a share to a numbered account carries a userId (EC2) or the 12-digit
+  account ID (RDS), never the literal "all". The remove direction (launchPermission.remove,
+  valuesToRemove) is a de-exposure and is intentionally excluded.
+
+  Field-model note: the add-list is a JSON array; this rule matches the "group":"all" and
+  "all" tokens as text (both compact and spaced encodings). A structured backend should
+  test the element membership directly. Pair with the image/snapshot ID and whether the
+  resource holds sensitive data before paging.
+references:
+  - https://attack.mitre.org/techniques/T1537/
+  - https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_ModifyImageAttribute.html
+  - https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_ModifySnapshotAttribute.html
+  - https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_ModifyDBSnapshotAttribute.html
+  - https://stratus-red-team.cloud/attack-techniques/AWS/aws.exfiltration.ec2-share-ebs-snapshot/
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.exfiltration
+  - attack.t1537
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_ec2_image:
+    eventName: 'ModifyImageAttribute'
+    requestParameters.launchPermission.add.items|contains:
+      - '"group": "all"'
+      - '"group":"all"'
+  selection_ec2_snapshot:
+    eventName: 'ModifySnapshotAttribute'
+    requestParameters.createVolumePermission.add.items|contains:
+      - '"group": "all"'
+      - '"group":"all"'
+  selection_rds:
+    eventName:
+      - 'ModifyDBSnapshotAttribute'
+      - 'ModifyDBClusterSnapshotAttribute'
+    requestParameters.valuesToAdd|contains: '"all"'
+  condition: selection_ec2_image or selection_ec2_snapshot or selection_rds
+falsepositives:
+  - Deliberately public community AMIs and public dataset snapshots (marketplace vendors,
+    open-data programs); allowlist by image/snapshot owner or a resource tag.
+  - A share to a specific partner account (userId / numeric account in valuesToAdd) is not
+    public and does not match the "all" discriminator.
+level: high

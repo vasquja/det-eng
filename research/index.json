@@ -613,6 +613,137 @@
           "url": "../atomics/T1098.001/src/emulate_aws_oidc.sh"
         }
       }
+    },
+    {
+      "name": "AWS Cognito Unauthenticated Identity Pool Abuse (AWS)",
+      "id": "TRR9016",
+      "tactics": [
+        "Initial Access"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1078.004"
+      ],
+      "platforms": [
+        "AWS"
+      ],
+      "procedures": {
+        "A": "Enhanced-flow guest issuance (data events off)",
+        "B": "Classic-flow issuance (sts:AssumeRoleWithWebIdentity)",
+        "C": "Downstream use of the guest session",
+        "D": "Enabling misconfiguration (AllowUnauthenticatedIdentities)",
+        "E": "Pool-ID discovery (gap)"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9016/aws/README.md",
+      "tests": {
+        "C": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1078.004/src/emulate_aws_cognito.sh"
+        }
+      }
+    },
+    {
+      "name": "Entra Illicit OAuth Consent Grant and Device-Code Phishing (Azure)",
+      "id": "TRR9017",
+      "tactics": [
+        "Credential Access"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1528",
+        "T1566.002"
+      ],
+      "platforms": [
+        "Azure"
+      ],
+      "procedures": {
+        "A": "End-user delegated illicit consent",
+        "B": "Admin / tenant-wide (AllPrincipals) consent",
+        "C": "Application-permission (app role) grant",
+        "D": "Device-code phishing (sign-in log)",
+        "E": "Direct Graph creation of the grant"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9017/azr/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1528/src/emulate_entra_consent.sh"
+        }
+      }
+    },
+    {
+      "name": "GCP Workload Identity Federation Abuse (GCP)",
+      "id": "TRR9018",
+      "tactics": [
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1098.001",
+        "T1199"
+      ],
+      "platforms": [
+        "GCP"
+      ],
+      "procedures": {
+        "A": "Full backdoor: pool + provider + SA binding",
+        "B": "Loosen an existing provider trust",
+        "C": "Bind a principalSet to an existing SA",
+        "D": "Workforce-pool variant (sibling)",
+        "E": "Data-plane use (gap)"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9018/gcp/README.md",
+      "tests": {
+        "C": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.001/src/emulate_gcp_wif.sh"
+        }
+      }
+    },
+    {
+      "name": "AWS Public and Cross-Account Resource Exposure (AWS)",
+      "id": "TRR9019",
+      "tactics": [
+        "Exfiltration"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1537"
+      ],
+      "platforms": [
+        "AWS"
+      ],
+      "procedures": {
+        "A": "Public / foreign resource-based policy",
+        "B": "Public disk-image / snapshot share",
+        "C": "Block Public Access disabled or deleted",
+        "D": "Public bucket ACL (backlog)",
+        "E": "Object-level ACL / data-plane (gap)"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9019/aws/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1537/src/emulate_aws_public_exposure.sh"
+        }
+      }
     }
   ]
 }

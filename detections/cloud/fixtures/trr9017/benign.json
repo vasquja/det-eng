@@ -1,0 +1,59 @@
+[
+  {
+    "time": "2026-10-12T15:04:22.517Z",
+    "resourceId": "/tenants/8f3b2c1a-9d4e-4f6a-b1c2-3d4e5f6a7b8c/providers/Microsoft.aadiam",
+    "operationName": "Consent to application",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "8f3b2c1a-9d4e-4f6a-b1c2-3d4e5f6a7b8c",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "198.51.100.23",
+    "correlationId": "b28d1aa4-22bb-4cc3-9dd4-aa11bb22cc33",
+    "Level": "Informational",
+    "properties": {
+      "id": "Directory_b28d1aa4-22bb-4cc3-9dd4-aa11bb22cc33_TRR9017",
+      "category": "ApplicationManagement",
+      "correlationId": "b28d1aa4-22bb-4cc3-9dd4-aa11bb22cc33",
+      "result": "success",
+      "resultReason": "",
+      "activityDisplayName": "Consent to application",
+      "activityDateTime": "2026-10-12T15:04:22.517Z",
+      "loggedByService": "Core Directory",
+      "operationType": "Assign",
+      "initiatedBy": {
+        "user": {
+          "id": "a1b2c3d4-e5f6-4071-8a9b-0c1d2e3f4a5b",
+          "displayName": "v.ictim",
+          "userPrincipalName": "v.ictim@trr9017-corp.onmicrosoft.com",
+          "ipAddress": "198.51.100.23"
+        }
+      },
+      "targetResources": [
+        {
+          "id": "c4d5e6f7-8899-4a0b-9c1d-2e3f4a5b6c7d",
+          "displayName": "trr9017-sso-app",
+          "type": "ServicePrincipal",
+          "modifiedProperties": [
+            {
+              "displayName": "ConsentContext.IsAdminConsent",
+              "oldValue": "",
+              "newValue": "\"False\""
+            },
+            {
+              "displayName": "ConsentAction.Permissions",
+              "oldValue": "",
+              "newValue": "\"[] => [[Id: grantB, ClientId: c4d5e6f7-8899-4a0b-9c1d-2e3f4a5b6c7d, PrincipalId: a1b2c3d4-e5f6-4071-8a9b-0c1d2e3f4a5b, ResourceId: 11112222-3333-4444-5555-666677778888, ConsentType: Principal, Scope: openid profile email User.Read, CreatedDateTime: , LastModifiedDateTime ]]; \""
+            },
+            {
+              "displayName": "TargetId.ServicePrincipalNames",
+              "oldValue": "",
+              "newValue": "\"c4d5e6f7-8899-4a0b-9c1d-2e3f4a5b6c7d\""
+            }
+          ]
+        }
+      ],
+      "additionalDetails": []
+    }
+  }
+]
