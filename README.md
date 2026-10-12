@@ -112,6 +112,9 @@ When a report is done, it goes where it belongs:
 | Tests    | [redcanaryco/atomic-red-team](https://github.com/redcanaryco/atomic-red-team) |
 | Rules    | [SigmaHQ/sigma](https://github.com/SigmaHQ/sigma) |
 
+See [`UPSTREAM.md`](UPSTREAM.md) for the full mapping, the per-gate conformance
+checks (`sigma check` passes with 0 errors), and the submission steps.
+
 ---
 
 ## The methodologies
