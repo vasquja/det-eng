@@ -35,6 +35,7 @@ detection:
       - 'SignInLogs'
       - 'NonInteractiveUserSignInLogs'
     properties.authenticationProtocol: 'deviceCode'
+    properties.status.errorCode: 0
   condition: selection
 falsepositives:
   - Legitimate device-code sign-ins from input-constrained devices (smart TVs, IoT,

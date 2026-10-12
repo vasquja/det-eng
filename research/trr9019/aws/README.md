@@ -84,11 +84,15 @@ resource-policy / share / guardrail write set.
 The field that separates attack from benign is the **grantee token with no effective scope**:
 
 - **Policy writes (Family A):** a `Statement` with `Effect "Allow"` and `Principal` equal to the
-  string `"*"` **or** the object `{"AWS":"*"}` (both shapes mean public — a rule must match both),
-  or a 12-digit foreign `accountId` not on the organization allowlist, **and** none of the
-  scoping condition keys `aws:PrincipalOrgID`, `aws:SourceArn`, `aws:SourceAccount`,
-  `aws:SourceVpce`, `aws:SourceVpc` present with a non-wildcard value. A wildcard principal that
-  **is** scoped by one of those keys is effectively private and must not fire.
+  string `"*"` **or** the object `{"AWS":"*"}` (both shapes mean public — the committed rule
+  matches both), **and** none of the scoping condition keys `aws:PrincipalOrgID`, `aws:SourceArn`,
+  `aws:SourceAccount`, `aws:SourceVpce`/`aws:SourceVpc` present. A wildcard principal that **is**
+  scoped by one of those keys is effectively private and must not fire. A grant to a *named*
+  12-digit foreign account (`{"AWS":"arn:aws:iam::<acct>:root"}`) is cross-account exposure too,
+  but telling a hostile account from a legitimate partner needs an organization-account allowlist
+  that a stateless rule cannot carry — so the committed rule covers only the **public** (`*`)
+  shape, and named-foreign-account detection is left to a production pipeline with that allowlist
+  (see Detection Strategy).
 - **Share attributes (Family B):** the literal lowercase token `all` in the add-list —
   `launchPermission.add.items[].group` (AMI), `createVolumePermission.add.items[].group` (EBS
   snapshot), or `valuesToAdd` containing `"all"` when `attributeName` is `restore` (RDS / Aurora).
@@ -164,8 +168,9 @@ with its own field path and encoding:
 - **Secrets Manager** — `PutResourcePolicy`, `requestParameters.resourcePolicy` (escaped JSON
   string), with `secretId` and `blockPublicPolicy false`.
 - **Lambda** — `AddPermission20150331v2` (prefix `AddPermission`), `requestParameters.principal`
-  `"*"` or a foreign account ID, `action lambda:InvokeFunction`, `functionName`, `statementId`, with
-  no `sourceArn`; `responseElements.statement` is an escaped JSON string.
+  `"*"` (public; the committed rule keys on the wildcard, not a named foreign account),
+  `action lambda:InvokeFunction`, `functionName`, `statementId`, with no `sourceArn` or
+  `principalOrgID`; `responseElements.statement` is an escaped JSON string.
 
 - **Prerequisites:** permission to write the resource policy (for example `s3:PutBucketPolicy`,
   `lambda:AddPermission`).

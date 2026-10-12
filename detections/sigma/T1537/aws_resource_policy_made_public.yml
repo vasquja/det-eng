@@ -49,7 +49,12 @@ detection:
       - 'SetTopicAttributes'
       - 'SetQueueAttributes'
   public_principal:
+    # Both encodings everywhere: S3 bucketPolicy is a nested object (spaced after JSON
+    # re-encode); the KMS/ECR/SNS/SQS/Secrets policies are escaped JSON STRINGS that may
+    # arrive compact or spaced, so match both for each.
     - requestParameters.bucketPolicy.Statement|contains:
+        - '"Principal":"*"'
+        - '"AWS":"*"'
         - '"Principal": "*"'
         - '"AWS": "*"'
     - requestParameters.policy|contains:
@@ -60,47 +65,68 @@ detection:
     - requestParameters.policyText|contains:
         - '"Principal":"*"'
         - '"AWS":"*"'
+        - '"Principal": "*"'
+        - '"AWS": "*"'
     - requestParameters.resourcePolicy|contains:
         - '"Principal":"*"'
         - '"AWS":"*"'
+        - '"Principal": "*"'
+        - '"AWS": "*"'
     - requestParameters.attributeValue|contains:
         - '"Principal":"*"'
         - '"AWS":"*"'
+        - '"Principal": "*"'
+        - '"AWS": "*"'
     - requestParameters.attributes.Policy|contains:
         - '"Principal":"*"'
         - '"AWS":"*"'
+        - '"Principal": "*"'
+        - '"AWS": "*"'
   filter_scoped:
+    # 'aws:SourceVpc' is a prefix of 'aws:SourceVpce', so this one token matches both the
+    # VPC-endpoint and the VPC scoping conditions. Applied to every policy representation,
+    # not just S3.
     - requestParameters.bucketPolicy.Statement|contains:
         - 'aws:PrincipalOrgID'
         - 'aws:SourceArn'
         - 'aws:SourceAccount'
-        - 'aws:SourceVpce'
+        - 'aws:SourceVpc'
     - requestParameters.policy|contains:
         - 'aws:PrincipalOrgID'
         - 'aws:SourceArn'
         - 'aws:SourceAccount'
+        - 'aws:SourceVpc'
     - requestParameters.policyText|contains:
         - 'aws:PrincipalOrgID'
         - 'aws:SourceArn'
         - 'aws:SourceAccount'
+        - 'aws:SourceVpc'
     - requestParameters.resourcePolicy|contains:
         - 'aws:PrincipalOrgID'
         - 'aws:SourceArn'
         - 'aws:SourceAccount'
+        - 'aws:SourceVpc'
     - requestParameters.attributeValue|contains:
         - 'aws:PrincipalOrgID'
         - 'aws:SourceArn'
         - 'aws:SourceAccount'
+        - 'aws:SourceVpc'
     - requestParameters.attributes.Policy|contains:
         - 'aws:PrincipalOrgID'
         - 'aws:SourceArn'
         - 'aws:SourceAccount'
+        - 'aws:SourceVpc'
   selection_lambda:
     eventName|startswith: 'AddPermission'
     requestParameters.principal: '\*'
   filter_lambda_scoped:
-    requestParameters.sourceArn: '*'
-  condition: (selection_policy_write and public_principal and not filter_scoped) or (selection_lambda and not filter_lambda_scoped)
+    # A Lambda wildcard grant scoped by an org ID or a source ARN is not public.
+    - requestParameters.sourceArn: '*'
+    - requestParameters.principalOrgID: '*'
+  filter_failed:
+    # Denied / failed mutating calls carry an errorCode and did not change state.
+    errorCode: '*'
+  condition: ((selection_policy_write and public_principal and not filter_scoped) or (selection_lambda and not filter_lambda_scoped)) and not filter_failed
 falsepositives:
   - Intentionally public static-website buckets, public datasets, and public container
     images; allowlist by resource name.

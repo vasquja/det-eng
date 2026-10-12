@@ -230,12 +230,13 @@ pool already has a binding, so nothing new appears beside the edited provider.
 
 Source: [`ddms/trr9018_gcp_b.json`](ddms/trr9018_gcp_b.json) (Arrows app format).
 
-**DDM summary.** The shaded node is the `UpdateWorkloadIdentityPoolProvider` audit event;
+**DDM summary.** The shaded node is an `UpdateWorkloadIdentityPoolProvider` audit event;
 `protoPayload.request.updateMask` names the loosened field and
 `request.workloadIdentityPoolProvider.attributeCondition` is empty or removed. The
-recorded attack provider fixture carries an empty `attributeCondition` (`""`), while the
-benign twin carries `assertion.repository=='trr9018-corp/deploy'`, which suppresses the
-rule.
+provider rule matches **`Create` or `Update`**, so it fires on this path too; no committed
+fixture carries an `Update`, so Procedure B's coverage is proven through the recorded
+`Create` provider fixture, which carries an empty `attributeCondition` (`""`), while its
+benign twin carries `assertion.repository=='trr9018-corp/deploy'` and is suppressed.
 
 ### Procedure C: Bind a principalSet to an already-trusted pool's SA  (`TRR9018.GCP.C`)
 
@@ -342,7 +343,7 @@ and the external `principalSet` uses the documentation project number `123456789
 | Procedure | Test | Status |
 |-----------|------|--------|
 | TRR9018.GCP.A | `emulate_gcp_wif.sh a` — full backdoor; fixture carries both the `SetIAMPolicy` `principalSet` binding and the `CreateWorkloadIdentityPoolProvider` with empty `attributeCondition`. | **built** |
-| TRR9018.GCP.B | `emulate_gcp_wif.sh b` — loosen a provider; the recorded attack provider has an empty `attributeCondition`, so the provider rule fires. | **built** |
+| TRR9018.GCP.B | `emulate_gcp_wif.sh b` — loosen an existing provider (`UpdateWorkloadIdentityPoolProvider` + `updateMask`). The provider rule covers `Create` **or** `Update`, but no committed fixture carries an `Update`; coverage is proven through the recorded `Create` provider fixture (empty `attributeCondition`). | documented |
 | TRR9018.GCP.C | `emulate_gcp_wif.sh c` — bind a `principalSet` to an already-trusted pool's SA (the same `SetIAMPolicy` binding fixture). | **built** |
 | TRR9018.GCP.D | `emulate_gcp_wif.sh d` — documented workforce-pool sibling; `cloudresourcemanager` `SetIamPolicy`, not covered by these two rules. | backlog |
 | TRR9018.GCP.E | `emulate_gcp_wif.sh e` — documented gap; STS `ExchangeToken` + `GenerateAccessToken` are Data Access / `ADMIN_READ`, off by default. | gap |
@@ -382,9 +383,10 @@ restriction on which external tokens are admitted.
 
 **The hard negative control.** The benign binding fixture is **GKE Workload Identity**:
 the same `google.iam.admin.v1.SetIAMPolicy`, the same `roles/iam.workloadIdentityUser`,
-the same `action` `ADD` — byte-identical to the attack **except** the `member`, which is
-`serviceAccount:trr9018-prod.svc.id.goog[deploy/deployer-ksa]` (project ID, no
-`principalSet`, no `/workloadIdentityPools/`). The benign provider fixture is the same
+the same `action` `ADD` — differing from the attack in the one field the rule keys on, the
+`member`, which is `serviceAccount:trr9018-prod.svc.id.goog[deploy/deployer-ksa]` (project
+ID, no `principalSet`, no `/workloadIdentityPools/`); the benign record also carries a
+different (legitimate CI) actor and caller IP, as a real GKE binding would. The benign provider fixture is the same
 `CreateWorkloadIdentityPoolProvider` but with a real `attributeCondition`
 (`assertion.repository=='trr9018-corp/deploy'`). A pass on these proves the rules key on
 the external-federation discriminator, not on the method or role alone.

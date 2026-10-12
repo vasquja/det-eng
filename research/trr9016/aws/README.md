@@ -326,9 +326,11 @@ that performs the real issuance-and-use chain in **your own AWS account** and is
 run in CI** (it needs a pool you control). The proven half is a pair of committed,
 schema-faithful CloudTrail fixtures
 ([`detections/cloud/fixtures/trr9016/`](../../../detections/cloud/fixtures/trr9016/))
-that the CI validator runs the rules over. Every object is named `trr9016-*`, the public
-source IP is an RFC 5737 TEST-NET address, the benign source IP is RFC 1918 egress, and
-the account is the AWS documentation account `123456789012`.
+that the CI validator runs the rules over. Every object is named `trr9016-*`, the attack
+source IP is an RFC 5737 TEST-NET address (`198.51.100.23`), and the benign baseline mixes
+RFC 1918 internal egress (`10.0.4.9`) with an RFC 5737 TEST-NET address (`198.51.100.77`)
+for the federated `AssumeRoleWithWebIdentity` call, and the account is the AWS
+documentation account `123456789012`.
 
 The attack fixture carries three events — the classic-flow `AssumeRoleWithWebIdentity`
 (B), the downstream `AssumedRole` `GetCallerIdentity` (C), and the enabling

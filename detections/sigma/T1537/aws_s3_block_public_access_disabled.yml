@@ -62,9 +62,21 @@ detection:
     requestParameters.PublicAccessBlockConfiguration.RestrictPublicBuckets: false
   selection_delete:
     eventName: 'DeletePublicAccessBlock'
-  condition: selection_put_weakened or selection_put_weakened_ignore or selection_put_weakened_policy or selection_put_weakened_restrict or selection_delete
+  filter_failed:
+    # A denied / failed call carries an errorCode and changed nothing.
+    errorCode: '*'
+  condition: (selection_put_weakened or selection_put_weakened_ignore or selection_put_weakened_policy or selection_put_weakened_restrict or selection_delete) and not filter_failed
 falsepositives:
   - Legitimately public static-website or public-dataset buckets whose owners intentionally
     relax BPA; allowlist by bucket/account and pair with a change-management record.
   - A Put* that sets all four controls to true is hardening, not exposure, and is excluded.
+  - End-state rather than delta -- Put* carries the full desired configuration, and
+    CloudTrail does not record the prior state. An IaC run that re-applies a long-standing
+    partial config (some controls already false) fires even though nothing changed this
+    time. Correlate with the actor/tooling (Terraform/CloudFormation userAgent) and change
+    management.
+  - Known limitation, a false negative -- a Put* that OMITS a control sets it to false by
+    default, but this rule only matches a control EXPLICITLY set to false. A partial config
+    that silently drops a control is missed. A pipeline that fills omitted controls with
+    their effective false value closes this gap.
 level: high

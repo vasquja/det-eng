@@ -42,6 +42,7 @@ detection:
   downstream_unauth_session:
     userIdentity.type: 'AssumedRole'
     userIdentity.sessionContext.sessionIssuer.userName|contains: 'Unauth'
+    userIdentity.sessionContext.webIdFederationData.federatedProvider: 'cognito-identity.amazonaws.com'
   classic_flow_assume:
     eventName: 'AssumeRoleWithWebIdentity'
     userIdentity.identityProvider: 'cognito-identity.amazonaws.com'

@@ -39,11 +39,34 @@ detection:
     protoPayload.methodName:
       - 'google.iam.v1.WorkloadIdentityPools.CreateWorkloadIdentityPoolProvider'
       - 'google.iam.v1.WorkloadIdentityPools.UpdateWorkloadIdentityPoolProvider'
+    # Provider create/update is a long-running operation that emits TWO Admin Activity
+    # entries. Only the begin entry (operation.first) carries the request body; keying
+    # on it alone stops the rule double-firing and stops the end entry (no request body,
+    # so no attributeCondition -> the "no condition" branch would wrongly fire) misfiring
+    # on every benign provider.
+    operation.first: true
+  selection_request_trust:
+    # Require the external-trust definition to be present in THIS entry (the request
+    # body). This both anchors to the begin entry and ignores updates that touch only
+    # unrelated fields.
+    - protoPayload.request.workloadIdentityPoolProvider.oidc.issuerUri|contains: '://'
+    - protoPayload.request.workloadIdentityPoolProvider.aws.accountId: '*'
+    - protoPayload.request.workloadIdentityPoolProvider.saml.idpMetadataXml: '*'
   filter_has_attribute_condition:
-    protoPayload.request.workloadIdentityPoolProvider.attributeCondition|contains: 'assertion'
-  condition: selection_provider_write and not filter_has_attribute_condition
+    # Suppress when ANY non-empty attribute condition is present. A substring test
+    # ('assertion') both misses a restrictive condition written with attribute.* /
+    # google.* (false positive) and is satisfied by a tautological condition that
+    # mentions 'assertion' (false negative). A non-empty test removes the former; the
+    # latter is an inherent limit of not evaluating CEL (see falsepositives).
+    protoPayload.request.workloadIdentityPoolProvider.attributeCondition|re: '.+'
+  condition: selection_provider_write and selection_request_trust and not filter_has_attribute_condition
 falsepositives:
   - Legitimate federation onboarding that intentionally uses a broad or no attribute
     condition (rare but valid). Confirm the issuerUri and that pool principals are only
     bound to appropriately-scoped service accounts.
+  - Known limitation, a false negative -- the suppressor tests only that SOME attribute
+    condition is present, not that it is actually restrictive. A tautological CEL guard
+    (for example "assertion.sub != empty") is non-empty and so is suppressed. Catching a
+    vacuous condition needs CEL evaluation in the pipeline, which a stateless Sigma rule
+    cannot do.
 level: medium

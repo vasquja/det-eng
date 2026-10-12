@@ -45,17 +45,31 @@ detection:
     requestParameters.launchPermission.add.items|contains:
       - '"group": "all"'
       - '"group":"all"'
+  selection_ec2_image_legacy:
+    # Legacy top-level request shape (older CLI/SDK): --operation-type add --user-groups all.
+    # Guarded by operationType=add so a public-share REMOVE does not fire.
+    eventName: 'ModifyImageAttribute'
+    requestParameters.operationType: 'add'
+    requestParameters.userGroups|contains: '"all"'
   selection_ec2_snapshot:
     eventName: 'ModifySnapshotAttribute'
     requestParameters.createVolumePermission.add.items|contains:
       - '"group": "all"'
       - '"group":"all"'
+  selection_ec2_snapshot_legacy:
+    eventName: 'ModifySnapshotAttribute'
+    requestParameters.operationType: 'add'
+    requestParameters.groupNames|contains: '"all"'
   selection_rds:
     eventName:
       - 'ModifyDBSnapshotAttribute'
       - 'ModifyDBClusterSnapshotAttribute'
     requestParameters.valuesToAdd|contains: '"all"'
-  condition: selection_ec2_image or selection_ec2_snapshot or selection_rds
+  filter_failed:
+    # A denied / failed share carries an errorCode and shared nothing. Encrypted EBS
+    # snapshots and Marketplace-coded AMIs also fail here and should not fire.
+    errorCode: '*'
+  condition: (selection_ec2_image or selection_ec2_image_legacy or selection_ec2_snapshot or selection_ec2_snapshot_legacy or selection_rds) and not filter_failed
 falsepositives:
   - Deliberately public community AMIs and public dataset snapshots (marketplace vendors,
     open-data programs); allowlist by image/snapshot owner or a resource tag.

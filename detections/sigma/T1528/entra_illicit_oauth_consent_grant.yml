@@ -46,7 +46,7 @@ detection:
       - 'Add app role assignment to service principal'
   selection_high_privilege_scope:
     properties.targetResources|contains:
-      - 'offline_access'
+      # Mailbox / files / chat data scopes (delegated or application).
       - 'Mail.Read'
       - 'Mail.ReadWrite'
       - 'Mail.Send'
@@ -57,15 +57,28 @@ detection:
       - 'Chat.Read'
       - 'EWS.AccessAsUser.All'
       - 'full_access_as_app'
+      # Tenant-wide read-all / write-all application permissions (mass access /
+      # directory recon): Directory.Read.All, User.Read.All, Group.Read.All,
+      # *.ReadWrite.All, etc. NOTE: offline_access is deliberately NOT a standalone
+      # token -- it is a refresh token requested by almost every app and co-occurs with
+      # routine SSO consent, so on its own it is a false-positive magnet. It is only
+      # risky WITH one of the data/directory scopes above, which already fire.
+      - '.Read.All'
       - '.ReadWrite.All'
       - 'RoleManagement.ReadWrite.Directory'
       - 'AppRoleAssignment.ReadWrite.All'
-      - 'ConsentType: AllPrincipals'
+      # Tenant-wide (admin) consent: AllPrincipals appears in ConsentAction.Permissions
+      # AND in DelegatedPermissionGrant.ConsentType -- match the bare token so either
+      # representation triggers.
+      - 'AllPrincipals'
   condition: selection_grant and selection_high_privilege_scope
 falsepositives:
   - Legitimate high-privilege SaaS onboarding (backup/migration/CRM/security tools)
     requests the same scopes, and admins legitimately grant tenant-wide (AllPrincipals)
     consent. Maintain a known-good app-ID allowlist and layer first-seen / initiator-risk.
-  - Low-risk SSO consent (openid/profile/email/User.Read) is routine and is excluded by
-    the scope discriminator.
+  - Low-risk SSO consent (openid/profile/email/User.Read, and offline_access on its own)
+    is routine and is excluded by the scope discriminator.
+  - Coverage gap -- resource-specific consent (RSC) is logged as "Grant contextual consent
+    to application" under properties.category GroupManagement, so it is NOT matched by the
+    ApplicationManagement gate here. Add that activity/category for RSC coverage.
 level: high
