@@ -1,0 +1,29 @@
+attack_technique: T1078.004
+display_name: "Valid Accounts: Cloud Accounts (leaked long-term access key, AWS)"
+
+# Behavioral emulation for TRR9012. The live test is READ-ONLY (whoami + enumeration)
+# with a throwaway long-term IAM-user key in your own AWS account; NOT run in CI. CI
+# validation runs the paired Sigma rule over the committed CloudTrail fixtures in
+# detections/cloud/fixtures/trr9012/ via detections/validate_cloud_detections.py.
+
+atomic_tests:
+  - name: "TRR9012.AWS.A — leaked long-term key: whoami + account enumeration"
+    auto_generated_guid: 7e1c2a90-9012-4a3b-8d21-3f4a5b6c7d81
+    description: |
+      Uses a long-term IAM-user access key (AKIA...) to call sts:GetCallerIdentity and
+      an IAM/S3 enumeration burst from off-cloud. Read-only.
+      Chokepoint: CloudTrail userIdentity.type IAMUser + accessKeyId AKIA, orientation/
+      enumeration eventName, from a source outside known-good egress.
+      Rule: detections/sigma/T1078.004/aws_leaked_access_key_recon.yml
+    supported_platforms:
+      - iaas:aws
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh a
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1078.004/src

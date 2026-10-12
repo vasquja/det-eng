@@ -1,0 +1,19 @@
+[
+  {
+    "time": "2026-10-12T15:05:00.1Z",
+    "resourceId": "/SUBSCRIPTIONS/11111111-2222-3333-4444-555555555555/RESOURCEGROUPS/TRR9013-RG/PROVIDERS/MICROSOFT.MANAGEDIDENTITY/USERASSIGNEDIDENTITIES/TRR9013-MI",
+    "operationName": "Microsoft.ManagedIdentity/userAssignedIdentities/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.Created",
+    "durationMs": 400,
+    "callerIpAddress": "198.51.100.23",
+    "correlationId": "bb22cc33-dd44-ee55-ff66-778899001122",
+    "level": "Informational",
+    "location": "global",
+    "properties": {
+      "statusCode": "Created",
+      "message": "Microsoft.ManagedIdentity/userAssignedIdentities/write"
+    }
+  }
+]

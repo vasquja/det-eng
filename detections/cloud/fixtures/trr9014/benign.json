@@ -1,0 +1,108 @@
+[
+  {
+    "insertId": "trr9014neg1",
+    "logName": "projects/trr9014-demo-project/logs/cloudaudit.googleapis.com%2Factivity",
+    "resource": {
+      "type": "gcs_bucket",
+      "labels": {
+        "project_id": "trr9014-demo-project",
+        "bucket_name": "trr9014-public-exposure-demo",
+        "location": "us"
+      }
+    },
+    "protoPayload": {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      "status": {},
+      "authenticationInfo": {
+        "principalEmail": "trr9014-admin@example.com"
+      },
+      "requestMetadata": {
+        "callerIp": "198.51.100.23",
+        "callerSuppliedUserAgent": "google-cloud-sdk gcloud/503.0.0 command/gcloud.storage.buckets.add-iam-policy-binding",
+        "requestAttributes": {
+          "time": "2026-10-12T17:04:21.512Z"
+        },
+        "destinationAttributes": {}
+      },
+      "serviceName": "storage.googleapis.com",
+      "methodName": "storage.setIamPermissions",
+      "authorizationInfo": [
+        {
+          "resource": "projects/_/buckets/trr9014-public-exposure-demo",
+          "permission": "storage.buckets.setIamPolicy",
+          "granted": true,
+          "resourceAttributes": {}
+        }
+      ],
+      "resourceName": "projects/_/buckets/trr9014-public-exposure-demo",
+      "serviceData": {
+        "@type": "type.googleapis.com/google.iam.v1.logging.AuditData",
+        "policyDelta": {
+          "bindingDeltas": [
+            {
+              "action": "ADD",
+              "role": "roles/storage.objectViewer",
+              "member": "user:trr9014-analyst@example.com"
+            }
+          ]
+        }
+      }
+    },
+    "severity": "NOTICE",
+    "timestamp": "2026-10-12T17:04:21.498Z",
+    "receiveTimestamp": "2026-10-12T17:04:22.133Z"
+  },
+  {
+    "insertId": "trr9014neg2",
+    "logName": "projects/trr9014-demo-project/logs/cloudaudit.googleapis.com%2Factivity",
+    "resource": {
+      "type": "cloud_run_revision",
+      "labels": {
+        "project_id": "trr9014-demo-project",
+        "service_name": "trr9014-public-exposure-demo",
+        "location": "us-central1"
+      }
+    },
+    "protoPayload": {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      "status": {},
+      "authenticationInfo": {
+        "principalEmail": "trr9014-admin@example.com"
+      },
+      "requestMetadata": {
+        "callerIp": "198.51.100.23",
+        "callerSuppliedUserAgent": "google-cloud-sdk gcloud/503.0.0 command/gcloud.run.services.add-iam-policy-binding",
+        "requestAttributes": {
+          "time": "2026-10-12T17:06:11.1Z"
+        },
+        "destinationAttributes": {}
+      },
+      "serviceName": "run.googleapis.com",
+      "methodName": "google.cloud.run.v2.Services.SetIamPolicy",
+      "authorizationInfo": [
+        {
+          "resource": "projects/trr9014-demo-project/locations/us-central1/services/trr9014-public-exposure-demo",
+          "permission": "run.services.setIamPolicy",
+          "granted": true
+        }
+      ],
+      "resourceName": "projects/trr9014-demo-project/locations/us-central1/services/trr9014-public-exposure-demo",
+      "request": {
+        "@type": "type.googleapis.com/google.iam.v1.SetIamPolicyRequest",
+        "policy": {
+          "bindings": [
+            {
+              "role": "roles/run.invoker",
+              "members": [
+                "serviceAccount:trr9014-invoker@trr9014-demo-project.iam.gserviceaccount.com"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "severity": "NOTICE",
+    "timestamp": "2026-10-12T17:06:11.05Z",
+    "receiveTimestamp": "2026-10-12T17:06:11.9Z"
+  }
+]

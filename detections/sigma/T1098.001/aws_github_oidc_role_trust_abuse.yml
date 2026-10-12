@@ -1,0 +1,82 @@
+title: AWS IAM Role Trust Policy Grants Over-Broad GitHub Actions OIDC Access
+id: 0269a7bb-c5f0-4279-a1c5-aec6998bac5a
+status: experimental
+description: |
+  Detects an IAM role trust-policy write that trusts the GitHub Actions OIDC provider
+  (token.actions.githubusercontent.com) for sts:AssumeRoleWithWebIdentity with an
+  over-broad or absent subject (sub) condition -- so a fork, an unexpected branch, or
+  any repository can assume the role from a GitHub Actions workflow outside the
+  organisation. This is the TRR9015 chokepoint (Procedures A, B, C): the grant is the
+  strongest signal because installing the backdoor is an unavoidable, default-logged
+  management event, readable before any use.
+
+  It keys on CloudTrail management events eventName iam:UpdateAssumeRolePolicy
+  (edit) or iam:CreateRole (create). The trust policy is a URL-encoded JSON string in
+  requestParameters.policyDocument (UpdateAssumeRolePolicy) or
+  requestParameters.assumeRolePolicyDocument (CreateRole). The rule anchors on the
+  issuer host, which is percent-encoding-invariant (letters and dots are not encoded),
+  then flags over-broad trust by substring: a wildcard in the sub (encoded '%2A'), OR
+  no GitHub-OIDC sub condition at all, OR no pinned aud (StringEquals
+  sts.amazonaws.com). A correctly-scoped trust -- StringEquals on an exact
+  repo:ORG/REPO:ref:... or :environment:NAME sub, aud pinned -- is suppressed.
+
+  Implementation note: this is the substring fallback the research recommends when a
+  pipeline cannot decode the policy. The wildcard case is only approximate over the
+  encoded string (it cannot tell a wildcard in the org/repo position from one in the
+  ref/branch position); a production pipeline should URL-decode and JSON-parse the
+  policy to judge the sub precisely. The missing-sub and unpinned-aud cases are sound
+  over substrings.
+
+  Blind spots (see the TRR): exploiting a PRE-EXISTING over-broad trust emits only the
+  use event (sts:AssumeRoleWithWebIdentity) and no grant -- catchable only with a
+  per-role sub allowlist; a sub pinned to a repo the attacker actually controls is not
+  wildcard-shaped and is not flagged here; iam:CreateOpenIDConnectProvider is an
+  informational precursor, not abuse on its own.
+references:
+  - https://attack.mitre.org/techniques/T1098/001/
+  - https://docs.github.com/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services
+  - https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_create_for-idp_oidc.html
+  - https://github.com/DataDog/stratus-red-team/blob/main/v2/internal/attacktechniques/aws/persistence/iam-backdoor-role/main.go
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1098.001
+  - attack.t1199
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_grant:
+    eventName:
+      - 'UpdateAssumeRolePolicy'
+      - 'CreateRole'
+  oidc_update:
+    requestParameters.policyDocument|contains: 'token.actions.githubusercontent.com'
+  oidc_create:
+    requestParameters.assumeRolePolicyDocument|contains: 'token.actions.githubusercontent.com'
+  sub_wildcard_update:
+    requestParameters.policyDocument|contains: '%2A'
+  sub_wildcard_create:
+    requestParameters.assumeRolePolicyDocument|contains: '%2A'
+  has_sub_update:
+    requestParameters.policyDocument|contains: 'githubusercontent.com%3Asub'
+  has_sub_create:
+    requestParameters.assumeRolePolicyDocument|contains: 'githubusercontent.com%3Asub'
+  has_pinned_aud_update:
+    requestParameters.policyDocument|contains: 'githubusercontent.com%3Aaud%22%3A%22sts.amazonaws.com'
+  has_pinned_aud_create:
+    requestParameters.assumeRolePolicyDocument|contains: 'githubusercontent.com%3Aaud%22%3A%22sts.amazonaws.com'
+  condition: >
+    selection_grant and (oidc_update or oidc_create) and
+    (sub_wildcard_update or sub_wildcard_create
+     or not (has_sub_update or has_sub_create)
+     or not (has_pinned_aud_update or has_pinned_aud_create))
+falsepositives:
+  - Orgs that deliberately use an org-wide StringLike repo:org/* for shared or
+    self-hosted runners or monorepos -- a policy-hygiene finding to review, not
+    necessarily compromise.
+  - A legitimately scoped multi-pattern StringLike list can look wildcard-shaped over
+    the encoded string; decode-then-parse to confirm before alerting.
+level: high

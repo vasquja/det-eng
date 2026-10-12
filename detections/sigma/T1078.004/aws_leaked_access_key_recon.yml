@@ -1,0 +1,74 @@
+title: AWS Leaked Long-Term Access Key Orientation and Enumeration
+id: f70357d8-9107-408c-8e63-ad2b47e7d047
+status: experimental
+description: |
+  Detects the initial-access signature of a leaked long-term IAM-user access key:
+  a long-term key (userIdentity.type IAMUser, accessKeyId beginning AKIA) performing
+  the canonical orientation call (sts:GetCallerIdentity) or an account-enumeration
+  burst (iam:GetAccountAuthorizationDetails/ListUsers/ListRoles/GetAccountSummary,
+  s3:ListBuckets, ec2:DescribeInstances, iam:ListAccessKeys/GetUser) from a source
+  outside the organisation's known-good egress. This is the TRR9012 chokepoint
+  (Procedure A, and the Procedure C STS pivot's first call).
+
+  The static identity half (IAMUser + AKIA) is invariant for any management call
+  signed directly by the leaked key but is noisy on its own, so this rule scopes to
+  the orientation/enumeration verbs AND excludes the org's known egress CIDRs. The
+  real discriminator is behavioural -- a previously-unseen source for that key --
+  which a single-event rule cannot express; approximate it here with the egress
+  allowlist and, in production, add a first-seen/new-terms overlay keyed on
+  accessKeyId -> {sourceIPAddress, ASN, userAgent}. GetCallerIdentity alone is
+  near-useless (every SDK/CLI/Terraform init calls it), which is why the verb set is
+  paired with the new-source approximation.
+
+  Excludes temporary credentials (accessKeyId ASIA, type AssumedRole/FederatedUser)
+  and root, so it does not conflate with EC2-instance-role or root activity. Blind
+  spots (see the TRR): data-plane-only use (Procedure B) needs CloudTrail data
+  events; the Procedure C pivot's downstream calls flip to ASIA and need
+  sessionIssuer correlation back to the issuing user; userAgent is spoofable so it is
+  never keyed on alone.
+references:
+  - https://attack.mitre.org/techniques/T1078/004/
+  - https://docs.aws.amazon.com/STS/latest/APIReference/API_GetAccessKeyInfo.html
+  - https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-event-reference-user-identity.html
+  - https://www.rapid7.com/blog/post/tr-crimson-collective-a-new-threat-group-observed-operating-in-the-cloud/
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.initial-access
+  - attack.persistence
+  - attack.t1078.004
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_longterm_user:
+    userIdentity.type: 'IAMUser'
+    userIdentity.accessKeyId|startswith: 'AKIA'
+  selection_orientation_or_enum:
+    eventName:
+      - 'GetCallerIdentity'
+      - 'GetAccountAuthorizationDetails'
+      - 'ListUsers'
+      - 'ListRoles'
+      - 'GetAccountSummary'
+      - 'ListBuckets'
+      - 'DescribeInstances'
+      - 'ListAccessKeys'
+      - 'GetUser'
+      - 'ListAttachedUserPolicies'
+  filter_known_egress:
+    sourceIPAddress|cidr:
+      - '10.0.0.0/8'
+      - '172.16.0.0/12'
+      - '192.168.0.0/16'
+      # PLACEHOLDER: replace 203.0.113.0/24 with your org's known-good egress CIDRs
+      # (corporate NAT, VPN, CI/CD runner ranges).
+      - '203.0.113.0/24'
+  condition: selection_longterm_user and selection_orientation_or_enum and not filter_known_egress
+falsepositives:
+  - Long-term IAM-user keys legitimately used from a new IP -- CI/CD runners and
+    serverless with rotating egress, developers on travel/VPN, new SaaS integrations.
+    Allowlist known-good egress CIDRs/ASNs and automation principals.
+  - sts:GetCallerIdentity is extremely high-volume; pair the new-source approximation
+    with the enumeration burst before alerting.
+level: medium

@@ -1,0 +1,67 @@
+title: AWS EC2 Instance Role Credentials Used Off-Instance
+id: 2643e90b-89d2-4e35-9e68-6c601e15c9d5
+status: experimental
+description: |
+  Detects AWS CloudTrail activity in which EC2 instance-role credentials are used
+  from a source that the instance does not own -- the control-plane signature of
+  credentials stolen from the Instance Metadata Service (IMDS) via SSRF or on-host
+  access and then used off-instance. This is the TRR9011 chokepoint (Procedures A,
+  B, C, D).
+
+  The in-record provenance is three invariants: userIdentity.type is AssumedRole,
+  userIdentity.sessionContext.sessionIssuer.type is Role, and the session is
+  EC2-delivered -- sessionContext.ec2RoleDelivery is present (1.0 = IMDSv1, 2.0 =
+  IMDSv2) and, as a fallback when that field is absent, userIdentity.arn carries the
+  instance-ID session name (contains "/i-"). Those three alone are NOT a detection:
+  they match ~100% of benign instance-role activity. The discriminator is the
+  off-instance leg -- sourceIPAddress is not an address the instance/account owns.
+  That cannot be judged from a single CloudTrail record, so this rule APPROXIMATES
+  it with a source-IP allowlist (RFC1918 plus the account's own NAT/Elastic-IP
+  egress CIDRs, which you must baseline). GuardDuty does the enrichment natively and
+  is the authoritative signal: UnauthorizedAccess:IAMUser/
+  InstanceCredentialExfiltration.OutsideAWS (external IP) and .InsideAWS (another AWS
+  account). Deploy this as a provider-agnostic backstop to GuardDuty, not a
+  replacement.
+
+  Blind spots (see the TRR): the IMDS fetch itself emits no CloudTrail (data-plane);
+  role chaining drops the markers after one hop; the InsideAWS variant (Procedure E)
+  shows an AWS-owned sourceIPAddress and is missed by the public-IP approximation
+  (GuardDuty .InsideAWS covers it); data-plane-only use needs CloudTrail data events.
+references:
+  - https://attack.mitre.org/techniques/T1552/005/
+  - https://docs.aws.amazon.com/guardduty/latest/ug/guardduty_finding-types-iam.html
+  - https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-event-reference-user-identity.html
+  - https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instance-metadata-transition-to-version-2.html
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.credential-access
+  - attack.t1552.005
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_assumed_role:
+    userIdentity.type: 'AssumedRole'
+    userIdentity.sessionContext.sessionIssuer.type: 'Role'
+  provenance_ec2_role_delivery:
+    userIdentity.sessionContext.ec2RoleDelivery: '*'
+  provenance_instance_session_name:
+    userIdentity.arn|contains: '/i-'
+  filter_account_owned_source:
+    sourceIPAddress|cidr:
+      - '10.0.0.0/8'
+      - '172.16.0.0/12'
+      - '192.168.0.0/16'
+      - '100.64.0.0/10'
+      # PLACEHOLDER: replace 203.0.113.0/24 with your account's own NAT-gateway and
+      # Elastic-IP egress CIDRs (and any Outposts/DirectConnect/VPN gateway CIDRs).
+      - '203.0.113.0/24'
+  condition: selection_assumed_role and (provenance_ec2_role_delivery or provenance_instance_session_name) and not filter_account_owned_source
+falsepositives:
+  - NAT-gateway or Elastic-IP egress for instances in private subnets; allowlist the
+    account's own NAT/EIP CIDRs.
+  - Hybrid egress via Outposts, Direct Connect, VPN or Transit Gateway makes
+    instance-role calls appear from on-prem/public IPs; suppress on the gateway CIDR.
+  - Backup or monitoring agents that legitimately use instance credentials off-box.
+level: high

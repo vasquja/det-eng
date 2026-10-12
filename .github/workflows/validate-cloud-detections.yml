@@ -1,0 +1,84 @@
+name: validate-cloud-detections
+
+# Proves the external-cloud detection loops (TRR9011-9015) without a live cloud:
+#   a recorded, schema-faithful attack log -> the paired Sigma rule, run by pySigma,
+#   matches it; and the benign baseline -> the same rule matches nothing.
+#
+# Cloud has no free CI target, so each technique ships committed CloudTrail / Entra /
+# Azure-Activity / GCP-Audit fixtures (an ATTACK set and a hard BENIGN baseline) under
+# detections/cloud/fixtures/. The validator runs the real pySigma SQLite backend over
+# them -- the same backend the Kubernetes validators use -- and asserts every rule
+# fires on its attack fixture (carrying the emulation's marker) and on nothing in the
+# benign baseline. Pure Python; no cluster, no root, no cloud credentials. Free.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'detections/cloud/**'
+      - 'detections/sigma/T1552.005/**'
+      - 'detections/sigma/T1078.004/**'
+      - 'detections/sigma/T1098.001/**'
+      - 'detections/sigma/T1098.003/**'
+      - 'detections/validate_cloud_detections.py'
+      - 'detections/sigma_eval.py'
+      - 'detections/requirements.txt'
+      - 'atomics/T1552.005/**'
+      - 'atomics/T1078.004/**'
+      - 'atomics/T1098.001/**'
+      - 'atomics/T1098.003/**'
+      - '.github/workflows/validate-cloud-detections.yml'
+  pull_request:
+    paths:
+      - 'detections/cloud/**'
+      - 'detections/sigma/T1552.005/**'
+      - 'detections/sigma/T1078.004/**'
+      - 'detections/sigma/T1098.001/**'
+      - 'detections/sigma/T1098.003/**'
+      - 'detections/validate_cloud_detections.py'
+      - 'detections/sigma_eval.py'
+      - 'detections/requirements.txt'
+      - 'atomics/T1552.005/**'
+      - 'atomics/T1078.004/**'
+      - 'atomics/T1098.001/**'
+      - 'atomics/T1098.003/**'
+      - '.github/workflows/validate-cloud-detections.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install validator requirements
+        run: pip install --quiet -r detections/requirements.txt
+
+      - name: Compile every cloud rule (pySigma dry-run)
+        shell: bash
+        run: |
+          python3 detections/validate_cloud_detections.py --dry-run | tee /tmp/clouddry.out
+
+      - name: Validate detections (recorded attack fires; negative control holds)
+        shell: bash
+        run: |
+          python3 detections/validate_cloud_detections.py | tee /tmp/cloudval.out
+
+      - name: Publish results to job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## External-cloud detection validation (recorded logs -> Sigma)'
+            echo ''
+            echo '```'
+            cat /tmp/cloudval.out 2>/dev/null || echo '(no validator output captured)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

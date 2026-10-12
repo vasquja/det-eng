@@ -234,6 +234,56 @@ rules (`sigma/T1552.007/linux_k8s_sa_token_read.yml`, and TRR9003's CRI rule for
 the static pod) are compiled but not match-gated here; the emulations document the
 gaps the way TRR9002 Procedure E does.
 
+## External cloud detections (TRR9011–9015)
+
+Five techniques key on a cloud provider's audit log instead of Linux syscalls or the
+Kubernetes API server, so they have their own validator
+(`validate_cloud_detections.py`) and workflow (`validate-cloud-detections.yml`):
+
+| TRR | Technique | Log | Chokepoint rule |
+|-----|-----------|-----|-----------------|
+| TRR9011 | IMDS creds used off-instance (T1552.005, AWS) | CloudTrail | `sigma/T1552.005/aws_imds_creds_used_off_instance.yml` |
+| TRR9012 | Leaked long-term access key (T1078.004, AWS) | CloudTrail | `sigma/T1078.004/aws_leaked_access_key_recon.yml` |
+| TRR9013 | Entra federated-identity backdoor (T1098.001, Azure) | Entra audit + Azure Activity | `sigma/T1098.001/entra_app_federated_credential_backdoor.yml` + `azure_managed_identity_federated_credential_backdoor.yml` |
+| TRR9014 | Public IAM exposure (T1098.003, GCP) | Cloud Audit Logs | `sigma/T1098.003/gcp_public_iam_member_grant.yml` |
+| TRR9015 | GitHub-OIDC role-trust abuse (T1098.001, AWS) | CloudTrail | `sigma/T1098.001/aws_github_oidc_role_trust_abuse.yml` |
+
+Cloud has no free live target to run the attacks against, so the loop is proven on
+**recorded logs** rather than a live run. Each technique ships two committed,
+schema-faithful fixtures under `cloud/fixtures/<trr>/` — an **attack** set and a hard
+**benign** baseline. Every field path is a real field of the provider's audit log,
+grounded on the provider's schema docs and real samples (see each TRR's References);
+only safe markers are used (RFC 5737 TEST-NET IPs, RFC 2606 `example.com`, the AWS doc
+account `123456789012`, and `trr90NN-` resource names). The validator runs each rule
+through the **same pySigma SQLite backend** the Kubernetes validators use (`sigma_eval.py`),
+and a technique passes only if the rule fires on its attack fixture (carrying the
+emulation's marker) **and** matches nothing in the benign baseline.
+
+The benign baseline is deliberately hard: it hits the same log source, method, and
+structural fields as the attack and differs only on the discriminating field (the
+off-instance source IP, the identity type, the FIC issuer, the public-vs-specific
+principal, the pinned-vs-wildcard OIDC subject). So a pass proves the rule keys on the
+technique's chokepoint, not on the fixture's shape or marker.
+
+```
+pip install -r detections/requirements.txt
+python3 detections/validate_cloud_detections.py --dry-run   # compile every cloud rule
+python3 detections/validate_cloud_detections.py             # attack fires + control holds
+```
+
+The runnable emulations (`atomics/<TECH>/src/`) perform the real attack in **your own**
+cloud account, guarded by a `TRR90NN_LIVE=1` opt-in, and are **not run in CI** — they
+need credentials and, for the data-plane / off-instance cases, cloud resources. The
+committed fixtures are what CI validates, and each emulation can print its recorded
+fixture with `--show-fixture`.
+
+Because the nested list fields in these logs (CloudTrail `sessionContext` aside —
+Azure `targetResources[]`, GCP `bindingDeltas[]`/`members[]`, and the URL-encoded AWS
+trust policy) flatten to searchable text, the rules match those with `|contains` over
+the flattened field, which is how a SIEM indexes nested JSON. The rule descriptions note
+where a production pipeline should decode/parse a field (e.g. the URL-encoded IAM trust
+policy) for a more precise match.
+
 ## Status
 
 All Sigma rules are `status: experimental`. Levels are set by how rare the

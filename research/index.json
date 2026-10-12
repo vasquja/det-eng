@@ -446,6 +446,221 @@
           "url": "../atomics/T1070/src/emulate.sh"
         }
       }
+    },
+    {
+      "name": "EC2 Instance Metadata Credential Theft Used Off-Instance (AWS)",
+      "id": "TRR9011",
+      "tactics": [
+        "Credential Access"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1552.005"
+      ],
+      "platforms": [
+        "AWS"
+      ],
+      "procedures": {
+        "A": "SSRF to IMDSv1, then off-instance use",
+        "B": "SSRF to IMDSv2, then off-instance use",
+        "C": "On-host IMDS read, then off-instance use",
+        "D": "Retrieval via SSM, then off-instance use",
+        "E": "Off-instance use from another AWS account (InsideAWS)"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9011/aws/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1552.005/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1552.005/src/emulate.sh"
+        },
+        "C": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1552.005/src/emulate.sh"
+        },
+        "D": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1552.005/src/emulate.sh"
+        },
+        "E": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1552.005/src/emulate.sh"
+        }
+      }
+    },
+    {
+      "name": "Initial Access with a Leaked Long-Term Access Key (AWS)",
+      "id": "TRR9012",
+      "tactics": [
+        "Initial Access"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1078.004"
+      ],
+      "platforms": [
+        "AWS"
+      ],
+      "procedures": {
+        "A": "Direct API use + enumeration",
+        "B": "Data-plane recon with the key",
+        "C": "STS pivot to temporary creds"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9012/aws/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1078.004/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1078.004/src/emulate.sh"
+        },
+        "C": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1078.004/src/emulate.sh"
+        }
+      }
+    },
+    {
+      "name": "Federated Identity Credential Backdoor on an Entra Application (Azure)",
+      "id": "TRR9013",
+      "tactics": [
+        "Persistence"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1098.001"
+      ],
+      "platforms": [
+        "Azure"
+      ],
+      "procedures": {
+        "A": "Add a FIC to an app registration",
+        "B": "Repoint an existing app FIC",
+        "C": "Add a FIC to a managed identity",
+        "D": "Use the backdoor (token exchange)"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9013/azr/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.001/src/emulate_entra.sh"
+        },
+        "B": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.001/src/emulate_entra.sh"
+        },
+        "C": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.001/src/emulate_entra.sh"
+        },
+        "D": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.001/src/emulate_entra.sh"
+        }
+      }
+    },
+    {
+      "name": "Public IAM Exposure via allUsers / allAuthenticatedUsers (GCP)",
+      "id": "TRR9014",
+      "tactics": [
+        "Persistence"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1098.003"
+      ],
+      "platforms": [
+        "GCP"
+      ],
+      "procedures": {
+        "A": "Public grant via the delta path",
+        "B": "Public grant via the request path",
+        "C": "Public exposure without an IAM binding"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9014/gcp/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.003/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.003/src/emulate.sh"
+        },
+        "C": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.003/src/emulate.sh"
+        }
+      }
+    },
+    {
+      "name": "GitHub Actions OIDC Role-Trust Abuse (AWS)",
+      "id": "TRR9015",
+      "tactics": [
+        "Persistence"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1098.001"
+      ],
+      "platforms": [
+        "AWS"
+      ],
+      "procedures": {
+        "A": "Over-broad sub grant (wildcard)",
+        "B": "Missing-condition grant (no sub)",
+        "C": "Create-time grant",
+        "D": "Create the GitHub OIDC provider",
+        "E": "Use of the federated trust"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9015/aws/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.001/src/emulate_aws_oidc.sh"
+        },
+        "B": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.001/src/emulate_aws_oidc.sh"
+        },
+        "C": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.001/src/emulate_aws_oidc.sh"
+        },
+        "D": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.001/src/emulate_aws_oidc.sh"
+        },
+        "E": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.001/src/emulate_aws_oidc.sh"
+        }
+      }
     }
   ]
 }

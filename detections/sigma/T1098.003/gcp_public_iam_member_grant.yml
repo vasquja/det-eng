@@ -1,0 +1,66 @@
+title: GCP IAM Policy Grants Public Principal allUsers or allAuthenticatedUsers
+id: 2787f809-9155-4f7d-a6f9-a50e46651117
+status: experimental
+description: |
+  Detects a GCP IAM-policy change that grants a role to the public pseudo-principals
+  allUsers (anyone on the internet, unauthenticated) or allAuthenticatedUsers (any
+  Google account), exposing a resource to the world. This is the TRR9014 chokepoint
+  (Procedures A and B), unified across the two distinct audit-log shapes and both
+  public principals in one rule.
+
+  It keys on two things. First, the method is in the set-IAM-policy family: the GCS
+  quirk storage.setIamPermissions, the bare SetIamPolicy (project/folder/org), and
+  the service forms google.cloud.run.v2.Services.SetIamPolicy,
+  iam.serviceAccounts.setIamPolicy, v1.compute.*.setIamPolicy, etc. -- matched
+  case-insensitively by the suffixes setiampolicy / setiampermissions. Second, a
+  public principal is newly granted, evaluated over BOTH shapes: the delta path
+  (protoPayload.serviceData.policyDelta.bindingDeltas, action ADD, member singular --
+  GCS and legacy services) and the request path
+  (protoPayload.request.policy.bindings[].members -- Cloud Run/Functions/Secret
+  Manager/Artifact Registry/service accounts, which emit no serviceData delta).
+
+  These are ADMIN_WRITE operations in the Admin Activity audit log, which is on by
+  default and free -- the technique's strength. Caveats (see the TRR): the request
+  path carries the full replaced policy, so a pre-existing public binding merely
+  re-submitted over-fires (the delta path with action ADD is higher fidelity, prefer
+  it when present). Documented gaps covered by companion rules, not this one: legacy
+  GCS ACLs (storage.setBucketAcl / predefinedAcl publicRead), Cloud Run
+  --no-invoker-iam-check (UpdateService), and BigQuery legacy dataset access
+  (specialGroup allAuthenticatedUsers) -- none emit a set-IAM-policy event.
+references:
+  - https://attack.mitre.org/techniques/T1098/003/
+  - https://cloud.google.com/iam/docs/audit-logging
+  - https://cloud.google.com/storage/docs/access-control/making-data-public
+  - https://cloud.google.com/run/docs/authenticating/public
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1098.003
+logsource:
+  product: gcp
+  service: gcp.audit
+detection:
+  selection_set_iam:
+    protoPayload.methodName|endswith:
+      - 'setiampolicy'
+      - 'setiampermissions'
+  public_in_delta:
+    protoPayload.serviceData.policyDelta.bindingDeltas|contains:
+      - '"allUsers"'
+      - '"allAuthenticatedUsers"'
+  public_in_request:
+    protoPayload.request.policy.bindings|contains:
+      - '"allUsers"'
+      - '"allAuthenticatedUsers"'
+  condition: selection_set_iam and (public_in_delta or public_in_request)
+falsepositives:
+  - Intentionally public assets -- static-website/public-download buckets, public
+    container images, public Cloud Run/Functions endpoints, public datasets.
+    Allowlist on protoPayload.resourceName and role.
+  - allAuthenticatedUsers used for broad internal/org sharing.
+  - The request path re-submits the full policy, so an unrelated policy rewrite that
+    keeps an existing public binding re-fires; prefer the delta path / diff when
+    available.
+level: high
