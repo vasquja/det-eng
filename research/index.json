@@ -310,6 +310,142 @@
           "url": "../atomics/T1611/src/emulate_k8s.sh"
         }
       }
+    },
+    {
+      "name": "Disabling Admission Control (Kubernetes)",
+      "id": "TRR9008",
+      "tactics": [
+        "Defense Evasion"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1562.001"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "Delete a ValidatingWebhookConfiguration",
+        "B": "Delete a MutatingWebhookConfiguration",
+        "C": "Neuter a webhook configuration in place",
+        "D": "Remove the enforcer's workload"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9008/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng validating-webhook delete behavioral emulation (no-op webhook)",
+          "url": "../atomics/T1562.001/src/emulate_k8s.sh"
+        },
+        "B": {
+          "text": "det-eng mutating-webhook delete behavioral emulation",
+          "url": "../atomics/T1562.001/src/emulate_k8s.sh"
+        },
+        "C": {
+          "text": "det-eng webhook neuter behavioral emulation (failurePolicy Ignore, rules [])",
+          "url": "../atomics/T1562.001/src/emulate_k8s.sh"
+        },
+        "D": {
+          "text": "det-eng enforcer-workload removal behavioral emulation (scale-to-zero + delete)",
+          "url": "../atomics/T1562.001/src/emulate_k8s.sh"
+        }
+      }
+    },
+    {
+      "name": "User Impersonation (Kubernetes)",
+      "id": "TRR9009",
+      "tactics": [
+        "Defense Evasion",
+        "Privilege Escalation"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1134"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "Impersonate a user",
+        "B": "Impersonate a group",
+        "C": "Impersonate a service account",
+        "D": "Impersonate a uid or extras"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9009/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng user-impersonation behavioral emulation (--as)",
+          "url": "../atomics/T1134/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng group-impersonation behavioral emulation (--as-group, incl. system:masters)",
+          "url": "../atomics/T1134/src/emulate.sh"
+        },
+        "C": {
+          "text": "det-eng service-account impersonation behavioral emulation",
+          "url": "../atomics/T1134/src/emulate.sh"
+        },
+        "D": {
+          "text": "det-eng uid-impersonation behavioral emulation (--as-uid)",
+          "url": "../atomics/T1134/src/emulate.sh"
+        }
+      }
+    },
+    {
+      "name": "Indicator Removal (Kubernetes)",
+      "id": "TRR9010",
+      "tactics": [
+        "Defense Evasion"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1070",
+        "T1070.004"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "Delete a single Event (core group)",
+        "B": "Bulk-wipe Events (deletecollection)",
+        "C": "Delete an Event (events.k8s.io group)",
+        "D": "Delete a Pod or Job (workload record)",
+        "E": "Clear the audit log on the node (the gap)"
+      },
+      "pub_date": "2026-10-12",
+      "last_update": "2026-10-12",
+      "path": "trr9010/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng core Event delete behavioral emulation",
+          "url": "../atomics/T1070/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng Event deletecollection (bulk wipe) behavioral emulation",
+          "url": "../atomics/T1070/src/emulate.sh"
+        },
+        "C": {
+          "text": "det-eng events.k8s.io Event delete behavioral emulation",
+          "url": "../atomics/T1070/src/emulate.sh"
+        },
+        "D": {
+          "text": "det-eng Pod delete (workload-record removal) behavioral emulation",
+          "url": "../atomics/T1070/src/emulate.sh"
+        },
+        "E": {
+          "text": "det-eng node audit-log clearing detection-gap demonstration",
+          "url": "../atomics/T1070/src/emulate.sh"
+        }
+      }
     }
   ]
 }

@@ -1,0 +1,25 @@
+# TRR9008 Procedure B target — a harmless, no-op MutatingWebhookConfiguration.
+# Same no-op shape as the validating one (failurePolicy Ignore, bogus rules, dummy
+# clientConfig). The emulation deletes it. NEVER edit a real policy webhook.
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: trr9008-mwc
+  labels: {app: trr9008}
+webhooks:
+  - name: w.trr9008.example.com
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Ignore
+    clientConfig:
+      service:
+        namespace: trr9008
+        name: trr9008-nosvc
+        path: /nope
+        port: 443
+    rules:
+      - apiGroups: ["trr9008.example.com"]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["widgets"]
+        scope: Namespaced

@@ -1,0 +1,53 @@
+title: Kubernetes Admission Webhook Neutered (Fail-Open or Never-Match)
+id: 57dd77f3-483c-43df-83fd-e28c9c361eda
+status: experimental
+description: |
+  Detects an admission webhook configuration edited in place so it no longer
+  protects the cluster, by inspecting the request body (requestObject, which needs
+  audit level Request or higher). This is the TRR9008 severity layer on top of the
+  chokepoint (k8s_admission_webhook_disabled.yml): the chokepoint flags every
+  admissionregistration write, this rule picks out the ones that disarm the
+  webhook. It matches when the submitted webhooks list sets failurePolicy to Ignore
+  (so an outage of the webhook endpoint is silently allowed -- fail-open) or sets
+  an empty rules list (so the webhook never fires).
+
+  The match uses |contains against the JSON-serialized webhooks array in both the
+  spaced (request-body) and compact (Go) forms, because the audit backend stores
+  an array field as JSON text. It matches a full-object write (an update/PUT via
+  kubectl replace or apply, or a strategic-merge patch) where requestObject carries
+  the webhooks list. A JSON patch (--type=json) submits an ops array, not the
+  object, so its requestObject does not carry the failurePolicy field -- that
+  variant fires the chokepoint but not this grader; triage it from the chokepoint.
+
+  Metadata level cannot feed this rule: the webhooks list lives only in
+  requestObject. Without Request level a neuter and a benign edit are
+  indistinguishable.
+references:
+  - https://attack.mitre.org/techniques/T1562/001/
+  - https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.defense-evasion
+  - attack.t1562.001
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_adm_modify:
+    objectRef.apiGroup: 'admissionregistration.k8s.io'
+    verb:
+      - 'update'
+      - 'patch'
+  sel_neuter:
+    requestObject.webhooks|contains:
+      - '"failurePolicy": "Ignore"'
+      - '"failurePolicy":"Ignore"'
+      - '"rules": []'
+      - '"rules":[]'
+  condition: select_adm_modify and sel_neuter
+falsepositives:
+  - An operator deliberately setting failurePolicy to Ignore during maintenance,
+    or a webhook with legitimately empty rules. Triage every hit against the actor
+    and the webhook.
+level: high

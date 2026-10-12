@@ -1,0 +1,51 @@
+title: Kubernetes Security Tool Workload Removed or Scaled To Zero
+id: 735935d9-dca5-42b4-a9be-70c942592a62
+status: experimental
+description: |
+  Detects the removal of a workload that enforces security: a delete of a
+  Deployment or DaemonSet, or a scale-to-zero (a patch or update that sets
+  spec.replicas to 0). This is the TRR9008 Strategy 2 fallback, covering Procedure
+  D. An adversary who does not want to touch the admission webhook configuration
+  can instead remove the enforcer itself -- delete or scale down the Gatekeeper,
+  Kyverno, or Falco Deployment/DaemonSet -- so the webhook endpoint is gone; paired
+  with a failurePolicy of Ignore, admission then fails open and nothing blocks.
+
+  This is a different edge than the admission-config chokepoint: it is an apps-group
+  write, not an admissionregistration one. It is noisy on its own (deployments are
+  scaled and deleted routinely), so correlate with the policy engine's namespace or
+  app labels (gatekeeper-system, kyverno, falco) and baseline normal scaling.
+  Scale-to-zero via "kubectl scale" uses the deployments/scale subresource, which
+  an audit policy must list explicitly (as */scale) to capture with a body; a scale
+  via "kubectl patch" of spec.replicas is on the deployments resource and is
+  covered here.
+references:
+  - https://attack.mitre.org/techniques/T1562/001/
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.defense-evasion
+  - attack.t1562.001
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_apps:
+    objectRef.apiGroup: 'apps'
+    objectRef.resource:
+      - 'deployments'
+      - 'daemonsets'
+  sel_delete:
+    verb: 'delete'
+  sel_scale_zero:
+    verb:
+      - 'update'
+      - 'patch'
+    requestObject.spec.replicas: 0
+  condition: select_apps and (sel_delete or sel_scale_zero)
+falsepositives:
+  - Routine scaling and teardown of deployments and daemonsets. This rule is a
+    correlation anchor; alert only when the target is a known security workload
+    (by namespace or app label) or when it correlates with an admission-config
+    change by the same identity. Baseline controllers and GitOps.
+level: medium

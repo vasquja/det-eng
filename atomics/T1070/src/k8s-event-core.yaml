@@ -1,0 +1,20 @@
+# TRR9010 Procedure A target — a harmless core v1 Event the emulation creates and
+# then deletes. The delete is the detection telemetry; if creation is skipped the
+# delete attempt is still audited with objectRef.name=trr9010-evt-a.
+apiVersion: v1
+kind: Event
+metadata:
+  name: trr9010-evt-a
+  namespace: trr9010
+involvedObject:
+  apiVersion: v1
+  kind: Namespace
+  name: trr9010
+reason: Trr9010Benign
+message: benign TRR9010 indicator-removal emulation
+type: Normal
+source:
+  component: trr9010-emulation
+firstTimestamp: "2026-10-12T00:00:00Z"
+lastTimestamp: "2026-10-12T00:00:00Z"
+count: 1

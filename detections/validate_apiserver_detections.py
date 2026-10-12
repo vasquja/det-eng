@@ -9,6 +9,9 @@ key on the same API server audit log (plus one node runtime sensor rule):
   * TRR9005 (T1053.007, Jobs/CronJobs)   - batch writes + a node CRI job-pod rule
   * TRR9006 (T1552.007, Secrets)         - secret reads + TokenRequest
   * TRR9007 (T1611, dangerous pod spec)  - pod + controller requestObject
+  * TRR9008 (T1562.001, impair defenses) - admissionregistration disable + grade
+  * TRR9009 (T1134, impersonation)       - impersonatedUser presence
+  * TRR9010 (T1070, indicator removal)   - events delete/deletecollection
 
 The loop this proves, for each match-gated rule:
 
@@ -78,6 +81,29 @@ def secret_gate(e):
     return not str(e.get("user.username") or "").startswith("system:")
 
 
+def impersonation_gate(e):
+    """TRR9009: the emulation's own impersonation, by the unique 'trr9009' marker.
+
+    List verbs carry no objectRef.name, so the identity marker is the anchor, not an
+    object name. Procedure C borrows system:serviceaccount:trr9009:trr9009-sa, so
+    'contains', not 'startswith'. The group variant marks the group instead.
+    """
+    u = str(e.get("impersonatedUser.username") or "")
+    g = str(e.get("impersonatedUser.groups") or "")
+    return "trr9009" in u or "trr9009-group" in g
+
+
+def trr9010_gate(e):
+    """TRR9010: a trr9010- named delete, or the bulk wipe (deletecollection) in ns.
+
+    A deletecollection audit event carries no objectRef.name, so the name prefix
+    cannot gate the bulk wipe -- the namespace plus the verb anchors it.
+    """
+    if (e.get("objectRef.name") or "").startswith("trr9010-"):
+        return True
+    return e.get("objectRef.namespace") == "trr9010" and e.get("verb") == "deletecollection"
+
+
 # (technique folder, rule file, source, label, note, gate). Order is report order.
 MANIFEST = [
     ("T1098.006", "k8s_rbac_write.yml", "audit", "9004 A-E",
@@ -96,6 +122,20 @@ MANIFEST = [
      "pod-spec host-access chokepoint (Request)", name_prefix("trr9007-")),
     ("T1611", "k8s_podspec_controller_host_access.yml", "audit", "9007 ctrl",
      "controller-template host-access (Request)", name_prefix("trr9007-")),
+    ("T1562.001", "k8s_admission_webhook_disabled.yml", "audit", "9008 A-C",
+     "admission-control disable chokepoint", name_prefix("trr9008-")),
+    ("T1562.001", "k8s_admission_webhook_neutered.yml", "audit", "9008 sev",
+     "webhook neuter severity (Request)", name_prefix("trr9008-")),
+    ("T1562.001", "k8s_security_tool_workload_removed.yml", "audit", "9008 D",
+     "enforcer workload removal fallback", name_prefix("trr9008-")),
+    ("T1134", "k8s_impersonation.yml", "audit", "9009 A-D",
+     "impersonation presence chokepoint", impersonation_gate),
+    ("T1134", "k8s_impersonation_privileged.yml", "audit", "9009 sev",
+     "privileged-identity impersonation severity", impersonation_gate),
+    ("T1070", "k8s_events_deleted.yml", "audit", "9010 A-C",
+     "events-deletion chokepoint (delete + deletecollection)", trr9010_gate),
+    ("T1070", "k8s_workload_deleted_evidence.yml", "audit", "9010 D",
+     "workload-record deletion fallback", trr9010_gate),
 ]
 
 # Folders whose other rules are compiled (not match-gated) so a break still fails.
@@ -154,7 +194,7 @@ def dedup_by_audit_id(matches):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Validate TRR9004-9007 K8s detections.")
+    ap = argparse.ArgumentParser(description="Validate TRR9004-9010 K8s detections.")
     ap.add_argument("--audit-log", default="/tmp/kube-apiserver-audit.log",
                     help="Path to the API server audit log (JSON lines).")
     ap.add_argument("--cri-log",
@@ -277,7 +317,7 @@ def main():
         print(f"The rule(s) with a log fired on the emulated telemetry; {skipped} "
               "rule(s) skipped for lack of a log.")
         return 0
-    print("All TRR9004-9007 match-gated detections fired on the emulated telemetry.")
+    print("All TRR9004-9010 match-gated detections fired on the emulated telemetry.")
     return 0
 
 

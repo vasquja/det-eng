@@ -1,0 +1,39 @@
+title: Kubernetes Pod or Job Deleted (Evidence Removal)
+id: 88d1a6c2-828a-44f0-98a7-2fb824f97ada
+status: experimental
+description: |
+  Detects deletion of a Pod or a Job through the API server: an audit event whose
+  verb is delete and whose objectRef.resource is pods or jobs. This is the TRR9010
+  Strategy 2 fallback, covering Procedure D. After running a malicious workload, an
+  adversary deletes the Pod (and the Job that spawned it) to remove the record of
+  what ran.
+
+  This is LOW fidelity by design: deleting pods and jobs is routine teardown. Do not
+  alert on it standalone. Use it only for correlation -- the same identity that also
+  deleted Events in a short window, a deletion in a sensitive namespace, or the
+  deletion of a Job whose creation the same identity made (the inverse of TRR9005,
+  which detects Job creation for execution). Suppress controller and GitOps
+  identities. Metadata level is enough.
+references:
+  - https://attack.mitre.org/techniques/T1070/
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.defense-evasion
+  - attack.t1070
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_workload_delete:
+    verb: 'delete'
+    objectRef.resource:
+      - 'pods'
+      - 'jobs'
+  condition: select_workload_delete
+falsepositives:
+  - Routine teardown of pods and jobs by operators, controllers, and GitOps. This
+    rule is a correlation anchor only; do not alert standalone. Baseline the
+    controller and automation identities.
+level: low

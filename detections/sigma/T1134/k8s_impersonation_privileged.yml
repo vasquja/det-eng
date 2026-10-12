@@ -1,0 +1,52 @@
+title: Kubernetes Impersonation of a Privileged Identity
+id: 76f0e919-65d7-4a8f-9101-38abda9e3012
+status: experimental
+description: |
+  Detects a Kubernetes impersonated request where the borrowed identity is
+  powerful. This is the TRR9009 severity layer on top of the chokepoint
+  (k8s_impersonation.yml): the chokepoint fires on every impersonated request, this
+  rule raises priority when the impersonated identity is a privileged group
+  (system:masters, cluster-admin, system:cluster-admins), a powerful built-in user
+  (system:admin, cluster-admin, system:kube-controller-manager), or a kube-system
+  service account. Impersonating any of these is an identity-swap straight to
+  cluster control, attributed to the borrowed identity.
+
+  impersonatedUser.groups is a JSON-serialized array in the audit backend, so the
+  group match uses |contains. The privileged-user matches are split into separate
+  selections (an exact-name list and a kube-system service-account prefix) and
+  OR-ed, because two keys in one selection would be AND-ed and never match.
+
+  This is an add-on, not a replacement: an unlisted but powerful target is still
+  caught by the base chokepoint rule. Metadata level is enough.
+references:
+  - https://attack.mitre.org/techniques/T1134/
+  - https://kubernetes.io/docs/reference/access-authn-authz/user-impersonation/
+author: det-eng
+date: 2026/10/12
+tags:
+  - attack.defense-evasion
+  - attack.privilege-escalation
+  - attack.t1134
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_impersonation:
+    impersonatedUser.username: '*'
+  sel_priv_groups:
+    impersonatedUser.groups|contains:
+      - '"system:masters"'
+      - '"cluster-admin"'
+      - '"system:cluster-admins"'
+  sel_priv_users:
+    impersonatedUser.username:
+      - 'system:admin'
+      - 'cluster-admin'
+      - 'system:kube-controller-manager'
+  sel_priv_sa:
+    impersonatedUser.username|startswith: 'system:serviceaccount:kube-system:'
+  condition: select_impersonation and (sel_priv_groups or sel_priv_users or sel_priv_sa)
+falsepositives:
+  - Break-glass or admin tooling that legitimately impersonates a powerful identity.
+    Triage every hit; baseline the known callers by the real actor (user.username).
+level: high

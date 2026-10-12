@@ -55,6 +55,18 @@ rules:
       - group: "rbac.authorization.k8s.io"
         resources: ["roles", "clusterroles", "rolebindings", "clusterrolebindings"]
 
+  # --- TRR9008: admission-control writes at Request (requestObject.webhooks) ---
+  # Delete fires the chokepoint at Metadata anyway, but Request is needed to GRADE a
+  # neuter (failurePolicy: Ignore / rules: []), which lives only in requestObject.
+  # create is recorded too, so the policy also serves a future malicious-webhook
+  # persistence report; the TRR9008 chokepoint still excludes create.
+  - level: Request
+    verbs: ["create", "update", "patch", "delete", "deletecollection"]
+    resources:
+      - group: "admissionregistration.k8s.io"
+        resources: ["validatingwebhookconfigurations", "mutatingwebhookconfigurations",
+                     "validatingadmissionpolicies", "validatingadmissionpolicybindings"]
+
   # --- TRR9006: Secret reads at Metadata (NEVER Request/RequestResponse) ---
   # Above every None rule, so a secret read is always recorded. Metadata carries
   # verb, objectRef, identity, source, client, and code -- but not the data.

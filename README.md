@@ -190,8 +190,9 @@ Proving the loop is automated:
   [`.github/workflows/validate-staticpod-detections.yml`](.github/workflows/validate-staticpod-detections.yml)
   (TRR9003 static pods), and
   [`.github/workflows/validate-apiserver-detections.yml`](.github/workflows/validate-apiserver-detections.yml)
-  (TRR9004–9007: RBAC, Jobs/CronJobs, Secrets, and dangerous pod specs, on one
-  shared `kind` cluster) spin up a `kind` cluster and run the emulation strict:
+  (TRR9004–9010: RBAC, Jobs/CronJobs, Secrets, dangerous pod specs, disabling
+  admission control, impersonation, and indicator removal, on one shared `kind`
+  cluster) spin up a `kind` cluster and run the emulation strict:
   a rule that does not fire on the emulation's own events fails the job. Each
   also runs the validator on the audit log captured *before* the emulation,
   where it must not pass — and the API server loop proves the rules fire on the
@@ -268,6 +269,21 @@ is copied to `trr0000/` and the maintainer assigns the final ID.
   Privileged, hostPath, host-namespace, and capability requests, caught at
   admission in the audit `requestObject` (Request level). A controller-template
   fallback and a static-pod gap round it out.
+
+- **[TRR9008 — Disabling Admission Control (T1562.001, Kubernetes)](research/trr9008/k8s/README.md)**
+  Deleting or neutering admission webhooks (OPA/Gatekeeper, Kyverno, Falco). One
+  chokepoint on `admissionregistration.k8s.io` writes, a Request-level rule that
+  grades a fail-open neuter, and an enforcer-workload-removal fallback.
+
+- **[TRR9009 — User Impersonation (T1134, Kubernetes)](research/trr9009/k8s/README.md)**
+  Acting as another user, group, or service account via the `impersonate` verb.
+  One presence rule on `impersonatedUser` catches every variant, including a
+  denied probe, where an allow-list rule does not.
+
+- **[TRR9010 — Indicator Removal (T1070, Kubernetes)](research/trr9010/k8s/README.md)**
+  Deleting Kubernetes Events (including the bulk `deletecollection` wipe upstream
+  misses) and the workloads that ran, with the node audit-log clearing as the
+  documented gap.
 
 See [`research/index.json`](research/index.json) for the machine-readable index.
 
