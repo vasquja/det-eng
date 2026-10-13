@@ -1,0 +1,70 @@
+title: GCP Workforce Identity Pool Provider Created or Updated Without an Attribute Condition
+id: 47ebcd85-6dbb-45ff-9b95-d26be23e3540
+status: experimental
+description: |
+  Detects creation or modification of a GCP Workforce Identity Pool PROVIDER that trusts an
+  external OIDC/SAML identity provider with NO attribute condition restricting which external
+  identities are accepted. Workforce pools federate ORGANISATION-scoped human identities
+  (not workloads), so a provider with an empty/absent attributeCondition admits every identity
+  the external IdP asserts. This is the TRR9020 trust leg -- the workforce twin of TRR9018's
+  workload-pool provider rule.
+
+  It keys on a Cloud Audit Log (Admin Activity, always on)
+  google.iam.admin.v1.WorkforcePools.CreateWorkforcePoolProvider or
+  UpdateWorkforcePoolProvider under serviceName iam.googleapis.com, on the begin
+  (operation.first) entry that carries the request body, suppressed when
+  protoPayload.request.workforcePoolProvider.attributeCondition carries a non-empty CEL guard.
+  Workforce pools are organisation-scoped, so these events land in the ORGANISATION's Admin
+  Activity log -- a project-only log sink misses them. Provider create/update are long-running
+  operations that emit two entries; the begin entry carries the request. Pair with the issuerUri
+  (an unexpected external IdP) and whether a workforce principalSet is bound to a privileged
+  role (the companion binding rule).
+references:
+  - https://attack.mitre.org/techniques/T1199/
+  - https://cloud.google.com/iam/docs/workforce-identity-federation
+  - https://cloud.google.com/iam/docs/audit-logging
+  - https://github.com/panther-labs/panther-analysis/blob/develop/rules/gcp_audit_rules/gcp_workforce_pool_created_or_updated.py
+author: det-eng
+date: 2026/10/13
+tags:
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1199
+  - attack.t1098.001
+logsource:
+  product: gcp
+  service: gcp.audit
+detection:
+  # CREATE: a new provider whose begin entry carries the full trust body (oidc/saml) and no
+  # real attribute condition.
+  selection_create:
+    protoPayload.serviceName: 'iam.googleapis.com'
+    protoPayload.methodName: 'google.iam.admin.v1.WorkforcePools.CreateWorkforcePoolProvider'
+    operation.first: true
+  selection_create_trust:
+    - protoPayload.request.workforcePoolProvider.oidc.issuerUri|contains: '://'
+    - protoPayload.request.workforcePoolProvider.saml.idpMetadataXml: '*'
+  # UPDATE: a field-masked update that TOUCHES the attribute condition. GCP updates are
+  # field-masked, so a provider loosened with `--attribute-condition=''` sends only
+  # {attributeCondition:""} with updateMask=attributeCondition and NO oidc/saml block -- which
+  # is why the Update is gated on the updateMask, not on re-sent trust fields. An update that
+  # only re-points the issuer (updateMask without attributeCondition) does NOT fire.
+  selection_update_touches_condition:
+    protoPayload.serviceName: 'iam.googleapis.com'
+    protoPayload.methodName: 'google.iam.admin.v1.WorkforcePools.UpdateWorkforcePoolProvider'
+    operation.first: true
+    protoPayload.request.updateMask|contains: 'attributeCondition'
+  filter_has_attribute_condition:
+    protoPayload.request.workforcePoolProvider.attributeCondition|re: '.+'
+  condition: ((selection_create and selection_create_trust) or selection_update_touches_condition) and not filter_has_attribute_condition
+falsepositives:
+  - Legitimate workforce-federation onboarding that intentionally uses a broad or no attribute
+    condition (rare but valid). Confirm the issuerUri and that workforce principals are only bound
+    to appropriately-scoped roles.
+  - A legitimate update that clears or tightens a provider's attribute condition is in scope of the
+    Update branch (it touches attributeCondition). A tightening is suppressed by the non-empty
+    filter; a legitimate clearing fires -- a real-but-noteworthy signal, same class as broad onboarding.
+  - Known limitation, a false negative -- the suppressor tests only that SOME attribute condition
+    is present, not that it is restrictive. A tautological CEL guard (gcloud's own example uses
+    "true") is non-empty and so is suppressed; catching a vacuous guard needs CEL evaluation.
+level: medium

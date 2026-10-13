@@ -1,0 +1,62 @@
+[
+  {
+    "logName": "organizations/123456789012/logs/cloudaudit.googleapis.com%2Factivity",
+    "operation": {
+      "id": "op-trr9020-.9",
+      "producer": "iam.googleapis.com",
+      "first": true
+    },
+    "protoPayload": {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      "serviceName": "iam.googleapis.com",
+      "methodName": "google.iam.admin.v1.WorkforcePools.CreateWorkforcePoolProvider",
+      "resourceName": "locations/global/workforcePools/trr9020-ext-pool/providers/attacker-idp",
+      "authenticationInfo": {
+        "principalEmail": "platform-ci@trr9020-prod.iam.gserviceaccount.com"
+      },
+      "requestMetadata": {
+        "callerIp": "10.0.4.9"
+      },
+      "request": {
+        "@type": "type.googleapis.com/google.iam.admin.v1.CreateWorkforcePoolProviderRequest",
+        "workforcePoolProvider": {
+          "oidc": {
+            "issuerUri": "https://attacker.example.com",
+            "clientId": "trr9020"
+          },
+          "attributeMapping": {
+            "google.subject": "assertion.sub"
+          },
+          "attributeCondition": "assertion.hd == 'trr9020-corp.example.com' && 'fte' in assertion.groups"
+        }
+      }
+    }
+  },
+  {
+    "logName": "organizations/123456789012/logs/cloudaudit.googleapis.com%2Factivity",
+    "protoPayload": {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      "serviceName": "cloudresourcemanager.googleapis.com",
+      "methodName": "SetIamPolicy",
+      "resourceName": "organizations/123456789012",
+      "authenticationInfo": {
+        "principalEmail": "platform-ci@trr9020-prod.iam.gserviceaccount.com"
+      },
+      "requestMetadata": {
+        "callerIp": "10.0.4.9"
+      },
+      "serviceData": {
+        "@type": "type.googleapis.com/google.iam.v1.logging.AuditData",
+        "policyDelta": {
+          "bindingDeltas": [
+            {
+              "action": "ADD",
+              "role": "roles/viewer",
+              "member": "principalSet://iam.googleapis.com/locations/global/workforcePools/trr9020-ext-pool/*"
+            }
+          ]
+        }
+      }
+    }
+  }
+]

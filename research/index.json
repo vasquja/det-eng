@@ -744,6 +744,105 @@
           "url": "../atomics/T1537/src/emulate_aws_public_exposure.sh"
         }
       }
+    },
+    {
+      "name": "GCP Workforce Identity Federation Abuse (GCP)",
+      "id": "TRR9020",
+      "tactics": [
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1199",
+        "T1098.001"
+      ],
+      "platforms": [
+        "GCP"
+      ],
+      "procedures": {
+        "A": "Full backdoor: workforce pool + provider + privileged binding",
+        "B": "Loosen an existing workforce provider trust",
+        "C": "Bind a workforce principalSet to a privileged role",
+        "D": "Use of the backdoor (sign-in / token exchange) -- gap"
+      },
+      "pub_date": "2026-10-13",
+      "last_update": "2026-10-13",
+      "path": "trr9020/gcp/README.md",
+      "tests": {
+        "C": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1199/src/emulate_gcp_workforce.sh"
+        }
+      }
+    },
+    {
+      "name": "AWS Public Resource Exposure via ACLs and the Service Long-Tail (AWS)",
+      "id": "TRR9021",
+      "tactics": [
+        "Exfiltration"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1537"
+      ],
+      "platforms": [
+        "AWS"
+      ],
+      "procedures": {
+        "A": "S3 bucket ACL grants public access",
+        "B": "EventBridge event bus made public",
+        "C": "EFS file system policy made public",
+        "D": "Glue Data Catalog resource policy made public",
+        "E": "SSM document shared publicly"
+      },
+      "pub_date": "2026-10-13",
+      "last_update": "2026-10-13",
+      "path": "trr9021/aws/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1537/src/emulate_aws_public_exposure_longtail.sh"
+        }
+      }
+    },
+    {
+      "name": "Entra Federated Service-Principal Sign-In Abuse (Azure)",
+      "id": "TRR9023",
+      "tactics": [
+        "Defense Evasion",
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1078.004",
+        "T1550.001"
+      ],
+      "platforms": [
+        "Azure"
+      ],
+      "procedures": {
+        "A": "Federated sign-in by a secret/cert-baseline SP",
+        "B": "First-seen overlay for a legitimately-federating SP",
+        "C": "Managed-identity FIC use (companion table)",
+        "D": "Cross-log correlation (write -> use) -- gap"
+      },
+      "pub_date": "2026-10-13",
+      "last_update": "2026-10-13",
+      "path": "trr9023/azr/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1078.004/src/emulate_entra_sp_fic_signin.sh"
+        }
+      }
     }
   ]
 }

@@ -126,6 +126,9 @@ final ID on merge.
 | TRR9017  | T1528  | Illicit OAuth Consent Grant + Device-Code Phishing | Azure | [`trr9017/azr`](trr9017/azr/README.md) |
 | TRR9018  | T1098.001 | Workload Identity Federation Abuse | GCP | [`trr9018/gcp`](trr9018/gcp/README.md) |
 | TRR9019  | T1537  | Public / Cross-Account Resource Exposure | AWS | [`trr9019/aws`](trr9019/aws/README.md) |
+| TRR9020  | T1199  | Workforce Identity Federation Abuse | GCP | [`trr9020/gcp`](trr9020/gcp/README.md) |
+| TRR9021  | T1537  | Public Resource Exposure (ACLs + service long-tail) | AWS | [`trr9021/aws`](trr9021/aws/README.md) |
+| TRR9023  | T1078.004 | Federated Service-Principal Sign-In Abuse | Azure | [`trr9023/azr`](trr9023/azr/README.md) |
 
 ## How to start a new TRR
 

@@ -1,0 +1,161 @@
+[
+  {
+    "eventVersion": "1.09",
+    "userIdentity": {
+      "type": "IAMUser",
+      "arn": "arn:aws:iam::123456789012:user/trr9021-operator",
+      "accountId": "123456789012",
+      "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+      "userName": "trr9021-operator"
+    },
+    "eventTime": "2026-10-13T12:00:00Z",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutBucketAcl",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "198.51.100.23",
+    "userAgent": "aws-cli/2.15.30",
+    "requestParameters": {
+      "bucketName": "trr9021-exposed-bucket",
+      "AccessControlPolicy": {
+        "AccessControlList": {
+          "Grant": [
+            {
+              "Grantee": {
+                "Type": "Group",
+                "URI": "http://acs.amazonaws.com/groups/global/AllUsers"
+              },
+              "Permission": "READ"
+            }
+          ]
+        },
+        "Owner": {
+          "ID": "ownercanonicalidtrr9021"
+        }
+      }
+    },
+    "responseElements": null,
+    "requestID": "req-PutBucketAcl",
+    "eventID": "evt-PutBucketAcl-23",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management"
+  },
+  {
+    "eventVersion": "1.09",
+    "userIdentity": {
+      "type": "IAMUser",
+      "arn": "arn:aws:iam::123456789012:user/trr9021-operator",
+      "accountId": "123456789012",
+      "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+      "userName": "trr9021-operator"
+    },
+    "eventTime": "2026-10-13T12:00:00Z",
+    "eventSource": "events.amazonaws.com",
+    "eventName": "PutPermission",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "198.51.100.23",
+    "userAgent": "aws-cli/2.15.30",
+    "requestParameters": {
+      "eventBusName": "trr9021-bus",
+      "action": "events:PutEvents",
+      "principal": "*",
+      "statementId": "trr9021-open-bus"
+    },
+    "responseElements": null,
+    "requestID": "req-PutPermission",
+    "eventID": "evt-PutPermission-23",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management"
+  },
+  {
+    "eventVersion": "1.09",
+    "userIdentity": {
+      "type": "IAMUser",
+      "arn": "arn:aws:iam::123456789012:user/trr9021-operator",
+      "accountId": "123456789012",
+      "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+      "userName": "trr9021-operator"
+    },
+    "eventTime": "2026-10-13T12:00:00Z",
+    "eventSource": "elasticfilesystem.amazonaws.com",
+    "eventName": "PutFileSystemPolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "198.51.100.23",
+    "userAgent": "aws-cli/2.15.30",
+    "requestParameters": {
+      "fileSystemId": "fs-trr9021example",
+      "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"elasticfilesystem:ClientMount\"}]}"
+    },
+    "responseElements": null,
+    "requestID": "req-PutFileSystemPolicy",
+    "eventID": "evt-PutFileSystemPolicy-23",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management"
+  },
+  {
+    "eventVersion": "1.09",
+    "userIdentity": {
+      "type": "IAMUser",
+      "arn": "arn:aws:iam::123456789012:user/trr9021-operator",
+      "accountId": "123456789012",
+      "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+      "userName": "trr9021-operator"
+    },
+    "eventTime": "2026-10-13T12:00:00Z",
+    "eventSource": "glue.amazonaws.com",
+    "eventName": "PutResourcePolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "198.51.100.23",
+    "userAgent": "aws-cli/2.15.30",
+    "requestParameters": {
+      "policyInJson": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"glue:GetTable\",\"Resource\":\"arn:aws:glue:us-east-1:123456789012:table/trr9021/*\"}]}"
+    },
+    "responseElements": null,
+    "requestID": "req-PutResourcePolicy",
+    "eventID": "evt-PutResourcePolicy-23",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management"
+  },
+  {
+    "eventVersion": "1.09",
+    "userIdentity": {
+      "type": "IAMUser",
+      "arn": "arn:aws:iam::123456789012:user/trr9021-operator",
+      "accountId": "123456789012",
+      "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+      "userName": "trr9021-operator"
+    },
+    "eventTime": "2026-10-13T12:00:00Z",
+    "eventSource": "ssm.amazonaws.com",
+    "eventName": "ModifyDocumentPermission",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "198.51.100.23",
+    "userAgent": "aws-cli/2.15.30",
+    "requestParameters": {
+      "name": "trr9021-doc",
+      "permissionType": "Share",
+      "accountIdsToAdd": [
+        "All"
+      ]
+    },
+    "responseElements": null,
+    "requestID": "req-ModifyDocumentPermission",
+    "eventID": "evt-ModifyDocumentPermission-23",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management"
+  }
+]

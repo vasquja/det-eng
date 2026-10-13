@@ -1,0 +1,59 @@
+title: AWS Glue Data Catalog Resource Policy Grants Public Access
+id: 35d45a3c-1401-497e-9984-363c7e69a50b
+status: experimental
+description: |
+  Detects a Glue PutResourcePolicy that attaches a Data Catalog resource policy allowing the public
+  principal ("*" / {"AWS":"*"}) with no scoping condition, exposing catalog metadata (database,
+  table, and column definitions -- often including S3 locations) cross-account or publicly.
+
+  It keys on the default-logged CloudTrail management event glue.amazonaws.com / PutResourcePolicy,
+  matching an Allow + Principal "*" token in requestParameters.policyInJson and suppressing when a
+  scoping condition (aws:PrincipalOrgID / aws:SourceArn / aws:SourceAccount) is present.
+
+  CRITICAL disambiguation: three unrelated APIs are named PutResourcePolicy -- Glue
+  (glue.amazonaws.com, field policyInJson), Secrets Manager (secretsmanager.amazonaws.com, field
+  resourcePolicy -- covered by TRR9019), and CloudTrail itself (cloudtrail.amazonaws.com). This rule
+  pins eventSource = glue.amazonaws.com so it neither overlaps TRR9019's Secrets Manager rule nor
+  fires on CloudTrail's own call.
+references:
+  - https://attack.mitre.org/techniques/T1537/
+  - https://docs.aws.amazon.com/glue/latest/webapi/API_PutResourcePolicy.html
+  - https://docs.aws.amazon.com/glue/latest/dg/security_iam_resource-based-policy-examples.html
+author: det-eng
+date: 2026/10/13
+tags:
+  - attack.exfiltration
+  - attack.t1537
+  - attack.persistence
+  - attack.t1098
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_glue_policy:
+    eventSource: 'glue.amazonaws.com'
+    eventName: 'PutResourcePolicy'
+  selection_allow:
+    # Require an Allow statement, so a protective Deny / data-perimeter policy with Principal "*"
+    # does not fire.
+    requestParameters.policyInJson|re: '"Effect"\s*:\s*"Allow"'
+  selection_public_principal:
+    # Literal asterisk principal, string OR single-element array ["*"], matched with a regex so
+    # the '*' is NOT a Sigma wildcard.
+    requestParameters.policyInJson|re: '"(?:Principal|AWS)"\s*:\s*\[?\s*"\*"'
+  filter_scoped:
+    requestParameters.policyInJson|contains:
+      - 'aws:PrincipalOrgID'
+      - 'aws:SourceArn'
+      - 'aws:SourceAccount'
+      - 'aws:SourceVpc'
+      - 'aws:SourceOwner'
+  filter_failed:
+    errorCode: '*'
+  condition: selection_glue_policy and selection_allow and selection_public_principal and not filter_scoped and not filter_failed
+falsepositives:
+  - A catalog policy granting a named account scoped by aws:PrincipalOrgID is not public and is
+    excluded (common for cross-account Lake Formation / data-mesh sharing within an org).
+  - The eventSource pin means a public Secrets Manager or CloudTrail PutResourcePolicy does not
+    fire this rule.
+level: high

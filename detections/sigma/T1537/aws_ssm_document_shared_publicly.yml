@@ -1,0 +1,44 @@
+title: AWS SSM Document Shared Publicly
+id: dc661af4-eaa0-445b-ac9b-2f302155f543
+status: experimental
+description: |
+  Detects an SSM ModifyDocumentPermission that shares a Systems Manager document publicly -- the
+  account id "All" in requestParameters.accountIdsToAdd. A publicly shared SSM document is a known
+  data-exposure vector: documents embed commands, automation steps, and sometimes parameters,
+  secrets, or internal references that any AWS account can then read.
+
+  It keys on the default-logged CloudTrail management event ssm.amazonaws.com /
+  ModifyDocumentPermission whose requestParameters.accountIdsToAdd contains "All"
+  (case-insensitive; the CLI constrains the value to (?i)all | a 12-digit account id), requiring
+  success (no errorCode). The remove direction (accountIdsToRemove) is a de-exposure and is
+  excluded -- the rule only matches the add list.
+references:
+  - https://attack.mitre.org/techniques/T1537/
+  - https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_ModifyDocumentPermission.html
+  - https://docs.aws.amazon.com/cli/latest/reference/ssm/modify-document-permission.html
+  - https://hub.powerpipe.io/mods/turbot/tailpipe-mod-aws-cloudtrail-log-detections/benchmarks/detection.ssm_document_shared_publicly
+author: det-eng
+date: 2026/10/13
+tags:
+  - attack.exfiltration
+  - attack.t1537
+  - attack.persistence
+  - attack.t1098
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_ssm_share:
+    eventSource: 'ssm.amazonaws.com'
+    eventName: 'ModifyDocumentPermission'
+  selection_public:
+    requestParameters.accountIdsToAdd|contains: '"All"'
+  filter_failed:
+    errorCode: '*'
+  condition: selection_ssm_share and selection_public and not filter_failed
+falsepositives:
+  - Intentionally public SSM documents (community automation, AWS-published documents); allowlist
+    by document name or owner.
+  - A share to a specific named account (a 12-digit account id in accountIdsToAdd) does not match
+    the "All" discriminator.
+level: high

@@ -76,3 +76,44 @@ atomic_tests:
         description: Path to the atomic source directory.
         type: string
         default: PathToAtomicsFolder/T1537/src
+
+  - name: "TRR9021.AWS.B — EventBridge event bus made public"
+    auto_generated_guid: 7c8d9e01-9021-4a1b-9c21-1a2b3c4d5e61
+    description: |
+      Grants Principal "*" permission to put events on a throwaway EventBridge bus with no
+      Condition, then revokes it.
+      Chokepoint: CloudTrail events.amazonaws.com / PutPermission with principal "*" and no
+      scoping condition (an org-scoped aws:PrincipalOrgID grant is excluded).
+      Rule: detections/sigma/T1537/aws_eventbridge_bus_made_public.yml
+    supported_platforms:
+      - iaas:aws
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_aws_public_exposure_longtail.sh b
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1537/src
+
+  - name: "TRR9021.AWS.E — SSM document shared publicly"
+    auto_generated_guid: 7c8d9e01-9021-4b2c-8d32-2b3c4d5e6f72
+    description: |
+      Shares a throwaway SSM document with the public "All" account id, then un-shares it.
+      Chokepoint: CloudTrail ssm.amazonaws.com / ModifyDocumentPermission with accountIdsToAdd
+      containing "All".
+      Rule: detections/sigma/T1537/aws_ssm_document_shared_publicly.yml
+    supported_platforms:
+      - iaas:aws
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_aws_public_exposure_longtail.sh e
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1537/src

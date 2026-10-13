@@ -1,0 +1,62 @@
+[
+  {
+    "logName": "organizations/123456789012/logs/cloudaudit.googleapis.com%2Factivity",
+    "operation": {
+      "id": "op-trr9020-23",
+      "producer": "iam.googleapis.com",
+      "first": true
+    },
+    "protoPayload": {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      "serviceName": "iam.googleapis.com",
+      "methodName": "google.iam.admin.v1.WorkforcePools.CreateWorkforcePoolProvider",
+      "resourceName": "locations/global/workforcePools/trr9020-ext-pool/providers/attacker-idp",
+      "authenticationInfo": {
+        "principalEmail": "mallory@example.com"
+      },
+      "requestMetadata": {
+        "callerIp": "198.51.100.23"
+      },
+      "request": {
+        "@type": "type.googleapis.com/google.iam.admin.v1.CreateWorkforcePoolProviderRequest",
+        "workforcePoolProvider": {
+          "oidc": {
+            "issuerUri": "https://attacker.example.com",
+            "clientId": "trr9020"
+          },
+          "attributeMapping": {
+            "google.subject": "assertion.sub"
+          },
+          "attributeCondition": ""
+        }
+      }
+    }
+  },
+  {
+    "logName": "organizations/123456789012/logs/cloudaudit.googleapis.com%2Factivity",
+    "protoPayload": {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      "serviceName": "cloudresourcemanager.googleapis.com",
+      "methodName": "SetIamPolicy",
+      "resourceName": "organizations/123456789012",
+      "authenticationInfo": {
+        "principalEmail": "mallory@example.com"
+      },
+      "requestMetadata": {
+        "callerIp": "198.51.100.23"
+      },
+      "serviceData": {
+        "@type": "type.googleapis.com/google.iam.v1.logging.AuditData",
+        "policyDelta": {
+          "bindingDeltas": [
+            {
+              "action": "ADD",
+              "role": "roles/owner",
+              "member": "principalSet://iam.googleapis.com/locations/global/workforcePools/trr9020-ext-pool/*"
+            }
+          ]
+        }
+      }
+    }
+  }
+]

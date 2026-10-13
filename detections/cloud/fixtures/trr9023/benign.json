@@ -1,0 +1,26 @@
+[
+  {
+    "time": "2026-10-13T12:00:00Z",
+    "resourceId": "/tenants/a17c0ff3-11aa-4bb2-8cc3-99ddeeff0011/providers/Microsoft.aadiam",
+    "category": "ServicePrincipalSignInLogs",
+    "operationName": "Sign-in activity",
+    "properties": {
+      "id": "sp-signin-trr9023-ben",
+      "servicePrincipalName": "trr9023-app",
+      "servicePrincipalId": "sp0a1b2c3-trr9023-4d5e-8f60-aabbccddeeff",
+      "appId": "c4d5e6f7-9023-4a0b-9c1d-2e3f4a5b6c7d",
+      "federatedCredentialId": "",
+      "clientCredentialType": "clientSecret",
+      "servicePrincipalCredentialKeyId": "key-trr9023-1111-4222-8333-secretkey0000",
+      "servicePrincipalCredentialThumbprint": "",
+      "resultType": 0,
+      "resultSignature": "SUCCESS",
+      "status": {
+        "errorCode": 0
+      },
+      "ipAddress": "198.51.100.23",
+      "resourceDisplayName": "Microsoft Graph",
+      "resourceServicePrincipalId": "graph-sp-0000"
+    }
+  }
+]
