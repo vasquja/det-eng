@@ -74,7 +74,15 @@ detection:
       # egress prefixes.
       - '203.0.113.0/24'
       - '2001:db8::/32'
-  condition: selection_iam_user and (id_akia or id_aida) and selection_orientation_or_enum and not filter_known_egress
+  filter_service_source:
+    # An AWS service acting on behalf of the identity logs a service DNS name (e.g.
+    # athena.amazonaws.com) or the literal "AWS Internal" as sourceIPAddress instead of
+    # an IP; that is benign automation, not a leaked-key attacker, and would otherwise
+    # bypass the egress allowlist. A real attacker with the key always presents a client IP.
+    sourceIPAddress|endswith: '.amazonaws.com'
+  filter_internal_source:
+    sourceIPAddress: 'AWS Internal'
+  condition: selection_iam_user and (id_akia or id_aida) and selection_orientation_or_enum and not filter_known_egress and not filter_service_source and not filter_internal_source
 falsepositives:
   - Long-term IAM-user keys legitimately used from a new IP -- CI/CD runners and
     serverless with rotating egress, developers on travel/VPN, new SaaS integrations,
@@ -83,4 +91,7 @@ falsepositives:
     source CIDR) and require the new-source overlay before alerting.
   - sts:GetCallerIdentity is extremely high-volume; pair the new-source overlay with
     the enumeration burst before alerting.
+  - An AWS service making a call attributed to the IAM user (sourceIPAddress is a service
+    DNS name such as athena.amazonaws.com, or the literal "AWS Internal") is benign
+    automation, not a leaked-key attacker; it is excluded by the service-source filters.
 level: medium
