@@ -24,7 +24,7 @@ description: |
   source-IP allowlist plus the oidc.eks provenance -- a different, EKS-specific signal with a
   different false-positive profile. There is NO GuardDuty finding for off-cluster IRSA credential
   use (InstanceCredentialExfiltration is EC2 instance-profile only; ResourceCredentialExfiltration
-  covers EC2/ECS/Lambda, not classic IRSA), so this CloudTrail rule is the PRIMARY detection, not a
+  covers ECS/Lambda, not classic IRSA), so this CloudTrail rule is the PRIMARY detection, not a
   backstop. EKS Pod Identity is a different mechanism (eks-auth:AssumeRoleForPodIdentity) and is not
   covered here.
 references:
@@ -75,7 +75,9 @@ falsepositives:
     STS over a com.amazonaws.<region>.sts VPC interface endpoint -- allowlist those CIDRs (the
     node-ENI private ranges and the NAT/EIP public ranges), or every IRSA exchange looks off-cluster.
   - Clusters egressing over IPv6 (dual-stack / egress-only internet gateway) need the account's IPv6
-    egress prefixes in the allowlist.
+    egress prefixes in the allowlist, entered in CloudTrail's canonical compressed lowercase form on
+    a prefix the textual |cidr backend can represent (nibble boundary) -- otherwise the match is
+    unreliable.
   - Hybrid egress via Direct Connect / VPN / Transit Gateway makes IRSA exchanges appear from
     on-prem or public IPs; suppress on the gateway CIDR.
   - Residual false negative -- a token replayed from WITHIN the cluster's own egress (a compromised

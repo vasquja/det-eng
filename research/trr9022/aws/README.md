@@ -27,11 +27,13 @@ projected service-account token off a pod's volume is already the subject of
 `T1552.007` (Unsecured Credentials: Container API); that is the upstream enabler and is
 out of scope here. No emulation in Stratus Red Team or Atomic Red Team steals an IRSA
 web-identity token and uses it off-cluster (Stratus ships the GCP equivalent,
-`use-compute-sa-outside-gcp`, but no EKS IRSA one). One production detection for the
-pattern exists — Elastic's "AssumeRoleWithWebIdentity from a Kubernetes service account
-and an external ASN" — and this report is honestly differentiated from it (below);
-SigmaHQ, Panther, and Splunk ESCU ship none, so the Sigma rules here are the first for
-this behavior in those ecosystems.
+`use-compute-sa-outside-gcp`, but no EKS IRSA one). The only prior production detections
+are Elastic's: two prebuilt rules — "AssumeRoleWithWebIdentity from a Kubernetes service
+account and an external ASN" (a CloudTrail rule on the exchange leg) and "AWS Lateral
+Movement from Kubernetes SA via AssumeRoleWithWebIdentity" (an ES|QL correlation rule on
+the use leg) — and this report is honestly differentiated from both (below). SigmaHQ,
+Panther, and Splunk ESCU ship none, so the Sigma rules here are the first for this
+behavior in those ecosystems.
 
 This is the EKS sibling of TRR9011 (EC2 instance-role credentials used off-instance),
 with a **cleaner, non-forgeable provenance anchor** and — unlike TRR9011 — **no
@@ -119,7 +121,7 @@ CloudTrail record**; it has to be joined against the cluster's egress. TRR9011 c
 on GuardDuty, which does this join natively for EC2 instance roles
 (`InstanceCredentialExfiltration.OutsideAWS` / `.InsideAWS`). **For EKS IRSA there is no
 equivalent finding:** `InstanceCredentialExfiltration` is EC2-instance-profile only, and
-the newer `ResourceCredentialExfiltration` covers EC2 / ECS / Lambda (endpoint-delivered,
+the newer `ResourceCredentialExfiltration` covers ECS / Lambda (endpoint-delivered,
 resource-bound sessions) but **not** a classic IRSA `AssumeRoleWithWebIdentity` session,
 which carries no resource binding for GuardDuty to join. GuardDuty's EKS features do not
 close this either — EKS Protection reads the Kubernetes audit log (not AWS IAM
@@ -292,8 +294,14 @@ enrichment and breaks on corporate proxy / VPN egress and on `AMAZON-02` ranges.
 report keys on an **enrichment-free source-IP allowlist** plus **`oidc.eks` provenance**
 — a different signal with a different false-positive profile, scoped strictly to EKS
 IRSA rather than any Kubernetes service account. Both share the service-account-subject
-and `AssumeRoleWithWebIdentity` predicates. SigmaHQ, Panther, and Splunk ESCU ship no
-equivalent.
+and `AssumeRoleWithWebIdentity` predicates. Elastic's second rule, "AWS Lateral Movement
+from Kubernetes SA via AssumeRoleWithWebIdentity", is the nearest prior art to Strategy 2
+(the use leg): it is an ES|QL **correlation** rule that groups by access key / source IP /
+ASN and fires on an exchange followed by multiple post-assume actions — a volume/behavioral
+heuristic with no off-cluster predicate. Strategy 2 differs: it fires on a **single**
+off-cluster `AssumedRole` event keyed on the `oidc.eks` `federatedProvider` and the
+source-IP allowlist, needing no correlation window or enrichment. SigmaHQ, Panther, and
+Splunk ESCU ship no equivalent of either leg.
 
 **Demonstrated gaps.** As in Procedure D: in-egress replay (allowlisted source), data-
 plane-only use (needs data events), cross-account IRSA (event in the resource account),
@@ -349,10 +357,13 @@ from an external IP (empty `webIdFederationData`). A pass therefore proves each 
 on the off-cluster source **and** on the EKS IRSA provenance, not on the identity shape,
 the marker, or the source IP alone.
 
-The off-cluster-IRSA detection idea has one prior production implementation (Elastic's
-external-ASN rule); the contribution here is the enrichment-free, EKS-scoped Sigma pair,
-the committed CloudTrail fixtures for both the exchange and use legs, and the emulation —
-none of which Stratus Red Team, Atomic Red Team, SigmaHQ, Panther, or Splunk ESCU ship.
+The off-cluster-IRSA detection idea has prior production art — Elastic's two rules (the
+external-ASN exchange rule and the ES|QL lateral-movement correlation on the use leg) —
+differentiated above; the contribution here is the enrichment-free, EKS-scoped Sigma pair
+(a single-event off-cluster signal on both legs, no correlation window or ASN
+enrichment), the committed CloudTrail fixtures for both the exchange and use legs, and the
+emulation — none of which Stratus Red Team, Atomic Red Team, SigmaHQ, Panther, or Splunk
+ESCU ship.
 
 ## References
 
@@ -369,6 +380,8 @@ none of which Stratus Red Team, Atomic Red Team, SigmaHQ, Panther, or Splunk ESC
 - AWS, GuardDuty IAM finding types (InstanceCredentialExfiltration /
   ResourceCredentialExfiltration scope): <https://docs.aws.amazon.com/guardduty/latest/ug/guardduty_finding-types-iam.html>
 - Elastic, AWS AssumeRoleWithWebIdentity from a Kubernetes SA and External ASN (prior
-  art): <https://www.elastic.co/guide/en/security/current/aws-assumerolewithwebidentity-from-kubernetes-sa-and-external-asn.html>
+  art, exchange leg): <https://www.elastic.co/guide/en/security/current/aws-assumerolewithwebidentity-from-kubernetes-sa-and-external-asn.html>
+- Elastic, AWS Lateral Movement from Kubernetes SA via AssumeRoleWithWebIdentity (prior
+  art, use leg; ES|QL correlation): <https://github.com/elastic/detection-rules/pull/6740>
 - TRR method:
   <https://github.com/tired-labs/techniques/blob/main/docs/TECHNIQUE-RESEARCH-REPORT.md>
