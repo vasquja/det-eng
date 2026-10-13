@@ -1,0 +1,55 @@
+attack_technique: T1550.001
+display_name: "Use Alternate Authentication Material: Application Access Token (EKS IRSA off-cluster, AWS)"
+
+# Behavioral emulation for TRR9022. The detectable step is the OFF-CLUSTER USE of an EKS
+# IRSA (IAM Roles for Service Accounts) projected service-account token or the temporary
+# role credentials it mints. Lifting the token off the pod leaves no AWS API trace. The
+# live tests are READ-ONLY and need your own AWS account / EKS cluster (not run in CI). CI
+# validation runs the paired Sigma rules over the committed CloudTrail fixtures in
+# detections/cloud/fixtures/trr9022/ via detections/validate_cloud_detections.py.
+
+atomic_tests:
+  - name: "TRR9022.AWS.A — off-cluster IRSA token exchange (AssumeRoleWithWebIdentity)"
+    auto_generated_guid: 7d0e1f2a-9022-4a1e-b3c1-7a2e5c0d2201
+    description: |
+      Replays a stolen EKS IRSA projected service-account token off-cluster via
+      sts:AssumeRoleWithWebIdentity to mint temporary role credentials. Read-only.
+      Chokepoint: sts:AssumeRoleWithWebIdentity whose responseElements.provider contains the
+      cluster oidc.eks OIDC provider and whose subjectFromWebIdentityToken is a
+      system:serviceaccount:* subject, from a sourceIPAddress outside the cluster's egress.
+      Rule: detections/sigma/T1550.001/aws_eks_irsa_web_identity_assumed_off_cluster.yml
+    supported_platforms:
+      - iaas:aws
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_eks_irsa_offpod.sh a
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1550.001/src
+
+  - name: "TRR9022.AWS.B — off-cluster use of a minted IRSA role session"
+    auto_generated_guid: 7d0e1f2a-9022-4b2f-8c4d-9b3f6d1e2202
+    description: |
+      Uses the minted IRSA role session (ASIA... temporary credentials) off-cluster
+      (sts:GetCallerIdentity and other calls). Read-only.
+      Chokepoint: userIdentity.type AssumedRole whose
+      sessionContext.webIdFederationData.federatedProvider contains the cluster oidc.eks OIDC
+      provider (non-empty only for IRSA, not EKS Pod Identity), from a sourceIPAddress outside
+      the cluster's egress.
+      Rule: detections/sigma/T1550.001/aws_eks_irsa_role_session_used_off_cluster.yml
+    supported_platforms:
+      - iaas:aws
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_eks_irsa_offpod.sh b
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1550.001/src

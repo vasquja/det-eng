@@ -1,0 +1,86 @@
+title: AWS EKS IRSA Web-Identity Role Assumed From Off-Cluster
+id: 810703bb-9bd2-48fe-851d-1545c63d79e9
+status: experimental
+description: |
+  Detects an sts:AssumeRoleWithWebIdentity call that redeems an EKS IRSA (IAM Roles for Service
+  Accounts) projected service-account OIDC token for temporary role credentials FROM A SOURCE THE
+  CLUSTER DOES NOT OWN -- the control-plane signature of an IRSA projected token stolen from a pod
+  and replayed off-cluster. This is the TRR9022 exchange-leg chokepoint and the EKS analog of
+  TRR9011 (EC2 IMDS creds used off-instance), with a cleaner, non-forgeable provenance anchor.
+
+  The in-record provenance is EKS-specific and set by STS from the validated OIDC token (the caller
+  cannot forge it): responseElements.provider is the cluster's IAM OIDC-provider ARN
+  (oidc.eks.<region>.amazonaws.com/id/<id>) and responseElements.subjectFromWebIdentityToken is the
+  pod's service account (system:serviceaccount:<ns>:<sa>). Those match ~100% of benign IRSA
+  exchanges -- they are provenance, not a detection. The discriminator is the off-cluster leg:
+  sourceIPAddress is not an address the cluster/account owns (worker-node NAT/EIP egress,
+  VPC-endpoint ENI, or node ENI CIDRs). A single CloudTrail record cannot prove "off-cluster", so
+  this rule APPROXIMATES it with a source-IP allowlist you must baseline (RFC1918 plus the account's
+  NAT/EIP IPv4 egress AND its IPv6 egress prefixes).
+
+  Scope / differentiation: keying on oidc.eks keeps this to EKS IRSA and excludes GitHub Actions and
+  other web-identity consumers (a different provider). Unlike Elastic's sibling rule, which keys on
+  an enriched external ASN (source.as.organization.name not Amazon), this keys on an enrichment-free
+  source-IP allowlist plus the oidc.eks provenance -- a different, EKS-specific signal with a
+  different false-positive profile. There is NO GuardDuty finding for off-cluster IRSA credential
+  use (InstanceCredentialExfiltration is EC2 instance-profile only; ResourceCredentialExfiltration
+  covers ECS/Lambda, not classic IRSA), so this CloudTrail rule is the PRIMARY detection, not a
+  backstop. EKS Pod Identity is a different mechanism (eks-auth:AssumeRoleForPodIdentity) and is not
+  covered here.
+references:
+  - https://attack.mitre.org/techniques/T1550/001/
+  - https://attack.mitre.org/techniques/T1078/004/
+  - https://docs.aws.amazon.com/IAM/latest/UserGuide/cloudtrail-integration.html
+  - https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-event-reference-user-identity.html
+  - https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts.html
+author: det-eng
+date: 2026/10/13
+tags:
+  - attack.defense-evasion
+  - attack.t1550.001
+  - attack.lateral-movement
+  - attack.t1078.004
+  - attack.credential-access
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_exchange:
+    eventSource: 'sts.amazonaws.com'
+    eventName: 'AssumeRoleWithWebIdentity'
+  selection_eks_irsa:
+    # STS-populated from the validated OIDC token; the EKS cluster OIDC provider ARN scopes this to
+    # IRSA and excludes GitHub Actions / other OIDC consumers (a different provider host).
+    responseElements.provider|contains: 'oidc.eks'
+  selection_k8s_sa:
+    # The OIDC sub is the pod's Kubernetes service account; always this shape for IRSA.
+    responseElements.subjectFromWebIdentityToken|startswith: 'system:serviceaccount:'
+  filter_cluster_owned_source:
+    # PLACEHOLDERS: replace 203.0.113.0/24 and 2001:db8::/32 with your cluster/account egress --
+    # NAT-gateway / Elastic-IP IPv4 CIDRs, the worker-node subnet CIDRs, STS VPC-endpoint ENI
+    # ranges, and your IPv6 egress prefixes. RFC1918 + CGNAT cover node-ENI / VPC-endpoint private
+    # IPs; a pod that egresses over IPv6 or a public-subnet public IPv4 otherwise looks off-cluster.
+    sourceIPAddress|cidr:
+      - '10.0.0.0/8'
+      - '172.16.0.0/12'
+      - '192.168.0.0/16'
+      - '100.64.0.0/10'
+      - '203.0.113.0/24'
+      - '2001:db8::/32'
+  filter_failed:
+    errorCode: '*'
+  condition: selection_exchange and selection_eks_irsa and selection_k8s_sa and not filter_cluster_owned_source and not filter_failed
+falsepositives:
+  - Worker nodes that egress to the global STS endpoint through a NAT gateway / Elastic IP, or reach
+    STS over a com.amazonaws.<region>.sts VPC interface endpoint -- allowlist those CIDRs (the
+    node-ENI private ranges and the NAT/EIP public ranges), or every IRSA exchange looks off-cluster.
+  - Clusters egressing over IPv6 (dual-stack / egress-only internet gateway) need the account's IPv6
+    egress prefixes in the allowlist, entered in CloudTrail's canonical compressed lowercase form on
+    a prefix the textual |cidr backend can represent (nibble boundary) -- otherwise the match is
+    unreliable.
+  - Hybrid egress via Direct Connect / VPN / Transit Gateway makes IRSA exchanges appear from
+    on-prem or public IPs; suppress on the gateway CIDR.
+  - Residual false negative -- a token replayed from WITHIN the cluster's own egress (a compromised
+    node, or an attacker pivoting through cluster egress) shows an allowlisted source IP and is not
+    matched; pair with a first-seen overlay on the service account / provider.
+level: high

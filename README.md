@@ -249,7 +249,8 @@ Proving the loop is automated:
   abuse, Cognito unauthenticated identity-pool abuse, Entra illicit OAuth consent
   and device-code phishing, GCP Workload and Workforce Identity Federation abuse,
   public / cross-account AWS resource exposure across policies, ACLs and the
-  service long-tail, and Entra federated service-principal sign-in). Cloud has no
+  service long-tail, Entra federated service-principal sign-in, and EKS IRSA
+  credentials used off-cluster). Cloud has no
   free CI target, so the loop
   runs the same pySigma backend over committed, schema-faithful **recorded**
   attack/benign log fixtures: every rule must fire on its attack fixture and match
@@ -403,6 +404,13 @@ is copied to `trr0000/` and the maintainer assigns the final ID.
   The use-side of TRR9013's FIC backdoor: a service principal signs in with a federated identity
   credential, keyed on `FederatedCredentialId` in the Entra SP sign-in log. The sign-in log carries
   no issuer, so it is a credential-type/anomaly signal; cross-log correlation is the gap.
+
+- **[TRR9022 — EKS IRSA Credentials Used Off-Cluster (T1550.001, AWS)](research/trr9022/aws/README.md)**
+  The EKS sibling of TRR9011: a pod's IRSA projected token (or the credentials it mints) used from
+  off-cluster, keyed on the non-forgeable `oidc.eks` federation provenance
+  (`responseElements.provider` / `webIdFederationData.federatedProvider`) plus an off-egress source
+  IP. Unlike TRR9011 there is no GuardDuty backstop, so the CloudTrail rule is primary; differentiated
+  from Elastic's external-ASN rule and the first such rule in SigmaHQ.
 
 See [`research/index.json`](research/index.json) for the machine-readable index.
 
