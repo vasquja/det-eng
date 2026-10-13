@@ -1,0 +1,130 @@
+attack_technique: T1098.006
+display_name: "Account Manipulation: Additional Container Cluster Roles (Kubernetes RBAC)"
+
+atomic_tests:
+  - name: "Kubernetes - ClusterRoleBinding to a built-in ClusterRole"
+    description: |
+      Creates a ClusterRoleBinding that binds a throwaway ServiceAccount to the read-only
+      built-in `view` ClusterRole. An adversary would name `cluster-admin` instead; the
+      Kubernetes audit event (create clusterrolebindings in the rbac.authorization.k8s.io
+      API group) has the identical shape. The binding here grants only read access.
+    supported_platforms:
+      - containers
+    dependencies:
+      - description: |
+          kubectl is installed and the current context points at a cluster where the caller
+          can write cluster-scoped RBAC objects.
+        prereq_command: |
+          kubectl auth can-i create clusterrolebindings >/dev/null 2>&1
+        get_prereq_command: |
+          echo "Install kubectl and point your current context at a cluster you administer (e.g. a local kind/minikube cluster) with rights to write RBAC objects."
+    dependency_executor_name: bash
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash "$PathToAtomicsFolder/T1098.006/src/emulate.sh" a
+      cleanup_command: |
+        kubectl delete clusterrolebinding atomic-t1098006-crb-view --ignore-not-found
+        kubectl -n default delete serviceaccount atomic-t1098006-sa --ignore-not-found
+
+  - name: "Kubernetes - Namespaced RoleBinding that references a ClusterRole"
+    description: |
+      Creates a namespaced RoleBinding whose roleRef names a cluster-wide ClusterRole (`view`).
+      The binding lives in one namespace but reaches a cluster-scoped role; the distinguishing
+      detail is requestObject.roleRef.kind=ClusterRole, visible at the Request audit level.
+    supported_platforms:
+      - containers
+    dependencies:
+      - description: |
+          kubectl is installed and the current context points at a cluster where the caller
+          can write namespaced RoleBindings.
+        prereq_command: |
+          kubectl auth can-i create rolebindings >/dev/null 2>&1
+        get_prereq_command: |
+          echo "Install kubectl and point your current context at a cluster you administer (e.g. a local kind/minikube cluster) with rights to write RBAC objects."
+    dependency_executor_name: bash
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash "$PathToAtomicsFolder/T1098.006/src/emulate.sh" b
+      cleanup_command: |
+        kubectl -n default delete rolebinding atomic-t1098006-rb-view --ignore-not-found
+        kubectl -n default delete serviceaccount atomic-t1098006-sa --ignore-not-found
+
+  - name: "Kubernetes - Create a Wildcard ClusterRole"
+    description: |
+      Creates a read-only ClusterRole and a wildcard ClusterRole whose verbs and resources are
+      both set to '*'. The wildcard role is NEVER bound to any subject, so it grants nothing on
+      its own; it exists to emit the telemetry of a dangerous role definition
+      (requestObject.rules contains a '*' verb and a '*' resource).
+    supported_platforms:
+      - containers
+    dependencies:
+      - description: |
+          kubectl is installed and the current context points at a cluster where the caller
+          can write cluster-scoped RBAC objects.
+        prereq_command: |
+          kubectl auth can-i create clusterroles >/dev/null 2>&1
+        get_prereq_command: |
+          echo "Install kubectl and point your current context at a cluster you administer (e.g. a local kind/minikube cluster) with rights to write RBAC objects."
+    dependency_executor_name: bash
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash "$PathToAtomicsFolder/T1098.006/src/emulate.sh" c
+      cleanup_command: |
+        kubectl delete clusterrole atomic-t1098006-cr-benign atomic-t1098006-cr-wild --ignore-not-found
+
+  - name: "Kubernetes - ClusterRoleBinding to a Group Subject"
+    description: |
+      Creates a ClusterRoleBinding whose subject is a GROUP (a throwaway group that no principal
+      belongs to) bound to the read-only `view` ClusterRole. An adversary would name
+      `system:authenticated` to grant every authenticated user at once — that is a real
+      mass-grant and is documented only, never performed by this test. The group-subject binding
+      shape is what the telemetry captures.
+    supported_platforms:
+      - containers
+    dependencies:
+      - description: |
+          kubectl is installed and the current context points at a cluster where the caller
+          can write cluster-scoped RBAC objects.
+        prereq_command: |
+          kubectl auth can-i create clusterrolebindings >/dev/null 2>&1
+        get_prereq_command: |
+          echo "Install kubectl and point your current context at a cluster you administer (e.g. a local kind/minikube cluster) with rights to write RBAC objects."
+    dependency_executor_name: bash
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash "$PathToAtomicsFolder/T1098.006/src/emulate.sh" d
+      cleanup_command: |
+        kubectl delete clusterrolebinding atomic-t1098006-crb-grp --ignore-not-found
+
+  - name: "Kubernetes - Patch an Existing ClusterRole to Add a Rule"
+    description: |
+      Patches an existing ClusterRole to append a rule (verb=patch, not create). Amending an
+      existing role is the stealthy path that detections watching only `create` verbs miss.
+      The test creates the target role first if it is absent, then patches it to add a
+      read-only rule.
+    supported_platforms:
+      - containers
+    dependencies:
+      - description: |
+          kubectl is installed and the current context points at a cluster where the caller
+          can patch cluster-scoped RBAC objects.
+        prereq_command: |
+          kubectl auth can-i patch clusterroles >/dev/null 2>&1
+        get_prereq_command: |
+          echo "Install kubectl and point your current context at a cluster you administer (e.g. a local kind/minikube cluster) with rights to write RBAC objects."
+    dependency_executor_name: bash
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash "$PathToAtomicsFolder/T1098.006/src/emulate.sh" e
+      cleanup_command: |
+        kubectl delete clusterrole atomic-t1098006-cr-benign atomic-t1098006-cr-wild --ignore-not-found
