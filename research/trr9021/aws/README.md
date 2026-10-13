@@ -29,8 +29,12 @@ keys on that act.
 This TRR is the **sibling** of TRR9019. TRR9019 covered resource **policies** on S3, ECR, KMS, SNS,
 SQS, Secrets Manager, and Lambda, plus AMI / EBS / RDS snapshot sharing and the S3 Block Public
 Access family. TRR9021 covers the two surfaces TRR9019 scoped out: the **ACL field shape** of S3
-(`PutBucketAcl`), and the **long-tail services** EventBridge, EFS, Glue, and SSM. There is no
-`eventSource`, `eventName`, field-path, or fixture overlap between the two reports.
+(`PutBucketAcl`), and the **long-tail services** EventBridge, EFS, Glue, and SSM. The two reports
+share no fixtures and no rule. The only surface-level overlaps are disambiguated by `eventSource`:
+`PutResourcePolicy` is used by Glue here (`glue.amazonaws.com`, `policyInJson`) and by Secrets
+Manager in TRR9019 (`secretsmanager.amazonaws.com`, `resourcePolicy`), and the field
+`requestParameters.policy` is used by EFS here and by KMS in TRR9019 — in both cases the committed
+rules pin `eventSource`, so neither fires on the other's events.
 
 The novel, detectable contribution is split honestly:
 
@@ -416,8 +420,9 @@ benign-clean**. The attack fixture carries one event per procedure: `PutBucketAc
 `PutPermission` `principal "*"` with no condition for B, `PutFileSystemPolicy` `Principal "*"` for C,
 Glue `PutResourcePolicy` `Principal "*"` for D, and `ModifyDocumentPermission` `["All"]` for E. The
 benign fixture is the close negative control: the same APIs with the exposure removed — the bucket ACL
-to a named `CanonicalUser`, the event bus scoped by `aws:PrincipalOrgID`, the EFS and Glue policies to
-a named `{"AWS":"...:root"}` with an org condition, the SSM share to a named account — plus the
+to a named `CanonicalUser`, the event bus scoped by `aws:PrincipalOrgID`, the EFS policy to a named
+`{"AWS":"...:root"}` with an `aws:PrincipalOrgID` condition, the Glue policy to a named
+`{"AWS":"...:root"}` (no public principal), the SSM share to a named account — plus the
 Secrets Manager `PutResourcePolicy` `Principal "*"` confounder that the Glue rule must ignore. The pass
 proves the rules key on the public grantee and the missing scope, not on the API alone.
 

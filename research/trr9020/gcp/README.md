@@ -235,27 +235,36 @@ Admin Activity and are logged by default.
 
 Source: [`ddms/trr9020_gcp_a.json`](ddms/trr9020_gcp_a.json) (Arrows app format).
 
-**DDM summary.** The shaded node is the `cloudresourcemanager.googleapis.com` `SetIamPolicy`
-audit event whose `serviceData.policyDelta.bindingDeltas[]` adds `action` `ADD`, `role`
-`roles/owner`, and a `principalSet://…/workforcePools/<pool>/*` member — the backdoor
-chokepoint. It is preceded by the `CreateWorkforcePoolProvider` trust node
-(`request.workforcePoolProvider.oidc.issuerUri` set, `attributeCondition` empty), the second
-detection opportunity on this path.
+**DDM summary.** The green node bundles the adversary's three writes (create pool, add the
+external provider, bind the principalSet). The shaded node is the
+`cloudresourcemanager.googleapis.com` `SetIamPolicy` audit event whose
+`serviceData.policyDelta.bindingDeltas[]` adds `action` `ADD`, a privileged `role` (e.g.
+`roles/owner`), and a `principalSet://…/workforcePools/<pool>/*` member — the backdoor
+chokepoint (the binding rule). The provider-create write on the same path
+(`CreateWorkforcePoolProvider`, `oidc.issuerUri` set, empty `attributeCondition`) is a second,
+independent detection opportunity that the provider rule catches — diagrammed as its own
+chokepoint in Procedure B.
 
 ### Procedure B: Loosen an existing provider's trust  (`TRR9020.GCP.B`)
 
 The stealthiest variant. The adversary runs `UpdateWorkforcePoolProvider` on a real,
-legitimate-looking provider and blanks `attributeCondition` or broadens `attributeMapping`.
+legitimate-looking provider and blanks `attributeCondition` (or broadens `attributeMapping`).
 No resource binding is touched if the pool already holds one, so nothing new appears beside
 the edited provider.
 
 - **Prerequisites:** `iam.workforcePoolProviders.update` on the provider.
-- **Mechanics:** the begin entry (`operation.first == true`) carries the request body with
-  the loosened `attributeCondition`.
+- **Mechanics:** GCP updates are field-masked, so the begin entry (`operation.first == true`)
+  carries only the changed fields plus `updateMask`. A clear of the guard sends
+  `updateMask` = `attributeCondition` with an empty `attributeCondition` and no `oidc`/`saml`
+  block, which is why the rule keys the Update branch on the `updateMask`, not on re-sent trust
+  fields.
 - **Impact:** widens who can federate into an already-bound pool.
 - **Covered by:** the provider rule
-  (`gcp_workforce_pool_provider_no_attribute_condition`) — it fires on `Create` **or**
-  `Update` when the resulting provider has no real `attributeCondition`.
+  (`gcp_workforce_pool_provider_no_attribute_condition`) — it fires on `Create` with no real
+  condition, and on an `Update` whose `updateMask` touches `attributeCondition` and leaves it
+  empty. An update that only broadens `attributeMapping` or re-points `issuerUri` **without**
+  touching the condition is **not** detected by this stateless rule (a documented limitation —
+  enrich with the provider's resulting config).
 
 #### Detection Data Model — `TRR9020.GCP.B`
 

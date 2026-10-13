@@ -35,22 +35,35 @@ logsource:
   product: gcp
   service: gcp.audit
 detection:
-  selection_provider_write:
+  # CREATE: a new provider whose begin entry carries the full trust body (oidc/saml) and no
+  # real attribute condition.
+  selection_create:
     protoPayload.serviceName: 'iam.googleapis.com'
-    protoPayload.methodName:
-      - 'google.iam.admin.v1.WorkforcePools.CreateWorkforcePoolProvider'
-      - 'google.iam.admin.v1.WorkforcePools.UpdateWorkforcePoolProvider'
+    protoPayload.methodName: 'google.iam.admin.v1.WorkforcePools.CreateWorkforcePoolProvider'
     operation.first: true
-  selection_request_trust:
+  selection_create_trust:
     - protoPayload.request.workforcePoolProvider.oidc.issuerUri|contains: '://'
     - protoPayload.request.workforcePoolProvider.saml.idpMetadataXml: '*'
+  # UPDATE: a field-masked update that TOUCHES the attribute condition. GCP updates are
+  # field-masked, so a provider loosened with `--attribute-condition=''` sends only
+  # {attributeCondition:""} with updateMask=attributeCondition and NO oidc/saml block -- which
+  # is why the Update is gated on the updateMask, not on re-sent trust fields. An update that
+  # only re-points the issuer (updateMask without attributeCondition) does NOT fire.
+  selection_update_touches_condition:
+    protoPayload.serviceName: 'iam.googleapis.com'
+    protoPayload.methodName: 'google.iam.admin.v1.WorkforcePools.UpdateWorkforcePoolProvider'
+    operation.first: true
+    protoPayload.request.updateMask|contains: 'attributeCondition'
   filter_has_attribute_condition:
     protoPayload.request.workforcePoolProvider.attributeCondition|re: '.+'
-  condition: selection_provider_write and selection_request_trust and not filter_has_attribute_condition
+  condition: ((selection_create and selection_create_trust) or selection_update_touches_condition) and not filter_has_attribute_condition
 falsepositives:
   - Legitimate workforce-federation onboarding that intentionally uses a broad or no attribute
     condition (rare but valid). Confirm the issuerUri and that workforce principals are only bound
     to appropriately-scoped roles.
+  - A legitimate update that clears or tightens a provider's attribute condition is in scope of the
+    Update branch (it touches attributeCondition). A tightening is suppressed by the non-empty
+    filter; a legitimate clearing fires -- a real-but-noteworthy signal, same class as broad onboarding.
   - Known limitation, a false negative -- the suppressor tests only that SOME attribute condition
     is present, not that it is restrictive. A tautological CEL guard (gcloud's own example uses
     "true") is non-empty and so is suppressed; catching a vacuous guard needs CEL evaluation.

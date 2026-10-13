@@ -33,17 +33,24 @@ detection:
   selection_glue_policy:
     eventSource: 'glue.amazonaws.com'
     eventName: 'PutResourcePolicy'
+  selection_allow:
+    # Require an Allow statement, so a protective Deny / data-perimeter policy with Principal "*"
+    # does not fire.
+    requestParameters.policyInJson|re: '"Effect"\s*:\s*"Allow"'
   selection_public_principal:
-    # Literal asterisk principal, matched with a regex so the '*' is NOT a Sigma wildcard.
-    requestParameters.policyInJson|re: '"(?:Principal|AWS)"\s*:\s*"\*"'
+    # Literal asterisk principal, string OR single-element array ["*"], matched with a regex so
+    # the '*' is NOT a Sigma wildcard.
+    requestParameters.policyInJson|re: '"(?:Principal|AWS)"\s*:\s*\[?\s*"\*"'
   filter_scoped:
     requestParameters.policyInJson|contains:
       - 'aws:PrincipalOrgID'
       - 'aws:SourceArn'
       - 'aws:SourceAccount'
+      - 'aws:SourceVpc'
+      - 'aws:SourceOwner'
   filter_failed:
     errorCode: '*'
-  condition: selection_glue_policy and selection_public_principal and not filter_scoped and not filter_failed
+  condition: selection_glue_policy and selection_allow and selection_public_principal and not filter_scoped and not filter_failed
 falsepositives:
   - A catalog policy granting a named account scoped by aws:PrincipalOrgID is not public and is
     excluded (common for cross-account Lake Formation / data-mesh sharing within an org).

@@ -32,22 +32,32 @@ detection:
   selection_efs_policy:
     eventSource: 'elasticfilesystem.amazonaws.com'
     eventName: 'PutFileSystemPolicy'
+  selection_allow:
+    # Require an Allow statement, so a Deny-only policy (e.g. an enforce-in-transit-encryption
+    # policy: Effect Deny + Principal "*" + aws:SecureTransport=false) does not fire.
+    requestParameters.policy|re: '"Effect"\s*:\s*"Allow"'
   selection_public_principal:
-    # Literal asterisk principal, matched with a regex so the '*' is NOT a Sigma wildcard
-    # (a |contains '"AWS":"*"' would match any named principal "AWS":"arn:...").
-    requestParameters.policy|re: '"(?:Principal|AWS)"\s*:\s*"\*"'
+    # Literal asterisk principal, string OR single-element array ["*"], matched with a regex so
+    # the '*' is NOT a Sigma wildcard (a |contains '"AWS":"*"' would match any named principal).
+    requestParameters.policy|re: '"(?:Principal|AWS)"\s*:\s*\[?\s*"\*"'
   filter_scoped:
     requestParameters.policy|contains:
       - 'aws:PrincipalOrgID'
       - 'aws:SourceArn'
       - 'aws:SourceAccount'
       - 'aws:SourceVpc'
+      - 'aws:SourceOwner'
   filter_failed:
     errorCode: '*'
-  condition: selection_efs_policy and selection_public_principal and not filter_scoped and not filter_failed
+  condition: selection_efs_policy and selection_allow and selection_public_principal and not filter_scoped and not filter_failed
 falsepositives:
   - A file-system policy granting a named account scoped by aws:PrincipalOrgID / aws:SourceArn is
     not public and is excluded.
   - Intentionally shared file systems; allowlist by file-system ID. Pair with EFS Block Public
     Access status.
+  - Per-statement limitation -- the Allow and the Principal "*" are matched across the whole
+    document, so a policy that mixes a scoped Allow with a separate public Deny does not fire
+    (good), but one mixing a scoped Allow with a second public Allow statement is a true positive
+    that the stateless match cannot separate from the scoped statement. Decode per statement in a
+    production pipeline.
 level: high

@@ -45,12 +45,19 @@ detection:
     protoPayload.serviceName: 'cloudresourcemanager.googleapis.com'
     protoPayload.methodName|endswith: 'SetIamPolicy'
   selection_workforce_privileged_binding:
-    protoPayload.serviceData.policyDelta.bindingDeltas|re: '\{(?=[^}]*"action": "ADD")(?=[^}]*/workforcePools/)(?=[^}]*"role": "roles/(?:owner|editor|[^"]*[Aa]dmin[^"]*)")'
+    # Role lookahead is NOT anchored to the predefined "roles/" prefix, so a custom
+    # project/organisation role (projects/<id>/roles/... or organizations/<org>/roles/...) whose
+    # name carries owner/editor/admin is caught too; benign scoped roles (viewer, a reader custom
+    # role) do not match. Owner/Editor/Admin are case-insensitive via explicit classes.
+    protoPayload.serviceData.policyDelta.bindingDeltas|re: '\{(?=[^}]*"action": "ADD")(?=[^}]*/workforcePools/)(?=[^}]*"role": "[^"]*(?:[Oo]wner|[Ee]ditor|[Aa]dmin)[^"]*")'
   condition: selection_setiam and selection_workforce_privileged_binding
 falsepositives:
   - A legitimate break-glass admin group federated through a workforce pool and intentionally
     bound to a privileged role. Enrich with the pool provider's attributeCondition (does a
     no-condition provider exist?), whole-pool /* breadth, the actor, and the caller IP.
+  - Residual false negative -- a custom role that is privileged in effect but is NOT named with
+    owner/editor/admin is missed. The name is only a heuristic for privilege; the role's actual
+    permission set would be needed to catch it.
   - Structural sibling of the public-IAM-grant rule (both key on the same cloudresourcemanager
     SetIamPolicy delta); kept distinct here by the /workforcePools/ member and the privileged role.
 level: medium
