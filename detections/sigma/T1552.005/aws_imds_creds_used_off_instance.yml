@@ -64,10 +64,21 @@ detection:
       # subnet's auto-assigned public IPv4 will otherwise look off-instance.
       - '203.0.113.0/24'
       - '2001:db8::/32'
-  condition: selection_assumed_role and (provenance_ec2_role_delivery or provenance_instance_session_name) and not filter_account_owned_source
+  filter_service_source:
+    # An AWS service acting on behalf of the role logs a service DNS name (e.g.
+    # athena.amazonaws.com) or the literal "AWS Internal" as sourceIPAddress instead of
+    # an IP; that is benign automation, not off-instance use, and would otherwise bypass
+    # the IP allowlist. A real off-instance attacker always presents a client IP.
+    sourceIPAddress|endswith: '.amazonaws.com'
+  filter_internal_source:
+    sourceIPAddress: 'AWS Internal'
+  condition: selection_assumed_role and (provenance_ec2_role_delivery or provenance_instance_session_name) and not filter_account_owned_source and not filter_service_source and not filter_internal_source
 falsepositives:
   - NAT-gateway or Elastic-IP egress for instances in private subnets; allowlist the
     account's own NAT/EIP CIDRs.
+  - An AWS service making a call on behalf of the role (sourceIPAddress is a service DNS
+    name such as athena.amazonaws.com, or the literal "AWS Internal") is benign
+    automation, not off-instance use; it is excluded by the service-source filters.
   - Instances in a PUBLIC subnet with an auto-assigned public IPv4 reach AWS APIs
     through the Internet Gateway as their own public IP (not RFC1918, not an EIP, and
     rotated on stop/start), so they cannot be cleanly allowlisted by CIDR -- prefer VPC

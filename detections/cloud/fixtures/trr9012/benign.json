@@ -73,5 +73,32 @@
       "cipherSuite": "TLS_AES_128_GCM_SHA256",
       "clientProvidedHostHeader": "sts.us-east-1.amazonaws.com"
     }
+  },
+  {
+    "_comment": "SERVICE-SOURCE CONTROL: an AWS service (e.g. Athena) performing an enumeration call attributed to the IAM user logs sourceIPAddress 'athena.amazonaws.com' (not an IP). It matches identity+verb and would fire without the service-source filter, but it is benign service automation, not a leaked-key attacker from their own host -- the filter must exclude it.",
+    "eventVersion": "1.09",
+    "userIdentity": {
+      "type": "IAMUser",
+      "principalId": "AIDATRR9012EXAMPLE01",
+      "arn": "arn:aws:iam::123456789012:user/trr9012-analytics-user",
+      "accountId": "123456789012",
+      "accessKeyId": "AKIATRR9012EXAMPLE01",
+      "userName": "trr9012-analytics-user"
+    },
+    "eventTime": "2026-10-12T07:40:00Z",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "ListBuckets",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "athena.amazonaws.com",
+    "userAgent": "athena.amazonaws.com",
+    "requestParameters": null,
+    "responseElements": null,
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "requestID": "bb001277-9012-srvc-req-0000-0000-000",
+    "eventID": "bb001277-9012-srvc-evt-0000-0000-000"
   }
 ]

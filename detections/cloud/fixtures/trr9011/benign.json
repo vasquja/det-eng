@@ -138,5 +138,46 @@
     },
     "requestID": "f6a7b8c9-9011-ffff-req-0000-0000-000",
     "eventID": "f6a7b8c9-9011-ffff-evt-0000-0000-000"
+  },
+  {
+    "_comment": "SERVICE-SOURCE CONTROL: an AWS service action attributed to the instance role logs sourceIPAddress 'AWS Internal' (not an IP). It carries the instance-role provenance (ec2RoleDelivery) and would fire without the service-source filter (AWS Internal is not in the egress allowlist), but it is benign automation, not off-instance use -- the filter must exclude it.",
+    "eventVersion": "1.08",
+    "userIdentity": {
+      "type": "AssumedRole",
+      "principalId": "AROATRR9011EXAMPLEID0:i-0b7e3f9a2c1d4e5f6",
+      "arn": "arn:aws:sts::123456789012:assumed-role/trr9011-ssrf-demo-role/i-0b7e3f9a2c1d4e5f6",
+      "accountId": "123456789012",
+      "accessKeyId": "ASIATRR9011EXAMPLE88",
+      "sessionContext": {
+        "sessionIssuer": {
+          "type": "Role",
+          "principalId": "AROATRR9011EXAMPLEID0",
+          "arn": "arn:aws:iam::123456789012:role/trr9011-ssrf-demo-role",
+          "accountId": "123456789012",
+          "userName": "trr9011-ssrf-demo-role"
+        },
+        "webIdFederationData": {},
+        "attributes": {
+          "creationDate": "2026-10-12T14:20:00Z",
+          "mfaAuthenticated": "false"
+        },
+        "ec2RoleDelivery": "2.0"
+      }
+    },
+    "eventTime": "2026-10-12T14:20:05Z",
+    "eventSource": "ssm.amazonaws.com",
+    "eventName": "UpdateInstanceInformation",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "AWS Internal",
+    "userAgent": "aws-sdk-go/1.49.0 (go1.21.5; linux; amd64) amazon-ssm-agent/3.2",
+    "requestParameters": null,
+    "responseElements": null,
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "requestID": "aa001177-9011-aiaw-req-0000-0000-000",
+    "eventID": "aa001177-9011-aiaw-evt-0000-0000-000"
   }
 ]
