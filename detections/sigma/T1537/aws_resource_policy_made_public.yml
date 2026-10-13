@@ -49,39 +49,17 @@ detection:
       - 'SetTopicAttributes'
       - 'SetQueueAttributes'
   public_principal:
-    # Both encodings everywhere: S3 bucketPolicy is a nested object (spaced after JSON
-    # re-encode); the KMS/ECR/SNS/SQS/Secrets policies are escaped JSON STRINGS that may
-    # arrive compact or spaced, so match both for each.
-    - requestParameters.bucketPolicy.Statement|contains:
-        - '"Principal":"*"'
-        - '"AWS":"*"'
-        - '"Principal": "*"'
-        - '"AWS": "*"'
-    - requestParameters.policy|contains:
-        - '"Principal":"*"'
-        - '"AWS":"*"'
-        - '"Principal": "*"'
-        - '"AWS": "*"'
-    - requestParameters.policyText|contains:
-        - '"Principal":"*"'
-        - '"AWS":"*"'
-        - '"Principal": "*"'
-        - '"AWS": "*"'
-    - requestParameters.resourcePolicy|contains:
-        - '"Principal":"*"'
-        - '"AWS":"*"'
-        - '"Principal": "*"'
-        - '"AWS": "*"'
-    - requestParameters.attributeValue|contains:
-        - '"Principal":"*"'
-        - '"AWS":"*"'
-        - '"Principal": "*"'
-        - '"AWS": "*"'
-    - requestParameters.attributes.Policy|contains:
-        - '"Principal":"*"'
-        - '"AWS":"*"'
-        - '"Principal": "*"'
-        - '"AWS": "*"'
+    # Literal asterisk principal across every policy representation, matched with a regex so the
+    # '*' stays a LITERAL. A |contains '"AWS":"*"' is a Sigma WILDCARD (LIKE '%"AWS":"%"%') that
+    # also matches any NAMED principal "AWS":"arn:...:root" -- a false positive. The regex allows
+    # optional whitespace, so it matches both the nested-object (S3 bucketPolicy, spaced after
+    # re-encode) and escaped-string (KMS/ECR/SNS/SQS/Secrets, compact or spaced) encodings.
+    - requestParameters.bucketPolicy.Statement|re: '"(?:Principal|AWS)"\s*:\s*"\*"'
+    - requestParameters.policy|re: '"(?:Principal|AWS)"\s*:\s*"\*"'
+    - requestParameters.policyText|re: '"(?:Principal|AWS)"\s*:\s*"\*"'
+    - requestParameters.resourcePolicy|re: '"(?:Principal|AWS)"\s*:\s*"\*"'
+    - requestParameters.attributeValue|re: '"(?:Principal|AWS)"\s*:\s*"\*"'
+    - requestParameters.attributes.Policy|re: '"(?:Principal|AWS)"\s*:\s*"\*"'
   filter_scoped:
     # 'aws:SourceVpc' is a prefix of 'aws:SourceVpce', so this one token matches both the
     # VPC-endpoint and the VPC scoping conditions. Applied to every policy representation,
@@ -118,7 +96,7 @@ detection:
         - 'aws:SourceVpc'
   selection_lambda:
     eventName|startswith: 'AddPermission'
-    requestParameters.principal: '\*'
+    requestParameters.principal|re: '^\*$'
   filter_lambda_scoped:
     # A Lambda wildcard grant scoped by an org ID or a source ARN is not public.
     - requestParameters.sourceArn: '*'

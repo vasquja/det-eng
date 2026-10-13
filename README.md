@@ -204,11 +204,13 @@ Proving the loop is automated:
   kube-proxy and kindnet privileged pods).
 - **External cloud (AWS / Azure / GCP)** —
   [`.github/workflows/validate-cloud-detections.yml`](.github/workflows/validate-cloud-detections.yml)
-  (TRR9011–9019: IMDS creds used off-instance, leaked access keys, Entra
+  (TRR9011–9023: IMDS creds used off-instance, leaked access keys, Entra
   federated-identity backdoors, public GCP IAM exposure, GitHub-OIDC role-trust
   abuse, Cognito unauthenticated identity-pool abuse, Entra illicit OAuth consent
-  and device-code phishing, GCP Workload Identity Federation abuse, and public /
-  cross-account AWS resource exposure). Cloud has no free CI target, so the loop
+  and device-code phishing, GCP Workload and Workforce Identity Federation abuse,
+  public / cross-account AWS resource exposure across policies, ACLs and the
+  service long-tail, and Entra federated service-principal sign-in). Cloud has no
+  free CI target, so the loop
   runs the same pySigma backend over committed, schema-faithful **recorded**
   attack/benign log fixtures: every rule must fire on its attack fixture and match
   nothing in a hard benign baseline. Pure Python — no cluster, no cloud account.
@@ -346,6 +348,21 @@ is copied to `trr0000/` and the maintainer assigns the final ID.
   disabling Block Public Access — unified across seven resource-policy services plus the
   snapshot and BPA families. The public form is new ground vs Stratus's account-to-account
   variants; object-level ACLs are the data-event gap.
+
+- **[TRR9020 — Workforce Identity Federation Abuse (T1199, GCP)](research/trr9020/gcp/README.md)**
+  The workforce (human-identity) sibling of TRR9018: trusting an external IdP with no attribute
+  condition and binding a `/workforcePools/` principalSet directly to a privileged org role.
+  Two always-on Admin-Activity chokepoints; the token-exchange use is the off-by-default gap.
+
+- **[TRR9021 — Public Resource Exposure via ACLs and the Service Long-Tail (T1537, AWS)](research/trr9021/aws/README.md)**
+  TRR9019's sibling: the S3 bucket-ACL path plus the services 9019 scoped out — EventBridge
+  `PutPermission`, EFS, Glue, and public SSM documents. EventBridge/EFS/Glue public-principal
+  detection is new ground; Redshift was vetted and dropped (no public share form).
+
+- **[TRR9023 — Federated Service-Principal Sign-In Abuse (T1078.004, Azure)](research/trr9023/azr/README.md)**
+  The use-side of TRR9013's FIC backdoor: a service principal signs in with a federated identity
+  credential, keyed on `FederatedCredentialId` in the Entra SP sign-in log. The sign-in log carries
+  no issuer, so it is a credential-type/anomaly signal; cross-log correlation is the gap.
 
 See [`research/index.json`](research/index.json) for the machine-readable index.
 

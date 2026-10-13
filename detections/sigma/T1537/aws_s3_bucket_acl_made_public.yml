@@ -1,0 +1,52 @@
+title: AWS S3 Bucket ACL Grants Public Access
+id: 9e63bc86-fb69-4771-8192-b6e90683333d
+status: experimental
+description: |
+  Detects an S3 bucket ACL write that grants the public AllUsers group (anyone on the internet)
+  or the AuthenticatedUsers group (any authenticated AWS principal, effectively public) read or
+  write on a bucket. This is the ACL path to public S3 exposure -- distinct from a bucket POLICY
+  grant (TRR9019) -- and realises TRR9019's documented-but-unbuilt Procedure D.
+
+  It keys on the default-logged CloudTrail management event s3.amazonaws.com / PutBucketAcl in
+  either of the two shapes AWS records: the canned-ACL header
+  requestParameters.x-amz-acl = public-read / public-read-write, OR an explicit grant list
+  requestParameters.AccessControlPolicy.AccessControlList.Grant[] naming a Grantee group URI
+  http://acs.amazonaws.com/groups/global/AllUsers or .../AuthenticatedUsers. It requires success
+  (no errorCode) because, under S3 Object-Ownership "bucket owner enforced", ACLs are disabled and
+  a PutBucketAcl fails with AccessControlListNotSupported -- a failed attempt changes nothing.
+references:
+  - https://attack.mitre.org/techniques/T1537/
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketAcl.html
+  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html
+  - https://github.com/elastic/detection-rules/blob/main/rules/integrations/aws/collection_s3_bucket_acl_public_access_new_identity.toml
+author: det-eng
+date: 2026/10/13
+tags:
+  - attack.exfiltration
+  - attack.t1537
+  - attack.persistence
+  - attack.t1098
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_acl_write:
+    eventSource: 's3.amazonaws.com'
+    eventName: 'PutBucketAcl'
+  selection_public_grant:
+    - requestParameters.x-amz-acl:
+        - 'public-read'
+        - 'public-read-write'
+    - requestParameters.AccessControlPolicy.AccessControlList.Grant|contains:
+        - 'http://acs.amazonaws.com/groups/global/AllUsers'
+        - 'http://acs.amazonaws.com/groups/global/AuthenticatedUsers'
+  filter_failed:
+    errorCode: '*'
+  condition: selection_acl_write and selection_public_grant and not filter_failed
+falsepositives:
+  - Intentionally public static-website buckets and public datasets; allowlist by bucket name.
+  - A grant to a specific CanonicalUser (a named account) or a private / bucket-owner-full-control
+    canned ACL is not public and is excluded.
+  - Buckets under Object-Ownership "bucket owner enforced" cannot receive a public ACL (the call
+    fails), so the real-world blast radius is reduced to ACL-enabled / legacy buckets.
+level: high

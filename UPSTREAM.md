@@ -13,7 +13,7 @@ runs, and lists the exact submission steps.
 
 | Artifact | Lives here | Upstream project | Upstream path |
 |----------|-----------|------------------|---------------|
-| The TRR (research) | `research/trrNNNN/<platform>/` | [tired-labs/techniques](https://github.com/tired-labs/techniques) | `trr0000/<platform>/` (maintainer assigns the final ID) |
+| The TRR (research) | `research/trrNNNN/<platform>/` | [tired-labs/techniques](https://github.com/tired-labs/techniques) | `reports/trr0000/<platform>/` (maintainer assigns the final ID) |
 | The Sigma rule(s) | `detections/sigma/<ATT&CK>/` | [SigmaHQ/sigma](https://github.com/SigmaHQ/sigma) | `rules/...` by log source (below) |
 | The emulation test | `atomics/<ATT&CK>/` | [redcanaryco/atomic-red-team](https://github.com/redcanaryco/atomic-red-team) | `atomics/<ATT&CK>/` |
 
@@ -46,22 +46,26 @@ TRR9008  Kubernetes  T1562.001        io_uring_setup.yml (+3)                  T
 TRR9009  Kubernetes  T1134            k8s_impersonation.yml (+1)               T1134
 TRR9010  Kubernetes  T1070,T1070.004  k8s_events_deleted.yml (+1)              T1070
 TRR9011  AWS         T1552.005        aws_imds_creds_used_off_instance.yml     T1552.005
-TRR9012  AWS         T1078.004        aws_cognito_identity_pool_unauth_enabled.yml (+2) T1078.004
+TRR9012  AWS         T1078.004        aws_cognito_identity_pool_unauth_enabled.yml (+3) T1078.004
 TRR9013  Azure       T1098.001        aws_github_oidc_role_trust_abuse.yml (+4) T1098.001
 TRR9014  GCP         T1098.003        gcp_public_iam_member_grant.yml          T1098.003
 TRR9015  AWS         T1098.001        aws_github_oidc_role_trust_abuse.yml (+4) T1098.001
-TRR9016  AWS         T1078.004        aws_cognito_identity_pool_unauth_enabled.yml (+2) T1078.004
+TRR9016  AWS         T1078.004        aws_cognito_identity_pool_unauth_enabled.yml (+3) T1078.004
 TRR9017  Azure       T1528,T1566.002  entra_device_code_authentication.yml (+1) T1528
-TRR9018  GCP         T1098.001,T1199  aws_github_oidc_role_trust_abuse.yml (+4) T1098.001
-TRR9019  AWS         T1537            aws_resource_policy_made_public.yml (+2) T1537
+TRR9018  GCP         T1098.001,T1199  aws_github_oidc_role_trust_abuse.yml (+6) T1098.001,T1199
+TRR9019  AWS         T1537            aws_efs_file_system_policy_made_public.yml (+7) T1537
+TRR9020  GCP         T1199,T1098.001  aws_github_oidc_role_trust_abuse.yml (+6) T1098.001,T1199
+TRR9021  AWS         T1537            aws_efs_file_system_policy_made_public.yml (+7) T1537
+TRR9023  Azure       T1078.004,T1550.001 aws_cognito_identity_pool_unauth_enabled.yml (+3) T1078.004
 -----------------------------------------------------------------------------------------------
-19 TRRs | 52 Sigma rule files | 20 atomic technique dirs
+22 TRRs | 60 Sigma rule files | 21 atomic technique dirs
 ```
 
 The "first rule" column is just the alphabetically-first file in each folder; a TRR
 owns the rules named in its own `## Detections` table. T1098.001 is shared by TRR9013
-(Entra/Azure), TRR9015 (AWS), and TRR9018 (GCP); T1078.004 by TRR9012 and TRR9016 (AWS);
-T1562.001 by the Linux io_uring rule and TRR9008.
+(Entra/Azure), TRR9015 (AWS), and TRR9018 (GCP); T1078.004 by TRR9012, TRR9016 (AWS) and
+TRR9023 (Entra SP sign-in); T1537 by TRR9019 (policies/snapshots/BPA) and TRR9021 (ACL +
+long-tail); T1199 by TRR9020 (GCP workforce); T1562.001 by the Linux io_uring rule and TRR9008.
 
 > Note: `detections/sigma/T1098.001/` holds five rules (TRR9013's two Entra/Azure
 > rules, TRR9015's AWS rule, and TRR9018's two GCP rules); `detections/sigma/T1078.004/`
@@ -81,19 +85,19 @@ pip install sigma-cli
 sigma check -x attacktag -x d3_fendtag -x detection_tag detections/sigma/
 ```
 
-Current result: **0 errors, 0 condition errors.** The only findings are 14
+Current result: **0 errors, 0 condition errors.** The only findings are 13
 LOW-severity style notes, each defensible:
 
 - **NumberAsStringIssue (×12)** — auditd syscall-argument fields (`a0`..`a3`, `exit`,
   arg counts) are hex/decimal **strings** in the auditd event, so matching them as
   quoted strings is correct for `product: linux`. Leave as-is, or convert to bare
   numbers only if a target backend coerces types.
-- **EscapedWildcardIssue (×2)** — both match a **literal** `*` with `\*`, intentionally:
-  `k8s_rbac_privileged_grant.yml` (an RBAC wildcard grant `verbs: ["*"]`), and
-  `aws_resource_policy_made_public.yml` (TRR9019; the Lambda public principal `"*"`).
+- **EscapedWildcardIssue (×1)** — `k8s_rbac_privileged_grant.yml` matches a **literal** `*`
+  (an RBAC wildcard grant `verbs: ["*"]`) with `\*`; intentional. (The cloud rules now match a
+  literal `*` with `|re` instead, so they carry no escaped-wildcard note.)
 
-The cloud rules (TRR9011–9019) produce **0 errors**; the only cloud note is that one
-intentional EscapedWildcardIssue in the TRR9019 resource-policy rule.
+The cloud rules (TRR9011–9023) produce **0 errors and 0 issues** (they match a literal `*`
+with `|re`, avoiding the escaped-wildcard note entirely).
 
 ### Atomics — Atomic Red Team schema
 
@@ -113,35 +117,67 @@ IDs, a rendered DDM PNG per procedure, and `index.json` consistency. All reports
 
 ## Submission steps
 
+> These steps were reconciled against each project's CURRENT `CONTRIBUTING`, format spec,
+> and CI workflows (read 2026-10-13). They correct earlier assumptions; re-pull each project's
+> linter/spec before a filing wave, since those gates are what bounce a PR. None of the three
+> projects requires a DCO sign-off or CLA as of that read (confirm from your own experience).
+> Opening each PR is a human step: fork + PR under your own account.
+
 ### 1. TRR → tired-labs/techniques
 
-1. Copy `research/trrNNNN/<platform>/` to `trr0000/<platform>/` in a fork of
-   tired-labs/techniques.
-2. Rewrite the local ID to the placeholder: `TRRNNNN` → `TRR0000` and
-   `trrNNNN` → `trr0000` in the README prose, the Metadata table, every
-   `TRRNNNN.PLATFORM.LETTER` procedure ID, and the DDM filenames/embeds. Re-render
-   the DDM PNGs so their stamped source hash matches
-   (`python3 research/tools/render_ddm.py trr0000/<platform>/ddms/*.json`).
-3. Drop the local `path` field and the `{_comment, trrs:[]}` wrapper when emitting
-   the `index.json` entry into upstream's top-level array (see the note in
-   `research/index.json`).
-4. The maintainer assigns the final upstream ID on merge.
+Upstream TRRs are **research-only** and the layout is rooted at `reports/`. Each report needs a
+structural transform (our local house style keeps extras the upstream linter rejects):
+
+1. Copy `research/trrNNNN/<platform>/` → `reports/trr0000/<platform>/` in a fork. `trr0000` is the
+   mandatory placeholder; a merge-bot assigns the real number and rewrites it.
+2. Remap the ID to the placeholder everywhere: `TRRNNNN`→`TRR0000`, `trrNNNN`→`trr0000` in prose,
+   the Metadata `ID` row, every `TRRNNNN.PLATFORM.LETTER` procedure ID, and DDM filenames/embeds.
+   Re-render the PNGs so their stamped hash matches
+   (`python3 research/tools/render_ddm.py reports/trr0000/<platform>/ddms/*.json`).
+3. **Delete** the `| Status |` metadata row, and the entire `## Detection Strategy` and
+   `## Detections` sections — upstream TRRs carry no detection content (the Sigma mapping moves to
+   the SigmaHQ PR).
+4. Rewrite the Procedures table header to exactly `| ID | Title | Tactic |`, and the Available
+   Emulation Tests table header to exactly `| ID | Link |` (link reference-style, or `None`).
+5. Re-wrap every prose/list line to ≤80 chars, and convert every inline `[text](url)` / `<url>` to
+   reference-style `[text][ref]` + a `[ref]: url` footnote block.
+6. Set `Contributors` to real human name(s), not `det-eng`. **(Confirm the names before filing.)**
+7. Do NOT add/edit upstream `index.json` (the bot generates it); do not include `research/index.json`.
+8. Gate locally: `go run tools/trrlint/main.go <README.md>` → 0 errors, and
+   `python3 tools/index/index.py merge_test -f <README.md>` → success. One technique per PR.
 
 ### 2. Sigma rule → SigmaHQ/sigma
 
-1. Place each rule at the path for its log source (table above).
-2. Keep `status: experimental` and the `author`, `date`, `references`,
-   `falsepositives`, and `level` fields (already present).
-3. Re-run `sigma check` without the `-x` exclusions in a network-enabled environment
-   so the ATT&CK-tag validator passes, then open the PR.
+1. Place each rule by **log source** (table above); novel research detections go under
+   `rules-emerging-threats/...` — which then **requires** a `detection.emerging-threats` tag (and
+   plain `rules/...` must NOT carry it). Filenames are lowercase, `_`-separated, product-prefixed
+   (`aws_*`/`azure_*`/`gcp_*`; no `entra_*` prefix — remap Entra to `azure_*`).
+2. Normalise tags: one canonical ATT&CK tactic form (we have a hyphen/underscore mix to fix), every
+   technique tag paired with its mapped tactic tag, and CVE tags as `cve.YYYY.NNNN` (dots).
+3. Keep `status: experimental`; titles ≤120 chars, Title Case, not starting "Detect"/ending with a
+   period; `references` with no MITRE-site links and git permalinks only.
+4. Rework any literal `\*` escaped-wildcard match (the `escaped_wildcard` validator flags it, and our
+   UUIDs are not on the exclusion list). `cri` / Kubernetes logsource fields may need a maintainer
+   discussion first (`test_logsource.py`).
+5. Run the REAL gate locally (not a plain `sigma check`):
+   `sigma check --fail-on-error --fail-on-issues --validation-config <sigma>/tests/sigma_cli_conf.yml`
+   with `pySigma-validators-sigmahq==0.21.*` installed, plus `yamllint -s` and `tests/test_logsource.py`.
+   Submit per-logsource-family PRs, not one big batch; fill the PR template's tagged Changelog block.
 
 ### 3. Atomic → redcanaryco/atomic-red-team
 
-1. Copy `atomics/<ATT&CK>/` (the `<ATT&CK>.yaml` and `src/`).
-2. Keep each test's `auto_generated_guid` (already assigned).
-3. For the cloud tests, keep the opt-in guard and the `--show-fixture` path, and state
-   in the PR that they act against the operator's own account and are not destructive
-   (they create throwaway resources and clean up, or are read-only).
+1. **Merge, do not copy.** Most technique IDs already exist upstream with community tests — open the
+   upstream `<T####>.yaml` and **append** our `atomic_tests[]`, keeping their `display_name`. Only a
+   genuinely-absent ID (e.g. T1098.006, T1199) is a new file. Existence-check every ID first.
+2. **Remove** hand-assigned `auto_generated_guid` from new tests (a GitHub Action assigns them); for
+   merges, ensure no GUID collides with the existing file.
+3. Strip the `TRRxxxx.PLAT.X —` name prefix and scrub `Rule: detections/sigma/...` / `Chokepoint:`
+   from descriptions (internal references).
+4. Reshape the cloud tests: drop the `*_LIVE=1` guard / dry-by-default / `--show-fixture` shape so
+   `command` runs the behaviour, gate on a `prereq_command` auth check, and add `cleanup_command` for
+   resource-creating tests (mark read-only ones as needing none).
+5. Gate locally: `cd atomic_red_team && poetry install && poetry run python runner.py validate`
+   (validates the whole repo). One PR per technique; `.yaml` extension, only `src`/`bin` subdirs.
 
 ## What stays here
 

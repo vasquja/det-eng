@@ -1,0 +1,53 @@
+title: AWS EFS File System Policy Grants Public Access
+id: 7e96a19e-2f88-4307-b5f4-2da8718a096c
+status: experimental
+description: |
+  Detects an EFS PutFileSystemPolicy that attaches a resource-based policy allowing the public
+  principal ("*" / {"AWS":"*"}) with no scoping condition, exposing a network file system to
+  anonymous mount/access. Public-principal detection for EFS is largely absent from open rule
+  sets -- this is new ground vs TRR9019's resource-policy family.
+
+  It keys on the default-logged CloudTrail management event
+  elasticfilesystem.amazonaws.com / PutFileSystemPolicy, matching an Allow + Principal "*" token
+  in requestParameters.policy and suppressing when a scoping condition
+  (aws:PrincipalOrgID / aws:SourceArn / aws:SourceAccount / aws:SourceVpc) is present. The policy
+  arrives as a document whose exact encoding this rule matches as text across representations
+  (the same approach TRR9019 took for mixed-encoding policy services); a production pipeline should
+  JSON-decode and evaluate scope per statement.
+references:
+  - https://attack.mitre.org/techniques/T1537/
+  - https://docs.aws.amazon.com/efs/latest/ug/API_PutFileSystemPolicy.html
+  - https://docs.aws.amazon.com/efs/latest/ug/access-control-block-public-access.html
+author: det-eng
+date: 2026/10/13
+tags:
+  - attack.exfiltration
+  - attack.t1537
+  - attack.persistence
+  - attack.t1098
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_efs_policy:
+    eventSource: 'elasticfilesystem.amazonaws.com'
+    eventName: 'PutFileSystemPolicy'
+  selection_public_principal:
+    # Literal asterisk principal, matched with a regex so the '*' is NOT a Sigma wildcard
+    # (a |contains '"AWS":"*"' would match any named principal "AWS":"arn:...").
+    requestParameters.policy|re: '"(?:Principal|AWS)"\s*:\s*"\*"'
+  filter_scoped:
+    requestParameters.policy|contains:
+      - 'aws:PrincipalOrgID'
+      - 'aws:SourceArn'
+      - 'aws:SourceAccount'
+      - 'aws:SourceVpc'
+  filter_failed:
+    errorCode: '*'
+  condition: selection_efs_policy and selection_public_principal and not filter_scoped and not filter_failed
+falsepositives:
+  - A file-system policy granting a named account scoped by aws:PrincipalOrgID / aws:SourceArn is
+    not public and is excluded.
+  - Intentionally shared file systems; allowlist by file-system ID. Pair with EFS Block Public
+    Access status.
+level: high

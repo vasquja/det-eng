@@ -1,0 +1,56 @@
+title: GCP Workforce Identity PrincipalSet Bound to a Privileged Resource Role
+id: 3624a6fc-655b-4bd0-9ae9-7b902f8e8d44
+status: experimental
+description: |
+  Detects a GCP IAM policy change that binds a Workforce Identity Federation principalSet
+  directly to a PRIVILEGED project / folder / organisation role (Owner, Editor, or an *Admin
+  role). This is the TRR9020 backdoor leg: an external, org-scoped human identity federated
+  through a workforce pool is granted a powerful resource role with no service-account or
+  workloadIdentityUser step. It is the GCP twin of TRR9018's workload-pool binding, on a
+  different service, method, member family, and target.
+
+  It keys on a Cloud Audit Log (Admin Activity, always on) cloudresourcemanager.googleapis.com
+  SetIamPolicy whose authoritative policy delta
+  (protoPayload.serviceData.policyDelta.bindingDeltas) adds, in one binding, a privileged role
+  to a member that is a workforce principalSet -- member containing /workforcePools/ (the single
+  form principal:// and the set form principalSet://). The three conditions are required on the
+  SAME delta element (a regex with lookaheads bounded to one {...}), so a REMOVE, or an unrelated
+  ADD elsewhere, does not fire.
+
+  The discriminator vs TRR9018 is the member: workforce members are anchored at
+  locations/global/workforcePools/ with NO project number, whereas workload members embed a
+  project number (.../projects/<number>/locations/global/workloadIdentityPools/). This rule keys
+  on /workforcePools/ and does not fire on workload bindings. Field-model note: the delta array is
+  matched as text; on a structured backend, evaluate bindingDeltas element-wise. Legitimate
+  workforce federation routinely binds principalSets to roles, so the privileged-role +
+  whole-pool-breadth requirement is a heuristic -- enrich with the provider's attributeCondition,
+  the pool, the actor, and the role before paging.
+references:
+  - https://attack.mitre.org/techniques/T1199/
+  - https://cloud.google.com/iam/docs/workforce-identity-federation
+  - https://cloud.google.com/iam/docs/principal-identifiers
+  - https://cloud.google.com/iam/docs/audit-logging
+author: det-eng
+date: 2026/10/13
+tags:
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1199
+  - attack.t1098.001
+logsource:
+  product: gcp
+  service: gcp.audit
+detection:
+  selection_setiam:
+    protoPayload.serviceName: 'cloudresourcemanager.googleapis.com'
+    protoPayload.methodName|endswith: 'SetIamPolicy'
+  selection_workforce_privileged_binding:
+    protoPayload.serviceData.policyDelta.bindingDeltas|re: '\{(?=[^}]*"action": "ADD")(?=[^}]*/workforcePools/)(?=[^}]*"role": "roles/(?:owner|editor|[^"]*[Aa]dmin[^"]*)")'
+  condition: selection_setiam and selection_workforce_privileged_binding
+falsepositives:
+  - A legitimate break-glass admin group federated through a workforce pool and intentionally
+    bound to a privileged role. Enrich with the pool provider's attributeCondition (does a
+    no-condition provider exist?), whole-pool /* breadth, the actor, and the caller IP.
+  - Structural sibling of the public-IAM-grant rule (both key on the same cloudresourcemanager
+    SetIamPolicy delta); kept distinct here by the /workforcePools/ member and the privileged role.
+level: medium

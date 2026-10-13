@@ -53,3 +53,25 @@ atomic_tests:
         description: Path to the atomic source directory.
         type: string
         default: PathToAtomicsFolder/T1078.004/src
+
+  - name: "TRR9023.AZR.A — federated service-principal sign-in (FIC use)"
+    auto_generated_guid: 8d9e0f12-9023-4a1b-9c21-1a2b3c4d5e61
+    description: |
+      Performs a workload-identity-federation token exchange so a service principal signs in to
+      Entra with a federated identity credential (the USE side of a FIC backdoor; TRR9013 covers
+      the write). Needs an external OIDC token the app's FIC trusts.
+      Chokepoint: Entra AADServicePrincipalSignInLogs with properties.federatedCredentialId
+      populated (clientCredentialType clientAssertion) on an SP whose baseline is secret/cert.
+      Rule: detections/sigma/T1078.004/entra_service_principal_federated_credential_signin.yml
+    supported_platforms:
+      - iaas:azure
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_entra_sp_fic_signin.sh a
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1078.004/src

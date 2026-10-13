@@ -1,0 +1,52 @@
+title: AWS EventBridge Event Bus Permission Grants Public or Unscoped Access
+id: d353229f-e3c7-45b9-90ef-48171f4dbbf7
+status: experimental
+description: |
+  Detects an EventBridge PutPermission that grants any AWS account permission to put events on an
+  event bus (Principal "*") with no scoping Condition. A public event bus lets any account inject
+  events, which can trigger rules, invoke targets, or poison downstream automation. Public-principal
+  detection for EventBridge is sparse in open rule sets -- this is new ground vs TRR9019.
+
+  It keys on the default-logged CloudTrail management event events.amazonaws.com / PutPermission in
+  either representation AWS records: the flat form requestParameters.principal "*" with no
+  requestParameters.condition, OR the single-document form requestParameters.policy with an Allow
+  statement naming Principal "*" / {"AWS":"*"}. It is suppressed when a scoping condition is present
+  -- the flat-form aws:PrincipalOrgID condition (requestParameters.condition.key), or an
+  aws:PrincipalOrgID / aws:SourceArn / aws:SourceAccount token in the policy document -- because an
+  org-scoped "*" grant (a legitimate organisation-wide bus) is not public. That condition is the
+  discriminator.
+references:
+  - https://attack.mitre.org/techniques/T1537/
+  - https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutPermission.html
+  - https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-bus-perms.html
+author: det-eng
+date: 2026/10/13
+tags:
+  - attack.exfiltration
+  - attack.t1537
+  - attack.persistence
+  - attack.t1098
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_putpermission:
+    eventSource: 'events.amazonaws.com'
+    eventName: 'PutPermission'
+  selection_public_principal:
+    - requestParameters.principal|re: '^\*$'
+    - requestParameters.policy|re: '"(?:Principal|AWS)"\s*:\s*"\*"'
+  filter_scoped:
+    - requestParameters.condition.key: '*'
+    - requestParameters.policy|contains:
+        - 'aws:PrincipalOrgID'
+        - 'aws:SourceArn'
+        - 'aws:SourceAccount'
+  filter_failed:
+    errorCode: '*'
+  condition: selection_putpermission and selection_public_principal and not filter_scoped and not filter_failed
+falsepositives:
+  - An organisation-wide event bus intentionally shared to all accounts in the org via an
+    aws:PrincipalOrgID condition is not public and is excluded.
+  - A grant to a specific named account (a numeric principal) does not match the "*" discriminator.
+level: high

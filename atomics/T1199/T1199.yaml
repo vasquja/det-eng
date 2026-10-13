@@ -1,0 +1,40 @@
+attack_technique: T1199
+display_name: "Trusted Relationship (GCP Workforce Identity Federation backdoor)"
+
+# Behavioral emulation for TRR9020. The live test creates a throwaway GCP workforce identity
+# pool + external OIDC provider and binds its principalSet to a role in your own organisation,
+# then deletes them (guarded by TRR9020_LIVE=1); NOT run in CI. CI validation runs the paired
+# Sigma rules over the committed Cloud Audit Log fixtures in detections/cloud/fixtures/trr9020/
+# via detections/validate_cloud_detections.py.
+#
+# Novelty: neither Stratus Red Team nor Atomic Red Team covers GCP workforce identity federation
+# (0 hits for "workforce" / "workforcePools" in either). The novel detectable contribution is the
+# provider created without an attribute condition and the direct cloudresourcemanager SetIamPolicy
+# binding of a workforce principalSet to a privileged role -- not "a pool was created" (which
+# Panther/shoc already flag broadly).
+
+atomic_tests:
+  - name: "TRR9020.GCP.C — bind a workforce principalSet to a privileged resource role"
+    auto_generated_guid: 6b7c8d90-9020-4a1b-9c21-1a2b3c4d5e61
+    description: |
+      Creates a throwaway GCP workforce identity pool + external OIDC provider (no attribute
+      condition) and binds its principalSet to an organisation role, then deletes them. The live
+      binding uses a SAFE role (roles/viewer) by default; the recorded attack fixture uses
+      roles/owner.
+      Chokepoint: Cloud Audit Log (Admin Activity) cloudresourcemanager SetIamPolicy whose delta
+      adds a privileged role to a principalSet://.../workforcePools/... member; plus
+      CreateWorkforcePoolProvider with an empty attributeCondition.
+      Rules: detections/sigma/T1199/gcp_workforce_principalset_privileged_binding.yml ;
+             detections/sigma/T1199/gcp_workforce_pool_provider_no_attribute_condition.yml
+    supported_platforms:
+      - iaas:gcp
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_gcp_workforce.sh c
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1199/src
