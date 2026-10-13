@@ -1,0 +1,78 @@
+title: AWS EKS IRSA Role Session Used From Off-Cluster
+id: 7f8d7617-4b55-460b-bffb-d18111a93640
+status: experimental
+description: |
+  Detects a subsequent AWS API call made with an EKS IRSA (IAM Roles for Service Accounts)
+  assumed-role session FROM A SOURCE THE CLUSTER DOES NOT OWN -- the control-plane signature of the
+  temporary role credentials an IRSA pod minted being used off-cluster (the already-exchanged
+  ASIA... session stolen and wielded elsewhere). This is the TRR9022 use-leg chokepoint and the
+  direct parallel of TRR9011 (EC2 instance-role creds used off-instance), on a cleaner provenance
+  field.
+
+  The in-record provenance is userIdentity.type AssumedRole with
+  sessionContext.sessionIssuer.type Role AND a NON-EMPTY
+  sessionContext.webIdFederationData.federatedProvider set to the cluster's IAM OIDC-provider ARN
+  (oidc.eks.<region>.amazonaws.com/id/<id>). That federatedProvider is populated by STS from the
+  validated OIDC token and cannot be forged; it is present ONLY for IRSA sessions -- EKS Pod
+  Identity sessions carry an EMPTY webIdFederationData, and GitHub Actions / other web-identity
+  sessions carry a different provider -- so keying on oidc.eks both confirms IRSA and excludes Pod
+  Identity and non-EKS OIDC. The service-account subject does NOT propagate to subsequent calls
+  (only the role ARN and the provider ARN do), so attribution to a specific pod requires joining the
+  session's accessKeyId back to its AssumeRoleWithWebIdentity event.
+
+  Those provenance fields match ~100% of benign IRSA activity -- they are provenance, not a
+  detection. The discriminator is the off-cluster leg: sourceIPAddress is not an address the
+  cluster/account owns. A single CloudTrail record cannot prove "off-cluster", so this rule
+  APPROXIMATES it with a source-IP allowlist you must baseline (RFC1918 plus the account's NAT/EIP
+  IPv4 egress AND its IPv6 egress prefixes). There is NO GuardDuty finding for off-cluster IRSA
+  credential use, so this CloudTrail rule is the PRIMARY detection, not a backstop.
+references:
+  - https://attack.mitre.org/techniques/T1550/001/
+  - https://attack.mitre.org/techniques/T1078/004/
+  - https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-event-reference-user-identity.html
+  - https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts.html
+  - https://docs.aws.amazon.com/guardduty/latest/ug/guardduty_finding-types-iam.html
+author: det-eng
+date: 2026/10/13
+tags:
+  - attack.defense-evasion
+  - attack.t1550.001
+  - attack.lateral-movement
+  - attack.t1078.004
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_assumed_role:
+    userIdentity.type: 'AssumedRole'
+    userIdentity.sessionContext.sessionIssuer.type: 'Role'
+  selection_eks_irsa:
+    # Non-empty federatedProvider set to the EKS cluster OIDC provider: present ONLY for IRSA
+    # sessions (EKS Pod Identity carries an empty webIdFederationData; GitHub/other OIDC carry a
+    # different provider), so this confirms IRSA and excludes Pod Identity and non-EKS web identity.
+    userIdentity.sessionContext.webIdFederationData.federatedProvider|contains: 'oidc.eks'
+  filter_cluster_owned_source:
+    # PLACEHOLDERS: replace 203.0.113.0/24 and 2001:db8::/32 with your cluster/account egress --
+    # NAT-gateway / Elastic-IP IPv4 CIDRs, worker-node subnet CIDRs, VPC-endpoint ENI ranges, and
+    # your IPv6 egress prefixes. RFC1918 + CGNAT cover node-ENI / VPC-endpoint private IPs.
+    sourceIPAddress|cidr:
+      - '10.0.0.0/8'
+      - '172.16.0.0/12'
+      - '192.168.0.0/16'
+      - '100.64.0.0/10'
+      - '203.0.113.0/24'
+      - '2001:db8::/32'
+  condition: selection_assumed_role and selection_eks_irsa and not filter_cluster_owned_source
+falsepositives:
+  - Pods that egress to AWS APIs through a NAT gateway / Elastic IP or a VPC interface endpoint --
+    allowlist the node-ENI private ranges and the NAT/EIP public ranges, or every off-node IRSA call
+    looks off-cluster.
+  - IPv6 egress (dual-stack / egress-only internet gateway) needs the account's IPv6 egress prefixes
+    in the allowlist.
+  - Cross-account IRSA (a pod assuming a role in another account) lands the use event in the resource
+    account, whose allowlist will not contain the cluster account's egress unless baselined there.
+  - Residual false negative -- a session reused from WITHIN the cluster's own egress (a compromised
+    node) shows an allowlisted source IP and is not matched; pair with a first-seen overlay per role.
+  - Data-plane-only use (e.g. s3:GetObject) is invisible unless CloudTrail data events are enabled;
+    this rule sees management-plane calls only.
+level: high

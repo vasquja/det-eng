@@ -1,0 +1,138 @@
+{
+  "style": {
+    "font-family": "sans-serif",
+    "background-color": "#ffffff",
+    "node-color": "#ffffff",
+    "border-width": 4,
+    "border-color": "#000000",
+    "radius": 50,
+    "outside-position": "auto",
+    "caption-font-size": 16,
+    "label-font-size": 14,
+    "label-border-width": 2,
+    "property-font-size": 14,
+    "arrow-width": 5,
+    "arrow-color": "#000000",
+    "type-font-size": 16
+  },
+  "nodes": [
+    {
+      "id": "n0",
+      "position": {
+        "x": 300,
+        "y": 0
+      },
+      "caption": "EKS IRSA off-cluster detection",
+      "labels": [
+        "Sigma"
+      ],
+      "properties": {
+        "discriminator": "off-egress sourceIPAddress"
+      },
+      "style": {
+        "border-color": "#000000",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top"
+      }
+    },
+    {
+      "id": "n1",
+      "position": {
+        "x": 0,
+        "y": 240
+      },
+      "caption": "Replay from within cluster egress",
+      "labels": [],
+      "properties": {
+        "sourceIPAddress": "allowlisted",
+        "result": "not matched (FN)"
+      },
+      "style": {
+        "border-color": "#9f9f9f",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "left"
+      }
+    },
+    {
+      "id": "n2",
+      "position": {
+        "x": 300,
+        "y": 300
+      },
+      "caption": "Data-plane-only use",
+      "labels": [],
+      "properties": {
+        "example": "s3:GetObject",
+        "CloudTrail": "data events off by default"
+      },
+      "style": {
+        "border-color": "#9f9f9f",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "bottom"
+      }
+    },
+    {
+      "id": "n3",
+      "position": {
+        "x": 620,
+        "y": 240
+      },
+      "caption": "Cross-account IRSA role use",
+      "labels": [],
+      "properties": {
+        "trail": "lands in the resource account"
+      },
+      "style": {
+        "border-color": "#9f9f9f",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "right"
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "id": "r0",
+      "fromId": "n0",
+      "toId": "n1",
+      "type": "gap",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r1",
+      "fromId": "n0",
+      "toId": "n2",
+      "type": "gap",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r2",
+      "fromId": "n0",
+      "toId": "n3",
+      "type": "gap",
+      "properties": {},
+      "style": {}
+    }
+  ]
+}

@@ -168,6 +168,18 @@ MANIFEST = [
      "trr9023/attack.json", "trr9023/benign.json", "Azure",
      "Entra service principal sign-in using a federated identity credential",
      marker("trr9023", "properties.servicePrincipalName")),
+    # --- TRR9022: EKS IRSA credential used off-cluster (the vetted replacement for the
+    #     dropped ECS/TRR9022 slot; a trusted-marker sibling of TRR9011) ---
+    ("TRR9022", "T1550.001", "aws_eks_irsa_web_identity_assumed_off_cluster.yml",
+     "trr9022/attack.json", "trr9022/benign.json", "AWS",
+     "EKS IRSA web-identity role assumed off-cluster (exchange leg)",
+     marker("trr9022", "requestParameters.roleArn", "responseElements.subjectFromWebIdentityToken",
+            "userIdentity.arn", "userIdentity.sessionContext.sessionIssuer.arn")),
+    ("TRR9022", "T1550.001", "aws_eks_irsa_role_session_used_off_cluster.yml",
+     "trr9022/attack.json", "trr9022/benign.json", "AWS",
+     "EKS IRSA role session used off-cluster (use leg)",
+     marker("trr9022", "requestParameters.roleArn", "responseElements.subjectFromWebIdentityToken",
+            "userIdentity.arn", "userIdentity.sessionContext.sessionIssuer.arn")),
 ]
 
 FOLDERS = sorted({folder for _, folder, *_ in MANIFEST})

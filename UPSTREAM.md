@@ -56,16 +56,18 @@ TRR9018  GCP         T1098.001,T1199  aws_github_oidc_role_trust_abuse.yml (+6) 
 TRR9019  AWS         T1537            aws_efs_file_system_policy_made_public.yml (+7) T1537
 TRR9020  GCP         T1199,T1098.001  aws_github_oidc_role_trust_abuse.yml (+6) T1098.001,T1199
 TRR9021  AWS         T1537            aws_efs_file_system_policy_made_public.yml (+7) T1537
-TRR9023  Azure       T1078.004,T1550.001 aws_cognito_identity_pool_unauth_enabled.yml (+3) T1078.004
+TRR9023  Azure       T1078.004,T1550.001 aws_cognito_identity_pool_unauth_enabled.yml (+5) T1078.004,T1550.001
+TRR9022  AWS         T1550.001,T1078.004 aws_cognito_identity_pool_unauth_enabled.yml (+5) T1078.004,T1550.001
 -----------------------------------------------------------------------------------------------
-22 TRRs | 60 Sigma rule files | 21 atomic technique dirs
+23 TRRs | 62 Sigma rule files | 22 atomic technique dirs
 ```
 
 The "first rule" column is just the alphabetically-first file in each folder; a TRR
 owns the rules named in its own `## Detections` table. T1098.001 is shared by TRR9013
 (Entra/Azure), TRR9015 (AWS), and TRR9018 (GCP); T1078.004 by TRR9012, TRR9016 (AWS) and
 TRR9023 (Entra SP sign-in); T1537 by TRR9019 (policies/snapshots/BPA) and TRR9021 (ACL +
-long-tail); T1199 by TRR9020 (GCP workforce); T1562.001 by the Linux io_uring rule and TRR9008.
+long-tail); T1199 by TRR9020 (GCP workforce); T1562.001 by the Linux io_uring rule and TRR9008;
+T1550.001 by TRR9022 (EKS IRSA off-cluster) and TRR9023 (Entra SP sign-in).
 
 > Note: `detections/sigma/T1098.001/` holds five rules (TRR9013's two Entra/Azure
 > rules, TRR9015's AWS rule, and TRR9018's two GCP rules); `detections/sigma/T1078.004/`

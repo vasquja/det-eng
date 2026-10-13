@@ -843,6 +843,43 @@
           "url": "../atomics/T1078.004/src/emulate_entra_sp_fic_signin.sh"
         }
       }
+    },
+    {
+      "name": "EKS IRSA Credentials Used Off-Cluster (AWS)",
+      "id": "TRR9022",
+      "tactics": [
+        "Defense Evasion",
+        "Lateral Movement"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1550.001",
+        "T1078.004"
+      ],
+      "platforms": [
+        "AWS"
+      ],
+      "procedures": {
+        "A": "Off-cluster IRSA token exchange (AssumeRoleWithWebIdentity)",
+        "B": "Off-cluster use of a minted IRSA session",
+        "C": "EKS Pod Identity (out of scope)",
+        "D": "Residual detection gaps"
+      },
+      "pub_date": "2026-10-13",
+      "last_update": "2026-10-13",
+      "path": "trr9022/aws/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1550.001/src/emulate_eks_irsa_offpod.sh"
+        },
+        "B": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1550.001/src/emulate_eks_irsa_offpod.sh"
+        }
+      }
     }
   ]
 }
