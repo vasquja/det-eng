@@ -1,8 +1,8 @@
-# det-eng — AI-Driven Detection Engineering
+# Detection at Scale
 
 [![lint-trr](https://github.com/vasquja/det-eng/actions/workflows/lint-trr.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/lint-trr.yml) [![validate-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-detections.yml) [![validate-apiserver-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-apiserver-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-apiserver-detections.yml) [![validate-cloud-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-cloud-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-cloud-detections.yml)
 
-**Detection at scale, held to a proof standard.**
+**AI-driven detection engineering, held to a proof standard.**
 
 Attackers already use AI to find and weaponize weaknesses at scale, faster
 than a human team can review them. Defenders cannot answer exploitation at
@@ -90,24 +90,12 @@ One technique, one platform, five steps. Each step produces an artifact, and
 every artifact names the **procedure ID** it serves (see
 [the spine](#the-procedure-id-is-the-spine)).
 
-```
-          ┌─────────────────────────────────────────────────────────┐
-          │  0. Pick ONE MITRE technique for ONE platform            │
-          └─────────────────────────────────────────────────────────┘
-                                   │
-   ┌───────────────┐   ┌───────────────┐   ┌───────────────┐   ┌───────────────┐
-   │ 1. RESEARCH   │ → │ 2. EMULATE    │ → │ 3. DETECT     │ → │ 4. PROVE      │
-   │   research/   │   │   atomics/    │   │ detections/   │   │  validator    │
-   │   (the TRR)   │   │ (one test per │   │   sigma/      │   │ atomic →      │
-   │               │   │  procedure)   │   │ (chokepoint   │   │ telemetry →   │
-   │               │   │               │   │  first)       │   │ rule fires    │
-   └───────────────┘   └───────────────┘   └───────────────┘   └───────────────┘
-                                   │
-                                   ▼
-          ┌─────────────────────────────────────────────────────────┐
-          │  5. CONTRIBUTE upstream (TRR, tests, rules)              │
-          └─────────────────────────────────────────────────────────┘
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/workflow-dark.png">
+  <img alt="Swimlane: a human picks one ATT&CK technique; the AI agent researches it (TRR, DDMs), writes an emulation, and writes a Sigma rule at the chokepoint; CI proves the rule fires on the emulation and stays quiet on controls, sending failures back to the agent; passing work goes back to the human to merge and contribute upstream." src="docs/diagrams/workflow-light.png">
+</picture>
+
+<sub>Drawn with <a href="https://github.com/cathrynlavery/diagram-design">diagram-design</a>; source in <a href="docs/diagrams/"><code>docs/diagrams/</code></a>.</sub>
 
 ### 1. Research — write the TRR
 
