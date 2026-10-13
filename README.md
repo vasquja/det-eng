@@ -1,15 +1,66 @@
-# det-eng — Detection Engineering Research
+# Detection at Scale
 
 [![lint-trr](https://github.com/vasquja/det-eng/actions/workflows/lint-trr.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/lint-trr.yml) [![validate-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-detections.yml) [![validate-apiserver-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-apiserver-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-apiserver-detections.yml) [![validate-cloud-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-cloud-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-cloud-detections.yml)
 
-Detection research, worked in the open. This repository is where I study a
-MITRE ATT&CK technique end to end: understand how it works, model where it can
-be seen, build a test that triggers it, write a rule that catches it, and then
-**prove** the rule fires on the test.
+**AI-driven detection engineering, held to a proof standard.**
+
+Attackers already use AI to find and weaponize weaknesses at scale, faster
+than a human team can review them. Defenders cannot answer exploitation at
+scale one hand-written rule at a time; they need **detection at scale**. This
+repository is an experiment in what that takes: an AI agent does the heavy
+lifting of detection engineering — research, emulation, rule writing — and a
+strict, automated validation loop decides what is allowed to count as done.
 
 > **Not production.** Nothing here is meant for production use. Rules are
 > `status: experimental` and need baselining before they alert. Finished work
 > is contributed upstream (see [Contributing upstream](#5-contribute-upstream)).
+
+---
+
+## Detection at scale, and why AI alone is not enough
+
+Coverage is a volume problem. ATT&CK has hundreds of techniques, each with
+several execution paths, across Linux, Kubernetes, and three major clouds. A
+careful human writes a well-researched detection in days. An AI agent can draft
+one in minutes.
+
+But a fast, wrong detection is worse than none: it gives false confidence. The
+thing that makes AI-written detections worth anything is **evidence**, not
+speed. So the agent works inside a method that does not trust its output:
+
+- **Research before rules.** The agent must write a structured Technique
+  Research Report (TRR) that models every execution path *before* it writes a
+  rule, so the reasoning is on the page where a human can check it.
+- **Chokepoints, not signatures.** The target is the one condition every
+  procedure must pass through. That is the opposite of the pile of brittle,
+  per-tool rules that cheap generation tends to produce.
+- **Proof, not claims.** Every detection strategy is paired with an emulation,
+  and CI asserts the rule fires on telemetry that emulation produced — and
+  stays silent on no-op runs, broken mutants, and benign baselines. A rule that cannot pass
+  that loop does not merge, however plausible it reads.
+
+### Who does what
+
+| Human | AI agent ([Claude Code](https://claude.com/claude-code)) |
+|-------|-----------------------------------------------------------|
+| Picks the technique and platform | Researches the mechanics and enumerates procedures |
+| Sets the method and the bar for "done" | Draws a Detection Data Model per procedure |
+| Reviews the reasoning and the gaps | Writes the emulation, the telemetry config, and the Sigma rules |
+| Merges | Iterates against CI until the proof passes |
+
+### What that looks like in practice
+
+From the first TRR (October 4, 2026) to TRR9019 (October 12, 2026), roughly
+nine days:
+
+- **19 Technique Research Reports** across Linux, Kubernetes, AWS, Azure, and GCP
+- **20 ATT&CK techniques** with behavioral emulations
+- **52 Sigma rules**, all compiled in CI, with each technique's primary rule
+  proven to fire on its own emulation
+- **82 Detection Data Models**, rendered and freshness-checked by the linter
+
+Several of these cover ground that public emulation libraries (Atomic Red Team,
+Stratus Red Team) do not, which is where machine-speed research pays off most.
 
 ---
 
@@ -23,7 +74,8 @@ This repository inverts that. **Research comes first.** Every detection here
 begins as a written **Technique Research Report (TRR)** that models the
 technique, enumerates its distinct execution paths, and finds the one place
 they all have to pass through. The rule is the *last* artifact, and it traces
-back to a documented decision.
+back to a documented decision. That ordering matters even more when an AI is
+the author: it forces the model to show its work.
 
 The method follows Andrew VanVleet's TRR process and the
 [tired-labs/techniques](https://github.com/tired-labs/techniques) project. The
@@ -38,24 +90,12 @@ One technique, one platform, five steps. Each step produces an artifact, and
 every artifact names the **procedure ID** it serves (see
 [the spine](#the-procedure-id-is-the-spine)).
 
-```
-          ┌─────────────────────────────────────────────────────────┐
-          │  0. Pick ONE MITRE technique for ONE platform            │
-          └─────────────────────────────────────────────────────────┘
-                                   │
-   ┌───────────────┐   ┌───────────────┐   ┌───────────────┐   ┌───────────────┐
-   │ 1. RESEARCH   │ → │ 2. EMULATE    │ → │ 3. DETECT     │ → │ 4. PROVE      │
-   │   research/   │   │   atomics/    │   │ detections/   │   │  validator    │
-   │   (the TRR)   │   │ (one test per │   │   sigma/      │   │ atomic →      │
-   │               │   │  procedure)   │   │ (chokepoint   │   │ telemetry →   │
-   │               │   │               │   │  first)       │   │ rule fires    │
-   └───────────────┘   └───────────────┘   └───────────────┘   └───────────────┘
-                                   │
-                                   ▼
-          ┌─────────────────────────────────────────────────────────┐
-          │  5. CONTRIBUTE upstream (TRR, tests, rules)              │
-          └─────────────────────────────────────────────────────────┘
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/workflow-dark.png">
+  <img alt="Swimlane: a human picks one ATT&CK technique; the AI agent researches it (TRR, DDMs), writes an emulation, and writes a Sigma rule at the chokepoint; CI proves the rule fires on the emulation and stays quiet on controls, sending failures back to the agent; passing work goes back to the human to merge and contribute upstream." src="docs/diagrams/workflow-light.png">
+</picture>
+
+<sub>Drawn with <a href="https://github.com/cathrynlavery/diagram-design">diagram-design</a>; source in <a href="docs/diagrams/"><code>docs/diagrams/</code></a>.</sub>
 
 ### 1. Research — write the TRR
 
