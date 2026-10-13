@@ -139,8 +139,9 @@ structural transform (our local house style keeps extras the upstream linter rej
    the SigmaHQ PR).
 4. Rewrite the Procedures table header to exactly `| ID | Title | Tactic |`, and the Available
    Emulation Tests table header to exactly `| ID | Link |` (link reference-style, or `None`).
-5. Re-wrap every prose/list line to ≤80 chars, and convert every inline `[text](url)` / `<url>` to
-   reference-style `[text][ref]` + a `[ref]: url` footnote block.
+5. Re-wrap every prose/list line to ≤80 chars, and convert every inline Markdown link and every
+   bare `<url>` autolink to reference-style (`[text][ref]` with a matching `[ref]: url` footnote
+   block).
 6. Set `Contributors` to real human name(s), not `det-eng`. **(Confirm the names before filing.)**
 7. Do NOT add/edit upstream `index.json` (the bot generates it); do not include `research/index.json`.
 8. Gate locally: `go run tools/trrlint/main.go <README.md>` → 0 errors, and
