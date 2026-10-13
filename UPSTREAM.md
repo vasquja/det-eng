@@ -119,8 +119,11 @@ IDs, a rendered DDM PNG per procedure, and `index.json` consistency. All reports
 
 > These steps were reconciled against each project's CURRENT `CONTRIBUTING`, format spec,
 > and CI workflows (read 2026-10-13). They correct earlier assumptions; re-pull each project's
-> linter/spec before a filing wave, since those gates are what bounce a PR. None of the three
-> projects requires a DCO sign-off or CLA as of that read (confirm from your own experience).
+> linter/spec before a filing wave, since those gates are what bounce a PR. **DCO / CLA
+> verified 2026-10-13** against each project's contributing docs, PR template, and workflow
+> list (and a live merged SigmaHQ PR): none of the three requires a DCO sign-off or a CLA —
+> tired-labs is GPL-3.0, SigmaHQ rules are DRL-1.1, Atomic Red Team is MIT; the only merge gate
+> is each project's CI plus maintainer review. So no `git commit -s` and nothing to sign.
 > Opening each PR is a human step: fork + PR under your own account.
 
 ### 1. TRR → tired-labs/techniques
@@ -142,7 +145,7 @@ structural transform (our local house style keeps extras the upstream linter rej
 5. Re-wrap every prose/list line to ≤80 chars, and convert every inline Markdown link and every
    bare `<url>` autolink to reference-style (`[text][ref]` with a matching `[ref]: url` footnote
    block).
-6. Set `Contributors` to real human name(s), not `det-eng`. **(Confirm the names before filing.)**
+6. Set `Contributors` to `Jason Vasquez` (not `det-eng`).
 7. Do NOT add/edit upstream `index.json` (the bot generates it); do not include `research/index.json`.
 8. Gate locally: `go run tools/trrlint/main.go <README.md>` → 0 errors, and
    `python3 tools/index/index.py merge_test -f <README.md>` → success. One technique per PR.
@@ -166,6 +169,11 @@ structural transform (our local house style keeps extras the upstream linter rej
    Submit per-logsource-family PRs, not one big batch; fill the PR template's tagged Changelog block.
 
 ### 3. Atomic → redcanaryco/atomic-red-team
+
+> **Staged:** T1098.006 and T1199 are prepared upstream-ready under
+> `upstream/atomic-red-team/` (both are new files upstream — 404-confirmed 2026-10-13 — not
+> merges); see `upstream/atomic-red-team/FILING.md` for the per-technique transforms and the
+> local validate command. The rest of the ART set still follows the merge-not-copy steps below.
 
 1. **Merge, do not copy.** Most technique IDs already exist upstream with community tests — open the
    upstream `<T####>.yaml` and **append** our `atomic_tests[]`, keeping their `display_name`. Only a

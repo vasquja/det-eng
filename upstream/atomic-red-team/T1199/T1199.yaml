@@ -1,0 +1,57 @@
+attack_technique: T1199
+display_name: "Trusted Relationship"
+
+atomic_tests:
+  - name: "GCP - Workforce Identity Federation Backdoor"
+    description: |
+      Creates a GCP Workforce Identity pool and an external OIDC provider with NO attribute
+      condition (so any identity the external IdP asserts is accepted), then binds the pool's
+      principalSet directly to an organization IAM role. This establishes an external,
+      org-scoped federated human identity with no service-account or workloadIdentityUser step
+      — a trusted-relationship backdoor into the organization.
+
+      The test binds a low-privilege role (`roles/browser`) by default to keep the blast radius
+      small; a real intrusion would bind `roles/owner`. The detectable shape is the same: a
+      CreateWorkforcePoolProvider with an empty attributeCondition and a cloudresourcemanager
+      SetIamPolicy whose delta adds a role to a `principalSet://.../workforcePools/...` member.
+      Run only against a Google Cloud organization you control. Cleanup removes the binding,
+      the provider, and the pool.
+    supported_platforms:
+      - iaas:gcp
+    input_arguments:
+      gcp_organization:
+        description: Numeric ID of a Google Cloud organization you control.
+        type: string
+        default: "0000000000"
+      workforce_pool:
+        description: ID for the throwaway workforce identity pool to create.
+        type: string
+        default: atomic-ext-pool
+      provider_id:
+        description: ID for the external OIDC provider to create in the pool.
+        type: string
+        default: atomic-ext-idp
+      issuer_uri:
+        description: Issuer URI of the external IdP the provider trusts.
+        type: url
+        default: https://issuer.example.com
+      binding_role:
+        description: Organization IAM role to bind the pool principalSet to.
+        type: string
+        default: roles/browser
+    dependencies:
+      - description: |
+          The gcloud CLI is installed and authenticated with rights to manage workforce identity
+          pools and set IAM policy on the target organization.
+        prereq_command: |
+          command -v gcloud >/dev/null 2>&1 && gcloud auth list --filter=status:ACTIVE --format="value(account)" | grep -q .
+        get_prereq_command: |
+          echo "Install the Google Cloud CLI (https://cloud.google.com/sdk/docs/install) and run 'gcloud auth login' with an identity that can manage workforce pools and set IAM policy on organization #{gcp_organization}."
+    dependency_executor_name: bash
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash "$PathToAtomicsFolder/T1199/src/emulate_gcp_workforce.sh" create "#{gcp_organization}" "#{workforce_pool}" "#{provider_id}" "#{issuer_uri}" "#{binding_role}"
+      cleanup_command: |
+        bash "$PathToAtomicsFolder/T1199/src/emulate_gcp_workforce.sh" cleanup "#{gcp_organization}" "#{workforce_pool}" "#{provider_id}" "#{issuer_uri}" "#{binding_role}"
