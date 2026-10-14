@@ -24,7 +24,7 @@ references:
 author: det-eng
 date: 2026/10/12
 tags:
-  - attack.defense-evasion
+  - attack.stealth
   - attack.privilege-escalation
   - attack.t1134
 logsource:

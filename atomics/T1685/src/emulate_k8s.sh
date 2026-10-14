@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# TRR9008 — behavioral emulation for T1562.001 (Impair Defenses: Disable or Modify
+# TRR9008 — behavioral emulation for T1685 (Disable or Modify
 # Tools), Kubernetes admission control. (The Linux io_uring telemetry-evasion atomic
-# for T1562.001 is the separate C program in this folder; this is the Kubernetes
+# for T1685 is the separate C program in this folder; this is the Kubernetes
 # admission-control half.)
 #
 # Each procedure DISABLES a harmless, throwaway admission object (NEVER a real

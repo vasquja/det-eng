@@ -10,7 +10,7 @@
 |--------------|-------|
 | ID           | TRR9022 |
 | External IDs | T1550.001, T1078.004 |
-| Tactics      | Defense Evasion, Lateral Movement |
+| Tactics      | Stealth, Lateral Movement |
 | Platforms    | AWS |
 | Contributors | det-eng |
 | Status       | draft |

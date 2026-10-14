@@ -42,7 +42,7 @@ TRR9004  Kubernetes  T1098.006        k8s_rbac_privileged_grant.yml (+1)       T
 TRR9005  Kubernetes  T1053.007        k8s_cri_job_pod.yml (+1)                 T1053.007
 TRR9006  Kubernetes  T1552.007        k8s_secret_access.yml (+2)               T1552.007
 TRR9007  Kubernetes  T1611            k8s_podspec_controller_host_access.yml (+2) T1611
-TRR9008  Kubernetes  T1562.001        io_uring_setup.yml (+3)                  T1562.001
+TRR9008  Kubernetes  T1685            io_uring_setup.yml (+3)                  T1685
 TRR9009  Kubernetes  T1134            k8s_impersonation.yml (+1)               T1134
 TRR9010  Kubernetes  T1070,T1070.004  k8s_events_deleted.yml (+1)              T1070
 TRR9011  AWS         T1552.005        aws_imds_creds_used_off_instance.yml     T1552.005
@@ -66,13 +66,13 @@ The "first rule" column is just the alphabetically-first file in each folder; a 
 owns the rules named in its own `## Detections` table. T1098.001 is shared by TRR9013
 (Entra/Azure), TRR9015 (AWS), and TRR9018 (GCP); T1078.004 by TRR9012, TRR9016 (AWS) and
 TRR9023 (Entra SP sign-in); T1537 by TRR9019 (policies/snapshots/BPA) and TRR9021 (ACL +
-long-tail); T1199 by TRR9020 (GCP workforce); T1562.001 by the Linux io_uring rule and TRR9008;
+long-tail); T1199 by TRR9020 (GCP workforce); T1685 by the Linux io_uring rule and TRR9008;
 T1550.001 by TRR9022 (EKS IRSA off-cluster) and TRR9023 (Entra SP sign-in).
 
 > Note: `detections/sigma/T1098.001/` holds five rules (TRR9013's two Entra/Azure
 > rules, TRR9015's AWS rule, and TRR9018's two GCP rules); `detections/sigma/T1078.004/`
 > holds TRR9012's leaked-key rule and TRR9016's two Cognito rules;
-> `detections/sigma/T1562.001/` holds the Linux
+> `detections/sigma/T1685/` holds the Linux
 > io_uring rule alongside TRR9008's Kubernetes rules. Submit each rule to the
 > SigmaHQ path for *its own* log source, not the folder's.
 
@@ -158,8 +158,8 @@ structural transform (our local house style keeps extras the upstream linter rej
    `rules-emerging-threats/...` — which then **requires** a `detection.emerging-threats` tag (and
    plain `rules/...` must NOT carry it). Filenames are lowercase, `_`-separated, product-prefixed
    (`aws_*`/`azure_*`/`gcp_*`; no `entra_*` prefix — remap Entra to `azure_*`).
-2. Normalise tags: one canonical ATT&CK tactic form (we have a hyphen/underscore mix to fix), every
-   technique tag paired with its mapped tactic tag, and CVE tags as `cve.YYYY.NNNN` (dots).
+2. Tags already follow ATT&CK v20 (hyphenated tactics `attack.stealth` / `attack.defense-impairment`,
+   `T1562.*` remapped to `T1685` / `T1686.001`); keep every technique tag paired with its mapped tactic tag, and CVE tags as `cve.YYYY.NNNN` (dots).
 3. Keep `status: experimental`; titles ≤120 chars, Title Case, not starting "Detect"/ending with a
    period; `references` with no MITRE-site links and git permalinks only.
 4. Rework any literal `\*` escaped-wildcard match (the `escaped_wildcard` validator flags it, and our

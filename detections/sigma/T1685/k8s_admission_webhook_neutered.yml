@@ -23,13 +23,13 @@ description: |
   requestObject. Without Request level a neuter and a benign edit are
   indistinguishable.
 references:
-  - https://attack.mitre.org/techniques/T1562/001/
+  - https://attack.mitre.org/techniques/T1685/
   - https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/
 author: det-eng
 date: 2026/10/12
 tags:
-  - attack.defense-evasion
-  - attack.t1562.001
+  - attack.defense-impairment
+  - attack.t1685
 logsource:
   product: kubernetes
   service: audit
