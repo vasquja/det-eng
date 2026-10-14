@@ -46,7 +46,7 @@ speed. So the agent works inside a method that does not trust its output:
 | Picks the technique and platform | Researches the mechanics and enumerates procedures |
 | Sets the method and the bar for "done" | Draws a Detection Data Model per procedure |
 | Reviews the reasoning and the gaps | Writes the emulation, the telemetry config, and the Sigma rules |
-| Merges | Iterates against CI until the proof passes |
+| Merges, or labels `automerge` to let CI merge on green | Iterates against CI until the proof passes |
 
 ### What that looks like in practice
 
@@ -255,6 +255,14 @@ Proving the loop is automated:
   nothing in a hard benign baseline. Pure Python — no cluster, no cloud account.
 - **Lint** — [`.github/workflows/lint-trr.yml`](.github/workflows/lint-trr.yml)
   checks TRR structure, DDM PNG freshness, and markdown links.
+- **Auto-merge (opt-in)** —
+  [`.github/workflows/automerge.yml`](.github/workflows/automerge.yml)
+  squash-merges a pull request once every check above has concluded successfully on
+  its exact head commit — the "proof decides what is done" model applied to the merge
+  itself, so the agent can drive a detection all the way to landed. It is label-gated
+  (only a PR a collaborator marks `automerge` is eligible), same-repo only (never a
+  fork), honors a reviewer's `CHANGES_REQUESTED`, and guards the merge by head SHA.
+  Remove the label to veto.
 
 Run the Linux loop locally:
 
