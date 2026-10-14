@@ -35,7 +35,7 @@ references:
 author: det-eng
 date: 2026/10/13
 tags:
-  - attack.defense-evasion
+  - attack.stealth
   - attack.t1550.001
   - attack.lateral-movement
   - attack.t1078.004

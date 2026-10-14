@@ -315,13 +315,13 @@
       "name": "Disabling Admission Control (Kubernetes)",
       "id": "TRR9008",
       "tactics": [
-        "Defense Evasion"
+        "Defense Impairment"
       ],
       "contributors": [
         "det-eng"
       ],
       "external_ids": [
-        "T1562.001"
+        "T1685"
       ],
       "platforms": [
         "Kubernetes"
@@ -338,19 +338,19 @@
       "tests": {
         "A": {
           "text": "det-eng validating-webhook delete behavioral emulation (no-op webhook)",
-          "url": "../atomics/T1562.001/src/emulate_k8s.sh"
+          "url": "../atomics/T1685/src/emulate_k8s.sh"
         },
         "B": {
           "text": "det-eng mutating-webhook delete behavioral emulation",
-          "url": "../atomics/T1562.001/src/emulate_k8s.sh"
+          "url": "../atomics/T1685/src/emulate_k8s.sh"
         },
         "C": {
           "text": "det-eng webhook neuter behavioral emulation (failurePolicy Ignore, rules [])",
-          "url": "../atomics/T1562.001/src/emulate_k8s.sh"
+          "url": "../atomics/T1685/src/emulate_k8s.sh"
         },
         "D": {
           "text": "det-eng enforcer-workload removal behavioral emulation (scale-to-zero + delete)",
-          "url": "../atomics/T1562.001/src/emulate_k8s.sh"
+          "url": "../atomics/T1685/src/emulate_k8s.sh"
         }
       }
     },
@@ -358,7 +358,7 @@
       "name": "User Impersonation (Kubernetes)",
       "id": "TRR9009",
       "tactics": [
-        "Defense Evasion",
+        "Stealth",
         "Privilege Escalation"
       ],
       "contributors": [
@@ -402,7 +402,7 @@
       "name": "Indicator Removal (Kubernetes)",
       "id": "TRR9010",
       "tactics": [
-        "Defense Evasion"
+        "Stealth"
       ],
       "contributors": [
         "det-eng"
@@ -814,7 +814,7 @@
       "name": "Entra Federated Service-Principal Sign-In Abuse (Azure)",
       "id": "TRR9023",
       "tactics": [
-        "Defense Evasion",
+        "Stealth",
         "Persistence",
         "Privilege Escalation"
       ],
@@ -848,7 +848,7 @@
       "name": "EKS IRSA Credentials Used Off-Cluster (AWS)",
       "id": "TRR9022",
       "tactics": [
-        "Defense Evasion",
+        "Stealth",
         "Lateral Movement"
       ],
       "contributors": [

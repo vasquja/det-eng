@@ -10,7 +10,7 @@
 |--------------|-------|
 | ID           | TRR9009 |
 | External IDs | T1134 |
-| Tactics      | Defense Evasion, Privilege Escalation |
+| Tactics      | Stealth, Privilege Escalation |
 | Platforms    | Kubernetes |
 | Contributors | det-eng |
 | Status       | draft |

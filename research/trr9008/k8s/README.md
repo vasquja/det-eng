@@ -9,15 +9,15 @@
 | Key          | Value |
 |--------------|-------|
 | ID           | TRR9008 |
-| External IDs | T1562.001 |
-| Tactics      | Defense Evasion |
+| External IDs | T1685 |
+| Tactics      | Defense Impairment |
 | Platforms    | Kubernetes |
 | Contributors | det-eng |
 | Status       | draft |
 
 ### Scope Statement
 
-This TRR covers Defense Evasion through **disabling dynamic admission control**:
+This TRR covers Defense Impairment through **disabling dynamic admission control**:
 removing or disarming the admission webhooks and CEL policies that enforce
 Kubernetes security policy, and removing the workload that serves them.
 
@@ -32,10 +32,10 @@ This TRR does not cover these related actions:
   (T1098.006) detects the grant; this report detects the use. An attacker
   usually needs the grant first, so the two are correlated but distinct.
 
-> ATT&CK has no Kubernetes-specific defense-evasion sub-technique, and T1562.001
+> ATT&CK has no Kubernetes-specific defense-impairment sub-technique, and T1685
 > (Disable or Modify Tools) lists Containers among its platforms, so it is the
 > correct and defensible mapping for neutering the policy engine. This report
-> co-exists with the repository's Linux T1562.001 report (io_uring
+> co-exists with the repository's Linux T1685 report (io_uring
 > telemetry-evasion); a TRR is platform-scoped.
 
 ## Technique Overview
@@ -56,7 +56,7 @@ the rules so it never fires; or they leave admission alone and remove the enforc
 itself, deleting or scaling the Gatekeeper, Kyverno, or Falco workload to zero so
 the webhook endpoint is gone. After any of these, the next malicious pod, the next
 unsigned image, the next privileged workload sails through. It is a one-request
-defense-evasion step that clears the way for everything else.
+defense-impairment step that clears the way for everything else.
 
 ## Technical Background
 
@@ -224,14 +224,14 @@ Match audit events where `objectRef.apiGroup` is `admissionregistration.k8s.io` 
 and cluster-upgrade tooling by `user.username`.
 
 - Sensor: API server audit log.
-- Rule: `detections/sigma/T1562.001/k8s_admission_webhook_disabled.yml` (built).
+- Rule: `detections/sigma/T1685/k8s_admission_webhook_disabled.yml` (built).
 
 **Strategy 2 — severity (grades C; needs Request level).**
 On top of the chokepoint, match a webhook write whose `requestObject.webhooks` sets
 failurePolicy to Ignore or an empty rules list. This needs Request level.
 
 - Sensor: API server audit log at Request level.
-- Rule: `detections/sigma/T1562.001/k8s_admission_webhook_neutered.yml` (built).
+- Rule: `detections/sigma/T1685/k8s_admission_webhook_neutered.yml` (built).
 
 **Strategy 3 — enforcer removal (covers D).**
 Match an apps-group write that deletes a Deployment/DaemonSet, or scales one to zero
@@ -239,7 +239,7 @@ Match an apps-group write that deletes a Deployment/DaemonSet, or scales one to 
 app labels.
 
 - Sensor: API server audit log.
-- Rule: `detections/sigma/T1562.001/k8s_security_tool_workload_removed.yml` (built).
+- Rule: `detections/sigma/T1685/k8s_security_tool_workload_removed.yml` (built).
 
 **Demonstrated gap — the control-plane bypass.**
 An adversary with control-plane node access can disable admission without any
@@ -271,9 +271,9 @@ admission group at Request level). The lab is a `kind` cluster; its config and a
 policy are in [`detections/k8s/`](../../../detections/k8s/). Every object is named
 `trr9008-*`, and every webhook is a no-op (failurePolicy Ignore, rules scoped to a
 bogus apiGroup) that cannot affect a real admission request. One script drives them:
-[`atomics/T1562.001/src/emulate_k8s.sh`](../../../atomics/T1562.001/src/emulate_k8s.sh),
+[`atomics/T1685/src/emulate_k8s.sh`](../../../atomics/T1685/src/emulate_k8s.sh),
 with Atomic Red Team wrappers in
-[`atomics/T1562.001/T1562.001.yaml`](../../../atomics/T1562.001/T1562.001.yaml)
+[`atomics/T1685/T1685.yaml`](../../../atomics/T1685/T1685.yaml)
 (alongside the Linux io_uring test for the same technique).
 
 | Procedure | Test | Status |
@@ -287,9 +287,9 @@ with Atomic Red Team wrappers in
 
 | Strategy | Covers | Sigma rule | Sensor |
 |----------|--------|------------|--------|
-| 1 (chokepoint) | A, B, C | [`detections/sigma/T1562.001/k8s_admission_webhook_disabled.yml`](../../../detections/sigma/T1562.001/k8s_admission_webhook_disabled.yml) | API server audit log |
-| 2 (severity) | grades C | [`detections/sigma/T1562.001/k8s_admission_webhook_neutered.yml`](../../../detections/sigma/T1562.001/k8s_admission_webhook_neutered.yml) | API server audit log (Request) |
-| 3 (fallback) | D | [`detections/sigma/T1562.001/k8s_security_tool_workload_removed.yml`](../../../detections/sigma/T1562.001/k8s_security_tool_workload_removed.yml) | API server audit log |
+| 1 (chokepoint) | A, B, C | [`detections/sigma/T1685/k8s_admission_webhook_disabled.yml`](../../../detections/sigma/T1685/k8s_admission_webhook_disabled.yml) | API server audit log |
+| 2 (severity) | grades C | [`detections/sigma/T1685/k8s_admission_webhook_neutered.yml`](../../../detections/sigma/T1685/k8s_admission_webhook_neutered.yml) | API server audit log (Request) |
+| 3 (fallback) | D | [`detections/sigma/T1685/k8s_security_tool_workload_removed.yml`](../../../detections/sigma/T1685/k8s_security_tool_workload_removed.yml) | API server audit log |
 
 The validator
 [`detections/validate_apiserver_detections.py`](../../../detections/validate_apiserver_detections.py)
@@ -305,8 +305,8 @@ chokepoint plus the neuter grader and the workload-removal rule.
 
 ## References
 
-- MITRE ATT&CK, T1562.001 Impair Defenses: Disable or Modify Tools:
-  <https://attack.mitre.org/techniques/T1562/001/>
+- MITRE ATT&CK, T1685 Disable or Modify Tools:
+  <https://attack.mitre.org/techniques/T1685/>
 - Kubernetes documentation, Dynamic Admission Control (webhook configs,
   failurePolicy, rules, selectors, clientConfig):
   <https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/>

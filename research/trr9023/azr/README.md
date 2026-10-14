@@ -10,7 +10,7 @@
 |--------------|-------|
 | ID           | TRR9023 |
 | External IDs | T1078.004, T1550.001 |
-| Tactics      | Defense Evasion, Persistence, Privilege Escalation |
+| Tactics      | Stealth, Persistence, Privilege Escalation |
 | Platforms    | Azure / Microsoft Entra ID |
 | Contributors | det-eng |
 | Status       | draft |

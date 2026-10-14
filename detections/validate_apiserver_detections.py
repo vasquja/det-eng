@@ -9,7 +9,7 @@ key on the same API server audit log (plus one node runtime sensor rule):
   * TRR9005 (T1053.007, Jobs/CronJobs)   - batch writes + a node CRI job-pod rule
   * TRR9006 (T1552.007, Secrets)         - secret reads + TokenRequest
   * TRR9007 (T1611, dangerous pod spec)  - pod + controller requestObject
-  * TRR9008 (T1562.001, impair defenses) - admissionregistration disable + grade
+  * TRR9008 (T1685, disable or modify tools) - admissionregistration disable + grade
   * TRR9009 (T1134, impersonation)       - impersonatedUser presence
   * TRR9010 (T1070, indicator removal)   - events delete/deletecollection
 
@@ -122,11 +122,11 @@ MANIFEST = [
      "pod-spec host-access chokepoint (Request)", name_prefix("trr9007-")),
     ("T1611", "k8s_podspec_controller_host_access.yml", "audit", "9007 ctrl",
      "controller-template host-access (Request)", name_prefix("trr9007-")),
-    ("T1562.001", "k8s_admission_webhook_disabled.yml", "audit", "9008 A-C",
+    ("T1685", "k8s_admission_webhook_disabled.yml", "audit", "9008 A-C",
      "admission-control disable chokepoint", name_prefix("trr9008-")),
-    ("T1562.001", "k8s_admission_webhook_neutered.yml", "audit", "9008 sev",
+    ("T1685", "k8s_admission_webhook_neutered.yml", "audit", "9008 sev",
      "webhook neuter severity (Request)", name_prefix("trr9008-")),
-    ("T1562.001", "k8s_security_tool_workload_removed.yml", "audit", "9008 D",
+    ("T1685", "k8s_security_tool_workload_removed.yml", "audit", "9008 D",
      "enforcer workload removal fallback", name_prefix("trr9008-")),
     ("T1134", "k8s_impersonation.yml", "audit", "9009 A-D",
      "impersonation presence chokepoint", impersonation_gate),

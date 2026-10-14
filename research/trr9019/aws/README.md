@@ -36,8 +36,8 @@ ships is `aws.persistence.lambda-backdoor-function` (`AddPermission` with `Princ
 public form of S3 bucket policy and of AMI / EBS / RDS snapshot sharing, the ECR / KMS / SNS /
 SQS / Secrets Manager policy surfaces, and the whole S3 Block-Public-Access family — none of
 which Stratus or Atomic Red Team covers. The enabling misconfiguration is frequently tracked as
-T1098 (Account Manipulation), and Block-Public-Access removal as T1562.007 (Disable or Modify
-Cloud Firewall); the paired Sigma rules tag those secondary IDs.
+T1098 (Account Manipulation), and Block-Public-Access removal as T1686.001 (Disable or Modify System
+Firewall: Cloud Firewall); the paired Sigma rules tag those secondary IDs.
 
 ## Technique Overview
 
