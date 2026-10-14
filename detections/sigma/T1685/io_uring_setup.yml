@@ -13,9 +13,9 @@ references:
 author: det-eng
 date: 2026/10/05
 tags:
-  - attack.defense_evasion
-  - attack.t1562.001
-  - attack.privilege_escalation
+  - attack.defense-impairment
+  - attack.t1685
+  - attack.privilege-escalation
   - attack.t1068
 logsource:
   product: linux

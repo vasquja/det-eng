@@ -204,7 +204,7 @@ validator (`validate_apiserver_detections.py`), and one workflow
 | TRR9005 | Jobs/CronJobs (T1053.007) | `sigma/T1053.007/k8s_job_create.yml` + a node-runtime job-pod rule | Request |
 | TRR9006 | Secrets (T1552.007) | `sigma/T1552.007/k8s_secret_access.yml` + a TokenRequest rule | Metadata |
 | TRR9007 | Dangerous pod spec (T1611) | `sigma/T1611/k8s_podspec_host_access.yml` + a controller rule | Request |
-| TRR9008 | Disable admission control (T1562.001) | `sigma/T1562.001/k8s_admission_webhook_disabled.yml` + a neuter grader + a workload-removal rule | Request |
+| TRR9008 | Disable admission control (T1685) | `sigma/T1685/k8s_admission_webhook_disabled.yml` + a neuter grader + a workload-removal rule | Request |
 | TRR9009 | Impersonation (T1134) | `sigma/T1134/k8s_impersonation.yml` + a privileged-target rule | Metadata |
 | TRR9010 | Indicator removal (T1070) | `sigma/T1070/k8s_events_deleted.yml` + a workload-deletion rule | Metadata |
 

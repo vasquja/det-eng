@@ -9,14 +9,14 @@
 |--------------|-------|
 | ID           | TRR9010 |
 | External IDs | T1070, T1070.004 |
-| Tactics      | Defense Evasion |
+| Tactics      | Stealth |
 | Platforms    | Kubernetes |
 | Contributors | det-eng |
 | Status       | draft |
 
 ### Scope Statement
 
-This TRR covers Defense Evasion through **indicator removal**: destroying the
+This TRR covers Stealth through **indicator removal**: destroying the
 records of what happened in a cluster. It covers deleting Kubernetes Events (the
 cluster's own activity record), deleting the Pods and Jobs that ran, and clearing
 the API server audit log on the node.
@@ -28,7 +28,7 @@ This TRR does not cover these related actions:
 - Command execution in a container (T1609) or a dangerous pod spec (T1611). Deleting
   a pod to remove evidence is distinct from running one.
 
-> ATT&CK maps this to T1070 (Indicator Removal, Defense Evasion); Containers is a
+> ATT&CK maps this to T1070 (Indicator Removal, Stealth); Containers is a
 > platform of the parent with no container sub-technique. Clearing the audit log
 > file on the node maps to T1070.004 (File Deletion), as Elastic's own "Kubernetes
 > Events Deleted" rule tags it.

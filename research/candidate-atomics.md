@@ -27,7 +27,7 @@ source, an atomic YAML entry, and an auditd Sigma rule:
 | # | Idea | Technique folder |
 |---|------|------------------|
 | 1 | userfaultfd | `T1068` |
-| 2 | io_uring | `T1562.001` |
+| 2 | io_uring | `T1685` |
 | 3 | eBPF program load | `T1014` |
 | 4 | memfd fileless exec | `T1620` |
 | 5 | DirtyPipe | `T1068` |
@@ -45,8 +45,8 @@ the uniqueness claim — ART adds content continuously.
 | # | Title | ATT&CK | Core telemetry (benign stub) | Gap vs. ART |
 |---|-------|--------|------------------------------|-------------|
 | 1 | userfaultfd heap-grooming signature | T1068 | `userfaultfd()` + `UFFDIO_REGISTER` | No userfaultfd telemetry in ART |
-| 2 | io_uring syscall-bypass signature | T1562.001 / T1068 | `io_uring_setup()` + `io_uring_enter()` | io_uring is an ART blind spot |
-| 3 | eBPF program load from a shell | T1068 / T1562 | `bpf(BPF_PROG_LOAD)` + map create | No BPF_PROG_LOAD behavioral test |
+| 2 | io_uring syscall-bypass signature | T1685 / T1068 | `io_uring_setup()` + `io_uring_enter()` | io_uring is an ART blind spot |
+| 3 | eBPF program load from a shell | T1068 / T1685 | `bpf(BPF_PROG_LOAD)` + map create | No BPF_PROG_LOAD behavioral test |
 | 4 | memfd fileless execution signature | T1620 / T1055 | `memfd_create()` + `fexecve()` | No clean memfd→fexecve generator |
 | 5 | DirtyPipe splice precondition | T1068 (CVE-2022-0847) | `splice()` read-only fd → pipe | No DirtyPipe behavioral test |
 | 6 | keyring stuffing signature | T1068 / T1556 | `add_key()` / `keyctl()` volume | No keyring telemetry in ART |
@@ -73,7 +73,7 @@ the uniqueness claim — ART adds content continuously.
 
 ## 2. io_uring syscall-bypass signature
 
-- **ATT&CK:** T1562.001 — Impair Defenses: Disable or Modify Tools; T1068
+- **ATT&CK:** T1685 — Disable or Modify Tools; T1068
 - **Description:** The test calls `io_uring_setup()` and submits a benign file
   read through `io_uring_enter()`. The read never passes through the classic
   `read()`/`openat()` syscalls. This shows how io_uring hides I/O from sensors
@@ -86,7 +86,7 @@ the uniqueness claim — ART adds content continuously.
 
 ## 3. eBPF program load from a shell
 
-- **ATT&CK:** T1068; T1562 — Impair Defenses
+- **ATT&CK:** T1068; T1685 — Disable or Modify Tools
 - **Description:** The test calls `bpf(BPF_PROG_LOAD)` to load a tiny, harmless
   eBPF program (for example a no-op, or a read-only counter). It also creates a
   BPF map. The program does nothing and is unloaded at once. An eBPF rootkit or
