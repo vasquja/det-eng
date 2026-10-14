@@ -24,7 +24,7 @@ author: det-eng
 date: 2026/05/15
 modified: 2026/10/09
 tags:
-  - attack.privilege_escalation
+  - attack.privilege-escalation
   - attack.t1068
   - cve.2026-31431
 correlation:

@@ -19,13 +19,13 @@ description: |
   via "kubectl patch" of spec.replicas is on the deployments resource and is
   covered here.
 references:
-  - https://attack.mitre.org/techniques/T1562/001/
+  - https://attack.mitre.org/techniques/T1685/
   - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
 author: det-eng
 date: 2026/10/12
 tags:
-  - attack.defense-evasion
-  - attack.t1562.001
+  - attack.defense-impairment
+  - attack.t1685
 logsource:
   product: kubernetes
   service: audit

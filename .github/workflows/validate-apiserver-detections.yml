@@ -7,7 +7,7 @@ name: validate-apiserver-detections
 #                                         and the executed job pod -> node sensor
 #   - TRR9006 (Secrets, T1552.007):     secret read / token -> audit -> Sigma
 #   - TRR9007 (dangerous pod spec, T1611): pod/controller requestObject -> audit -> Sigma
-#   - TRR9008 (disable admission control, T1562.001): admissionregistration write -> audit -> Sigma
+#   - TRR9008 (disable admission control, T1685): admissionregistration write -> audit -> Sigma
 #   - TRR9009 (impersonation, T1134):   impersonatedUser presence    -> audit -> Sigma
 #   - TRR9010 (indicator removal, T1070): events delete/deletecollection -> audit -> Sigma
 #
@@ -33,7 +33,7 @@ on:
       - 'detections/sigma/T1053.007/**'
       - 'detections/sigma/T1552.007/**'
       - 'detections/sigma/T1611/**'
-      - 'detections/sigma/T1562.001/**'
+      - 'detections/sigma/T1685/**'
       - 'detections/sigma/T1134/**'
       - 'detections/sigma/T1070/**'
       - 'detections/validate_apiserver_detections.py'
@@ -43,7 +43,7 @@ on:
       - 'atomics/T1053.007/**'
       - 'atomics/T1552.007/**'
       - 'atomics/T1611/**'
-      - 'atomics/T1562.001/**'
+      - 'atomics/T1685/**'
       - 'atomics/T1134/**'
       - 'atomics/T1070/**'
       - '.github/workflows/validate-apiserver-detections.yml'
@@ -56,7 +56,7 @@ on:
       - 'detections/sigma/T1053.007/**'
       - 'detections/sigma/T1552.007/**'
       - 'detections/sigma/T1611/**'
-      - 'detections/sigma/T1562.001/**'
+      - 'detections/sigma/T1685/**'
       - 'detections/sigma/T1134/**'
       - 'detections/sigma/T1070/**'
       - 'detections/validate_apiserver_detections.py'
@@ -66,7 +66,7 @@ on:
       - 'atomics/T1053.007/**'
       - 'atomics/T1552.007/**'
       - 'atomics/T1611/**'
-      - 'atomics/T1562.001/**'
+      - 'atomics/T1685/**'
       - 'atomics/T1134/**'
       - 'atomics/T1070/**'
       - '.github/workflows/validate-apiserver-detections.yml'
@@ -175,7 +175,7 @@ jobs:
         shell: bash
         env:
           TRR9008_NODE: apiserver-control-plane
-        run: bash atomics/T1562.001/src/emulate_k8s.sh all
+        run: bash atomics/T1685/src/emulate_k8s.sh all
 
       - name: Emulate TRR9009 (impersonation, read-only)
         shell: bash

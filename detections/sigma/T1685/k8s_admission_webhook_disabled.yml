@@ -25,14 +25,14 @@ description: |
   own service account, GitOps/Helm identities, and system:kube-controller-manager
   by user.username and user.groups -- an attacker touches the same objects.
 references:
-  - https://attack.mitre.org/techniques/T1562/001/
+  - https://attack.mitre.org/techniques/T1685/
   - https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/
   - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
 author: det-eng
 date: 2026/10/12
 tags:
-  - attack.defense-evasion
-  - attack.t1562.001
+  - attack.defense-impairment
+  - attack.t1685
 logsource:
   product: kubernetes
   service: audit

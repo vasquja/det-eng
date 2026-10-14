@@ -105,6 +105,14 @@ final ID on merge.
 
 ## Index
 
+External IDs and tactic names follow **ATT&CK Enterprise v20** (released
+2026-10-13). In v19/v20 ATT&CK renamed tactic TA0005 Defense Evasion to
+**Stealth**, added TA0112 **Defense Impairment**, and revoked the `T1562.*`
+family in favour of `T1685` (Disable or Modify Tools) and `T1686.*`. Sigma
+tags use the hyphenated forms SigmaHQ uses (`attack.stealth`,
+`attack.defense-impairment`). Re-check the STIX bundle before each upstream
+filing wave; ATT&CK revokes and renames IDs between releases.
+
 | Local ID | ATT&CK | Technique | Platform | Folder |
 |----------|--------|-----------|----------|--------|
 | TRR9001  | T1040  | Network Sniffing | Linux | [`trr9001/lin`](trr9001/lin/README.md) |
@@ -114,7 +122,7 @@ final ID on merge.
 | TRR9005  | T1053.007 | Container Orchestration Job | Kubernetes | [`trr9005/k8s`](trr9005/k8s/README.md) |
 | TRR9006  | T1552.007 | Unsecured Credentials: Container API | Kubernetes | [`trr9006/k8s`](trr9006/k8s/README.md) |
 | TRR9007  | T1611  | Escape to Host via a Dangerous Pod Spec | Kubernetes | [`trr9007/k8s`](trr9007/k8s/README.md) |
-| TRR9008  | T1562.001 | Disabling Admission Control | Kubernetes | [`trr9008/k8s`](trr9008/k8s/README.md) |
+| TRR9008  | T1685 | Disabling Admission Control | Kubernetes | [`trr9008/k8s`](trr9008/k8s/README.md) |
 | TRR9009  | T1134  | User Impersonation | Kubernetes | [`trr9009/k8s`](trr9009/k8s/README.md) |
 | TRR9010  | T1070  | Indicator Removal | Kubernetes | [`trr9010/k8s`](trr9010/k8s/README.md) |
 | TRR9011  | T1552.005 | IMDS Credential Theft Used Off-Instance | AWS | [`trr9011/aws`](trr9011/aws/README.md) |

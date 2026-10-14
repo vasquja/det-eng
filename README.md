@@ -326,7 +326,7 @@ is copied to `trr0000/` and the maintainer assigns the final ID.
   admission in the audit `requestObject` (Request level). A controller-template
   fallback and a static-pod gap round it out.
 
-- **[TRR9008 — Disabling Admission Control (T1562.001, Kubernetes)](research/trr9008/k8s/README.md)**
+- **[TRR9008 — Disabling Admission Control (T1685, Kubernetes)](research/trr9008/k8s/README.md)**
   Deleting or neutering admission webhooks (OPA/Gatekeeper, Kyverno, Falco). One
   chokepoint on `admissionregistration.k8s.io` writes, a Request-level rule that
   grades a fail-open neuter, and an enforcer-workload-removal fallback.

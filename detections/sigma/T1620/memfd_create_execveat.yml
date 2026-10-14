@@ -26,7 +26,7 @@ author: det-eng
 date: 2026/10/05
 modified: 2026/10/09
 tags:
-  - attack.defense_evasion
+  - attack.stealth
   - attack.t1620
   - attack.t1055
 correlation:

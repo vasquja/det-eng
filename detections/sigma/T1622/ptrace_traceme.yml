@@ -12,7 +12,7 @@ references:
 author: det-eng
 date: 2026/10/05
 tags:
-  - attack.defense_evasion
+  - attack.stealth
   - attack.t1622
   - attack.t1055.008
 logsource:

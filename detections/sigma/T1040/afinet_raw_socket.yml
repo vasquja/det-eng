@@ -19,7 +19,7 @@ references:
 author: det-eng
 date: 2026/10/05
 tags:
-  - attack.credential_access
+  - attack.credential-access
   - attack.discovery
   - attack.t1040
 logsource:
