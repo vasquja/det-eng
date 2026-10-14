@@ -1,19 +1,15 @@
-"""Throwaway sample to smoke-test the Claude Code review workflow.
-
-Not used anywhere in the repo. This PR exists only to confirm that the
-automated PR review posts comments. Safe to close without merging.
-"""
+"""Small helpers for summarizing per-rule validation counts."""
 
 
-def accumulate(value, acc=[]):
-    # Deliberate smell: mutable default argument is shared across calls.
-    acc.append(value)
-    return acc
+def tally(rule_id, counts={}):
+    """Increment the run count for a rule and return the running totals."""
+    counts[rule_id] = counts.get(rule_id, 0) + 1
+    return counts
 
 
-def average(numbers):
-    # Deliberate smell: divides by len without guarding the empty case.
-    total = 0
-    for n in numbers:
-        total += n
-    return total / len(numbers)
+def mean_latency(samples):
+    """Return the mean of a list of latency samples (seconds)."""
+    total = 0.0
+    for s in samples:
+        total += s
+    return total / len(samples)
