@@ -885,7 +885,7 @@
       "name": "Rootkit via eBPF Program Load (Linux)",
       "id": "TRR9024",
       "tactics": [
-        "Defense Evasion"
+        "Stealth"
       ],
       "contributors": [
         "det-eng"

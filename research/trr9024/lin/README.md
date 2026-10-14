@@ -9,7 +9,7 @@
 |--------------|-------|
 | ID           | TRR9024 |
 | External IDs | T1014 |
-| Tactics      | Defense Evasion |
+| Tactics      | Stealth |
 | Platforms    | Linux |
 | Contributors | det-eng |
 | Status       | experimental |
@@ -31,7 +31,7 @@ techniques with their own telemetry.
 A rootkit is code that hides an adversary on a host and keeps their access. Once
 it is in place, it can hide files, processes, network connections, and the
 adversary's own login, so the normal tools on the host report a clean system
-when it is not. A rootkit is a defense-evasion tool first: its job is to make
+when it is not. A rootkit is a stealth tool first: its job is to make
 the rest of the intrusion invisible.
 
 On Linux a rootkit can live in three places. It can run as kernel code, loaded
@@ -93,9 +93,9 @@ that call is the detection opportunity, captured before the rootkit can hide it.
 
 | ID | Title | Tactic | Entry point |
 |----|-------|--------|-------------|
-| TRR9024.LIN.A | eBPF program load (`BPF_PROG_LOAD`) | Defense Evasion | `bpf(BPF_MAP_CREATE)` + `bpf(BPF_PROG_LOAD)` |
-| TRR9024.LIN.B | Loadable kernel module | Defense Evasion | `finit_module()` / `init_module()` |
-| TRR9024.LIN.C | Userland library preload | Defense Evasion | `write()` to `/etc/ld.so.preload`, or `LD_PRELOAD` |
+| TRR9024.LIN.A | eBPF program load (`BPF_PROG_LOAD`) | Stealth | `bpf(BPF_MAP_CREATE)` + `bpf(BPF_PROG_LOAD)` |
+| TRR9024.LIN.B | Loadable kernel module | Stealth | `finit_module()` / `init_module()` |
+| TRR9024.LIN.C | Userland library preload | Stealth | `write()` to `/etc/ld.so.preload`, or `LD_PRELOAD` |
 
 > Tool is not procedure. TripleCross, boopkit, and a hand-written eBPF loader all
 > pass through `bpf(BPF_PROG_LOAD)`; they are Procedure A, not a procedure each.
@@ -292,7 +292,7 @@ sudo python3 detections/validate_detections.py           # real: atomic -> telem
 python3 detections/validate_detections.py --dry-run       # compile + parse only
 ```
 
-The Sigma rule also tags `attack.t1068` / `attack.privilege_escalation`: a
+The Sigma rule also tags `attack.t1068` / `attack.privilege-escalation`: a
 `bpf(BPF_PROG_LOAD)` from an unexpected process is both a rootkit-install signal
 (T1014) and a classic eBPF privilege-escalation surface. This same node is the
 eBPF half of the TRR9001 (T1040) network-sniffing fallback, so one rule serves
