@@ -1,0 +1,156 @@
+name: automerge
+
+# Auto-merge a pull request once the full validation loop is green — det-eng's
+# "the proof decides what is done" model, applied to the merge itself. This lets an
+# AI (or anyone) drive a detection to a mergeable, CI-proven state and have it land
+# without a manual click, at scale, while keeping an auditable, bounded blast radius.
+#
+# SAFETY RAILS (all must hold, re-checked on the exact head commit every time):
+#   1. Per-PR opt-in: the PR must carry the `automerge` label. A label can be added
+#      only by a collaborator with triage/write access, so the label IS the human (or
+#      trusted-automation) opt-in. Remove the label to veto.
+#   2. Same-repo only: fork PRs are never merged here (and a fork PR's GITHUB_TOKEN is
+#      read-only anyway). This is the key defense against a malicious outside PR.
+#   3. Not a draft, and the base branch is `main`.
+#   4. Every check run on the exact head SHA has concluded success / neutral / skipped
+#      (nothing failed, nothing still running), and there is at least one check — a PR
+#      with no CI did not run the proof loop.
+#   5. No reviewer's latest review is CHANGES_REQUESTED (a human veto is honored).
+#   6. No merge conflict (`mergeable == true`).
+#   7. The merge is guarded by the head SHA, so a push that races the merge aborts it
+#      rather than merging unreviewed code.
+#
+# It triggers only off the named validation / review workflows completing (never off
+# its own run, so there is no self-trigger loop) and off the label being added, and
+# re-evaluates until the PR is green-and-labeled or has merged. Squash-merge matches
+# the repo's history. Nothing here runs PR-authored code; it only reads API metadata.
+#
+# Requirements: repository Actions permission must allow read/write workflow tokens
+# (Settings -> Actions -> General -> Workflow permissions). The `automerge` label must
+# exist in the repo. No branch-protection or "Allow auto-merge" repo setting is needed;
+# a stricter alternative is GitHub native auto-merge gated by branch-protection
+# required checks, which this workflow deliberately does not depend on.
+
+on:
+  workflow_run:
+    workflows:
+      - validate-detections
+      - validate-apiserver-detections
+      - validate-cloud-detections
+      - validate-k8s-detections
+      - validate-staticpod-detections
+      - lint-trr
+      - claude-code-review
+    types: [completed]
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  statuses: read
+
+concurrency:
+  group: automerge-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  automerge:
+    name: automerge
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate the proof loop and merge when green
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          LABEL: automerge
+          EVENT: ${{ github.event_name }}
+          PR_FROM_LABEL: ${{ github.event.pull_request.number }}
+          SHA_FROM_RUN: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # --- Resolve the candidate open PR(s) for this event --------------------
+          if [ "$EVENT" = "pull_request" ]; then
+            prs="$PR_FROM_LABEL"
+          else
+            # workflow_run: the PR(s) whose head commit is this run's head SHA.
+            prs="$(gh api "repos/$REPO/commits/$SHA_FROM_RUN/pulls" \
+                     --jq '.[] | select(.state=="open") | .number' 2>/dev/null || true)"
+          fi
+          if [ -z "${prs//[[:space:]]/}" ]; then
+            echo "No candidate open PR for this event; nothing to do."
+            exit 0
+          fi
+
+          for pr in $prs; do
+            echo "::group::Evaluate PR #$pr"
+
+            data="$(gh api "repos/$REPO/pulls/$pr")"
+            state="$(jq -r '.state' <<<"$data")"
+            draft="$(jq -r '.draft' <<<"$data")"
+            base="$(jq -r '.base.ref' <<<"$data")"
+            same_repo="$(jq -r '.head.repo.full_name == .base.repo.full_name' <<<"$data")"
+            head_sha="$(jq -r '.head.sha' <<<"$data")"
+            has_label="$(jq -r --arg l "$LABEL" 'any(.labels[]?; .name==$l)' <<<"$data")"
+
+            [ "$state" = "open" ]     || { echo "skip: not open";        echo "::endgroup::"; continue; }
+            [ "$draft" = "false" ]    || { echo "skip: draft";           echo "::endgroup::"; continue; }
+            [ "$same_repo" = "true" ] || { echo "skip: fork PR";         echo "::endgroup::"; continue; }
+            [ "$base" = "main" ]      || { echo "skip: base is $base";   echo "::endgroup::"; continue; }
+            [ "$has_label" = "true" ] || { echo "skip: no '$LABEL' label"; echo "::endgroup::"; continue; }
+
+            # --- A human reviewer's standing CHANGES_REQUESTED is a veto -----------
+            changes_requested="$(gh api "repos/$REPO/pulls/$pr/reviews" --paginate --jq '
+              [ .[] | select(.state=="CHANGES_REQUESTED" or .state=="APPROVED" or .state=="DISMISSED") ]
+              | group_by(.user.login)
+              | map(max_by(.submitted_at))
+              | any(.[]?; .state=="CHANGES_REQUESTED")' 2>/dev/null || echo "true")"
+            [ "$changes_requested" = "false" ] || { echo "skip: changes requested"; echo "::endgroup::"; continue; }
+
+            # --- Every check run on the EXACT head SHA must be a pass --------------
+            # Exclude this workflow's own 'automerge' check (it is in_progress now).
+            runs="$(gh api --paginate "repos/$REPO/commits/$head_sha/check-runs" \
+                      --jq '.check_runs[] | select(.name != "automerge")
+                            | [.status, (.conclusion // "")] | @tsv' 2>/dev/null || true)"
+            total="$(printf '%s' "$runs" | grep -c . || true)"
+            not_done="$(printf '%s\n' "$runs" | awk -F'\t' 'NF>0 && $1!="completed"{c++} END{print c+0}')"
+            bad="$(printf '%s\n' "$runs" | awk -F'\t' \
+                    'NF>0 && $1=="completed" && $2!="success" && $2!="neutral" && $2!="skipped"{c++} END{print c+0}')"
+
+            if [ "$total" -lt 1 ]; then echo "skip: no check runs yet"; echo "::endgroup::"; continue; fi
+            if [ "$not_done" -ne 0 ]; then echo "skip: $not_done check(s) still running"; echo "::endgroup::"; continue; fi
+            if [ "$bad" -ne 0 ]; then echo "skip: $bad check(s) not successful"; echo "::endgroup::"; continue; fi
+
+            # --- Legacy commit statuses (if any) must be success ------------------
+            status_state="$(gh api "repos/$REPO/commits/$head_sha/status" --jq '.state' 2>/dev/null || echo "unknown")"
+            if [ "$status_state" != "success" ] && [ "$status_state" != "" ]; then
+              # 'pending' with zero statuses reports as 'pending'; treat only a real
+              # failure/error as blocking. No contexts => total_count 0 => allow.
+              total_statuses="$(gh api "repos/$REPO/commits/$head_sha/status" --jq '.total_count' 2>/dev/null || echo 0)"
+              if [ "${total_statuses:-0}" -gt 0 ] && [ "$status_state" != "success" ]; then
+                echo "skip: commit status is $status_state"; echo "::endgroup::"; continue
+              fi
+            fi
+
+            # --- No merge conflict (mergeable may be computed async) --------------
+            mergeable="$(jq -r '.mergeable' <<<"$data")"
+            for _ in 1 2 3 4 5; do
+              [ "$mergeable" = "null" ] || break
+              sleep 3
+              mergeable="$(gh api "repos/$REPO/pulls/$pr" --jq '.mergeable' 2>/dev/null || echo "null")"
+            done
+            [ "$mergeable" != "false" ] || { echo "skip: merge conflict"; echo "::endgroup::"; continue; }
+
+            # --- All rails clear: squash-merge, guarded by the head SHA -----------
+            echo "All checks green and rails clear; merging PR #$pr at $head_sha"
+            if gh api -X PUT "repos/$REPO/pulls/$pr/merge" \
+                 -f merge_method=squash -f sha="$head_sha" >/dev/null 2>&1; then
+              echo "Merged PR #$pr."
+            else
+              echo "Merge was not applied (head moved, or a protection/permission gate). Leaving the PR open."
+            fi
+            echo "::endgroup::"
+          done
