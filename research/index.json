@@ -880,6 +880,36 @@
           "url": "../atomics/T1550.001/src/emulate_eks_irsa_offpod.sh"
         }
       }
+    },
+    {
+      "name": "Rootkit via eBPF Program Load (Linux)",
+      "id": "TRR9024",
+      "tactics": [
+        "Defense Evasion"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1014"
+      ],
+      "platforms": [
+        "Linux"
+      ],
+      "procedures": {
+        "A": "eBPF program load (BPF_PROG_LOAD)",
+        "B": "Loadable kernel module",
+        "C": "Userland library preload"
+      },
+      "pub_date": "2026-10-14",
+      "last_update": "2026-10-14",
+      "path": "trr9024/lin/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng eBPF program-load (BPF_MAP_CREATE + BPF_PROG_LOAD) behavioral atomic",
+          "url": "../atomics/T1014/src/ebpf_prog_load_behavioral.c"
+        }
+      }
     }
   ]
 }

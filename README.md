@@ -412,6 +412,12 @@ is copied to `trr0000/` and the maintainer assigns the final ID.
   IP. Unlike TRR9011 there is no GuardDuty backstop, so the CloudTrail rule is primary; differentiated
   from Elastic's external-ASN rule and the first such rule in SigmaHQ.
 
+- **[TRR9024 — Rootkit via eBPF Program Load (T1014, Linux)](research/trr9024/lin/README.md)**
+  Linux rootkits by where they install: an eBPF program, a loadable kernel module, or a userland
+  `ld.so.preload` library. There is no single syscall chokepoint across the three, so the strategy is
+  one anchor each. The modern eBPF path (`bpf(BPF_PROG_LOAD)` from a non-allowlisted process) is built
+  and proven on its own atomic; the kernel-module and userland-preload anchors are documented gaps.
+
 See [`research/index.json`](research/index.json) for the machine-readable index.
 
 ---

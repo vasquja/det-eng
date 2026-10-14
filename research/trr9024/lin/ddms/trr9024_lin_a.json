@@ -1,0 +1,241 @@
+{
+  "style": {
+    "font-family": "sans-serif",
+    "background-color": "#ffffff",
+    "background-image": "",
+    "background-size": "100%",
+    "node-color": "#ffffff",
+    "border-width": 4,
+    "border-color": "#000000",
+    "radius": 50,
+    "node-padding": 5,
+    "node-margin": 2,
+    "outside-position": "auto",
+    "node-icon-image": "",
+    "node-background-image": "",
+    "icon-position": "inside",
+    "icon-size": 64,
+    "caption-position": "inside",
+    "caption-max-width": 200,
+    "caption-color": "#000000",
+    "caption-font-size": 16,
+    "caption-font-weight": "normal",
+    "label-position": "outside",
+    "label-display": "pill",
+    "label-color": "#000000",
+    "label-background-color": "#ffffff",
+    "label-border-color": "#000000",
+    "label-border-width": 2,
+    "label-font-size": 14,
+    "label-padding": 5,
+    "label-margin": 4,
+    "directionality": "directed",
+    "detail-position": "inline",
+    "detail-orientation": "parallel",
+    "arrow-width": 5,
+    "arrow-color": "#000000",
+    "margin-start": 5,
+    "margin-end": 5,
+    "margin-peer": 20,
+    "attachment-start": "normal",
+    "attachment-end": "normal",
+    "relationship-icon-image": "",
+    "type-color": "#000000",
+    "type-background-color": "#ffffff",
+    "type-border-color": "#000000",
+    "type-border-width": 0,
+    "type-font-size": 16,
+    "type-padding": 5,
+    "property-position": "outside",
+    "property-alignment": "colon",
+    "property-color": "#000000",
+    "property-font-size": 16,
+    "property-font-weight": "normal"
+  },
+  "nodes": [
+    {
+      "id": "n0",
+      "position": {
+        "x": 0,
+        "y": 150
+      },
+      "caption": "Install eBPF Rootkit",
+      "labels": [],
+      "properties": {},
+      "style": {
+        "border-color": "#000000",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top"
+      }
+    },
+    {
+      "id": "n1",
+      "position": {
+        "x": 280,
+        "y": 150
+      },
+      "caption": "Call bpf()",
+      "labels": [],
+      "properties": {
+        "Cmd": "BPF_MAP_CREATE",
+        "Requires": "CAP_BPF (or unprivileged_bpf_disabled=0)"
+      },
+      "style": {
+        "border-color": "#68bc00",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "bottom"
+      }
+    },
+    {
+      "id": "n2",
+      "position": {
+        "x": 600,
+        "y": 150
+      },
+      "caption": "Create Map",
+      "labels": [
+        "auditd SYSCALL"
+      ],
+      "properties": {
+        "a0": "0x0 (BPF_MAP_CREATE)"
+      },
+      "style": {
+        "border-color": "#0062b1",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "bottom"
+      }
+    },
+    {
+      "id": "n3",
+      "position": {
+        "x": 900,
+        "y": 0
+      },
+      "caption": "Call bpf()",
+      "labels": [],
+      "properties": {
+        "Cmd": "BPF_PROG_LOAD"
+      },
+      "style": {
+        "border-color": "#68bc00",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top"
+      }
+    },
+    {
+      "id": "n4",
+      "position": {
+        "x": 1200,
+        "y": 0
+      },
+      "caption": "Load Program",
+      "labels": [
+        "auditd SYSCALL"
+      ],
+      "properties": {
+        "a0": "0x5 (BPF_PROG_LOAD)",
+        "Prog type": "SOCKET_FILTER",
+        "Rule": "bpf_prog_load.yml"
+      },
+      "style": {
+        "border-color": "#0062b1",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top",
+        "node-color": "#fff2a8"
+      }
+    },
+    {
+      "id": "n5",
+      "position": {
+        "x": 1200,
+        "y": 330
+      },
+      "caption": "Attach to Hook",
+      "labels": [
+        "auditd SYSCALL"
+      ],
+      "properties": {
+        "a0": "0x8 (BPF_PROG_ATTACH)",
+        "Hook": "kprobe / tracepoint / XDP / tc",
+        "Role": "enrichment, not required"
+      },
+      "style": {
+        "border-color": "#0062b1",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "bottom"
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "id": "r0",
+      "fromId": "n0",
+      "toId": "n1",
+      "type": "",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r1",
+      "fromId": "n1",
+      "toId": "n2",
+      "type": "",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r2",
+      "fromId": "n2",
+      "toId": "n3",
+      "type": "",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r3",
+      "fromId": "n3",
+      "toId": "n4",
+      "type": "",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r4",
+      "fromId": "n4",
+      "toId": "n5",
+      "type": "optional (enrichment)",
+      "properties": {},
+      "style": {}
+    }
+  ]
+}

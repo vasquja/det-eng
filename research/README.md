@@ -130,6 +130,7 @@ final ID on merge.
 | TRR9021  | T1537  | Public Resource Exposure (ACLs + service long-tail) | AWS | [`trr9021/aws`](trr9021/aws/README.md) |
 | TRR9022  | T1550.001 | EKS IRSA Credentials Used Off-Cluster | AWS | [`trr9022/aws`](trr9022/aws/README.md) |
 | TRR9023  | T1078.004 | Federated Service-Principal Sign-In Abuse | Azure | [`trr9023/azr`](trr9023/azr/README.md) |
+| TRR9024  | T1014  | Rootkit via eBPF Program Load | Linux | [`trr9024/lin`](trr9024/lin/README.md) |
 
 ## How to start a new TRR
 
