@@ -1,0 +1,62 @@
+title: Kubernetes Cluster DNS ConfigMap Modified
+id: 95223619-74de-43c6-91b1-1fa78bc6a7ba
+status: experimental
+description: |
+  Detects a write to the cluster DNS configuration: an audit event whose
+  objectRef.resource is configmaps, whose objectRef.namespace is kube-system, whose
+  objectRef.name is coredns, kube-dns, or coredns-custom, and whose verb is update,
+  patch, delete, or create. This is the TRR9027 Strategy 1 chokepoint, covering
+  Procedure A (repoint the base coredns Corefile), B (edit the legacy kube-dns
+  ConfigMap), and C (inject through the coredns-custom import path). Cluster DNS is
+  resolved by CoreDNS from these ConfigMaps; an adversary who can write them redirects
+  name resolution for every pod to an attacker-controlled resolver -- an in-cluster
+  adversary-in-the-middle that enables credential capture and traffic redirection.
+
+  The marker is load-bearing, not just non-spoofable: the CoreDNS Deployment mounts
+  the ConfigMap named coredns in kube-system, so an attacker who wants CoreDNS to read
+  their config must write that exact object -- they cannot rename it. objectRef.name,
+  objectRef.namespace, objectRef.resource, and verb are all set by the API server.
+
+  Metadata level is enough to fire this chokepoint (name, namespace, resource, verb,
+  and identity are all present). The companion grader
+  (k8s_coredns_corefile_poisoned.yml) inspects the submitted Corefile at Request level
+  to tell a poisoning edit from a benign one. Elastic ships near-identical rules at
+  this layer; this is the provider-agnostic Sigma counterpart. Baseline the ACTOR, not
+  the object: suppress the coredns/kube-dns service accounts, system:node:*,
+  kube-controller-manager, GitOps/Helm, and the managed-control-plane principals
+  (eks:*, aksService) by user.username and user.groups -- an attacker edits the same
+  object a legitimate operator does.
+references:
+  - https://attack.mitre.org/techniques/T1565/001/
+  - https://kubernetes.io/docs/tasks/administer-cluster/dns-custom-nameservers/
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+author: det-eng
+date: 2026/10/14
+tags:
+  - attack.impact
+  - attack.t1565.001
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_dns_configmap:
+    objectRef.resource: 'configmaps'
+    objectRef.namespace: 'kube-system'
+    objectRef.name:
+      - 'coredns'
+      - 'kube-dns'
+      - 'coredns-custom'
+    verb:
+      - 'update'
+      - 'patch'
+      - 'delete'
+      - 'create'
+  condition: select_dns_configmap
+falsepositives:
+  - The cluster's own DNS operators updating the Corefile. The coredns and kube-dns
+    service accounts, system:node:*, kube-controller-manager, and the managed
+    control-plane principals (eks:*, aksService) read and reconcile these; baseline
+    them by user.username and user.groups.
+  - GitOps/Helm and cluster upgrades that manage the DNS ConfigMap as config. Baseline
+    the automation identities, then grade the content with the companion rule.
+level: medium

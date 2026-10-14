@@ -1,7 +1,7 @@
 name: validate-apiserver-detections
 
-# Proves the TRR9004-9007 loops on a real Kubernetes cluster, on ONE kind cluster
-# that all four techniques share (they all key on the same API server audit log):
+# Proves the API-server Kubernetes loops on a real Kubernetes cluster, on ONE kind
+# cluster that all the techniques share (they all key on the same API server audit log):
 #   - TRR9004 (RBAC, T1098.006):        rbac write        -> audit -> Sigma
 #   - TRR9005 (Jobs/CronJobs, T1053.007): batch write      -> audit -> Sigma,
 #                                         and the executed job pod -> node sensor
@@ -10,6 +10,9 @@ name: validate-apiserver-detections
 #   - TRR9008 (disable admission control, T1685): admissionregistration write -> audit -> Sigma
 #   - TRR9009 (impersonation, T1134):   impersonatedUser presence    -> audit -> Sigma
 #   - TRR9010 (indicator removal, T1070): events delete/deletecollection -> audit -> Sigma
+#   - TRR9025 (malicious admission webhook, T1546): admissionregistration create + body grade
+#   - TRR9026 (pod port-forward, T1572): pods/portforward subresource -> audit -> Sigma
+#   - TRR9027 (cluster DNS poisoning, T1565.001): kube-system DNS ConfigMap write + Corefile grade
 #
 # A kind cluster runs on the ubuntu-latest runner with API server audit logging on
 # (pods, controllers, RBAC and admission configs at Request level; Secrets and tokens
@@ -36,6 +39,9 @@ on:
       - 'detections/sigma/T1685/**'
       - 'detections/sigma/T1134/**'
       - 'detections/sigma/T1070/**'
+      - 'detections/sigma/T1546/**'
+      - 'detections/sigma/T1572/**'
+      - 'detections/sigma/T1565.001/**'
       - 'detections/validate_apiserver_detections.py'
       - 'detections/sigma_eval.py'
       - 'detections/requirements.txt'
@@ -46,6 +52,9 @@ on:
       - 'atomics/T1685/**'
       - 'atomics/T1134/**'
       - 'atomics/T1070/**'
+      - 'atomics/T1546/**'
+      - 'atomics/T1572/**'
+      - 'atomics/T1565.001/**'
       - '.github/workflows/validate-apiserver-detections.yml'
   pull_request:
     paths:
@@ -59,6 +68,9 @@ on:
       - 'detections/sigma/T1685/**'
       - 'detections/sigma/T1134/**'
       - 'detections/sigma/T1070/**'
+      - 'detections/sigma/T1546/**'
+      - 'detections/sigma/T1572/**'
+      - 'detections/sigma/T1565.001/**'
       - 'detections/validate_apiserver_detections.py'
       - 'detections/sigma_eval.py'
       - 'detections/requirements.txt'
@@ -69,6 +81,9 @@ on:
       - 'atomics/T1685/**'
       - 'atomics/T1134/**'
       - 'atomics/T1070/**'
+      - 'atomics/T1546/**'
+      - 'atomics/T1572/**'
+      - 'atomics/T1565.001/**'
       - '.github/workflows/validate-apiserver-detections.yml'
   workflow_dispatch:
 
@@ -186,6 +201,22 @@ jobs:
         env:
           TRR9010_NODE: apiserver-control-plane
         run: bash atomics/T1070/src/emulate.sh all
+
+      - name: Emulate TRR9025 (malicious admission webhooks, no-op)
+        shell: bash
+        env:
+          TRR9025_NODE: apiserver-control-plane
+        run: bash atomics/T1546/src/emulate_k8s.sh all
+
+      - name: Emulate TRR9026 (pod port-forward, harmless tunnel)
+        shell: bash
+        run: bash atomics/T1572/src/emulate.sh all
+
+      - name: Emulate TRR9027 (cluster DNS poisoning, sentinel + restore)
+        shell: bash
+        env:
+          TRR9027_NODE: apiserver-control-plane
+        run: bash atomics/T1565.001/src/emulate.sh all
 
       - name: Collect the audit log and the node sensor log
         shell: bash

@@ -35,6 +35,15 @@ rules:
       - group: ""
         resources: ["pods", "pods/ephemeralcontainers"]
 
+  # --- TRR9026: pod port-forward tunnel at Metadata (resource/subresource/verb) ---
+  # The pods subresource is not covered by the pods rule above (audit resource matching
+  # is exact), and a port-forward is get (WebSocket) or create (SPDY); Metadata carries
+  # the objectRef.subresource the rule keys on. No request body is needed.
+  - level: Metadata
+    resources:
+      - group: ""
+        resources: ["pods/portforward"]
+
   # --- TRR9005 + TRR9007: workload controllers at Request (embedded templates) ---
   # TRR9005 keys on batch writes; TRR9007 grades the embedded pod template. Keep
   # delete too, so TRR9005 teardown is visible.
@@ -66,6 +75,19 @@ rules:
       - group: "admissionregistration.k8s.io"
         resources: ["validatingwebhookconfigurations", "mutatingwebhookconfigurations",
                      "validatingadmissionpolicies", "validatingadmissionpolicybindings"]
+
+  # --- TRR9027: cluster DNS ConfigMap writes in kube-system at Request ---
+  # The coredns Corefile (and the kube-dns/coredns-custom redirects) live in
+  # requestObject.data, which only Request level records, so the content grader can tell
+  # a poisoning edit from a benign one. Scoped to kube-system, whose ConfigMaps are
+  # configuration, not credentials. Writes only; reads stay dropped by the None rule
+  # below. Above the catch-all so it wins.
+  - level: Request
+    namespaces: ["kube-system"]
+    verbs: ["create", "update", "patch", "delete"]
+    resources:
+      - group: ""
+        resources: ["configmaps"]
 
   # --- TRR9006: Secret reads at Metadata (NEVER Request/RequestResponse) ---
   # Above every None rule, so a secret read is always recorded. Metadata carries

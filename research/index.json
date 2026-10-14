@@ -910,6 +910,121 @@
           "url": "../atomics/T1014/src/ebpf_prog_load_behavioral.c"
         }
       }
+    },
+    {
+      "name": "Malicious Admission Webhook (Kubernetes)",
+      "id": "TRR9025",
+      "tactics": [
+        "Persistence",
+        "Credential Access"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1546"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "Mutating webhook backdoor",
+        "B": "Validating webhook Secret exfiltration",
+        "C": "CEL admission policy (chokepoint only)"
+      },
+      "pub_date": "2026-10-14",
+      "last_update": "2026-10-14",
+      "path": "trr9025/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng mutating-webhook backdoor behavioral emulation (no-op, off-cluster URL)",
+          "url": "../atomics/T1546/src/emulate_k8s.sh"
+        },
+        "B": {
+          "text": "det-eng validating-webhook Secret-exfiltration behavioral emulation (no-op, off-cluster URL)",
+          "url": "../atomics/T1546/src/emulate_k8s.sh"
+        },
+        "C": {
+          "text": "det-eng CEL ValidatingAdmissionPolicy behavioral emulation (chokepoint only)",
+          "url": "../atomics/T1546/src/emulate_k8s.sh"
+        }
+      }
+    },
+    {
+      "name": "Pod Port-Forward Tunnel (Kubernetes)",
+      "id": "TRR9026",
+      "tactics": [
+        "Command and Control"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1572"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "Port-forward over SPDY",
+        "B": "Port-forward over WebSocket",
+        "C": "Direct-kubelet / nodes-proxy tunnel"
+      },
+      "pub_date": "2026-10-14",
+      "last_update": "2026-10-14",
+      "path": "trr9026/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng pods/portforward SPDY behavioral emulation (verb=create)",
+          "url": "../atomics/T1572/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng pods/portforward WebSocket behavioral emulation (verb=get)",
+          "url": "../atomics/T1572/src/emulate.sh"
+        },
+        "C": {
+          "text": "det-eng direct-kubelet port-forward detection-gap demonstration",
+          "url": "../atomics/T1572/src/emulate.sh"
+        }
+      }
+    },
+    {
+      "name": "Cluster DNS Poisoning via the CoreDNS ConfigMap (Kubernetes)",
+      "id": "TRR9027",
+      "tactics": [
+        "Impact"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1565.001"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "Repoint the coredns Corefile",
+        "B": "Edit the legacy kube-dns ConfigMap",
+        "C": "Inject via coredns-custom import"
+      },
+      "pub_date": "2026-10-14",
+      "last_update": "2026-10-14",
+      "path": "trr9027/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng coredns Corefile poisoning behavioral emulation (sentinel forward, restores original)",
+          "url": "../atomics/T1565.001/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng kube-dns stubDomains redirect behavioral emulation (inert)",
+          "url": "../atomics/T1565.001/src/emulate.sh"
+        },
+        "C": {
+          "text": "det-eng coredns-custom import injection behavioral emulation (inert)",
+          "url": "../atomics/T1565.001/src/emulate.sh"
+        }
+      }
     }
   ]
 }

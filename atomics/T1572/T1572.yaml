@@ -1,0 +1,79 @@
+attack_technique: T1572
+display_name: "Protocol Tunneling (Kubernetes Pod Port-Forward)"
+
+# Behavioral emulation for TRR9026. Each test opens a port-forward tunnel to a throwaway
+# pod through the API server, so the API server writes the pods/portforward audit event
+# the paired detection keys on. The target pod is named trr9026-target so a validator
+# matches the emulation's own events; the tunnel is harmless (a local listener held for a
+# moment, then closed). Procedures A and B differ only in transport (SPDY -> verb=create,
+# WebSocket -> verb=get); the rule is verb-agnostic. These need a reachable cluster with
+# rights on pods/portforward and audit logging (see
+# detections/k8s/kind-apiserver-cluster.yaml).
+
+atomic_tests:
+  - name: "TRR9026.K8S.A — port-forward over SPDY (verb=create)"
+    auto_generated_guid: 09447039-08df-4a22-98c8-1a22854e5b10
+    description: |
+      Opens a port-forward to pod trr9026-target over the legacy SPDY transport (POST
+      upgrade), recorded as verb=create on pods/portforward.
+      Chokepoint: objectRef.resource=pods, objectRef.subresource=portforward.
+      Rule: detections/sigma/T1572/k8s_pod_portforward.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh a
+      cleanup_command: |
+        kubectl delete pod trr9026-target --ignore-not-found --force --grace-period=0
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1572/src
+
+  - name: "TRR9026.K8S.B — port-forward over WebSocket (verb=get)"
+    auto_generated_guid: 23fc496c-c739-4ad2-9bee-30422191b2c9
+    description: |
+      Opens a port-forward to pod trr9026-target over the WebSocket transport
+      (portforward.k8s.io, GET upgrade), recorded as verb=get on pods/portforward. A
+      create-only rule would miss this; the verb-agnostic rule catches it.
+      Rule: detections/sigma/T1572/k8s_pod_portforward.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh b
+      cleanup_command: |
+        kubectl delete pod trr9026-target --ignore-not-found --force --grace-period=0
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1572/src
+
+  - name: "TRR9026.K8S.C — direct-kubelet port-forward (no audit event)"
+    auto_generated_guid: 4699bf90-bf39-4f07-848c-367d919bc0d6
+    description: |
+      Read-only demonstration of the gap: a port-forward straight to the kubelet :10250
+      /portForward (for example with kubeletctl) bypasses the API server and leaves no
+      pods/portforward audit event, so the API-audit chokepoint is blind -- the TRR9002
+      direct-kubelet gap, restated. Makes no kubelet call.
+      Rule: detections/sigma/T1572/k8s_pod_portforward.yml (does not see this path)
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh gap
+      cleanup_command: |
+        true
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1572/src

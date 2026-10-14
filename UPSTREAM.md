@@ -59,8 +59,11 @@ TRR9021  AWS         T1537            aws_efs_file_system_policy_made_public.yml
 TRR9023  Azure       T1078.004,T1550.001 aws_cognito_identity_pool_unauth_enabled.yml (+5) T1078.004,T1550.001
 TRR9022  AWS         T1550.001,T1078.004 aws_cognito_identity_pool_unauth_enabled.yml (+5) T1078.004,T1550.001
 TRR9024  Linux       T1014            bpf_prog_load.yml                        T1014
+TRR9025  Kubernetes  T1546            k8s_admission_webhook_created.yml (+1)   T1546
+TRR9026  Kubernetes  T1572            k8s_pod_portforward.yml                  T1572
+TRR9027  Kubernetes  T1565.001        k8s_coredns_configmap_modified.yml (+1)  T1565.001
 -----------------------------------------------------------------------------------------------
-24 TRRs | 62 Sigma rule files | 22 atomic technique dirs
+27 TRRs | 67 Sigma rule files | 25 atomic technique dirs
 ```
 
 The "first rule" column is just the alphabetically-first file in each folder; a TRR

@@ -139,6 +139,9 @@ filing wave; ATT&CK revokes and renames IDs between releases.
 | TRR9022  | T1550.001 | EKS IRSA Credentials Used Off-Cluster | AWS | [`trr9022/aws`](trr9022/aws/README.md) |
 | TRR9023  | T1078.004 | Federated Service-Principal Sign-In Abuse | Azure | [`trr9023/azr`](trr9023/azr/README.md) |
 | TRR9024  | T1014  | Rootkit via eBPF Program Load | Linux | [`trr9024/lin`](trr9024/lin/README.md) |
+| TRR9025  | T1546  | Malicious Admission Webhook | Kubernetes | [`trr9025/k8s`](trr9025/k8s/README.md) |
+| TRR9026  | T1572  | Pod Port-Forward Tunnel | Kubernetes | [`trr9026/k8s`](trr9026/k8s/README.md) |
+| TRR9027  | T1565.001 | Cluster DNS Poisoning via the CoreDNS ConfigMap | Kubernetes | [`trr9027/k8s`](trr9027/k8s/README.md) |
 
 ## How to start a new TRR
 

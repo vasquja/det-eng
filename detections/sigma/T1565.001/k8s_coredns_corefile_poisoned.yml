@@ -1,0 +1,65 @@
+title: Kubernetes CoreDNS Corefile Poisoned
+id: 8aee81f7-1028-4c86-a2e9-ad2b24333a3b
+status: experimental
+description: |
+  Detects a cluster DNS edit that injects a redirect into the CoreDNS Corefile, by
+  inspecting the request body (requestObject, which needs audit level Request or
+  higher). This is the TRR9027 severity layer on top of the chokepoint
+  (k8s_coredns_configmap_modified.yml): the chokepoint fires on every write to the
+  coredns/kube-dns/coredns-custom ConfigMap, this rule picks out the writes that
+  poison resolution. It fires when the submitted Corefile carries a rewrite or
+  template plugin (neither is in a default Corefile), or a forward to an explicit IP
+  address (a default Corefile forwards to /etc/resolv.conf, not to a literal IP), i.e.
+  resolution redirected to an attacker-controlled target.
+
+  The forward-to-IP match uses |re to find a forward directive followed by an IPv4
+  literal; the rewrite/template plugins use |contains. requestObject.data.Corefile is
+  a string (not an array), so it is matched directly. This grades Procedure A
+  (poison the base coredns Corefile). Procedure B (kube-dns) stores its redirect as
+  JSON stubDomains/upstreamNameservers rather than a Corefile, and Procedure C
+  (coredns-custom) stores snippets under arbitrary data keys, so both are covered at
+  the chokepoint and triaged there; this grader is the high-confidence Corefile case.
+
+  Metadata level cannot feed this rule: the Corefile lives only in requestObject.
+  Without Request level a poisoning edit and a benign Corefile change are
+  indistinguishable. A cluster whose legitimate Corefile already forwards to an
+  explicit upstream IP will match the forward-to-IP clause; baseline your own Corefile
+  and treat this as a triage signal, not a standalone alert.
+references:
+  - https://attack.mitre.org/techniques/T1565/001/
+  - https://coredns.io/plugins/rewrite/
+  - https://coredns.io/plugins/forward/
+author: det-eng
+date: 2026/10/14
+tags:
+  - attack.impact
+  - attack.t1565.001
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_dns_configmap_write:
+    objectRef.resource: 'configmaps'
+    objectRef.namespace: 'kube-system'
+    objectRef.name:
+      - 'coredns'
+      - 'kube-dns'
+      - 'coredns-custom'
+    verb:
+      - 'update'
+      - 'patch'
+      - 'create'
+  sel_poison_plugin:
+    requestObject.data.Corefile|contains:
+      - 'rewrite '
+      - 'template '
+  sel_rogue_forward:
+    requestObject.data.Corefile|re: 'forward\s+[^\n]*\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}'
+  condition: select_dns_configmap_write and (sel_poison_plugin or sel_rogue_forward)
+falsepositives:
+  - A cluster whose legitimate Corefile forwards to an explicit upstream IP (some
+    environments do) matches the forward-to-IP clause. Baseline your own Corefile and
+    the known DNS operators, and triage the diff.
+  - A legitimate rewrite/template customization (for example a split-horizon or alias).
+    Triage against the actor and the injected target.
+level: high
