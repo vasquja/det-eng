@@ -90,10 +90,8 @@ One technique, one platform, five steps. Each step produces an artifact, and
 every artifact names the **procedure ID** it serves (see
 [the spine](#the-procedure-id-is-the-spine)).
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/workflow-dark.png">
-  <img alt="Swimlane: a human picks one ATT&CK technique; the AI agent researches it (TRR, DDMs), writes an emulation, and writes a Sigma rule at the chokepoint; CI proves the rule fires on the emulation and stays quiet on controls, sending failures back to the agent; passing work goes back to the human to merge and contribute upstream." src="docs/diagrams/workflow-light.png">
-</picture>
+![Swimlane: a human picks one ATT&CK technique; the AI agent researches it (TRR, DDMs), writes an emulation, and writes a Sigma rule at the chokepoint; CI proves the rule fires on the emulation and stays quiet on controls, sending failures back to the agent; passing work goes back to the human to merge and contribute upstream.](docs/diagrams/workflow-light.png#gh-light-mode-only)
+![Swimlane: a human picks one ATT&CK technique; the AI agent researches it (TRR, DDMs), writes an emulation, and writes a Sigma rule at the chokepoint; CI proves the rule fires on the emulation and stays quiet on controls, sending failures back to the agent; passing work goes back to the human to merge and contribute upstream.](docs/diagrams/workflow-dark.png#gh-dark-mode-only)
 
 <sub>Drawn with <a href="https://github.com/cathrynlavery/diagram-design">diagram-design</a>; source in <a href="docs/diagrams/"><code>docs/diagrams/</code></a>.</sub>
 
