@@ -1,0 +1,54 @@
+title: Kubernetes Admission Webhook Configuration Created
+id: 9d9d3c61-9211-4e3c-b736-b53f7813bd13
+status: experimental
+description: |
+  Detects the creation of a dynamic admission controller object: a create on the
+  admissionregistration.k8s.io API group (MutatingWebhookConfiguration,
+  ValidatingWebhookConfiguration, and the CEL ValidatingAdmissionPolicy and
+  ValidatingAdmissionPolicyBinding). This is the TRR9025 Strategy 1 chokepoint,
+  covering Procedure A (a mutating webhook backdoor), B (a validating webhook that
+  copies every object, including Secrets, to an off-cluster endpoint), and C (a CEL
+  ValidatingAdmissionPolicy in the same group). A mutating webhook runs on every
+  admitted object and can inject a sidecar or backdoor into every pod; a validating
+  webhook receives a copy of every matching object and can exfiltrate Secrets. Both
+  are cluster-scoped persistence that survives credential rotation.
+
+  This is the inverse of TRR9008: TRR9008 keys on DELETE/UPDATE/PATCH of admission
+  objects (disabling the policy engine) and deliberately EXCLUDES create; this rule
+  keys on CREATE (installing a malicious webhook), which TRR9008 scoped out as a
+  separate persistence technique. The companion grader
+  (k8s_malicious_admission_webhook_created.yml) raises severity on a webhook whose
+  clientConfig points off-cluster or whose rules reach cluster-wide or over Secrets.
+
+  The chokepoint fires at Metadata (verb, apiGroup, and objectRef.name are enough to
+  see a create). It cannot tell a benign operator-installed webhook from a malicious
+  one; the grader does that at Request level. This is noisy by design: cert-manager,
+  Gatekeeper, Kyverno, and Helm installs legitimately create webhook configurations.
+  Baseline the ACTOR, not the object -- suppress the policy engine's own service
+  account, the installer's GitOps/Helm identity, and cluster-upgrade tooling by
+  user.username and user.groups. An attacker creates the same kind of object.
+references:
+  - https://attack.mitre.org/techniques/T1546/
+  - https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+author: det-eng
+date: 2026/10/14
+tags:
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1546
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_adm_create:
+    objectRef.apiGroup: 'admissionregistration.k8s.io'
+    verb: 'create'
+  condition: select_adm_create
+falsepositives:
+  - The policy engine's own install creating its webhook configuration (Gatekeeper,
+    Kyverno, cert-manager's ca-injector), and GitOps or Helm deploys that install a
+    webhook. Baseline these identities by user.username and user.groups.
+  - Cluster bootstrap and upgrades that install the built-in admission configurations.
+    Baseline the upgrade tooling.
+level: medium

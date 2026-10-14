@@ -1,0 +1,18 @@
+# TRR9026 target pod: a harmless pod with a listening port, so a port-forward tunnel
+# fully establishes and the API server writes the pods/portforward audit event. The
+# container serves an empty directory over HTTP on 8080; no traffic is sent to it.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: trr9026-target
+  namespace: default
+  labels:
+    app: trr9026-target
+spec:
+  containers:
+    - name: web
+      image: busybox:1.36
+      command: ["httpd", "-f", "-p", "8080", "-h", "/tmp"]
+      ports:
+        - containerPort: 8080
+  restartPolicy: Never

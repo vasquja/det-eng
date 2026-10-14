@@ -1,0 +1,106 @@
+attack_technique: T1546
+display_name: "Event Triggered Execution (Kubernetes Malicious Admission Webhook)"
+
+# Behavioral emulation for TRR9025. Each test CREATES a harmless, throwaway dynamic
+# admission object through the API server, so the API server writes the
+# admissionregistration.k8s.io create audit event the paired detections key on. Every
+# object is named trr9025-* so a validator matches the emulation's own events, and every
+# webhook is a NO-OP: failurePolicy Ignore, a bogus unreachable off-cluster
+# clientConfig.url, and an objectSelector matching a label no object carries, so it never
+# intercepts real admission. This is the CREATE half of admission-control abuse; TRR9008
+# (T1685) owns disabling (delete/neuter). These need a reachable cluster with rights to
+# write admissionregistration objects and audit logging at Request level (see
+# detections/k8s/kind-apiserver-cluster.yaml).
+
+atomic_tests:
+  - name: "TRR9025.K8S.A — create a mutating webhook backdoor (off-cluster URL, wildcard rules)"
+    auto_generated_guid: c1c58357-00ab-47fb-8fdc-4335ea2d0224
+    description: |
+      Creates a no-op MutatingWebhookConfiguration (trr9025-mwc) whose clientConfig.url
+      points off-cluster and whose rules reach every object (operations CREATE, apiGroups
+      ["*"], resources ["*"]). An objectSelector on a label no object carries, plus
+      failurePolicy Ignore, make it inert; the audit requestObject still carries the URL
+      and wildcard rules the grader keys on.
+      Chokepoint: objectRef.apiGroup=admissionregistration.k8s.io, verb=create.
+      Rule: detections/sigma/T1546/k8s_admission_webhook_created.yml
+      Grader: detections/sigma/T1546/k8s_malicious_admission_webhook_created.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_k8s.sh a
+      cleanup_command: |
+        kubectl delete mutatingwebhookconfiguration trr9025-mwc --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1546/src
+
+  - name: "TRR9025.K8S.B — create a validating webhook scoped to secrets (off-cluster URL)"
+    auto_generated_guid: 3e3c8bb5-eac5-4181-97d1-b8418c9dcb59
+    description: |
+      Creates a no-op ValidatingWebhookConfiguration (trr9025-vwc) scoped to secrets with
+      an off-cluster clientConfig.url, the Secret-exfiltration shape. An objectSelector on
+      a label no object carries, plus failurePolicy Ignore, keep it from intercepting a
+      real Secret; the audit requestObject carries the URL and the secrets scope.
+      Grader: detections/sigma/T1546/k8s_malicious_admission_webhook_created.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_k8s.sh b
+      cleanup_command: |
+        kubectl delete validatingwebhookconfiguration trr9025-vwc --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1546/src
+
+  - name: "TRR9025.K8S.C — create a CEL ValidatingAdmissionPolicy (chokepoint only)"
+    auto_generated_guid: 281d6daf-f45d-435f-bc4f-a8f0ece27dc7
+    description: |
+      Creates a benign CEL ValidatingAdmissionPolicy (trr9025-vap, always-allow, no
+      binding). It cannot call off-cluster, so it fires the chokepoint but is not graded.
+      Rule: detections/sigma/T1546/k8s_admission_webhook_created.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_k8s.sh c
+      cleanup_command: |
+        kubectl delete validatingadmissionpolicy trr9025-vap --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1546/src
+
+  - name: "TRR9025.K8S — control-plane etcd bypass (no audit event)"
+    auto_generated_guid: 1d3b37fa-9550-490b-a5ae-873b3bfadc3e
+    description: |
+      Read-only demonstration of the gap: an adversary with control-plane node/etcd access
+      can write a webhook configuration straight into etcd, with no API create and no audit
+      event, so the chokepoint is blind. Shows the etcd data path on the node; makes no
+      change. Needs node access (docker exec on kind) or TRR9025_NODE_EXEC.
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_k8s.sh gap
+      cleanup_command: |
+        true
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1546/src

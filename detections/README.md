@@ -191,9 +191,9 @@ python3 detections/validate_staticpod_detections.py \
   --audit-log /tmp/kube-apiserver-audit.log --cri-log /tmp/cri-pods.jsonl
 ```
 
-## Kubernetes API server detections (TRR9004–9010)
+## Kubernetes API server detections (TRR9004–9010, 9025–9027)
 
-Four more Kubernetes techniques key on the same API server **audit log**, so one
+Several more Kubernetes techniques key on the same API server **audit log**, so one
 shared `kind` cluster, one audit policy (`k8s/audit-policy-apiserver.yaml`), one
 validator (`validate_apiserver_detections.py`), and one workflow
 (`.github/workflows/validate-apiserver-detections.yml`) cover them all:
@@ -207,20 +207,26 @@ validator (`validate_apiserver_detections.py`), and one workflow
 | TRR9008 | Disable admission control (T1685) | `sigma/T1685/k8s_admission_webhook_disabled.yml` + a neuter grader + a workload-removal rule | Request |
 | TRR9009 | Impersonation (T1134) | `sigma/T1134/k8s_impersonation.yml` + a privileged-target rule | Metadata |
 | TRR9010 | Indicator removal (T1070) | `sigma/T1070/k8s_events_deleted.yml` + a workload-deletion rule | Metadata |
+| TRR9025 | Malicious admission webhook (T1546) | `sigma/T1546/k8s_admission_webhook_created.yml` + a Request-level body grader | Request |
+| TRR9026 | Pod port-forward (T1572) | `sigma/T1572/k8s_pod_portforward.yml` (verb-agnostic subresource) | Metadata |
+| TRR9027 | Cluster DNS poisoning (T1565.001) | `sigma/T1565.001/k8s_coredns_configmap_modified.yml` + a Request-level Corefile grader | Metadata + Request |
 
-The audit **level** is per technique: pods, workload controllers, and RBAC are
-logged at `Request` so `requestObject` carries the privileged/hostPath fields,
-the bound role, and the group subject; Secrets and `serviceaccounts/token` stay
-at `Metadata`, never higher, because `RequestResponse` would copy the Secret data
-and the signed token into the log.
+The audit **level** is per technique: pods, workload controllers, RBAC, and
+admission-webhook creates are logged at `Request` so `requestObject` carries the
+privileged/hostPath fields, the bound role, the group subject, and the webhook
+`clientConfig`; `kube-system` ConfigMap writes are at `Request` so the CoreDNS
+Corefile is present; Secrets and `serviceaccounts/token` stay at `Metadata`, never
+higher, because `RequestResponse` would copy the Secret data and the signed token
+into the log.
 
 These rules are intentionally generic, and a fresh `kind` cluster is full of
 baseline matches: bootstrap RBAC writes, controller-created Jobs and Pods,
-controller Secret reads, and the kube-proxy and kindnet privileged pods. So the
-validator gates each rule on the emulation's own marker — a `trr9004-`/`trr9005-`
-/`trr9007-` object name, the `trr9006` namespace with a non-system caller, or a
-`trr9005-` Job label on the node sensor — and the negative control proves a pass
-depends on the emulation, not the baseline.
+controller Secret reads, the kube-proxy and kindnet privileged pods, and the
+bootstrap coredns ConfigMap. So the validator gates each rule on the emulation's
+own marker — a `trr9004-`/`trr9005-`/`trr9007-`/`trr9025-`/`trr9026-` object name,
+the `trr9006` namespace with a non-system caller, a `trr9005-` Job label on the node
+sensor, or the `trr9027` sentinel in a DNS-ConfigMap write — and the negative
+control proves a pass depends on the emulation, not the baseline.
 
 ```
 python3 detections/validate_apiserver_detections.py --dry-run     # compile only

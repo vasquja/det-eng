@@ -2,7 +2,7 @@
 """
 Validate the API-server-mediated Kubernetes detection loops on the telemetry the
 emulations produced. Sibling of validate_k8s_detections.py (TRR9002) and
-validate_staticpod_detections.py (TRR9003), extended to four techniques that all
+validate_staticpod_detections.py (TRR9003), extended to the techniques that all
 key on the same API server audit log (plus one node runtime sensor rule):
 
   * TRR9004 (T1098.006, RBAC)            - rbac writes
@@ -12,6 +12,9 @@ key on the same API server audit log (plus one node runtime sensor rule):
   * TRR9008 (T1685, disable or modify tools) - admissionregistration disable + grade
   * TRR9009 (T1134, impersonation)       - impersonatedUser presence
   * TRR9010 (T1070, indicator removal)   - events delete/deletecollection
+  * TRR9025 (T1546, malicious admission webhook) - admissionregistration create + grade
+  * TRR9026 (T1572, pod port-forward)    - pods/portforward subresource (verb-agnostic)
+  * TRR9027 (T1565.001, cluster DNS poison) - kube-system DNS ConfigMap write + Corefile grade
 
 The loop this proves, for each match-gated rule:
 
@@ -33,6 +36,11 @@ kindnet privileged pods). The gate is:
     caller is not a system identity (a controller reads Secrets in that namespace
     too; a 'list' has no objectRef.name, so the namespace + non-system-caller pair
     is the only gate that spans A/B/C/D).
+  * TRR9025 / TRR9026 : objectRef.name begins with 'trr9025-' / 'trr9026-'.
+  * TRR9027        : objectRef.name is a cluster-DNS ConfigMap (coredns / kube-dns /
+    coredns-custom) in kube-system AND the write carries the 'trr9027' sentinel in its
+    requestObject (the coredns ConfigMap exists at bootstrap, so the name alone is not
+    enough; the sentinel identifies the emulation's own write and excludes the restore).
 
 Rules in each technique folder that are NOT match-gated here (the Linux file-event
 token-read rule, for example) are still COMPILED, so a broken rule fails the run.
@@ -104,6 +112,23 @@ def trr9010_gate(e):
     return e.get("objectRef.namespace") == "trr9010" and e.get("verb") == "deletecollection"
 
 
+def coredns_gate(e):
+    """TRR9027: the emulation's own cluster-DNS write, told apart by the trr9027 sentinel.
+
+    The coredns ConfigMap exists at bootstrap and kube-dns/coredns-custom may be created by
+    other tooling, so name + namespace alone is not enough. The emulation injects its unique
+    'trr9027' sentinel into every write's requestObject (the poisoned Corefile, the kube-dns
+    stubDomains redirect, the coredns-custom snippet), recorded because the audit policy keeps
+    kube-system ConfigMap writes at Request. The restore write carries the original Corefile
+    and no sentinel, so it is correctly excluded.
+    """
+    if e.get("objectRef.namespace") != "kube-system":
+        return False
+    if (e.get("objectRef.name") or "") not in ("coredns", "kube-dns", "coredns-custom"):
+        return False
+    return any("trr9027" in str(v) for v in e.values())
+
+
 # (technique folder, rule file, source, label, note, gate). Order is report order.
 MANIFEST = [
     ("T1098.006", "k8s_rbac_write.yml", "audit", "9004 A-E",
@@ -136,6 +161,16 @@ MANIFEST = [
      "events-deletion chokepoint (delete + deletecollection)", trr9010_gate),
     ("T1070", "k8s_workload_deleted_evidence.yml", "audit", "9010 D",
      "workload-record deletion fallback", trr9010_gate),
+    ("T1546", "k8s_admission_webhook_created.yml", "audit", "9025 A-C",
+     "malicious admission-webhook create chokepoint", name_prefix("trr9025-")),
+    ("T1546", "k8s_malicious_admission_webhook_created.yml", "audit", "9025 sev",
+     "malicious webhook grader: off-cluster url / wildcard+secrets (Request)", name_prefix("trr9025-")),
+    ("T1572", "k8s_pod_portforward.yml", "audit", "9026 A-B",
+     "pod port-forward chokepoint (verb-agnostic subresource)", name_prefix("trr9026-")),
+    ("T1565.001", "k8s_coredns_configmap_modified.yml", "audit", "9027 A-C",
+     "cluster DNS ConfigMap write chokepoint", coredns_gate),
+    ("T1565.001", "k8s_coredns_corefile_poisoned.yml", "audit", "9027 sev",
+     "CoreDNS Corefile poison grader (Request)", coredns_gate),
 ]
 
 # Folders whose other rules are compiled (not match-gated) so a break still fails.
@@ -194,7 +229,7 @@ def dedup_by_audit_id(matches):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Validate TRR9004-9010 K8s detections.")
+    ap = argparse.ArgumentParser(description="Validate TRR9004-9010, 9025-9027 K8s detections.")
     ap.add_argument("--audit-log", default="/tmp/kube-apiserver-audit.log",
                     help="Path to the API server audit log (JSON lines).")
     ap.add_argument("--cri-log",
@@ -317,7 +352,7 @@ def main():
         print(f"The rule(s) with a log fired on the emulated telemetry; {skipped} "
               "rule(s) skipped for lack of a log.")
         return 0
-    print("All TRR9004-9010 match-gated detections fired on the emulated telemetry.")
+    print("All TRR9004-9010, 9025-9027 match-gated detections fired on the emulated telemetry.")
     return 0
 
 

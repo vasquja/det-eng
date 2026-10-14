@@ -1,0 +1,55 @@
+title: Kubernetes Pod Port-Forward Tunnel
+id: b75aa299-d6c5-4798-a913-6c7ac1ca7f5b
+status: experimental
+description: |
+  Detects a port-forward tunnel opened to a pod through the Kubernetes API server: an
+  audit event whose objectRef.resource is pods and whose objectRef.subresource is
+  portforward. This is the TRR9026 chokepoint, covering Procedure A (port-forward over
+  legacy SPDY) and Procedure B (port-forward over WebSocket). kubectl port-forward (and
+  any client library) tunnels arbitrary TCP through the kube-apiserver to a pod's
+  network, which an adversary uses to reach an in-cluster service, database, or
+  dashboard they could not reach directly -- a protocol tunnel for lateral movement or
+  command and control.
+
+  The rule does NOT filter on verb, by design. A port-forward over the legacy SPDY
+  transport is an HTTP POST upgrade, recorded with verb=create; a port-forward over
+  WebSocket (the portforward.k8s.io subprotocol that recent kubectl uses) is an HTTP
+  GET upgrade, recorded with verb=get. A rule that matched only verb=create would be
+  dead against a current kubectl -- the same WebSocket verb trap TRR9002 documents for
+  exec. Matching the subresource regardless of verb is the invariant. objectRef.name
+  (the pod) is attacker-chosen, so it is a correlation and severity field, never the
+  anchor; the server-set resource/subresource pair is the anchor.
+
+  This is a low-fidelity hunting and correlation anchor, not a standalone alert: a
+  developer port-forward is byte-identical in the audit record to a malicious tunnel.
+  Lift fidelity by context -- a port-forward by a service-account principal
+  (system:serviceaccount:*), cross-namespace, into kube-system or a Secrets-bearing or
+  database pod, off-hours, or from an unexpected sourceIP. Falco's default k8saudit
+  ruleset ships an equivalent port-forward rule; this is its provider-agnostic
+  Sigma/pySigma counterpart, and the first pods/portforward rule in the Sigma rule set
+  (SigmaHQ ships only the exec sibling). It does not see a port-forward that goes
+  directly to the kubelet or through nodes/proxy (that leaves a nodes/proxy or no API
+  audit record), which is the TRR9002 direct-kubelet gap.
+references:
+  - https://attack.mitre.org/techniques/T1572/
+  - https://kubernetes.io/docs/tasks/access-application-cluster/port-forward-access-application-cluster/
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+author: det-eng
+date: 2026/10/14
+tags:
+  - attack.command-and-control
+  - attack.t1572
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_portforward:
+    objectRef.resource: 'pods'
+    objectRef.subresource: 'portforward'
+  condition: select_portforward
+falsepositives:
+  - Developers and operators who port-forward to a pod to debug it, and CI/CD or
+    tooling (dashboards, database clients) that port-forward as part of normal work.
+    This rule is a hunting and correlation anchor; baseline the identities that
+    legitimately port-forward and triage on actor, target namespace, and target pod.
+level: medium
