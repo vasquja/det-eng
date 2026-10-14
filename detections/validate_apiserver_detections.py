@@ -229,7 +229,7 @@ def dedup_by_audit_id(matches):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Validate TRR9004-9010 K8s detections.")
+    ap = argparse.ArgumentParser(description="Validate TRR9004-9010, 9025-9027 K8s detections.")
     ap.add_argument("--audit-log", default="/tmp/kube-apiserver-audit.log",
                     help="Path to the API server audit log (JSON lines).")
     ap.add_argument("--cri-log",
@@ -352,7 +352,7 @@ def main():
         print(f"The rule(s) with a log fired on the emulated telemetry; {skipped} "
               "rule(s) skipped for lack of a log.")
         return 0
-    print("All TRR9004-9010 match-gated detections fired on the emulated telemetry.")
+    print("All TRR9004-9010, 9025-9027 match-gated detections fired on the emulated telemetry.")
     return 0
 
 

@@ -416,6 +416,24 @@ is copied to `trr0000/` and the maintainer assigns the final ID.
   one anchor each. The modern eBPF path (`bpf(BPF_PROG_LOAD)` from a non-allowlisted process) is built
   and proven on its own atomic; the kernel-module and userland-preload anchors are documented gaps.
 
+- **[TRR9025 — Malicious Admission Webhook (T1546, Kubernetes)](research/trr9025/k8s/README.md)**
+  The persistence sibling TRR9008 scoped out: creating a mutating/validating admission webhook (the
+  `create` verb TRR9008 excludes) to backdoor every pod or exfiltrate every Secret. A chokepoint on the
+  `admissionregistration.k8s.io` create, plus a Request-level grader keying on an off-cluster
+  `clientConfig.url` — the one non-spoofable, low-false-positive tell. The in-cluster-relay variant is a
+  documented correlation gap.
+
+- **[TRR9026 — Pod Port-Forward Tunnel (T1572, Kubernetes)](research/trr9026/k8s/README.md)**
+  The tunnel TRR9002 scoped out of the exec report. One verb-agnostic `pods/portforward` rule covering
+  both transports — SPDY (`verb=create`) and WebSocket (`verb=get`) — so a current kubectl is not
+  missed. A low-fidelity hunting anchor; the first `pods/portforward` rule in the Sigma rule set.
+
+- **[TRR9027 — Cluster DNS Poisoning via the CoreDNS ConfigMap (T1565.001, Kubernetes)](research/trr9027/k8s/README.md)**
+  Writing the `kube-system` DNS ConfigMap (the `coredns` Corefile, `kube-dns`, or `coredns-custom`) to
+  redirect in-cluster resolution to an attacker resolver. A chokepoint on the write keyed on the
+  load-bearing ConfigMap name, plus a Request-level Corefile content grader (a `rewrite`/`template`/
+  `hosts` plugin, or a `forward` to an explicit IP).
+
 See [`research/index.json`](research/index.json) for the machine-readable index.
 
 ---

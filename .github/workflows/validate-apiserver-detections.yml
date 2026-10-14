@@ -250,7 +250,7 @@ jobs:
         shell: bash
         run: |
           {
-            echo '## TRR9004-9007 API server detection validation (emulate -> audit + node sensor -> Sigma)'
+            echo '## TRR9004-9010, 9025-9027 API server detection validation (emulate -> audit + node sensor -> Sigma)'
             echo ''
             echo '```'
             cat /tmp/apival.out 2>/dev/null || echo '(no validator output captured)'

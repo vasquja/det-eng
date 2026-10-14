@@ -91,7 +91,7 @@
         "verb": "create",
         "objectRef.resource": "validatingwebhookconfigurations",
         "requestObject.webhooks[].resources": "secrets",
-        "Chokepoint": "A-C; Grader: url+secrets"
+        "Chokepoint": "A-C; Grader: url"
       },
       "style": {
         "border-color": "#0062b1",

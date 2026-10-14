@@ -1,4 +1,4 @@
-# kind cluster for the TRR9004-9007 lab (RBAC, Jobs/CronJobs, Secrets, dangerous
+# kind cluster for the TRR9004-9010, 9025-9027 lab (RBAC, Jobs/CronJobs, Secrets, dangerous
 # pod specs), with API server audit logging turned on at the levels those
 # techniques need.
 #
@@ -19,7 +19,7 @@
 #   docker exec apiserver-control-plane \
 #     cat /var/log/kubernetes/kube-apiserver-audit.log
 #
-# A single control-plane node is enough. Every procedure in TRR9004-9007 is
+# A single control-plane node is enough. Every procedure in TRR9004-9010, 9025-9027 is
 # visible on it (RBAC, batch, Secrets, and pod admission all go through the one API
 # server), and it is also the node for the TRR9007 static-pod gap demonstration.
 kind: Cluster

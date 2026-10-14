@@ -29,7 +29,10 @@ set -euo pipefail
 NS="kube-system"
 NODE="${TRR9027_NODE:-apiserver-control-plane}"
 SENTINEL_IP="198.51.100.53"   # RFC 5737 TEST-NET-2, non-routable
-SENTINEL_BLOCK=$'\ntrr9027poison.example.invalid:53 {\n    errors\n    forward . '"$SENTINEL_IP"$'\n}\n'
+# An inert sentinel zone block: a rewrite (exercises the grader's plugin clause) and a
+# forward to a TEST-NET IP (exercises the forward-to-IP clause). It answers only the
+# sentinel .invalid zone, so real resolution is unaffected.
+SENTINEL_BLOCK=$'\ntrr9027poison.example.invalid:53 {\n    errors\n    rewrite name trr9027poison.example.invalid sink.trr9027.example.invalid\n    forward . '"$SENTINEL_IP"$'\n}\n'
 
 log() { printf '[trr9027] %s\n' "$*" >&2; }
 
@@ -45,21 +48,31 @@ cleanup() {
 
 # Procedure A — repoint the coredns Corefile, then restore it. The poison appends an
 # inert sentinel zone; resolution for every real name is unchanged, and the original
-# Corefile is put back immediately.
+# Corefile is put back immediately. The restore is armed on a signal BEFORE the poison
+# is applied (so an interrupt between the two patches cannot leave the sentinel in
+# place) and verified afterward.
 procedure_a() {
-  local orig poison
+  local orig
   orig="$(kubectl -n "$NS" get configmap coredns -o jsonpath='{.data.Corefile}' 2>/dev/null || true)"
   if [ -z "$orig" ]; then
     log "A: coredns ConfigMap has no Corefile (not a CoreDNS cluster?) — skipping"
     return 0
   fi
-  poison="${orig}${SENTINEL_BLOCK}"
-  log "A: patch coredns Corefile with a sentinel forward (trr9027poison.example.invalid -> ${SENTINEL_IP})"
+  _restore_coredns() {
+    kubectl -n "$NS" patch configmap coredns --type=merge \
+      -p "$(printf '%s' "$orig" | _corefile_patch)" >/dev/null 2>&1 || true
+  }
+  trap '_restore_coredns' INT TERM
+  log "A: patch coredns Corefile with a sentinel rewrite + forward (trr9027poison.example.invalid -> ${SENTINEL_IP})"
   kubectl -n "$NS" patch configmap coredns --type=merge \
-    -p "$(printf '%s' "$poison" | _corefile_patch)" >/dev/null 2>&1 || true
+    -p "$(printf '%s' "${orig}${SENTINEL_BLOCK}" | _corefile_patch)" >/dev/null 2>&1 || true
   log "A: restore the original coredns Corefile"
-  kubectl -n "$NS" patch configmap coredns --type=merge \
-    -p "$(printf '%s' "$orig" | _corefile_patch)" >/dev/null 2>&1 || true
+  _restore_coredns
+  trap - INT TERM
+  if kubectl -n "$NS" get configmap coredns -o jsonpath='{.data.Corefile}' 2>/dev/null | grep -q 'trr9027'; then
+    log "::error:: coredns Corefile still carries the trr9027 sentinel after restore — restoring again"
+    _restore_coredns
+  fi
 }
 
 # Procedure B — legacy kube-dns ConfigMap with a stubDomains redirect (JSON). Inert on a

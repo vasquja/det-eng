@@ -10,14 +10,14 @@
 |--------------|-------|
 | ID           | TRR9025 |
 | External IDs | T1546 |
-| Tactics      | Persistence, Credential Access |
+| Tactics      | Persistence, Privilege Escalation |
 | Platforms    | Kubernetes |
 | Contributors | det-eng |
 | Status       | draft |
 
 ### Scope Statement
 
-This TRR covers persistence and credential access through a **malicious dynamic
+This TRR covers persistence and privilege escalation through a **malicious dynamic
 admission controller**: creating a MutatingWebhookConfiguration or a
 ValidatingWebhookConfiguration (or a CEL ValidatingAdmissionPolicy) in the
 `admissionregistration.k8s.io` API group so that the adversary's endpoint runs on,
@@ -38,16 +38,19 @@ This TRR does not cover these related actions:
   configuration, not a workload.
 
 > **ATT&CK mapping caveat.** The best available ID is **T1546 (Event Triggered
-> Execution)**, tactic Persistence, with Credential Access as a secondary tactic for
-> the Secret-exfiltration path. This is the mapping Elastic uses for its
-> admission-webhook rule. Unlike TRR9008's T1685 (which lists Containers among its
-> platforms), T1546's platform list is IaaS/Linux/macOS/Windows/Office/SaaS and does
-> **not** include Containers, so this mapping cannot lean on a Containers platform
-> tag — ATT&CK has no clean Kubernetes sub-technique for admission-controller
-> persistence. T1554 (Compromise Host Software Binary) is a worse fit and is
-> rejected. The authoritative behavior source is the Microsoft Threat Matrix for
-> Kubernetes entry "Malicious admission controller." The platform fit is imperfect;
-> the tactics are right.
+> Execution)**, whose ATT&CK tactics are Persistence and Privilege Escalation (a
+> mutating webhook that injects a privileged sidecar escalates). This is the mapping
+> Elastic uses for its admission-webhook rule. The validating-webhook
+> Secret-exfiltration path (Procedure B) additionally achieves **credential access** —
+> the Microsoft Threat Matrix for Kubernetes files "Malicious admission controller"
+> under both Persistence and Credential Access — but credential access is a behavioral
+> effect here, not a T1546 tactic, so the Sigma rule tags stay on T1546's own tactics.
+> Unlike TRR9008's T1685 (which lists Containers among its platforms), T1546's platform
+> list is IaaS/Linux/macOS/Windows/Office/SaaS and does **not** include Containers, so
+> this mapping cannot lean on a Containers platform tag — ATT&CK has no clean
+> Kubernetes sub-technique for admission-controller persistence. T1554 (Compromise Host
+> Software Binary) is a worse fit and is rejected. The platform fit is imperfect; the
+> technique is right.
 
 ## Technique Overview
 
@@ -233,11 +236,13 @@ grader builds on.
 **Strategy 2 — grader (grades A, B; needs Request level).**
 On top of the chokepoint, match a created MutatingWebhookConfiguration or
 ValidatingWebhookConfiguration whose `requestObject.webhooks` carries a
-`clientConfig.url` (off-cluster), or whose rules reach cluster-wide
-(`apiGroups`/`resources` `["*"]`, matched with `|re` for the literal `*`) **and**
-include Secrets. This is the novel layer: neither SigmaHQ's nor Elastic's rule reads
-the webhook body to separate a benign in-cluster webhook from an off-cluster
-exfiltration endpoint.
+`clientConfig.url` pointing off-cluster (an http(s) URL). This is the novel layer:
+neither SigmaHQ's nor Elastic's rule reads the webhook body, and the off-cluster URL
+is the one non-spoofable, low-false-positive discriminator — a benign webhook calls
+an in-cluster `clientConfig.service`, not a raw URL. The grader deliberately does
+**not** key on cluster-wide rules or a Secrets scope: Kyverno and Gatekeeper validate
+cluster-wide and over Secrets, so grading on those would be a high-severity false
+positive on the admission tooling every cluster runs.
 
 - Sensor: API server audit log at Request level.
 - Rule: `detections/sigma/T1546/k8s_malicious_admission_webhook_created.yml` (built).
@@ -245,9 +250,10 @@ exfiltration endpoint.
 **Demonstrated gaps.**
 - **In-cluster malicious endpoint.** A webhook wired to an in-cluster
   `clientConfig.service` backed by an attacker pod has no off-cluster URL, so the
-  grader's primary clause does not fire; only the wildcard-plus-Secrets clause
-  catches it. Correlate the webhook create with the creation of its backing Service
-  and pod.
+  grader does not fire — it is caught at the chokepoint only. This is a deliberate
+  trade: a cluster-wide-rules-plus-Secrets heuristic would fire on Kyverno and
+  Gatekeeper, so it is not used. Correlate the webhook create with the creation of
+  its backing Service and pod instead.
 - **Control-plane bypass.** An adversary with control-plane node or etcd access can
   write a webhook configuration straight into etcd, with no API `create` and no audit
   event. The lab demonstrates this read-only (it shows that a node-local etcd write
@@ -257,8 +263,8 @@ exfiltration endpoint.
 
 | Procedure | Covered by | How |
 |-----------|-----------|-----|
-| A | Strategy 1; graded by Strategy 2 | off-cluster `clientConfig.url`, wildcard rules |
-| B | Strategy 1; graded by Strategy 2 | off-cluster `clientConfig.url`, `secrets` scope |
+| A | Strategy 1; graded by Strategy 2 | off-cluster `clientConfig.url` |
+| B | Strategy 1; graded by Strategy 2 | off-cluster `clientConfig.url` |
 | C | Strategy 1 | `create` on a CEL policy (not graded; lower risk) |
 
 One chokepoint rule covers every admission-object install. One grader separates the

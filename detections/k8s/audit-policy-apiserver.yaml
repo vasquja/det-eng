@@ -1,4 +1,4 @@
-# API server audit policy for the TRR9004-9007 lab (RBAC, Jobs/CronJobs, Secrets,
+# API server audit policy for the TRR9004-9010, 9025-9027 lab (RBAC, Jobs/CronJobs, Secrets,
 # dangerous pod specs).
 #
 # Purpose: make the telemetry the four techniques' Sigma rules key on exist, while
@@ -79,15 +79,16 @@ rules:
   # --- TRR9027: cluster DNS ConfigMap writes in kube-system at Request ---
   # The coredns Corefile (and the kube-dns/coredns-custom redirects) live in
   # requestObject.data, which only Request level records, so the content grader can tell
-  # a poisoning edit from a benign one. Scoped to kube-system, whose ConfigMaps are
-  # configuration, not credentials. Writes only; reads stay dropped by the None rule
-  # below. Above the catch-all so it wins.
+  # a poisoning edit from a benign one. Scoped by resourceNames to the three DNS
+  # ConfigMaps only, so no other kube-system ConfigMap has its body copied into the log.
+  # Writes only; reads stay dropped by the None rule below. Above the catch-all so it wins.
   - level: Request
     namespaces: ["kube-system"]
     verbs: ["create", "update", "patch", "delete"]
     resources:
       - group: ""
         resources: ["configmaps"]
+        resourceNames: ["coredns", "kube-dns", "coredns-custom"]
 
   # --- TRR9006: Secret reads at Metadata (NEVER Request/RequestResponse) ---
   # Above every None rule, so a secret read is always recorded. Metadata carries

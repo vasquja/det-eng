@@ -16,10 +16,11 @@ atomic_tests:
   - name: "TRR9027.K8S.A — repoint the coredns Corefile, then restore"
     auto_generated_guid: ee24a095-e7c0-4e70-aac8-acb7d6d5ae10
     description: |
-      Patches the coredns ConfigMap Corefile with an inert sentinel server block (a forward
-      of trr9027poison.example.invalid to a TEST-NET IP), then restores the original
-      Corefile. Real resolution is never changed. The audit requestObject carries the
-      poisoned Corefile the grader keys on.
+      Patches the coredns ConfigMap Corefile with an inert sentinel server block (a rewrite
+      plus a forward of trr9027poison.example.invalid to a TEST-NET IP), then restores the
+      original Corefile (armed on a signal before the poison, and verified after). Real
+      resolution is never changed. The audit requestObject carries the poisoned Corefile the
+      grader keys on.
       Chokepoint: objectRef.resource=configmaps, objectRef.namespace=kube-system,
       objectRef.name=coredns, verb=patch.
       Rule: detections/sigma/T1565.001/k8s_coredns_configmap_modified.yml

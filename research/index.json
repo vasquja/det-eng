@@ -916,7 +916,7 @@
       "id": "TRR9025",
       "tactics": [
         "Persistence",
-        "Credential Access"
+        "Privilege Escalation"
       ],
       "contributors": [
         "det-eng"
