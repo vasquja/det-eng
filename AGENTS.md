@@ -20,10 +20,22 @@ A detection change is done only when CI shows all of these:
    - Kubernetes: the audit log captured before the emulation (`--expect-miss`).
    - Cloud: a hard benign baseline that differs from the attack only in the
      discriminating field.
-3. **Lints clean.** `trr_lint.py`, `check_md_links.py`, and `sigma check` pass.
+3. **Has sufficient checks.** The rule's sidecar
+   `detections/sigma/<ATT&CK-ID>/<stem>.cases.jsonl` holds a positive and at least
+   one near-miss: a variant that shares the chokepoint but breaks one required
+   field (declared in `breaks`), which `rule_cases.py` proves is the single flip
+   that would fire the rule. `check_sufficiency.py` fails a rule with no verified
+   near-miss or filtered negative, or one that keys on the emulation's names.
+4. **Stays within its benign budget.** `score_benign.py --check --enforce` passes:
+   the rule's hits on the benign corpus (`detections/benign/`) are within its
+   budget (0 for a new rule), and `scores.json` is current.
+5. **Lints clean.** `trr_lint.py`, `check_md_links.py`, and `sigma check` pass.
 
-Never skip, disable, or loosen a control, a test, or a benign baseline to get
-green. Fix the rule.
+Never skip, disable, or loosen a control, a test, a case, or a benign baseline to
+get green, and never edit the corpus to silence a rule. Fix the rule, or record the
+defect in [`detections/RULE_DEFECTS.md`](detections/RULE_DEFECTS.md). A failure
+message names the event, the item and the value that failed; read it before you
+change anything.
 
 ## Workflow
 
@@ -46,6 +58,7 @@ For any TRR or new detection, load the `trr` skill first:
 | Index | Entry in `research/index.json` and a row in the table in `research/README.md` |
 | Emulation | `atomics/<ATT&CK-ID>/` |
 | Sigma rule | `detections/sigma/<ATT&CK-ID>/*.yml`, `status: experimental` |
+| Rule cases | `detections/sigma/<ATT&CK-ID>/<stem>.cases.jsonl`: positive, near-miss, filtered, confounder and benign cases |
 | Cloud fixtures | `detections/cloud/fixtures/<trr>/`: attack + benign |
 | Validator entry | The `MANIFEST` list in the matching `detections/validate_*.py` |
 | CI wiring | In the matching `.github/workflows/validate-*.yml`, add the new `detections/sigma/<ATT&CK-ID>/` and `atomics/<ATT&CK-ID>/` paths to both the `push: paths:` list and the `changes`-job pattern list. Keep the two in sync, or the PR skips behavioral validation. |
@@ -82,6 +95,11 @@ python3 detections/validate_k8s_detections.py --dry-run
 python3 detections/validate_staticpod_detections.py --dry-run
 python3 detections/validate_apiserver_detections.py --dry-run
 
+# Rule cases, the sufficiency gate and the benign corpus (offline)
+python3 detections/rule_cases.py
+python3 detections/check_sufficiency.py
+python3 detections/score_benign.py --check --enforce
+
 # Lint
 python3 .github/scripts/trr_lint.py
 python3 .github/scripts/check_md_links.py
@@ -99,6 +117,9 @@ Each validator's details are in [`detections/README.md`](detections/README.md).
 - **Upstream filing is a human step.** Prepare artifacts per
   [`UPSTREAM.md`](UPSTREAM.md); do not open PRs against tired-labs, Atomic Red
   Team, or SigmaHQ.
-- **Merging is a human decision.** A human merges, or adds the `automerge` label,
-  which turns on GitHub's native auto-merge once the required checks pass. Do not
-  add that label yourself.
+- **Merging is a human decision.** A human merges, or adds the `automerge` label.
+  With the label, the `automerge` workflow turns on GitHub's native auto-merge only
+  while its rails hold: a pull request that changes anything but content (rules,
+  cases, fixtures, docs) also needs an approval on its head commit from an
+  independent human. Do not add that label yourself. Budgets, corpus slices and
+  check waivers are human decisions too: propose them in the pull request.

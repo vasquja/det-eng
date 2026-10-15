@@ -24,6 +24,11 @@ agent's word. Before a detection merges, CI must show that:
 - **It stays quiet on everything else.** The same rule must not fire on no-op
   runs, broken "mutant" attacks, allowlisted tools, or a benign baseline that
   differs from the attack only in the one field the rule keys on.
+- **Its checks are hard to game.** Every rule ships near-miss cases that share
+  the attack's chokepoint but break one required field, and a gate fails a rule
+  whose negatives are trivial or that keys on the emulation's own names. A
+  versioned benign corpus scores how often each rule fires on ordinary activity,
+  against a budget a human approves.
 - **Its reasoning can be checked.** Every rule traces back to a written
   Technique Research Report (TRR) that maps each way to perform the technique
   and picks the chokepoint they all pass through.
