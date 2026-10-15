@@ -1,6 +1,6 @@
 # Detection at Scale
 
-[![lint-trr](https://github.com/vasquja/det-eng/actions/workflows/lint-trr.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/lint-trr.yml) [![validate-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-detections.yml) [![validate-apiserver-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-apiserver-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-apiserver-detections.yml) [![validate-cloud-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-cloud-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-cloud-detections.yml)
+[![lint-trr](https://github.com/vasquja/det-eng/actions/workflows/lint-trr.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/lint-trr.yml) [![validate-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-detections.yml) [![validate-apiserver-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-apiserver-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-apiserver-detections.yml) [![validate-cloud-detections](https://github.com/vasquja/det-eng/actions/workflows/validate-cloud-detections.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/validate-cloud-detections.yml) [![detection-quality](https://github.com/vasquja/det-eng/actions/workflows/detection-quality.yml/badge.svg)](https://github.com/vasquja/det-eng/actions/workflows/detection-quality.yml)
 
 **AI-driven detection engineering, held to a proof standard.**
 
@@ -38,6 +38,15 @@ speed. So the agent works inside a method that does not trust its output:
   and CI asserts the rule fires on telemetry that emulation produced — and
   stays silent on no-op runs, broken mutants, and benign baselines. A rule that cannot pass
   that loop does not merge, however plausible it reads.
+- **Checks that would catch a wrong rule.** The agent writes the checks too, so
+  "a check that passes" is not the bar. Every rule ships near-miss cases next to
+  it, each keeping the chokepoint and breaking exactly one required condition. A
+  gate verifies each one really is a near-miss, and rejects rules whose only
+  negatives are trivial.
+- **A noise floor, not just a gate.** Production asks a second question: how often
+  does the rule fire on ordinary activity? Every rule is also scored against a
+  versioned benign corpus of operational traffic, and its false-positive rate is
+  tracked in the repository.
 
 ### Who does what
 
@@ -139,6 +148,20 @@ runs each atomic, compiles its paired Sigma rule with a real Sigma backend
 produced, on syscalls that succeeded. Controls then test the test: a no-op, a
 set of broken mutants, and allowlisted process names must all fail. This runs
 in CI on every push (see [Continuous validation](#continuous-validation)).
+
+Two more layers sit on top of that loop:
+
+- **Near-miss cases.** Every rule carries offline test cases beside it
+  (`<rule>.cases.jsonl`): a positive, plus negatives that keep the technique's
+  surface and break one required item each. The
+  [sufficiency gate](detections/README.md#rule-test-cases-and-the-sufficiency-gate)
+  verifies that each negative really is a near-miss.
+- **Benign corpus.** Every rule is scored against the
+  [benign corpus](detections/benign/README.md) for its false-positive rate.
+
+When anything fails, the validators explain it item by item: which field failed
+on which event, which control unexpectedly passed, and what the kernel probe said.
+The agent fixes the cause instead of guessing.
 
 ### 5. Contribute upstream
 
@@ -253,6 +276,23 @@ Proving the loop is automated:
   runs the same pySigma backend over committed, schema-faithful **recorded**
   attack/benign log fixtures: every rule must fire on its attack fixture and match
   nothing in a hard benign baseline. Pure Python — no cluster, no cloud account.
+- **Detection quality** —
+  `.github/workflows/detection-quality.yml`
+  runs on every pull request:
+  - **`rule-cases`** runs every rule's sidecar cases.
+  - **`check-sufficiency`** fails a rule with no registered positive, no verified
+    near-miss negative, or negatives that differ only in the emulation's marker.
+  - **`benign-corpus`** scores every rule against the benign corpus. It fails on a
+    stale false-positive snapshot or an enforce-mode budget overrun; other
+    overruns are warnings.
+  - **`benign-linux-live`** records a realistic workload on a real runner under
+    the det-eng audit rules and scores it in shadow mode.
+
+  The kind validator also scores the cluster's pre-emulation audit log (bootstrap
+  plus a benign operator workload) as a live benign slice.
+- **Scheduled regression** — every validator also runs weekly, so each rule
+  re-proves itself even when nothing in its path filter changed (pySigma, runner
+  image, and kernel drift).
 - **Lint** — [`.github/workflows/lint-trr.yml`](.github/workflows/lint-trr.yml)
   checks TRR structure, DDM PNG freshness, and markdown links.
 - **Auto-merge (opt-in)** —
@@ -262,7 +302,9 @@ Proving the loop is automated:
   itself, so the agent can drive a detection all the way to landed. It is label-gated
   (only a PR a collaborator marks `automerge` is eligible), same-repo only (never a
   fork), honors a reviewer's `CHANGES_REQUESTED`, and guards the merge by head SHA.
-  Remove the label to veto.
+  A pull request that changes what counts as benign enough, or the gate itself, is
+  never merged without a human's approval. That covers corpus slices, budgets, and
+  the sufficiency and scoring scripts. Remove the label to veto.
 
 Run the Linux loop locally:
 

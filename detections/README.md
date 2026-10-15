@@ -75,6 +75,85 @@ does, the check above is unsound and the run fails:
   is re-run under a process name from that allowlist (e.g. `tcpdump`), and the
   filter must suppress it.
 
+Each mutant also declares the condition item it is built to break, for example
+`afinet_raw_socket.a1`. The validator grades the mutant's closest event against
+the rule (see [Explained failures](#explained-failures)). It warns when the mutant
+holds for a different reason than the one it claims, because a control that is
+`distant` from the rule does not test the rule.
+
+## Rule test cases and the sufficiency gate
+
+The controls above run live, and only for the Linux rules. Every rule, on every
+platform, also ships **offline test cases next to it**:
+`sigma/<T>/<stem>.cases.jsonl`, one JSON object per line. Each case is a small event
+set in the rule's own log shape, with a declared kind:
+
+| kind | expectation |
+|------|-------------|
+| `positive` | the rule fires (the telemetry its emulation produces) |
+| `near-miss` | no match; keeps the technique's surface and breaks exactly one required item, named in `breaks` |
+| `filtered` | no match; every selection holds and one `not <filter>` item alone suppresses it |
+| `confounder` | no match; a realistic legitimate look-alike (must share the rule's surface) |
+| `benign` | no match; anything |
+
+`rule_cases.py` runs the cases through the same pySigma backend as the
+validators. It also uses [`sigma_explain.py`](sigma_explain.py) to verify that each
+`near-miss` / `filtered` case really is one item away from firing, on the exact item
+it declares. An unrelated event cannot pass as a near-miss.
+
+`check_sufficiency.py` is the gate on top. It fails a rule that:
+
+- has no registered positive in a validator `MANIFEST` (documented telemetry gaps are
+  listed in its `COMPILE_ONLY`, and still need a sidecar positive);
+- has no **verified** near-miss or filtered negative, from its cases or (cloud) its
+  hard benign fixture. A no-op, an unrelated event or a pre-emulation baseline does
+  not count;
+- has a failing case;
+- (cloud) has near-misses that flip only the emulation's marker fields, so its
+  negatives differ from the attack only in naming.
+
+It also warns about *thin* checks: rules that exercise far fewer of their condition
+items than the median rule of their platform.
+
+```
+python3 detections/rule_cases.py --atoms sigma/T1040/afinet_raw_socket.yml  # the items `breaks` can name
+python3 detections/rule_cases.py                     # every rule's cases
+python3 detections/check_sufficiency.py              # the gate (CI: detection-quality / check-sufficiency)
+```
+
+## The benign corpus (false-positive scores)
+
+The hard gate answers "does the rule key on the technique?". The **benign corpus**
+([`benign/`](benign/README.md)) answers the production question: "how often does it
+fire on ordinary activity?". [`score_benign.py`](score_benign.py) runs every rule
+over versioned slices of benign operational activity (admin, developer, CI/CD,
+controller and service traffic, including legitimate near-miss tools). It reports
+hits, the rate per 10,000 events, and the distinct processes or principals behind
+them. Per-rule budgets decide whether an overrun is a warning (`shadow`) or a
+failure (`enforce`). A committed snapshot (`benign/scores.json`) makes every change
+in a rule's false-positive count visible in review. The kind cluster's
+pre-emulation audit log and a live Ubuntu-runner workload are scored in CI too, in
+shadow mode.
+
+```
+python3 detections/score_benign.py                  # report
+python3 detections/score_benign.py --check --enforce  # what CI runs
+```
+
+## Explained failures
+
+A red run says *why* it failed. Every validator prints, under each failing line:
+
+- the match count of every detection block and item, over all events or the
+  emulation's own events;
+- the nearest event, item by item, with the values it carried;
+- a hint when the rule reads a field that no event carries (an audit level or
+  field-name problem rather than rule logic).
+
+A broken control prints the events behind its hit. A Linux case prints its
+kernel-probe result. `--json PATH` writes the same results machine-readably for an
+agent to parse.
+
 ### Event schema the rules assume
 
 One event per auditd `SYSCALL` record: `type`, `syscall` (the **name**),
