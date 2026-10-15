@@ -13,6 +13,7 @@ always gets back the concrete events behind every hit and can check where they
 came from.
 """
 
+import importlib.machinery
 import json
 import os
 import re
@@ -29,10 +30,19 @@ import sys
 # a module (sigma.py, a sourceless sigma.pyc, sigma.so, ...) wins over a namespace
 # portion, so it replaces pySigma whole. So detections/ may hold nothing else named
 # sigma.* (nor __pycache__/sigma.*), in any letter case.
+# The same holds for every other module a gate imports from site-packages or the
+# stdlib: a sourceless yaml.pyc (or a yaml.so) in detections/ replaces PyYAML for
+# every gate, unreviewable in a diff and hidden locally by .gitignore's *.pyc. So no
+# file directly in detections/ may carry a bytecode or extension-module suffix
+# (importlib.machinery.BYTECODE_SUFFIXES + EXTENSION_SUFFIXES), in any letter case.
+# This runs when sigma_eval is first imported, so it cannot stop a module that a
+# script imports before sigma_eval, nor a plain-source detections/<name>.py.
 _DETECTIONS = os.path.dirname(os.path.abspath(__file__))
 _RULE_DIR = os.path.join(_DETECTIONS, "sigma")
 _TECHNIQUE_DIR = re.compile(r"T\d{4}(\.\d{3})?")
 _RULE_MATERIAL = re.compile(r".+\.(yml|cases\.jsonl|md)")
+_COMPILED_SUFFIXES = tuple(s.lower() for s in importlib.machinery.BYTECODE_SUFFIXES
+                           + importlib.machinery.EXTENSION_SUFFIXES)
 
 
 def _rule_dir_intruders():
@@ -55,14 +65,17 @@ def _rule_dir_intruders():
 
 
 def _sibling_intruders():
-    """Entries of detections/ (and detections/__pycache__/) named sigma.*."""
+    """Entries of detections/ (and detections/__pycache__/) named sigma.*, and entries
+    of detections/ named as compiled bytecode or an extension module (*.pyc, *.so, ...)."""
     bad = []
     for sub in ("", "__pycache__"):
         try:
             names = sorted(os.listdir(os.path.join(_DETECTIONS, sub)))
         except (FileNotFoundError, NotADirectoryError):
             continue
-        bad += [f"{sub}/{n}" if sub else n for n in names if n.lower().startswith("sigma.")]
+        bad += [f"{sub}/{n}" if sub else n for n in names
+                if n.lower().startswith("sigma.")
+                or (not sub and n.lower().endswith(_COMPILED_SUFFIXES))]
     return bad
 
 
@@ -75,7 +88,10 @@ if _intruders:
              "sigma.pth, __pycache__/sigma.*, ...), because the rule directory shares the "
              "`sigma` package namespace with pySigma: anything importable there would "
              "shadow pySigma's own modules, and a `sigma` module beside it would replace "
-             "pySigma whole. Move or delete:\n  "
+             "pySigma whole. Nor may any file in detections/ be compiled bytecode or an "
+             "extension module (" + ", ".join("*" + s for s in _COMPILED_SUFFIXES) + "): "
+             "a sourceless module there (yaml.pyc, ...) would replace the module of that "
+             "name in every gate. Move or delete:\n  "
              + "\n  ".join(f"detections/{p}" for p in _intruders))
 
 try:
