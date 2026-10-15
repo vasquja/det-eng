@@ -151,10 +151,23 @@ it declares. An unrelated event cannot pass as a near-miss.
 - **R0** cannot be split into items, or sits in a `detections/sigma/` that holds
   anything but `*.md` notes and `T<id>/` directories of `*.yml`, `*.cases.jsonl`
   and `*.md`. The rules directory shares the `sigma` package namespace with
-  pySigma, so a stray `.py` there would replace pySigma modules. `sigma_eval.py`
-  refuses to load in that case too, and also when anything else in `detections/`
-  is named `sigma.*` (a `sigma.py` or `sigma.pyc` beside the directory would
-  replace pySigma whole).
+  pySigma, so a stray `.py` there would replace pySigma modules. R0 also fails on
+  anything in `detections/` or `detections/__pycache__/` named `sigma.*` (a
+  `sigma.py` or `sigma.pyc` beside the directory would replace pySigma whole), and
+  on any compiled module directly in `detections/`: a name ending in a bytecode or
+  extension-module suffix of the running interpreter (on Linux `.pyc`, `.so`,
+  `.abi3.so` and `.cpython-3XX-<platform>.so`). A gate run as a script has `detections/`
+  first on `sys.path`, so a sourceless `yaml.pyc` there would replace PyYAML, or a
+  standard-library module of its name, in every gate, and a binary cannot be
+  reviewed. The usual `__pycache__/<module>.cpython-*.pyc` files are allowed.
+  `check_sufficiency.py` imports the standard library before `detections/` is on
+  `sys.path`, so R0 runs before such a file can be imported. `sigma_eval.py`
+  refuses to load in each of these cases too, but its guard runs only when it is
+  first imported. It cannot stop a module that a script imports before it
+  (`validate_detections.py` and `sigma_explain.py` import PyYAML first, and the
+  other gates import some of the standard library first), a plain-source
+  `detections/<name>.py`, or a package directory. None of those paths is content,
+  so `automerge` holds them for a human.
 - **R1** has no registered positive in a validator `MANIFEST`, or declares a log
   source other than the one that validator proves it on (auditd: `linux/auditd`;
   API server and TRR9003: `kubernetes/audit` or `kubernetes/cri`, as the entry
@@ -173,22 +186,38 @@ it declares. An unrelated event cannot pass as a near-miss.
   correlation fire (so it is in the right group and window).
 - **R3** has a failing or unparsable case, or a sidecar exists without its rule.
 - **R4** keys on the emulation's naming: its detection names an emulation
-  literally (`trr9NNN`, `deteng_`); or the rename test, which replaces every
-  emulation identity in the rule's positives (its sidecar positives, and for cloud
-  the attack records that carry the gate's marker) with a neutral token of the
-  same shape, stops it firing; or it has no positive to rename; or every verified
-  negative breaks only items that the rename flips. An identity is an emulation
-  name or a gate marker plus the rest of its token, so `deteng_afxdp_socket_behavioral`
-  and `trr9026-target` are renamed whole. A cloud rule's validator gate must also
-  be a `marker(...)`. Not renamed: what precedes the name in its token (the AWS key
-  type in `AKIATRR9012...`), source IPs, account or instance ids and timestamps; a
-  human reviewer must catch a rule keyed on those.
+  literally (`trr9NNN`, `deteng_`); or the rename test stops it firing; or it has
+  no positive to rename; or none of its positives carries an emulation identity,
+  so the test renamed nothing (a `COMPILE_ONLY` rule is excused); or every
+  verified negative breaks only items that the rename flips. The test renames
+  every emulation identity in each positive unit:
+  - every passing sidecar positive;
+  - for a rule the auditd validator runs, a copy of each such positive in which
+    every event carries the `exe` and `comm` that the validator's run of each of
+    the rule's atomics writes (`/tmp/deteng_val_<8 random>/deteng_<atomic stem>`
+    and its first 15 characters), used only if that copy fires;
+  - for cloud, each attack record that fires and carries the gate's marker.
+
+  An identity is an emulation name or a gate marker plus the rest of its token,
+  so `deteng_afxdp_socket_behavioral` and `trr9026-target` are renamed whole. Each
+  unit is renamed twice, with replacements drawn at random for each run, and must
+  fire after both. *Same-shape* swaps every letter and digit for another of its
+  class, one random substitution for the run. *Neutral* turns each identity into
+  random lowercase letters 3 to 8 characters longer. The failure names the original
+  identities and which rename stopped the rule, never the replacement. A cloud
+  rule's validator gate must also be a `marker(...)`. Not renamed: what precedes
+  the name in its token (the AWS key type in `AKIATRR9012...`), source IPs,
+  account or instance ids and timestamps. Outside the auditd rules the units are
+  the sidecar and the attack fixtures as written, so a positive that carries an
+  identity only in a field the rule does not read passes too. A human reviewer
+  must catch a rule keyed on any of those.
 
 Four waiver tables exist in `check_sufficiency.py` (a protected path, so a human
 approves every entry). Each entry is the reason plus the digest of the rule content
 the human approved: the rule's `name`, `id`, `logsource`, `detection` and
-`correlation` blocks. When the rule changes, the waiver stops excusing it, and the
-gate prints the new digest for a human to re-approve.
+`correlation` blocks. When any of those changes, the waiver stops excusing the rule,
+and the gate prints the new digest for a human to re-approve. Its `level`,
+`status`, `description`, tags and comments are not part of the digest.
 
 - `COMPILE_ONLY` (R1): CI collects no telemetry for the rule; a sidecar positive
   is still required.
@@ -208,13 +237,35 @@ the rules that have any verified negative), or whose negatives break only filter
 (or only surface items and filters) and no discriminating selection item.
 
 With `--baseline FILE` (the base branch's `--json` report) it also runs the
-**ratchet**: a rule in both reports fails when it has fewer verified negatives, has
-lost an item those negatives exercised, has fewer passing positive cases, has
-lost its sidecar, or has changed its logsource (or a correlation base's: a moved
-rule is scored on other slices and budgets). CI's `sufficiency-ratchet` job runs it on every pull request,
-with the base branch's own copy of the script, so a pull request that deletes or
-weakens negatives (sidecars are content, which merges without a human) holds for a
-human instead.
+**ratchet**. The report records every sidecar case by name, with its kind and a
+digest (sha256 of its kind, `breaks` and events, not its `why`), and a digest of
+every verified negative (its case's, or a cloud fixture record's canonical JSON).
+The ratchet fails when:
+
+- a rule of the base is not on the head (deleted or renamed);
+- a sidecar case of the base, of any kind, is gone or its kind, `breaks` or
+  events changed;
+- a verified negative of the base is gone or changed. A fixture negative is named
+  by its record's index, so a moved record counts as gone;
+- a rule has fewer verified negatives, has lost an item those negatives
+  exercised, has fewer passing positive cases, has lost its sidecar, or has
+  changed its logsource (or a correlation base's: a moved rule is scored on other
+  slices and budgets).
+
+New cases and new rules pass, and so does rewording a case's `why`. A base report
+from an older copy of the script carries no digests: the ratchet then compares
+those rules' cases and negatives by count and name only, and prints a note saying
+so. Not compared: the rule's own detection (a broadened rule that keeps every case
+passes here; its near-miss cases and the benign comparison below guard it), and
+fixture records that are not verified negatives.
+
+CI's `sufficiency-ratchet` job runs it on every pull request, with the base
+branch's own copy of the script. The same job then runs the head's
+`score_benign.py --baseline-scores` against the base branch's committed
+`benign/scores.json`, and fails when a rule raises more benign hits than there,
+even inside its budget. Sidecars, rules and `scores.json` are content, which
+merges without a human, so a pull request that deletes or edits a case, deletes or
+renames a rule, or makes a rule noisier holds for a human instead.
 
 A case that shows a rule defect stays as it is. Record the defect in
 [`RULE_DEFECTS.md`](RULE_DEFECTS.md), the tracker for the next rule-fix pull
@@ -238,7 +289,10 @@ a rule's hits there are presence indicators, not production rates. It reports
 hits, the rate per 10,000 events, and the distinct processes or principals behind
 them. Per-rule budgets decide whether an overrun is a warning (`shadow`) or a
 failure (`enforce`). A committed snapshot (`benign/scores.json`) makes every change
-in a rule's false-positive count visible in review. The kind cluster's
+in a rule's false-positive count visible in review. A budget leaves headroom above
+a rule's hits at the committed seed, so on a pull request `sufficiency-ratchet`
+also fails any rule with more hits than in the base branch's snapshot (fewer hits
+pass). The kind cluster's
 pre-emulation audit log and a live Ubuntu-runner workload are scored in CI too, in
 shadow mode. A hit that a rule defect explains is tracked in
 [`RULE_DEFECTS.md`](RULE_DEFECTS.md).
@@ -246,6 +300,7 @@ shadow mode. A hit that a rule defect explains is tracked in
 ```
 python3 detections/score_benign.py                  # report
 python3 detections/score_benign.py --check --enforce  # what CI runs
+python3 detections/score_benign.py --baseline-scores base-scores.json  # any rule noisier than that snapshot? (CI: sufficiency-ratchet)
 ```
 
 ## Explained failures

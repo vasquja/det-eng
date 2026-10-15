@@ -94,7 +94,10 @@ subagent: marker / existing-coverage / novelty / chokepoint) and converge on a G
   the chokepoint and break one required item, and each `not <filter>` should have a
   look-alike that only the filter suppresses. Optimize for the intent, not for the
   checks you already have: never relabel or weaken a case, edit the corpus, or raise
-  a budget to turn a run green. A budget or corpus change is a human's call. When a
+  a budget to turn a run green. A budget or corpus change is a human's call. On a
+  pull request, `sufficiency-ratchet` also holds for a human any edit to or deletion
+  of an existing case, a deleted or renamed rule, and any rise in a rule's
+  benign-corpus hits. When a
   correct case or a benign hit shows the rule is wrong, record it in
   `detections/RULE_DEFECTS.md` with its evidence and the proposed fix.
 - **Review adversarially, and reproduce every finding.** Claims about a rule's behavior

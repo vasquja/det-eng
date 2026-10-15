@@ -123,24 +123,38 @@ occur proves nothing.
   grades trivial for every rule). Neither does a near-miss that breaks only the
   surface (`syscall`, `verb`, `eventName`), because it would pass just as well for the
   rule with its argument deleted. A near-miss must share the branch it nearly fires.
-- A rule that keys on the emulation's naming. The rename test replaces every
-  emulation identity in every positive (`trr9NNN` or `deteng_` or the gate marker,
-  plus the rest of its token, so `deteng_afxdp_socket_behavioral` and `trr9026-target`
-  go whole) with a neutral token of the same shape, and the rule must still fire. A
-  rule that names an emulation literally, or has no positive to rename, fails too. A
+- A rule that keys on the emulation's naming. The rename test renames every
+  emulation identity (`trr9NNN` or `deteng_` or the gate marker, plus the rest of its
+  token, so `deteng_afxdp_socket_behavioral` and `trr9026-target` go whole) in every
+  positive unit: each passing sidecar positive; for an auditd rule, a copy of each
+  with the `exe` and `comm` that the validator's run of each of the rule's atomics
+  writes (`/tmp/deteng_val_<random>/deteng_<atomic stem>`), if that copy fires; and
+  for a cloud rule, each attack record that fires and carries the marker. Each unit
+  is renamed twice, with replacements drawn at random for each run: same-shape (every
+  letter and digit becomes another of its class) and neutral (random lowercase
+  letters, 3 to 8 longer). The rule must still fire after both, so it may key on
+  neither the name nor its shape. A rule that names an emulation literally, has no
+  positive unit, or has no unit that carries an identity (the test renamed nothing;
+  a `COMPILE_ONLY` rule is excused) fails too. A
   cloud rule's validator gate must be a `marker(...)` on a name only the emulation
   uses (`trr90NN-...`), never on a string the rule itself matches. A gate of
   `Unauth` on a rule that keys on Cognito's `...Unauth_Role` naming proved
   nothing. Source IPs, account ids and the part of a token before the name are not
-  renamed: do not key a rule on them.
-- Any failing sidecar case, or any file under `detections/sigma/` other than
-  `T<id>/` rule files, `.cases.jsonl` sidecars and `.md`.
+  renamed: do not key a rule on them. Outside the auditd rules the units are your
+  sidecar and fixtures as written, so give each positive the emulation's real names
+  in the fields the rule reads; a positive whose name sits only in a field the rule
+  does not read proves nothing, and the gate does not notice.
+- Any failing sidecar case; any file under `detections/sigma/` other than `T<id>/`
+  rule files, `.cases.jsonl` sidecars and `.md`; and anything in `detections/` named
+  `sigma.*` or a compiled module (`.pyc`, `.so`) directly in `detections/`, which
+  would replace pySigma, PyYAML or a standard-library module in every gate.
 
 Four human-approved waiver tables exist in `check_sufficiency.py`. Never add an
 entry yourself; propose it in the PR with the reason. Each entry carries the digest of
 the rule content a human approved (its `name`, `id`, `logsource`, `detection` and
-`correlation`), so editing a waived rule fails the gate until a human re-approves the
-new digest, which the gate prints:
+`correlation`), so editing any of those in a waived rule fails the gate until a human
+re-approves the new digest, which the gate prints (`level`, `status`, `description`
+and tags are not covered):
 
 - `COMPILE_ONLY` (R1): CI collects no telemetry for the rule; it still needs a
   sidecar positive.
@@ -164,9 +178,21 @@ surface items and filters) and no discriminating selection item. Treat that warn
 as a request to add near-misses.
 
 On a pull request, the `sufficiency-ratchet` job compares every rule with the base
-branch: fewer verified negatives, a lost exercised item, fewer passing positives, a
-lost sidecar or a changed logsource fails it, so a weakened sidecar or a moved rule
-goes to a human.
+branch. It fails on:
+
+- a base rule that is gone from the head (deleted or renamed);
+- a sidecar case of the base, of any kind, that is gone or whose kind, `breaks` or
+  events changed (each case is compared by a digest of those three);
+- a verified negative whose cloud fixture record is gone or changed;
+- fewer verified negatives, a lost exercised item, fewer passing positives, a lost
+  sidecar or a changed logsource;
+- a rule with more benign-corpus hits than in the base branch's `scores.json`, even
+  inside its budget.
+
+Adding cases and rewording a case's `why` pass. So an edited or deleted case, a
+moved or renamed rule, or a noisier rule goes to a human. The job does not compare
+the rule's own detection: a broadened rule that keeps every case is left to its
+near-miss cases and the benign comparison.
 
 Never weaken a case, relabel its kind, or edit a rule's condition to make a check
 pass. If a negative you believe is correct fires, the rule has a defect: fix the rule
@@ -218,8 +244,11 @@ processes/principals behind them. `detection-quality / benign-corpus` runs
   `budgets.json` key that names no rule, on an `unscored` entry without a `why`, and
   on a per-rule entry whose `why` does not start `documented noise:` or `rule defect,
   tracked in detections/RULE_DEFECTS.md <ID>:` (an ID the tracker lists). Every
-  per-rule entry is `enforce` today, so a rule that gets noisier fails until a human
-  raises its budget.
+  per-rule entry is `enforce` today. A budget is the most hits over eleven seeds, so
+  it leaves headroom above the committed seed's hits: a rule that gets noisier fails
+  `benign-corpus` only once it passes `max_hits`. On a pull request,
+  `sufficiency-ratchet` fails any rise over the base branch's `scores.json`, even
+  inside that headroom (`score_benign.py --baseline-scores`). Fewer hits pass.
 
 When a new rule fires on the corpus, read the explained example hit first. A precise
 rule firing on benign activity is a rule defect. A deliberately generic hunting rule
@@ -352,7 +381,8 @@ These workflows run on every PR. The `main` ruleset requires only the validator,
   - `rule-cases` runs every sidecar.
   - `check-sufficiency` is the gate above.
   - `sufficiency-ratchet` (pull requests only) compares every rule with the base
-    branch.
+    branch: its sufficiency report (cases, negatives, positives, logsource) and its
+    benign-corpus hits.
   - `benign-corpus` checks the FP snapshot and budgets.
   - `benign-linux-live` is a shadow capture of a real runner workload.
 

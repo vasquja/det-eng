@@ -13,7 +13,7 @@ layer that measures that.
 | Layer | Question | Shape | Fails CI |
 |-------|----------|-------|----------|
 | Hard gate (validators, `rule_cases.py`, `check_sufficiency.py`) | Does the rule catch the technique and reject its near-misses? | binary, per rule | always |
-| Benign corpus (`score_benign.py`) | How much does it fire on normal activity? | scored: hits, rate, actors | when `scores.json` is stale, a rule is unscored without an exemption, or an `enforce`-mode rule is over budget |
+| Benign corpus (`score_benign.py`) | How much does it fire on normal activity? | scored: hits, rate, actors | when `scores.json` is stale, a rule is unscored without an exemption, or an `enforce`-mode rule is over budget; on a pull request, also when a rule has more hits than in the base branch's `scores.json` |
 
 ## What is in it
 
@@ -100,9 +100,19 @@ than `enforce` or `shadow`, on an `unscored` entry without a `why`, and on a
 Today every per-rule entry is `enforce`. Its `max_hits` is the most hits the rule
 raised over the committed seed and ten reseeds of every synthetic slice
 (`score_benign.py --reseeds 10` prints that figure), not one seed's exact count, so a
-routine version bump of a slice does not trip it. So a rule that gets noisier on the
-committed corpus fails CI until a human raises its budget, and a rule fix that makes
-it quieter passes; lower the budget in the same pull request.
+routine version bump of a slice does not trip it. That leaves headroom: most budgets
+sit above the rule's hits at the committed seed. Two checks cover a rule that gets
+noisier on the committed corpus:
+
+- a rise past `max_hits` fails `benign-corpus` (`--check --enforce`) on every run,
+  until a human raises the budget or the rule is fixed;
+- on a pull request, any rise over the base branch's committed `scores.json`, even
+  inside the headroom, fails `sufficiency-ratchet` (see
+  [Tracking it over time](#tracking-it-over-time)), so `automerge` holds the pull
+  request for a human.
+
+Fewer hits pass both, so a rule fix that makes the rule quieter passes; lower the
+budget in the same pull request.
 
 A rule that no slice reads is not scored. A slice reads a rule when it has the
 rule's product and service; category counts only when neither names a service.
@@ -138,12 +148,30 @@ file's git history is the trend. The per-slice summary (each slice's version,
 fidelity and event count) is informational: it is compared only when the corpus
 digest changes, and `_doc` never is, so a hand edit there alone passes `--check`.
 
+`--check` asks only whether the snapshot is current, so a pull request can make a
+rule noisier and commit the new snapshot. On a pull request, `sufficiency-ratchet`
+therefore also runs the head's `score_benign.py --baseline-scores` against the base
+branch's committed `scores.json`. It scores the head's rules on the head's corpus
+and compares each rule scored in both with the base snapshot:
+
+- more hits fails, with `RISE <rule>: hits B -> H (budget M)` and the new or grown
+  actors, so `automerge` holds the pull request and a human decides;
+- fewer or equal hits pass;
+- a rule absent from the base snapshot is new, and its budget alone governs it;
+- a rule in the base snapshot that is no longer scored is not compared.
+
+When the corpus digest differs from the base's, it prints a note, and a rise that a
+corpus or slice change causes fails too. This step reads the base snapshot as data
+and runs no code from the base. It is skipped, with a notice, when the base has no
+`scores.json`, and it fails on one it cannot read or that is not a scores snapshot.
+
 ```bash
 python3 detections/score_benign.py              # report (with an explained example hit per rule)
 python3 detections/score_benign.py --check      # is scores.json current?
 python3 detections/score_benign.py --update     # rewrite scores.json after an intended change
 python3 detections/score_benign.py --check --enforce   # what CI runs
 python3 detections/score_benign.py --reseeds 10 # most hits over 10 reseeds: the basis for max_hits
+python3 detections/score_benign.py --baseline-scores base-scores.json  # fail on any rule noisier than that snapshot
 python3 detections/score_benign.py --extra-slice capture.jsonl \
     --extra-logsource linux/auditd --extra-label my-host   # score a live capture (shadow)
 ```
@@ -174,11 +202,13 @@ run.** An agent may propose new slices, templates and budget changes. The
 - rules and their `.cases.jsonl` under `detections/sigma/T<id>/`;
 - cloud fixtures;
 - this directory's `scores.json` (derived: the benign-corpus check proves every
-  rule's score and the corpus digest current);
+  rule's score and the corpus digest current, and `sufficiency-ratchet` fails a
+  rule with more hits than on the base branch);
 - `research/` (no `*.py`, nothing under `research/tools/`), `docs/`, `upstream/`;
 - `atomics/`, including the C and shell emulation sources that CI compiles and runs
   (the Linux validator runs its atomics as root);
-- Markdown outside `.github/`, `.claude/` and `research/tools/`, except agent
+- Markdown outside `.github/`, any `.claude/` directory (at the root or nested, such
+  as `research/<trr>/.claude/skills/`) and `research/tools/`, except agent
   instruction files: `CLAUDE.md`, `CLAUDE.local.md` and `AGENTS.md` in any directory,
   matched in any letter case (as are `.github/` and `.claude/`).
 
@@ -192,10 +222,17 @@ commits. A pull request that needs an approval and has a commit whose author or
 committer is linked to no GitHub account is held for a human to merge by hand: no
 approval can be shown to be independent of that commit.
 
-Sidecar cases are content, so deleting or weakening one does not need an approval
-by path. The `sufficiency-ratchet` check catches it instead: it fails when a rule
-has fewer verified negatives, exercised items or passing positives than on the base
-branch, and `automerge` holds a pull request with a failed check.
+Sidecar cases are content, so deleting or editing one does not need an approval by
+path. The `sufficiency-ratchet` check catches it instead. The base branch's report
+holds a digest of every sidecar case (its kind, `breaks` and events) and of every
+verified negative, so the check fails when a case of any kind (positive, near-miss,
+filtered, confounder or benign) is gone or changed, when a verified negative's cloud
+fixture record is gone or changed, when a rule of the base is deleted or renamed,
+and when a rule has fewer verified negatives, exercised items or passing positives
+than on the base branch. Adding a case, or rewording a case's `why`, passes. The
+check does not compare the rule's own detection: a broadened rule that keeps every
+case passes it, and is left to its near-miss cases and the benign-hits comparison
+above. `automerge` holds a pull request with a failed check.
 
 After approving, remove and re-add the `automerge` label, or merge by hand; an
 approval alone does not re-run `automerge`.
@@ -230,8 +267,12 @@ To make the sign-off bind a manual merge, a repository admin must:
    which ends content-only auto-merge. With 0, Code Owner review applies to the
    code-owned paths only. Check the result on a test pull request; it was not
    verified here.
-3. Add `rule-cases`, `check-sufficiency`, `sufficiency-ratchet` and `benign-corpus`
-   as required status checks (not `benign-linux-live`, which is shadow only).
+3. Add `rule-cases`, `check-sufficiency` and `benign-corpus` as required status
+   checks. Leave out `benign-linux-live` (shadow only) and `sufficiency-ratchet`:
+   the ratchet fails by design on a change a human may accept (a deleted or
+   corrected case, a deliberate rise in benign hits with a raised budget), and with
+   no bypass actors a required ratchet could never be merged past. `automerge`
+   already waits for it, and a human merging by hand sees it red and decides.
 4. Keep the ruleset free of bypass actors.
 
 Until then, the sign-off is a convention for manual merges, and a rule of the bot

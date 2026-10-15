@@ -294,22 +294,34 @@ Proving the loop is automated:
   runs on every pull request, on push to `main`, and weekly:
   - **`rule-cases`** runs every rule's sidecar cases.
   - **`check-sufficiency`** fails a rule that does not load (or a
-    `detections/sigma/` that holds anything but rule material), has no registered
+    `detections/sigma/` that holds anything but rule material, or a compiled module
+    such as a `.pyc` directly in `detections/`), has no registered
     positive, declares a log source other than the one its validator proves it on,
     has no verified near-miss or filtered negative that breaks a discriminating item
     or a filter (unless a human waived that for the rule), has a failing sidecar
     case, or keys on the emulation's naming: its positives must still fire after
-    every emulation name (`trr9NNN`, `deteng_`) and gate marker in them is renamed.
-    A waiver is bound to a digest of the rule, so an edit to a waived rule goes back
-    to a human.
-  - **`sufficiency-ratchet`** (pull requests only) fails when a rule has fewer
-    verified negatives, exercised items or passing positives than on the base
-    branch, has lost its sidecar, or has changed its logsource.
+    every emulation name (`trr9NNN`, `deteng_`) and gate marker in them is renamed,
+    by each of two renames drawn at random for the run. A rule none of whose
+    positives carries such a name fails too, unless it is a documented telemetry
+    gap (`COMPILE_ONLY`).
+    A waiver is bound to a digest of the rule's `name`, `id`, `logsource`,
+    `detection` and `correlation`, so an edit to any of those goes back to a human.
+    An edit to its `level`, `status`, `description` or tags does not.
+  - **`sufficiency-ratchet`** (pull requests only) compares the head with the base
+    branch. It fails when a rule of the base is gone from the head (deleted or
+    renamed); when a rule has fewer verified negatives, exercised items or passing
+    positives, has lost its sidecar, or has changed its logsource; when a sidecar
+    case of the base, of any kind, is gone or its kind, `breaks` or events changed,
+    or a verified negative's fixture record is gone or changed; and when a rule
+    raises more hits on the benign corpus than in the base branch's `scores.json`,
+    even inside its budget. Adding cases or rules, or rewording a case's `why`,
+    passes.
   - **`benign-corpus`** scores every rule that a slice reads against the benign
     corpus. It fails on a stale false-positive snapshot, on an enforce-mode budget
     overrun (every per-rule budget is enforced, at the most hits over eleven seeds
     of the corpus), and on a rule that no slice reads unless `budgets.json`
-    exempts it under `unscored`.
+    exempts it under `unscored`. A rise in hits that stays inside the budget fails
+    `sufficiency-ratchet` on a pull request instead.
   - **`benign-linux-live`** records a realistic workload on a real runner under
     the det-eng audit rules and scores it in shadow mode.
 
@@ -331,7 +343,8 @@ Proving the loop is automated:
   derived benign scores, `docs/`, `upstream/`, Markdown, `research/` (except Python
   and `research/tools/`) and `atomics/`, including the C and shell emulation
   sources that CI compiles and runs (the Linux validator runs its atomics as root).
-  Any Python, anything under `.github/` or `.claude/`, any agent instruction file
+  Any Python, anything under `.github/`, anything in a `.claude/` directory at
+  any depth (such as `research/<trr>/.claude/skills/`), any agent instruction file
   (`CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, in any directory and any letter
   case), a budget, a corpus slice, a live workload, an audit or kind config or a
   control mutant, and so every new-technique PR, needs an approval on the head
