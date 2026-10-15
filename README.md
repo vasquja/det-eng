@@ -257,15 +257,17 @@ Proving the loop is automated:
   checks TRR structure, DDM PNG freshness, and markdown links.
 - **Auto-merge (opt-in)** —
   [`.github/workflows/automerge.yml`](.github/workflows/automerge.yml)
-  squash-merges a pull request once every check above has concluded successfully on
-  its exact head commit — the "proof decides what is done" model applied to the merge
+  enables GitHub's native auto-merge on a pull request so it squash-merges once every
+  required check is green — the "proof decides what is done" model applied to the merge
   itself, so the agent can drive a detection all the way to landed. It is label-gated
   (only a PR a collaborator marks `automerge` is eligible), same-repo only (never a
-  fork), honors a reviewer's `CHANGES_REQUESTED`, and guards the merge by head SHA.
-  Remove the label to veto. One-time activation: the `automerge` label must exist,
-  Actions workflow permissions must be read/write, and the branch ruleset's "Require
-  branches to be up to date before merging" must be off (a `GITHUB_TOKEN` push cannot
-  re-run CI, so a strict policy would strand behind-but-green PRs).
+  fork), not a draft, and honors a reviewer's `CHANGES_REQUESTED`. Removing the label
+  (or a `CHANGES_REQUESTED` review) disables auto-merge — the veto. GitHub performs the
+  merge itself, so it works on a protected branch with no bypass or PAT (a workflow's
+  `GITHUB_TOKEN` cannot merge a protected branch directly). One-time activation: "Allow
+  auto-merge" on the repo, the `automerge` label, read/write Actions workflow
+  permissions, and the branch ruleset's "Require branches to be up to date before
+  merging" off (so a green-but-behind PR can still land).
 
 Run the Linux loop locally:
 
