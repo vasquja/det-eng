@@ -18,7 +18,14 @@ backend (sigma_eval) and the same item-by-item grading (sigma_explain):
                  directory, a hidden file, a symlink) fails the run before
                  pySigma is imported: the directory shares the `sigma` package
                  namespace with pySigma, and a rule hidden one level down is
-                 never checked.
+                 never checked. So does anything in detections/ (or its
+                 __pycache__/) named sigma.*, and any compiled module directly
+                 in detections/ (a name ending in a bytecode or extension-module
+                 suffix: a sourceless .pyc, a .so): detections/ is first on
+                 sys.path, so such a file would replace pySigma, PyYAML or a
+                 standard-library module in every gate, unreviewed. This script
+                 imports the standard library before detections/ is on sys.path,
+                 so R0 runs before any such file could be imported.
   R1 positive    the rule is a positive in some validator MANIFEST (auditd,
                  cloud, API server, TRR9002, TRR9003), or it is listed in
                  COMPILE_ONLY below for a documented telemetry gap. A
@@ -82,32 +89,48 @@ backend (sigma_eval) and the same item-by-item grading (sigma_explain):
                  emulations give their objects:
                  - its detection names no emulation literally (trr9NNN, deteng_);
                  - the RENAME TEST, every platform: each positive unit (every
-                   passing sidecar positive case, and for a cloud rule every
-                   attack fixture record it fires on that carries the
-                   validator gate's marker) must still fire after every
-                   emulation IDENTITY in it is replaced by a neutral token of
-                   the same length and character classes. An identity is an
-                   emulation name (/trr9\\d{3}/i, `deteng_`) or a gate marker
-                   plus the rest of its token (letters, digits, `_`, `.`, `-`
-                   up to the next `/`, `:`, `=`, quote, space): the whole of
-                   `deteng_val_x`, `deteng_afxdp_socket_behavioral`,
-                   `trr9026-target`, `oidc.trr9013-attacker.example.com`. So a
-                   rule that stops firing keys on some part of the emulation's
-                   naming (the atomic's `_behavioral` suffix, an object's
-                   `-target`), however its regex spells it (`rr9026`,
-                   `tr?9026`, `ssrf-demo`). The rename is deterministic (each
-                   letter and digit is rotated). What precedes the name in its
-                   token is kept: the platform writes it (the AWS unique-id
-                   type in `AKIATRR9012EXAMPLE01`, `ami-`, `Cognito_`) and a
-                   rule may key on it. Where a platform's naming template
-                   follows the name (Cognito_<pool>Unauth_Role), a human lists
-                   the rule in PLATFORM_NAMING with the substrings to keep. A
-                   rule with no positive unit to rename fails: the test cannot
-                   run. RESIDUAL: only names are renamed. A rule keyed on a
-                   token's prefix before the emulation name, or on another
-                   constant of an emulation run (an attack fixture's source IP,
-                   an instance, account or key id, a timestamp), still passes
-                   here; the human review of the rule must catch it;
+                   passing sidecar positive case; for a rule the auditd
+                   validator runs, a copy of each such case whose every event
+                   carries the exe and comm that validator's run of each of the
+                   rule's atomics writes, /tmp/deteng_val_<8 random>/deteng_<atomic
+                   stem> and its first 15 characters, if that copy fires; and
+                   for a cloud rule every attack fixture record it fires on that
+                   carries the validator gate's marker) must still fire after
+                   every emulation IDENTITY in it is renamed, by each of two
+                   renames drawn at random for the run (SystemRandom), which the
+                   failure message never prints: SAME-SHAPE (every letter and
+                   digit becomes another of its class, through one random
+                   substitution for the run; other characters are kept) and
+                   NEUTRAL (each identity becomes random lowercase letters of a
+                   different length). An identity is an emulation name
+                   (/trr9\\d{3}/i, `deteng_`) or a gate marker plus the rest of
+                   its token (letters, digits, `_`, `.`, `-` up to the next `/`,
+                   `:`, `=`, quote, space): the whole of `deteng_val_x`,
+                   `deteng_afxdp_socket_behavioral`, `trr9026-target`,
+                   `oidc.trr9013-attacker.example.com`. So a rule that stops
+                   firing keys on some part of the emulation's naming (the
+                   atomic's `_behavioral` suffix, an object's `-target`),
+                   however its regex spells it (`rr9026`, `tr?9026`,
+                   `ssrf-demo`), or on the naming's shape (`_[a-z]{10}$`). What
+                   precedes the name in its token is kept: the platform writes
+                   it (the AWS unique-id type in `AKIATRR9012EXAMPLE01`, `ami-`,
+                   `Cognito_`) and a rule may key on it. Where a platform's
+                   naming template follows the name (Cognito_<pool>Unauth_Role),
+                   a human lists the rule in PLATFORM_NAMING with the substrings
+                   to keep. A rule with no positive unit fails: the test cannot
+                   run. So does a rule none of whose units carries an identity
+                   (the test renamed nothing), unless it is COMPILE_ONLY (no
+                   emulation run names anything). RESIDUAL: only names are
+                   renamed. A rule keyed on a token's prefix before the
+                   emulation name, or on another constant of an emulation run
+                   (an attack fixture's source IP, an instance, account or key
+                   id, a timestamp), still passes here. Outside the auditd
+                   validator the units come from the sidecar and the attack
+                   fixtures as written, so a positive that carries an identity
+                   only in a field the rule does not read, with the field the
+                   rule keys on renamed by hand (`web-target` for
+                   `trr9026-target`), passes too; the human review of the rule
+                   and its sidecar must catch both;
                  - (cloud) every MANIFEST gate of the rule is a marker(substr,
                    *fields): it carries `.substr` and `.fields` and answers as
                    marker() does on every attack, benign and renamed record.
@@ -148,14 +171,22 @@ path alone.
 
 RATCHET (--baseline FILE; the CI job sufficiency-ratchet runs it on a pull
 request): FILE is the --json report of the base branch, made by the base tree's own
-copy of this script. For every rule in both reports, the head must not have fewer
-verified negatives, lose an item those negatives exercised (a rule item, a
-correlation item, or a correlation base's item), have fewer passing positive cases,
-or lose its sidecar, and must keep its logsource (and each correlation base's: a
-rule moved to a sibling service of its provider is scored on other slices and
-budgets). Each decrease is printed and fails the run, so deleting or
-weakening negatives above the R2 minimum (content-only edits) goes to a human
-instead of merging on its own.
+copy of this script. The report records, per rule, every sidecar case by name with
+its kind and digest (sha256 of canonical JSON of its kind, `breaks` and events; not
+its why or source text) and every verified negative with a digest (a case's, or the
+canonical JSON of a fixture record). Every rule of the base must still exist on the
+head (a deleted or renamed rule is a decrease). For every rule in both reports, the
+head must keep every base sidecar case by name with the same kind and digest, keep
+every base verified negative (same source, same digest), not have fewer verified
+negatives, not lose an item those negatives exercised (a rule item, a correlation
+item, or a correlation base's item), not have fewer passing positive cases, not
+lose its sidecar, and keep its logsource (and each correlation base's: a rule
+moved to a sibling service of its provider is scored on other slices and budgets).
+New cases are fine. Each decrease is printed and fails the run, so deleting or
+editing any sidecar case, or a verified negative's fixture record (content-only
+edits), goes to a human instead of merging on its own. A base report from an older
+copy of this script has no digests: the ratchet then says it compared those rules'
+cases and negatives by count and name only.
 
 Usage:
     python3 detections/check_sufficiency.py                      # the gate
@@ -165,32 +196,52 @@ Usage:
     python3 detections/check_sufficiency.py --baseline base.json # the gate plus the ratchet
 """
 
-import argparse
-import glob
-import hashlib
-import json
 import os
-import re
-import statistics
 import sys
-from collections import namedtuple
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Running this script puts detections/ first on sys.path, ahead of the standard
+# library and site-packages. Import the standard library before it is there, so a
+# stray compiled module in detections/ cannot replace one before R0 has looked
+# (R0 refuses such files; detections/ goes back on sys.path after R0 passes).
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if sys.path and os.path.abspath(sys.path[0] or os.curdir) == _HERE:
+    del sys.path[0]
+
+import argparse  # noqa: E402
+import glob  # noqa: E402
+import hashlib  # noqa: E402
+import importlib.machinery  # noqa: E402
+import itertools  # noqa: E402
+import json  # noqa: E402
+import random  # noqa: E402
+import re  # noqa: E402
+import statistics  # noqa: E402
+import string  # noqa: E402
+from collections import namedtuple  # noqa: E402
+
+REPO = os.path.dirname(_HERE)
 SIGMA = os.path.join(REPO, "detections", "sigma")
 
 # ---- repository hygiene (R0), before pySigma is imported --------------------
 
 TECHNIQUE_DIR = re.compile(r"T\d{4}(\.\d{3})?")
 RULE_MATERIAL = re.compile(r"[^./][^/]*\.(yml|cases\.jsonl|md)")
+# A sourceless compiled module (.pyc, .so, ...) directly in detections/ is imported
+# ahead of site-packages and the standard library by every gate (detections/ is
+# first on sys.path), and it cannot be reviewed. sigma_eval's import guard uses the
+# same rule.
+COMPILED_SUFFIXES = tuple(s.lower() for s in importlib.machinery.BYTECODE_SUFFIXES
+                          + importlib.machinery.EXTENSION_SUFFIXES)
 
 
 def unexpected_sigma_files():
-    """Entries under detections/sigma/ that are not rule material, and anything in
-    detections/ (or detections/__pycache__/) named sigma.* (R0), as repo paths.
+    """Entries under detections/sigma/ that are not rule material, anything in
+    detections/ (or detections/__pycache__/) named sigma.*, and any compiled module
+    (COMPILED_SUFFIXES) directly in detections/ (R0), as repo paths.
 
     Allowed: T<id>/<stem>.yml, T<id>/<stem>.cases.jsonl, T<id>/*.md and *.md at
-    the top. A directory is reported once, with a trailing slash. The sigma.* check
-    mirrors sigma_eval's import guard, so R0 names the file itself.
+    the top. A directory is reported once, with a trailing slash. The detections/
+    checks mirror sigma_eval's import guard, so R0 names the file itself.
     """
     def name(entry, prefix=""):
         return prefix + entry.name + ("/" if entry.is_dir(follow_symlinks=False) else "")
@@ -203,7 +254,7 @@ def unexpected_sigma_files():
         except (FileNotFoundError, NotADirectoryError):
             continue
         bad += [f"detections/{sub + '/' if sub else ''}{n}" for n in names
-                if n.lower().startswith("sigma.")]
+                if n.lower().startswith("sigma.") or (not sub and n.lower().endswith(COMPILED_SUFFIXES))]
     if not os.path.isdir(SIGMA):
         return bad + ["detections/sigma/ (the directory itself is missing)"]
     for entry in sorted(os.scandir(SIGMA), key=lambda e: e.name):
@@ -218,14 +269,22 @@ def unexpected_sigma_files():
 
 
 def hygiene_errors(unexpected):
-    return [f"R0: unexpected `{p}`: detections/sigma/ holds only "
-            "T<id>/<stem>.yml rules, their <stem>.cases.jsonl sidecars and *.md notes (no "
-            "other extension, nested directory, hidden file or symlink: a rule one level down "
-            "is never checked, and the directory shares pySigma's `sigma` namespace); move "
-            "or delete it" if p.startswith("detections/sigma/") else
-            f"R0: unexpected `{p}`: nothing in detections/ (or its __pycache__/) may be named "
-            "sigma.*, because a `sigma` module beside the validators would replace pySigma "
-            "whole; move or delete it" for p in unexpected]
+    def error(p):
+        if p.startswith("detections/sigma/"):
+            return (f"R0: unexpected `{p}`: detections/sigma/ holds only "
+                    "T<id>/<stem>.yml rules, their <stem>.cases.jsonl sidecars and *.md notes "
+                    "(no other extension, nested directory, hidden file or symlink: a rule one "
+                    "level down is never checked, and the directory shares pySigma's `sigma` "
+                    "namespace); move or delete it")
+        if os.path.basename(p.rstrip("/")).lower().startswith("sigma."):
+            return (f"R0: unexpected `{p}`: nothing in detections/ (or its __pycache__/) may be "
+                    "named sigma.*, because a `sigma` module beside the validators would "
+                    "replace pySigma whole; move or delete it")
+        return (f"R0: unexpected `{p}`: no compiled module ({', '.join(COMPILED_SUFFIXES)}) "
+                "may sit directly in detections/: detections/ is first on sys.path, so every "
+                "gate would import it instead of the standard-library or site-packages module "
+                "of that name, and a binary cannot be reviewed; delete it")
+    return [error(p) for p in unexpected]
 
 
 def _arg_parser():
@@ -240,9 +299,10 @@ def _arg_parser():
     ap.add_argument("-v", "--verbose", action="store_true",
                     help="list every rule's verified negatives and rename analysis")
     ap.add_argument("--baseline", metavar="FILE",
-                    help="the base branch's --json report: also fail when a rule in both loses "
-                         "verified negatives, exercised items, passing positives or its "
-                         "sidecar, or changes its logsource")
+                    help="the base branch's --json report: also fail when a base rule is gone, "
+                         "or a rule in both loses or changes a sidecar case or verified "
+                         "negative, loses exercised items, passing positives or its sidecar, "
+                         "or changes its logsource")
     return ap
 
 
@@ -273,7 +333,7 @@ if __name__ == "__main__":
     if _UNEXPECTED:
         sys.exit(_hygiene_exit(_UNEXPECTED))
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _HERE)
 import rule_cases  # noqa: E402
 import sigma_eval  # noqa: E402
 import sigma_explain  # noqa: E402
@@ -609,10 +669,11 @@ def _proven_on(label, entry):
 
 def load_manifests():
     """({rule key: [validator label, ...]}, {rule key: [cloud entry, ...]},
-    {rule key: [(validator label, logsource it is proven on), ...]}, errors)."""
+    {rule key: [(validator label, logsource it is proven on), ...]},
+    {rule key: [auditd atomic source, ...]}, errors)."""
     import importlib
 
-    positives, cloud, proven, errors = {}, {}, {}, []
+    positives, cloud, proven, atomics, errors = {}, {}, {}, {}, []
     for label, name in VALIDATORS:
         try:
             module = importlib.import_module(name)
@@ -633,7 +694,11 @@ def load_manifests():
                 proven[key].append((label, where))
             if label == "cloud":
                 cloud.setdefault(key, []).append(_cloud_entry(module, entry))
-    return positives, cloud, proven, errors
+            if label == "auditd":
+                for src in (x for x in entry if isinstance(x, str) and x.endswith(".c")):
+                    if src not in atomics.setdefault(key, []):
+                        atomics[key].append(src)
+    return positives, cloud, proven, atomics, errors
 
 
 # ---- rule items, for messages ----------------------------------------------
@@ -789,19 +854,45 @@ def _negative_hint(rule, path, exclude=(), cloud_fixture=None, keep_extra=None):
 # ---- marker analysis (R4) --------------------------------------------------
 
 
-def _scramble(text):
-    """Same length and character classes, different letters and digits."""
-    out = []
-    for ch in text:
-        if "a" <= ch <= "z":
-            out.append(chr((ord(ch) - 97 + 13) % 26 + 97))
-        elif "A" <= ch <= "Z":
-            out.append(chr((ord(ch) - 65 + 13) % 26 + 65))
-        elif ch.isdigit():
-            out.append(str((int(ch) + 5) % 10))
-        else:
-            out.append(ch)
-    return "".join(out)
+_RANDOM = random.SystemRandom()
+_CHAR_CLASSES = (string.ascii_lowercase, string.ascii_uppercase, string.digits)
+
+
+def _derangement(chars):
+    """A random permutation of `chars` that moves every character."""
+    while True:
+        out = list(chars)
+        _RANDOM.shuffle(out)
+        if all(a != b for a, b in zip(chars, out)):
+            return dict(zip(chars, out))
+
+
+# The two renames, drawn once per run (os.urandom through SystemRandom), so a rule
+# cannot list the replacement:
+# - SAME-SHAPE: every lowercase letter, uppercase letter and digit becomes another
+#   of its class (one random substitution for the run, so a name that recurs in a
+#   unit, e.g. across a correlation's events, stays one name); other characters
+#   are kept. It catches a rule keyed on a part of the name, however spelled.
+# - NEUTRAL: each renamed stretch becomes random lowercase letters of a different
+#   length (one per distinct stretch for the run). It catches a rule keyed on the
+#   name's shape (`_[a-z]{10}$`, `^[a-z]{3}\d{4}-`), which the first rename keeps.
+_SAME_SHAPE = {}
+for _chars in _CHAR_CLASSES:
+    _SAME_SHAPE.update(_derangement(_chars))
+_NEUTRAL = {}
+RENAMES = ("same-shape", "neutral")
+
+
+def _neutral(text):
+    if text not in _NEUTRAL:
+        taken = set(_NEUTRAL.values())
+        while True:
+            token = "".join(_RANDOM.choice(string.ascii_lowercase)
+                            for _ in range(len(text) + _RANDOM.randint(3, 8)))
+            if token not in taken:
+                break
+        _NEUTRAL[text] = token
+    return _NEUTRAL[text]
 
 
 # The rest of an identity token after an emulation name or a marker: letters,
@@ -823,19 +914,28 @@ def rename_pattern(markers=()):
     return re.compile(rf"(?:{'|'.join(cores)}){TOKEN_REST}", re.IGNORECASE)
 
 
-def _rename_token(token, keep=()):
-    """_scramble(token), except the substrings a PLATFORM_NAMING waiver keeps."""
+def _rename_token(token, keep=(), how="same-shape"):
+    """The token renamed (see RENAMES), except the substrings a PLATFORM_NAMING
+    waiver keeps: those stay, and each stretch between them is renamed."""
     kept = set()
     for k in keep:
         for m in re.finditer(re.escape(k), token, re.IGNORECASE):
             kept.update(range(*m.span()))
-    return "".join(ch if i in kept else _scramble(ch) for i, ch in enumerate(token))
+    if how == "same-shape":
+        return "".join(ch if i in kept else _SAME_SHAPE.get(ch, ch)
+                       for i, ch in enumerate(token))
+    out = []
+    for is_kept, run in itertools.groupby(range(len(token)), key=lambda i: i in kept):
+        run = list(run)
+        text = token[run[0]:run[-1] + 1]
+        out.append(text if is_kept else _neutral(text))
+    return "".join(out)
 
 
-def rename_names(event, pattern, keep=()):
-    """The flat event with every match of `pattern` in a value replaced by a neutral
-    token of the same length and character classes (see _scramble)."""
-    return {k: pattern.sub(lambda m: _rename_token(m.group(0), keep), v)
+def rename_names(event, pattern, keep=(), how="same-shape"):
+    """The flat event with every match of `pattern` in a value renamed (`how`: one
+    of RENAMES)."""
+    return {k: pattern.sub(lambda m: _rename_token(m.group(0), keep, how), v)
             if isinstance(v, str) else v for k, v in event.items()}
 
 
@@ -861,11 +961,14 @@ def _flipped_atoms(rule, own, renamed):
 
 
 def rename_test(rule, units, pattern, keep=()):
-    """Rename the emulation's identities in every positive unit; does each still fire?
+    """Rename the emulation's identities in every positive unit, once by each of
+    RENAMES; does each still fire?
 
     `units` is [(label, [flat events])], each a unit that fires the rule (a
-    passing positive case, or one marker-carrying attack record / alert). Returns
-    {"units", "renamed", "stopped": [{"unit", "names", "flipped"}], "name_keyed"}.
+    passing positive case, its copy carrying the Linux emulation's identity, or
+    one marker-carrying attack record / alert). Returns {"units", "renamed",
+    "stopped": [{"unit", "names", "flipped", "renames"}], "name_keyed"}; "renames"
+    lists the renames that stopped the unit firing.
     """
     out = {"units": len(units), "renamed": 0, "stopped": [], "name_keyed": set()}
     for label, own in units:
@@ -877,13 +980,47 @@ def rename_test(rule, units, pattern, keep=()):
         if not names:
             continue  # nothing to rename: the unit cannot show anything either way
         out["renamed"] += 1
-        renamed = [rename_names(e, pattern, keep) for e in own]
-        flipped = _flipped_atoms(rule, own, renamed)
+        flipped, stopped_by = [], []
+        for how in RENAMES:
+            renamed = [rename_names(e, pattern, keep, how) for e in own]
+            flipped += [a for a in _flipped_atoms(rule, own, renamed) if a not in flipped]
+            if not _fires(rule, renamed):
+                stopped_by.append(how)
         out["name_keyed"] |= set(flipped)
-        if not _fires(rule, renamed):
-            out["stopped"].append({"unit": label, "flipped": flipped,
+        if stopped_by:
+            out["stopped"].append({"unit": label, "flipped": flipped, "renames": stopped_by,
                                    "names": [names[k] for k in sorted(names)]})
     out["name_keyed"] = [a for a in rule.atoms if a in out["name_keyed"]]
+    return out
+
+
+# How validate_detections.py names a Linux emulation: compile_atomic builds the
+# atomic `<dir>/<stem>.c` as `deteng_<stem>` inside tempfile.mkdtemp(prefix=
+# "deteng_val_"), so the kernel logs that path as exe and its first 15 characters
+# as comm (TASK_COMM_LEN).
+MKDTEMP_CHARS = string.ascii_lowercase + string.digits + "_"
+
+
+def emulation_identity(src):
+    """{"exe", "comm"} the auditd validator's run of atomic `src` carries; the
+    mkdtemp directory is random, as it is in the validator's run."""
+    binary = "deteng_" + os.path.basename(src)[:-len(".c")]
+    workdir = "deteng_val_" + "".join(_RANDOM.choice(MKDTEMP_CHARS) for _ in range(8))
+    return {"exe": f"/tmp/{workdir}/{binary}", "comm": binary[:15]}
+
+
+def emulation_units(rule, units, atomics):
+    """Each passing positive unit with every event's exe and comm set to the
+    identity of each emulation (atomic) the auditd validator runs for the rule, if
+    that copy fires: the rename test then renames the emulation's real names, not
+    what the sidecar author wrote."""
+    out = []
+    for src in atomics:
+        identity = emulation_identity(src)
+        for label, own in units:
+            copy = [dict(e, **identity) for e in own]
+            if _fires(rule, copy):
+                out.append((f"{label} as the emulation `{identity['exe']}`", copy))
     return out
 
 
@@ -934,7 +1071,8 @@ class Report:
         self.cases_file = None
         self.case_total = self.case_passed = 0
         self.positive_cases = 0  # passing sidecar positive cases
-        self.negatives = []  # {"source", "kind", "atoms"[, "base_items"]}
+        self.case_digests = {}  # every sidecar case: name -> {"kind", "digest"}
+        self.negatives = []  # {"source", "kind", "atoms", "digest"[, "base_items"]}
         self.exercised = []
         self.base_exercised = []  # correlation: "base:<ref>/<item>" its negatives break
         self.positive_units = []  # (label, [flat events]) the rename test runs on
@@ -984,7 +1122,8 @@ class Report:
             "presence": _waiver_json(PRESENCE.get(self.key)),
             "cases": {"file": rel(self.cases_file) if self.cases_file else None,
                       "total": self.case_total, "passed": self.case_passed,
-                      "positive": self.sidecar_positive, "positives": self.positive_cases},
+                      "positive": self.sidecar_positive, "positives": self.positive_cases,
+                      "digests": self.case_digests},
             "negatives": self.negatives,
             "atoms": {"total": len(self.atoms), "exercised": self.exercised,
                       "base_exercised": self.base_exercised,
@@ -1025,7 +1164,21 @@ def check_logsource(r, rule, proven):
                              "log")
 
 
-def check_rule(path, positives, cloud, proven=None):
+def content_digest(value):
+    """sha256 of `value` as canonical JSON (what the ratchet compares)."""
+    text = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                      default=str)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def case_digest(case):
+    """A sidecar case's content: its kind, `breaks` and events (not its why or
+    source text, so rewording a case does not change it)."""
+    return content_digest({"kind": case["kind"], "breaks": case.get("breaks"),
+                           "events": case["events"]})
+
+
+def check_rule(path, positives, cloud, proven=None, atomics=None):
     r = Report(path)
     try:
         rule = sigma_explain.load(path)
@@ -1054,6 +1207,7 @@ def check_rule(path, positives, cloud, proven=None):
             r.fail("R3", f"`{rel(cases_path)}` {err}")
         for res in results:
             case = res.case
+            r.case_digests[case["name"]] = {"kind": case["kind"], "digest": case_digest(case)}
             where = f"case '{case['name']}' ({case['kind']}, `{rel(cases_path)}` " \
                     f"line {case.get('_line', '?')})"
             if not res.ok:
@@ -1068,7 +1222,8 @@ def check_rule(path, positives, cloud, proven=None):
             elif case["kind"] in ("near-miss", "filtered"):
                 breaks = case["breaks"] if isinstance(case["breaks"], list) else [case["breaks"]]
                 negative = {"source": f"case:{case['name']}", "kind": case["kind"],
-                            "atoms": list(breaks)}
+                            "atoms": list(breaks),
+                            "digest": r.case_digests[case["name"]]["digest"]}
                 if rule.is_correlation:
                     negative["base_items"] = base_negative_items(
                         rule, [sigma_eval.flatten(e) for e in case["events"]], _base_refs(breaks))
@@ -1100,7 +1255,9 @@ def check_rule(path, positives, cloud, proven=None):
                 continue  # the cloud validator fails on this; it is no negative
             fixture_grades.append(v.kind)
             if v.kind in sigma_explain.NON_TRIVIAL:
-                negative = {"source": f"fixture:{label}", "kind": v.kind, "atoms": list(v.atoms)}
+                negative = {"source": f"fixture:{label}", "kind": v.kind, "atoms": list(v.atoms),
+                            "digest": content_digest(events if rule.is_correlation
+                                                     else events[i])}
                 if rule.is_correlation:
                     negative["base_items"] = base_negative_items(rule, events,
                                                                  _base_refs(v.atoms))
@@ -1213,7 +1370,7 @@ def check_rule(path, positives, cloud, proven=None):
                          + _negative_hint(rule, path, exclude=r.exercised, cloud_fixture=next(
                              (e["benign"] for e in cloud.get(r.key, []) if e["benign"]), None)))
 
-    check_names(r, rule, path, cloud.get(r.key, []))
+    check_names(r, rule, path, cloud.get(r.key, []), (atomics or {}).get(r.key, []))
     return r
 
 
@@ -1242,7 +1399,7 @@ def check_bases(r, rule):
     return needs
 
 
-def check_names(r, rule, path, entries):
+def check_names(r, rule, path, entries, atomics=()):
     """R4: the rule keys on the technique, not on the emulation's naming."""
     named = _emulation_names(rule)
     if named:
@@ -1277,7 +1434,8 @@ def check_names(r, rule, path, entries):
     pattern = rename_pattern(markers)
     for entry, records in attacks:
         checked = [(_fixture_label(entry["attack"], records, i), e) for i, e in enumerate(records)]
-        checked += [(f"renamed {label}", rename_names(e, pattern)) for label, e in checked]
+        checked += [(f"renamed ({how}) {label}", rename_names(e, pattern, how=how))
+                    for how in RENAMES for label, e in checked]
         if entry["benign"] and os.path.exists(entry["benign"]):
             benign = entry["load"](entry["benign"])
             checked += [(_fixture_label(entry["benign"], benign, i), e)
@@ -1293,15 +1451,23 @@ def check_names(r, rule, path, entries):
     if r.key in PLATFORM_NAMING:
         check_waiver_digest(r, "R4", PLATFORM_NAMING, r.key, path)
         keep = tuple(PLATFORM_NAMING[r.key].keep)
-    units = r.positive_units + attack_units
+    emulated = emulation_units(rule, r.positive_units, atomics)
+    units = r.positive_units + emulated + attack_units
     r.rename = dict(rename_test(rule, units, pattern, keep), markers=markers, kept=list(keep),
-                    attack_units=len(attack_units))
+                    attack_units=len(attack_units), emulation_units=len(emulated))
     if not units:
         r.fail("R4", "no positive unit to run the rename test on: "
                      + ("; ".join(no_attack) + ", and " if no_attack else "")
                      + f"there is no passing positive case in `{_cases_rel(path)}`. Add the "
                      "emulation's own event as a positive case, so renaming its names can show "
                      "the rule keys on the technique")
+    elif not r.rename["renamed"] and not r.compile_only:
+        r.fail("R4", f"no positive unit carries an emulation identity (0/{len(units)} carry "
+                     "trr9NNN, deteng_ or a validator gate's marker), so the rename test renamed "
+                     "nothing and cannot show the rule keys on the technique rather than on the "
+                     f"emulation's naming. Add a positive case to `{_cases_rel(path)}` that is the "
+                     "emulation's own record, with the names the emulation gives its objects as "
+                     "the validator's run writes them")
     elif no_attack:
         r.warn("R4", "; ".join(no_attack) + "; the rename test ran on the sidecar positives only")
     stopped = r.rename["stopped"]
@@ -1314,12 +1480,14 @@ def check_names(r, rule, path, entries):
             if not rule.is_correlation else sorted({a for s in stopped for a in s["flipped"]})
         shown = "; ".join(s["unit"] for s in stopped[:3]) \
             + (f" (+{len(stopped) - 3} more)" if len(stopped) > 3 else "")
-        renames = ", ".join(f"{n} -> {_scramble(n)}" for n in list(names.values())[:4])
-        r.fail("R4", f"renaming the emulation's identities ({renames}) stops the rule firing on "
+        how = [h for h in RENAMES if any(h in s["renames"] for s in stopped)]
+        r.fail("R4", f"renaming the emulation's identities ({', '.join(list(names.values())[:4])}"
+                     + (f" +{len(names) - 4} more" if len(names) > 4 else "")
+                     + f") to random tokens ({' and '.join(how)} rename) stops the rule firing on "
                      f"{len(stopped)}/{len(units)} positive unit(s): {shown}. Items that flip: "
                      f"{', '.join(flipped) or 'no single item'}. The rule keys on the names the "
                      "emulation gives its objects (or on the validator gate's marker), however "
-                     "it spells them; key it on the technique instead")
+                     "it spells them, or on their shape; key it on the technique instead")
 
     # Negatives that differ from a positive only in the emulation's naming.
     keyed = set(r.rename["name_keyed"])
@@ -1384,10 +1552,10 @@ def thin_checks(reports):
 def run(selected=None):
     """Check every rule. Returns (reports for the selection, medians, global errors)."""
     errors = hygiene_errors(unexpected_sigma_files())
-    positives, cloud, proven, manifest_errors = load_manifests()
+    positives, cloud, proven, atomics, manifest_errors = load_manifests()
     errors += manifest_errors
     paths = sorted(glob.glob(os.path.join(SIGMA, "*", "*.yml")))
-    reports = [check_rule(p, positives, cloud, proven) for p in paths]
+    reports = [check_rule(p, positives, cloud, proven, atomics) for p in paths]
     medians = thin_checks(reports)
 
     known = {r.key: r.rule for r in reports}
@@ -1454,7 +1622,8 @@ def print_report(reports, medians, errors, verbose=False, subset=False):
             if r.rename:
                 n = r.rename
                 print(f"      rename test: {n['renamed']}/{n['units']} positive unit(s) carry a "
-                      f"name ({n['attack_units']} attack record(s)); markers "
+                      f"name ({n['attack_units']} attack record(s), {n['emulation_units']} "
+                      "positive(s) carrying the emulation's identity); markers "
                       f"{', '.join(repr(m) for m in n['markers']) or '-'}; stopped firing: "
                       f"{len(n['stopped'])}; name-keyed items: "
                       f"{', '.join(n['name_keyed']) or '-'}"
@@ -1530,13 +1699,16 @@ def write_markdown(path, reports, medians, errors, subset=False):
 
 
 def ratchet(reports, baseline_path):
-    """Compare each rule in both reports with the base branch's --json report.
+    """Compare each rule with the base branch's --json report.
 
-    Returns (decreases, errors): one line per rule that has fewer verified
-    negatives, lost an item its negatives exercised (rule, correlation or base
-    item), has fewer passing positive cases, lost its sidecar, or changed its
-    logsource (or a base's); and the reasons
-    the baseline cannot be used (each fails the run: the ratchet fails closed).
+    Returns (decreases, errors, notes): one line per base rule that is not on the
+    head, and per rule in both that has fewer verified negatives, lost one or
+    changed its content (a sidecar case's kind/breaks/events, or a fixture
+    record), lost or changed any sidecar case, lost an item its negatives
+    exercised (rule, correlation or base item), has fewer passing positive cases,
+    lost its sidecar, or changed its logsource (or a base's); the reasons the
+    baseline cannot be used (each fails the run: the ratchet fails closed); and
+    notes on what could not be compared (a base report without content digests).
     """
     try:
         with open(baseline_path, encoding="utf-8") as fh:
@@ -1544,22 +1716,52 @@ def ratchet(reports, baseline_path):
         base = {b["rule"]: b for b in rules}
     except (OSError, ValueError, KeyError, TypeError) as e:
         return [], [f"--baseline {baseline_path}: not a check_sufficiency.py --json report "
-                    f"({type(e).__name__}: {e})"]
+                    f"({type(e).__name__}: {e})"], []
     if not base:
         return [], [f"--baseline {baseline_path} holds no rule (the base run failed before "
-                    "checking any rule, e.g. on R0 hygiene), so nothing can be compared"]
-    decreases = []
+                    "checking any rule, e.g. on R0 hygiene), so nothing can be compared"], []
+    decreases, undigested = [], []
+    head = {r.key for r in reports}
+    for key, b in sorted(base.items()):
+        if key not in head and not os.path.exists(os.path.join(SIGMA, key)):
+            decreases.append(f"{key}: on the base branch but not on the head: deleted or renamed; "
+                             f"its {len(b.get('negatives') or [])} verified negative(s) are not "
+                             "compared")
     for r in reports:
         b = base.get(r.key)
         if b is None:
             continue  # a new rule: nothing to ratchet against
         lost = []
-        b_neg = [n.get("source") for n in b.get("negatives") or []]
-        if len(r.negatives) < len(b_neg):
-            now = {n["source"] for n in r.negatives}
-            gone = [n for n in b_neg if n not in now]
+        b_cases = (b.get("cases") or {}).get("digests")
+        changed_cases = []
+        if b_cases is None:
+            undigested.append(r.key)
+        else:
+            gone = [n for n in b_cases if n not in r.case_digests]
+            for n, was in b_cases.items():
+                now = r.case_digests.get(n)
+                if now and (now["kind"], now["digest"]) != (was.get("kind"), was.get("digest")):
+                    changed_cases.append(n)
+            if gone:
+                lost.append(f"sidecar case(s) gone: {', '.join(gone)}")
+            if changed_cases:
+                lost.append("sidecar case(s) changed (kind, breaks or events): " + ", ".join(
+                    n + (f" ({b_cases[n].get('kind')} -> {r.case_digests[n]['kind']})"
+                         if b_cases[n].get("kind") != r.case_digests[n]["kind"] else "")
+                    for n in changed_cases))
+        b_neg = b.get("negatives") or []
+        now = {n["source"]: n.get("digest") for n in r.negatives}
+        gone = [n.get("source") for n in b_neg if n.get("source") not in now]
+        changed = [n["source"] for n in b_neg if n.get("source") in now
+                   and n.get("digest") is not None and now[n["source"]] != n["digest"]
+                   and n["source"] not in {f"case:{c}" for c in changed_cases}]  # said above
+        if any(n.get("digest") is None for n in b_neg) and r.key not in undigested:
+            undigested.append(r.key)
+        if gone or len(r.negatives) < len(b_neg):
             lost.append(f"verified negatives {len(b_neg)} -> {len(r.negatives)}"
                         + (f" (gone: {', '.join(gone)})" if gone else ""))
+        if changed:
+            lost.append(f"verified negative(s) changed: {', '.join(changed)}")
         atoms = b.get("atoms") or {}
         for field, label, have in (("exercised", "items", r.exercised),
                                    ("base_exercised", "base items", r.base_exercised)):
@@ -1584,7 +1786,13 @@ def ratchet(reports, baseline_path):
                         "and which slices apply")
         if lost:
             decreases.append(f"{r.key}: " + "; ".join(lost))
-    return decreases, []
+    notes = [f"{len(undigested)} rule(s) of the base report carry no case or negative digests "
+             "(a report from an older check_sufficiency.py), so the content of their sidecar "
+             "cases and verified negatives was not compared, only their counts and names: "
+             + ", ".join(undigested[:6])
+             + (f" (+{len(undigested) - 6} more)" if len(undigested) > 6 else "")] \
+        if undigested else []
+    return decreases, [], notes
 
 
 def _logsources_text(logsources):
@@ -1593,29 +1801,35 @@ def _logsources_text(logsources):
                      for k, ls in sorted(logsources.items()))
 
 
-def print_ratchet(baseline_path, decreases, errors):
+def print_ratchet(baseline_path, decreases, errors, notes=()):
     print(f"\nRatchet against {baseline_path} (the base branch's report):")
     for e in errors:
         print(f"  [ERROR] {e}")
     for d in decreases:
         print(f"  [RATCHET] {d}")
+    for n in notes:
+        print(f"  [NOTE] {n}")
     if errors or decreases:
-        print(f"FAILED: {len(decreases)} rule(s) lost checks against the base branch"
+        print(f"FAILED: {len(decreases)} rule(s) lost or changed checks against the base branch"
               + (f"; {len(errors)} baseline error(s)" if errors else "")
               + ". A decrease is a human's decision: restore the checks, or a human approves "
                 "the pull request as it is.")
     else:
-        print("OK: no rule has fewer verified negatives, exercised items, passing positives or "
-              "sidecars than on the base branch, or a different logsource.")
+        print("OK: every base rule is on the head, and none has fewer verified negatives, "
+              "exercised items, passing positives or sidecars, a different logsource, or a "
+              "sidecar case or verified negative that is gone or changed"
+              + (" (content not compared for the rules noted)" if notes else "") + ".")
 
 
-def write_ratchet_markdown(path, decreases, errors):
+def write_ratchet_markdown(path, decreases, errors, notes=()):
     ok = not (decreases or errors)
     lines = ["## Sufficiency ratchet (vs the base branch)", "",
-             "**PASS**: no rule lost checks." if ok else
-             f"**FAIL**: {len(decreases)} rule(s) lost checks against the base branch.", ""]
+             "**PASS**: no rule lost or changed checks." if ok else
+             f"**FAIL**: {len(decreases)} rule(s) lost or changed checks against the base "
+             "branch.", ""]
     lines += [f"- **error**: {e}" for e in errors]
     lines += [f"- {d}" for d in decreases]
+    lines += [f"- **note**: {n}" for n in notes]
     with open(path, "a", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n\n")
 
@@ -1654,10 +1868,10 @@ def main():
         write_markdown(args.markdown, reports, medians, errors, subset)
     ok = summary(reports, medians, errors, subset)["ok"]
     if args.baseline:
-        decreases, ratchet_errors = ratchet(reports, args.baseline)
-        print_ratchet(args.baseline, decreases, ratchet_errors)
+        decreases, ratchet_errors, notes = ratchet(reports, args.baseline)
+        print_ratchet(args.baseline, decreases, ratchet_errors, notes)
         if args.markdown:
-            write_ratchet_markdown(args.markdown, decreases, ratchet_errors)
+            write_ratchet_markdown(args.markdown, decreases, ratchet_errors, notes)
         ok = ok and not (decreases or ratchet_errors)
     return 0 if ok else 1
 

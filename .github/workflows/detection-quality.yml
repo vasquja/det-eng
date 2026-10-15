@@ -8,19 +8,34 @@ name: detection-quality
 #                      each declared `breaks` must really be the single flip that
 #                      would fire the rule (detections/rule_cases.py). Hard gate.
 #   check-sufficiency  every rule must ship a positive and at least one VERIFIED
-#                      non-trivial negative (one that shares the chokepoint and fails
-#                      a required argument, for a correlation an argument of each
-#                      base), and no rule may key on an emulation marker
+#                      near-miss or filtered negative (a near-miss shares the
+#                      chokepoint and fails one required argument, for a correlation
+#                      an argument of each base), unless a human waived that for a
+#                      one-item presence rule (PRESENCE in check_sufficiency.py, which
+#                      then only warns); and no rule may key on an emulation marker
 #                      (detections/check_sufficiency.py). Hard gate.
-#   sufficiency-ratchet  PULL REQUESTS ONLY. The base branch's own
-#                      check_sufficiency.py reports the base tree (--json), and the
-#                      head runs with --baseline: a rule that loses verified negatives,
-#                      exercised items, passing positives or its sidecar, or changes
-#                      its logsource, fails this job, so automerge holds and a human
-#                      decides. Sidecar cases are
-#                      content, so without it a PR could delete negatives above the
-#                      R2 minimum and merge on its own. Skipped (success) when the base
-#                      has no check_sufficiency.py; any other error fails it.
+#   sufficiency-ratchet  PULL REQUESTS ONLY. Two comparisons with the base branch,
+#                      each failing this job, so automerge holds and a human decides:
+#                      1. The base branch's own check_sufficiency.py reports the base
+#                      tree (--json), and the head runs with --baseline. It fails when
+#                      a rule loses verified negatives, exercised items, passing
+#                      positives or its sidecar, or changes its logsource; when a base
+#                      rule is missing from the head (deleted or renamed); and when any
+#                      base sidecar case (any kind) is gone or has changed kind,
+#                      breaks or events, or a verified negative (a case or a fixture
+#                      record) is gone or changed. Rewording a case's why or source
+#                      passes. Sidecar cases and fixtures are content, so without it
+#                      a PR could delete or weaken negatives and merge on its own.
+#                      Skipped (success) when the base has no check_sufficiency.py.
+#                      2. The head's score_benign.py --baseline-scores compares the
+#                      head's live benign scores with the base's committed
+#                      detections/benign/scores.json: a rule scored on both sides that
+#                      raises more hits fails, even inside its budget's headroom (a
+#                      rule and scores.json are content, so without it a broadened rule
+#                      would merge on its own); fewer hits pass. A rule absent from the
+#                      base is new, and its budget alone governs it. Skipped (success,
+#                      with a notice) when the base has no scores.json.
+#                      Any other error, or an unreadable base scores.json, fails it.
 #   benign-corpus      every rule scored against the committed benign corpus
 #                      (detections/score_benign.py): the snapshot scores.json must be
 #                      current, and a rule in `enforce` mode (every per-rule entry
@@ -122,9 +137,11 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   sufficiency-ratchet:
-    # PR only: compare the head with the base branch, each judged by its own copy
-    # of check_sufficiency.py. Fails closed: a base SHA that cannot be checked out,
-    # or a base run that writes no report, fails the job.
+    # PR only: compare the head with the base branch. The sufficiency report of each
+    # side comes from its own copy of check_sufficiency.py; the benign scores are
+    # the head's live scores against the base's committed scores.json (data only).
+    # Fails closed: a base SHA that cannot be checked out, a base run that writes no
+    # report, or an unreadable base scores.json fails the job.
     name: sufficiency-ratchet
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -170,7 +187,7 @@ jobs:
         if: steps.base.outputs.present == 'true'
         run: pip install --quiet -r detections/requirements.txt
 
-      - name: Fail on any rule that lost checks against the base
+      - name: Fail on any rule that lost or changed checks against the base
         if: steps.base.outputs.present == 'true'
         shell: bash
         run: |
@@ -193,6 +210,43 @@ jobs:
             cat /tmp/ratchet.out
             echo '```'
             echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+      - name: Fail on any rule noisier on the benign corpus than on the base
+        # Runs even when the step above failed, so the summary shows both.
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          base="$RUNNER_TEMP/base-tree"
+          if [ ! -e "$base/.git" ]; then
+            echo "::error title=sufficiency-ratchet::the base tree was not checked out"
+            exit 1
+          fi
+          if [ ! -e "$base/detections/benign/scores.json" ]; then
+            echo "::notice title=sufficiency-ratchet::the base has no detections/benign/scores.json; no benign scores to ratchet against"
+            exit 0
+          fi
+          # The base snapshot is data; only the head's code runs. (The head's
+          # requirements are already installed when the base had check_sufficiency.py.)
+          pip install --quiet -r detections/requirements.txt
+          rc=0
+          python3 detections/score_benign.py --examples 0 \
+            --baseline-scores "$base/detections/benign/scores.json" \
+            > /tmp/benign-ratchet.out 2>&1 || rc=$?
+          cat /tmp/benign-ratchet.out
+          {
+            echo '## Benign-score ratchet (vs the base branch)'
+            echo ''
+            echo 'A rule that raises more benign hits than in the scores.json of the base branch fails, even inside its budget.'
+            echo ''
+            echo '```'
+            if grep -q '^Benign ratchet against' /tmp/benign-ratchet.out; then
+              sed -n '/^Benign ratchet against/,$p' /tmp/benign-ratchet.out
+            else
+              cat /tmp/benign-ratchet.out
+            fi
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
 

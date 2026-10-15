@@ -22,11 +22,17 @@ Budgets (detections/benign/budgets.json) set, per rule, how many benign hits are
 acceptable and whether going over is a warning (mode "shadow") or a failure
 (mode "enforce", with --enforce). budgets.json's `default` (enforce at 0 hits)
 applies to a rule with no entry; shadow at 0 is only the fallback when the file
-names no default. Every per-rule entry is "enforce" today, so a rule that gets
-noisier on the committed corpus fails CI; "shadow" is for a rule a human accepts
-while its corpus is not yet trusted. Raising a budget is a human decision: it
-means "this much noise is acceptable", so a budget change needs a human approval
-before merge. Set max_hits from the most hits over several seeds of the
+names no default. Every per-rule entry is "enforce" today, so a rule whose hits
+on the committed corpus exceed its budget fails CI; "shadow" is for a rule a human
+accepts while its corpus is not yet trusted. A budget leaves headroom above
+today's hits (see max_hits below), so a rise inside it passes --enforce. On a
+pull request --baseline-scores catches that rise instead: it compares the head's
+live scores with the base branch's committed scores.json and fails when any rule
+present in both raises more hits than on the base (a rule absent from the base is
+new, and its budget, enforce at 0 by default, governs it). The failure holds
+automerge, so a human decides; fewer hits pass. Raising a budget is a human
+decision: it means "this much noise is acceptable", so a budget change needs a
+human approval before merge. Set max_hits from the most hits over several seeds of the
 synthetic slices (--reseeds 10), not from one seed's exact count, or a routine
 version bump of a slice trips the budget. Every entry's `why` starts
 "documented noise:" or "rule defect, tracked in detections/RULE_DEFECTS.md
@@ -54,6 +60,8 @@ Usage:
     python3 detections/score_benign.py --update        # rewrite the snapshot
     python3 detections/score_benign.py --enforce       # fail on enforce-mode overruns
     python3 detections/score_benign.py --reseeds 10    # most hits over 10 reseeds
+    python3 detections/score_benign.py --baseline-scores BASE/detections/benign/scores.json
+                                                       # fail on any rule noisier than the base
     python3 detections/score_benign.py --extra-slice /tmp/pre-emulation-audit.log \\
         --extra-logsource kubernetes/audit --extra-label kind-bootstrap
 """
@@ -282,6 +290,48 @@ def diff_snapshots(old, new):
     return lines
 
 
+def load_baseline(path):
+    """The base branch's scores.json, or a ValueError saying why it cannot be used.
+
+    Fails closed: an unreadable file, bad JSON, or a document that is not a scores
+    snapshot (no non-empty `rules` map of entries with an integer `hits`) is an error,
+    never an empty baseline that every rule would pass.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read {path}: {exc}") from exc
+    rules = doc.get("rules") if isinstance(doc, dict) else None
+    if not isinstance(rules, dict) or not rules:
+        raise ValueError(f"{path} has no `rules` map of rule scores")
+    for key, sc in rules.items():
+        hits = sc.get("hits") if isinstance(sc, dict) else None
+        actors = sc.get("actors", {}) if isinstance(sc, dict) else None
+        if not isinstance(hits, int) or isinstance(hits, bool) or hits < 0 \
+                or not isinstance(actors, dict):
+            raise ValueError(f"{path}: rule {key!r} has no non-negative integer `hits` "
+                             "and `actors` map")
+    return doc
+
+
+def baseline_rises(base, scores):
+    """[(key, base score, head score)] for every rule scored on both sides whose hits rose."""
+    rises = []
+    for key, sc in sorted(scores.items()):
+        old = base["rules"].get(key)
+        if old is not None and sc["hits"] > old["hits"]:
+            rises.append((key, old, sc))
+    return rises
+
+
+def grown_actors(old, new):
+    """The head's top actors that are new or have more hits than on the base."""
+    was = old.get("actors", {})
+    return [f"{a} x{n}" + (f" (was {was[a]})" if a in was else " (new)")
+            for a, n in new["actors"].items() if n > was.get(a, 0)]
+
+
 def load_extra(path, logsource, label):
     """A live capture as a slice: JSONL raw events (or one JSON array)."""
     product, _, service = logsource.partition("/")
@@ -327,7 +377,22 @@ def main():
     ap.add_argument("--reseeds", type=int, default=0, metavar="N",
                     help="also report each rule's most hits over the committed corpus and N "
                          "reseeds of every synthetic slice: the basis for a budget's max_hits")
+    ap.add_argument("--baseline-scores", metavar="FILE",
+                    help="the base branch's committed scores.json: fail when a rule scored in "
+                         "both raises more hits now than in FILE (a rise inside its budget "
+                         "then waits for a human); an unreadable FILE fails")
     args = ap.parse_args()
+
+    base = None
+    if args.baseline_scores:
+        if args.rules:
+            print("ERROR: --baseline-scores compares every rule; do not pass rule paths.")
+            return 1
+        try:
+            base = load_baseline(args.baseline_scores)
+        except ValueError as exc:
+            print(f"ERROR: --baseline-scores: {exc}")
+            return 1
 
     rules = load_rules(args.rules or None)
     slices = benign_corpus.load_corpus()
@@ -511,6 +576,33 @@ def main():
         print(f"\n{len(over_shadow)} shadow-mode rule(s) over budget (warning only)"
               + (f"; {len(over_enforce)} enforce-mode (not enforced without --enforce)"
                  if over_enforce else "") + ".")
+    if base is not None:
+        rises = baseline_rises(base, scores)
+        new = sorted(set(scores) - set(base["rules"]))
+        print(f"\nBenign ratchet against {args.baseline_scores} (the base branch's snapshot):")
+        if base.get("corpus_digest") != benign_corpus.corpus_digest(slices):
+            print("  note: the corpus differs from the base's, so a rise may come from the "
+                  "corpus, not the rule")
+        for key, old, sc in rises:
+            b = budget_for(key, default, budgets)
+            grown = grown_actors(old, sc)
+            print(f"  RISE {key}: hits {old['hits']} -> {sc['hits']} (budget "
+                  f"{b.get('max_hits', 0)}); new or grown actors: "
+                  + (", ".join(grown) or "none in the top actors"))
+            annotate("error", f"{key} raises {sc['hits']} benign hit(s), {old['hits']} on the "
+                     "base branch")
+        if new:
+            print(f"  {len(new)} rule(s) not in the base snapshot, governed by their budget "
+                  "alone: " + ", ".join(new))
+        if rises:
+            print(f"\nFAILED: {len(rises)} rule(s) raise more benign hits than on the base "
+                  "branch: " + ", ".join(k for k, *_ in rises))
+            print("A rise inside a rule's budget still changes how noisy it is, so a human "
+                  "decides: approve and merge by hand, or fix the rule. Fewer hits pass.")
+            status = 1
+        else:
+            print(f"\nOK: no rule raises more benign hits than on the base branch "
+                  f"({len(set(scores) & set(base['rules']))} rule(s) compared).")
     return status
 
 
