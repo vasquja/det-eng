@@ -99,5 +99,6 @@ Each validator's details are in [`detections/README.md`](detections/README.md).
 - **Upstream filing is a human step.** Prepare artifacts per
   [`UPSTREAM.md`](UPSTREAM.md); do not open PRs against tired-labs, Atomic Red
   Team, or SigmaHQ.
-- **Merging is a human decision.** A human merges, or adds the `automerge` label
-  to let CI merge on green. Do not add that label yourself.
+- **Merging is a human decision.** A human merges, or adds the `automerge` label,
+  which turns on GitHub's native auto-merge once the required checks pass. Do not
+  add that label yourself.

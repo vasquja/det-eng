@@ -1,82 +1,52 @@
 name: automerge
 
-# Auto-merge a pull request once the full validation loop is green — det-eng's
-# "the proof decides what is done" model, applied to the merge itself. This lets an
-# AI (or anyone) drive a detection to a mergeable, CI-proven state and have it land
-# without a manual click, at scale, while keeping an auditable, bounded blast radius.
+# Enable GitHub's NATIVE auto-merge on a labeled pull request, so it lands
+# automatically once branch protection is satisfied (all required checks green) --
+# det-eng's "the proof decides what is done" model, applied to the merge, so an AI
+# (or anyone) can drive a detection all the way to landed without a manual click.
 #
-# SAFETY RAILS (all must hold, re-checked on the exact head commit every time, and
-# every gate fails CLOSED — any ambiguity holds the merge):
-#   1. Per-PR opt-in: the PR must carry the `automerge` label. A label can be added
-#      only by a collaborator with triage/write access, so the label IS the human (or
-#      trusted-automation) opt-in. Remove the label to veto.
-#   2. Same-repo only: fork PRs are never merged here (a fork's head.repo.full_name
-#      carries the fork owner, so it can never equal the base). This is the key defense
-#      against a malicious outside PR.
-#   3. Not a draft, and the base branch is `main`.
-#   4. Every check run on the exact head SHA has concluded success / neutral / skipped
-#      (nothing failed, nothing still running), and there is at least one check.
-#   5. No reviewer's latest review is CHANGES_REQUESTED (a human veto is honored).
-#   6. No merge conflict (`mergeable == true`, confirmed — an unknown holds).
-#   7. The merge is guarded by the head SHA, so a push that races the merge aborts it
-#      rather than merging unreviewed code.
+# WHY NATIVE AUTO-MERGE (not a direct API merge): `main` is a protected branch, and a
+# workflow's built-in GITHUB_TOKEN cannot merge directly into a protected branch --
+# GitHub blocks GITHUB_TOKEN writes to protected refs unless the bot is a ruleset
+# bypass actor (a deliberate guard so workflows can't circumvent branch protection).
+# But ENABLING native auto-merge is allowed, and GitHub's own auto-merge then performs
+# the merge when the required checks pass, honoring branch protection -- no bypass, no
+# PAT, enforcement fully intact. The repo must have "Allow auto-merge" enabled (it is).
 #
-# The label path uses `pull_request_target`, NOT `pull_request`: pull_request_target
-# runs THIS file from the base branch (main) with a write token and never uses the PR
-# branch's copy, so a PR cannot ship an altered automerge.yml that runs with write
-# access. This is safe only because the job reads API metadata and never checks out or
-# runs PR-authored code. The `workflow_run` path likewise always runs the base-branch
-# copy. Nothing from the event (title, branch, body, author) is interpolated into the
-# shell; github-context values come through the env: block.
+# SAFETY RAILS (checked before enabling; every gate fails CLOSED):
+#   1. `automerge` label -- the per-PR opt-in (addable only by a collaborator with
+#      triage/write). Removing it DISABLES auto-merge (the veto).
+#   2. Same-repo only: fork PRs are never touched (head.repo != base.repo).
+#   3. Open, not a draft, base branch is `main`.
+#   4. No reviewer's latest review is CHANGES_REQUESTED. Because the ruleset requires
+#      0 approvals, GitHub would not otherwise honor that veto, so a CHANGES_REQUESTED
+#      review arriving later DISABLES auto-merge (the pull_request_review trigger).
+#   5. No merge conflict (`mergeable != false`).
+# GitHub enforces the required status checks itself before the auto-merge fires, so
+# this workflow does not re-scan them. Squash keeps `main`'s required linear history.
 #
-# COVERAGE — the heavy validators (apiserver / cloud / k8s / staticpod) now ALWAYS
-# report a status on a PR: each one triggers on every PR, a cheap `changes` job
-# decides from the diff whether the heavy job runs, and an unrelated PR skips it (a
-# skipped required check counts as success). They are wired to be branch-protection
-# required checks, so both this auto-merge gate and the merge itself see a real,
-# per-validator signal instead of "only the checks that happened to run".
+# The label/review paths use `pull_request_target` / `pull_request_review`, which run
+# THIS file from base (main) with a write token and never check out or run PR code;
+# nothing from the event is interpolated into the shell (values come via env:).
 #
-# Residual gap: a validator's `changes` detector keys on the SAME path list as the
-# validator's `push: paths:`, so a PR that adds a technique directory NOT YET in that
-# list is judged "not relevant" and its behavioral validation is skipped (the rule is
-# still Sigma-compiled by the always-on `sigma-lint`). Keep each validator's
-# `push: paths:` and its `changes`-job pattern list in sync when adding a technique,
-# as the TRR flow does.
-#
-# Requirements: repository Actions permission must allow read/write workflow tokens
-# (Settings -> Actions -> General -> Workflow permissions), and the `automerge` label
-# must exist. The merge is a direct squash-merge via the API, so the `main` ruleset's
-# required status checks still gate it (all 8 must be green), but "Require branches to
-# be up to date before merging" (strict) must be OFF: a workflow using the built-in
-# GITHUB_TOKEN cannot update a PR branch and have CI re-run (GitHub suppresses workflow
-# runs for GITHUB_TOKEN pushes), so with strict ON a green-but-behind PR could never
-# be auto-merged. With strict OFF a green labeled PR merges even if slightly behind
-# main; the required checks ran on its head and git still blocks a textual conflict
-# (mergeable==true is required below). GitHub's merge queue would keep the
-# test-against-latest-main guarantee, but it needs an organization-owned repo.
+# Requirements (one-time): "Allow auto-merge" on the repo; Actions workflow permissions
+# read/write; the `automerge` label exists; and (for a green-but-behind PR to land)
+# the `main` ruleset's "Require branches to be up to date before merging" off.
 
 on:
-  workflow_run:
-    workflows:
-      - validate-detections
-      - validate-apiserver-detections
-      - validate-cloud-detections
-      - validate-k8s-detections
-      - validate-staticpod-detections
-      - lint-trr
-      - claude-code-review
-    types: [completed]
   pull_request_target:
-    types: [labeled]
+    types: [labeled, unlabeled]
+  pull_request_review:
+    types: [submitted, dismissed, edited]
 
 permissions:
   contents: write
   pull-requests: write
-  checks: read
-  statuses: read
 
 concurrency:
-  group: automerge-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.sha }}
+  # Keyed by PR and action so a disable (unlabel / review) run is never
+  # superseded-cancelled by an enable (label) run for the same PR.
+  group: automerge-${{ github.event.pull_request.number }}-${{ github.event.action }}
   cancel-in-progress: false
 
 jobs:
@@ -84,107 +54,92 @@ jobs:
     name: automerge
     runs-on: ubuntu-latest
     steps:
-      - name: Evaluate the proof loop and merge when green
+      - name: Enable or disable native auto-merge from the label
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           LABEL: automerge
           EVENT: ${{ github.event_name }}
-          PR_FROM_LABEL: ${{ github.event.pull_request.number }}
-          SHA_FROM_RUN: ${{ github.event.workflow_run.head_sha }}
-          RUN_ID: ${{ github.run_id }}
+          ACTION: ${{ github.event.action }}
+          LABEL_NAME: ${{ github.event.label.name }}
+          PR_NUM: ${{ github.event.pull_request.number }}
         shell: bash
         run: |
           set -euo pipefail
 
-          # --- Resolve the candidate open PR(s) for this event --------------------
-          if [ "$EVENT" = "pull_request_target" ]; then
-            prs="$PR_FROM_LABEL"
-          else
-            # workflow_run: the PR(s) whose head commit is this run's head SHA.
-            prs="$(gh api "repos/$REPO/commits/$SHA_FROM_RUN/pulls" \
-                     --jq '.[] | select(.state=="open") | .number' 2>/dev/null || true)"
-          fi
-          if [ -z "${prs//[[:space:]]/}" ]; then
-            echo "No candidate open PR for this event; nothing to do."
+          disable_am() { gh pr merge "$PR_NUM" --disable-auto -R "$REPO" >/dev/null 2>&1; }
+
+          # standing_changes_requested: true if the latest review per author is
+          # CHANGES_REQUESTED. Fails CLOSED (any API error -> "true").
+          standing_changes_requested() {
+            # NOTE: `gh api --slurp` is INCOMPATIBLE with `--jq` (gh errors), so --slurp
+            # must pipe to a standalone jq. Any error -> the blocking value "true".
+            gh api --paginate --slurp "repos/$REPO/pulls/$PR_NUM/reviews" 2>/dev/null \
+              | jq -r '
+                add
+                | [ .[] | select(.state=="CHANGES_REQUESTED" or .state=="APPROVED" or .state=="DISMISSED") ]
+                | group_by(.user.login)
+                | map(max_by(.submitted_at))
+                | any(.[]?; .state=="CHANGES_REQUESTED")' 2>/dev/null || echo "true"
+          }
+
+          # --- Label removed -> disable auto-merge (the veto) ------------------
+          if [ "$EVENT" = "pull_request_target" ] && [ "$ACTION" = "unlabeled" ]; then
+            if [ "$LABEL_NAME" = "$LABEL" ]; then
+              if disable_am; then echo "Label removed; auto-merge disabled on #$PR_NUM."
+              else echo "Label removed; auto-merge was not enabled on #$PR_NUM (or already merged)."; fi
+            fi
             exit 0
           fi
 
-          for pr in $prs; do
-            echo "::group::Evaluate PR #$pr"
+          data="$(gh api "repos/$REPO/pulls/$PR_NUM")"
+          has_label="$(jq -r 'any(.labels[]?; .name==env.LABEL)' <<<"$data")"
 
-            data="$(gh api "repos/$REPO/pulls/$pr")"
-            state="$(jq -r '.state' <<<"$data")"
-            draft="$(jq -r '.draft' <<<"$data")"
-            base="$(jq -r '.base.ref' <<<"$data")"
-            same_repo="$(jq -r '.head.repo.full_name == .base.repo.full_name' <<<"$data")"
-            head_sha="$(jq -r '.head.sha' <<<"$data")"
-            has_label="$(jq -r --arg l "$LABEL" 'any(.labels[]?; .name==$l)' <<<"$data")"
-
-            [ "$state" = "open" ]     || { echo "skip: not open";        echo "::endgroup::"; continue; }
-            [ "$draft" = "false" ]    || { echo "skip: draft";           echo "::endgroup::"; continue; }
-            [ "$same_repo" = "true" ] || { echo "skip: fork PR";         echo "::endgroup::"; continue; }
-            [ "$base" = "main" ]      || { echo "skip: base is $base";   echo "::endgroup::"; continue; }
-            [ "$has_label" = "true" ] || { echo "skip: no '$LABEL' label"; echo "::endgroup::"; continue; }
-
-            # --- A human reviewer's standing CHANGES_REQUESTED is a veto -----------
-            # --slurp merges all pages into one array BEFORE aggregating (a per-page
-            # --jq would mis-compute the latest-review-per-author across a page break).
-            # Any API error defaults to the blocking value ("true").
-            changes_requested="$(gh api --paginate --slurp "repos/$REPO/pulls/$pr/reviews" --jq '
-              add
-              | [ .[] | select(.state=="CHANGES_REQUESTED" or .state=="APPROVED" or .state=="DISMISSED") ]
-              | group_by(.user.login)
-              | map(max_by(.submitted_at))
-              | any(.[]?; .state=="CHANGES_REQUESTED")' 2>/dev/null || echo "true")"
-            [ "$changes_requested" = "false" ] || { echo "skip: changes requested"; echo "::endgroup::"; continue; }
-
-            # --- Every check run on the EXACT head SHA must be a pass --------------
-            # Exclude only THIS workflow run's own check (match its run id in the
-            # details_url), not any check that merely shares the name 'automerge'.
-            runs="$(gh api --paginate "repos/$REPO/commits/$head_sha/check-runs" \
-                      --jq '.check_runs[]
-                            | select((.details_url // "") | contains("/runs/" + env.RUN_ID + "/") | not)
-                            | [.status, (.conclusion // "")] | @tsv' 2>/dev/null || true)"
-            total="$(printf '%s' "$runs" | grep -c . || true)"
-            not_done="$(printf '%s\n' "$runs" | awk -F'\t' 'NF>0 && $1!="completed"{c++} END{print c+0}')"
-            bad="$(printf '%s\n' "$runs" | awk -F'\t' \
-                    'NF>0 && $1=="completed" && $2!="success" && $2!="neutral" && $2!="skipped"{c++} END{print c+0}')"
-
-            if [ "$total" -lt 1 ]; then echo "skip: no check runs yet"; echo "::endgroup::"; continue; fi
-            if [ "$not_done" -ne 0 ]; then echo "skip: $not_done check(s) still running"; echo "::endgroup::"; continue; fi
-            if [ "$bad" -ne 0 ]; then echo "skip: $bad check(s) not successful"; echo "::endgroup::"; continue; fi
-
-            # --- Legacy commit statuses (if any) must be success; fail closed ------
-            status_json="$(gh api "repos/$REPO/commits/$head_sha/status" 2>/dev/null || true)"
-            if [ -z "$status_json" ]; then echo "skip: commit status unreadable"; echo "::endgroup::"; continue; fi
-            status_state="$(jq -r '.state' <<<"$status_json")"
-            total_statuses="$(jq -r '.total_count' <<<"$status_json")"
-            if [ "${total_statuses:-0}" -gt 0 ] && [ "$status_state" != "success" ]; then
-              echo "skip: commit status is $status_state"; echo "::endgroup::"; continue
-            fi
-
-            # --- Mergeability must be CONFIRMED true (unknown holds) ---------------
-            mergeable="$(jq -r '.mergeable' <<<"$data")"
-            for _ in $(seq 1 10); do
-              [ "$mergeable" = "null" ] || break
-              sleep 3
-              mergeable="$(gh api "repos/$REPO/pulls/$pr" --jq '.mergeable' 2>/dev/null || echo "null")"
-            done
-            [ "$mergeable" = "true" ] || { echo "skip: mergeable not confirmed ($mergeable)"; echo "::endgroup::"; continue; }
-
-            # --- Re-read the label right before merging (honor a late veto) -------
-            still_labeled="$(gh api "repos/$REPO/pulls/$pr" \
-              --jq 'any(.labels[]?; .name==env.LABEL)' 2>/dev/null || echo "false")"
-            [ "$still_labeled" = "true" ] || { echo "skip: label removed"; echo "::endgroup::"; continue; }
-
-            # --- All rails clear: squash-merge, guarded by the head SHA -----------
-            echo "All checks green and rails clear; merging PR #$pr at $head_sha"
-            if gh api -X PUT "repos/$REPO/pulls/$pr/merge" \
-                 -f merge_method=squash -f sha="$head_sha" >/dev/null 2>&1; then
-              echo "Merged PR #$pr."
+          # --- A review arrived -> honor a standing CHANGES_REQUESTED veto -----
+          if [ "$EVENT" = "pull_request_review" ]; then
+            [ "$has_label" = "true" ] || { echo "Review on #$PR_NUM but no '$LABEL' label; nothing to do."; exit 0; }
+            if [ "$(standing_changes_requested)" = "true" ]; then
+              if disable_am; then echo "Standing CHANGES_REQUESTED on #$PR_NUM; auto-merge disabled."
+              else echo "CHANGES_REQUESTED on #$PR_NUM; auto-merge was not enabled."; fi
             else
-              echo "Merge was not applied (head moved, or a protection/permission gate). Leaving the PR open."
+              echo "No standing CHANGES_REQUESTED on #$PR_NUM; leaving auto-merge as-is."
             fi
-            echo "::endgroup::"
+            exit 0
+          fi
+
+          # --- A labeled event for some other label is not ours ---------------
+          if [ "$ACTION" = "labeled" ] && [ "$LABEL_NAME" != "$LABEL" ]; then
+            echo "Label '$LABEL_NAME' is not '$LABEL'; nothing to do."; exit 0
+          fi
+
+          # --- Rails before enabling auto-merge (all fail closed) -------------
+          state="$(jq -r '.state' <<<"$data")"
+          draft="$(jq -r '.draft' <<<"$data")"
+          base="$(jq -r '.base.ref' <<<"$data")"
+          same_repo="$(jq -r '.head.repo.full_name == .base.repo.full_name' <<<"$data")"
+          [ "$state" = "open" ]     || { echo "skip: not open";          exit 0; }
+          [ "$draft" = "false" ]    || { echo "skip: draft";             exit 0; }
+          [ "$same_repo" = "true" ] || { echo "skip: fork PR";           exit 0; }
+          [ "$base" = "main" ]      || { echo "skip: base is $base";     exit 0; }
+          [ "$has_label" = "true" ] || { echo "skip: no '$LABEL' label"; exit 0; }
+          [ "$(standing_changes_requested)" = "false" ] || { echo "skip: changes requested"; exit 0; }
+
+          # No merge conflict (unknown -> retry; only a confirmed conflict blocks).
+          mergeable="$(jq -r '.mergeable' <<<"$data")"
+          for _ in $(seq 1 10); do
+            [ "$mergeable" = "null" ] || break
+            sleep 3
+            mergeable="$(gh api "repos/$REPO/pulls/$PR_NUM" --jq '.mergeable' 2>/dev/null || echo "null")"
           done
+          [ "$mergeable" != "false" ] || { echo "skip: merge conflict"; exit 0; }
+
+          # --- Enable native auto-merge; GitHub merges when the checks pass ----
+          echo "Rails clear; enabling native auto-merge (squash) on #$PR_NUM."
+          if out="$(gh pr merge "$PR_NUM" --auto --squash -R "$REPO" 2>&1)"; then
+            echo "Auto-merge enabled on #$PR_NUM; GitHub will squash-merge it once the required checks pass."
+          else
+            # Most common benign case: the PR is already fully mergeable, so GitHub
+            # rejects "enable auto-merge" (nothing to wait for). We cannot direct-merge
+            # a protected branch with GITHUB_TOKEN, so surface it rather than hide it.
+            echo "::warning title=automerge::Could not enable auto-merge on #$PR_NUM (already mergeable, or auto-merge not allowed): $out"
+          fi
