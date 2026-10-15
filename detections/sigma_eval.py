@@ -25,7 +25,12 @@ import sys
 # there would replace pySigma's own module inside every gate and validator. So
 # before pySigma is imported, the rule directory must hold only rule material:
 # T<id>/ directories of *.yml, *.cases.jsonl and *.md files, nothing else.
-_RULE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sigma")
+# A module named `sigma` NEXT TO the rule directory is worse: in one sys.path entry
+# a module (sigma.py, a sourceless sigma.pyc, sigma.so, ...) wins over a namespace
+# portion, so it replaces pySigma whole. So detections/ may hold nothing else named
+# sigma.* (nor __pycache__/sigma.*), in any letter case.
+_DETECTIONS = os.path.dirname(os.path.abspath(__file__))
+_RULE_DIR = os.path.join(_DETECTIONS, "sigma")
 _TECHNIQUE_DIR = re.compile(r"T\d{4}(\.\d{3})?")
 _RULE_MATERIAL = re.compile(r".+\.(yml|cases\.jsonl|md)")
 
@@ -49,13 +54,29 @@ def _rule_dir_intruders():
     return bad
 
 
-_intruders = _rule_dir_intruders()
+def _sibling_intruders():
+    """Entries of detections/ (and detections/__pycache__/) named sigma.*."""
+    bad = []
+    for sub in ("", "__pycache__"):
+        try:
+            names = sorted(os.listdir(os.path.join(_DETECTIONS, sub)))
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        bad += [f"{sub}/{n}" if sub else n for n in names if n.lower().startswith("sigma.")]
+    return bad
+
+
+_intruders = ([f"sigma/{p}" for p in _rule_dir_intruders()]
+              + _sibling_intruders())
 if _intruders:
     sys.exit("refusing to import pySigma: detections/sigma/ may hold only *.md files "
-             "and T<id>/ directories of *.yml, *.cases.jsonl and *.md files, because it shares "
-             "the `sigma` package namespace with pySigma and anything importable there "
-             "would shadow pySigma's own modules. Move or delete:\n  "
-             + "\n  ".join(f"detections/sigma/{p}" for p in _intruders))
+             "and T<id>/ directories of *.yml, *.cases.jsonl and *.md files, and nothing "
+             "else in detections/ may be named sigma.* (sigma.py, sigma.pyc, sigma.so, "
+             "sigma.pth, __pycache__/sigma.*, ...), because the rule directory shares the "
+             "`sigma` package namespace with pySigma: anything importable there would "
+             "shadow pySigma's own modules, and a `sigma` module beside it would replace "
+             "pySigma whole. Move or delete:\n  "
+             + "\n  ".join(f"detections/{p}" for p in _intruders))
 
 try:
     from sigma.backends.sqlite import sqliteBackend

@@ -29,12 +29,16 @@ name: automerge
 #      the previous name of a renamed file) is content:
 #        detections/sigma/T<id>/<stem>.yml and <stem>.cases.jsonl   rules, their cases
 #        detections/cloud/fixtures/<trr>/*.json                      cloud log fixtures
-#        detections/benign/scores.json    derived; the benign-corpus check proves it
-#                                         matches the rules and the corpus
+#        detections/benign/scores.json    derived; the benign-corpus check proves
+#                                         every rule score and the corpus digest
+#                                         match, and fails a rule over its budget
 #        research/** (but no *.py, nothing under research/tools/), atomics/**,
-#        docs/**, upstream/**, and *.md outside .github/ and .claude/ (no CLAUDE.md)
+#        docs/**, upstream/**, and *.md outside .github/ and .claude/, except agent
+#        instructions (CLAUDE.md, CLAUDE.local.md, AGENTS.md, in any directory)
 #      Everything else is the code and configuration the gates run on: any *.py
-#      (sigma_eval.py and the validators included), .github/**, .claude/**,
+#      (sigma_eval.py and the validators included), .github/**, .claude/**, the
+#      agent-instruction files (policy for the next agent session; these exclusions
+#      match in any letter case, as a case-insensitive checkout reads them),
 #      detections/requirements.txt, detections/benign/** other than scores.json
 #      (budgets.json, slices/, the live workloads), detections/k8s/**,
 #      detections/audit/**, detections/controls/**, research/tools/**, and any path
@@ -42,8 +46,10 @@ name: automerge
 #      an APPROVED review, as that reviewer's latest decision, ON THE EXACT HEAD
 #      COMMIT, from a human (user type "User", not a bot) whose repository
 #      permission is write, maintain or admin, and who is neither the PR author nor
-#      the author or committer of any of the PR's commits. Otherwise the PR is left
-#      for a human to approve or merge.
+#      the author or committer of any of the PR's commits. A commit whose author or
+#      committer is linked to no GitHub account is unattributed (no login can
+#      exclude whoever made it), so such a PR is held for a human to merge. Otherwise
+#      the PR is left for a human to approve or merge.
 #      So a NEW-TECHNIQUE PR needs a human approval too: it edits a validator's
 #      MANIFEST (detections/validate_*.py) and the validators' path filters
 #      (.github/workflows/). The CONTENT / NOT_CONTENT patterns at the top of the
@@ -147,8 +153,12 @@ jobs:
           # every path (and previous name) is content merges without an approval;
           # anything else needs one. Widen only for files no gate imports, executes
           # or reads as policy.
+          # NOT_CONTENT is matched case-insensitively: on a case-insensitive checkout
+          # (macOS, Windows) claude.md IS CLAUDE.md and .Claude/ IS .claude/. Agent
+          # instruction files (CLAUDE.md, CLAUDE.local.md, AGENTS.md, in any directory)
+          # are policy for the next agent session, never content.
           CONTENT='^(detections/sigma/T[0-9]{4}(\.[0-9]{3})?/[^/]+\.(yml|cases\.jsonl)|detections/cloud/fixtures/[^/]+/[^/]+\.json|detections/benign/scores\.json|research/.+|atomics/.+|docs/.+|upstream/.+|.+\.md)$'
-          NOT_CONTENT='(\.py$|^research/tools/|^\.github/|^\.claude/|(^|/)CLAUDE\.md$)'
+          NOT_CONTENT='(\.py$|^research/tools/|^\.github/|^\.claude/|(^|/)(claude(\.local)?|agents)\.md$)'
 
           # The PR's head SHA now; "" on any error, which never equals a SHA.
           head_now() { gh api "repos/$REPO/pulls/$1" --jq '.head.sha' 2>/dev/null || true; }
@@ -218,7 +228,7 @@ jobs:
             fi
             paths="$(printf '%s\n' "$files" | tr '\t' '\n' | grep -v '^$' | sort -u || true)"
             not_content="$( { printf '%s\n' "$paths" | grep -Ev "$CONTENT" || true
-                              printf '%s\n' "$paths" | grep -E "$NOT_CONTENT" || true
+                              printf '%s\n' "$paths" | grep -Ei "$NOT_CONTENT" || true
                             } | grep -v '^$' | sort -u || true)"
             if [ -n "$not_content" ]; then
               n_not_content="$(printf '%s\n' "$not_content" | grep -c . || true)"
@@ -231,7 +241,7 @@ jobs:
                 ''|*[!0-9]*) echo "skip: commit count unknown ($pr_commits)"; echo "::endgroup::"; continue ;;
               esac
               if ! commits="$(gh api --paginate "repos/$REPO/pulls/$pr/commits" \
-                                --jq '.[] | [(.author.login // ""), (.committer.login // "")] | @tsv' 2>/dev/null)"; then
+                                --jq '.[] | [.sha, (.author.login // ""), (.committer.login // "")] | @tsv' 2>/dev/null)"; then
                 echo "skip: PR commit list unreadable"; echo "::endgroup::"; continue
               fi
               listed_commits="$(printf '%s' "$commits" | grep -c . || true)"
@@ -239,8 +249,19 @@ jobs:
                 # The commits API stops at 250 entries; an incomplete list cannot clear rail 8.
                 echo "skip: listed $listed_commits of $pr_commits commit(s)"; echo "::endgroup::"; continue
               fi
+              # A commit whose author or committer is linked to no GitHub account (an
+              # unknown e-mail) is unattributed: no login excludes whoever made it, so
+              # the collaborator who pushed it could approve it. Hold for a human.
+              if ! unattributed="$(printf '%s\n' "$commits" | awk -F'\t' \
+                    'NF>0 && ($2=="" || $3=="") {printf "%s%s", s, ($1=="" ? "?" : substr($1,1,12)); s=","}')"; then
+                echo "skip: PR commit list unparsable"; echo "::endgroup::"; continue
+              fi
+              if [ -n "$unattributed" ]; then
+                echo "skip: commit(s) $unattributed have an author or committer linked to no GitHub account, so no approval can be shown independent of them; a human merges this PR by hand, or the commits are re-pushed under linked identities"
+                echo "::endgroup::"; continue
+              fi
               # (Any error leaves this empty, so the --argjson below fails: no approvers.)
-              excluded="$( { jq -r '.user.login' <<<"$data"; printf '%s\n' "$commits" | tr '\t' '\n'; } \
+              excluded="$( { jq -r '.user.login' <<<"$data"; printf '%s\n' "$commits" | cut -f2- | tr '\t' '\n'; } \
                            | { grep -v '^$' || true; } | jq -R 'ascii_downcase' | jq -sc 'unique' || true)"
 
               # Candidates: latest decision APPROVED, on this head, by a human who
