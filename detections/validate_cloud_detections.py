@@ -65,7 +65,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sigma_eval  # noqa: E402
-import sigma_explain  # noqa: E402
+try:  # explanations are optional: a broken sigma_explain must never break a verdict
+    import sigma_explain  # noqa: E402
+except Exception as _e:  # noqa: BLE001
+    sigma_explain = None
+    print(f"[diag] no explanations: sigma_explain failed to import "
+          f"({type(_e).__name__}: {_e})")
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SIGMA = os.path.join(REPO, "detections", "sigma")

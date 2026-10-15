@@ -79,7 +79,12 @@ except ImportError:
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sigma_eval  # noqa: E402
-import sigma_explain  # noqa: E402
+try:  # explanations are optional: a broken sigma_explain must never break a verdict
+    import sigma_explain  # noqa: E402
+except Exception as _e:  # noqa: BLE001
+    sigma_explain = None
+    print(f"[diag] no explanations: sigma_explain failed to import "
+          f"({type(_e).__name__}: {_e})")
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -204,12 +209,13 @@ MANIFEST = [
 # SUCCESS_GATE for the validator's own success=yes check. Each held mutant is
 # graded against the rule; a different grade prints a WARNING (not a failure).
 SUCCESS_GATE = "success"
+VACUOUS = "vacuous"  # a control that made no audited syscall proves nothing
 NOOP = "detections/controls/noop.c"
 CONTROLS = [
     ("detections/sigma/T1068/dirtypipe_splice_readonly.yml",
      "detections/controls/splice_without_pipe.c", [],
-     "another process's pipe completed the correlation",
-     ["base:dirtypipe_pipe_create"]),
+     "a pipe() in one process and a splice() in another were correlated",
+     ["group-by"]),
     ("detections/sigma/T1620/memfd_create_execveat.yml",
      "detections/controls/memfd_fexecve_in_child.c", [],
      "halves from different pids were correlated",
@@ -505,24 +511,32 @@ def explain_broken(rule, sql, events, tree, meaning):
 def grade_control(rule, sql, events, tree, expected):
     """Grade a held mutant against the rule: (graded atoms, summary, warning, lines).
 
-    The mutant's closest event (or, for a correlation, its whole event set) says
-    which part of the rule held it. A grade other than `expected` is a WARNING:
-    the mutant may no longer test what its CONTROLS entry says it does.
+    The grade uses the control's own SUCCEEDED syscalls, the same pool judge()
+    gates on: a syscall the kernel rejected never reaches the rule, so it cannot
+    be what held the control. The closest event (or, for a correlation, the whole
+    set) says which part of the rule held it. A grade other than `expected` is a
+    WARNING: the mutant may no longer test what its CONTROLS entry says it does.
+    A control whose process tree made no audited syscall at all is VACUOUS.
     """
     own = [e for e in events if e["pid"] in tree]
+    accepted = [e for e in own if e["success"] == "yes"]
+    rejected = sorted({f"{e['syscall']}: {_errno_name(e['exit'])}"
+                       for e in own if e["success"] != "yes"})
     lines = []
     if not own:
-        graded, kind = [], "no audited syscall"
-        text = ("held: the control's process tree made no audited syscall -- it proves "
+        graded, kind = [], VACUOUS
+        text = ("VACUOUS: the control's process tree made no audited syscall -- it proves "
                 "nothing about the rule")
     elif stimulus_hits(sql, events, tree, succeeded_only=False):
-        rejected = sorted({f"{e['syscall']}: {_errno_name(e['exit'])}"
-                           for e in own if e["success"] != "yes"})
         graded, kind = [SUCCESS_GATE], "rejected"
         text = ("held: the rule's logic matches, but only syscalls the kernel rejected "
                 f"({'; '.join(rejected)}); the success=yes gate held it")
+    elif not accepted:
+        graded, kind = [], "all rejected"
+        text = ("held, but every audited syscall the control made was rejected by the "
+                f"kernel ({'; '.join(rejected)}), so it never reaches the rule")
     else:
-        verdicts = sigma_explain.judge_events(rule, own)
+        verdicts = sigma_explain.judge_events(rule, accepted)
         v = min(verdicts, key=lambda x: (sigma_explain.KIND_RANK[x.kind], -x.closeness))
         lines, kind = v.lines, v.kind
         graded = list(v.atoms) if v.kind in sigma_explain.NON_TRIVIAL else []
@@ -531,6 +545,8 @@ def grade_control(rule, sql, events, tree, expected):
                 "distant": "held: distant -- the mutant may not exercise the chokepoint",
                 "trivial": "held: trivial -- the mutant does not reach the rule's surface",
                 }.get(v.kind, f"held, though the rule's logic grades it {v.kind}")
+        if rejected:
+            text += f" (rejected syscalls not graded: {'; '.join(rejected)})"
     warning = None
     if expected is not None and sorted(graded) != sorted(expected):
         warning = (f"WARNING: built to break {', '.join(expected)}, but graded "
@@ -720,6 +736,10 @@ def validate(args, report):
                           info["explanation"]))
         elif status == "N/A":
             shown.append(("N/A", label, detail))
+        elif info.get("graded") == [] and str(info.get("grade", "")).startswith("VACUOUS"):
+            info["explanation"] = [info["grade"]]
+            shown.append(("BROKEN", label, "vacuous: the control made no audited syscall",
+                          info["explanation"]))
         else:
             lines = [info["grade"]] if info.get("grade") else []
             if info.get("warning"):
