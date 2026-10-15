@@ -36,36 +36,84 @@ on:
       - 'atomics/T1199/**'
       - 'atomics/T1550.001/**'
       - '.github/workflows/validate-cloud-detections.yml'
+  # PRs always trigger (no paths: filter) so the required `validate-cloud` check
+  # ALWAYS reports. The `changes` job decides from the diff whether the heavy job
+  # runs; a skip on an unrelated PR counts as success. Push to main stays filtered.
   pull_request:
-    paths:
-      - 'detections/cloud/**'
-      - 'detections/sigma/T1552.005/**'
-      - 'detections/sigma/T1078.004/**'
-      - 'detections/sigma/T1098.001/**'
-      - 'detections/sigma/T1098.003/**'
-      - 'detections/sigma/T1528/**'
-      - 'detections/sigma/T1537/**'
-      - 'detections/sigma/T1199/**'
-      - 'detections/sigma/T1550.001/**'
-      - 'detections/validate_cloud_detections.py'
-      - 'detections/sigma_eval.py'
-      - 'detections/requirements.txt'
-      - 'atomics/T1552.005/**'
-      - 'atomics/T1078.004/**'
-      - 'atomics/T1098.001/**'
-      - 'atomics/T1098.003/**'
-      - 'atomics/T1528/**'
-      - 'atomics/T1537/**'
-      - 'atomics/T1199/**'
-      - 'atomics/T1550.001/**'
-      - '.github/workflows/validate-cloud-detections.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  changes:
+    name: changes-cloud
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.f.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: f
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_SHA:-}" ]; then
+            echo "Non-PR event; running the validator."
+            echo "relevant=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # Exact file paths, or directory prefixes ending in '/'. Mirror of the
+          # push: paths: list above (keep the two in sync when adding a technique).
+          patterns=$(printf '%s\n' \
+            'detections/cloud/' \
+            'detections/sigma/T1552.005/' \
+            'detections/sigma/T1078.004/' \
+            'detections/sigma/T1098.001/' \
+            'detections/sigma/T1098.003/' \
+            'detections/sigma/T1528/' \
+            'detections/sigma/T1537/' \
+            'detections/sigma/T1199/' \
+            'detections/sigma/T1550.001/' \
+            'detections/validate_cloud_detections.py' \
+            'detections/sigma_eval.py' \
+            'detections/requirements.txt' \
+            'atomics/T1552.005/' \
+            'atomics/T1078.004/' \
+            'atomics/T1098.001/' \
+            'atomics/T1098.003/' \
+            'atomics/T1528/' \
+            'atomics/T1537/' \
+            'atomics/T1199/' \
+            'atomics/T1550.001/' \
+            '.github/workflows/validate-cloud-detections.yml')
+          if ! changed="$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}" 2>/dev/null)"; then
+            echo "git diff failed; running the validator to be safe."
+            echo "relevant=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          relevant=false
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            while IFS= read -r pat; do
+              [ -n "$pat" ] || continue
+              if [ "${pat%/}" != "$pat" ]; then
+                case "$file" in "$pat"*) relevant=true; break 2 ;; esac
+              else
+                [ "$file" = "$pat" ] && { relevant=true; break 2; }
+              fi
+            done <<< "$patterns"
+          done <<< "$changed"
+          echo "Changed files vs base:"; printf '%s\n' "$changed"
+          echo "relevant=$relevant"
+          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
+
   validate:
+    name: validate-cloud
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
