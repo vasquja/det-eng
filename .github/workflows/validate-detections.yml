@@ -12,6 +12,7 @@ on:
   push:
     branches: [ main ]
   pull_request:
+  merge_group:        # run the required checks on the merge queue's combined ref
   workflow_dispatch:
 
 permissions:
