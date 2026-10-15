@@ -1,51 +1,66 @@
 name: automerge
 
-# Auto-merge a pull request once the full validation loop is green — det-eng's
-# "the proof decides what is done" model, applied to the merge itself. This lets an
-# AI (or anyone) drive a detection to a mergeable, CI-proven state and have it land
-# without a manual click, at scale, while keeping an auditable, bounded blast radius.
+# Enqueue a labeled, CI-green pull request into GitHub's merge queue -- det-eng's
+# "the proof decides what is done" model, applied to the merge itself. An AI (or
+# anyone) drives a detection to a green, labeled state; this workflow enqueues it;
+# the merge queue tests the merged-with-latest-main result and lands it, keeping
+# main green at scale without a manual click.
 #
-# SAFETY RAILS (all must hold, re-checked on the exact head commit every time, and
-# every gate fails CLOSED — any ambiguity holds the merge):
-#   1. Per-PR opt-in: the PR must carry the `automerge` label. A label can be added
-#      only by a collaborator with triage/write access, so the label IS the human (or
-#      trusted-automation) opt-in. Remove the label to veto.
-#   2. Same-repo only: fork PRs are never merged here (a fork's head.repo.full_name
-#      carries the fork owner, so it can never equal the base). This is the key defense
-#      against a malicious outside PR.
-#   3. Not a draft, and the base branch is `main`.
-#   4. Every check run on the exact head SHA has concluded success / neutral / skipped
-#      (nothing failed, nothing still running), and there is at least one check.
-#   5. No reviewer's latest review is CHANGES_REQUESTED (a human veto is honored).
-#   6. No merge conflict (`mergeable == true`, confirmed — an unknown holds).
-#   7. The merge is guarded by the head SHA, so a push that races the merge aborts it
-#      rather than merging unreviewed code.
+# WHY A MERGE QUEUE (not a direct merge): main's branch protection is strict -- a PR
+# must be up to date with main before it can merge. A workflow cannot update a PR
+# branch and have CI re-run, because a push made with the built-in GITHUB_TOKEN does
+# NOT trigger new workflow runs (GitHub's recursion guard). The merge queue is
+# GitHub's own answer: it updates each entry against the latest main, runs the
+# required checks on that combined result (the `merge_group` event), and merges when
+# green -- all server-side, no PAT required.
 #
-# The label path uses `pull_request_target`, NOT `pull_request`: pull_request_target
-# runs THIS file from the base branch (main) with a write token and never uses the PR
-# branch's copy, so a PR cannot ship an altered automerge.yml that runs with write
-# access. This is safe only because the job reads API metadata and never checks out or
-# runs PR-authored code. The `workflow_run` path likewise always runs the base-branch
-# copy. Nothing from the event (title, branch, body, author) is interpolated into the
-# shell; github-context values come through the env: block.
+# SAFETY RAILS (all must hold before enqueue; every gate fails CLOSED -- any
+# ambiguity holds the PR out of the queue):
+#   1. Per-PR opt-in: the PR carries the `automerge` label. A label is addable only
+#      by a collaborator with triage/write access, so it IS the human opt-in.
+#      Removing the label dequeues the PR -- a best-effort, racy veto (it runs in a
+#      fresh event and can lose a race to the queue finishing the group), but a
+#      FAILED dequeue fails this workflow loudly rather than silently merging.
+#   2. Same-repo only: fork PRs are never enqueued (head.repo != base.repo). This is
+#      the key defense against a malicious outside PR.
+#   3. Open, not a draft, and the base branch is `main`.
+#   4. Every check run on the exact head SHA concluded success / neutral / skipped
+#      (nothing failed, nothing running), and there is at least one. We never queue a
+#      PR whose own-head checks are red -- that only wastes a queue cycle re-failing
+#      on the group.
+#   5. No reviewer's latest review is CHANGES_REQUESTED. Honored at enqueue AND for
+#      the whole queue window: a CHANGES_REQUESTED review (pull_request_review) on a
+#      labeled PR dequeues it. (Lifting the veto does not auto re-enqueue; re-add the
+#      label or push to re-enter.)
+#   6. No merge conflict (`mergeable == true`, confirmed; an unknown holds). We do
+#      NOT require up-to-date-with-main here: the queue handles that.
+#   7. Enqueue is guarded by the head OID (expectedHeadOid), so a push that races the
+#      enqueue aborts it rather than queuing a moved head. A PR already in the queue
+#      is skipped (isInMergeQueue).
 #
-# COVERAGE — the heavy validators (apiserver / cloud / k8s / staticpod) now ALWAYS
-# report a status on a PR: each one triggers on every PR, a cheap `changes` job
-# decides from the diff whether the heavy job runs, and an unrelated PR skips it (a
-# skipped required check counts as success). They are wired to be branch-protection
-# required checks, so both this auto-merge gate and the merge itself see a real,
-# per-validator signal instead of "only the checks that happened to run".
+# The label and review paths use `pull_request_target` / `pull_request_review`, NOT
+# `pull_request`: they always run THIS file from base (main) with a write token, so a
+# PR cannot ship an altered copy that runs with write access. Safe because the job
+# only reads API metadata and calls the enqueue/dequeue GraphQL mutations -- it never
+# checks out or runs PR-authored code. Nothing from the event (title, branch, body,
+# author) is interpolated into the shell; context values come through the env: block.
+# The concurrency group is keyed by event action so a pending veto (unlabeled /
+# review) run is never superseded-cancelled by an enqueue run on the same head.
 #
-# Residual gap: a validator's `changes` detector keys on the SAME path list as the
-# validator's `push: paths:`, so a PR that adds a technique directory NOT YET in that
-# list is judged "not relevant" and its behavioral validation is skipped (the rule is
-# still Sigma-compiled by the always-on `sigma-lint`). Keep each validator's
-# `push: paths:` and its `changes`-job pattern list in sync when adding a technique,
-# as the TRR flow does.
+# Requirements (one-time): Settings -> Actions -> General -> Workflow permissions set
+# to read/write; the `automerge` label exists; and the `main` ruleset has a "Require
+# merge queue" rule whose MERGE METHOD is SQUASH (or Rebase) -- NOT the default
+# "Merge commit". `main` also requires LINEAR HISTORY, and a merge commit written to
+# it by the queue would be rejected, so with the default method the queue would
+# silently stall with every entry green. Each required-check workflow also triggers
+# on `merge_group` so the queue can run it. Until the queue rule exists, enqueue
+# fails closed and the PR simply waits -- nothing is merged unsafely.
 #
-# Requirements: repository Actions permission must allow read/write workflow tokens
-# (Settings -> Actions -> General -> Workflow permissions), and the `automerge` label
-# must exist. No branch-protection or "Allow auto-merge" repo setting is needed.
+# Note: if a merge_group run fails (a real break, or a flake in the heavy validators),
+# GitHub ejects that PR from the queue and does not re-add it. The PR keeps its label
+# and its own checks stay green, but nothing re-enqueues it automatically -- remove
+# and re-add the `automerge` label (or push) to retry. This is intentional: auto
+# re-enqueue cannot tell a flake from a real break and would risk queue thrash.
 
 on:
   workflow_run:
@@ -59,7 +74,9 @@ on:
       - claude-code-review
     types: [completed]
   pull_request_target:
-    types: [labeled]
+    types: [labeled, unlabeled]
+  pull_request_review:
+    types: [submitted, dismissed, edited]
 
 permissions:
   contents: write
@@ -68,7 +85,10 @@ permissions:
   statuses: read
 
 concurrency:
-  group: automerge-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.sha }}
+  # Keyed by action too, so a pending veto run (unlabeled / review submitted) is never
+  # superseded-cancelled by an enqueue run (labeled / workflow_run completed) on the
+  # same head.
+  group: automerge-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.sha }}-${{ github.event.action }}
   cancel-in-progress: false
 
 jobs:
@@ -76,30 +96,107 @@ jobs:
     name: automerge
     runs-on: ubuntu-latest
     steps:
-      - name: Evaluate the proof loop and merge when green
+      - name: Enqueue into the merge queue when the proof loop is green
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           LABEL: automerge
           EVENT: ${{ github.event_name }}
-          PR_FROM_LABEL: ${{ github.event.pull_request.number }}
+          ACTION: ${{ github.event.action }}
+          LABEL_NAME: ${{ github.event.label.name }}
+          PR_NUM: ${{ github.event.pull_request.number }}
           SHA_FROM_RUN: ${{ github.event.workflow_run.head_sha }}
           RUN_ID: ${{ github.run_id }}
         shell: bash
         run: |
           set -euo pipefail
+          owner="${REPO%/*}"; name="${REPO#*/}"
 
-          # --- Resolve the candidate open PR(s) for this event --------------------
+          in_merge_queue() { # $1 = PR number -> prints true | false | unknown
+            gh api graphql \
+              -f query='query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){isInMergeQueue}}}' \
+              -f o="$owner" -f n="$name" -F p="$1" \
+              --jq '.data.repository.pullRequest.isInMergeQueue' 2>/dev/null || echo "unknown"
+          }
+
+          # Dequeue a PR as a VETO. Benign (0) if it was never queued; LOUD (1) if a
+          # queued PR could not be confirmed out of the queue -- so a dropped veto
+          # fails the run and is retried/visible instead of silently merging.
+          veto_dequeue() { # $1 = PR number
+            local pr="$1" q node out
+            q="$(in_merge_queue "$pr")"
+            if [ "$q" != "true" ]; then
+              echo "PR #$pr is not in the merge queue ($q); nothing to dequeue."
+              return 0
+            fi
+            node="$(gh api "repos/$REPO/pulls/$pr" --jq '.node_id' 2>/dev/null || true)"
+            if [ -z "$node" ]; then
+              echo "::error::Queued PR #$pr: could not read node id; dequeue NOT applied -- veto did not take."
+              return 1
+            fi
+            if ! out="$(gh api graphql \
+                 -f query='mutation($id:ID!){dequeuePullRequest(input:{pullRequestId:$id}){mergeQueueEntry{id}}}' \
+                 -f id="$node" 2>&1)"; then
+              echo "::error::Queued PR #$pr: dequeue failed; veto did not take: $out"
+              return 1
+            fi
+            if [ "$(in_merge_queue "$pr")" = "true" ]; then
+              echo "::error::PR #$pr still in the merge queue after dequeue; veto did not take."
+              return 1
+            fi
+            echo "Dequeued PR #$pr."
+            return 0
+          }
+
+          # --- Label removed -> dequeue (veto) and stop; fail CLOSED and LOUD -----
+          if [ "$EVENT" = "pull_request_target" ] && [ "$ACTION" = "unlabeled" ]; then
+            if [ "$LABEL_NAME" = "$LABEL" ]; then
+              echo "'$LABEL' removed from PR #$PR_NUM; honoring the veto."
+              veto_dequeue "$PR_NUM" || exit 1
+            fi
+            exit 0
+          fi
+
+          # --- A review arrived -> honor a standing CHANGES_REQUESTED veto for the
+          #     whole queue window by dequeuing a labeled PR (mirror of unlabeled). --
+          if [ "$EVENT" = "pull_request_review" ]; then
+            data="$(gh api "repos/$REPO/pulls/$PR_NUM" 2>/dev/null || echo '{}')"
+            has_label="$(jq -r 'any(.labels[]?; .name==env.LABEL)' <<<"$data" 2>/dev/null || echo "false")"
+            if [ "$has_label" != "true" ]; then
+              echo "Review on PR #$PR_NUM but no '$LABEL' label; nothing to do."; exit 0
+            fi
+            # Fail closed: any API error defaults to the blocking value ("true").
+            changes_requested="$(gh api --paginate --slurp "repos/$REPO/pulls/$PR_NUM/reviews" --jq '
+              add
+              | [ .[] | select(.state=="CHANGES_REQUESTED" or .state=="APPROVED" or .state=="DISMISSED") ]
+              | group_by(.user.login)
+              | map(max_by(.submitted_at))
+              | any(.[]?; .state=="CHANGES_REQUESTED")' 2>/dev/null || echo "true")"
+            if [ "$changes_requested" = "true" ]; then
+              echo "Standing CHANGES_REQUESTED on PR #$PR_NUM; dequeuing (veto)."
+              veto_dequeue "$PR_NUM" || exit 1
+            else
+              echo "No standing CHANGES_REQUESTED on PR #$PR_NUM; leaving queue state as-is."
+            fi
+            exit 0
+          fi
+
+          # --- A labeled event for some other label is not ours -----------------
+          if [ "$EVENT" = "pull_request_target" ] && [ "$ACTION" = "labeled" ] \
+             && [ "$LABEL_NAME" != "$LABEL" ]; then
+            echo "Label '$LABEL_NAME' is not '$LABEL'; nothing to do."; exit 0
+          fi
+
+          # --- Resolve the candidate open PR(s) for this event ------------------
           if [ "$EVENT" = "pull_request_target" ]; then
-            prs="$PR_FROM_LABEL"
+            prs="$PR_NUM"
           else
             # workflow_run: the PR(s) whose head commit is this run's head SHA.
             prs="$(gh api "repos/$REPO/commits/$SHA_FROM_RUN/pulls" \
                      --jq '.[] | select(.state=="open") | .number' 2>/dev/null || true)"
           fi
           if [ -z "${prs//[[:space:]]/}" ]; then
-            echo "No candidate open PR for this event; nothing to do."
-            exit 0
+            echo "No candidate open PR for this event; nothing to do."; exit 0
           fi
 
           for pr in $prs; do
@@ -111,15 +208,19 @@ jobs:
             base="$(jq -r '.base.ref' <<<"$data")"
             same_repo="$(jq -r '.head.repo.full_name == .base.repo.full_name' <<<"$data")"
             head_sha="$(jq -r '.head.sha' <<<"$data")"
-            has_label="$(jq -r --arg l "$LABEL" 'any(.labels[]?; .name==$l)' <<<"$data")"
+            node_id="$(jq -r '.node_id' <<<"$data")"
+            has_label="$(jq -r 'any(.labels[]?; .name==env.LABEL)' <<<"$data")"
 
-            [ "$state" = "open" ]     || { echo "skip: not open";        echo "::endgroup::"; continue; }
-            [ "$draft" = "false" ]    || { echo "skip: draft";           echo "::endgroup::"; continue; }
-            [ "$same_repo" = "true" ] || { echo "skip: fork PR";         echo "::endgroup::"; continue; }
-            [ "$base" = "main" ]      || { echo "skip: base is $base";   echo "::endgroup::"; continue; }
+            [ "$state" = "open" ]     || { echo "skip: not open";          echo "::endgroup::"; continue; }
+            [ "$draft" = "false" ]    || { echo "skip: draft";             echo "::endgroup::"; continue; }
+            [ "$same_repo" = "true" ] || { echo "skip: fork PR";           echo "::endgroup::"; continue; }
+            [ "$base" = "main" ]      || { echo "skip: base is $base";     echo "::endgroup::"; continue; }
             [ "$has_label" = "true" ] || { echo "skip: no '$LABEL' label"; echo "::endgroup::"; continue; }
 
-            # --- A human reviewer's standing CHANGES_REQUESTED is a veto -----------
+            # --- Already in the queue? nothing to do -----------------------------
+            [ "$(in_merge_queue "$pr")" = "true" ] && { echo "skip: already in merge queue"; echo "::endgroup::"; continue; }
+
+            # --- A human reviewer's standing CHANGES_REQUESTED is a veto ---------
             # --slurp merges all pages into one array BEFORE aggregating (a per-page
             # --jq would mis-compute the latest-review-per-author across a page break).
             # Any API error defaults to the blocking value ("true").
@@ -131,7 +232,7 @@ jobs:
               | any(.[]?; .state=="CHANGES_REQUESTED")' 2>/dev/null || echo "true")"
             [ "$changes_requested" = "false" ] || { echo "skip: changes requested"; echo "::endgroup::"; continue; }
 
-            # --- Every check run on the EXACT head SHA must be a pass --------------
+            # --- Every check run on the EXACT head SHA must be a pass ------------
             # Exclude only THIS workflow run's own check (match its run id in the
             # details_url), not any check that merely shares the name 'automerge'.
             runs="$(gh api --paginate "repos/$REPO/commits/$head_sha/check-runs" \
@@ -142,12 +243,11 @@ jobs:
             not_done="$(printf '%s\n' "$runs" | awk -F'\t' 'NF>0 && $1!="completed"{c++} END{print c+0}')"
             bad="$(printf '%s\n' "$runs" | awk -F'\t' \
                     'NF>0 && $1=="completed" && $2!="success" && $2!="neutral" && $2!="skipped"{c++} END{print c+0}')"
+            if [ "$total" -lt 1 ];    then echo "skip: no check runs yet";           echo "::endgroup::"; continue; fi
+            if [ "$not_done" -ne 0 ]; then echo "skip: $not_done check(s) running";   echo "::endgroup::"; continue; fi
+            if [ "$bad" -ne 0 ];      then echo "skip: $bad check(s) not successful"; echo "::endgroup::"; continue; fi
 
-            if [ "$total" -lt 1 ]; then echo "skip: no check runs yet"; echo "::endgroup::"; continue; fi
-            if [ "$not_done" -ne 0 ]; then echo "skip: $not_done check(s) still running"; echo "::endgroup::"; continue; fi
-            if [ "$bad" -ne 0 ]; then echo "skip: $bad check(s) not successful"; echo "::endgroup::"; continue; fi
-
-            # --- Legacy commit statuses (if any) must be success; fail closed ------
+            # --- Legacy commit statuses (if any) must be success; fail closed ----
             status_json="$(gh api "repos/$REPO/commits/$head_sha/status" 2>/dev/null || true)"
             if [ -z "$status_json" ]; then echo "skip: commit status unreadable"; echo "::endgroup::"; continue; fi
             status_state="$(jq -r '.state' <<<"$status_json")"
@@ -156,7 +256,9 @@ jobs:
               echo "skip: commit status is $status_state"; echo "::endgroup::"; continue
             fi
 
-            # --- Mergeability must be CONFIRMED true (unknown holds) ---------------
+            # --- Mergeability (no conflict) must be CONFIRMED true (unknown holds) -
+            # Up-to-date-with-main is intentionally NOT required: the merge queue
+            # updates the entry against latest main itself.
             mergeable="$(jq -r '.mergeable' <<<"$data")"
             for _ in $(seq 1 10); do
               [ "$mergeable" = "null" ] || break
@@ -165,18 +267,20 @@ jobs:
             done
             [ "$mergeable" = "true" ] || { echo "skip: mergeable not confirmed ($mergeable)"; echo "::endgroup::"; continue; }
 
-            # --- Re-read the label right before merging (honor a late veto) -------
+            # --- Re-read the label right before acting (honor a late veto) ------
             still_labeled="$(gh api "repos/$REPO/pulls/$pr" \
-              --jq --arg l "$LABEL" 'any(.labels[]?; .name==$l)' 2>/dev/null || echo "false")"
+              --jq 'any(.labels[]?; .name==env.LABEL)' 2>/dev/null || echo "false")"
             [ "$still_labeled" = "true" ] || { echo "skip: label removed"; echo "::endgroup::"; continue; }
 
-            # --- All rails clear: squash-merge, guarded by the head SHA -----------
-            echo "All checks green and rails clear; merging PR #$pr at $head_sha"
-            if gh api -X PUT "repos/$REPO/pulls/$pr/merge" \
-                 -f merge_method=squash -f sha="$head_sha" >/dev/null 2>&1; then
-              echo "Merged PR #$pr."
+            # --- All rails clear: enqueue, guarded by the head OID --------------
+            echo "Gates clear; enqueuing PR #$pr at $head_sha into the merge queue."
+            if out="$(gh api graphql \
+                 -f query='mutation($id:ID!,$oid:GitObjectID!){enqueuePullRequest(input:{pullRequestId:$id,expectedHeadOid:$oid}){mergeQueueEntry{id state}}}' \
+                 -f id="$node_id" -f oid="$head_sha" 2>&1)"; then
+              echo "Enqueued PR #$pr."
             else
-              echo "Merge was not applied (head moved, or a protection/permission gate). Leaving the PR open."
+              echo "Enqueue not applied for PR #$pr (not ready, queue not enabled, or head moved):"
+              echo "$out"
             fi
             echo "::endgroup::"
           done
