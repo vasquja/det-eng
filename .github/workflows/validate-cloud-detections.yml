@@ -26,6 +26,7 @@ on:
       - 'detections/sigma/T1550.001/**'
       - 'detections/validate_cloud_detections.py'
       - 'detections/sigma_eval.py'
+      - 'detections/sigma_explain.py'
       - 'detections/requirements.txt'
       - 'atomics/T1552.005/**'
       - 'atomics/T1078.004/**'
@@ -41,6 +42,11 @@ on:
   # runs; a skip on an unrelated PR counts as success. Push to main stays filtered.
   pull_request:
   workflow_dispatch:
+  # Weekly regression: re-prove every rule even when no file in the paths above
+  # changed (pySigma, the runner image, kind and the kernel drift underneath).
+  # A schedule event has no PR base, so the `changes` job decides relevant=true.
+  schedule:
+    - cron: '23 6 * * 1'
 
 permissions:
   contents: read
@@ -80,6 +86,7 @@ jobs:
             'detections/sigma/T1550.001/' \
             'detections/validate_cloud_detections.py' \
             'detections/sigma_eval.py' \
+            'detections/sigma_explain.py' \
             'detections/requirements.txt' \
             'atomics/T1552.005/' \
             'atomics/T1078.004/' \

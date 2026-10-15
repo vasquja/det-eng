@@ -20,6 +20,19 @@ name: automerge
 #   6. No merge conflict (`mergeable == true`, confirmed — an unknown holds).
 #   7. The merge is guarded by the head SHA, so a push that races the merge aborts it
 #      rather than merging unreviewed code.
+#   8. Human sign-off on PROTECTED paths. What counts as "benign enough" and what
+#      counts as a sufficient check are human decisions, so a PR that changes any of
+#        detections/benign/budgets.json, detections/benign/slices/**,
+#        detections/check_sufficiency.py, detections/rule_cases.py,
+#        detections/sigma_explain.py, detections/score_benign.py,
+#        detections/benign_corpus.py,
+#        .github/workflows/detection-quality.yml, .github/workflows/automerge.yml
+#      (a rename away from one counts too) is merged here only with an APPROVED
+#      review, as that reviewer's latest decision, ON THE EXACT HEAD COMMIT, from a
+#      human (user type "User", not a bot) who is a repo owner/member/collaborator
+#      and is not the PR author. Otherwise the PR is left for a human to approve or
+#      merge. The file list is paginated and compared with the PR's changed_files
+#      count; an API error or an incomplete list holds the merge.
 #
 # The label path uses `pull_request_target`, NOT `pull_request`: pull_request_target
 # runs THIS file from the base branch (main) with a write token and never uses the PR
@@ -34,7 +47,9 @@ name: automerge
 # decides from the diff whether the heavy job runs, and an unrelated PR skips it (a
 # skipped required check counts as success). They are wired to be branch-protection
 # required checks, so both this auto-merge gate and the merge itself see a real,
-# per-validator signal instead of "only the checks that happened to run".
+# per-validator signal instead of "only the checks that happened to run". The
+# `detection-quality` checks (rule-cases, check-sufficiency, benign-corpus and the
+# shadow benign-linux-live capture) also run on every PR, with no path filter.
 #
 # Residual gap: a validator's `changes` detector keys on the SAME path list as the
 # validator's `push: paths:`, so a PR that adds a technique directory NOT YET in that
@@ -55,6 +70,7 @@ on:
       - validate-cloud-detections
       - validate-k8s-detections
       - validate-staticpod-detections
+      - detection-quality
       - lint-trr
       - claude-code-review
     types: [completed]
@@ -119,17 +135,65 @@ jobs:
             [ "$base" = "main" ]      || { echo "skip: base is $base";   echo "::endgroup::"; continue; }
             [ "$has_label" = "true" ] || { echo "skip: no '$LABEL' label"; echo "::endgroup::"; continue; }
 
+            # --- Every review, all pages, read once (fail closed) ------------------
+            # --slurp wraps all pages in one outer array, so the latest-review-per-
+            # author below is computed across page breaks. gh rejects --slurp together
+            # with --jq, so the pages are aggregated by the runner's standalone jq.
+            if ! reviews="$(gh api --paginate --slurp "repos/$REPO/pulls/$pr/reviews" 2>/dev/null)"; then
+              echo "skip: reviews unreadable"; echo "::endgroup::"; continue
+            fi
+
             # --- A human reviewer's standing CHANGES_REQUESTED is a veto -----------
-            # --slurp merges all pages into one array BEFORE aggregating (a per-page
-            # --jq would mis-compute the latest-review-per-author across a page break).
-            # Any API error defaults to the blocking value ("true").
-            changes_requested="$(gh api --paginate --slurp "repos/$REPO/pulls/$pr/reviews" --jq '
-              add
+            # Any jq error defaults to the blocking value ("true").
+            changes_requested="$(jq -r '
+              add // []
               | [ .[] | select(.state=="CHANGES_REQUESTED" or .state=="APPROVED" or .state=="DISMISSED") ]
               | group_by(.user.login)
               | map(max_by(.submitted_at))
-              | any(.[]?; .state=="CHANGES_REQUESTED")' 2>/dev/null || echo "true")"
+              | any(.[]?; .state=="CHANGES_REQUESTED")' <<<"$reviews" 2>/dev/null || echo "true")"
             [ "$changes_requested" = "false" ] || { echo "skip: changes requested"; echo "::endgroup::"; continue; }
+
+            # --- Protected paths need a human sign-off on this head (rail 8) -------
+            # One TSV line per changed file: filename, previous_filename (renames).
+            if ! files="$(gh api --paginate "repos/$REPO/pulls/$pr/files" \
+                            --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' 2>/dev/null)"; then
+              echo "skip: PR file list unreadable"; echo "::endgroup::"; continue
+            fi
+            changed_files="$(jq -r '.changed_files' <<<"$data")"
+            listed="$(printf '%s' "$files" | grep -c . || true)"
+            case "$changed_files" in
+              ''|*[!0-9]*) echo "skip: changed_files unknown ($changed_files)"; echo "::endgroup::"; continue ;;
+            esac
+            if [ "$listed" -lt "$changed_files" ]; then
+              # The files API stops at 3000 entries; an incomplete list cannot clear rail 8.
+              echo "skip: listed $listed of $changed_files changed file(s)"; echo "::endgroup::"; continue
+            fi
+            protected="$(printf '%s\n' "$files" | tr '\t' '\n' | grep -E \
+              '^(detections/benign/budgets\.json|detections/benign/slices/.+|detections/(check_sufficiency|rule_cases|sigma_explain|score_benign|benign_corpus)\.py|\.github/workflows/(detection-quality|automerge)\.yml)$' \
+              | sort -u | paste -sd, - || true)"
+            if [ -n "$protected" ]; then
+              author="$(jq -r '.user.login' <<<"$data")"
+              approvers="$(jq -r --arg sha "$head_sha" --arg author "$author" '
+                add // []
+                | [ .[] | select(.state=="CHANGES_REQUESTED" or .state=="APPROVED" or .state=="DISMISSED") ]
+                | group_by(.user.login)
+                | map(max_by(.submitted_at))
+                | [ .[]
+                    | select(.state == "APPROVED"
+                             and .commit_id == $sha
+                             and .user.type == "User"
+                             and .user.login != $author
+                             and (.author_association == "OWNER"
+                                  or .author_association == "MEMBER"
+                                  or .author_association == "COLLABORATOR"))
+                    | .user.login ]
+                | join(",")' <<<"$reviews" 2>/dev/null || true)"
+              if [ -z "$approvers" ]; then
+                echo "skip: touches protected path(s) $protected; a human must approve or merge"
+                echo "::endgroup::"; continue
+              fi
+              echo "Protected path(s) $protected approved on $head_sha by: $approvers"
+            fi
 
             # --- Every check run on the EXACT head SHA must be a pass --------------
             # Exclude only THIS workflow run's own check (match its run id in the
@@ -166,9 +230,10 @@ jobs:
             [ "$mergeable" = "true" ] || { echo "skip: mergeable not confirmed ($mergeable)"; echo "::endgroup::"; continue; }
 
             # --- Re-read the label right before merging (honor a late veto) -------
-            still_labeled="$(gh api "repos/$REPO/pulls/$pr" \
-              --jq --arg l "$LABEL" 'any(.labels[]?; .name==$l)' 2>/dev/null || echo "false")"
-            [ "$still_labeled" = "true" ] || { echo "skip: label removed"; echo "::endgroup::"; continue; }
+            # gh's --jq takes no --arg, so list the label names and match them here;
+            # any API error reads as "no labels" (fail closed).
+            labels_now="$(gh api "repos/$REPO/pulls/$pr" --jq '.labels[]?.name' 2>/dev/null || true)"
+            grep -Fxq -- "$LABEL" <<<"$labels_now" || { echo "skip: label removed"; echo "::endgroup::"; continue; }
 
             # --- All rails clear: squash-merge, guarded by the head SHA -----------
             echo "All checks green and rails clear; merging PR #$pr at $head_sha"

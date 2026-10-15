@@ -75,8 +75,10 @@ does, the check above is unsound and the run fails:
   is re-run under a process name from that allowlist (e.g. `tcpdump`), and the
   filter must suppress it.
 
-Each mutant also declares the condition item it is built to break, for example
-`afinet_raw_socket.a1`. The validator grades the mutant's closest event against
+Each mutant also declares the condition item it is built to break: for example
+`afinet_raw_socket.a1`, `base:dirtypipe_pipe_create` (half a correlation),
+`group-by`, or `success` (the validator's own success=yes gate, for a syscall the
+kernel rejects). The validator grades the mutant's closest event against
 the rule (see [Explained failures](#explained-failures)). It warns when the mutant
 holds for a different reason than the one it claims, because a control that is
 `distant` from the rule does not test the rule.
@@ -109,11 +111,17 @@ it declares. An unrelated event cannot pass as a near-miss.
   hard benign fixture. A no-op, an unrelated event or a pre-emulation baseline does
   not count;
 - has a failing case;
-- (cloud) has near-misses that flip only the emulation's marker fields, so its
-  negatives differ from the attack only in naming.
+- names an emulation in its own detection (`trr9NNN`, `deteng_`);
+- (cloud) has near-misses that all break **marker-keyed** items only. An item is
+  marker-keyed when renaming the validator gate's marker in the attack flips it.
+  Such negatives differ from the attack only in the emulation's naming, so they
+  don't show that the rule keys on the technique.
 
 It also warns about *thin* checks: rules that exercise far fewer of their condition
-items than the median rule of their platform.
+items than the median rule of their platform (over rules with any verified
+negative), or whose negatives break only filters or only the surface (`syscall`,
+`verb`, `eventName`). It also warns about a renamed attack that stops firing, and a
+non-cloud rule with no offline positive case.
 
 ```
 python3 detections/rule_cases.py --atoms sigma/T1040/afinet_raw_socket.yml  # the items `breaks` can name

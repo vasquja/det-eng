@@ -100,9 +100,14 @@ grades those records the same way.
   a sidecar positive.
 - A rule whose only negatives are trivial or distant: no-op runs, unrelated
   events, a pre-emulation baseline.
-- A cloud rule whose near-misses flip **only marker fields**. Negatives that differ
-  from the attack only in the emulation's naming (`trr90NN-`) mean the rule may key
-  on the marker, not the technique.
+- A rule that names an emulation in its own detection (`trr9NNN`, `deteng_`).
+- A cloud rule whose near-misses all break only **marker-keyed** items: items that
+  flip when the validator gate's marker is renamed in the attack. Negatives that
+  differ from the attack only in the emulation's naming mean the rule may key on
+  the marker, not the technique. Gate each rule on a name only the emulation
+  uses (`trr90NN-...`), never on a string the rule itself matches. A gate of
+  `Unauth` on a rule that keys on Cognito's `...Unauth_Role` naming proved
+  nothing.
 - Any failing sidecar case.
 
 It **warns** (never fails) on *thin* checks: a rule whose exercised-atom ratio is

@@ -303,8 +303,9 @@ Proving the loop is automated:
   (only a PR a collaborator marks `automerge` is eligible), same-repo only (never a
   fork), honors a reviewer's `CHANGES_REQUESTED`, and guards the merge by head SHA.
   A pull request that changes what counts as benign enough, or the gate itself, is
-  never merged without a human's approval. That covers corpus slices, budgets, and
-  the sufficiency and scoring scripts. Remove the label to veto.
+  never auto-merged without a human collaborator's approval on its head commit.
+  That covers corpus slices, budgets, the sufficiency and scoring scripts, and the
+  `detection-quality` and `automerge` workflows. Remove the label to veto.
 
 Run the Linux loop locally:
 

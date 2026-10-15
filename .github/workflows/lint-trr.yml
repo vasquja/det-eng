@@ -12,6 +12,10 @@ on:
     branches: [ main ]
   pull_request:
   workflow_dispatch:
+  # Weekly regression: re-run even when nothing changed (the runner image and its
+  # Python move underneath the lint).
+  schedule:
+    - cron: '11 6 * * 1'
 
 permissions:
   contents: read

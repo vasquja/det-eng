@@ -117,7 +117,14 @@ Treat the corpus like test data:
   corpus to hide the hit.
 
 **A human signs off on what counts as benign enough.** An agent may propose new
-slices, templates and budget changes. But changes to `budgets.json` or to
-anything under `slices/`, and to the gate scripts themselves, are protected paths:
-the `automerge` workflow will not merge such a pull request without an approving
-review from someone other than its author.
+slices, templates and budget changes. But a number of paths are protected:
+
+- `budgets.json` and anything under `slices/`;
+- the gate scripts: `check_sufficiency.py`, `rule_cases.py`, `sigma_explain.py`,
+  `score_benign.py` and `benign_corpus.py`;
+- the `detection-quality` and `automerge` workflows.
+
+The `automerge` workflow will not merge a pull request that changes any of them
+without an approving review on its exact head commit. That review must come from
+a human collaborator who is not the pull request's author. Otherwise a human
+merges it.
