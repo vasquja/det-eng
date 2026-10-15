@@ -46,16 +46,18 @@ bar. A check is sufficient only if it would **fail for a plausible wrong rule**.
 
 | Grade | Meaning | Counts toward sufficiency |
 |-------|---------|---------------------------|
-| `near-miss` | exactly one positive **item** (`selection.a1`, `sel_pod.verb`) is false, and flipping it alone fires the rule | yes |
+| `near-miss` | some positive **item** holds, and flipping one item (`selection.a1`, `sel_pod.verb`) alone fires the rule through a branch the event already shares | yes |
 | `filtered` | every selection holds; one `not <filter>` item alone suppresses it | yes |
-| `distant` | two flips away | no |
-| `trivial` | three or more flips away, or nothing of the rule holds (a no-op) | no |
+| `distant` | some positive item holds, but no single flip fires the rule (two or more flips away) | no |
+| `trivial` | no positive item holds (a no-op, an unrelated event), however few flips away | no |
 
-An atom is one detection item (`<block>.<field>`), not a whole block. A near-miss
-therefore means "fails exactly one field condition". List a rule's atoms with
-`python3 detections/rule_cases.py --atoms <rule>`.
+An atom is one detection item (`<block>.<field>`, or `<block>.<field>|<modifiers>`
+when a block has several items on one field), not a whole block. A near-miss
+therefore means "one field condition away from firing, through a branch the event
+shares"; under an OR condition, several positive items of other branches may be
+false. List a rule's atoms with `python3 detections/rule_cases.py --atoms <rule>`.
 
-**Every rule ships with, next to it, in `detections/sigma/<T>/<stem>.cases.jsonl`:**
+**A new rule ships with, next to it, in `detections/sigma/<T>/<stem>.cases.jsonl`:**
 
 1. **≥1 `positive`.** The telemetry the repo's own emulation produces, in the real log
    shape: same field names, casing, nesting and encoding (auditd hex args, nested
@@ -68,11 +70,21 @@ therefore means "fails exactly one field condition". List a rule's atoms with
    discriminating item**, not one.
 3. **A `filtered` case for every `not <filter>` block**: an allowlisted look-alike that
    the filter alone suppresses. This proves each filter does work and is not dead code.
+   Model a real allowlisted process doing the real call; a filtered case for a process
+   that never makes the call proves nothing (and the filter entry is then an evasion).
 4. **`confounder` cases** for realistic legitimate look-alikes, which must share the
    rule's surface (the runner rejects a trivial confounder).
 
-Cloud rules may instead get their near-misses from their hard benign fixture. The gate
-grades those records the same way.
+Cloud rules may instead get their near-misses from their hard benign fixture, and
+some older cloud rules have no sidecar yet. The gate grades fixture records the same
+way. A rule with one positive item and no filter cannot have a near-miss at all
+(`PRESENCE`, below), and a rule with one selection item can have only filtered and
+benign negatives.
+
+Model every event on the telemetry the pipeline really produces: a syscall that
+`detections/audit/atomic.rules` audits, an audit level and `requestObject` that the
+audit policy really logs, the comm and exe the real process has. An event that cannot
+occur proves nothing.
 
 **Templates for the negative that matters most**, per platform:
 
@@ -81,9 +93,14 @@ grades those records the same way.
   doing the exact positive call.
 - **auditd correlation**: *half a correlation* (`breaks: ["base:<name>"]`): only one of
   the base events. Also *different group* (`breaks: ["group-by"]`): both halves, in
-  different pids (the `memfd_fexecve_in_child` mutant offline). Add a live mutant in
-  `detections/controls/` with its expected atom in the `CONTROLS` entry. The
-  validator grades it on every CI run and warns if it misses the declared atom.
+  different pids (the `memfd_fexecve_in_child` mutant offline). The gate also checks
+  each base on its own: a base with an argument needs a set in which the other base
+  holds and this base's event keeps its surface but breaks that argument, in the
+  right group and window (`ip netns add` then a `NETLINK_ROUTE` socket breaks the
+  `NETLINK_XFRM` base's `a2`). Add a live mutant in `detections/controls/` with its
+  expected atom in the `CONTROLS` entry. The validator grades it on every CI run and
+  warns if it misses the declared atom; a mutant that makes no audited syscall at all
+  is vacuous and fails the run.
 - **Kubernetes audit**: same `verb` + `objectRef.resource`, with the dangerous
   `requestObject` field absent or safe (`hostPID: false`, `privileged: false`). Also a
   system controller identity the filter excludes, and a Request-level grader's input
@@ -97,42 +114,64 @@ grades those records the same way.
 
 - A rule with no registered positive in any validator `MANIFEST`. A documented
   telemetry gap goes in `COMPILE_ONLY` with a reason (human-approved) and still needs
-  a sidecar positive.
+  a sidecar positive. A registered rule must also declare the log source its
+  validator proves it on (`linux/auditd`, `kubernetes/audit` or `kubernetes/cri`, the
+  cloud provider): the benign corpus scores a rule only on its log source.
 - A rule with no verified negative that breaks a **discriminating** item or a
   filter. Trivial and distant negatives don't count: no-op runs, unrelated events, a
   pre-emulation baseline, or a record where *no* positive item holds (an `{"x": 1}`
   grades trivial for every rule). Neither does a near-miss that breaks only the
   surface (`syscall`, `verb`, `eventName`), because it would pass just as well for the
   rule with its argument deleted. A near-miss must share the branch it nearly fires.
-- A rule that keys on the emulation's naming. The rename test replaces `trr9NNN` /
-  `deteng_` in every positive with a neutral token, and the rule must still fire. A
+- A rule that keys on the emulation's naming. The rename test replaces every
+  emulation identity in every positive (`trr9NNN` or `deteng_` or the gate marker,
+  plus the rest of its token, so `deteng_afxdp_socket_behavioral` and `trr9026-target`
+  go whole) with a neutral token of the same shape, and the rule must still fire. A
+  rule that names an emulation literally, or has no positive to rename, fails too. A
   cloud rule's validator gate must be a `marker(...)` on a name only the emulation
   uses (`trr90NN-...`), never on a string the rule itself matches. A gate of
   `Unauth` on a rule that keys on Cognito's `...Unauth_Role` naming proved
-  nothing.
+  nothing. Source IPs, account ids and the part of a token before the name are not
+  renamed: do not key a rule on them.
 - Any failing sidecar case, or any file under `detections/sigma/` other than
   `T<id>/` rule files, `.cases.jsonl` sidecars and `.md`.
 
-Two human-approved waivers exist in `check_sufficiency.py`. Never add an entry
-yourself; propose it in the PR with the reason:
+Four human-approved waiver tables exist in `check_sufficiency.py`. Never add an
+entry yourself; propose it in the PR with the reason. Each entry carries the digest of
+the rule content a human approved (its `name`, `id`, `logsource`, `detection` and
+`correlation`), so editing a waived rule fails the gate until a human re-approves the
+new digest, which the gate prints:
 
-- `CHOKEPOINT`: the record kind itself is the technique, so every positive item is
-  a surface field.
-- `PRESENCE`: one positive item, no filter. No negative can be one flip away, so the
-  positive and the benign-corpus budget are the proof.
+- `COMPILE_ONLY` (R1): CI collects no telemetry for the rule; it still needs a
+  sidecar positive.
+- `CHOKEPOINT` (R2): the record kind itself is the technique, so every positive item
+  is a surface field (key `<rule> base:<name>` for one base of a correlation).
+- `PRESENCE` (R2): one positive item, no filter. No negative can be one flip away, so
+  the positive and the benign-corpus budget are the proof.
+- `PLATFORM_NAMING` (R4): the rule keys on a platform naming template that follows
+  the emulation's name; the rename keeps the named substrings.
 
 Correlation atoms (`base:<name>`, `group-by`, `timespan`, `order`, `threshold`) are
 verified by construction: the grader repairs the named atom (unifies the pid,
 re-stamps into the window) and requires the repaired set to fire the compiled rule.
-Every event needs a parseable timestamp and a group-by value, or it grades trivial.
+Every event needs a parseable timestamp and a value for every group-by field, or the
+correlation never sees it. A set with such an event is never a near-miss: it grades
+distant, or trivial if no base is visible.
 
 It **warns** (never fails) on *thin* checks: a rule whose exercised-atom ratio is
-below half its platform's median, or whose negatives exercise only filters and no
-discriminating selection item. Treat that warning as a request to add near-misses.
+below half its platform's median, or whose negatives exercise only filters (or only
+surface items and filters) and no discriminating selection item. Treat that warning
+as a request to add near-misses.
+
+On a pull request, the `sufficiency-ratchet` job compares every rule with the base
+branch: fewer verified negatives, a lost exercised item, fewer passing positives, a
+lost sidecar or a changed logsource fails it, so a weakened sidecar or a moved rule
+goes to a human.
 
 Never weaken a case, relabel its kind, or edit a rule's condition to make a check
 pass. If a negative you believe is correct fires, the rule has a defect: fix the rule
-and keep the case, or report it.
+and keep the case, or record it in `detections/RULE_DEFECTS.md` (rule, kind,
+severity, evidence, proposed fix) and point the case's `why` at that entry.
 
 ## Reading a red run
 
@@ -142,7 +181,8 @@ what broke. Fix the cause the output names:
 - **Rule did not fire.** The output prints each block's and each item's match count
   over the events (or over the emulation's own events, for the cluster validators)
   and the nearest event, item by item, with the field values it carried. For
-  example, `- selection_raw [FAILS] / no a1 a1='2'` says the stimulus opened
+  example, `- afinet_raw_socket [FAILS]` over
+  `no   a1  a1='2'  (rule wants: '3' or '803' or ...)` says the stimulus opened
   `SOCK_DGRAM`. "no event carries `requestObject.spec.hostPID`" means the telemetry
   never records that field: an audit-policy level, an audit rule, or a field
   name/casing problem, not a rule-logic problem.
@@ -171,12 +211,23 @@ processes/principals behind them. `detection-quality / benign-corpus` runs
 - `--check` fails if `detections/benign/scores.json` is stale. After an intended
   change, run `python3 detections/score_benign.py --update` and commit the snapshot.
   The false-positive change is then visible in review.
-- `--enforce` fails only for rules in `enforce` mode that exceed their budget in
-  `detections/benign/budgets.json`. Other overruns are warnings.
+- `--enforce` fails for an `enforce`-mode rule over its budget in
+  `detections/benign/budgets.json`; shadow-mode overruns are warnings. With either
+  flag, a rule that no slice reads fails unless `budgets.json` lists it under
+  `unscored`, and so does a stale `unscored` entry. Every run fails on a
+  `budgets.json` key that names no rule, on an `unscored` entry without a `why`, and
+  on a per-rule entry whose `why` does not start `documented noise:` or `rule defect,
+  tracked in detections/RULE_DEFECTS.md <ID>:` (an ID the tracker lists). Every
+  per-rule entry is `enforce` today, so a rule that gets noisier fails until a human
+  raises its budget.
 
 When a new rule fires on the corpus, read the explained example hit first. A precise
 rule firing on benign activity is a rule defect. A deliberately generic hunting rule
-may need a budget: **propose** one with a `why`, and say so in the PR. Budget and corpus changes are not
+may need a budget: **propose** one (`enforce`) with a `why`, and say so in the PR. Base `max_hits` on
+`score_benign.py --reseeds 10` (the most hits over ten reseeds of every synthetic
+slice), not on one seed's count. A rule whose log source no slice reads is proposed
+under `unscored` with a `why`. A precise rule that fires on benign activity goes in
+`detections/RULE_DEFECTS.md`. Budget and corpus changes are not
 content, so they need a human's approval before merge. Never
 edit the corpus to silence a rule. You may propose new slices for realistic activity,
 but a human decides what counts as benign enough.
@@ -282,18 +333,26 @@ prints the committed fixture. ART format (`attack_technique`, `display_name`,
 
 ## CI wiring
 
-These workflows gate PRs:
+These workflows run on every PR. The `main` ruleset requires only the validator,
+`sigma-lint`, `markdown-links` and `trr-lint` checks; `automerge` waits for every check
+(see `detections/benign/README.md`, "Branch protection: what binds a manual merge"):
 
 - `validate-detections.yml`: auditd loop + `sigma check` + `markdown-links`, runs on
   every PR.
-- `validate-cloud-detections.yml`: the fixture loop, **path-filtered**. Add the new
-  `detections/sigma/<T...>/**` and `atomics/<T...>/**` globs to both the `push`
-  `paths:` list and the `changes`-job pattern list.
+- `validate-cloud-detections.yml`: the fixture loop, **path-filtered**. Add
+  `detections/sigma/<T...>/**` and `atomics/<T...>/**` to the `push` `paths:` list,
+  and add the directory prefixes `'detections/sigma/<T...>/'` and `'atomics/<T...>/'`
+  (trailing slash, no `**`) to the `changes`-job pattern list. That job treats an
+  entry ending in `/` as a prefix and any other entry as an exact path, so a glob
+  there never matches, and the validator is skipped (which counts as success). The
+  kind validators have the same two lists.
 - The kind validators.
 - `lint-trr.yml`.
 - `detection-quality.yml`, on every PR:
   - `rule-cases` runs every sidecar.
   - `check-sufficiency` is the gate above.
+  - `sufficiency-ratchet` (pull requests only) compares every rule with the base
+    branch.
   - `benign-corpus` checks the FP snapshot and budgets.
   - `benign-linux-live` is a shadow capture of a real runner workload.
 

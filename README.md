@@ -39,14 +39,23 @@ speed. So the agent works inside a method that does not trust its output:
   stays silent on no-op runs, broken mutants, and benign baselines. A rule that cannot pass
   that loop does not merge, however plausible it reads.
 - **Checks that would catch a wrong rule.** The agent writes the checks too, so
-  "a check that passes" is not the bar. Every rule ships near-miss cases next to
-  it, each keeping the chokepoint and breaking exactly one required condition. A
-  gate verifies each one really is a near-miss, and rejects rules whose only
-  negatives are trivial.
+  "a check that passes" is not the bar. Rules ship near-miss cases next to them
+  (`<rule>.cases.jsonl`), each keeping the chokepoint and breaking exactly one
+  required condition; a cloud rule may take its near-misses from its hard benign
+  fixture instead. A gate checks that each one really is one item from firing, and
+  fails a rule that has no such negative, unless a human has waived that for a
+  one-item presence rule (no negative can be one flip away from it).
 - **A noise floor, not just a gate.** Production asks a second question: how often
-  does the rule fire on ordinary activity? Every rule is also scored against a
-  versioned benign corpus of operational traffic, and its false-positive rate is
-  tracked in the repository.
+  does the rule fire on ordinary activity? Every rule whose log source the benign
+  corpus covers is also scored against that versioned corpus, and its false-positive
+  count is tracked in the repository. A rule the corpus cannot read is exempted by
+  name, with the reason. Today every corpus slice is synthetic, modelled on
+  documented operational activity; live captures in CI are the path to recorded
+  slices.
+- **Defects are written down.** What the cases, the corpus and the live captures
+  showed to be wrong in a rule is tracked in
+  [`detections/RULE_DEFECTS.md`](detections/RULE_DEFECTS.md), the plan for the next
+  rule-fix pull request, rather than hidden by a weakened check.
 
 ### Who does what
 
@@ -147,17 +156,20 @@ runs each atomic, compiles its paired Sigma rule with a real Sigma backend
 (pySigma), and asserts the rule matches telemetry *the atomic itself*
 produced, on syscalls that succeeded. Controls then test the test: a no-op, a
 set of broken mutants, and allowlisted process names must all fail. This runs
-in CI on every push (see [Continuous validation](#continuous-validation)).
+in CI on every pull request, on push to `main`, and weekly (see
+[Continuous validation](#continuous-validation)).
 
 Two more layers sit on top of that loop:
 
-- **Near-miss cases.** Every rule carries offline test cases beside it
+- **Near-miss cases.** Most rules carry offline test cases beside them
   (`<rule>.cases.jsonl`): a positive, plus negatives that keep the technique's
-  surface and break one required item each. The
+  surface and break one required item each. A cloud rule without a sidecar is
+  graded on the records of its hard benign fixture instead. The
   [sufficiency gate](detections/README.md#rule-test-cases-and-the-sufficiency-gate)
   verifies that each negative really is a near-miss.
-- **Benign corpus.** Every rule is scored against the
-  [benign corpus](detections/benign/README.md) for its false-positive rate.
+- **Benign corpus.** Every rule whose log source a corpus slice reads is scored
+  against the [benign corpus](detections/benign/README.md) for its false-positive
+  count.
 
 When anything fails, the validators explain it item by item: which field failed
 on which event, which control unexpectedly passed, and what the kernel probe said.
@@ -245,8 +257,9 @@ Proving the loop is automated:
   [`.github/workflows/validate-detections.yml`](.github/workflows/validate-detections.yml)
   loads the audit rules and runs the validator on an `ubuntu-latest` runner
   (a full VM, so root has the audit subsystem). It is strict: a rule that does
-  not fire, or a control that does, fails the job. A rule is skipped only when
-  an independent kernel-feature probe shows the kernel lacks what the
+  not fire, a control that does, or a control that made no audited syscall at all
+  (a *vacuous* control, which proves nothing) fails the job. A rule is skipped only
+  when an independent kernel-feature probe shows the kernel lacks what the
   technique needs (no AF_ALG, io_uring disabled …).
 - **Kubernetes** —
   [`.github/workflows/validate-k8s-detections.yml`](.github/workflows/validate-k8s-detections.yml)
@@ -278,13 +291,25 @@ Proving the loop is automated:
   nothing in a hard benign baseline. Pure Python — no cluster, no cloud account.
 - **Detection quality** —
   [`.github/workflows/detection-quality.yml`](.github/workflows/detection-quality.yml)
-  runs on every pull request:
+  runs on every pull request, on push to `main`, and weekly:
   - **`rule-cases`** runs every rule's sidecar cases.
-  - **`check-sufficiency`** fails a rule with no registered positive, no verified
-    near-miss negative, or negatives that differ only in the emulation's marker.
-  - **`benign-corpus`** scores every rule against the benign corpus. It fails on a
-    stale false-positive snapshot or an enforce-mode budget overrun; other
-    overruns are warnings.
+  - **`check-sufficiency`** fails a rule that does not load (or a
+    `detections/sigma/` that holds anything but rule material), has no registered
+    positive, declares a log source other than the one its validator proves it on,
+    has no verified near-miss or filtered negative that breaks a discriminating item
+    or a filter (unless a human waived that for the rule), has a failing sidecar
+    case, or keys on the emulation's naming: its positives must still fire after
+    every emulation name (`trr9NNN`, `deteng_`) and gate marker in them is renamed.
+    A waiver is bound to a digest of the rule, so an edit to a waived rule goes back
+    to a human.
+  - **`sufficiency-ratchet`** (pull requests only) fails when a rule has fewer
+    verified negatives, exercised items or passing positives than on the base
+    branch, has lost its sidecar, or has changed its logsource.
+  - **`benign-corpus`** scores every rule that a slice reads against the benign
+    corpus. It fails on a stale false-positive snapshot, on an enforce-mode budget
+    overrun (every per-rule budget is enforced, at the most hits over eleven seeds
+    of the corpus), and on a rule that no slice reads unless `budgets.json`
+    exempts it under `unscored`.
   - **`benign-linux-live`** records a realistic workload on a real runner under
     the det-eng audit rules and scores it in shadow mode.
 
@@ -303,10 +328,20 @@ Proving the loop is automated:
   (only a PR a collaborator marks `automerge` is eligible), same-repo only (never a
   fork), honors a reviewer's `CHANGES_REQUESTED`, and guards the merge by head SHA.
   It merges without a human only content: rules, their cases, cloud fixtures, the
-  derived benign scores, research notes, atomics and docs. Any code, workflow,
-  budget or corpus change, and so every new-technique PR, needs an approval on the
-  head commit from a human with write access who neither opened the PR nor
-  authored its commits. Remove the label to veto.
+  derived benign scores, `docs/`, `upstream/`, Markdown, `research/` (except Python
+  and `research/tools/`) and `atomics/`, including the C and shell emulation
+  sources that CI compiles and runs (the Linux validator runs its atomics as root).
+  Any Python, anything under `.github/` or `.claude/`, any agent instruction file
+  (`CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, in any directory and any letter
+  case), a budget, a corpus slice, a live workload, an audit or kind config or a
+  control mutant, and so every new-technique PR, needs an approval on the head
+  commit from a human with write access who neither opened the PR nor authored or
+  committed any of its commits. A PR that needs an approval and has a commit linked
+  to no GitHub account is left for a human to merge. Remove the label to veto.
+
+  This rail binds only the bot. Today the `main` ruleset requires the validator
+  checks but no approving review, so a manual merge needs no second human; see
+  [what a human must configure](detections/benign/README.md#branch-protection-what-binds-a-manual-merge).
 
 Run the Linux loop locally:
 

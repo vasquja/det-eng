@@ -68,26 +68,69 @@ does, the check above is unsound and the run fails:
 
 - **No-op** (`controls/noop.c`), evaluated against every rule.
 - **Mutants** (`controls/*.c`) that keep the surface of a technique but break
-  it: a `splice()` with no `pipe()` of its own, `memfd_create` and `fexecve`
-  in different processes, a `bpf(BPF_PROG_LOAD)` the kernel rejects, and a
-  `SOCK_STREAM` socket against the raw-socket rule.
+  it: a pipe created in one process and spliced into by a forked child (two
+  pids), `memfd_create` and `fexecve` in different processes, a
+  `bpf(BPF_PROG_LOAD)` the kernel rejects, and a `SOCK_STREAM` socket against the
+  raw-socket rule.
 - **Allowlisted names**: each atomic whose rule has a `not <allowlist>` filter
   is re-run under a process name from that allowlist (e.g. `tcpdump`), and the
   filter must suppress it.
 
 Each mutant also declares the condition item it is built to break: for example
-`afinet_raw_socket.a1`, `base:dirtypipe_pipe_create` (half a correlation),
-`group-by`, or `success` (the validator's own success=yes gate, for a syscall the
-kernel rejects). The validator grades the mutant's closest event against
+`afinet_raw_socket.a1`, `group-by` (both halves of a correlation in different
+pids), or `success` (the validator's own success=yes gate, for a syscall the
+kernel rejects). The validator grades the mutant's own succeeded syscalls against
 the rule (see [Explained failures](#explained-failures)). It warns when the mutant
 holds for a different reason than the one it claims, because a control that is
-`distant` from the rule does not test the rule.
+`distant` from the rule does not test the rule. A mutant whose process tree made
+no audited syscall at all is **vacuous**: it proves nothing about the rule, so it
+counts as a broken control and fails the run.
+
+### Event schema the rules assume
+
+One event per auditd `SYSCALL` record: `type`, `syscall` (the **name**),
+`success`, `exit`, `a0`..`a3` (raw hex, exactly as auditd logs them), `pid`,
+`ppid`, `comm`, `exe`, `timestamp`. auditd's `ENRICHED` log format carries the
+syscall name (`SYSCALL=`); with `RAW` format the validator resolves it with
+`ausyscall`. `comm` and `exe` are text: the kernel logs a value that holds a
+space, a double quote or a non-printable byte as unquoted uppercase hex
+(`comm=417474616368204C697374656E6572`), and the validator decodes it
+(`Attach Listener`). Neither raw `audit.log` (`syscall=41`) nor `ausearch -i`
+output (`a0=packet`) has this shape as-is, so the log pipeline that feeds these
+rules to a SIEM must normalize to it, or add a pySigma field-mapping pipeline.
+
+### Correlation rules
+
+A Sigma condition such as `A and B` is evaluated against **one** event, and an
+auditd event records one syscall. So a two-syscall pattern (CopyFail,
+DirtyFrag xfrm, DirtyPipe, memfd -> execveat) is written as a Sigma
+correlation rule: each file holds a `type: temporal` correlation grouped by
+`pid` plus the base rules it references. A backend without correlation support
+cannot run these four rules.
+
+### Two deliberate pass/fail changes
+
+This validator's verdicts changed in two places against the base of this work
+(`ed8c3b6`), both on purpose:
+
+1. **A vacuous control fails the run.** At the base, a control whose process tree
+   made no audited syscall counted as held, which is a pass. Now it counts as
+   broken, because a control that never reached the audit log tests nothing (for
+   example, a mutant that crashes before its first syscall).
+2. **Hex-encoded `comm` and `exe` are decoded.** At the base, a rule or an
+   allowlist saw the hex string for any process name with a space (a JVM thread
+   such as `Attach Listener`, a Firefox content process) or for runc's
+   `/memfd:runc_cloned:/proc/self/exe (deleted)` image. Now it sees the decoded
+   name. A quoted value, and an unquoted value that is not uppercase hex (such as
+   `(null)`), are left as they are.
 
 ## Rule test cases and the sufficiency gate
 
-The controls above run live, and only for the Linux rules. Every rule, on every
-platform, also ships **offline test cases next to it**:
-`sigma/<T>/<stem>.cases.jsonl`, one JSON object per line. Each case is a small event
+The controls above run live, and only for the Linux rules. Rules on every
+platform also ship **offline test cases next to them**:
+`sigma/<T>/<stem>.cases.jsonl`, one JSON object per line. A cloud rule without a
+sidecar takes its verified negatives from the records of its hard benign fixture,
+and its rename-test positives from its attack fixture. Each case is a small event
 set in the rule's own log shape, with a declared kind:
 
 | kind | expectation |
@@ -106,38 +149,79 @@ it declares. An unrelated event cannot pass as a near-miss.
 `check_sufficiency.py` is the gate on top. It fails a rule that:
 
 - **R0** cannot be split into items, or sits in a `detections/sigma/` that holds
-  anything but `T<id>/` directories of `*.yml`, `*.cases.jsonl` and `*.md`. The
-  rules directory shares the `sigma` package namespace with pySigma, so a stray
-  `.py` there would replace pySigma modules; `sigma_eval.py` refuses to load in
-  that case too.
-- **R1** has no registered positive in a validator `MANIFEST`. A documented
-  telemetry gap is listed in `COMPILE_ONLY` and still needs a sidecar positive.
+  anything but `*.md` notes and `T<id>/` directories of `*.yml`, `*.cases.jsonl`
+  and `*.md`. The rules directory shares the `sigma` package namespace with
+  pySigma, so a stray `.py` there would replace pySigma modules. `sigma_eval.py`
+  refuses to load in that case too, and also when anything else in `detections/`
+  is named `sigma.*` (a `sigma.py` or `sigma.pyc` beside the directory would
+  replace pySigma whole).
+- **R1** has no registered positive in a validator `MANIFEST`, or declares a log
+  source other than the one that validator proves it on (auditd: `linux/auditd`;
+  API server and TRR9003: `kubernetes/audit` or `kubernetes/cri`, as the entry
+  says; TRR9002: `kubernetes/audit`; cloud: the entry's provider). The benign
+  corpus scores a rule only on the slices of its log source, so a rule moved to
+  another log would escape its budget. A documented telemetry gap is listed in
+  `COMPILE_ONLY` and still needs a sidecar positive.
 - **R2** has no **verified** negative that breaks a *discriminating* item or a
   filter. A verified negative is a near-miss or filtered case, from the rule's
   cases or (cloud) its hard benign fixture. A no-op, an unrelated event or a
   pre-emulation baseline does not count, and neither does a negative that breaks
-  only the surface (`syscall`, `verb`, `eventName`).
-- **R3** has a failing case.
-- **R4** keys on the emulation's naming. The rename test replaces every emulation
-  name (`trr9NNN`, `deteng_`) in the rule's positives (its sidecar positives, and
-  for cloud the attack records) with a neutral token; the rule must still fire.
-  A cloud rule's validator gate must also be a `marker(...)`.
+  only the surface (`syscall`, `verb`, `eventName`). A correlation is checked base
+  by base: each base that has a discriminating item needs its own verified
+  negative, a set declared `breaks: [base:<name>]` in which one event misses that
+  base by one such item and, marked as the base's match, makes the compiled
+  correlation fire (so it is in the right group and window).
+- **R3** has a failing or unparsable case, or a sidecar exists without its rule.
+- **R4** keys on the emulation's naming: its detection names an emulation
+  literally (`trr9NNN`, `deteng_`); or the rename test, which replaces every
+  emulation identity in the rule's positives (its sidecar positives, and for cloud
+  the attack records that carry the gate's marker) with a neutral token of the
+  same shape, stops it firing; or it has no positive to rename; or every verified
+  negative breaks only items that the rename flips. An identity is an emulation
+  name or a gate marker plus the rest of its token, so `deteng_afxdp_socket_behavioral`
+  and `trr9026-target` are renamed whole. A cloud rule's validator gate must also
+  be a `marker(...)`. Not renamed: what precedes the name in its token (the AWS key
+  type in `AKIATRR9012...`), source IPs, account or instance ids and timestamps; a
+  human reviewer must catch a rule keyed on those.
 
-Two waivers exist, each with a reason, in `check_sufficiency.py` (a protected
-path, so a human approves every entry):
+Four waiver tables exist in `check_sufficiency.py` (a protected path, so a human
+approves every entry). Each entry is the reason plus the digest of the rule content
+the human approved: the rule's `name`, `id`, `logsource`, `detection` and
+`correlation` blocks. When the rule changes, the waiver stops excusing it, and the
+gate prints the new digest for a human to re-approve.
 
-- `CHOKEPOINT`: the rule's every positive item is a surface field because the
-  record kind itself is the technique (any `add_key`, any Events delete).
-- `PRESENCE`: the rule has one positive item and no filter (any impersonated
-  request, any static-pod sandbox). No negative can be one item from firing, so
-  the proof is the positive case and the rule's benign-corpus budget.
+- `COMPILE_ONLY` (R1): CI collects no telemetry for the rule; a sidecar positive
+  is still required.
+- `CHOKEPOINT` (R2): every positive item is a surface field because the record
+  kind itself is the technique (any `add_key`, any Events delete). Any verified
+  negative then counts. One base of a correlation is waived as `<rule> base:<name>`.
+- `PRESENCE` (R2): one positive item and no filter (any impersonated request, any
+  static-pod sandbox). No negative can be one item from firing, so the proof is the
+  positive case and the rule's benign-corpus budget.
+- `PLATFORM_NAMING` (R4): the rule keys on a platform's naming template that
+  follows the emulation's name (Cognito's `Cognito_<pool>Unauth_Role`); the rename
+  keeps the named substrings (`Unauth`).
 
-It warns (never fails) about *thin* checks: rules that exercise far fewer of their
-condition items than the median rule of their platform, or whose negatives break
-only filters.
+It warns (never fails) about *thin* checks (**R5**): rules that exercise fewer than
+half as many of their condition items as the median rule of their platform (over
+the rules that have any verified negative), or whose negatives break only filters
+(or only surface items and filters) and no discriminating selection item.
+
+With `--baseline FILE` (the base branch's `--json` report) it also runs the
+**ratchet**: a rule in both reports fails when it has fewer verified negatives, has
+lost an item those negatives exercised, has fewer passing positive cases, has
+lost its sidecar, or has changed its logsource (or a correlation base's: a moved
+rule is scored on other slices and budgets). CI's `sufficiency-ratchet` job runs it on every pull request,
+with the base branch's own copy of the script, so a pull request that deletes or
+weakens negatives (sidecars are content, which merges without a human) holds for a
+human instead.
+
+A case that shows a rule defect stays as it is. Record the defect in
+[`RULE_DEFECTS.md`](RULE_DEFECTS.md), the tracker for the next rule-fix pull
+request, and never weaken the case.
 
 ```
-python3 detections/rule_cases.py --atoms sigma/T1040/afinet_raw_socket.yml  # the items `breaks` can name
+python3 detections/rule_cases.py --atoms detections/sigma/T1040/afinet_raw_socket.yml  # the items `breaks` can name
 python3 detections/rule_cases.py                     # every rule's cases
 python3 detections/check_sufficiency.py              # the gate (CI: detection-quality / check-sufficiency)
 ```
@@ -147,14 +231,17 @@ python3 detections/check_sufficiency.py              # the gate (CI: detection-q
 The hard gate answers "does the rule key on the technique?". The **benign corpus**
 ([`benign/`](benign/README.md)) answers the production question: "how often does it
 fire on ordinary activity?". [`score_benign.py`](score_benign.py) runs every rule
-over versioned slices of benign operational activity (admin, developer, CI/CD,
-controller and service traffic, including legitimate near-miss tools). It reports
+over versioned slices of benign activity (admin, developer, CI/CD, controller and
+service traffic, including legitimate near-miss tools). Every committed slice is
+synthetic today, generated from templates modelled on documented real activity, so
+a rule's hits there are presence indicators, not production rates. It reports
 hits, the rate per 10,000 events, and the distinct processes or principals behind
 them. Per-rule budgets decide whether an overrun is a warning (`shadow`) or a
 failure (`enforce`). A committed snapshot (`benign/scores.json`) makes every change
 in a rule's false-positive count visible in review. The kind cluster's
 pre-emulation audit log and a live Ubuntu-runner workload are scored in CI too, in
-shadow mode.
+shadow mode. A hit that a rule defect explains is tracked in
+[`RULE_DEFECTS.md`](RULE_DEFECTS.md).
 
 ```
 python3 detections/score_benign.py                  # report
@@ -175,33 +262,19 @@ A broken control prints the events behind its hit. A Linux case prints its
 kernel-probe result. `--json PATH` writes the same results machine-readably for an
 agent to parse.
 
-### Event schema the rules assume
-
-One event per auditd `SYSCALL` record: `type`, `syscall` (the **name**),
-`success`, `exit`, `a0`..`a3` (raw hex, exactly as auditd logs them), `pid`,
-`ppid`, `comm`, `exe`, `timestamp`. auditd's `ENRICHED` log format carries the
-syscall name (`SYSCALL=`); with `RAW` format the validator resolves it with
-`ausyscall`. Neither raw `audit.log` (`syscall=41`) nor `ausearch -i` output
-(`a0=packet`) has this shape as-is, so the log pipeline that feeds these rules
-to a SIEM must normalize to it, or add a pySigma field-mapping pipeline.
-
-### Correlation rules
-
-A Sigma condition such as `A and B` is evaluated against **one** event, and an
-auditd event records one syscall. So a two-syscall pattern (CopyFail,
-DirtyFrag xfrm, DirtyPipe, memfd -> execveat) is written as a Sigma
-correlation rule: each file holds a `type: temporal` correlation grouped by
-`pid` plus the base rules it references. A backend without correlation support
-cannot run these four rules.
-
 ## Continuous validation (CI)
 
-`.github/workflows/validate-detections.yml` runs this loop on every push and
-pull request. A standard `ubuntu-latest` runner is a full VM, so the audit
-subsystem is available to root. The job installs auditd and the Python
+`.github/workflows/validate-detections.yml` runs this loop on every pull request,
+on push to `main`, and weekly. A standard `ubuntu-latest` runner is a full VM, so
+the audit subsystem is available to root. The job installs auditd and the Python
 requirements, then runs the validator with `--require-audit`. It is strict: a
-detection FAIL or a broken control fails the job; only a probe-confirmed SKIP
-does not. On a public repository the run is free.
+detection FAIL, a broken control or a vacuous control fails the job; only a
+probe-confirmed SKIP does not. On a public repository the run is free.
+
+`.github/workflows/detection-quality.yml` runs the offline layers on every pull
+request, on push to `main`, and weekly: `rule-cases`, `check-sufficiency`,
+`sufficiency-ratchet` (pull requests only), `benign-corpus`
+(`score_benign.py --check --enforce`) and the shadow `benign-linux-live` capture.
 
 ## Manual run
 
@@ -314,10 +387,12 @@ validator (`validate_apiserver_detections.py`), and one workflow
 The audit **level** is per technique: pods, workload controllers, RBAC, and
 admission-webhook creates are logged at `Request` so `requestObject` carries the
 privileged/hostPath fields, the bound role, the group subject, and the webhook
-`clientConfig`; `kube-system` ConfigMap writes are at `Request` so the CoreDNS
-Corefile is present; Secrets and `serviceaccounts/token` stay at `Metadata`, never
-higher, because `RequestResponse` would copy the Secret data and the signed token
-into the log.
+`clientConfig`; an update, patch or delete of the three `kube-system` DNS
+ConfigMaps (`coredns`, `kube-dns`, `coredns-custom`) is at `Request` so the Corefile
+is present (a create names no object when the policy is evaluated, so it is logged
+at `Metadata` with no body: [`RULE_DEFECTS.md`](RULE_DEFECTS.md) P2); Secrets and
+`serviceaccounts/token` stay at `Metadata`, never higher, because `RequestResponse`
+would copy the Secret data and the signed token into the log.
 
 These rules are intentionally generic, and a fresh `kind` cluster is full of
 baseline matches: bootstrap RBAC writes, controller-created Jobs and Pods,
@@ -325,8 +400,10 @@ controller Secret reads, the kube-proxy and kindnet privileged pods, and the
 bootstrap coredns ConfigMap. So the validator gates each rule on the emulation's
 own marker — a `trr9004-`/`trr9005-`/`trr9007-`/`trr9025-`/`trr9026-` object name,
 the `trr9006` namespace with a non-system caller, a `trr9005-` Job label on the node
-sensor, or the `trr9027` sentinel in a DNS-ConfigMap write — and the negative
-control proves a pass depends on the emulation, not the baseline.
+sensor, or the `trr9027` sentinel in procedure A's DNS-ConfigMap patch (procedures
+B and C create their ConfigMaps, which are logged with no body, so this validator
+proves TRR9027 on procedure A only) — and the negative control proves a pass depends
+on the emulation, not the baseline.
 
 ```
 python3 detections/validate_apiserver_detections.py --dry-run     # compile only
