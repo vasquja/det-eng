@@ -37,7 +37,10 @@ with a real, provable chokepoint that isn't already covered. So this skill is
    DDMs, and the atomic. → `references/build-and-prove.md`
 4. **Prove.** The rule fires on the recorded attack (carrying the emulation marker) and
    matches NOTHING in a benign baseline that differs only on the discriminating field.
-   Run the repo's validators + linters green. → `references/build-and-prove.md`
+   It ships a `<rule>.cases.jsonl` beside it with a positive and **verified near-miss**
+   negatives (one required item broken each), which `check-sufficiency` grades. Its
+   false-positive rate on the benign corpus is scored and committed. Run the repo's
+   validators + linters green. → `references/build-and-prove.md`
 5. **Review.** An adversarial pass (per-rule / per-fixture / per-README skeptics, each
    finding reproduced against the real pySigma backend) before the PR is "done".
 6. **Document + wire CI**, then open the PR and drive it to green.
@@ -85,6 +88,12 @@ subagent: marker / existing-coverage / novelty / chokepoint) and converge on a G
   little; a rule that fires on the attack AND stays silent on a baseline differing only
   on the chokepoint field proves it keys on the technique, not the fixture's shape. Make
   the baseline hard, and add provenance confounders (a look-alike that must NOT fire).
+- **Write checks that would fail for a wrong rule.** A negative that any reasonable
+  rule rejects (a no-op, an unrelated event) proves nothing. Each negative should keep
+  the chokepoint and break one required item, and each `not <filter>` should have a
+  look-alike that only the filter suppresses. Optimize for the intent, not for the
+  checks you already have: never relabel or weaken a case, edit the corpus, or raise
+  a budget to turn a run green. A budget or corpus change is a human's call.
 - **Review adversarially, and reproduce every finding.** Claims about a rule's behavior
   are cheap; a crafted event run through `detections/sigma_eval.py` is proof. The review
   has repeatedly caught defects in already-"done" rules.

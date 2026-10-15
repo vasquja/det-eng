@@ -6,6 +6,9 @@ the repo's CI, so following it is what makes a PR mergeable.
 
 ## Contents
 - [The proof contract](#the-proof-contract)
+- [What a sufficient check looks like](#what-a-sufficient-check-looks-like)
+- [Reading a red run](#reading-a-red-run)
+- [The benign corpus (scored false positives)](#the-benign-corpus-scored-false-positives)
 - [The pySigma backend and its gotchas](#the-pysigma-backend-and-its-gotchas)
 - [Reusable rule patterns](#reusable-rule-patterns)
 - [Fixtures and the validator MANIFEST](#fixtures-and-the-validator-manifest)
@@ -33,6 +36,129 @@ provider) — to prove the discriminator, not just the IP.
 Kubernetes/auditd TRRs use sibling validators (`validate_apiserver_detections.py`,
 `validate_detections.py`) that run the real emulation on a live kind cluster / auditd VM in
 CI rather than recorded fixtures.
+
+## What a sufficient check looks like
+
+You write the checks as well as the rule, so "a check that currently passes" is not the
+bar. A check is sufficient only if it would **fail for a plausible wrong rule**. The
+`check-sufficiency` gate (`detections/check_sufficiency.py`) enforces the minimum, and
+`detections/sigma_explain.py` grades every negative against the rule's condition:
+
+| Grade | Meaning | Counts toward sufficiency |
+|-------|---------|---------------------------|
+| `near-miss` | exactly one positive **item** (`selection.a1`, `sel_pod.verb`) is false, and flipping it alone fires the rule | yes |
+| `filtered` | every selection holds; one `not <filter>` item alone suppresses it | yes |
+| `distant` | two flips away | no |
+| `trivial` | three or more flips away, or nothing of the rule holds (a no-op) | no |
+
+An atom is one detection item (`<block>.<field>`), not a whole block. A near-miss
+therefore means "fails exactly one field condition". List a rule's atoms with
+`python3 detections/rule_cases.py --atoms <rule>`.
+
+**Every rule ships with, next to it, in `detections/sigma/<T>/<stem>.cases.jsonl`:**
+
+1. **≥1 `positive`.** The telemetry the repo's own emulation produces, in the real log
+   shape: same field names, casing, nesting and encoding (auditd hex args, nested
+   `audit.k8s.io/v1` Events, CloudTrail lowerCamelCase). Add a second positive for each
+   procedure variant the rule claims to cover, such as a second verb or transport, a
+   flag combination, or IPv6.
+2. **≥1 verified `near-miss`**: same chokepoint, one required item broken, with
+   `breaks: ["<block>.<field>"]`. The runner fails the case unless that item really is
+   the single flip, so a no-op cannot be passed off as a near-miss. Aim to cover **every
+   discriminating item**, not one.
+3. **A `filtered` case for every `not <filter>` block**: an allowlisted look-alike that
+   the filter alone suppresses. This proves each filter does work and is not dead code.
+4. **`confounder` cases** for realistic legitimate look-alikes, which must share the
+   rule's surface (the runner rejects a trivial confounder).
+
+Cloud rules may instead get their near-misses from their hard benign fixture. The gate
+grades those records the same way.
+
+**Templates for the negative that matters most**, per platform:
+
+- **auditd syscall rule**: same `syscall`, one argument wrong (`SOCK_STREAM` for
+  `SOCK_RAW`, a `bpf` command other than `BPF_PROG_LOAD`). Also the allowlisted `comm`
+  doing the exact positive call.
+- **auditd correlation**: *half a correlation* (`breaks: ["base:<name>"]`): only one of
+  the base events. Also *different group* (`breaks: ["group-by"]`): both halves, in
+  different pids (the `memfd_fexecve_in_child` mutant offline). Add a live mutant in
+  `detections/controls/` with its expected atom in the `CONTROLS` entry. The
+  validator grades it on every CI run and warns if it misses the declared atom.
+- **Kubernetes audit**: same `verb` + `objectRef.resource`, with the dangerous
+  `requestObject` field absent or safe (`hostPID: false`, `privileged: false`). Also a
+  system controller identity the filter excludes, and a Request-level grader's input
+  with an in-cluster `service` instead of an off-cluster `url`.
+- **Cloud audit log**: same `eventSource`/`eventName`, one discriminator flipped: a
+  specific principal instead of `*`, a pinned OIDC `sub`, an allowlisted egress IP, a
+  failed call (`errorCode`). Also a provenance confounder (e.g. Pod Identity's empty
+  `webIdFederationData`).
+
+**What the gate rejects** (each fails `check-sufficiency`):
+
+- A rule with no registered positive in any validator `MANIFEST`. A documented
+  telemetry gap goes in `COMPILE_ONLY` with a reason (human-approved) and still needs
+  a sidecar positive.
+- A rule whose only negatives are trivial or distant: no-op runs, unrelated
+  events, a pre-emulation baseline.
+- A cloud rule whose near-misses flip **only marker fields**. Negatives that differ
+  from the attack only in the emulation's naming (`trr90NN-`) mean the rule may key
+  on the marker, not the technique.
+- Any failing sidecar case.
+
+It **warns** (never fails) on *thin* checks: a rule whose exercised-atom ratio is
+below half its platform's median, or whose negatives exercise only filters and no
+discriminating selection item. Treat that warning as a request to add near-misses.
+
+Never weaken a case, relabel its kind, or edit a rule's condition to make a check
+pass. If a negative you believe is correct fires, the rule has a defect: fix the rule
+and keep the case, or report it.
+
+## Reading a red run
+
+The validators explain their failures item by item, so you should not have to guess
+what broke. Fix the cause the output names:
+
+- **Rule did not fire.** The output prints each block's and each item's match count
+  over the events (or over the emulation's own events, for the cluster validators)
+  and the nearest event, item by item, with the field values it carried. For
+  example, `- selection_raw [FAILS] / no a1 a1='2'` says the stimulus opened
+  `SOCK_DGRAM`. "no event carries `requestObject.spec.hostPID`" means the telemetry
+  never records that field: an audit-policy level, an audit rule, or a field
+  name/casing problem, not a rule-logic problem.
+- **No emulation event at all** (cluster validators): the emulation did not run,
+  or its marker (name prefix, namespace) differs from the gate.
+- **A control passed.** The output prints the events behind the unexpected hit
+  (syscall, pid, comm, args) and which items held. A mutant that is graded
+  `distant` instead of `near-miss` on its declared atom does not test what it
+  claims, even while it holds.
+- **Kernel probe.** Every Linux case prints its probe result. A miss is a SKIP only
+  when the probe says the kernel lacks the feature.
+- **Benign fixture hit** (cloud): the benign record index and the items that held
+  on it.
+- **Machine-readable.** Every validator takes `--json PATH`
+  (`{rule, status, detail, explanation}`), so you can parse results rather than
+  scrape logs.
+
+## The benign corpus (scored false positives)
+
+The hard gate proves the rule keys on the technique. The benign corpus
+(`detections/benign/`, see its README) measures how often the rule fires on ordinary
+operational activity: hits, rate per 10k events, and the distinct
+processes/principals behind them. `detection-quality / benign-corpus` runs
+`score_benign.py --check --enforce`:
+
+- `--check` fails if `detections/benign/scores.json` is stale. After an intended
+  change, run `python3 detections/score_benign.py --update` and commit the snapshot.
+  The false-positive change is then visible in review.
+- `--enforce` fails only for rules in `enforce` mode that exceed their budget in
+  `detections/benign/budgets.json`. Other overruns are warnings.
+
+When a new rule fires on the corpus, read the explained example hit first. A precise
+rule firing on benign activity is a rule defect. A deliberately generic hunting rule
+may need a budget: **propose** one with a `why`, and say so in the PR. Budget and
+corpus changes are protected paths that need a human's approval before merge. Never
+edit the corpus to silence a rule. You may propose new slices for realistic activity,
+but a human decides what counts as benign enough.
 
 ## The pySigma backend and its gotchas
 
@@ -135,14 +261,30 @@ prints the committed fixture. ART format (`attack_technique`, `display_name`,
 
 ## CI wiring
 
-Three workflows gate PRs: `validate-detections.yml` (auditd loop + `sigma check` +
-`markdown-links`, runs on every PR), `validate-cloud-detections.yml` (the fixture loop,
-**path-filtered** — add the new `detections/sigma/<T...>/**` and `atomics/<T...>/**` globs
-to both the `push` and `pull_request` `paths:` lists), and `lint-trr.yml`.
+These workflows gate PRs:
+
+- `validate-detections.yml`: auditd loop + `sigma check` + `markdown-links`, runs on
+  every PR.
+- `validate-cloud-detections.yml`: the fixture loop, **path-filtered**. Add the new
+  `detections/sigma/<T...>/**` and `atomics/<T...>/**` globs to both the `push`
+  `paths:` list and the `changes`-job pattern list.
+- The kind validators.
+- `lint-trr.yml`.
+- `detection-quality.yml`, on every PR:
+  - `rule-cases` runs every sidecar.
+  - `check-sufficiency` is the gate above.
+  - `benign-corpus` checks the FP snapshot and budgets.
+  - `benign-linux-live` is a shadow capture of a real runner workload.
+
+Every validator also runs weekly on a schedule, so a rule re-proves itself after
+unrelated changes (pySigma, runner image, kernel).
 
 Run locally before pushing:
 ```bash
+python3 detections/rule_cases.py detections/sigma/<T...>/<rule>.yml   # sidecar cases hold
+python3 detections/check_sufficiency.py --rule detections/sigma/<T...>/<rule>.yml
 python3 detections/validate_cloud_detections.py            # attack fires + benign clean
+python3 detections/score_benign.py --check --enforce       # FP snapshot current, budgets held
 sigma check -x attacktag -x d3_fendtag -x cartag -x detection_tag detections/sigma/<T...>/
 python3 .github/scripts/trr_lint.py
 python3 .github/scripts/check_md_links.py
