@@ -463,3 +463,5 @@ python3 detections/validate_detections.py --dry-run
 The research layer's [`research/README.md`](research/README.md) and the
 detection layer's [`detections/README.md`](detections/README.md) go deeper than
 this overview.
+
+<!-- ci: skip-as-success probe for required validate-* checks; temporary PR, do not merge -->
