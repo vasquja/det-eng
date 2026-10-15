@@ -18,9 +18,18 @@ workload's own process tree: the runner agent, systemd, containerd and the
 kernel's own helpers are part of what a real host looks like.
 
 The audit helpers (audit_available, load_audit_rules, unload_audit_rules,
-audit_log_lines, normalize) are imported from validate_detections.py, so the
-capture and the hard gate share one pipeline. The audit rules are always
-unloaded afterwards, even when the workload fails.
+AUDIT_LOG, normalize) are imported from validate_detections.py, so the capture
+and the hard gate share one pipeline. The audit rules are always unloaded
+afterwards, even when the workload fails.
+
+The window starts at the audit log's byte size, and the file is identified by its
+inode and first bytes, so a rotation during the workload (auditd renames
+audit.log to audit.log.1 and opens a new one) is detected: the window is then the
+rotated file from the saved offset plus every newer file, and a warning says so.
+
+The workload runs in its own session. On timeout every process in it gets
+SIGTERM (each step's `timeout` passes it on, and workload.sh's EXIT trap removes
+what it created), then, after a grace period, SIGKILL.
 
 Usage (root, with auditd running):
     sudo python3 detections/benign/linux/capture.py --out /tmp/linux-benign.jsonl
@@ -34,9 +43,11 @@ Without root or auditd the script SKIPS (exit 0, nothing written) unless
 
 import argparse
 import collections
+import glob
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -48,6 +59,8 @@ import validate_detections as vd  # noqa: E402
 
 DEFAULT_WORKLOAD = os.path.join(HERE, "workload.sh")
 TOP = 25
+STOP_GRACE = 30  # seconds the workload gets after SIGTERM to run its EXIT trap
+HEAD_BYTES = 4096  # with the inode, tells "the same file" from a new one that reused it
 
 
 def audit_status():
@@ -64,17 +77,140 @@ def audit_status():
     return out
 
 
+def _head(path):
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(HEAD_BYTES)
+    except OSError:
+        return None
+
+
+def log_position():
+    """(inode, size, first bytes) of the audit log now: where the capture window starts."""
+    try:
+        st = os.stat(vd.AUDIT_LOG)
+    except OSError:
+        return None, 0, b""
+    return st.st_ino, st.st_size, _head(vd.AUDIT_LOG) or b""
+
+
+def _is_start_file(path, inode, head):
+    try:
+        if os.stat(path).st_ino != inode:
+            return False
+    except OSError:
+        return False
+    now = _head(path)
+    return now is not None and now[:len(head)] == head
+
+
+def _read_from(path, offset):
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(offset)
+            return fh.read().decode("utf-8", errors="replace").splitlines(keepends=True)
+    except OSError:
+        return []
+
+
+def read_window(start):
+    """Audit log lines written since `start` (log_position()), and a warning or None.
+
+    auditd rotates by renaming audit.log to audit.log.1 (older files shift to .2,
+    .3, ...) and opening a new audit.log. So: still the start file (same inode and
+    first bytes), read on from the saved byte offset. Otherwise find the rotated
+    file that is the start file, read it from the offset, then every newer rotated
+    file and the new audit.log.
+    """
+    inode, offset, head = start
+    path = vd.AUDIT_LOG
+    if inode is None:
+        return _read_from(path, 0), (f"{path} did not exist when the window started; "
+                                     "read all of it.")
+    if _is_start_file(path, inode, head) and os.path.getsize(path) >= offset:
+        return _read_from(path, offset), None
+    rotated = sorted((p for p in glob.glob(path + ".*") if p.rsplit(".", 1)[1].isdigit()),
+                     key=lambda p: int(p.rsplit(".", 1)[1]))  # .1 is the newest
+    for i, older in enumerate(rotated):
+        if not _is_start_file(older, inode, head):
+            continue
+        lines = _read_from(older, offset)
+        for newer in rotated[:i][::-1]:
+            lines += _read_from(newer, 0)
+        lines += _read_from(path, 0)
+        return lines, (f"{path} rotated during the workload; the window was read from "
+                       f"{older} (from byte {offset}) through the new {path}.")
+    return _read_from(path, 0), (f"{path} was rotated, truncated or replaced during the "
+                                 "workload and the file the window started in is gone; "
+                                 "the capture is incomplete.")
+
+
+def _session_pids(sid):
+    """PIDs of every process in session `sid` (from /proc)."""
+    pids = []
+    for name in os.listdir("/proc"):
+        if not name.isdigit() or int(name) == os.getpid():
+            continue
+        try:
+            with open(f"/proc/{name}/stat", encoding="utf-8", errors="replace") as fh:
+                fields = fh.read().rsplit(")", 1)[1].split()
+        except (OSError, IndexError):
+            continue
+        if len(fields) > 3 and fields[3] == str(sid):  # state ppid pgrp session
+            pids.append(int(name))
+    return pids
+
+
+def signal_workload(sid, sig):
+    """Send sig to the workload's process group and every other process in its session.
+
+    GNU `timeout` (every workload step runs under it) moves itself into a process
+    group of its own, so the session, not the group, is what holds the whole tree.
+    """
+    targets = set(_session_pids(sid))
+    try:
+        os.killpg(sid, sig)
+    except OSError:
+        pass
+    for pid in targets:
+        try:
+            os.kill(pid, sig)
+        except OSError:
+            pass
+
+
+def stop_workload(proc):
+    """SIGTERM the workload, give its EXIT trap STOP_GRACE seconds, then SIGKILL."""
+    signal_workload(proc.pid, signal.SIGTERM)
+    try:
+        proc.wait(timeout=STOP_GRACE)
+    except subprocess.TimeoutExpired:
+        print(f"WARNING: the workload did not exit {STOP_GRACE}s after SIGTERM; killing "
+              "it, so its EXIT-trap cleanup may not have run.", flush=True)
+    signal_workload(proc.pid, signal.SIGKILL)  # and any straggler it left behind
+    proc.wait()
+
+
 def run_workload(path, timeout):
     """Run the workload; its own failures never fail the capture."""
     print(f"== workload: {path} (timeout {timeout}s) ==", flush=True)
     start = time.time()
     try:
-        r = subprocess.run(["bash", path], timeout=timeout)
-        code = r.returncode
-    except subprocess.TimeoutExpired:
-        code = "timeout"
+        # Its own session (and process group), so a timeout can stop the whole tree.
+        proc = subprocess.Popen(["bash", path], start_new_session=True)
     except OSError as e:
-        code = f"could not start: {e}"
+        proc, code = None, f"could not start: {e}"
+    if proc is not None:
+        try:
+            code = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            print(f"== workload timed out after {timeout}s; stopping it (SIGTERM, then "
+                  f"SIGKILL after {STOP_GRACE}s) ==", flush=True)
+            stop_workload(proc)
+            code = "timeout"
+        except BaseException:
+            stop_workload(proc)
+            raise
     took = time.time() - start
     print(f"== workload finished in {took:.0f}s (exit {code}) ==", flush=True)
     return code, took
@@ -122,21 +258,16 @@ def main():
     before_status = audit_status()
     vd.load_audit_rules()
     try:
-        offset = len(vd.audit_log_lines())
+        start = log_position()
         code, took = run_workload(args.workload, args.workload_timeout)
         time.sleep(2)  # let auditd flush the last records
-        lines = vd.audit_log_lines()
+        window, warning = read_window(start)
     finally:
         vd.unload_audit_rules()
     after_status = audit_status()
 
-    if len(lines) >= offset:
-        window = lines[offset:]
-    else:
-        # The log rotated during the workload: what is left is all post-start.
-        print(f"WARNING: {vd.AUDIT_LOG} rotated during the workload "
-              f"({offset} -> {len(lines)} lines); the capture is incomplete.")
-        window = lines
+    if warning:
+        print(f"WARNING: {warning}")
     events = vd.normalize(window)
 
     with open(args.out, "w", encoding="utf-8") as fh:

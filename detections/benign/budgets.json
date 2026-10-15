@@ -215,5 +215,9 @@
       "max_hits": 10,
       "why": "documented noise: GitOps prunes and a downscaler scaling workloads, documented anchor."
     }
+  },
+  "unscored": {
+    "T1543.005/linux_static_pod_manifest_write.yml": "no benign slice for its logsource (linux / file_event: node file-integrity or EDR file events). The Linux slice is auditd SYSCALL records, which this rule does not read; score it once a recorded node file-event slice exists.",
+    "T1552.007/linux_k8s_sa_token_read.yml": "no benign slice for its logsource (linux / file_event: node file-integrity or EDR file events with container context). The Linux slice is auditd SYSCALL records, which this rule does not read; score it once a recorded node file-event slice exists."
   }
 }

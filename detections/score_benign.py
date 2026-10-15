@@ -19,6 +19,13 @@ failure (mode "enforce", with --enforce). A rule moves to "enforce" once its
 corpus is trusted. Raising a budget is a human decision: it means "this much
 noise is acceptable", so a budget change needs a human approval before merge.
 
+A rule is scored against every slice whose product and service match its own
+logsource (category counts only when neither side names a service), so adding a
+`category:` to a rule cannot move it out of scoring. A rule that no slice reads
+is "not scored": --check and --enforce fail unless budgets.json lists it under
+`unscored` with the reason, because leaving the false-positive layer is a human
+decision like a budget.
+
 The committed snapshot (detections/benign/scores.json) records every rule's
 score, so a change that moves a rule's false-positive count shows up in the pull
 request diff, and the git history of that file is the trend. --check fails when
@@ -70,7 +77,11 @@ ACTOR_FIELDS = {
     ("azure", "signinlogs"): ["properties.userPrincipalName", "properties.servicePrincipalName",
                               "properties.appDisplayName"],
     ("azure", "activitylogs"): ["caller", "identity.claims.name", "identity.claims.appid"],
-    ("gcp", "gcp.audit"): ["protoPayload.authenticationInfo.principalEmail"],
+    # Federated callers (Workload / Workforce Identity Federation, STS token
+    # exchange) log no principalEmail, only principalSubject.
+    ("gcp", "gcp.audit"): ["protoPayload.authenticationInfo.principalEmail",
+                           "protoPayload.authenticationInfo.principalSubject",
+                           "protoPayload.authenticationInfo.serviceAccountDelegationInfo"],
 }
 
 
@@ -80,6 +91,21 @@ def actor(event, logsource):
         if event.get(field) not in (None, ""):
             return str(event[field])
     return "<unknown>"
+
+
+def reads(slice_logsource, rule_logsource):
+    """True if a rule with rule_logsource is scored against a slice with slice_logsource.
+
+    Product and service decide. Category counts only when neither side names a
+    service: the compiled query ignores logsource, so an extra `category:` on a
+    rule must not take it out of scoring.
+    """
+    mine, theirs = slice_logsource or {}, rule_logsource or {}
+    if mine.get("product") != theirs.get("product"):
+        return False
+    if mine.get("service") or theirs.get("service"):
+        return mine.get("service") == theirs.get("service")
+    return mine.get("category") == theirs.get("category")
 
 
 def rule_key(path):
@@ -100,7 +126,7 @@ def load_budgets():
     with open(BUDGETS, encoding="utf-8") as fh:
         doc = json.load(fh)
     default = doc.get("default", {"mode": "shadow", "max_hits": 0})
-    return default, doc.get("rules", {})
+    return default, doc.get("rules", {}), doc.get("unscored", {})
 
 
 def budget_for(key, default, budgets):
@@ -113,7 +139,7 @@ def score(rules, slices):
     """{rule key: score dict} over the given slices, plus a few example hits."""
     scores, examples = {}, {}
     for s in slices:
-        readers = [r for r in rules if s.matches(r["logsource"])]
+        readers = [r for r in rules if reads(s.logsource, r["logsource"])]
         if not readers:
             continue
         table = sigma_eval.EventTable(s.events)
@@ -222,10 +248,15 @@ def main():
 
     rules = load_rules(args.rules or None)
     slices = benign_corpus.load_corpus()
-    default, budgets = load_budgets()
-    unknown = sorted(set(budgets) - {r["key"] for r in load_rules()})
+    default, budgets, exempt = load_budgets()
+    unknown = sorted((set(budgets) | set(exempt)) - {r["key"] for r in load_rules()})
     if unknown:
         print(f"ERROR: budgets.json names rule(s) that do not exist: {', '.join(unknown)}")
+        return 1
+    no_why = sorted(k for k, why in exempt.items() if not isinstance(why, str) or not why.strip())
+    if no_why:
+        print("ERROR: budgets.json `unscored` entries need a why (a non-empty string): "
+              + ", ".join(no_why))
         return 1
     scores, examples = score(rules, slices)
 
@@ -261,10 +292,13 @@ def main():
         print(f"{r['key']:<{width}}  {str(r['level']):<13} {b['mode']:<7} {sc['events']:>7} "
               f"{sc['hits']:>5} {sc['rate_per_10k']:>7} {b.get('max_hits', 0):>6}  {status:<6}  "
               f"{actors}{f' (+{more} more)' if more > 0 else ''}")
+    unexempt = [k for k in unscored if k not in exempt]
+    stale_exempt = sorted(k for k in exempt if k in scores)
     if unscored:
         print(f"\nNot scored (no benign slice for their logsource): {len(unscored)} rule(s)")
         for key in unscored:
-            print(f"  {key}")
+            print(f"  {key}  " + (f"exempt: {exempt[key]}" if key in exempt
+                                  else "NOT EXEMPT (no `unscored` entry in budgets.json)"))
 
     if args.examples:
         for r, sc, b, status in rows:
@@ -305,6 +339,7 @@ def main():
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump({"snapshot": snap or snapshot(scores, slices),
                        "unscored": unscored,
+                       "unscored_not_exempt": unexempt,
                        "over_budget": {"enforce": [r["key"] for r, *_ in over_enforce],
                                        "shadow": [r["key"] for r, *_ in over_shadow]},
                        "extra": {k: v for k, v in extra_rows}}, fh, indent=2, sort_keys=True)
@@ -322,7 +357,7 @@ def main():
                          f"{status} | {actors} |\n")
             if unscored:
                 fh.write(f"\nNot scored (no slice for their logsource): "
-                         f"{', '.join(f'`{k}`' for k in unscored)}\n")
+                         f"{', '.join(f'`{k}`' + ('' if k in exempt else ' (NOT EXEMPT)') for k in unscored)}\n")
             if extra_rows:
                 fh.write(f"\n### Live capture `{args.extra_label}` (shadow)\n\n"
                          "| rule | hits | per 10k | top actors |\n|---|---:|---:|---|\n")
@@ -359,6 +394,17 @@ def main():
             status = 1
         else:
             print("\nscores.json is current.")
+    if (args.check or args.enforce) and unexempt:
+        print(f"\nFAILED: {len(unexempt)} rule(s) are not scored (no benign slice reads their "
+              "logsource) and budgets.json does not exempt them: " + ", ".join(unexempt))
+        print("Leaving the false-positive layer is a human decision: add a slice for the "
+              "logsource, or list the rule under `unscored` in budgets.json with the reason "
+              "(a protected path that needs a human approval).")
+        status = 1
+    if (args.check or args.enforce) and stale_exempt:
+        print("\nFAILED: budgets.json `unscored` exempts rule(s) that are scored now; remove "
+              "the stale exemption: " + ", ".join(stale_exempt))
+        status = 1
     if args.enforce and over_enforce:
         print(f"\nFAILED: {len(over_enforce)} enforce-mode rule(s) over their benign budget: "
               + ", ".join(r["key"] for r, *_ in over_enforce))

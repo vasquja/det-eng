@@ -6,7 +6,8 @@ name: automerge
 # without a manual click, at scale, while keeping an auditable, bounded blast radius.
 #
 # SAFETY RAILS (all must hold, re-checked on the exact head commit every time, and
-# every gate fails CLOSED — any ambiguity holds the merge):
+# every gate fails CLOSED — any ambiguity, API error or unreadable answer holds the
+# merge):
 #   1. Per-PR opt-in: the PR must carry the `automerge` label. A label can be added
 #      only by a collaborator with triage/write access, so the label IS the human (or
 #      trusted-automation) opt-in. Remove the label to veto.
@@ -15,24 +16,57 @@ name: automerge
 #      against a malicious outside PR.
 #   3. Not a draft, and the base branch is `main`.
 #   4. Every check run on the exact head SHA has concluded success / neutral / skipped
-#      (nothing failed, nothing still running), and there is at least one check.
+#      (nothing failed, nothing still running), and there is at least one check. An
+#      error while reading the check runs or the commit status (on any page) holds.
 #   5. No reviewer's latest review is CHANGES_REQUESTED (a human veto is honored).
 #   6. No merge conflict (`mergeable == true`, confirmed — an unknown holds).
-#   7. The merge is guarded by the head SHA, so a push that races the merge aborts it
-#      rather than merging unreviewed code.
-#   8. Human sign-off on PROTECTED paths. What counts as "benign enough" and what
-#      counts as a sufficient check are human decisions, so a PR that changes any of
-#        detections/benign/budgets.json, detections/benign/slices/**,
-#        detections/check_sufficiency.py, detections/rule_cases.py,
-#        detections/sigma_explain.py, detections/score_benign.py,
-#        detections/benign_corpus.py,
-#        .github/workflows/detection-quality.yml, .github/workflows/automerge.yml
-#      (a rename away from one counts too) is merged here only with an APPROVED
-#      review, as that reviewer's latest decision, ON THE EXACT HEAD COMMIT, from a
-#      human (user type "User", not a bot) who is a repo owner/member/collaborator
-#      and is not the PR author. Otherwise the PR is left for a human to approve or
-#      merge. The file list is paginated and compared with the PR's changed_files
-#      count; an API error or an incomplete list holds the merge.
+#   7. The head SHA is pinned: it is re-read after the reviews, file list and commit
+#      list are read and again right before the merge (a moved head skips), and the
+#      merge itself is guarded by it, so a push that races the merge aborts it rather
+#      than merging unreviewed code.
+#   8. Human sign-off on everything that is not plain CONTENT. This is an ALLOWLIST.
+#      A PR merges here without a human approval only when EVERY changed path (and
+#      the previous name of a renamed file) is content:
+#        detections/sigma/T<id>/<stem>.yml and <stem>.cases.jsonl   rules, their cases
+#        detections/cloud/fixtures/<trr>/*.json                      cloud log fixtures
+#        detections/benign/scores.json    derived; the benign-corpus check proves it
+#                                         matches the rules and the corpus
+#        research/** (but no *.py, nothing under research/tools/), atomics/**,
+#        docs/**, upstream/**, and *.md outside .github/ and .claude/ (no CLAUDE.md)
+#      Everything else is the code and configuration the gates run on: any *.py
+#      (sigma_eval.py and the validators included), .github/**, .claude/**,
+#      detections/requirements.txt, detections/benign/** other than scores.json
+#      (budgets.json, slices/, the live workloads), detections/k8s/**,
+#      detections/audit/**, detections/controls/**, research/tools/**, and any path
+#      this list does not recognise. A PR touching any of them merges here only with
+#      an APPROVED review, as that reviewer's latest decision, ON THE EXACT HEAD
+#      COMMIT, from a human (user type "User", not a bot) whose repository
+#      permission is write, maintain or admin, and who is neither the PR author nor
+#      the author or committer of any of the PR's commits. Otherwise the PR is left
+#      for a human to approve or merge.
+#      So a NEW-TECHNIQUE PR needs a human approval too: it edits a validator's
+#      MANIFEST (detections/validate_*.py) and the validators' path filters
+#      (.github/workflows/). The CONTENT / NOT_CONTENT patterns at the top of the
+#      script below are the one place to loosen this rail; widen them only for files
+#      no gate imports, executes or reads as policy.
+#      The file list and the commit list are paginated and compared with the PR's
+#      changed_files and commits counts; an API error or an incomplete list holds.
+#
+# AFTER A HUMAN APPROVES: nothing re-runs this workflow on an approval (a
+# pull_request_review trigger would run the PR branch's copy of this file with a
+# write token), and by then the checks have usually finished and this run has
+# already logged the skip. So after approving, remove and re-add the `automerge`
+# label to re-evaluate the PR, or merge it by hand.
+#
+# PLATFORM BACKSTOP: rail 8 binds only this workflow. Anyone with write access can
+# still press merge or call the merge API, and an agent acting with a human's token
+# can approve as that human. Branch protection on `main` is what makes the sign-off
+# hold for every merge path: require a pull request with an approval, "Require
+# approval of the most recent reviewable push", "Require review from Code Owners"
+# (with a CODEOWNERS file naming humans for the non-content paths above), the
+# validator and detection-quality checks as required status checks, and "Do not
+# allow bypassing the above settings". This rail is the second layer, not a
+# substitute for that.
 #
 # The label path uses `pull_request_target`, NOT `pull_request`: pull_request_target
 # runs THIS file from the base branch (main) with a write token and never uses the PR
@@ -56,11 +90,14 @@ name: automerge
 # list is judged "not relevant" and its behavioral validation is skipped (the rule is
 # still Sigma-compiled by the always-on `sigma-lint`). Keep each validator's
 # `push: paths:` and its `changes`-job pattern list in sync when adding a technique,
-# as the TRR flow does.
+# as the TRR flow does (and, per rail 8, a human approves that PR).
 #
 # Requirements: repository Actions permission must allow read/write workflow tokens
 # (Settings -> Actions -> General -> Workflow permissions), and the `automerge` label
-# must exist. No branch-protection or "Allow auto-merge" repo setting is needed.
+# must exist. Auto-merging itself needs no branch-protection or "Allow auto-merge"
+# setting; branch protection is the backstop above. GitHub may refuse this workflow's
+# token a merge that changes .github/workflows/ (it has no `workflows` permission):
+# the log then says "Merge was not applied" and a human merges the PR.
 
 on:
   workflow_run:
@@ -104,6 +141,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          # --- Rail 8 allowlist: the ONE place to loosen the human sign-off ---------
+          # A path is content when it matches CONTENT and not NOT_CONTENT. A PR whose
+          # every path (and previous name) is content merges without an approval;
+          # anything else needs one. Widen only for files no gate imports, executes
+          # or reads as policy.
+          CONTENT='^(detections/sigma/T[0-9]{4}(\.[0-9]{3})?/[^/]+\.(yml|cases\.jsonl)|detections/cloud/fixtures/[^/]+/[^/]+\.json|detections/benign/scores\.json|research/.+|atomics/.+|docs/.+|upstream/.+|.+\.md)$'
+          NOT_CONTENT='(\.py$|^research/tools/|^\.github/|^\.claude/|(^|/)CLAUDE\.md$)'
+
+          # The PR's head SHA now; "" on any error, which never equals a SHA.
+          head_now() { gh api "repos/$REPO/pulls/$1" --jq '.head.sha' 2>/dev/null || true; }
 
           # --- Resolve the candidate open PR(s) for this event --------------------
           if [ "$EVENT" = "pull_request_target" ]; then
@@ -153,7 +201,7 @@ jobs:
               | any(.[]?; .state=="CHANGES_REQUESTED")' <<<"$reviews" 2>/dev/null || echo "true")"
             [ "$changes_requested" = "false" ] || { echo "skip: changes requested"; echo "::endgroup::"; continue; }
 
-            # --- Protected paths need a human sign-off on this head (rail 8) -------
+            # --- Anything but content needs a human sign-off on this head (rail 8) --
             # One TSV line per changed file: filename, previous_filename (renames).
             if ! files="$(gh api --paginate "repos/$REPO/pulls/$pr/files" \
                             --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' 2>/dev/null)"; then
@@ -168,40 +216,86 @@ jobs:
               # The files API stops at 3000 entries; an incomplete list cannot clear rail 8.
               echo "skip: listed $listed of $changed_files changed file(s)"; echo "::endgroup::"; continue
             fi
-            protected="$(printf '%s\n' "$files" | tr '\t' '\n' | grep -E \
-              '^(detections/benign/budgets\.json|detections/benign/slices/.+|detections/(check_sufficiency|rule_cases|sigma_explain|score_benign|benign_corpus)\.py|\.github/workflows/(detection-quality|automerge)\.yml)$' \
-              | sort -u | paste -sd, - || true)"
-            if [ -n "$protected" ]; then
-              author="$(jq -r '.user.login' <<<"$data")"
-              approvers="$(jq -r --arg sha "$head_sha" --arg author "$author" '
+            paths="$(printf '%s\n' "$files" | tr '\t' '\n' | grep -v '^$' | sort -u || true)"
+            not_content="$( { printf '%s\n' "$paths" | grep -Ev "$CONTENT" || true
+                              printf '%s\n' "$paths" | grep -E "$NOT_CONTENT" || true
+                            } | grep -v '^$' | sort -u || true)"
+            if [ -n "$not_content" ]; then
+              n_not_content="$(printf '%s\n' "$not_content" | grep -c . || true)"
+              shown="$(printf '%s\n' "$not_content" | awk 'NR<=10' | paste -sd, -)"
+              [ "$n_not_content" -le 10 ] || shown="$shown (+$((n_not_content - 10)) more)"
+
+              # Who may not sign off: the PR author and every commit author/committer.
+              pr_commits="$(jq -r '.commits' <<<"$data")"
+              case "$pr_commits" in
+                ''|*[!0-9]*) echo "skip: commit count unknown ($pr_commits)"; echo "::endgroup::"; continue ;;
+              esac
+              if ! commits="$(gh api --paginate "repos/$REPO/pulls/$pr/commits" \
+                                --jq '.[] | [(.author.login // ""), (.committer.login // "")] | @tsv' 2>/dev/null)"; then
+                echo "skip: PR commit list unreadable"; echo "::endgroup::"; continue
+              fi
+              listed_commits="$(printf '%s' "$commits" | grep -c . || true)"
+              if [ "$listed_commits" -lt "$pr_commits" ]; then
+                # The commits API stops at 250 entries; an incomplete list cannot clear rail 8.
+                echo "skip: listed $listed_commits of $pr_commits commit(s)"; echo "::endgroup::"; continue
+              fi
+              # (Any error leaves this empty, so the --argjson below fails: no approvers.)
+              excluded="$( { jq -r '.user.login' <<<"$data"; printf '%s\n' "$commits" | tr '\t' '\n'; } \
+                           | { grep -v '^$' || true; } | jq -R 'ascii_downcase' | jq -sc 'unique' || true)"
+
+              # Candidates: latest decision APPROVED, on this head, by a human who
+              # neither opened the PR nor authored or committed any of its commits.
+              candidates="$(jq -r --arg sha "$head_sha" --argjson excluded "$excluded" '
                 add // []
                 | [ .[] | select(.state=="CHANGES_REQUESTED" or .state=="APPROVED" or .state=="DISMISSED") ]
                 | group_by(.user.login)
                 | map(max_by(.submitted_at))
-                | [ .[]
-                    | select(.state == "APPROVED"
-                             and .commit_id == $sha
-                             and .user.type == "User"
-                             and .user.login != $author
-                             and (.author_association == "OWNER"
-                                  or .author_association == "MEMBER"
-                                  or .author_association == "COLLABORATOR"))
-                    | .user.login ]
-                | join(",")' <<<"$reviews" 2>/dev/null || true)"
+                | .[]
+                | select(.state == "APPROVED"
+                         and .commit_id == $sha
+                         and .user.type == "User"
+                         and ((.user.login | ascii_downcase) as $l | $excluded | index($l) | not)
+                         and (.author_association == "OWNER"
+                              or .author_association == "MEMBER"
+                              or .author_association == "COLLABORATOR"))
+                | .user.login' <<<"$reviews" 2>/dev/null || true)"
+
+              # ...whose repository permission is write, maintain or admin (fail closed).
+              approvers=""
+              while IFS= read -r login; do
+                [ -n "$login" ] || continue
+                perm="$(gh api "repos/$REPO/collaborators/$login/permission" --jq '.permission' 2>/dev/null || true)"
+                case "$perm" in
+                  admin|maintain|write) approvers="${approvers:+$approvers,}$login" ;;
+                  *) echo "approval by $login not counted: repository permission is '${perm:-unreadable}'" ;;
+                esac
+              done <<<"$candidates"
+
               if [ -z "$approvers" ]; then
-                echo "skip: touches protected path(s) $protected; a human must approve or merge"
+                echo "skip: non-content path(s) need a human approval on $head_sha: $shown"
+                echo "hint: once a human with write access (not the PR author, nor an author or committer of its commits) approves the head commit, remove and re-add the '$LABEL' label to re-run this check, or merge by hand. An approval alone does not re-trigger automerge."
                 echo "::endgroup::"; continue
               fi
-              echo "Protected path(s) $protected approved on $head_sha by: $approvers"
+              echo "Non-content path(s) $shown approved on $head_sha by: $approvers"
             fi
 
-            # --- Every check run on the EXACT head SHA must be a pass --------------
+            # --- The head must not have moved while reviews, files, commits were read
+            if [ "$(head_now "$pr")" != "$head_sha" ]; then
+              echo "skip: head moved while the PR was evaluated; the run for the new head re-checks it"
+              echo "::endgroup::"; continue
+            fi
+
+            # --- Every check run on the EXACT head SHA must be a pass (fail closed) -
             # Exclude only THIS workflow run's own check (match its run id in the
             # details_url), not any check that merely shares the name 'automerge'.
-            runs="$(gh api --paginate "repos/$REPO/commits/$head_sha/check-runs" \
-                      --jq '.check_runs[]
-                            | select((.details_url // "") | contains("/runs/" + env.RUN_ID + "/") | not)
-                            | [.status, (.conclusion // "")] | @tsv' 2>/dev/null || true)"
+            # gh streams each page as it reads it, so an error on a later page must
+            # hold the merge rather than leave a partial (all-green) list.
+            if ! runs="$(gh api --paginate "repos/$REPO/commits/$head_sha/check-runs" \
+                           --jq '.check_runs[]
+                                 | select((.details_url // "") | contains("/runs/" + env.RUN_ID + "/") | not)
+                                 | [.status, (.conclusion // "")] | @tsv' 2>/dev/null)"; then
+              echo "skip: check runs unreadable"; echo "::endgroup::"; continue
+            fi
             total="$(printf '%s' "$runs" | grep -c . || true)"
             not_done="$(printf '%s\n' "$runs" | awk -F'\t' 'NF>0 && $1!="completed"{c++} END{print c+0}')"
             bad="$(printf '%s\n' "$runs" | awk -F'\t' \
@@ -212,11 +306,15 @@ jobs:
             if [ "$bad" -ne 0 ]; then echo "skip: $bad check(s) not successful"; echo "::endgroup::"; continue; fi
 
             # --- Legacy commit statuses (if any) must be success; fail closed ------
-            status_json="$(gh api "repos/$REPO/commits/$head_sha/status" 2>/dev/null || true)"
-            if [ -z "$status_json" ]; then echo "skip: commit status unreadable"; echo "::endgroup::"; continue; fi
-            status_state="$(jq -r '.state' <<<"$status_json")"
-            total_statuses="$(jq -r '.total_count' <<<"$status_json")"
-            if [ "${total_statuses:-0}" -gt 0 ] && [ "$status_state" != "success" ]; then
+            if ! status_json="$(gh api "repos/$REPO/commits/$head_sha/status" 2>/dev/null)"; then
+              echo "skip: commit status unreadable"; echo "::endgroup::"; continue
+            fi
+            status_state="$(jq -r '.state' <<<"$status_json" 2>/dev/null || true)"
+            total_statuses="$(jq -r '.total_count' <<<"$status_json" 2>/dev/null || true)"
+            case "$total_statuses" in
+              ''|*[!0-9]*) echo "skip: commit status unreadable"; echo "::endgroup::"; continue ;;
+            esac
+            if [ "$total_statuses" -gt 0 ] && [ "$status_state" != "success" ]; then
               echo "skip: commit status is $status_state"; echo "::endgroup::"; continue
             fi
 
@@ -229,11 +327,13 @@ jobs:
             done
             [ "$mergeable" = "true" ] || { echo "skip: mergeable not confirmed ($mergeable)"; echo "::endgroup::"; continue; }
 
-            # --- Re-read the label right before merging (honor a late veto) -------
-            # gh's --jq takes no --arg, so list the label names and match them here;
-            # any API error reads as "no labels" (fail closed).
-            labels_now="$(gh api "repos/$REPO/pulls/$pr" --jq '.labels[]?.name' 2>/dev/null || true)"
-            grep -Fxq -- "$LABEL" <<<"$labels_now" || { echo "skip: label removed"; echo "::endgroup::"; continue; }
+            # --- Re-read the PR right before merging: a late veto, a moved head ----
+            # Any API or jq error reads as "no label" / "moved" (fail closed).
+            now="$(gh api "repos/$REPO/pulls/$pr" 2>/dev/null || true)"
+            label_now="$(jq -r --arg l "$LABEL" 'any(.labels[]?; .name==$l)' <<<"$now" 2>/dev/null || true)"
+            sha_now="$(jq -r '.head.sha' <<<"$now" 2>/dev/null || true)"
+            [ "$label_now" = "true" ] || { echo "skip: label removed"; echo "::endgroup::"; continue; }
+            [ "$sha_now" = "$head_sha" ] || { echo "skip: head moved before the merge"; echo "::endgroup::"; continue; }
 
             # --- All rails clear: squash-merge, guarded by the head SHA -----------
             echo "All checks green and rails clear; merging PR #$pr at $head_sha"

@@ -14,9 +14,46 @@ came from.
 """
 
 import json
+import os
 import re
 import sqlite3
 import sys
+
+# The gates run as `python3 detections/<script>.py`, so detections/ is sys.path[0]
+# and the rule directory detections/sigma/ joins pySigma's `sigma` namespace package
+# AHEAD of site-packages: a collection.py (or a package, .pyc, .so, ...) dropped
+# there would replace pySigma's own module inside every gate and validator. So
+# before pySigma is imported, the rule directory must hold only rule material:
+# T<id>/ directories of *.yml, *.cases.jsonl and *.md files, nothing else.
+_RULE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sigma")
+_TECHNIQUE_DIR = re.compile(r"T\d{4}(\.\d{3})?")
+_RULE_MATERIAL = re.compile(r".+\.(yml|cases\.jsonl|md)")
+
+
+def _rule_dir_intruders():
+    """Entries under detections/sigma/ that are not rule material."""
+    bad = []
+    try:
+        entries = sorted(os.scandir(_RULE_DIR), key=lambda e: e.name)
+    except FileNotFoundError:
+        return bad
+    for entry in entries:
+        if not (entry.is_dir(follow_symlinks=False) and _TECHNIQUE_DIR.fullmatch(entry.name)):
+            bad.append(entry.name)
+            continue
+        for item in sorted(os.scandir(entry.path), key=lambda e: e.name):
+            if not (item.is_file(follow_symlinks=False) and _RULE_MATERIAL.fullmatch(item.name)):
+                bad.append(f"{entry.name}/{item.name}")
+    return bad
+
+
+_intruders = _rule_dir_intruders()
+if _intruders:
+    sys.exit("refusing to import pySigma: detections/sigma/ may hold only T<id>/ "
+             "directories of *.yml, *.cases.jsonl and *.md files, because it shares "
+             "the `sigma` package namespace with pySigma and anything importable there "
+             "would shadow pySigma's own modules. Move or delete:\n  "
+             + "\n  ".join(f"detections/sigma/{p}" for p in _intruders))
 
 try:
     from sigma.backends.sqlite import sqliteBackend
@@ -80,6 +117,18 @@ class EventTable:
             "regexp", 2,
             lambda pattern, value: 1 if value is not None and re.search(pattern, str(value)) else 0)
         columns = sorted({k for e in events for k in e} - {_ROWID})
+        # SQLite column names are case-insensitive: 'level' and 'Level' would be one
+        # column (a cryptic "duplicate column name" error), and a rule field would
+        # match an event key that differs only by case, which a case-sensitive SIEM
+        # would not. Refuse the collision plainly instead.
+        folded = {}
+        for col in columns:
+            folded.setdefault(col.lower(), []).append(col)
+        clashes = [names for names in folded.values() if len(names) > 1]
+        if clashes:
+            raise ValueError("event keys that differ only by case cannot share one table: "
+                             + "; ".join(" / ".join(n) for n in clashes)
+                             + " (score or evaluate these log shapes separately)")
         self.db.execute(f"CREATE TABLE logs ({_ROWID} INTEGER PRIMARY KEY"
                         + "".join(f", {_quote(c)}" for c in columns) + ")")
         for rowid, event in enumerate(events):
