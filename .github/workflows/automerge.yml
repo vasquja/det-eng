@@ -72,12 +72,15 @@ jobs:
           # standing_changes_requested: true if the latest review per author is
           # CHANGES_REQUESTED. Fails CLOSED (any API error -> "true").
           standing_changes_requested() {
-            gh api --paginate --slurp "repos/$REPO/pulls/$PR_NUM/reviews" --jq '
-              add
-              | [ .[] | select(.state=="CHANGES_REQUESTED" or .state=="APPROVED" or .state=="DISMISSED") ]
-              | group_by(.user.login)
-              | map(max_by(.submitted_at))
-              | any(.[]?; .state=="CHANGES_REQUESTED")' 2>/dev/null || echo "true"
+            # NOTE: `gh api --slurp` is INCOMPATIBLE with `--jq` (gh errors), so --slurp
+            # must pipe to a standalone jq. Any error -> the blocking value "true".
+            gh api --paginate --slurp "repos/$REPO/pulls/$PR_NUM/reviews" 2>/dev/null \
+              | jq -r '
+                add
+                | [ .[] | select(.state=="CHANGES_REQUESTED" or .state=="APPROVED" or .state=="DISMISSED") ]
+                | group_by(.user.login)
+                | map(max_by(.submitted_at))
+                | any(.[]?; .state=="CHANGES_REQUESTED")' 2>/dev/null || echo "true"
           }
 
           # --- Label removed -> disable auto-merge (the veto) ------------------
