@@ -38,15 +38,30 @@ and detections/requirements.txt. Without root or auditd the script SKIPS
 (exit 0), unless --require-audit is given; CI passes it so a broken audit
 setup cannot pass silently.
 
+Every result is explained beneath its line (sigma_explain.py), so a red run can
+be fixed without guessing:
+  * each case's kernel-feature probe result (present, or why it is missing);
+  * a detection FAIL lists the audited syscalls the stimulus tree made (name,
+    count, success or errno) and grades the tree's events against the rule, item
+    by item (succeeded and rejected events alike; each is labelled);
+  * a BROKEN control shows the events that satisfied the rule and why, with what
+    a pass of that control means;
+  * a HELD mutant is graded against the rule ("held: near-miss on
+    afinet_raw_socket.a1"); a grade that differs from the atoms the mutant is
+    built to break (its CONTROLS entry) prints a WARNING, never a failure.
+--json PATH also writes all of it as a machine-readable report.
+
 Usage:
     sudo python3 detections/validate_detections.py                  # validate + controls
     sudo python3 detections/validate_detections.py --require-audit  # CI
     python3 detections/validate_detections.py --dry-run             # compile atomics + rules
+    ... --json PATH                                                 # also a JSON report
 """
 
 import argparse
 import ctypes
 import errno
+import json
 import os
 import re
 import shutil
@@ -64,6 +79,7 @@ except ImportError:
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sigma_eval  # noqa: E402
+import sigma_explain  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -71,7 +87,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 #
 # Each probe returns None when the feature is present, or the reason it is
 # missing. They only ever ask the kernel "do you have this?"; they never run the
-# technique, and they run before the audit rules are loaded.
+# technique, and they run before the audit rules are loaded. `probe.what` names
+# the feature for the report.
 
 _LIBC = ctypes.CDLL(None, use_errno=True)
 AF_RXRPC, AF_XDP = 33, 44  # not exported by Python's socket module
@@ -87,6 +104,7 @@ def socket_family(family, type_, proto, label):
                            errno.ESOCKTNOSUPPORT):
                 return f"kernel lacks {label} ({errno.errorcode[e.errno]})"
         return None
+    probe.what = label if "socket" in label else f"{label} sockets"
     return probe
 
 
@@ -103,6 +121,7 @@ def syscall_exists(name, *args):
         elif ctypes.get_errno() == errno.ENOSYS:
             return f"kernel lacks {name} (ENOSYS)"
         return None
+    probe.what = f"{name}()"
     return probe
 
 
@@ -115,6 +134,7 @@ def sysctl_is(path, value, label):
         except OSError:
             pass
         return None
+    probe.what = f"sysctl {path[len('/proc/sys/'):].replace('/', '.')} != {value}"
     return probe
 
 
@@ -179,21 +199,29 @@ MANIFEST = [
 ]
 
 # Mutants that keep the surface of a technique but break it. Each must FAIL;
-# the note says what a PASS would mean.
+# the note says what a PASS would mean. The last field is what the mutant is
+# built to break: the rule's condition atoms (`rule_cases.py --atoms RULE`), or
+# SUCCESS_GATE for the validator's own success=yes check. Each held mutant is
+# graded against the rule; a different grade prints a WARNING (not a failure).
+SUCCESS_GATE = "success"
 NOOP = "detections/controls/noop.c"
 CONTROLS = [
     ("detections/sigma/T1068/dirtypipe_splice_readonly.yml",
      "detections/controls/splice_without_pipe.c", [],
-     "another process's pipe completed the correlation"),
+     "another process's pipe completed the correlation",
+     ["base:dirtypipe_pipe_create"]),
     ("detections/sigma/T1620/memfd_create_execveat.yml",
      "detections/controls/memfd_fexecve_in_child.c", [],
-     "halves from different pids were correlated"),
+     "halves from different pids were correlated",
+     ["group-by"]),
     ("detections/sigma/T1014/bpf_prog_load.yml",
      "detections/controls/bpf_prog_load_fails.c", [],
-     "a syscall the kernel rejected counted as an execution"),
+     "a syscall the kernel rejected counted as an execution",
+     [SUCCESS_GATE]),
     ("detections/sigma/T1040/afinet_raw_socket.yml",
      "detections/controls/afinet_stream_socket.c", [],
-     "the a1 (SOCK_RAW) argument constraint was not enforced"),
+     "the a1 (SOCK_RAW) argument constraint was not enforced",
+     ["afinet_raw_socket.a1"]),
 ]
 
 AUDIT_RULES = os.path.join(REPO, "detections/audit/atomic.rules")
@@ -359,20 +387,25 @@ def _errno_name(exit_code):
         return exit_code
 
 
+def stimulus_hits(sql, events, tree, succeeded_only=True):
+    """The rule's hits whose every event came from the stimulus tree.
+
+    By default only syscalls that succeeded count (what judge() gates on).
+    """
+    pool = [e for e in events if e["success"] == "yes"] if succeeded_only else events
+    return [h for h in sigma_eval.evaluate(sql, pool) if all(e["pid"] in tree for e in h)]
+
+
 def judge(sql, events, tree, missing=None, stderr=""):
     """PASS / SKIP / FAIL for one stimulus run, and why."""
-    def from_stimulus(hit):
-        return all(e["pid"] in tree for e in hit)
-
-    succeeded = [e for e in events if e["success"] == "yes"]
-    done = [h for h in sigma_eval.evaluate(sql, succeeded) if from_stimulus(h)]
+    done = stimulus_hits(sql, events, tree)
     if done:
         calls = "+".join(dict.fromkeys(e["syscall"] for e in done[0]))
         pids = ",".join(str(p) for p in sorted({e["pid"] for e in done[0]}))
         return "PASS", f"{len(done)} hit(s), e.g. {calls} by pid {pids}"
     if missing:
         return "SKIP", missing
-    tried = [h for h in sigma_eval.evaluate(sql, events) if from_stimulus(h)]
+    tried = stimulus_hits(sql, events, tree, succeeded_only=False)
     if tried:
         failed = sorted({f"{e['syscall']}: {_errno_name(e['exit'])}"
                          for h in tried for e in h if e["success"] != "yes"})
@@ -382,8 +415,11 @@ def judge(sql, events, tree, missing=None, stderr=""):
     return "FAIL", detail + (f"; stderr: {stderr}" if stderr else "")
 
 
-def allowlisted_comm(rule_path):
-    """A process name the rule's `not <allowlist>` filter must suppress, or None."""
+def allowlist(rule_path):
+    """(block, comm): the rule's `not <allowlist>` block and a name it must suppress.
+
+    (None, None) when the rule has no such block.
+    """
     with open(os.path.join(REPO, rule_path), encoding="utf-8") as fh:
         doc = next(yaml.safe_load_all(fh))
     det = doc.get("detection") or {}
@@ -394,18 +430,150 @@ def allowlisted_comm(rule_path):
             values = block["comm"] if isinstance(block["comm"], list) else [block["comm"]]
             for v in values:
                 if len(v) <= 15 and "/" not in v:  # comm = exe basename, 15 chars max
-                    return v
-    return None
+                    return name, v
+    return None, None
+
+
+def allowlisted_comm(rule_path):
+    """A process name the rule's `not <allowlist>` filter must suppress, or None."""
+    return allowlist(rule_path)[1]
+
+
+# ---- explanations (sigma_explain) ------------------------------------------
+
+
+def describe_event(e):
+    """syscall, pid, comm, a0..a3 and whether the kernel accepted it."""
+    args = ",".join(str(e.get(f"a{i}")) for i in range(4))
+    result = ("succeeded" if e.get("success") == "yes"
+              else f"REJECTED {_errno_name(e.get('exit'))}")
+    return (f"{e.get('syscall')} pid={e.get('pid')} ppid={e.get('ppid')} comm={e.get('comm')} "
+            f"a0..a3={args} -> {result}")
+
+
+def tree_syscalls(events, tree):
+    """'socket x2 (yes x1, EPERM x1), ...': the audited syscalls of the stimulus tree."""
+    calls = {}
+    for e in events:
+        if e["pid"] in tree:
+            outcome = "yes" if e["success"] == "yes" else _errno_name(e["exit"])
+            per = calls.setdefault(e["syscall"], {})
+            per[outcome] = per.get(outcome, 0) + 1
+    return ", ".join(f"{name} x{sum(per.values())} ("
+                     + ", ".join(f"{o} x{n}" if len(per) > 1 else str(o) for o, n in per.items())
+                     + ")" for name, per in calls.items())
+
+
+def explain_fail(rule, events, tree):
+    """Why a detection FAILed: what the stimulus tree did, and how close it came."""
+    idx = [i for i, e in enumerate(events) if e["pid"] in tree]
+    comms = sorted({str(e["comm"]) for e in events if e["pid"] in tree})
+    lines = [f"stimulus tree: pid(s) {','.join(str(p) for p in sorted(tree))}"
+             + (f" (comm {', '.join(comms)})" if comms else "")
+             + f"; {len(idx)} of the {len(events)} audited event(s) in the window are its own"]
+    label = describe_event
+    if not idx:
+        lines.append("the stimulus tree made no audited syscall: the audit rules "
+                     "(detections/audit/atomic.rules) may not cover it, the atomic exited "
+                     "early (see stderr), or auditd dropped records")
+        if not events:
+            return lines
+        lines.append("closest event in the whole window (NOT from the stimulus tree):")
+        return lines + sigma_explain.explain_miss(rule, events, k=1, label=label)
+    lines.append(f"audited syscalls from the tree: {tree_syscalls(events, tree)}")
+    lines.append("the tree's events graded against the rule (succeeded and rejected alike; "
+                 "each is labelled):")
+    return lines + sigma_explain.explain_miss(rule, events, k=2, candidates=idx, label=label)
+
+
+def explain_broken(rule, sql, events, tree, meaning):
+    """A control PASSED: the events that satisfied the rule, why, and what that means."""
+    hits = stimulus_hits(sql, events, tree)
+    noop = "the rule matched a no-op: something other than the technique satisfies it"
+    lines = [f"meaning: {meaning or noop}"]
+    for hit in hits[:3]:
+        for e in hit:
+            lines.append(f"hit: {describe_event(e)}")
+        why = (sigma_explain.judge_events(rule, hit)[0].lines if rule.is_correlation
+               else sigma_explain.explain_hit(rule, hit[0]))
+        lines.extend(why)
+    if len(hits) > 3:
+        lines.append(f"... and {len(hits) - 3} more hit(s)")
+    return lines
+
+
+def grade_control(rule, sql, events, tree, expected):
+    """Grade a held mutant against the rule: (graded atoms, summary, warning, lines).
+
+    The mutant's closest event (or, for a correlation, its whole event set) says
+    which part of the rule held it. A grade other than `expected` is a WARNING:
+    the mutant may no longer test what its CONTROLS entry says it does.
+    """
+    own = [e for e in events if e["pid"] in tree]
+    lines = []
+    if not own:
+        graded, kind = [], "no audited syscall"
+        text = ("held: the control's process tree made no audited syscall -- it proves "
+                "nothing about the rule")
+    elif stimulus_hits(sql, events, tree, succeeded_only=False):
+        rejected = sorted({f"{e['syscall']}: {_errno_name(e['exit'])}"
+                           for e in own if e["success"] != "yes"})
+        graded, kind = [SUCCESS_GATE], "rejected"
+        text = ("held: the rule's logic matches, but only syscalls the kernel rejected "
+                f"({'; '.join(rejected)}); the success=yes gate held it")
+    else:
+        verdicts = sigma_explain.judge_events(rule, own)
+        v = min(verdicts, key=lambda x: (sigma_explain.KIND_RANK[x.kind], -x.closeness))
+        lines, kind = v.lines, v.kind
+        graded = list(v.atoms) if v.kind in sigma_explain.NON_TRIVIAL else []
+        text = {"near-miss": f"held: near-miss on {', '.join(v.atoms)}",
+                "filtered": f"held: filtered on {', '.join(v.atoms)}",
+                "distant": "held: distant -- the mutant may not exercise the chokepoint",
+                "trivial": "held: trivial -- the mutant does not reach the rule's surface",
+                }.get(v.kind, f"held, though the rule's logic grades it {v.kind}")
+    warning = None
+    if expected is not None and sorted(graded) != sorted(expected):
+        warning = (f"WARNING: built to break {', '.join(expected)}, but graded "
+                   f"{', '.join(graded) or kind}: the control may no longer test what its "
+                   "CONTROLS entry says (not a failure)")
+    return graded, text, warning, lines
+
+
+def explained(fn, rule, *args):
+    """Run an explanation helper on a rule; an explanation must never change a verdict."""
+    if rule is None:
+        return ["(no explanation: sigma_explain could not load the rule)"]
+    try:
+        return fn(rule, *args)
+    except Exception as e:  # noqa: BLE001
+        return [f"(no explanation: {type(e).__name__}: {e})"]
+
+
+def load_rule(rule_path):
+    try:
+        return sigma_explain.load(os.path.join(REPO, rule_path))
+    except Exception as e:  # noqa: BLE001
+        print(f"[diag] sigma_explain could not load {rule_path}: {e} (no explanations)")
+        return None
+
+
+def write_json(path, report):
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2)
+        fh.write("\n")
 
 
 # ---- main ----------------------------------------------------------------
 
 
 def print_table(title, rows):
+    """Rows are (status, label, detail[, explanation lines printed beneath])."""
     print(f"\n{title}")
     width = max((len(r[1]) for r in rows), default=0)
-    for status, label, detail in rows:
+    for status, label, detail, *extra in rows:
         print(f"  [{status:^6}] {label:<{width}}  {detail}")
+        for line in (extra[0] if extra else []):
+            print("           " + line)
 
 
 def main():
@@ -414,11 +582,25 @@ def main():
                     help="compile atomics, controls and rules only; no auditd")
     ap.add_argument("--require-audit", action="store_true",
                     help="fail (instead of skip) when auditd is unavailable")
+    ap.add_argument("--json", metavar="PATH",
+                    help="also write a machine-readable report (results, controls, "
+                    "explanations) to PATH")
     args = ap.parse_args()
+    report = {"validator": "linux-auditd", "mode": "dry-run" if args.dry_run else "validate",
+              "results": [], "controls": []}
+    code = validate(args, report)
+    if args.json:
+        report["exit"] = code
+        write_json(args.json, report)
+    return code
 
+
+def validate(args, report):
+    """The validation run behind main(); fills `report` for --json."""
     ok, why = (True, "") if args.dry_run else audit_available()
     if not ok and args.require_audit:
         print(f"ERROR: audit validation unavailable ({why}) and --require-audit set.")
+        report.update(mode="error", reason=why)
         return 1
     dry = args.dry_run or not ok
     if args.dry_run:
@@ -426,6 +608,7 @@ def main():
     elif not ok:
         print(f"== SKIP: audit validation unavailable ({why}) ==")
         print("   Run as root on a host with auditd to validate for real.")
+        report.update(mode="skip", reason=why)
 
     workdir = tempfile.mkdtemp(prefix="deteng_val_")
     rule_paths = list(dict.fromkeys([m[0] for m in MANIFEST] + [c[0] for c in CONTROLS]))
@@ -445,14 +628,27 @@ def main():
     if dry or errors:
         for label, detail in errors:
             print(f"  [ERROR ] {label}  {detail}")
+        report["results"] = ([{"rule": label, "status": "ERROR", "detail": detail,
+                               "explanation": []} for label, detail in errors]
+                             + [{"rule": path, "status": "OK", "detail": "compiles",
+                                 "explanation": []} for path in queries])
         shutil.rmtree(workdir, ignore_errors=True)
         if not errors:
             print(f"OK: {len(queries)} rules compiled by pySigma, "
                   f"{len(binaries)} atomics/controls compiled.")
         return 1 if errors else 0
 
-    missing = {i: next((w for p in m[3] if (w := p())), None)
-               for i, m in enumerate(MANIFEST)}
+    # Every probe of every case (the first missing feature is the SKIP reason).
+    probes = {i: [(getattr(p, "what", "probe"), p()) for p in m[3]]
+              for i, m in enumerate(MANIFEST)}
+    missing = {i: next((w for _, w in probes[i] if w), None) for i in probes}
+    print("Kernel-feature probes (asked before the audit rules load; a missing feature "
+          "turns a miss into a SKIP):")
+    for i, (rule, src, _args, _probes) in enumerate(MANIFEST):
+        found = "; ".join(f"{what}: {'present' if w is None else 'MISSING -- ' + w}"
+                          for what, w in probes[i]) or "no probe (a miss is always a FAIL)"
+        print(f"  {os.path.basename(rule)} <- {os.path.basename(src)}: {found}")
+    rules = {path: load_rule(path) for path in rule_paths}
     results, controls = [], []
     load_audit_rules()
     try:
@@ -461,50 +657,85 @@ def main():
             events, tree, err = run(binaries[src], run_args)
             status, detail = judge(queries[rule], events, tree, missing[i], err)
             positive.setdefault(rule, (src, run_args, status))
-            results.append((status, os.path.basename(rule), detail))
+            lines = (explained(explain_fail, rules[rule], events, tree)
+                     if status == "FAIL" else [])
+            results.append((status, os.path.basename(rule), detail, lines))
+            report["results"].append({
+                "rule": rule, "atomic": src, "status": status, "detail": detail,
+                "probes": [{"what": what, "missing": w} for what, w in probes[i]],
+                "explanation": lines})
 
         # Controls: every one must FAIL.
+        def control(status, label, detail, meaning, rule, events, tree, expected):
+            """Record one control; explain a pass, grade a held mutant."""
+            info = {"control": label, "rule": rule, "judge": status, "detail": detail,
+                    "meaning": meaning, "expected": expected, "explanation": []}
+            if status == "PASS":
+                info["explanation"] = explained(explain_broken, rules[rule], queries[rule],
+                                                events, tree, meaning)
+            elif expected is not None:
+                graded = explained(grade_control, rules[rule], queries[rule], events, tree,
+                                   expected)
+                if isinstance(graded, tuple):
+                    info["graded"], info["grade"], info["warning"], info["verdict"] = graded
+                else:
+                    info["grade"] = graded[0]
+            controls.append((status, label, detail, meaning, info))
+
         events, tree, _ = run(binaries[NOOP], [])
         for rule in rule_paths:
             status, detail = judge(queries[rule], events, tree)
-            controls.append((status, f"noop -> {os.path.basename(rule)}", detail, ""))
-        for rule, src, run_args, meaning in CONTROLS:
+            control(status, f"noop -> {os.path.basename(rule)}", detail, "", rule, events,
+                    tree, None)
+        for rule, src, run_args, meaning, expected in CONTROLS:
             events, tree, _ = run(binaries[src], run_args)
             status, detail = judge(queries[rule], events, tree)
-            controls.append((status, f"{os.path.basename(src)} -> "
-                             f"{os.path.basename(rule)}", detail, meaning))
+            control(status, f"{os.path.basename(src)} -> {os.path.basename(rule)}", detail,
+                    meaning, rule, events, tree, expected)
         for rule, (src, run_args, pos_status) in positive.items():
-            comm = allowlisted_comm(rule)
+            block, comm = allowlist(rule)
             if not comm:
                 continue
             label = f"{os.path.basename(src)} as '{comm}' -> {os.path.basename(rule)}"
             if pos_status != "PASS":
                 controls.append(("N/A", label, "atomic did not pass under its own "
-                                 "name, so the allowlist is not exercised", ""))
+                                 "name, so the allowlist is not exercised", "",
+                                 {"control": label, "rule": rule, "judge": "N/A",
+                                  "explanation": []}))
                 continue
             binary = compile_atomic(src, os.path.join(workdir, "allow"), name=comm)
             events, tree, _ = run(binary, run_args)
             status, detail = judge(queries[rule], events, tree)
-            controls.append((status, label, detail, "the allowlist filter did not "
-                             "suppress an allowlisted process"))
+            control(status, label, detail, "the allowlist filter did not suppress an "
+                    "allowlisted process", rule, events, tree, [f"{block}.comm"])
     finally:
         unload_audit_rules()
         shutil.rmtree(workdir, ignore_errors=True)
 
     print_table("Detections (atomic -> auditd -> pySigma backend):", results)
-    shown = []
-    for status, label, detail, meaning in controls:
+    shown, warnings = [], 0
+    for status, label, detail, meaning, info in controls:
         if status == "PASS":
-            shown.append(("BROKEN", label, f"passed: {meaning or 'matched a no-op'}"))
+            shown.append(("BROKEN", label, f"passed: {meaning or 'matched a no-op'}",
+                          info["explanation"]))
         elif status == "N/A":
             shown.append(("N/A", label, detail))
         else:
-            shown.append(("held", label, detail))
+            lines = [info["grade"]] if info.get("grade") else []
+            if info.get("warning"):
+                warnings += 1
+                lines += [info["warning"]] + info.get("verdict", [])
+            info["explanation"] = lines
+            shown.append(("held", label, detail, lines))
+        report["controls"].append(dict(info, status=shown[-1][0]))
     print_table("Controls (each must FAIL; one that passes means the check is unsound):",
                 shown)
 
     count = {s: sum(1 for r in results if r[0] == s) for s in ("PASS", "SKIP", "FAIL")}
     broken = sum(1 for r in shown if r[0] == "BROKEN")
+    if warnings:
+        print(f"\n{warnings} held control(s) graded differently from what they are built "
+              "to break (WARNING above; not a failure).")
     print(f"\n{count['PASS']} passed, {count['SKIP']} skipped (kernel feature "
           f"missing), {count['FAIL']} failed; {broken} control(s) broken.")
     return 1 if (count["FAIL"] or broken) else 0

@@ -32,10 +32,19 @@ Modes:
         Report misses in the summary instead of failing on them. Only a rule
         that fails to compile fails the run.
 
+    ... --json PATH
+        Also write a machine-readable report (status, detail and the
+        explanation lines of every rule) to PATH.
+
 The key-finding check (exec recorded as verb=get over WebSocket and verb=create
 over SPDY) is reported, never gated: a cluster older than v1.31, or a kubectl
 that ignores the protocol toggle, changes which verbs appear, but the chokepoint
 rule matches on the subresource regardless of verb.
+
+A MISS is explained beneath its line (sigma_explain.py): what the gate requires,
+how many events name the target pod, and the one that came closest to the rule,
+item by item; or, when none does, that the emulation may not have run. A failed
+--expect-miss shows the event(s) the rule matched and why.
 """
 
 import argparse
@@ -46,6 +55,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sigma_eval  # noqa: E402
+import sigma_explain  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RULES_DIR = os.path.join(REPO, "detections", "sigma", "T1609")
@@ -53,19 +63,37 @@ RULES_DIR = os.path.join(REPO, "detections", "sigma", "T1609")
 # The pod every emulated procedure targets (atomics/T1609/src/emulate.sh).
 TARGET_POD = os.environ.get("TRR9002_POD", "trr9002-target")
 
+
+def field_is(field, value):
+    def gate(e):
+        return e.get(field) == value
+    gate.describe = f"{field} == {value!r}"  # for the MISS explanation
+    return gate
+
+
+def field_contains(field, sub):
+    def gate(e):
+        return sub in (e.get(field) or "")
+    gate.describe = f"{field} contains {sub!r}"
+    return gate
+
+
 # Each rule paired with the procedure it serves, a one-line note, and how to
 # recognise the emulation's own event. Order is the report order.
 MANIFEST = [
     ("k8s_pod_exec_attach.yml", "A/B",
      "exec or attach through the API server (chokepoint)",
-     lambda e: e.get("objectRef.name") == TARGET_POD),
+     field_is("objectRef.name", TARGET_POD)),
     ("k8s_pod_ephemeral_container.yml", "C",
      "ephemeral debug container",
-     lambda e: e.get("objectRef.name") == TARGET_POD),
+     field_is("objectRef.name", TARGET_POD)),
     ("k8s_node_proxy_exec.yml", "D",
      "exec through the API server node proxy",
-     lambda e: f"/{TARGET_POD}/" in (e.get("requestURI") or "")),
+     field_contains("requestURI", f"/{TARGET_POD}/")),
 ]
+
+# Anything the emulation touches mentions this; used when no event passes a gate.
+TAG = "trr9002"
 
 
 def load_events(audit_log):
@@ -109,6 +137,114 @@ def exec_verbs(events):
     return verbs
 
 
+# ---- failure explanations (sigma_explain) --------------------------------
+# The same helpers as validate_apiserver_detections.py; each validator stays standalone.
+
+
+def summary(e):
+    """One line naming an audit event: verb, resource, name, namespace, user."""
+    resource = str(e.get("objectRef.resource"))
+    if e.get("objectRef.subresource"):
+        resource += f"/{e['objectRef.subresource']}"
+    return (f"verb={e.get('verb')} resource={resource} name={e.get('objectRef.name')} "
+            f"ns={e.get('objectRef.namespace')} user={e.get('user.username')}"
+            + (f" code={e['responseStatus.code']}" if e.get("responseStatus.code") else "")
+            + (f" stage={e['stage']}" if e.get("stage") else ""))
+
+
+def labeller(events):
+    index = {id(e): i for i, e in enumerate(events)}
+    return lambda e: f"event #{index.get(id(e), '?')} [{summary(e)}]"
+
+
+def absent_hint(rule, events, scope, where):
+    """A line naming rule fields no event carries, and whether the audit level explains it."""
+    fields = dict.fromkeys(f for a in rule.positive_atoms() for f in rule.fields(a))
+    absent = [f for f in fields if all(e.get(f) is None for e in events)]
+    if not absent:
+        return []
+    hint = f"rule field(s) no event in the log carries: {', '.join(absent)}"
+    if any(f.startswith("requestObject") for f in absent):
+        if not any(k.startswith("requestObject") for e in scope for k in e):
+            return [hint + f"; {where} carry no requestObject at all: the audit policy "
+                    "records this resource below level Request, which the rule needs"]
+        return [hint + "; requestObject is recorded but never sets these"]
+    return [hint + "; no event of that shape reached the log, the audit policy does not "
+            "record it, or the field is named differently (casing, flattening)"]
+
+
+def explain_gated_miss(rule_path, events, gate, matched):
+    """Why no event the emulation made matched: the gate, then the closest marked event."""
+    rule = sigma_explain.load(rule_path)
+    label = labeller(events)
+    marked = [i for i, e in enumerate(events) if gate(e)]
+    lines = [f"gate: {getattr(gate, 'describe', 'see its MANIFEST entry')}"]
+    candidates, where = marked, "the marked event(s)"
+    if marked:
+        lines.append(f"{len(marked)} event(s) carry the emulation's marker and the rule "
+                     "matches none of them")
+    else:
+        lines.append(f"NO event carries the emulation's marker: the emulation may not have run, "
+                     f"or the target pod is not named {TARGET_POD!r} (TRR9002_POD)")
+        candidates = [i for i, e in enumerate(events) if any(TAG in str(v) for v in e.values())]
+        where = f"the event(s) mentioning {TAG!r}"
+        hit = {id(e) for e in matched}
+        if candidates:
+            lines.append(f"{len(candidates)} event(s) mention {TAG!r} but fail the gate, e.g.:")
+            lines.extend(f"  {label(events[i])}" for i in candidates[:3])
+            fired = sum(1 for i in candidates if id(events[i]) in hit)
+            if fired:
+                lines.append(f"the rule DOES match {fired} of them: the rule works, the gate "
+                             "does not recognise the event as the emulation's")
+        else:
+            where = "the events of the whole log"
+            if matched:
+                lines.append(f"no event mentions {TAG!r} at all, while the rule matches "
+                             f"{len(matched)} other event(s): the emulation's own records are "
+                             "missing (check the emulate step's output)")
+            else:
+                lines.append(f"no event mentions {TAG!r} at all")
+                candidates = None  # nothing to narrow to: grade the whole log
+    lines += absent_hint(rule, events,
+                         [events[i] for i in candidates] if candidates else events, where)
+    if candidates or candidates is None:
+        lines.append(f"per block over {where}, then the closest event, item by item:")
+        lines += sigma_explain.explain_miss(rule, events, k=1, candidates=candidates,
+                                            label=label)
+    return lines
+
+
+def explain_unexpected(rule_path, events, ours):
+    """--expect-miss failed: the event(s) the rule matched, and why it fired."""
+    rule = sigma_explain.load(rule_path)
+    label = labeller(events)
+    lines = [f"the pre-emulation log already holds {len(ours)} match(es) on {TARGET_POD!r}; "
+             "a log captured before the emulation should hold none (captured late, or a "
+             "pod left over from an earlier run?):"]
+    for e in ours[:3]:
+        lines.append(f"  {label(e)}"
+                     + (f" at {e['requestReceivedTimestamp']}"
+                        if e.get("requestReceivedTimestamp") else ""))
+        lines.extend("  " + ln for ln in sigma_explain.explain_hit(rule, e))
+    if len(ours) > 3:
+        lines.append(f"  ... and {len(ours) - 3} more")
+    return lines
+
+
+def explained(fn, *args):
+    """Run an explanation helper; an explanation must never break the gate."""
+    try:
+        return fn(*args)
+    except Exception as e:  # noqa: BLE001
+        return [f"(no explanation: {type(e).__name__}: {e})"]
+
+
+def write_json(path, report):
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2)
+        fh.write("\n")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Validate TRR9002 K8s detections.")
     ap.add_argument("--audit-log", default="/tmp/kube-apiserver-audit.log",
@@ -119,8 +255,22 @@ def main():
                     help="Negative control: fail if any rule passes.")
     ap.add_argument("--report", action="store_true",
                     help="Report misses instead of failing on them.")
+    ap.add_argument("--json", metavar="PATH",
+                    help="Also write a machine-readable report (results + explanations).")
     args = ap.parse_args()
+    report = {"validator": "k8s",
+              "mode": "dry-run" if args.dry_run else
+              "expect-miss" if args.expect_miss else "validate", "results": []}
+    code = validate(args, report)
+    if args.json:
+        report["exit"] = code
+        write_json(args.json, report)
+    return code
 
+
+def validate(args, report):
+    """The validation run behind main(); fills `report` for --json."""
+    results = report["results"]
     # Compile the rules first; a compile error always fails.
     queries = {}
     parse_errors = 0
@@ -131,6 +281,8 @@ def main():
         except Exception as e:  # noqa: BLE001
             parse_errors += 1
             print(f"ERROR compile {fname}: {e}")
+            results.append({"rule": fname, "procedure": proc, "status": "ERROR",
+                            "detail": f"compile: {e}", "explanation": []})
     # Compile any other rule in the folder too.
     for path in sorted(glob.glob(os.path.join(RULES_DIR, "*.yml"))):
         if os.path.basename(path) not in queries:
@@ -139,8 +291,12 @@ def main():
             except Exception as e:  # noqa: BLE001
                 parse_errors += 1
                 print(f"ERROR compile {os.path.basename(path)}: {e}")
+                results.append({"rule": os.path.basename(path), "status": "ERROR",
+                                "detail": f"compile: {e}", "explanation": []})
 
     if args.dry_run:
+        results.extend({"rule": fname, "status": "OK", "detail": "compiles",
+                        "explanation": []} for fname in queries)
         print()
         if parse_errors:
             print(f"Dry run FAILED: {parse_errors} compile error(s).")
@@ -164,19 +320,33 @@ def main():
             [hit[0] for hit in sigma_eval.evaluate(queries[fname], events)])
         ours = [e for e in matched if from_emulation(e)]
         other = len(matched) - len(ours)
+        rule_path = os.path.join(RULES_DIR, fname)
+        explanation = []
         if ours:
             passes += 1
-            print(f"PASS  [{proc}] {fname}: {len(ours)} emulation event(s) match"
-                  + (f" (+{other} other)" if other else ""))
+            detail = f"{len(ours)} emulation event(s) match" + (f" (+{other} other)"
+                                                                if other else "")
+            print(f"PASS  [{proc}] {fname}: {detail}")
             sample = ours[0]
             print(f"        e.g. verb={sample.get('verb')} "
                   f"resource={sample.get('objectRef.resource')} "
                   f"subresource={sample.get('objectRef.subresource')} "
                   f"user={sample.get('user.username')}")
+            if args.expect_miss:
+                explanation = explained(explain_unexpected, rule_path, events, ours)
         else:
             misses += 1
-            print(f"MISS  [{proc}] {fname}: no emulation event matched"
-                  + (f" ({other} unrelated match(es) ignored)" if other else ""))
+            detail = "no emulation event matched" + (f" ({other} unrelated match(es) ignored)"
+                                                     if other else "")
+            print(f"MISS  [{proc}] {fname}: {detail}")
+            if not args.expect_miss:
+                explanation = explained(explain_gated_miss, rule_path, events, from_emulation,
+                                        matched)
+        for line in explanation:
+            print("        " + line)
+        results.append({"rule": fname, "procedure": proc, "status": "PASS" if ours else "MISS",
+                        "detail": detail, "emulation_matches": len(ours),
+                        "other_matches": other, "explanation": explanation})
 
     # Key-finding report (never gated).
     verbs = exec_verbs(events)

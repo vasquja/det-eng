@@ -123,6 +123,7 @@ class PlainRule:
         # block". A dict block is the AND of its items; a list of maps is the OR of
         # each map's AND (items named block[i].field); a keyword list is one atom.
         self.items = {}      # atom -> compiled SQL
+        self.item_expect = {}  # atom -> what the item matches, for explanations
         self.item_field = {}  # atom -> field name (None for keyword atoms)
         self.block_tree = {}  # block -> subtree over its item atoms
         for name, definition in detection.items():
@@ -142,6 +143,10 @@ class PlainRule:
         self.items[atom] = _compile_doc({"title": f"{self.title} [{atom}]",
                                          "logsource": self.logsource, "detection": detection})
         self.item_field[atom] = str(field_key).split("|")[0] if field_key is not None else None
+        mods = "|".join(str(field_key).split("|")[1:]) if field_key is not None else "keywords"
+        values = value if isinstance(value, list) else [value]
+        shown = " or ".join(_short(v, 40) for v in values[:6]) + (" ..." if len(values) > 6 else "")
+        self.item_expect[atom] = f"{mods + ' ' if mods else ''}{shown}"
         return ("id", atom)
 
     def _block_items(self, name, definition):
@@ -268,6 +273,10 @@ class PlainRule:
             for atom in (a for a in self.items if self.block_of[a] == block):
                 field = self.item_field[atom]
                 shown = f"{field}={_short(event.get(field))}" if field else "(keyword search)"
+                # Show what the item wants where it decides the verdict: a failed
+                # selection item, or a filter item that matched.
+                if truth.get(atom) == negated:
+                    shown += f"  (rule wants: {self.item_expect[atom]})"
                 lines.append(f"      {'yes' if truth.get(atom) else 'no '}  "
                              f"{atom[len(block):].lstrip('.') or atom}  {shown}")
         return lines
