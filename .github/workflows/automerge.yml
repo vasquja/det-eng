@@ -29,14 +29,19 @@ name: automerge
 # copy. Nothing from the event (title, branch, body, author) is interpolated into the
 # shell; github-context values come through the env: block.
 #
-# KNOWN LIMITATION — it proves "the checks that ran are green", not "the right
-# validator ran". The heavy validators (apiserver / cloud / k8s / staticpod) are
-# path-filtered, so a PR adding a NEW technique directory that is not yet in a
-# validator's `paths:` list would not trigger that validator, and this gate would see
-# only the always-on checks. The `automerge` label is therefore also an assertion by
-# the labeler that the technique's own validator ran green; keep each validator's
-# `paths:` in sync when adding a technique (as the TRR flow already does), or move the
-# gate to branch-protection required checks.
+# COVERAGE — the heavy validators (apiserver / cloud / k8s / staticpod) now ALWAYS
+# report a status on a PR: each one triggers on every PR, a cheap `changes` job
+# decides from the diff whether the heavy job runs, and an unrelated PR skips it (a
+# skipped required check counts as success). They are wired to be branch-protection
+# required checks, so both this auto-merge gate and the merge itself see a real,
+# per-validator signal instead of "only the checks that happened to run".
+#
+# Residual gap: a validator's `changes` detector keys on the SAME path list as the
+# validator's `push: paths:`, so a PR that adds a technique directory NOT YET in that
+# list is judged "not relevant" and its behavioral validation is skipped (the rule is
+# still Sigma-compiled by the always-on `sigma-lint`). Keep each validator's
+# `push: paths:` and its `changes`-job pattern list in sync when adding a technique,
+# as the TRR flow does.
 #
 # Requirements: repository Actions permission must allow read/write workflow tokens
 # (Settings -> Actions -> General -> Workflow permissions), and the `automerge` label
