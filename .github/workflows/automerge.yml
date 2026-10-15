@@ -100,10 +100,19 @@ name: automerge
 #
 # Requirements: repository Actions permission must allow read/write workflow tokens
 # (Settings -> Actions -> General -> Workflow permissions), and the `automerge` label
-# must exist. Auto-merging itself needs no branch-protection or "Allow auto-merge"
-# setting; branch protection is the backstop above. GitHub may refuse this workflow's
-# token a merge that changes .github/workflows/ (it has no `workflows` permission):
-# the log then says "Merge was not applied" and a human merges the PR.
+# must exist. The merge is a direct squash-merge via the API, so the `main` ruleset's
+# required status checks still gate it (the 8 validator checks must be green; the
+# detection-quality checks are not required there yet, but rail 4 above waits for every
+# check run on the head). "Require branches to be up to date before merging" (strict)
+# must be OFF: a workflow using the built-in GITHUB_TOKEN cannot update a PR branch and
+# have CI re-run (GitHub suppresses workflow runs for GITHUB_TOKEN pushes), so with
+# strict ON a green-but-behind PR could never be auto-merged. With strict OFF a green
+# labeled PR merges even if slightly behind main; the required checks ran on its head
+# and git still blocks a textual conflict (mergeable==true is required below). GitHub's
+# merge queue would keep the test-against-latest-main guarantee, but it needs an
+# organization-owned repo. GitHub may refuse this workflow's token a merge that changes
+# .github/workflows/ (it has no `workflows` permission): the log then says "Merge was
+# not applied" and a human merges the PR.
 
 on:
   workflow_run:
