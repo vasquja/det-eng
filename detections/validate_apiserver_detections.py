@@ -37,10 +37,11 @@ kindnet privileged pods). The gate is:
     too; a 'list' has no objectRef.name, so the namespace + non-system-caller pair
     is the only gate that spans A/B/C/D).
   * TRR9025 / TRR9026 : objectRef.name begins with 'trr9025-' / 'trr9026-'.
-  * TRR9027        : objectRef.name is a cluster-DNS ConfigMap (coredns / kube-dns /
-    coredns-custom) in kube-system AND the write carries the 'trr9027' sentinel in its
-    requestObject (the coredns ConfigMap exists at bootstrap, so the name alone is not
-    enough; the sentinel identifies the emulation's own write and excludes the restore).
+  * TRR9027 (procedure A only): objectRef.name is a cluster-DNS ConfigMap (coredns /
+    kube-dns / coredns-custom) in kube-system AND the write carries the 'trr9027'
+    sentinel in its requestObject (the coredns ConfigMap exists at bootstrap, so the
+    name alone is not enough; the sentinel identifies the emulation's own write and
+    excludes the restore). B and C's creates are logged at Metadata, with no body.
 
 Rules in each technique folder that are NOT match-gated here (the Linux file-event
 token-read rule, for example) are still COMPILED, so a broken rule fails the run.
@@ -138,11 +139,15 @@ def coredns_gate(e):
     """TRR9027: the emulation's own cluster-DNS write, told apart by the trr9027 sentinel.
 
     The coredns ConfigMap exists at bootstrap and kube-dns/coredns-custom may be created by
-    other tooling, so name + namespace alone is not enough. The emulation injects its unique
-    'trr9027' sentinel into every write's requestObject (the poisoned Corefile, the kube-dns
-    stubDomains redirect, the coredns-custom snippet), recorded because the audit policy keeps
-    kube-system ConfigMap writes at Request. The restore write carries the original Corefile
-    and no sentinel, so it is correctly excluded.
+    other tooling, so name + namespace alone is not enough. The emulation puts its unique
+    'trr9027' sentinel into every write's body, but only procedure A's coredns patch is
+    logged with its body: the audit policy's Request rule for these ConfigMaps is scoped by
+    resourceNames, and a create names no object when the policy is evaluated, so procedures
+    B and C (the kube-dns and coredns-custom creates) are logged at Metadata, with no
+    requestObject and so no sentinel. This gate therefore marks procedure A only (label
+    '9027 A'); the chokepoint rule still sees B and C, but this validator does not prove
+    them. The restore write carries the original Corefile and no sentinel, so it is
+    correctly excluded.
     """
     if e.get("objectRef.namespace") != "kube-system":
         return False
@@ -200,7 +205,7 @@ MANIFEST = [
      "malicious webhook grader: off-cluster url / wildcard+secrets (Request)", name_prefix("trr9025-")),
     ("T1572", "k8s_pod_portforward.yml", "audit", "9026 A-B",
      "pod port-forward chokepoint (verb-agnostic subresource)", name_prefix("trr9026-")),
-    ("T1565.001", "k8s_coredns_configmap_modified.yml", "audit", "9027 A-C",
+    ("T1565.001", "k8s_coredns_configmap_modified.yml", "audit", "9027 A",
      "cluster DNS ConfigMap write chokepoint", coredns_gate),
     ("T1565.001", "k8s_coredns_corefile_poisoned.yml", "audit", "9027 sev",
      "CoreDNS Corefile poison grader (Request)", coredns_gate),
