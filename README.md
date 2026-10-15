@@ -261,7 +261,8 @@ Proving the loop is automated:
   required check is green — the "proof decides what is done" model applied to the merge
   itself, so the agent can drive a detection all the way to landed. It is label-gated
   (only a PR a collaborator marks `automerge` is eligible), same-repo only (never a
-  fork), not a draft, and honors a reviewer's `CHANGES_REQUESTED`. Removing the label
+  fork), not a draft, and honors a reviewer's standing `CHANGES_REQUESTED` (the latest
+  review per reviewer). Removing the label
   (or a `CHANGES_REQUESTED` review) disables auto-merge — the veto. GitHub performs the
   merge itself, so it works on a protected branch with no bypass or PAT (a workflow's
   `GITHUB_TOKEN` cannot merge a protected branch directly). One-time activation: "Allow
