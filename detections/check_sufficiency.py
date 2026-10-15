@@ -23,6 +23,18 @@ backend (sigma_eval) and the same item-by-item grading (sigma_explain):
                  cloud, API server, TRR9002, TRR9003), or it is listed in
                  COMPILE_ONLY below for a documented telemetry gap. A
                  COMPILE_ONLY rule still needs a passing sidecar positive.
+                 The rule's logsource (every base's, for a correlation) must
+                 name the log its validator proves it on: auditd ->
+                 linux/auditd; API server and TRR9003 -> kubernetes/<the
+                 entry's source, audit or cri>; TRR9002 -> kubernetes/audit;
+                 cloud -> product = the entry's provider. The validators run
+                 the compiled SQL, which ignores logsource, but the benign
+                 corpus scores a rule only on the slices of its logsource: a
+                 rule moved to a sibling service would read 0 benign hits and
+                 escape its budget. (The cloud MANIFEST names no service, so R1
+                 lets a cloud rule move between services of its provider, e.g.
+                 Azure activitylogs / auditlogs / signinlogs; the ratchet below
+                 fails any logsource change of an existing rule instead.)
   R2 negatives   at least one VERIFIED non-trivial negative that breaks a
                  DISCRIMINATING item (a selection item outside SURFACE_FIELDS:
                  an argument, a provenance field, a policy pattern) or a
@@ -47,7 +59,22 @@ backend (sigma_eval) and the same item-by-item grading (sigma_explain):
                  a negative could break, and it is exactly the shape a rule takes
                  when it loses its argument. It fails R2 unless a human lists it
                  in CHOKEPOINT below, with the reason the record kind itself is
-                 the technique; then any verified negative counts.
+                 the technique; then any verified negative counts. A PRESENCE
+                 rule (one positive item, no filter) can have no one-flip
+                 negative; a human lists it in PRESENCE, and its proof is the
+                 positive plus its benign-corpus budget.
+                 A CORRELATION's own items (base presence, group-by, timespan,
+                 order, threshold) say which events go together, not what makes
+                 an event the technique: that lives in each base rule, so R2
+                 runs on each base. A pure-surface base fails unless CHOKEPOINT
+                 names it ("<rule> base:<name>"). Every other base needs a
+                 verified negative that breaks one of ITS discriminating items
+                 (or its filter): a set declared `breaks: [base:<name>]` in which
+                 one event misses that base by exactly such an item and, marked
+                 as the base's match, makes the compiled correlation fire (so the
+                 event is in the right group and window, not just anywhere).
+                 Dropping a base's event, or moving events out of the group or
+                 the window, does not count for a base.
   R3 cases hold  every sidecar case passes, every sidecar parses, and no
                  sidecar exists without its rule.
   R4 not name-keyed
@@ -58,12 +85,29 @@ backend (sigma_eval) and the same item-by-item grading (sigma_explain):
                    passing sidecar positive case, and for a cloud rule every
                    attack fixture record it fires on that carries the
                    validator gate's marker) must still fire after every
-                   emulation name (/trr9\\d{3}/i, `deteng_`) and every gate
-                   marker in it is replaced by a neutral token of the same
-                   length and character classes. A rule that stops firing keys
-                   on the emulation's naming, however its regex spells the
-                   name (`rr9026`, `tr?9026`, `ssrf-demo`). A rule with no
-                   positive unit to rename fails: the test cannot run;
+                   emulation IDENTITY in it is replaced by a neutral token of
+                   the same length and character classes. An identity is an
+                   emulation name (/trr9\\d{3}/i, `deteng_`) or a gate marker
+                   plus the rest of its token (letters, digits, `_`, `.`, `-`
+                   up to the next `/`, `:`, `=`, quote, space): the whole of
+                   `deteng_val_x`, `deteng_afxdp_socket_behavioral`,
+                   `trr9026-target`, `oidc.trr9013-attacker.example.com`. So a
+                   rule that stops firing keys on some part of the emulation's
+                   naming (the atomic's `_behavioral` suffix, an object's
+                   `-target`), however its regex spells it (`rr9026`,
+                   `tr?9026`, `ssrf-demo`). The rename is deterministic (each
+                   letter and digit is rotated). What precedes the name in its
+                   token is kept: the platform writes it (the AWS unique-id
+                   type in `AKIATRR9012EXAMPLE01`, `ami-`, `Cognito_`) and a
+                   rule may key on it. Where a platform's naming template
+                   follows the name (Cognito_<pool>Unauth_Role), a human lists
+                   the rule in PLATFORM_NAMING with the substrings to keep. A
+                   rule with no positive unit to rename fails: the test cannot
+                   run. RESIDUAL: only names are renamed. A rule keyed on a
+                   token's prefix before the emulation name, or on another
+                   constant of an emulation run (an attack fixture's source IP,
+                   an instance, account or key id, a timestamp), still passes
+                   here; the human review of the rule must catch it;
                  - (cloud) every MANIFEST gate of the rule is a marker(substr,
                    *fields): it carries `.substr` and `.fields` and answers as
                    marker() does on every attack, benign and renamed record.
@@ -91,24 +135,45 @@ a correlation rule `base:<name>`, `group-by`, `timespan`, `threshold`.
 "Exercised" counts the items a verified negative flips: the declared `breaks` of
 a sidecar case, or every single flip sigma_explain finds for a fixture record.
 
-Waivers: there are none beyond COMPILE_ONLY and CHOKEPOINT. A human edits those
-dicts, with a reason, and a change to this file needs a human approval before
-merge.
+Waivers: COMPILE_ONLY (R1), CHOKEPOINT and PRESENCE (R2), PLATFORM_NAMING (R4);
+nothing else. A human edits those dicts, and a change to this file needs a human
+approval before merge. Each entry is Waiver(why, digest): the reason, and the
+digest of the rule content the human approved (detection_digest: sha256 of every
+YAML document's name, id, logsource, detection and correlation blocks as canonical
+JSON; comments, title, description and other metadata are not part of it). When
+the rule changes, the digest no longer matches and the waiver stops excusing it:
+R1, R2 or R4 fails and prints the new digest, so a human re-reviews the changed
+rule and re-approves it by writing that digest here. A waiver is never keyed by
+path alone.
+
+RATCHET (--baseline FILE; the CI job sufficiency-ratchet runs it on a pull
+request): FILE is the --json report of the base branch, made by the base tree's own
+copy of this script. For every rule in both reports, the head must not have fewer
+verified negatives, lose an item those negatives exercised (a rule item, a
+correlation item, or a correlation base's item), have fewer passing positive cases,
+or lose its sidecar, and must keep its logsource (and each correlation base's: a
+rule moved to a sibling service of its provider is scored on other slices and
+budgets). Each decrease is printed and fails the run, so deleting or
+weakening negatives above the R2 minimum (content-only edits) goes to a human
+instead of merging on its own.
 
 Usage:
     python3 detections/check_sufficiency.py                      # the gate
     python3 detections/check_sufficiency.py --rule detections/sigma/T1040/afinet_raw_socket.yml
     python3 detections/check_sufficiency.py -v                   # list each rule's negatives
     python3 detections/check_sufficiency.py --json out.json --markdown "$GITHUB_STEP_SUMMARY"
+    python3 detections/check_sufficiency.py --baseline base.json # the gate plus the ratchet
 """
 
 import argparse
 import glob
+import hashlib
 import json
 import os
 import re
 import statistics
 import sys
+from collections import namedtuple
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SIGMA = os.path.join(REPO, "detections", "sigma")
@@ -120,34 +185,47 @@ RULE_MATERIAL = re.compile(r"[^./][^/]*\.(yml|cases\.jsonl|md)")
 
 
 def unexpected_sigma_files():
-    """Entries under detections/sigma/ that are not rule material (R0).
+    """Entries under detections/sigma/ that are not rule material, and anything in
+    detections/ (or detections/__pycache__/) named sigma.* (R0), as repo paths.
 
     Allowed: T<id>/<stem>.yml, T<id>/<stem>.cases.jsonl, T<id>/*.md and *.md at
-    the top. A directory is reported once, with a trailing slash.
+    the top. A directory is reported once, with a trailing slash. The sigma.* check
+    mirrors sigma_eval's import guard, so R0 names the file itself.
     """
     def name(entry, prefix=""):
         return prefix + entry.name + ("/" if entry.is_dir(follow_symlinks=False) else "")
 
     bad = []
+    detections = os.path.dirname(SIGMA)
+    for sub in ("", "__pycache__"):
+        try:
+            names = sorted(os.listdir(os.path.join(detections, sub)))
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        bad += [f"detections/{sub + '/' if sub else ''}{n}" for n in names
+                if n.lower().startswith("sigma.")]
     if not os.path.isdir(SIGMA):
-        return ["(detections/sigma/ itself is missing)"]
+        return bad + ["detections/sigma/ (the directory itself is missing)"]
     for entry in sorted(os.scandir(SIGMA), key=lambda e: e.name):
         if entry.is_dir(follow_symlinks=False) and TECHNIQUE_DIR.fullmatch(entry.name):
             for item in sorted(os.scandir(entry.path), key=lambda e: e.name):
                 if not (item.is_file(follow_symlinks=False) and RULE_MATERIAL.fullmatch(item.name)):
-                    bad.append(name(item, entry.name + "/"))
+                    bad.append("detections/sigma/" + name(item, entry.name + "/"))
         elif not (entry.is_file(follow_symlinks=False) and entry.name.endswith(".md")
                   and not entry.name.startswith(".")):
-            bad.append(name(entry))
+            bad.append("detections/sigma/" + name(entry))
     return bad
 
 
 def hygiene_errors(unexpected):
-    return [f"R0: unexpected `detections/sigma/{p}`: detections/sigma/ holds only "
+    return [f"R0: unexpected `{p}`: detections/sigma/ holds only "
             "T<id>/<stem>.yml rules, their <stem>.cases.jsonl sidecars and *.md notes (no "
             "other extension, nested directory, hidden file or symlink: a rule one level down "
             "is never checked, and the directory shares pySigma's `sigma` namespace); move "
-            "or delete it" for p in unexpected]
+            "or delete it" if p.startswith("detections/sigma/") else
+            f"R0: unexpected `{p}`: nothing in detections/ (or its __pycache__/) may be named "
+            "sigma.*, because a `sigma` module beside the validators would replace pySigma "
+            "whole; move or delete it" for p in unexpected]
 
 
 def _arg_parser():
@@ -161,14 +239,18 @@ def _arg_parser():
                     help="append a Markdown summary (e.g. $GITHUB_STEP_SUMMARY)")
     ap.add_argument("-v", "--verbose", action="store_true",
                     help="list every rule's verified negatives and rename analysis")
+    ap.add_argument("--baseline", metavar="FILE",
+                    help="the base branch's --json report: also fail when a rule in both loses "
+                         "verified negatives, exercised items, passing positives or its "
+                         "sidecar, or changes its logsource")
     return ap
 
 
 def _hygiene_exit(unexpected):
-    """Report unexpected files under detections/sigma/ without importing pySigma."""
+    """Report unexpected files in detections/ without importing pySigma."""
     args = _arg_parser().parse_args()
     errors = hygiene_errors(unexpected)
-    line = f"{len(errors)} unexpected file(s) under detections/sigma/ (R0); no rule was checked"
+    line = f"{len(errors)} unexpected file(s) in detections/ (R0); no rule was checked"
     print("Check sufficiency: repository hygiene (R0) fails, so pySigma was not imported:")
     for e in errors:
         print(f"  [ERROR] {e}")
@@ -195,19 +277,28 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rule_cases  # noqa: E402
 import sigma_eval  # noqa: E402
 import sigma_explain  # noqa: E402
+import yaml  # noqa: E402
+
+# A human-approved waiver: the reason, and detection_digest() of the rule content
+# the human approved. A rule that changes no longer matches its digest, and the
+# waiver stops excusing it until a human re-approves the new content. `keep` is
+# used by PLATFORM_NAMING only.
+Waiver = namedtuple("Waiver", "why digest keep", defaults=((),))
 
 # Rules no validator can match-gate, because CI does not collect their telemetry.
 # Each still needs a passing positive in its sidecar. Adding an entry is a waiver
 # of R1: a human decides it, with the reason, and approves the change.
 COMPILE_ONLY = {
-    "T1552.007/linux_k8s_sa_token_read.yml":
+    "T1552.007/linux_k8s_sa_token_read.yml": Waiver(
         "node file-access telemetry (open of the projected service-account token) is not "
         "collected on the kind CI cluster; validate_apiserver_detections.py compiles the rule "
         "but cannot match-gate it",
-    "T1543.005/linux_static_pod_manifest_write.yml":
+        "d18f7d7bb4e66140adc3bd05adb5aa87b464397ed7612439b52872d0df0e1914"),
+    "T1543.005/linux_static_pod_manifest_write.yml": Waiver(
         "node file-write telemetry (a manifest dropped in the kubelet's staticPodPath) is not "
         "collected on the kind CI cluster; validate_staticpod_detections.py compiles the rule "
         "but cannot match-gate it",
+        "10d6917afde97ae9871f2446a55e6b094111a8076196967b43a07d5fe280524f"),
 }
 
 # Pure-surface rules: every positive item is a SURFACE_FIELDS field, so the rule
@@ -222,55 +313,156 @@ COMPILE_ONLY = {
 # benign corpus: the rule must be scored there, under a budget. A human decides
 # each entry, with the reason, and approves the change.
 PRESENCE = {
-    "T1134/k8s_impersonation.yml":
+    "T1134/k8s_impersonation.yml": Waiver(
         "TRR9009: any request carrying impersonatedUser is the technique; the API server "
         "stamps it only for an impersonated request, so presence is the chokepoint",
-    "T1053.007/k8s_cri_job_pod.yml":
+        "8598e83d949f32f868b3a11c8b986b7ca5c311a3266209455784b0f9d229cd47"),
+    "T1053.007/k8s_cri_job_pod.yml": Waiver(
         "TRR9005 node-runtime fallback: a pod sandbox carrying the job-name label is a Job's "
         "pod; a low-severity hunting rule bounded by its benign-corpus budget",
-    "T1543.005/k8s_cri_static_pod_start.yml":
+        "dd3cf0fd1af3bcd4586191338aed9cbbbf9f0fabe71102b2828de4b2f2eaeb72"),
+    "T1543.005/k8s_cri_static_pod_start.yml": Waiver(
         "TRR9003 chokepoint: the kubelet stamps config.source file/http only on a pod it ran "
         "from a node-local or URL manifest (api otherwise)",
+        "571f06abb83e7cf3acce50fde1266a80518d87c4758b8bd135534870b27b1ac3"),
 }
 
+# Keyed by rule, or "<rule> base:<name>" for one base of a correlation rule.
 CHOKEPOINT = {
-    "T1053.007/k8s_job_create.yml":
+    "T1053.007/k8s_job_create.yml": Waiver(
         "TRR9005 chokepoint: every Job/CronJob procedure is a batch/v1 write; the "
         "controllers' own writes are filtered",
-    "T1068/keyring_add_key_burst.yml":
+        "1c857d69494bb99c723d3530a1b0bca1da2f10fe9f3fab79f7b2ad5b94f7cc3f"),
+    "T1068/copyfail_af_alg_authencesn.yml base:copyfail_splice": Waiver(
+        "splice(2) is the CopyFail page-cache write itself; the AF_ALG base carries the "
+        "argument (a0 = AF_ALG) and the same-pid 5s correlation narrows it",
+        "0b9f45023ac8016d09c0fdc60b4a3642bf2e83702993cd5bc8c4b6cca2966897"),
+    "T1068/dirtypipe_splice_readonly.yml base:dirtypipe_pipe_create": Waiver(
+        "pipe(2)/pipe2(2) is the DirtyPipe setup step; auditd records no descriptor type, so "
+        "the pipe-then-splice sequence on one pid within 5s is the whole signal",
+        "a326cb4dee31ba4faf8865b404af703ccf3538e84f2af02905397d62c5215cf6"),
+    "T1068/dirtypipe_splice_readonly.yml base:dirtypipe_splice": Waiver(
+        "splice(2) is the DirtyPipe page-cache write itself; auditd records no descriptor "
+        "type, so the pipe-then-splice sequence on one pid within 5s is the whole signal",
+        "a326cb4dee31ba4faf8865b404af703ccf3538e84f2af02905397d62c5215cf6"),
+    "T1068/keyring_add_key_burst.yml": Waiver(
         "add_key(2) itself is the keyring-stuffing primitive; the keyring users are filtered",
-    "T1068/perf_event_open_non_profiler.yml":
+        "a2b8ed413767592bca987001ac70204ef5a67079a1fea4971c14e284add87b7f"),
+    "T1068/perf_event_open_non_profiler.yml": Waiver(
         "perf_event_open(2) itself is the escalation surface; profilers are filtered",
-    "T1068/userfaultfd_syscall.yml":
+        "c5a2981b447ed7a7af1bc2f0ba0af676af1e0a29903f222b3e3a766d2466cadf"),
+    "T1068/userfaultfd_syscall.yml": Waiver(
         "userfaultfd(2) itself is the exploit timing primitive and is rare outside CRIU/QEMU",
-    "T1070/k8s_events_deleted.yml":
+        "ada55f947b8af992be5f43d7b7961bfd55b1432904c9918840a2b94fa2368c98"),
+    "T1070/k8s_events_deleted.yml": Waiver(
         "TRR9010 chokepoint: deleting Events is the evidence removal",
-    "T1070/k8s_workload_deleted_evidence.yml":
+        "72ad91074862cb63acccb94ac1bc381e030a32587b8d1c2315370b28f02147aa"),
+    "T1070/k8s_workload_deleted_evidence.yml": Waiver(
         "TRR9010 low-fidelity fallback by design: any pod/job delete",
-    "T1098.001/azure_managed_identity_federated_credential_backdoor.yml":
+        "6ebb782a6613f3a5bf11d2f20c0518aa6e313ec2c6761483852251e617b80961"),
+    "T1098.001/azure_managed_identity_federated_credential_backdoor.yml": Waiver(
         "the Activity Log carries no issuer/subject, so the FIC write operation is the "
         "whole signal (TRR9013 procedure C)",
-    "T1098.006/k8s_rbac_write.yml":
+        "8a7b2d2ac00c745fa8fef0c0cb7636aca0f7855db5ad9cc50ba20247833c9cb1"),
+    "T1098.006/k8s_rbac_write.yml": Waiver(
         "TRR9004 chokepoint: every grant passes through an RBAC write",
-    "T1546/k8s_admission_webhook_created.yml":
+        "792519439219c31634c90239820252c9b290d8886dc207a5ca4294a04fb19bd5"),
+    "T1546/k8s_admission_webhook_created.yml": Waiver(
         "TRR9025 chokepoint: creating an admission controller object",
-    "T1552.007/k8s_secret_access.yml":
+        "118564279afcfcfef6afacfd241e9feb60f7768a5a5248998f6be0ccbff47638"),
+    "T1552.007/k8s_secret_access.yml": Waiver(
         "TRR9006 chokepoint: every API read of a Secret",
-    "T1552.007/k8s_secret_token_request.yml":
+        "02c75f50efdcbadbde1687c623b0557c797fd190c8ccc2f0a1b4b8421100d596"),
+    "T1552.007/k8s_secret_token_request.yml": Waiver(
         "TRR9006 fallback: the TokenRequest create itself; system minters are filtered",
-    "T1572/k8s_pod_portforward.yml":
+        "0f64580b75ec1bb90e066216a47e468a90704cdd41c168c8ba12a910a5c89aa3"),
+    "T1572/k8s_pod_portforward.yml": Waiver(
         "TRR9026 chokepoint: the pods/portforward subresource is the tunnel",
-    "T1609/k8s_pod_ephemeral_container.yml":
+        "b3809fdd4a546ec9227d4ee21a639c67d110cf73ed7b965fbc63b6fa95150e2b"),
+    "T1609/k8s_pod_ephemeral_container.yml": Waiver(
         "TRR9002 strategy 2: a write to pods/ephemeralcontainers is the injection",
-    "T1609/k8s_pod_exec_attach.yml":
+        "d8c58a95b41b744af9e82b72eedd279aaee14a101c7423586bc7ce6f809be5c1"),
+    "T1609/k8s_pod_exec_attach.yml": Waiver(
         "TRR9002 chokepoint: the pods/exec and pods/attach subresources",
-    "T1611/setns_namespace_join.yml":
+        "efcf8dad25a63e1bbb805b035d9b8dc596b91679261b33cfc83a2c9f685a173b"),
+    "T1611/setns_namespace_join.yml": Waiver(
         "setns(2) itself is the namespace-join primitive; container runtimes are filtered",
-    "T1685/io_uring_setup.yml":
+        "fc785a1679f43811e4444ccfb087e245ff10d0492116702f405c4a94c2177cb3"),
+    "T1620/memfd_create_execveat.yml base:memfd_exec_execveat": Waiver(
+        "execveat(2) of the anonymous file is the fileless execution itself; the "
+        "memfd_create-then-execveat sequence on one pid within 10s is the whole signal",
+        "f95a395d9414ed81cb038403fe16609b64551e7419f9b76de1880a0d6235e7c4"),
+    "T1620/memfd_create_execveat.yml base:memfd_exec_memfd_create": Waiver(
+        "memfd_create(2) is the anonymous in-memory file of fileless execution; the "
+        "memfd_create-then-execveat sequence on one pid within 10s is the whole signal",
+        "f95a395d9414ed81cb038403fe16609b64551e7419f9b76de1880a0d6235e7c4"),
+    "T1685/io_uring_setup.yml": Waiver(
         "creating or entering an io_uring ring is the sensor-evasion surface",
-    "T1685/k8s_admission_webhook_disabled.yml":
+        "3f3a92f2619b105d96b031c63c1a9e0a42fa4e0e73432bc59ee0d3f60950f6fa"),
+    "T1685/k8s_admission_webhook_disabled.yml": Waiver(
         "TRR9008 chokepoint: any delete/update/patch of an admission control object",
+        "bdbd86cc9b08db8665df9b0a33549391048be94b1ccf8e0d98b58c3eb0fd921e"),
 }
+
+
+# R4: a rule that keys on a PLATFORM's naming convention, which the emulation's
+# identity embeds after the emulation name (AWS's console names an identity pool's
+# guest role Cognito_<pool>Unauth_Role). The rename test cannot tell that part of
+# the token from the emulation's own naming, so a human names the convention's
+# substrings (`keep`); the rename keeps them and renames every other character.
+PLATFORM_NAMING = {
+    "T1078.004/aws_cognito_unauthenticated_identity_use.yml": Waiver(
+        "the Cognito console names an identity pool's guest role Cognito_<pool>Unauth_Role "
+        "(Amplify: ...-unauthRole); the rule keys on that convention by design and documents "
+        "a renamed guest role as a miss. The emulation's pool name is trr9016Pool, so its "
+        "role is Cognito_trr9016PoolUnauth_Role",
+        "665831c4b77beacc294c500847e49abd330e02ae27a9625a7766ae71e291042c",
+        keep=("Unauth",)),
+}
+
+WAIVERS = (("COMPILE_ONLY", COMPILE_ONLY), ("CHOKEPOINT", CHOKEPOINT), ("PRESENCE", PRESENCE),
+           ("PLATFORM_NAMING", PLATFORM_NAMING))
+
+
+def detection_digest(path):
+    """What a waiver approves: sha256 of the rule file's name, id, logsource,
+    detection and correlation blocks (every YAML document, in order), as canonical
+    JSON. Comments, description, tags and other metadata are not part of it."""
+    with open(path, encoding="utf-8") as fh:
+        docs = [d for d in yaml.safe_load_all(fh) if d]
+    content = [{k: d[k] for k in ("name", "id", "logsource", "detection", "correlation")
+                if k in d} for d in docs if isinstance(d, dict)]
+    text = json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                      default=str)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def waiver_rule(key):
+    """(rule key, base name or None) of a waiver key ("<rule> base:<name>" for a base)."""
+    rule, _, base = key.partition(" base:")
+    return rule, (base or None)
+
+
+def _waiver_json(waiver):
+    return dict(waiver._asdict()) if waiver else None
+
+
+def check_waiver_digest(r, check, table, key, path):
+    """Fail `check` when the waiver's approved digest no longer matches the rule."""
+    waiver = table[key]
+    now = detection_digest(path)
+    if waiver.digest == now:
+        return True
+    name = next(n for n, t in WAIVERS if t is table)
+    r.fail(check, f"the {name} waiver for `{key}` was approved for rule digest "
+                  f"{waiver.digest[:16]}..., and the rule's name/id/logsource/detection/"
+                  f"correlation now digest to {now}: the rule changed since a human approved "
+                  f"the waiver ({waiver.why}), so the waiver no longer excuses it. A human "
+                  "re-reviews the changed rule and, if the reason still holds, re-approves it "
+                  f"by setting the entry's digest to \"{now}\" in check_sufficiency.py (a "
+                  "protected path); otherwise revert the rule change")
+    return False
+
 
 # Validators whose MANIFEST registers positives: (label, module name).
 VALIDATORS = (
@@ -385,11 +577,42 @@ def _cloud_entry(module, entry):
             "load": getattr(module, "load_fixture", None)}
 
 
+CLOUD_PROVIDERS = ("aws", "azure", "gcp")
+
+
+def _proven_on(label, entry):
+    """The logsource fields of the log a MANIFEST entry proves its rule on.
+
+    Each value is read where the validator itself reads it: the API-server
+    validator unpacks (folder, rule, source, ...), the TRR9003 validator (rule,
+    source, ...) and the cloud validator (trr, folder, rule, attack, benign,
+    provider, ...). A value outside the known set raises (a fail-closed error).
+    """
+    if label == "auditd":
+        return {"product": "linux", "service": "auditd"}
+    if label == "trr9002":
+        return {"product": "kubernetes", "service": "audit"}
+    if label in ("apiserver", "trr9003"):
+        source = entry[2] if label == "apiserver" else entry[1]
+        if source not in ("audit", "cri"):
+            raise ValueError(f"MANIFEST entry {entry!r:.120} names log source {source!r}, "
+                             "not 'audit' or 'cri'")
+        return {"product": "kubernetes", "service": source}
+    if label == "cloud":
+        provider = str(entry[5]).lower()
+        if provider not in CLOUD_PROVIDERS:
+            raise ValueError(f"MANIFEST entry {entry!r:.120} names provider {entry[5]!r}, not "
+                             f"one of {', '.join(CLOUD_PROVIDERS)}")
+        return {"product": provider}
+    raise ValueError(f"no log source is known for validator {label}")
+
+
 def load_manifests():
-    """({rule key: [validator label, ...]}, {rule key: [cloud entry, ...]}, errors)."""
+    """({rule key: [validator label, ...]}, {rule key: [cloud entry, ...]},
+    {rule key: [(validator label, logsource it is proven on), ...]}, errors)."""
     import importlib
 
-    positives, cloud, errors = {}, {}, []
+    positives, cloud, proven, errors = {}, {}, {}, []
     for label, name in VALIDATORS:
         try:
             module = importlib.import_module(name)
@@ -400,14 +623,17 @@ def load_manifests():
         for entry in manifest:
             try:
                 key = rule_key(_entry_rule_path(module, entry))
-            except ValueError as e:
+                where = _proven_on(label, entry)
+            except (ValueError, IndexError) as e:
                 errors.append(f"{name}: {e}")
                 continue
             if label not in positives.setdefault(key, []):
                 positives[key].append(label)
+            if (label, where) not in proven.setdefault(key, []):
+                proven[key].append((label, where))
             if label == "cloud":
                 cloud.setdefault(key, []).append(_cloud_entry(module, entry))
-    return positives, cloud, errors
+    return positives, cloud, proven, errors
 
 
 # ---- rule items, for messages ----------------------------------------------
@@ -446,11 +672,59 @@ def surface_atoms(rule):
 
 
 def discriminating_atoms(rule):
-    """Selection items that make the event the technique (not its surface)."""
+    """Selection items that make the event the technique (not its surface).
+
+    A correlation has none of its own: base presence, group-by, timespan, order
+    and threshold say which events go together. What makes an event the
+    technique lives in its bases (see base_items)."""
     if rule.is_correlation:
-        return list(rule.atoms)
+        return []
     surface = set(surface_atoms(rule))
     return [a for a in rule.positive_atoms() if a not in surface]
+
+
+def base_items(rule):
+    """{base ref: (discriminating items, filter items)} of a correlation's bases."""
+    return {ref: (discriminating_atoms(base), base.negated_atoms())
+            for ref, base in rule.bases.items()}
+
+
+def base_negative_items(rule, events, refs):
+    """Base-level items a correlation negative breaks, as "base:<ref>/<item>".
+
+    For each base the negative misses (`refs`, from its verified `breaks` or the
+    grader's repairs), every event of the set that no base matches and that misses
+    that base by one item flip (near-miss) or by one filter (filtered) is marked as
+    the base's match, and the compiled correlation (that base relaxed to "the
+    marked event") runs on the set. If it fires, the event is the base's near-miss
+    in the right group and window, and the items it flips are what the negative
+    exercises in that base.
+    """
+    out = []
+    table = sigma_eval.EventTable(events)
+    matched = {i for base in rule.bases.values() for hit in table.hit_indices(base.sql)
+               for i in hit}
+    for ref in refs:
+        base = rule.bases.get(ref)
+        if base is None:
+            continue
+        rows, _ = base.truth_table(table)
+        for i, event in enumerate(events):
+            if i in matched:
+                continue
+            v = base.verdict(event, rows[i], False)
+            if v.mismatch or v.kind not in sigma_explain.NON_TRIVIAL or not v.atoms:
+                continue
+            key = f"base:{ref}"
+            marked = [dict(e, **{sigma_explain.REPAIR_FIELD: key}) if j == i else e
+                      for j, e in enumerate(events)]
+            if not rule._fires(marked, rule._variant(key)):
+                continue
+            for atom in v.atoms:
+                item = f"{key}/{atom}"
+                if item not in out:
+                    out.append(item)
+    return out
 
 
 def _surface_parts(rule):
@@ -481,8 +755,9 @@ def _negative_hint(rule, path, exclude=(), cloud_fixture=None, keep_extra=None):
         bases = [a for a in rule.atoms if a.startswith("base:") and a not in exclude]
         other = [a for a in ("group-by", "timespan", "order", "threshold")
                  if a in rule.atoms and a not in exclude]
-        text = f"Add a near-miss case to {target}: half a correlation, every event but one " \
-               f"base's (breaks one of: {', '.join(bases) or '-'})"
+        text = f"Add a near-miss case to {target}: the full correlation whose event for one " \
+               "base misses that base by one discriminating item, or half a correlation, " \
+               f"every event but one base's (breaks one of: {', '.join(bases) or '-'})"
         if other:
             text += f", or every base but in the wrong {'/'.join(other)} " \
                     f"(breaks one of: {', '.join(other)})"
@@ -529,18 +804,39 @@ def _scramble(text):
     return "".join(out)
 
 
+# The rest of an identity token after an emulation name or a marker: letters,
+# digits, `_`, `.` and `-` (a token ends at `/`, `:`, `=`, a quote, a space, ...).
+TOKEN_REST = r"[\w.-]*"
+
+
 def rename_pattern(markers=()):
-    """Every emulation name, and each gate marker (longest first, so a marker that
-    contains an emulation name is renamed whole), case-insensitive."""
-    alts = [re.escape(m) for m in sorted({m for m in markers if m}, key=len, reverse=True)]
-    return re.compile("|".join(alts + [EMULATION_NAME.pattern]), re.IGNORECASE)
+    """Every emulation IDENTITY: an emulation name or a gate marker (longest
+    marker first) and the rest of its token, case-insensitive. `deteng_val_x`,
+    `deteng_afxdp_socket_behavioral` and `trr9026-target` are renamed whole.
+
+    The token is renamed from the name onward, not from its first character: the
+    platform writes what comes before it (the AWS unique-id type in
+    `AKIATRR9012EXAMPLE01`, `ami-`, `fs-`, `Cognito_`), and a rule may key on
+    that. A rule keyed on such a prefix is not caught here (residual)."""
+    cores = [re.escape(m) for m in sorted({m for m in markers if m}, key=len, reverse=True)]
+    cores.append(EMULATION_NAME.pattern)
+    return re.compile(rf"(?:{'|'.join(cores)}){TOKEN_REST}", re.IGNORECASE)
 
 
-def rename_names(event, pattern):
+def _rename_token(token, keep=()):
+    """_scramble(token), except the substrings a PLATFORM_NAMING waiver keeps."""
+    kept = set()
+    for k in keep:
+        for m in re.finditer(re.escape(k), token, re.IGNORECASE):
+            kept.update(range(*m.span()))
+    return "".join(ch if i in kept else _scramble(ch) for i, ch in enumerate(token))
+
+
+def rename_names(event, pattern, keep=()):
     """The flat event with every match of `pattern` in a value replaced by a neutral
     token of the same length and character classes (see _scramble)."""
-    return {k: pattern.sub(lambda m: _scramble(m.group(0)), v) if isinstance(v, str) else v
-            for k, v in event.items()}
+    return {k: pattern.sub(lambda m: _rename_token(m.group(0), keep), v)
+            if isinstance(v, str) else v for k, v in event.items()}
 
 
 def _fires(rule, events):
@@ -564,8 +860,8 @@ def _flipped_atoms(rule, own, renamed):
     return [a for a in rule.atoms if any(rows[i][a] != rows[n + i][a] for i in range(n))]
 
 
-def rename_test(rule, units, pattern):
-    """Rename the emulation's names in every positive unit; does each still fire?
+def rename_test(rule, units, pattern, keep=()):
+    """Rename the emulation's identities in every positive unit; does each still fire?
 
     `units` is [(label, [flat events])], each a unit that fires the rule (a
     passing positive case, or one marker-carrying attack record / alert). Returns
@@ -581,7 +877,7 @@ def rename_test(rule, units, pattern):
         if not names:
             continue  # nothing to rename: the unit cannot show anything either way
         out["renamed"] += 1
-        renamed = [rename_names(e, pattern) for e in own]
+        renamed = [rename_names(e, pattern, keep) for e in own]
         flipped = _flipped_atoms(rule, own, renamed)
         out["name_keyed"] |= set(flipped)
         if not _fires(rule, renamed):
@@ -637,9 +933,10 @@ class Report:
         self.compile_only = None
         self.cases_file = None
         self.case_total = self.case_passed = 0
-        self.sidecar_positive = False
-        self.negatives = []  # {"source", "kind", "atoms"}
+        self.positive_cases = 0  # passing sidecar positive cases
+        self.negatives = []  # {"source", "kind", "atoms"[, "base_items"]}
         self.exercised = []
+        self.base_exercised = []  # correlation: "base:<ref>/<item>" its negatives break
         self.positive_units = []  # (label, [flat events]) the rename test runs on
         self.rename = None
         self.failures = []  # (check, message)
@@ -656,8 +953,21 @@ class Report:
         return "FAIL" if self.failures else ("WARN" if self.warnings else "PASS")
 
     @property
+    def sidecar_positive(self):
+        return self.positive_cases > 0
+
+    @property
     def atoms(self):
         return list(self.rule.atoms) if self.rule else []
+
+    @property
+    def logsources(self):
+        """The logsource of the rule, or of each base of a correlation ("base:<ref>")."""
+        if not self.rule:
+            return None
+        if self.rule.is_correlation:
+            return {f"base:{ref}": dict(b.logsource) for ref, b in sorted(self.rule.bases.items())}
+        return {"rule": dict(self.rule.logsource)}
 
     @property
     def ratio(self):
@@ -667,13 +977,17 @@ class Report:
         return {
             "rule": self.key, "platform": self.platform, "status": self.status,
             "logsource": dict(self.rule.logsource) if self.rule else None,
-            "positives": self.positives, "compile_only": self.compile_only,
-            "chokepoint": CHOKEPOINT.get(self.key),
+            "logsources": self.logsources,
+            "positives": self.positives, "compile_only": _waiver_json(self.compile_only),
+            "chokepoint": {k: _waiver_json(w) for k, w in CHOKEPOINT.items()
+                           if waiver_rule(k)[0] == self.key} or None,
+            "presence": _waiver_json(PRESENCE.get(self.key)),
             "cases": {"file": rel(self.cases_file) if self.cases_file else None,
                       "total": self.case_total, "passed": self.case_passed,
-                      "positive": self.sidecar_positive},
+                      "positive": self.sidecar_positive, "positives": self.positive_cases},
             "negatives": self.negatives,
             "atoms": {"total": len(self.atoms), "exercised": self.exercised,
+                      "base_exercised": self.base_exercised,
                       "ratio": round(self.ratio, 3)},
             "rename": self.rename,
             "failures": [{"check": c, "message": m} for c, m in self.failures],
@@ -688,7 +1002,30 @@ def _fixture_label(path, events, i):
     return f"{rel(path)} record #{i} ({what})"
 
 
-def check_rule(path, positives, cloud):
+def _base_refs(atoms):
+    return [a[len("base:"):] for a in atoms if a.startswith("base:")]
+
+
+def check_logsource(r, rule, proven):
+    """R1: the rule's logsource names the log each validator proves it on."""
+    sources = [(f"base:{ref} ", b.logsource) for ref, b in rule.bases.items()] \
+        if rule.is_correlation else [("", rule.logsource)]
+    for label, want in proven:
+        for where, logsource in sources:
+            have = {k: str(logsource.get(k) or "").lower() for k in want}
+            if have != want:
+                shown = "/".join(f"{k}: {logsource.get(k)}" for k in want)
+                r.fail("R1", f"{where}logsource ({shown}) disagrees with the log the {label} "
+                             "validator proves the rule on ("
+                             + ", ".join(f"{k}: {v}" for k, v in want.items()) + "). The "
+                             "benign corpus scores a rule only on the slices of its logsource, "
+                             "so the rule would be scored on a log it never reads (a noisy rule "
+                             "escapes its budget that way). Set the logsource to the log the "
+                             "validator reads, or register the rule with the validator of its "
+                             "log")
+
+
+def check_rule(path, positives, cloud, proven=None):
     r = Report(path)
     try:
         rule = sigma_explain.load(path)
@@ -725,13 +1062,17 @@ def check_rule(path, positives, cloud):
                 continue
             r.case_passed += 1
             if case["kind"] == "positive":
-                r.sidecar_positive = True
+                r.positive_cases += 1
                 r.positive_units.append((f"positive case '{case['name']}'",
                                          [sigma_eval.flatten(e) for e in case["events"]]))
             elif case["kind"] in ("near-miss", "filtered"):
                 breaks = case["breaks"] if isinstance(case["breaks"], list) else [case["breaks"]]
-                r.negatives.append({"source": f"case:{case['name']}", "kind": case["kind"],
-                                    "atoms": list(breaks)})
+                negative = {"source": f"case:{case['name']}", "kind": case["kind"],
+                            "atoms": list(breaks)}
+                if rule.is_correlation:
+                    negative["base_items"] = base_negative_items(
+                        rule, [sigma_eval.flatten(e) for e in case["events"]], _base_refs(breaks))
+                r.negatives.append(negative)
             elif res.verdict.kind in sigma_explain.NON_TRIVIAL and res.verdict.atoms:
                 unverified.append(f"case '{case['name']}' is declared {case['kind']} but "
                                   f"already grades {res.verdict.kind} on "
@@ -759,10 +1100,15 @@ def check_rule(path, positives, cloud):
                 continue  # the cloud validator fails on this; it is no negative
             fixture_grades.append(v.kind)
             if v.kind in sigma_explain.NON_TRIVIAL:
-                r.negatives.append({"source": f"fixture:{label}", "kind": v.kind,
-                                    "atoms": list(v.atoms)})
+                negative = {"source": f"fixture:{label}", "kind": v.kind, "atoms": list(v.atoms)}
+                if rule.is_correlation:
+                    negative["base_items"] = base_negative_items(rule, events,
+                                                                 _base_refs(v.atoms))
+                r.negatives.append(negative)
 
     r.exercised = [a for a in rule.atoms if any(a in n["atoms"] for n in r.negatives)]
+    for n in r.negatives:
+        r.base_exercised += [b for b in n.get("base_items", ()) if b not in r.base_exercised]
 
     # R1 verdict.
     if r.positives:
@@ -780,11 +1126,19 @@ def check_rule(path, positives, cloud):
                      f"{REGISTER_HINT.get(r.platform, 'a validator MANIFEST')}; for a "
                      "documented telemetry gap a human may add it to COMPILE_ONLY in "
                      "check_sufficiency.py with the reason (it then needs a sidecar positive)")
+    if r.compile_only:
+        check_waiver_digest(r, "R1", COMPILE_ONLY, r.key, path)
+    check_logsource(r, rule, (proven or {}).get(r.key, []))
 
     # R2 verdict.
+    for key in [k for k in CHOKEPOINT if waiver_rule(k)[0] == r.key]:
+        check_waiver_digest(r, "R2", CHOKEPOINT, key, path)
+    if r.key in PRESENCE:
+        check_waiver_digest(r, "R2", PRESENCE, r.key, path)
     disc = set(discriminating_atoms(rule))
     pure_surface = not disc
-    if pure_surface and r.key not in CHOKEPOINT:
+    needs = check_bases(r, rule) if rule.is_correlation else {}
+    if not rule.is_correlation and pure_surface and r.key not in CHOKEPOINT:
         r.fail("R2", f"every positive item is a surface field ("
                      f"{_surface_parts(rule) or 'it has no positive item'}), so "
                      "the rule matches every record of that kind and no negative can show "
@@ -793,7 +1147,11 @@ def check_rule(path, positives, cloud):
                      "policy pattern): restore it. Only if the record kind itself is the "
                      "technique may a human list the rule in CHOKEPOINT in check_sufficiency.py, "
                      "with the reason")
-    if r.key in CHOKEPOINT and not pure_surface:
+    if r.key in CHOKEPOINT and rule.is_correlation:
+        r.warn("R2", "CHOKEPOINT lists the correlation itself, but R2 runs on each base: name "
+                     f"the base (\"{r.key} base:<name>\") or remove the stale waiver from "
+                     "check_sufficiency.py")
+    elif r.key in CHOKEPOINT and not pure_surface:
         r.warn("R2", "listed in CHOKEPOINT but the rule has discriminating items ("
                      + ", ".join(a for a in rule.atoms if a in disc)
                      + "); remove the stale waiver from check_sufficiency.py")
@@ -806,7 +1164,7 @@ def check_rule(path, positives, cloud):
     if not r.negatives and r.key in PRESENCE and presence:
         r.warn("R2", "presence rule (PRESENCE waiver): no negative can be one item flip from "
                      f"firing; its proof is the positive case and its benign-corpus budget "
-                     f"({PRESENCE[r.key]})")
+                     f"({PRESENCE[r.key].why})")
     elif not r.negatives:
         why = []
         if r.cases_file is None:
@@ -823,6 +1181,26 @@ def check_rule(path, positives, cloud):
                      + _negative_hint(rule, path, cloud_fixture=next(
                          (e["benign"] for e in cloud.get(r.key, []) if e["benign"]), None))
                      + ("" if not unverified else ". Note: " + "; ".join(unverified)))
+    elif rule.is_correlation:
+        # Each base with an argument needs a negative that breaks it in place.
+        for ref, decisive in needs.items():
+            want = {f"base:{ref}/{a}" for a in decisive}
+            if any(want & set(n.get("base_items", ())) for n in r.negatives):
+                continue
+            base = rule.bases[ref]
+            disc_items = [a for a in decisive if a not in base.negated_atoms()]
+            keep = _surface_text(base) or "the base's other items"
+            r.fail("R2", f"no verified negative breaks a discriminating item of base:{ref} ("
+                         + ", ".join(atom_spec(base, a) for a in disc_items[:6]) + "): every "
+                         "negative only drops a base's event or moves events out of the group or "
+                         "the window, which passes just as well for the rule with that base's "
+                         "argument deleted. Add a near-miss case to "
+                         f"`{_cases_rel(path)}`: the full correlation (one group, inside the "
+                         f"window) whose base:{ref} event keeps {keep} and breaks exactly one of "
+                         "those items, declared `breaks: [\"base:" + ref + "\"]`"
+                         + (f"; or a filtered look-alike for its filter "
+                            f"({', '.join(base.negated_atoms()[:4])})"
+                            if base.negated_atoms() else ""))
     elif not pure_surface:
         # A surface-only negative passes as well for the rule with its argument
         # deleted; it needs company that breaks a discriminating item or a filter.
@@ -837,6 +1215,31 @@ def check_rule(path, positives, cloud):
 
     check_names(r, rule, path, cloud.get(r.key, []))
     return r
+
+
+def check_bases(r, rule):
+    """R2 on each base of a correlation: a pure-surface base fails unless CHOKEPOINT
+    names it. Returns {base ref: decisive items} for every base with an argument
+    (discriminating items, plus its filters), which a negative must break in place."""
+    needs = {}
+    for ref, (disc, filters) in base_items(rule).items():
+        key = f"{r.key} base:{ref}"
+        if not disc and key not in CHOKEPOINT:
+            r.fail("R2", f"base:{ref}: every positive item of the base is a surface field ("
+                         f"{_surface_parts(rule.bases[ref]) or 'it has no positive item'}), so "
+                         "it matches every record of that kind and the correlation's group-by, "
+                         "window and order are all that is left of the argument. This is the "
+                         "shape a base takes when it loses its argument (an `a0`, a protocol, a "
+                         "flag): restore it. Only if the record kind itself is that step of the "
+                         f"technique may a human list \"{key}\" in CHOKEPOINT in "
+                         "check_sufficiency.py, with the reason")
+        elif disc and key in CHOKEPOINT:
+            r.warn("R2", f"CHOKEPOINT lists `{key}` but the base has discriminating items ("
+                         + ", ".join(disc) + "); remove the stale waiver from "
+                         "check_sufficiency.py")
+        if disc:
+            needs[ref] = list(disc) + list(filters)
+    return needs
 
 
 def check_names(r, rule, path, entries):
@@ -886,8 +1289,12 @@ def check_names(r, rule, path, entries):
                          "Write it as marker(...) in the validate_cloud_detections.py MANIFEST")
 
     # The rename test (every platform).
+    keep = ()
+    if r.key in PLATFORM_NAMING:
+        check_waiver_digest(r, "R4", PLATFORM_NAMING, r.key, path)
+        keep = tuple(PLATFORM_NAMING[r.key].keep)
     units = r.positive_units + attack_units
-    r.rename = dict(rename_test(rule, units, pattern), markers=markers,
+    r.rename = dict(rename_test(rule, units, pattern, keep), markers=markers, kept=list(keep),
                     attack_units=len(attack_units))
     if not units:
         r.fail("R4", "no positive unit to run the rename test on: "
@@ -908,7 +1315,7 @@ def check_names(r, rule, path, entries):
         shown = "; ".join(s["unit"] for s in stopped[:3]) \
             + (f" (+{len(stopped) - 3} more)" if len(stopped) > 3 else "")
         renames = ", ".join(f"{n} -> {_scramble(n)}" for n in list(names.values())[:4])
-        r.fail("R4", f"renaming the emulation's names ({renames}) stops the rule firing on "
+        r.fail("R4", f"renaming the emulation's identities ({renames}) stops the rule firing on "
                      f"{len(stopped)}/{len(units)} positive unit(s): {shown}. Items that flip: "
                      f"{', '.join(flipped) or 'no single item'}. The rule keys on the names the "
                      "emulation gives its objects (or on the validator gate's marker), however "
@@ -977,19 +1384,33 @@ def thin_checks(reports):
 def run(selected=None):
     """Check every rule. Returns (reports for the selection, medians, global errors)."""
     errors = hygiene_errors(unexpected_sigma_files())
-    positives, cloud, manifest_errors = load_manifests()
+    positives, cloud, proven, manifest_errors = load_manifests()
     errors += manifest_errors
     paths = sorted(glob.glob(os.path.join(SIGMA, "*", "*.yml")))
-    reports = [check_rule(p, positives, cloud) for p in paths]
+    reports = [check_rule(p, positives, cloud, proven) for p in paths]
     medians = thin_checks(reports)
 
-    known = {r.key for r in reports}
-    for key in sorted(set(positives) - known):
+    known = {r.key: r.rule for r in reports}
+    for key in sorted(set(positives) - set(known)):
         errors.append(f"a validator MANIFEST registers {key}, which does not exist")
-    for key in sorted(set(COMPILE_ONLY) - known):
-        errors.append(f"COMPILE_ONLY lists {key}, which does not exist; remove the entry")
-    for key in sorted(set(CHOKEPOINT) - known):
-        errors.append(f"CHOKEPOINT lists {key}, which does not exist; remove the entry")
+    for name, table in WAIVERS:
+        for key in sorted(table):
+            rule, base = waiver_rule(key)
+            if rule not in known:
+                errors.append(f"{name} lists {key}, which does not exist; remove the entry")
+            elif base is not None and not (getattr(known[rule], "is_correlation", False)
+                                           and base in known[rule].bases):
+                errors.append(f"{name} lists {key}, but {rule} has no correlation base named "
+                              f"{base!r}; remove or rename the entry")
+            elif base is not None and name != "CHOKEPOINT":
+                errors.append(f"{name} lists {key}: only CHOKEPOINT waives one base of a "
+                              "correlation; remove the entry")
+            elif not (isinstance(table[key], Waiver) and isinstance(table[key].digest, str)
+                      and re.fullmatch(r"[0-9a-f]{64}", table[key].digest)):
+                errors.append(f"{name}[{key!r}] is not Waiver(why, <sha256 detection_digest>)")
+            elif (name == "PLATFORM_NAMING") != bool(table[key].keep):
+                errors.append(f"{name}[{key!r}]: `keep` belongs to PLATFORM_NAMING entries, and "
+                              "every PLATFORM_NAMING entry names the substrings it keeps")
     for case_file in sorted(glob.glob(os.path.join(SIGMA, "*", "*.cases.jsonl"))):
         if not os.path.exists(case_file[:-len(".cases.jsonl")] + ".yml"):
             errors.append(f"`{rel(case_file)}` has no rule next to it (rename it with its rule "
@@ -1027,14 +1448,17 @@ def print_report(reports, medians, errors, verbose=False, subset=False):
         for r in reports:
             print(f"  {r.key}")
             for n in r.negatives:
-                print(f"      {n['kind']:<9} {n['source']}  breaks {', '.join(n['atoms'])}")
+                print(f"      {n['kind']:<9} {n['source']}  breaks {', '.join(n['atoms'])}"
+                      + (f"  (in place: {', '.join(n['base_items'])})"
+                         if n.get("base_items") else ""))
             if r.rename:
                 n = r.rename
                 print(f"      rename test: {n['renamed']}/{n['units']} positive unit(s) carry a "
                       f"name ({n['attack_units']} attack record(s)); markers "
                       f"{', '.join(repr(m) for m in n['markers']) or '-'}; stopped firing: "
                       f"{len(n['stopped'])}; name-keyed items: "
-                      f"{', '.join(n['name_keyed']) or '-'}")
+                      f"{', '.join(n['name_keyed']) or '-'}"
+                      + (f"; kept (PLATFORM_NAMING): {', '.join(n['kept'])}" if n['kept'] else ""))
     failing = [r for r in reports if r.failures]
     if errors or failing:
         print("\nFailures (each fails the gate; the message says what to add):")
@@ -1102,6 +1526,100 @@ def write_markdown(path, reports, medians, errors, subset=False):
         fh.write("\n".join(lines) + "\n\n")
 
 
+# ---- the ratchet (--baseline) -----------------------------------------------
+
+
+def ratchet(reports, baseline_path):
+    """Compare each rule in both reports with the base branch's --json report.
+
+    Returns (decreases, errors): one line per rule that has fewer verified
+    negatives, lost an item its negatives exercised (rule, correlation or base
+    item), has fewer passing positive cases, lost its sidecar, or changed its
+    logsource (or a base's); and the reasons
+    the baseline cannot be used (each fails the run: the ratchet fails closed).
+    """
+    try:
+        with open(baseline_path, encoding="utf-8") as fh:
+            rules = json.load(fh)["rules"]
+        base = {b["rule"]: b for b in rules}
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        return [], [f"--baseline {baseline_path}: not a check_sufficiency.py --json report "
+                    f"({type(e).__name__}: {e})"]
+    if not base:
+        return [], [f"--baseline {baseline_path} holds no rule (the base run failed before "
+                    "checking any rule, e.g. on R0 hygiene), so nothing can be compared"]
+    decreases = []
+    for r in reports:
+        b = base.get(r.key)
+        if b is None:
+            continue  # a new rule: nothing to ratchet against
+        lost = []
+        b_neg = [n.get("source") for n in b.get("negatives") or []]
+        if len(r.negatives) < len(b_neg):
+            now = {n["source"] for n in r.negatives}
+            gone = [n for n in b_neg if n not in now]
+            lost.append(f"verified negatives {len(b_neg)} -> {len(r.negatives)}"
+                        + (f" (gone: {', '.join(gone)})" if gone else ""))
+        atoms = b.get("atoms") or {}
+        for field, label, have in (("exercised", "items", r.exercised),
+                                   ("base_exercised", "base items", r.base_exercised)):
+            gone = [a for a in atoms.get(field) or [] if a not in have]
+            if gone:
+                lost.append(f"{label} its negatives exercised, now untested: {', '.join(gone)}")
+        cases = b.get("cases") or {}
+        b_pos = cases.get("positives")
+        if not isinstance(b_pos, int):
+            b_pos = 1 if cases.get("positive") else 0
+        if r.positive_cases < b_pos:
+            lost.append(f"passing positive cases {b_pos} -> {r.positive_cases}")
+        if cases.get("file") and not r.cases_file:
+            lost.append(f"its sidecar `{cases['file']}` is gone")
+        b_ls = b.get("logsources")
+        if b_ls is None and b.get("logsource") is not None:
+            b_ls = {"rule": b["logsource"]}  # a report from before "logsources"
+        if b_ls is not None and r.logsources is not None and b_ls != r.logsources:
+            lost.append(f"logsource changed ({_logsources_text(b_ls)} -> "
+                        f"{_logsources_text(r.logsources)}): the benign corpus scores a rule "
+                        "only on the slices of its logsource, so a move changes which budget "
+                        "and which slices apply")
+        if lost:
+            decreases.append(f"{r.key}: " + "; ".join(lost))
+    return decreases, []
+
+
+def _logsources_text(logsources):
+    return "; ".join((f"{k} " if k != "rule" else "")
+                     + "/".join(f"{f}: {v}" for f, v in sorted((ls or {}).items()))
+                     for k, ls in sorted(logsources.items()))
+
+
+def print_ratchet(baseline_path, decreases, errors):
+    print(f"\nRatchet against {baseline_path} (the base branch's report):")
+    for e in errors:
+        print(f"  [ERROR] {e}")
+    for d in decreases:
+        print(f"  [RATCHET] {d}")
+    if errors or decreases:
+        print(f"FAILED: {len(decreases)} rule(s) lost checks against the base branch"
+              + (f"; {len(errors)} baseline error(s)" if errors else "")
+              + ". A decrease is a human's decision: restore the checks, or a human approves "
+                "the pull request as it is.")
+    else:
+        print("OK: no rule has fewer verified negatives, exercised items, passing positives or "
+              "sidecars than on the base branch, or a different logsource.")
+
+
+def write_ratchet_markdown(path, decreases, errors):
+    ok = not (decreases or errors)
+    lines = ["## Sufficiency ratchet (vs the base branch)", "",
+             "**PASS**: no rule lost checks." if ok else
+             f"**FAIL**: {len(decreases)} rule(s) lost checks against the base branch.", ""]
+    lines += [f"- **error**: {e}" for e in errors]
+    lines += [f"- {d}" for d in decreases]
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n\n")
+
+
 def _resolve(path):
     for candidate in (path, os.path.join(REPO, path), os.path.join(SIGMA, path)):
         if os.path.isfile(candidate) and candidate.endswith(".yml"):
@@ -1128,12 +1646,20 @@ def main():
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump({"summary": summary(reports, medians, errors, subset),
-                       "compile_only": COMPILE_ONLY, "chokepoint": CHOKEPOINT,
+                       **{name.lower(): {k: _waiver_json(w) for k, w in table.items()}
+                          for name, table in WAIVERS},
                        "rules": [r.to_json() for r in reports]}, fh, indent=2)
             fh.write("\n")
     if args.markdown:
         write_markdown(args.markdown, reports, medians, errors, subset)
-    return 0 if summary(reports, medians, errors, subset)["ok"] else 1
+    ok = summary(reports, medians, errors, subset)["ok"]
+    if args.baseline:
+        decreases, ratchet_errors = ratchet(reports, args.baseline)
+        print_ratchet(args.baseline, decreases, ratchet_errors)
+        if args.markdown:
+            write_ratchet_markdown(args.markdown, decreases, ratchet_errors)
+        ok = ok and not (decreases or ratchet_errors)
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

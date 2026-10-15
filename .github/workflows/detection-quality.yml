@@ -9,12 +9,23 @@ name: detection-quality
 #                      would fire the rule (detections/rule_cases.py). Hard gate.
 #   check-sufficiency  every rule must ship a positive and at least one VERIFIED
 #                      non-trivial negative (one that shares the chokepoint and fails
-#                      a required argument or a correlation half), and no rule may key
-#                      on an emulation marker (detections/check_sufficiency.py). Hard gate.
+#                      a required argument, for a correlation an argument of each
+#                      base), and no rule may key on an emulation marker
+#                      (detections/check_sufficiency.py). Hard gate.
+#   sufficiency-ratchet  PULL REQUESTS ONLY. The base branch's own
+#                      check_sufficiency.py reports the base tree (--json), and the
+#                      head runs with --baseline: a rule that loses verified negatives,
+#                      exercised items, passing positives or its sidecar, or changes
+#                      its logsource, fails this job, so automerge holds and a human
+#                      decides. Sidecar cases are
+#                      content, so without it a PR could delete negatives above the
+#                      R2 minimum and merge on its own. Skipped (success) when the base
+#                      has no check_sufficiency.py; any other error fails it.
 #   benign-corpus      every rule scored against the committed benign corpus
 #                      (detections/score_benign.py): the snapshot scores.json must be
-#                      current, and a rule in `enforce` mode must stay within its
-#                      budget. Shadow-mode overruns only warn.
+#                      current, and a rule in `enforce` mode (every per-rule entry
+#                      today) must stay within its budget. Shadow-mode overruns only
+#                      warn.
 #   benign-linux-live  SHADOW. A real Ubuntu runner runs ordinary admin, developer
 #                      and service activity under the det-eng audit rules
 #                      (detections/benign/linux/), and every Linux rule is scored on
@@ -22,8 +33,10 @@ name: detection-quality
 #                      capture is uploaded so a human can promote a sanitized copy
 #                      into a recorded slice.
 #
-# No paths: filter on pull_request, so these checks ALWAYS report on a PR (they are
-# wired to be branch-protection required checks, and automerge waits for them).
+# No paths: filter on pull_request, so these checks ALWAYS report on a PR: automerge
+# waits for every check run on the head commit. They are meant to be required checks
+# in the main ruleset too, which is not configured yet (see detections/benign/README.md,
+# "Branch protection: what binds a manual merge").
 # The weekly schedule re-proves every rule even when nothing in the repo changed
 # (pySigma, the runner image and the kernel drift underneath the rules).
 
@@ -107,6 +120,81 @@ jobs:
             echo '```'
             echo '</details>'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  sufficiency-ratchet:
+    # PR only: compare the head with the base branch, each judged by its own copy
+    # of check_sufficiency.py. Fails closed: a base SHA that cannot be checked out,
+    # or a base run that writes no report, fails the job.
+    name: sufficiency-ratchet
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Report the base branch with its own check_sufficiency.py
+        id: base
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          base="$RUNNER_TEMP/base-tree"
+          git worktree add --detach "$base" "$BASE_SHA"
+          if [ ! -f "$base/detections/check_sufficiency.py" ]; then
+            echo "::notice title=sufficiency-ratchet::the base ($BASE_SHA) has no detections/check_sufficiency.py; nothing to ratchet against"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          pip install --quiet -r "$base/detections/requirements.txt"
+          rm -f "$RUNNER_TEMP/base.json"
+          # The base gate may itself fail (exit 1): its report still counts. A run
+          # that writes no report fails here, and a report with no rule fails the
+          # head's --baseline step.
+          python3 "$base/detections/check_sufficiency.py" --json "$RUNNER_TEMP/base.json" \
+            > "$RUNNER_TEMP/base.out" 2>&1 || true
+          if [ ! -s "$RUNNER_TEMP/base.json" ]; then
+            echo "::error title=sufficiency-ratchet::the base's check_sufficiency.py wrote no report"
+            cat "$RUNNER_TEMP/base.out"
+            exit 1
+          fi
+          tail -n 1 "$RUNNER_TEMP/base.out"
+          echo "present=true" >> "$GITHUB_OUTPUT"
+
+      - name: Install requirements (head)
+        if: steps.base.outputs.present == 'true'
+        run: pip install --quiet -r detections/requirements.txt
+
+      - name: Fail on any rule that lost checks against the base
+        if: steps.base.outputs.present == 'true'
+        shell: bash
+        run: |
+          # The head's gate runs too (it fails on its own failures as well); the
+          # ratchet section at the end of the output says what decreased.
+          rc=0
+          python3 detections/check_sufficiency.py --baseline "$RUNNER_TEMP/base.json" \
+            > /tmp/ratchet.out 2>&1 || rc=$?
+          cat /tmp/ratchet.out
+          {
+            echo '## Sufficiency ratchet (vs the base branch)'
+            echo ''
+            echo '```'
+            sed -n '/^Ratchet against/,$p' /tmp/ratchet.out
+            echo '```'
+            echo ''
+            echo '<details><summary>check_sufficiency.py --baseline output</summary>'
+            echo ''
+            echo '```'
+            cat /tmp/ratchet.out
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
 
   benign-corpus:
     name: benign-corpus
