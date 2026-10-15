@@ -1,13 +1,13 @@
 {
  "id": "k8s-audit-human-operators",
- "version": 1,
+ "version": 2,
  "logsource": {
   "product": "kubernetes",
   "service": "audit"
  },
  "fidelity": "synthetic",
- "represents": "About 1.5 hours of interactive and read-mostly traffic on the same staging cluster: SREs and developers (OIDC users) running kubectl get/describe/logs/top, rollout restart/status, exec, port-forward to databases and dashboards, kubectl debug, Secret existence checks, `auth can-i --as` and `--as/--as-group` RBAC checks, cordon/drain, scale, manual `create job --from=cronjob`, a kubeadm break-glass read; an access gateway (Teleport kube agent) proxying engineers' requests by impersonation, including an on-call role mapped to system:masters; Prometheus scraping kubelet/cAdvisor metrics through the API server node proxy; kube-state-metrics list/watch.",
- "provenance": "synthetic; event shapes from the audit.k8s.io/v1 Event type (impersonatedUser, objectRef.subresource, requestURI query parameters as kubectl sends them: exec and port-forward over WebSocket as verb get / response 101 for kubectl >= 1.30, SPDY as verb create), levels per detections/k8s/audit-policy-apiserver.yaml (pods/ephemeralcontainers and workload writes at Request, the rest Metadata), the Teleport kube-agent impersonation model and the Prometheus kubernetes-nodes-cadvisor scrape path. Version strings are illustrative; users are fictional @example.com; addresses RFC1918.",
+ "represents": "About an hour (the v2 expansion spans 65 minutes) of interactive and read-mostly traffic on the same staging cluster: SREs and developers (OIDC users) running kubectl get/describe/logs/top, rollout restart/status, exec, port-forward to databases and dashboards, kubectl debug, Secret existence checks, `auth can-i --as` and `--as/--as-group` RBAC checks, cordon/drain, scale, manual `create job --from=cronjob`, a kubeadm break-glass read; an access gateway (Teleport kube agent) proxying engineers' requests by impersonation, including an on-call role mapped to system:masters; Prometheus scraping kubelet/cAdvisor metrics through the API server node proxy; kube-state-metrics list/watch. Template weights set which behaviours appear and roughly how often relative to each other, not their production rates; treat hits and rate_per_10k as presence indicators, not as production false-positive rates.",
+ "provenance": "synthetic; event shapes from the audit.k8s.io/v1 Event type (impersonatedUser, objectRef.subresource, requestURI query parameters as kubectl sends them: exec over WebSocket as verb get / response 101 for kubectl >= 1.30 (TranslateStreamCloseWebsocketRequests is beta and on in 1.30), port-forward over SPDY as verb create (PortForwardWebsockets is alpha and off on this 1.30 API server, so kubectl 1.31 falls back to SPDY)), request bodies as the API server logs them (decoded with defaulting, before admission), authorization reasons for the identity the request is authorized as (the impersonated one under --as), levels per detections/k8s/audit-policy-apiserver.yaml (pods/ephemeralcontainers and workload writes at Request, the rest Metadata), the Teleport kube-agent impersonation model and the Prometheus kubernetes-nodes-cadvisor scrape path. Version strings are illustrative; users are fictional @example.com; addresses RFC1918.",
  "adjacent_to": [
   "T1609/k8s_pod_exec_attach.yml (interactive exec by SREs and developers)",
   "T1609/k8s_pod_ephemeral_container.yml (kubectl debug)",
@@ -1549,10 +1549,7 @@
   ],
   "verb_res": [
    "pods",
-   "deployments",
-   "secrets",
-   "configmaps",
-   "jobs"
+   "secrets"
   ],
   "tp_user": [
    {
@@ -1595,26 +1592,346 @@
    {
     "ns": "payments",
     "cj": "ledger-reconcile",
-    "image": "registry.example.com/payments/ledger-worker:1.42.3",
-    "sa": "ledger-worker"
+    "cj_uid": "208f4050-7d7b-439b-aa56-22305dd923ad",
+    "labels": {
+     "app.kubernetes.io/name": "ledger-reconcile"
+    },
+    "spec": {
+     "parallelism": 1,
+     "completions": 1,
+     "backoffLimit": 2,
+     "activeDeadlineSeconds": 1800,
+     "ttlSecondsAfterFinished": 86400,
+     "template": {
+      "metadata": {
+       "creationTimestamp": null,
+       "labels": {
+        "app.kubernetes.io/name": "ledger-reconcile"
+       }
+      },
+      "spec": {
+       "volumes": [
+        {
+         "name": "tmp",
+         "emptyDir": {}
+        }
+       ],
+       "containers": [
+        {
+         "name": "ledger-reconcile",
+         "image": "registry.example.com/payments/ledger-worker:1.42.3",
+         "args": [
+          "--once",
+          "--log-format=json"
+         ],
+         "envFrom": [
+          {
+           "secretRef": {
+            "name": "ledger-reconcile-env"
+           }
+          }
+         ],
+         "resources": {
+          "limits": {
+           "memory": "256Mi"
+          },
+          "requests": {
+           "cpu": "50m",
+           "memory": "128Mi"
+          }
+         },
+         "terminationMessagePath": "/dev/termination-log",
+         "terminationMessagePolicy": "File",
+         "imagePullPolicy": "IfNotPresent",
+         "securityContext": {
+          "allowPrivilegeEscalation": false,
+          "capabilities": {
+           "drop": [
+            "ALL"
+           ]
+          },
+          "readOnlyRootFilesystem": true,
+          "runAsNonRoot": true,
+          "runAsUser": 10001
+         }
+        }
+       ],
+       "restartPolicy": "OnFailure",
+       "terminationGracePeriodSeconds": 30,
+       "dnsPolicy": "ClusterFirst",
+       "serviceAccountName": "ledger-worker",
+       "serviceAccount": "ledger-worker",
+       "securityContext": {
+        "seccompProfile": {
+         "type": "RuntimeDefault"
+        },
+        "fsGroup": 10001
+       },
+       "schedulerName": "default-scheduler"
+      }
+     },
+     "completionMode": "NonIndexed",
+     "suspend": false,
+     "podReplacementPolicy": "TerminatingOrFailed"
+    }
    },
    {
     "ns": "orders",
     "cj": "report-export",
-    "image": "registry.example.com/orders/reports:3.7.0",
-    "sa": "orders-reports"
+    "cj_uid": "b3f90de1-2823-4212-af58-0258d3ed1bfb",
+    "labels": {
+     "app.kubernetes.io/name": "report-export"
+    },
+    "spec": {
+     "parallelism": 1,
+     "completions": 1,
+     "backoffLimit": 2,
+     "activeDeadlineSeconds": 1800,
+     "ttlSecondsAfterFinished": 86400,
+     "template": {
+      "metadata": {
+       "creationTimestamp": null,
+       "labels": {
+        "app.kubernetes.io/name": "report-export"
+       }
+      },
+      "spec": {
+       "volumes": [
+        {
+         "name": "tmp",
+         "emptyDir": {}
+        }
+       ],
+       "containers": [
+        {
+         "name": "report-export",
+         "image": "registry.example.com/orders/reports:3.7.0",
+         "args": [
+          "--once",
+          "--log-format=json"
+         ],
+         "envFrom": [
+          {
+           "secretRef": {
+            "name": "report-export-env"
+           }
+          }
+         ],
+         "resources": {
+          "limits": {
+           "memory": "256Mi"
+          },
+          "requests": {
+           "cpu": "50m",
+           "memory": "128Mi"
+          }
+         },
+         "terminationMessagePath": "/dev/termination-log",
+         "terminationMessagePolicy": "File",
+         "imagePullPolicy": "IfNotPresent",
+         "securityContext": {
+          "allowPrivilegeEscalation": false,
+          "capabilities": {
+           "drop": [
+            "ALL"
+           ]
+          },
+          "readOnlyRootFilesystem": true,
+          "runAsNonRoot": true,
+          "runAsUser": 10001
+         }
+        }
+       ],
+       "restartPolicy": "OnFailure",
+       "terminationGracePeriodSeconds": 30,
+       "dnsPolicy": "ClusterFirst",
+       "serviceAccountName": "orders-reports",
+       "serviceAccount": "orders-reports",
+       "securityContext": {
+        "seccompProfile": {
+         "type": "RuntimeDefault"
+        },
+        "fsGroup": 10001
+       },
+       "schedulerName": "default-scheduler"
+      }
+     },
+     "completionMode": "NonIndexed",
+     "suspend": false,
+     "podReplacementPolicy": "TerminatingOrFailed"
+    }
    },
    {
     "ns": "search",
     "cj": "index-compact",
-    "image": "registry.example.com/search/indexer:0.31.4",
-    "sa": "search-indexer"
+    "cj_uid": "221dd140-9a6d-4dc8-a205-5b55bd7dd213",
+    "labels": {
+     "app.kubernetes.io/name": "index-compact"
+    },
+    "spec": {
+     "parallelism": 1,
+     "completions": 1,
+     "backoffLimit": 2,
+     "activeDeadlineSeconds": 1800,
+     "ttlSecondsAfterFinished": 86400,
+     "template": {
+      "metadata": {
+       "creationTimestamp": null,
+       "labels": {
+        "app.kubernetes.io/name": "index-compact"
+       }
+      },
+      "spec": {
+       "volumes": [
+        {
+         "name": "tmp",
+         "emptyDir": {}
+        }
+       ],
+       "containers": [
+        {
+         "name": "index-compact",
+         "image": "registry.example.com/search/indexer:0.31.4",
+         "args": [
+          "--once",
+          "--log-format=json"
+         ],
+         "envFrom": [
+          {
+           "secretRef": {
+            "name": "index-compact-env"
+           }
+          }
+         ],
+         "resources": {
+          "limits": {
+           "memory": "256Mi"
+          },
+          "requests": {
+           "cpu": "50m",
+           "memory": "128Mi"
+          }
+         },
+         "terminationMessagePath": "/dev/termination-log",
+         "terminationMessagePolicy": "File",
+         "imagePullPolicy": "IfNotPresent",
+         "securityContext": {
+          "allowPrivilegeEscalation": false,
+          "capabilities": {
+           "drop": [
+            "ALL"
+           ]
+          },
+          "readOnlyRootFilesystem": true,
+          "runAsNonRoot": true,
+          "runAsUser": 10001
+         }
+        }
+       ],
+       "restartPolicy": "OnFailure",
+       "terminationGracePeriodSeconds": 30,
+       "dnsPolicy": "ClusterFirst",
+       "serviceAccountName": "search-indexer",
+       "serviceAccount": "search-indexer",
+       "securityContext": {
+        "seccompProfile": {
+         "type": "RuntimeDefault"
+        },
+        "fsGroup": 10001
+       },
+       "schedulerName": "default-scheduler"
+      }
+     },
+     "completionMode": "NonIndexed",
+     "suspend": false,
+     "podReplacementPolicy": "TerminatingOrFailed"
+    }
    },
    {
     "ns": "payments",
     "cj": "db-backup",
-    "image": "registry.example.com/platform/pg-backup:16.4-2",
-    "sa": "db-backup"
+    "cj_uid": "6916e603-aae0-40ff-8fd6-987858ac8223",
+    "labels": {
+     "app.kubernetes.io/name": "db-backup"
+    },
+    "spec": {
+     "parallelism": 1,
+     "completions": 1,
+     "backoffLimit": 2,
+     "activeDeadlineSeconds": 1800,
+     "ttlSecondsAfterFinished": 86400,
+     "template": {
+      "metadata": {
+       "creationTimestamp": null,
+       "labels": {
+        "app.kubernetes.io/name": "db-backup"
+       }
+      },
+      "spec": {
+       "volumes": [
+        {
+         "name": "tmp",
+         "emptyDir": {}
+        }
+       ],
+       "containers": [
+        {
+         "name": "db-backup",
+         "image": "registry.example.com/platform/pg-backup:16.4-2",
+         "args": [
+          "--once",
+          "--log-format=json"
+         ],
+         "envFrom": [
+          {
+           "secretRef": {
+            "name": "db-backup-env"
+           }
+          }
+         ],
+         "resources": {
+          "limits": {
+           "memory": "256Mi"
+          },
+          "requests": {
+           "cpu": "50m",
+           "memory": "128Mi"
+          }
+         },
+         "terminationMessagePath": "/dev/termination-log",
+         "terminationMessagePolicy": "File",
+         "imagePullPolicy": "IfNotPresent",
+         "securityContext": {
+          "allowPrivilegeEscalation": false,
+          "capabilities": {
+           "drop": [
+            "ALL"
+           ]
+          },
+          "readOnlyRootFilesystem": true,
+          "runAsNonRoot": true,
+          "runAsUser": 10001
+         }
+        }
+       ],
+       "restartPolicy": "OnFailure",
+       "terminationGracePeriodSeconds": 30,
+       "dnsPolicy": "ClusterFirst",
+       "serviceAccountName": "db-backup",
+       "serviceAccount": "db-backup",
+       "securityContext": {
+        "seccompProfile": {
+         "type": "RuntimeDefault"
+        },
+        "fsGroup": 10001
+       },
+       "schedulerName": "default-scheduler"
+      }
+     },
+     "completionMode": "NonIndexed",
+     "suspend": false,
+     "podReplacementPolicy": "TerminatingOrFailed"
+    }
    }
   ],
   "suffix": [
@@ -1831,6 +2148,16 @@
    {
     "ns": "kube-system",
     "name": "coredns-tls"
+   }
+  ],
+  "ksm_grp": [
+   {
+    "g": "apps",
+    "r": "deployments"
+   },
+   {
+    "g": "batch",
+    "r": "jobs"
    }
   ]
  },
@@ -2257,15 +2584,15 @@
   },
   {
    "weight": 1.2,
-   "name": "kubectl port-forward to a database or dashboard",
+   "name": "kubectl port-forward to a database or dashboard (SPDY: PortForwardWebsockets is alpha and off on a 1.30 API server, so kubectl 1.30 uses SPDY and 1.31 falls back to it)",
    "event": {
     "kind": "Event",
     "apiVersion": "audit.k8s.io/v1",
     "level": "Metadata",
     "auditID": "{{auditID}}",
     "stage": "ResponseStarted",
-    "requestURI": "/api/v1/namespaces/{{dbpod.ns}}/pods/{{dbpod.pod}}/portforward?ports={{dbpod.port}}",
-    "verb": "get",
+    "requestURI": "/api/v1/namespaces/{{dbpod.ns}}/pods/{{dbpod.pod}}/portforward",
+    "verb": "create",
     "user": {
      "username": "{{dbpod.user}}",
      "groups": "{{dbpod.groups}}"
@@ -2498,7 +2825,7 @@
     "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
     "annotations": {
      "authorization.k8s.io/decision": "allow",
-     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"platform-sre-impersonate\" of ClusterRole \"impersonator\" to Group \"oidc:platform-sre\""
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"system:basic-user\" of ClusterRole \"system:basic-user\" to Group \"system:authenticated\""
     }
    }
   },
@@ -2835,8 +3162,8 @@
    }
   },
   {
-   "weight": 1.5,
-   "name": "kube-state-metrics re-establishes list/watch (Secrets metadata included)",
+   "weight": 0.6,
+   "name": "kube-state-metrics re-establishes a core list/watch (pods, Secrets metadata)",
    "event": {
     "kind": "Event",
     "apiVersion": "audit.k8s.io/v1",
@@ -2877,6 +3204,64 @@
     "userAgent": "kube-state-metrics/v2.13.0 (linux/amd64) kubernetes/$Format",
     "objectRef": {
      "resource": "{{verb_res}}",
+     "apiVersion": "v1"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"kube-state-metrics\" of ClusterRole \"kube-state-metrics\" to ServiceAccount \"kube-state-metrics/monitoring\""
+    }
+   }
+  },
+  {
+   "weight": 0.6,
+   "name": "kube-state-metrics re-establishes an apps/batch list/watch (deployments, jobs)",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/apis/{{ksm_grp.g}}/v1/{{ksm_grp.r}}?allowWatchBookmarks=true&resourceVersion=4{{rv}}&timeout=6m51s&timeoutSeconds=411&watch=true",
+    "verb": "watch",
+    "user": {
+     "username": "system:serviceaccount:monitoring:kube-state-metrics",
+     "uid": "696f78a7-7d96-4991-b392-e155df4a23bc",
+     "groups": [
+      "system:serviceaccounts",
+      "system:serviceaccounts:monitoring",
+      "system:authenticated"
+     ],
+     "extra": {
+      "authentication.kubernetes.io/credential-id": [
+       "JTI={{jti}}"
+      ],
+      "authentication.kubernetes.io/node-name": [
+       "k8s-wk-02"
+      ],
+      "authentication.kubernetes.io/node-uid": [
+       "8942c9a8-b51e-4d25-bdbf-5c9df52adbc9"
+      ],
+      "authentication.kubernetes.io/pod-name": [
+       "kube-state-metrics-6b9d8c7f5-x52x9"
+      ],
+      "authentication.kubernetes.io/pod-uid": [
+       "98b2ce32-e16b-4637-8f1c-613f578540bc"
+      ]
+     }
+    },
+    "sourceIPs": [
+     "10.244.4.101"
+    ],
+    "userAgent": "kube-state-metrics/v2.13.0 (linux/amd64) kubernetes/$Format",
+    "objectRef": {
+     "resource": "{{ksm_grp.r}}",
+     "apiGroup": "{{ksm_grp.g}}",
      "apiVersion": "v1"
     },
     "responseStatus": {
@@ -3115,6 +3500,7 @@
       "name": "{{manual.cj}}-manual-{{suffix}}",
       "namespace": "{{manual.ns}}",
       "creationTimestamp": null,
+      "labels": "{{manual.labels}}",
       "annotations": {
        "cronjob.kubernetes.io/instantiate": "manual"
       },
@@ -3123,43 +3509,12 @@
         "apiVersion": "batch/v1",
         "kind": "CronJob",
         "name": "{{manual.cj}}",
-        "uid": "{{jti}}",
+        "uid": "{{manual.cj_uid}}",
         "controller": true
        }
       ]
      },
-     "spec": {
-      "template": {
-       "metadata": {
-        "creationTimestamp": null
-       },
-       "spec": {
-        "containers": [
-         {
-          "name": "{{manual.cj}}",
-          "image": "{{manual.image}}",
-          "args": [
-           "--once"
-          ],
-          "resources": {},
-          "securityContext": {
-           "allowPrivilegeEscalation": false,
-           "capabilities": {
-            "drop": [
-             "ALL"
-            ]
-           },
-           "readOnlyRootFilesystem": true,
-           "runAsNonRoot": true,
-           "runAsUser": 10001
-          }
-         }
-        ],
-        "restartPolicy": "OnFailure",
-        "serviceAccountName": "{{manual.sa}}"
-       }
-      }
-     },
+     "spec": "{{manual.spec}}",
      "status": {}
     },
     "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",

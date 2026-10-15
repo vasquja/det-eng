@@ -7,37 +7,47 @@
   "rules": {
     "T1014/bpf_prog_load.yml": {
       "mode": "shadow",
-      "max_hits": 12,
+      "max_hits": 9,
       "why": "rule defect, fix tracked (follow-up rule-fix PR): stock runc (cgroup-v2 device filter on every container create) and snap-confine (device-cgroup program on snap launches) are not in bpf_processes; the 2 bcc hits are documented observability noise."
     },
     "T1040/afinet_raw_socket.yml": {
       "mode": "shadow",
-      "max_hits": 6,
+      "max_hits": 4,
       "why": "documented noise: mtr's raw ICMP / IPPROTO_RAW sockets, named in the rule's falsepositives (extend allowed_processes per site)."
     },
     "T1053.007/k8s_cri_job_pod.yml": {
       "mode": "shadow",
-      "max_hits": 59,
+      "max_hits": 43,
       "why": "documented noise: low hunting rule: every CronJob child, Helm hook and manual Job pod matches by design."
     },
     "T1053.007/k8s_job_create.yml": {
       "mode": "shadow",
-      "max_hits": 24,
+      "max_hits": 33,
       "why": "rule defect, fix tracked (follow-up rule-fix PR): filter_controllers misses kube-system ttl-after-finished-controller and generic-garbage-collector deletes (6 of the hits); the rest is documented GitOps/CI Job deployment."
+    },
+    "T1068/dirtypipe_splice_readonly.yml": {
+      "mode": "shadow",
+      "max_hits": 18,
+      "why": "documented noise: Go TCP proxies (docker-proxy) take a fresh pipe2 and splice through it on a new connection, the zero-copy proxy class the rule's falsepositives name; baseline by exe."
     },
     "T1068/keyring_add_key_burst.yml": {
       "mode": "shadow",
-      "max_hits": 1,
+      "max_hits": 2,
       "why": "rule defect, fix tracked (follow-up rule-fix PR): described as a burst detector but fires on a single add_key; cryptsetup / systemd-cryptsetup hand LUKS2 volume keys to dm-crypt via add_key('logon')."
     },
     "T1068/perf_event_open_non_profiler.yml": {
       "mode": "shadow",
-      "max_hits": 5,
+      "max_hits": 8,
       "why": "documented noise: JVM / Python profilers (documented profiler class). Note: auditd comm is the thread name, so a comm allowlist cannot cover JVM-hosted profilers; key on exe."
+    },
+    "T1070/k8s_events_deleted.yml": {
+      "mode": "shadow",
+      "max_hits": 2,
+      "why": "rule defect, fix tracked (follow-up rule-fix PR): the kube-system namespace-controller deletecollections core/v1 and events.k8s.io Events in every namespace being deleted; the rule's falsepositives wrongly say kube-system controllers never delete Events. Filter or baseline that identity's deletecollection."
     },
     "T1070/k8s_workload_deleted_evidence.yml": {
       "mode": "shadow",
-      "max_hits": 59,
+      "max_hits": 57,
       "why": "documented noise: low correlation anchor: routine pod and Job teardown by controllers, kubelets and Helm."
     },
     "T1078.004/aws_cognito_identity_pool_unauth_enabled.yml": {
@@ -82,22 +92,22 @@
     },
     "T1098.006/k8s_rbac_privileged_grant.yml": {
       "mode": "shadow",
-      "max_hits": 9,
+      "max_hits": 7,
       "why": "rule defect, fix tracked (follow-up rule-fix PR): the kube-system clusterrole-aggregation-controller re-applying the built-in edit/admin ClusterRoles (which carry impersonate) fires (3 hits); tenant admin/edit bindings by GitOps are documented."
     },
     "T1098.006/k8s_rbac_write.yml": {
       "mode": "shadow",
-      "max_hits": 30,
+      "max_hits": 24,
       "why": "documented noise: generic RBAC-write chokepoint: GitOps reconciles and the aggregation controller."
     },
     "T1134/k8s_impersonation.yml": {
       "mode": "shadow",
-      "max_hits": 59,
+      "max_hits": 69,
       "why": "documented noise: access gateway (Teleport) and admins verifying RBAC; baseline by the real actor."
     },
     "T1134/k8s_impersonation_privileged.yml": {
       "mode": "shadow",
-      "max_hits": 3,
+      "max_hits": 7,
       "why": "documented noise: break-glass gateway role mapped to system:masters, documented in falsepositives."
     },
     "T1199/gcp_workforce_pool_provider_no_attribute_condition.yml": {
@@ -137,12 +147,12 @@
     },
     "T1543.005/k8s_cri_static_pod_start.yml": {
       "mode": "shadow",
-      "max_hits": 13,
+      "max_hits": 12,
       "why": "documented noise: kubeadm control-plane static pods start with config.source file; the documented suppression is name + config.hash per node."
     },
     "T1543.005/k8s_static_pod_mirror_create.yml": {
       "mode": "shadow",
-      "max_hits": 1,
+      "max_hits": 2,
       "why": "documented noise: a control-plane kubelet re-registering its mirror pod after a restart, documented."
     },
     "T1546/k8s_admission_webhook_created.yml": {
@@ -157,42 +167,42 @@
     },
     "T1552.007/k8s_secret_access.yml": {
       "mode": "shadow",
-      "max_hits": 239,
+      "max_hits": 217,
       "why": "documented noise: generic secret-read chokepoint: GitOps, CI and controllers."
     },
     "T1552.007/k8s_secret_token_request.yml": {
       "mode": "shadow",
-      "max_hits": 7,
+      "max_hits": 16,
       "why": "documented noise: external-secrets minting tokens for Vault auth service accounts, documented."
     },
     "T1565.001/k8s_coredns_configmap_modified.yml": {
       "mode": "shadow",
-      "max_hits": 3,
+      "max_hits": 4,
       "why": "documented noise: GitOps managing the CoreDNS ConfigMap, documented."
     },
     "T1565.001/k8s_coredns_corefile_poisoned.yml": {
       "mode": "shadow",
-      "max_hits": 3,
+      "max_hits": 4,
       "why": "rule defect, fix tracked (follow-up rule-fix PR): the forward-to-IP clause matches any server block, so a private stub zone forwarding a corporate domain to RFC1918 resolvers fires at high."
     },
     "T1572/k8s_pod_portforward.yml": {
       "mode": "shadow",
-      "max_hits": 14,
+      "max_hits": 15,
       "why": "documented noise: port-forward to databases and dashboards by operators (both transports)."
     },
     "T1609/k8s_pod_ephemeral_container.yml": {
       "mode": "shadow",
-      "max_hits": 4,
+      "max_hits": 0,
       "why": "documented noise: kubectl debug with an unprivileged ephemeral container."
     },
     "T1609/k8s_pod_exec_attach.yml": {
       "mode": "shadow",
-      "max_hits": 24,
+      "max_hits": 18,
       "why": "documented noise: interactive debugging by operators."
     },
     "T1611/k8s_podspec_controller_host_access.yml": {
       "mode": "shadow",
-      "max_hits": 5,
+      "max_hits": 2,
       "why": "documented noise: GitOps server-side apply of node-agent DaemonSets (documented host-access workloads)."
     },
     "T1611/k8s_podspec_host_access.yml": {
@@ -202,32 +212,37 @@
     },
     "T1611/setns_namespace_join.yml": {
       "mode": "shadow",
-      "max_hits": 14,
-      "why": "rule defect, fix tracked (follow-up rule-fix PR): runc's nsexec runs as comm 'runc:[1:CHILD]' (and exe memfd:runc_cloned), not 'runc', so every container exec fires; snap-confine joins the snap mount namespace on every snap launch; ip netns exec."
+      "max_hits": 37,
+      "why": "rule defect, fix tracked (follow-up rule-fix PR): runc's nsexec runs as comm 'runc:[1:CHILD]' (and exe /memfd:runc_cloned:/proc/self/exe (deleted)); it does one setns per namespace, about six per container exec, not 'runc', so every container exec fires; snap-confine joins the snap mount namespace on every snap launch; ip netns exec."
+    },
+    "T1620/memfd_create_execveat.yml": {
+      "mode": "shadow",
+      "max_hits": 5,
+      "why": "rule defect, fix tracked (follow-up rule-fix PR): runc < 1.2 re-executes itself from a memfd on every container start and exec (memfd_create, then execveat in the same pid ~40 ms later), so every Docker/containerd container start fires this high-severity rule; allowlist the runc memfd image by exe or require a non-runtime parent."
     },
     "T1622/ptrace_traceme.yml": {
       "mode": "shadow",
-      "max_hits": 5,
+      "max_hits": 15,
       "why": "rule defect, fix tracked (follow-up rule-fix PR): debuggers (gdb, dlv) fork an inferior that calls PTRACE_TRACEME with the debugger's comm/exe; not in falsepositives."
     },
     "T1685/io_uring_setup.yml": {
       "mode": "shadow",
-      "max_hits": 7,
+      "max_hits": 12,
       "why": "rule defect, fix tracked (follow-up rule-fix PR): described as flagging ring creation by a non-allowlisted process, but it has no allowlist and also matches the per-I/O io_uring_enter (an fio benchmark)."
     },
     "T1685/k8s_admission_webhook_disabled.yml": {
       "mode": "shadow",
-      "max_hits": 8,
+      "max_hits": 5,
       "why": "documented noise: policy engines and PKI/injector controllers reconciling their webhook configs, documented."
     },
     "T1685/k8s_admission_webhook_neutered.yml": {
       "mode": "shadow",
-      "max_hits": 4,
+      "max_hits": 1,
       "why": "rule defect, fix tracked (follow-up rule-fix PR): grades the submitted state, not a transition: a full-object rewrite of a webhook that already fails open (Gatekeeper CA rotation, Helm upgrade) is graded as a neuter."
     },
     "T1685/k8s_security_tool_workload_removed.yml": {
       "mode": "shadow",
-      "max_hits": 10,
+      "max_hits": 12,
       "why": "documented noise: GitOps prunes and a downscaler scaling workloads, documented anchor."
     }
   },

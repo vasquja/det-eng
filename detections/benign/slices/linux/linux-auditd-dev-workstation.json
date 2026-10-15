@@ -1,13 +1,13 @@
 {
  "id": "linux-auditd-dev-workstation",
- "version": 1,
+ "version": 2,
  "logsource": {
   "product": "linux",
   "service": "auditd"
  },
  "fidelity": "synthetic",
- "represents": "About an hour of det-eng-keyed syscalls on a developer/admin workstation (Ubuntu 24.04, kernel 6.8, GNOME on Wayland, Firefox snap, Docker Engine with runc 1.1): GPU/tty ioctls, shell pipelines, git/ssh/make/gcc/go/cargo/python/node/VS Code, systemd and snap-confine cgroup-BPF loads, resolved/NetworkManager/sshd/sudo/apt, memfd shared memory (Firefox, PipeWire, mutter, Xwayland), a docker-proxy splicing a local Postgres/Redis port, docker exec/run through runc; plus admin and debugging work adjacent to the rules: gdb/dlv/strace, perf and async-profiler, bpftool and bcc execsnoop, tcpdump, ping/tracepath/mtr, `ip xfrm` and strongSwan charon-nm, `ip netns add/exec`, `unshare -rn`, systemd PrivateNetwork units, `cryptsetup open` of a LUKS2 backup disk (AF_ALG + kernel keyring), `keyctl show`, fio with io_uring.",
- "provenance": "synthetic; event shape = detections/validate_detections.py normalize() output for SYSCALL records keyed det-eng; only syscalls in detections/audit/atomic.rules; argument encodings from the syscall ABIs (socket family/type/protocol incl. SOCK_CLOEXEC/NONBLOCK bits, setsockopt level/optname, ioctl request numbers from asm-generic/ioctls.h, sockios.h, dm-ioctl.h and drm.h, bpf(2) command numbers, ptrace(2) requests, unshare/setns CLONE_* flags, memfd_create MFD_* flags), and documented tool behaviour (iputils ping datagram ICMP, libpcap TPACKET setup, iproute2 netlink options, gdb/Go PTRACE_TRACEME in the forked inferior, strace PTRACE_SEIZE + GET_SYSCALL_INFO, Go's splice pipe pool (pipe2 O_CLOEXEC|O_NONBLOCK), runc 1.1's memfd re-exec and nsexec stage names, snap-confine's device-cgroup BPF and preserved mount namespace, cryptsetup LUKS2 AF_ALG keyslot decryption and logon key). Pointer arguments are random addresses in the right regions; pids are fixed for daemons and drawn per tool session. Events are drawn independently, so multi-syscall sequences (e.g. runc's memfd_create -> execveat in one pid) are NOT reproduced as sequences; correlation rules see only their base events here, except where one long-lived process (docker-proxy) issues both halves.",
+ "represents": "About an hour (the v2 expansion spans 58 minutes) of det-eng-keyed syscalls on a developer/admin workstation (Ubuntu 24.04, kernel 6.8, GNOME on Wayland, Firefox snap, Docker Engine with runc 1.1): GPU/tty ioctls, shell pipelines, git/ssh/make/gcc/go/cargo/python/node/VS Code, systemd and snap-confine cgroup-BPF loads, resolved/NetworkManager/sshd/sudo/apt, memfd shared memory (Firefox, PipeWire, mutter, Xwayland), a docker-proxy splicing a local Postgres/Redis port, docker exec/run through runc; plus admin and debugging work adjacent to the rules: gdb/dlv/strace, perf and async-profiler, bpftool and bcc execsnoop, tcpdump, ping/tracepath/mtr, `ip xfrm` and strongSwan charon-nm, `ip netns add/exec`, `unshare -rn`, systemd PrivateNetwork units, `cryptsetup open` of a LUKS2 backup disk (AF_ALG + kernel keyring), `keyctl show`, fio with io_uring. Template weights set which behaviours appear and roughly how often relative to each other, not their production call rates: a real fio io_uring run issues thousands of io_uring_enter calls a second where this slice has a handful, and a busy docker-proxy splices far more. Treat hits and rate_per_10k as presence indicators (does this benign behaviour trip the rule, and by which actor), not as production false-positive rates.",
+ "provenance": "synthetic; event shape = detections/validate_detections.py normalize() output for SYSCALL records keyed det-eng; only syscalls in detections/audit/atomic.rules; argument encodings from the syscall ABIs (socket family/type/protocol incl. SOCK_CLOEXEC/NONBLOCK bits, setsockopt level/optname, ioctl request numbers from asm-generic/ioctls.h, sockios.h, dm-ioctl.h and drm.h, bpf(2) command numbers, ptrace(2) requests, unshare/setns CLONE_* flags, memfd_create MFD_* flags), and documented tool behaviour (iputils ping datagram ICMP, libpcap TPACKET setup, iproute2 netlink options, gdb/Go PTRACE_TRACEME in the forked inferior, strace PTRACE_SEIZE + GET_SYSCALL_INFO, Go's splice pipe pool (pipe2 O_CLOEXEC|O_NONBLOCK), runc 1.1's memfd re-exec and nsexec stage names, snap-confine's device-cgroup BPF and preserved mount namespace, cryptsetup LUKS2 AF_ALG keyslot decryption and logon key). Pointer arguments are random addresses in the right regions; pids are fixed for daemons and drawn per tool session. int -1 arguments are logged as 32-bit ffffffff, as glibc's variadic syscall() passes an int. Multi-syscall behaviour is written as sequences that share one draw (same pid, milliseconds apart), so correlation rules see it as it happens: runc 1.1's memfd re-exec on every container start (runc init, comm exe: memfd_create(MFD_CLOEXEC|MFD_ALLOW_SEALING), then ~40 ms later execveat(fd, \"\", AT_EMPTY_PATH) whose record already carries the new image's comm (the fd number) and exe (the memfd)), followed by nsexec's runc:[1:CHILD] (cloned with CLONE_PARENT, so a child of the runc create/exec process) setns()ing into each namespace (docker exec) or unsharing new ones, with runc:[2:INIT] unsharing the cgroup namespace and runc loading, querying and attaching its cgroup-v2 device filter (docker run); and docker-proxy's Go splice path on a new connection with an empty pipe pool (socket to the backend, then per direction pipe2 and two splices through that pipe). Everything else is drawn independently. comm/exe values are in normalize() output form: auditd hex-encodes a comm or exe containing a space, and normalize() decodes it, so they read as plain text.",
  "adjacent_to": [
   "T1622/ptrace_traceme.yml (gdb and dlv inferiors call PTRACE_TRACEME)",
   "T1068/perf_event_open_non_profiler.yml (perf allowlisted; async-profiler, bcc not)",
@@ -17,9 +17,9 @@
   "T1611/setns_namespace_join.yml (runc:[1:CHILD], ip netns exec, snap-confine)",
   "T1068/dirtyfrag_xfrm_unshare_netlink.yml (ip xfrm / charon-nm NETLINK_XFRM; ip netns add, unshare -rn, PrivateNetwork unshare in other pids)",
   "T1068/copyfail_af_alg_authencesn.yml (cryptsetup AF_ALG without splice)",
-  "T1068/dirtypipe_splice_readonly.yml (docker-proxy pipe2 + splice; shell pipes)",
+  "T1068/dirtypipe_splice_readonly.yml (docker-proxy pipe2 + splice on a new connection: expected to fire; shell pipes)",
   "T1068/keyring_add_key_burst.yml (cryptsetup logon key; sshd keyctl)",
-  "T1620/memfd_create_execveat.yml (memfd shared memory; runc's memfd re-exec)",
+  "T1620/memfd_create_execveat.yml (memfd shared memory; runc 1.1's memfd re-exec on every docker run/exec: expected to fire)",
   "T1685/io_uring_setup.yml (fio io_uring benchmark)"
  ],
  "count": 1300,
@@ -358,7 +358,7 @@
    {
     "pid": 377415,
     "ppid": 301277,
-    "tracee": "5c247"
+    "tracee": "5c248"
    }
   ],
   "perf_s": [
@@ -441,48 +441,6 @@
     "ppid": 7212
    }
   ],
-  "runcx": [
-   {
-    "pid": 406611,
-    "ppid": 3226
-   },
-   {
-    "pid": 406702,
-    "ppid": 3301
-   },
-   {
-    "pid": 411880,
-    "ppid": 3226
-   }
-  ],
-  "runcinit": [
-   {
-    "pid": 406618,
-    "ppid": 406611
-   },
-   {
-    "pid": 406709,
-    "ppid": 406702
-   },
-   {
-    "pid": 411887,
-    "ppid": 411880
-   }
-  ],
-  "runcchild": [
-   {
-    "pid": 406620,
-    "ppid": 406618
-   },
-   {
-    "pid": 406711,
-    "ppid": 406709
-   },
-   {
-    "pid": 411889,
-    "ppid": 411887
-   }
-  ],
   "snapc": [
    {
     "pid": 5118,
@@ -501,71 +459,103 @@
     "ppid": 244702
    }
   ],
-  "nsflag": {
-   "weighted": [
-    [
-     1,
-     "8000000"
-    ],
-    [
-     1,
-     "4000000"
-    ],
-    [
-     1,
-     "40000000"
-    ],
-    [
-     1,
-     "20000000"
-    ],
-    [
-     1,
-     "20000"
-    ],
-    [
-     1,
-     "2000000"
-    ]
-   ]
-  },
   "ptrace_gdb": {
    "weighted": [
     [
-     5,
-     "3"
+     2,
+     {
+      "r": "3",
+      "a2": "88",
+      "a3": "7fffc170ff68"
+     }
     ],
     [
-     6,
-     "c"
+     2,
+     {
+      "r": "3",
+      "a2": "b8",
+      "a3": "7fffc170ff68"
+     }
     ],
     [
-     4,
-     "7"
+     1,
+     {
+      "r": "3",
+      "a2": "a8",
+      "a3": "7fffc170f4d8"
+     }
     ],
     [
      3,
-     "1"
+     {
+      "r": "c",
+      "a2": "0",
+      "a3": "7fffc170ff10"
+     }
+    ],
+    [
+     3,
+     {
+      "r": "c",
+      "a2": "0",
+      "a3": "7fffc170f770"
+     }
+    ],
+    [
+     4,
+     {
+      "r": "7",
+      "a2": "1",
+      "a3": "0"
+     }
+    ],
+    [
+     3,
+     {
+      "r": "1",
+      "a2": "555555555149",
+      "a3": "7fffc170f5c8"
+     }
     ],
     [
      2,
-     "5"
+     {
+      "r": "5",
+      "a2": "555555555149",
+      "a3": "e5894855fa1e0fcc"
+     }
     ],
     [
      2,
-     "4202"
+     {
+      "r": "4202",
+      "a2": "0",
+      "a3": "7fffc170fb60"
+     }
     ],
     [
      1,
-     "4200"
+     {
+      "r": "4200",
+      "a2": "0",
+      "a3": "10003f"
+     }
     ],
     [
      2,
-     "6"
+     {
+      "r": "6",
+      "a2": "350",
+      "a3": "555555558010"
+     }
     ],
     [
      1,
-     "4204"
+     {
+      "r": "4204",
+      "a2": "202",
+      "a3": "7fffc170ffe0"
+     }
     ]
    ]
   },
@@ -596,28 +586,68 @@
   "ptrace_dlv": {
    "weighted": [
     [
-     4,
-     "4204"
+     2,
+     {
+      "r": "4204",
+      "a2": "1",
+      "a3": "c0001a5e48"
+     }
+    ],
+    [
+     2,
+     {
+      "r": "4204",
+      "a2": "202",
+      "a3": "c0001a5e60"
+     }
     ],
     [
      3,
-     "7"
-    ],
-    [
-     2,
-     "6"
-    ],
-    [
-     2,
-     "1"
+     {
+      "r": "7",
+      "a2": "0",
+      "a3": "0"
+     }
     ],
     [
      1,
-     "4200"
+     {
+      "r": "6",
+      "a2": "350",
+      "a3": "4a5e20"
+     }
     ],
     [
      1,
-     "5"
+     {
+      "r": "6",
+      "a2": "388",
+      "a3": "1"
+     }
+    ],
+    [
+     2,
+     {
+      "r": "1",
+      "a2": "4b2f60",
+      "a3": "c0004f1000"
+     }
+    ],
+    [
+     1,
+     {
+      "r": "4200",
+      "a2": "0",
+      "a3": "8"
+     }
+    ],
+    [
+     1,
+     {
+      "r": "5",
+      "a2": "4a5e20",
+      "a3": "8b4864cc"
+     }
     ]
    ]
   },
@@ -817,7 +847,7 @@
       "req": "420e",
       "a2": "58",
       "a3": "7ffd5e1c2a40",
-      "rc": "65"
+      "rc": "33"
      }
     ],
     [
@@ -864,18 +894,26 @@
    "80"
   ],
   "nsub": [
-   "1",
-   "4",
-   "8",
-   "10",
-   "20"
-  ],
-  "nsub_dec": [
-   "1",
-   "4",
-   "8",
-   "16",
-   "32"
+   {
+    "h": "1",
+    "d": "1"
+   },
+   {
+    "h": "4",
+    "d": "4"
+   },
+   {
+    "h": "8",
+    "d": "8"
+   },
+   {
+    "h": "10",
+    "d": "16"
+   },
+   {
+    "h": "20",
+    "d": "32"
+   }
   ],
   "pcap": [
    {
@@ -1013,9 +1051,9 @@
    }
   ],
   "keyserial_hex": [
-   "1892f2cd",
-   "5420fa2",
-   "3d0257dc"
+   "18930e0d",
+   "54208aa",
+   "3d02611c"
   ],
   "dmioc": [
    "c138fd00",
@@ -1060,19 +1098,825 @@
     "pid": 1311
    }
   ],
-  "runcname": [
-   "5612c0e0a4f8",
-   "55f3a3c1d0f8",
-   "5603b2e9c4f8"
+  "dpc": [
+   {
+    "cli": "a",
+    "be": "11",
+    "bex": "b",
+    "r1": "c",
+    "w1": "d",
+    "r2": "e",
+    "w2": "f"
+   },
+   {
+    "cli": "8",
+    "be": "9",
+    "bex": "9",
+    "r1": "a",
+    "w1": "b",
+    "r2": "c",
+    "w2": "d"
+   },
+   {
+    "cli": "c",
+    "be": "13",
+    "bex": "d",
+    "r1": "e",
+    "w1": "f",
+    "r2": "10",
+    "w2": "11"
+   }
   ],
-  "runcempty": [
-   "5612c0a1e2b5",
-   "55f3a3b8e2b5",
-   "5603b2d0e2b5"
+  "bytes2": {
+   "weighted": [
+    [
+     6,
+     "8192"
+    ],
+    [
+     5,
+     "65536"
+    ],
+    [
+     4,
+     "312"
+    ],
+    [
+     3,
+     "1448"
+    ],
+    [
+     3,
+     "4096"
+    ],
+    [
+     2,
+     "16384"
+    ],
+    [
+     2,
+     "27"
+    ],
+    [
+     2,
+     "131072"
+    ],
+    [
+     1,
+     "2896"
+    ],
+    [
+     1,
+     "730"
+    ]
+   ]
+  },
+  "h6b": {
+   "hex": 6
+  },
+  "h6c": {
+   "hex": 6
+  },
+  "h6d": {
+   "hex": 6
+  },
+  "rexec": [
+   {
+    "x": 380117,
+    "xp": 3226,
+    "init": 380124,
+    "child": 380126
+   },
+   {
+    "x": 380731,
+    "xp": 3301,
+    "init": 380738,
+    "child": 380740
+   },
+   {
+    "x": 381345,
+    "xp": 3412,
+    "init": 381352,
+    "child": 381354
+   },
+   {
+    "x": 381870,
+    "xp": 3226,
+    "init": 381877,
+    "child": 381879
+   },
+   {
+    "x": 382484,
+    "xp": 3301,
+    "init": 382491,
+    "child": 382493
+   },
+   {
+    "x": 383009,
+    "xp": 3412,
+    "init": 383016,
+    "child": 383018
+   },
+   {
+    "x": 383623,
+    "xp": 3226,
+    "init": 383630,
+    "child": 383632
+   },
+   {
+    "x": 384237,
+    "xp": 3301,
+    "init": 384244,
+    "child": 384246
+   },
+   {
+    "x": 384762,
+    "xp": 3412,
+    "init": 384769,
+    "child": 384771
+   },
+   {
+    "x": 385376,
+    "xp": 3226,
+    "init": 385383,
+    "child": 385385
+   },
+   {
+    "x": 385901,
+    "xp": 3301,
+    "init": 385908,
+    "child": 385910
+   },
+   {
+    "x": 386515,
+    "xp": 3412,
+    "init": 386522,
+    "child": 386524
+   },
+   {
+    "x": 387129,
+    "xp": 3226,
+    "init": 387136,
+    "child": 387138
+   },
+   {
+    "x": 387654,
+    "xp": 3301,
+    "init": 387661,
+    "child": 387663
+   },
+   {
+    "x": 388268,
+    "xp": 3412,
+    "init": 388275,
+    "child": 388277
+   },
+   {
+    "x": 388793,
+    "xp": 3226,
+    "init": 388800,
+    "child": 388802
+   },
+   {
+    "x": 389407,
+    "xp": 3301,
+    "init": 389414,
+    "child": 389416
+   },
+   {
+    "x": 389932,
+    "xp": 3412,
+    "init": 389939,
+    "child": 389941
+   },
+   {
+    "x": 390546,
+    "xp": 3226,
+    "init": 390553,
+    "child": 390555
+   },
+   {
+    "x": 391160,
+    "xp": 3301,
+    "init": 391167,
+    "child": 391169
+   },
+   {
+    "x": 391685,
+    "xp": 3412,
+    "init": 391692,
+    "child": 391694
+   },
+   {
+    "x": 392299,
+    "xp": 3226,
+    "init": 392306,
+    "child": 392308
+   },
+   {
+    "x": 392824,
+    "xp": 3301,
+    "init": 392831,
+    "child": 392833
+   },
+   {
+    "x": 393438,
+    "xp": 3412,
+    "init": 393445,
+    "child": 393447
+   },
+   {
+    "x": 394052,
+    "xp": 3226,
+    "init": 394059,
+    "child": 394061
+   },
+   {
+    "x": 394577,
+    "xp": 3301,
+    "init": 394584,
+    "child": 394586
+   },
+   {
+    "x": 395191,
+    "xp": 3412,
+    "init": 395198,
+    "child": 395200
+   },
+   {
+    "x": 395716,
+    "xp": 3226,
+    "init": 395723,
+    "child": 395725
+   },
+   {
+    "x": 396330,
+    "xp": 3301,
+    "init": 396337,
+    "child": 396339
+   },
+   {
+    "x": 396855,
+    "xp": 3412,
+    "init": 396862,
+    "child": 396864
+   },
+   {
+    "x": 397469,
+    "xp": 3226,
+    "init": 397476,
+    "child": 397478
+   },
+   {
+    "x": 398083,
+    "xp": 3301,
+    "init": 398090,
+    "child": 398092
+   },
+   {
+    "x": 398608,
+    "xp": 3412,
+    "init": 398615,
+    "child": 398617
+   },
+   {
+    "x": 399222,
+    "xp": 3226,
+    "init": 399229,
+    "child": 399231
+   },
+   {
+    "x": 399747,
+    "xp": 3301,
+    "init": 399754,
+    "child": 399756
+   },
+   {
+    "x": 400361,
+    "xp": 3412,
+    "init": 400368,
+    "child": 400370
+   },
+   {
+    "x": 400975,
+    "xp": 3226,
+    "init": 400982,
+    "child": 400984
+   },
+   {
+    "x": 401500,
+    "xp": 3301,
+    "init": 401507,
+    "child": 401509
+   },
+   {
+    "x": 402114,
+    "xp": 3412,
+    "init": 402121,
+    "child": 402123
+   },
+   {
+    "x": 402639,
+    "xp": 3226,
+    "init": 402646,
+    "child": 402648
+   },
+   {
+    "x": 403253,
+    "xp": 3301,
+    "init": 403260,
+    "child": 403262
+   },
+   {
+    "x": 403778,
+    "xp": 3412,
+    "init": 403785,
+    "child": 403787
+   },
+   {
+    "x": 404392,
+    "xp": 3226,
+    "init": 404399,
+    "child": 404401
+   },
+   {
+    "x": 405006,
+    "xp": 3301,
+    "init": 405013,
+    "child": 405015
+   },
+   {
+    "x": 405531,
+    "xp": 3412,
+    "init": 405538,
+    "child": 405540
+   },
+   {
+    "x": 406145,
+    "xp": 3226,
+    "init": 406152,
+    "child": 406154
+   },
+   {
+    "x": 406670,
+    "xp": 3301,
+    "init": 406677,
+    "child": 406679
+   },
+   {
+    "x": 407284,
+    "xp": 3412,
+    "init": 407291,
+    "child": 407293
+   },
+   {
+    "x": 407898,
+    "xp": 3226,
+    "init": 407905,
+    "child": 407907
+   },
+   {
+    "x": 408423,
+    "xp": 3301,
+    "init": 408430,
+    "child": 408432
+   },
+   {
+    "x": 409037,
+    "xp": 3412,
+    "init": 409044,
+    "child": 409046
+   },
+   {
+    "x": 409562,
+    "xp": 3226,
+    "init": 409569,
+    "child": 409571
+   },
+   {
+    "x": 410176,
+    "xp": 3301,
+    "init": 410183,
+    "child": 410185
+   },
+   {
+    "x": 410701,
+    "xp": 3412,
+    "init": 410708,
+    "child": 410710
+   },
+   {
+    "x": 411315,
+    "xp": 3226,
+    "init": 411322,
+    "child": 411324
+   },
+   {
+    "x": 411929,
+    "xp": 3301,
+    "init": 411936,
+    "child": 411938
+   },
+   {
+    "x": 412454,
+    "xp": 3412,
+    "init": 412461,
+    "child": 412463
+   },
+   {
+    "x": 413068,
+    "xp": 3226,
+    "init": 413075,
+    "child": 413077
+   },
+   {
+    "x": 413593,
+    "xp": 3301,
+    "init": 413600,
+    "child": 413602
+   },
+   {
+    "x": 414207,
+    "xp": 3412,
+    "init": 414214,
+    "child": 414216
+   },
+   {
+    "x": 414821,
+    "xp": 3226,
+    "init": 414828,
+    "child": 414830
+   },
+   {
+    "x": 415346,
+    "xp": 3301,
+    "init": 415353,
+    "child": 415355
+   },
+   {
+    "x": 415960,
+    "xp": 3412,
+    "init": 415967,
+    "child": 415969
+   },
+   {
+    "x": 416485,
+    "xp": 3226,
+    "init": 416492,
+    "child": 416494
+   }
   ],
-  "runcbpf": [
-   "10",
-   "8"
+  "rrun": [
+   {
+    "x": 380506,
+    "xp": 380492,
+    "init": 380513,
+    "child": 380515,
+    "init2": 380516
+   },
+   {
+    "x": 381328,
+    "xp": 381314,
+    "init": 381335,
+    "child": 381337,
+    "init2": 381338
+   },
+   {
+    "x": 382053,
+    "xp": 382039,
+    "init": 382060,
+    "child": 382062,
+    "init2": 382063
+   },
+   {
+    "x": 382875,
+    "xp": 382861,
+    "init": 382882,
+    "child": 382884,
+    "init2": 382885
+   },
+   {
+    "x": 383600,
+    "xp": 383586,
+    "init": 383607,
+    "child": 383609,
+    "init2": 383610
+   },
+   {
+    "x": 384422,
+    "xp": 384408,
+    "init": 384429,
+    "child": 384431,
+    "init2": 384432
+   },
+   {
+    "x": 385147,
+    "xp": 385133,
+    "init": 385154,
+    "child": 385156,
+    "init2": 385157
+   },
+   {
+    "x": 385969,
+    "xp": 385955,
+    "init": 385976,
+    "child": 385978,
+    "init2": 385979
+   },
+   {
+    "x": 386694,
+    "xp": 386680,
+    "init": 386701,
+    "child": 386703,
+    "init2": 386704
+   },
+   {
+    "x": 387516,
+    "xp": 387502,
+    "init": 387523,
+    "child": 387525,
+    "init2": 387526
+   },
+   {
+    "x": 388241,
+    "xp": 388227,
+    "init": 388248,
+    "child": 388250,
+    "init2": 388251
+   },
+   {
+    "x": 388966,
+    "xp": 388952,
+    "init": 388973,
+    "child": 388975,
+    "init2": 388976
+   },
+   {
+    "x": 389788,
+    "xp": 389774,
+    "init": 389795,
+    "child": 389797,
+    "init2": 389798
+   },
+   {
+    "x": 390513,
+    "xp": 390499,
+    "init": 390520,
+    "child": 390522,
+    "init2": 390523
+   },
+   {
+    "x": 391335,
+    "xp": 391321,
+    "init": 391342,
+    "child": 391344,
+    "init2": 391345
+   },
+   {
+    "x": 392060,
+    "xp": 392046,
+    "init": 392067,
+    "child": 392069,
+    "init2": 392070
+   },
+   {
+    "x": 392882,
+    "xp": 392868,
+    "init": 392889,
+    "child": 392891,
+    "init2": 392892
+   },
+   {
+    "x": 393607,
+    "xp": 393593,
+    "init": 393614,
+    "child": 393616,
+    "init2": 393617
+   },
+   {
+    "x": 394429,
+    "xp": 394415,
+    "init": 394436,
+    "child": 394438,
+    "init2": 394439
+   },
+   {
+    "x": 395154,
+    "xp": 395140,
+    "init": 395161,
+    "child": 395163,
+    "init2": 395164
+   },
+   {
+    "x": 395976,
+    "xp": 395962,
+    "init": 395983,
+    "child": 395985,
+    "init2": 395986
+   },
+   {
+    "x": 396701,
+    "xp": 396687,
+    "init": 396708,
+    "child": 396710,
+    "init2": 396711
+   },
+   {
+    "x": 397426,
+    "xp": 397412,
+    "init": 397433,
+    "child": 397435,
+    "init2": 397436
+   },
+   {
+    "x": 398248,
+    "xp": 398234,
+    "init": 398255,
+    "child": 398257,
+    "init2": 398258
+   },
+   {
+    "x": 398973,
+    "xp": 398959,
+    "init": 398980,
+    "child": 398982,
+    "init2": 398983
+   },
+   {
+    "x": 399795,
+    "xp": 399781,
+    "init": 399802,
+    "child": 399804,
+    "init2": 399805
+   },
+   {
+    "x": 400520,
+    "xp": 400506,
+    "init": 400527,
+    "child": 400529,
+    "init2": 400530
+   },
+   {
+    "x": 401342,
+    "xp": 401328,
+    "init": 401349,
+    "child": 401351,
+    "init2": 401352
+   },
+   {
+    "x": 402067,
+    "xp": 402053,
+    "init": 402074,
+    "child": 402076,
+    "init2": 402077
+   },
+   {
+    "x": 402889,
+    "xp": 402875,
+    "init": 402896,
+    "child": 402898,
+    "init2": 402899
+   },
+   {
+    "x": 403614,
+    "xp": 403600,
+    "init": 403621,
+    "child": 403623,
+    "init2": 403624
+   },
+   {
+    "x": 404436,
+    "xp": 404422,
+    "init": 404443,
+    "child": 404445,
+    "init2": 404446
+   },
+   {
+    "x": 405161,
+    "xp": 405147,
+    "init": 405168,
+    "child": 405170,
+    "init2": 405171
+   },
+   {
+    "x": 405886,
+    "xp": 405872,
+    "init": 405893,
+    "child": 405895,
+    "init2": 405896
+   },
+   {
+    "x": 406708,
+    "xp": 406694,
+    "init": 406715,
+    "child": 406717,
+    "init2": 406718
+   },
+   {
+    "x": 407433,
+    "xp": 407419,
+    "init": 407440,
+    "child": 407442,
+    "init2": 407443
+   },
+   {
+    "x": 408255,
+    "xp": 408241,
+    "init": 408262,
+    "child": 408264,
+    "init2": 408265
+   },
+   {
+    "x": 408980,
+    "xp": 408966,
+    "init": 408987,
+    "child": 408989,
+    "init2": 408990
+   },
+   {
+    "x": 409802,
+    "xp": 409788,
+    "init": 409809,
+    "child": 409811,
+    "init2": 409812
+   },
+   {
+    "x": 410527,
+    "xp": 410513,
+    "init": 410534,
+    "child": 410536,
+    "init2": 410537
+   },
+   {
+    "x": 411349,
+    "xp": 411335,
+    "init": 411356,
+    "child": 411358,
+    "init2": 411359
+   },
+   {
+    "x": 412074,
+    "xp": 412060,
+    "init": 412081,
+    "child": 412083,
+    "init2": 412084
+   },
+   {
+    "x": 412896,
+    "xp": 412882,
+    "init": 412903,
+    "child": 412905,
+    "init2": 412906
+   },
+   {
+    "x": 413621,
+    "xp": 413607,
+    "init": 413628,
+    "child": 413630,
+    "init2": 413631
+   },
+   {
+    "x": 414346,
+    "xp": 414332,
+    "init": 414353,
+    "child": 414355,
+    "init2": 414356
+   },
+   {
+    "x": 415168,
+    "xp": 415154,
+    "init": 415175,
+    "child": 415177,
+    "init2": 415178
+   },
+   {
+    "x": 415893,
+    "xp": 415879,
+    "init": 415900,
+    "child": 415902,
+    "init2": 415903
+   },
+   {
+    "x": 416715,
+    "xp": 416701,
+    "init": 416722,
+    "child": 416724,
+    "init2": 416725
+   }
+  ],
+  "rimg": [
+   {
+    "name": "5612c0e0a4f8",
+    "empty": "5612c0a1e2b5"
+   },
+   {
+    "name": "55f3a3c1d0f8",
+    "empty": "55f3a3b8e2b5"
+   },
+   {
+    "name": "5603b2e9c4f8",
+    "empty": "5603b2d0e2b5"
+   }
   ]
  },
  "templates": [
@@ -1255,7 +2099,7 @@
     "syscall": "ioctl",
     "success": "yes",
     "exit": "0",
-    "a0": "{{fd}}",
+    "a0": "{{fdx}}",
     "a1": "{{tiocw}}",
     "a2": "7ff{{sd}}{{h8}}",
     "a3": "0",
@@ -1312,7 +2156,7 @@
     "syscall": "ioctl",
     "success": "no",
     "exit": "-25",
-    "a0": "{{fd}}",
+    "a0": "{{fdx}}",
     "a1": "5401",
     "a2": "7ff{{sd}}{{h8}}",
     "a3": "0",
@@ -1407,7 +2251,7 @@
     "syscall": "setsockopt",
     "success": "yes",
     "exit": "0",
-    "a0": "{{fd}}",
+    "a0": "{{fdx}}",
     "a1": "{{sol}}",
     "a2": "{{sopt}}",
     "a3": "7ff{{sd}}{{h8}}",
@@ -1445,7 +2289,7 @@
     "syscall": "setsockopt",
     "success": "yes",
     "exit": "0",
-    "a0": "{{fd}}",
+    "a0": "{{fdx}}",
     "a1": "{{sshsol.l}}",
     "a2": "{{sshsol.o}}",
     "a3": "7ff{{sd}}{{h8}}",
@@ -1616,7 +2460,7 @@
     "syscall": "ioctl",
     "success": "yes",
     "exit": "0",
-    "a0": "{{fd}}",
+    "a0": "{{fdx}}",
     "a1": "{{nbio}}",
     "a2": "7ff{{sd}}{{h8}}",
     "a3": "0",
@@ -1675,8 +2519,8 @@
     "exit": "{{fd}}",
     "a0": "{{h10}}",
     "a1": "{{tidhex}}",
-    "a2": "ffffffffffffffff",
-    "a3": "ffffffffffffffff",
+    "a2": "ffffffff",
+    "a3": "ffffffff",
     "pid": "{{java_s.pid}}",
     "ppid": "{{java_s.ppid}}",
     "comm": "Attach Listener",
@@ -1711,10 +2555,10 @@
     "syscall": "ptrace",
     "success": "yes",
     "exit": "0",
-    "a0": "{{ptrace_gdb}}",
+    "a0": "{{ptrace_gdb.r}}",
     "a1": "{{gdb_s.child_hex}}",
-    "a2": "7f{{h10}}",
-    "a3": "0",
+    "a2": "{{ptrace_gdb.a2}}",
+    "a3": "{{ptrace_gdb.a3}}",
     "pid": "{{gdb_s.pid}}",
     "ppid": "{{gdb_s.ppid}}",
     "comm": "gdb",
@@ -1749,10 +2593,10 @@
     "syscall": "ptrace",
     "success": "yes",
     "exit": "0",
-    "a0": "{{ptrace_dlv}}",
-    "a1": "534e6",
-    "a2": "c000{{h6}}",
-    "a3": "0",
+    "a0": "{{ptrace_dlv.r}}",
+    "a1": "534ee",
+    "a2": "{{ptrace_dlv.a2}}",
+    "a3": "{{ptrace_dlv.a3}}",
     "pid": "{{dlv_s.pid}}",
     "ppid": "{{dlv_s.ppid}}",
     "comm": "dlv",
@@ -1771,7 +2615,7 @@
     "a0": "4206",
     "a1": "{{strace_s.tracee}}",
     "a2": "0",
-    "a3": "51",
+    "a3": "5f",
     "pid": "{{strace_s.pid}}",
     "ppid": "{{strace_s.ppid}}",
     "comm": "strace",
@@ -1807,9 +2651,9 @@
     "success": "yes",
     "exit": "{{fd}}",
     "a0": "5{{hp}}{{h10}}",
-    "a1": "ffffffffffffffff",
+    "a1": "ffffffff",
     "a2": "{{cpu}}",
-    "a3": "ffffffffffffffff",
+    "a3": "ffffffff",
     "pid": "{{perf_s.pid}}",
     "ppid": "{{perf_s.ppid}}",
     "comm": "perf",
@@ -1825,7 +2669,7 @@
     "syscall": "ioctl",
     "success": "yes",
     "exit": "0",
-    "a0": "{{fd}}",
+    "a0": "{{fdx}}",
     "a1": "{{perfioc}}",
     "a2": "0",
     "a3": "0",
@@ -1902,9 +2746,9 @@
     "success": "yes",
     "exit": "{{fd}}",
     "a0": "7ff{{sd}}{{h8}}",
-    "a1": "ffffffffffffffff",
+    "a1": "ffffffff",
     "a2": "{{cpu}}",
-    "a3": "ffffffffffffffff",
+    "a3": "ffffffff",
     "pid": "{{bcc_s.pid}}",
     "ppid": "{{bcc_s.ppid}}",
     "comm": "execsnoop-bpfcc",
@@ -1938,10 +2782,10 @@
     "type": "SYSCALL",
     "syscall": "io_uring_enter",
     "success": "yes",
-    "exit": "{{nsub_dec}}",
-    "a0": "{{fd}}",
-    "a1": "{{nsub}}",
-    "a2": "{{nsub}}",
+    "exit": "{{nsub.d}}",
+    "a0": "{{fdx}}",
+    "a1": "{{nsub.h}}",
+    "a2": "{{nsub.h}}",
     "a3": "1",
     "pid": "{{fio_s.pid}}",
     "ppid": "{{fio_s.ppid}}",
@@ -1977,7 +2821,7 @@
     "syscall": "setsockopt",
     "success": "yes",
     "exit": "0",
-    "a0": "{{fd}}",
+    "a0": "{{fdx}}",
     "a1": "{{pcap.l}}",
     "a2": "{{pcap.o}}",
     "a3": "7ff{{sd}}{{h8}}",
@@ -1996,7 +2840,7 @@
     "syscall": "ioctl",
     "success": "yes",
     "exit": "0",
-    "a0": "{{fd}}",
+    "a0": "{{fdx}}",
     "a1": "{{ifioc}}",
     "a2": "7ff{{sd}}{{h8}}",
     "a3": "0",
@@ -2319,7 +3163,7 @@
     "syscall": "setsockopt",
     "success": "yes",
     "exit": "0",
-    "a0": "{{fd}}",
+    "a0": "{{fdx}}",
     "a1": "{{resopt.l}}",
     "a2": "{{resopt.o}}",
     "a3": "7ff{{sd}}{{h8}}",
@@ -2357,7 +3201,7 @@
     "syscall": "ioctl",
     "success": "yes",
     "exit": "0",
-    "a0": "{{fd}}",
+    "a0": "{{fdx}}",
     "a1": "{{ifioc}}",
     "a2": "7ff{{sd}}{{h8}}",
     "a3": "0",
@@ -2604,7 +3448,7 @@
     "syscall": "setns",
     "success": "yes",
     "exit": "0",
-    "a0": "{{fd}}",
+    "a0": "{{fdx}}",
     "a1": "20000",
     "a2": "0",
     "a3": "0",
@@ -2813,7 +3657,7 @@
     "syscall": "setsockopt",
     "success": "yes",
     "exit": "0",
-    "a0": "{{fd}}",
+    "a0": "{{fdx}}",
     "a1": "117",
     "a2": "1",
     "a3": "5{{hp}}{{h10}}",
@@ -2853,7 +3697,7 @@
     "exit": "0",
     "a0": "9",
     "a1": "{{keyserial_hex}}",
-    "a2": "ffffffffffffffff",
+    "a2": "ffffffff",
     "a3": "0",
     "pid": "{{crypt_s.pid}}",
     "ppid": "{{crypt_s.ppid}}",
@@ -2870,7 +3714,7 @@
     "syscall": "ioctl",
     "success": "yes",
     "exit": "0",
-    "a0": "{{fd}}",
+    "a0": "{{fdx}}",
     "a1": "{{dmioc}}",
     "a2": "5{{hp}}{{h10}}",
     "a3": "0",
@@ -2940,22 +3784,130 @@
   },
   {
    "weight": 0.4,
-   "name": "docker-proxy Go splice pipe pool refill (pipe2 O_CLOEXEC|O_NONBLOCK)",
-   "event": {
-    "type": "SYSCALL",
-    "syscall": "pipe2",
-    "success": "yes",
-    "exit": "0",
-    "a0": "c000{{h6}}",
-    "a1": "80800",
-    "a2": "0",
-    "a3": "0",
-    "pid": "{{dproxy}}",
-    "ppid": 1683,
-    "comm": "docker-proxy",
-    "exe": "/usr/bin/docker-proxy",
-    "timestamp": "{{ts}}"
-   }
+   "name": "docker-proxy accepts a connection with an empty splice pipe pool: dial the backend, then per direction pipe2 and two splices through it (Go internal/poll splice)",
+   "events": [
+    {
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "socket",
+      "success": "yes",
+      "exit": "{{dpc.be}}",
+      "a0": "2",
+      "a1": "80801",
+      "a2": "0",
+      "a3": "0",
+      "pid": "{{dproxy}}",
+      "ppid": 1683,
+      "comm": "docker-proxy",
+      "exe": "/usr/bin/docker-proxy",
+      "timestamp": "{{ts}}"
+     }
+    },
+    {
+     "delay_ms": 1,
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "pipe2",
+      "success": "yes",
+      "exit": "0",
+      "a0": "c000{{h6}}",
+      "a1": "80800",
+      "a2": "0",
+      "a3": "0",
+      "pid": "{{dproxy}}",
+      "ppid": 1683,
+      "comm": "docker-proxy",
+      "exe": "/usr/bin/docker-proxy",
+      "timestamp": "{{ts}}"
+     }
+    },
+    {
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "splice",
+      "success": "yes",
+      "exit": "{{bytes}}",
+      "a0": "{{dpc.cli}}",
+      "a1": "0",
+      "a2": "{{dpc.w1}}",
+      "a3": "0",
+      "pid": "{{dproxy}}",
+      "ppid": 1683,
+      "comm": "docker-proxy",
+      "exe": "/usr/bin/docker-proxy",
+      "timestamp": "{{ts}}"
+     }
+    },
+    {
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "splice",
+      "success": "yes",
+      "exit": "{{bytes}}",
+      "a0": "{{dpc.r1}}",
+      "a1": "0",
+      "a2": "{{dpc.bex}}",
+      "a3": "0",
+      "pid": "{{dproxy}}",
+      "ppid": 1683,
+      "comm": "docker-proxy",
+      "exe": "/usr/bin/docker-proxy",
+      "timestamp": "{{ts}}"
+     }
+    },
+    {
+     "delay_ms": 3,
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "pipe2",
+      "success": "yes",
+      "exit": "0",
+      "a0": "c000{{h6b}}",
+      "a1": "80800",
+      "a2": "0",
+      "a3": "0",
+      "pid": "{{dproxy}}",
+      "ppid": 1683,
+      "comm": "docker-proxy",
+      "exe": "/usr/bin/docker-proxy",
+      "timestamp": "{{ts}}"
+     }
+    },
+    {
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "splice",
+      "success": "yes",
+      "exit": "{{bytes2}}",
+      "a0": "{{dpc.bex}}",
+      "a1": "0",
+      "a2": "{{dpc.w2}}",
+      "a3": "0",
+      "pid": "{{dproxy}}",
+      "ppid": 1683,
+      "comm": "docker-proxy",
+      "exe": "/usr/bin/docker-proxy",
+      "timestamp": "{{ts}}"
+     }
+    },
+    {
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "splice",
+      "success": "yes",
+      "exit": "{{bytes2}}",
+      "a0": "{{dpc.r2}}",
+      "a1": "0",
+      "a2": "{{dpc.cli}}",
+      "a3": "0",
+      "pid": "{{dproxy}}",
+      "ppid": 1683,
+      "comm": "docker-proxy",
+      "exe": "/usr/bin/docker-proxy",
+      "timestamp": "{{ts}}"
+     }
+    }
+   ]
   },
   {
    "weight": 0.4,
@@ -2977,137 +3929,318 @@
    }
   },
   {
-   "weight": 0.3,
-   "name": "runc (docker exec/run) os.Pipe",
-   "event": {
-    "type": "SYSCALL",
-    "syscall": "pipe2",
-    "success": "yes",
-    "exit": "0",
-    "a0": "c000{{h6}}",
-    "a1": "80000",
-    "a2": "0",
-    "a3": "0",
-    "pid": "{{runcx.pid}}",
-    "ppid": "{{runcx.ppid}}",
-    "comm": "runc",
-    "exe": "/usr/bin/runc",
-    "timestamp": "{{ts}}"
-   }
-  },
-  {
-   "weight": 0.25,
-   "name": "runc init re-exec guard: sealed memfd copy of runc (CVE-2019-5736)",
-   "event": {
-    "type": "SYSCALL",
-    "syscall": "memfd_create",
-    "success": "yes",
-    "exit": "6",
-    "a0": "{{runcname}}",
-    "a1": "3",
-    "a2": "0",
-    "a3": "0",
-    "pid": "{{runcinit.pid}}",
-    "ppid": "{{runcinit.ppid}}",
-    "comm": "exe",
-    "exe": "/usr/bin/runc",
-    "timestamp": "{{ts}}"
-   }
-  },
-  {
-   "weight": 0.25,
-   "name": "runc init fexecve()s the sealed copy (execveat AT_EMPTY_PATH)",
-   "event": {
-    "type": "SYSCALL",
-    "syscall": "execveat",
-    "success": "yes",
-    "exit": "0",
-    "a0": "6",
-    "a1": "{{runcempty}}",
-    "a2": "5{{hp}}{{h10}}",
-    "a3": "5{{hp}}{{h10}}",
-    "pid": "{{runcinit.pid}}",
-    "ppid": "{{runcinit.ppid}}",
-    "comm": "6",
-    "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
-    "timestamp": "{{ts}}"
-   }
-  },
-  {
    "weight": 0.35,
-   "name": "runc:[1:CHILD] joins the container's namespaces (docker exec)",
-   "event": {
-    "type": "SYSCALL",
-    "syscall": "setns",
-    "success": "yes",
-    "exit": "0",
-    "a0": "{{fdx}}",
-    "a1": "{{nsflag}}",
-    "a2": "0",
-    "a3": "0",
-    "pid": "{{runcchild.pid}}",
-    "ppid": "{{runcchild.ppid}}",
-    "comm": "runc:[1:CHILD]",
-    "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
-    "timestamp": "{{ts}}"
-   }
+   "name": "docker exec through runc 1.1: memfd re-exec of runc init, then runc:[1:CHILD] setns()es into each of the container's namespaces",
+   "events": [
+    {
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "pipe2",
+      "success": "yes",
+      "exit": "0",
+      "a0": "c000{{h6}}",
+      "a1": "80000",
+      "a2": "0",
+      "a3": "0",
+      "pid": "{{rexec.x}}",
+      "ppid": "{{rexec.xp}}",
+      "comm": "runc",
+      "exe": "/usr/bin/runc",
+      "timestamp": "{{ts}}"
+     }
+    },
+    {
+     "delay_ms": 4,
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "memfd_create",
+      "success": "yes",
+      "exit": "6",
+      "a0": "{{rimg.name}}",
+      "a1": "3",
+      "a2": "0",
+      "a3": "0",
+      "pid": "{{rexec.init}}",
+      "ppid": "{{rexec.x}}",
+      "comm": "exe",
+      "exe": "/usr/bin/runc",
+      "timestamp": "{{ts}}"
+     }
+    },
+    {
+     "delay_ms": 38,
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "execveat",
+      "success": "yes",
+      "exit": "0",
+      "a0": "6",
+      "a1": "{{rimg.empty}}",
+      "a2": "5{{hp}}{{h10}}",
+      "a3": "7ff{{sd}}{{h8}}",
+      "pid": "{{rexec.init}}",
+      "ppid": "{{rexec.x}}",
+      "comm": "6",
+      "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
+      "timestamp": "{{ts}}"
+     }
+    },
+    {
+     "delay_ms": 4,
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "setns",
+      "success": "yes",
+      "exit": "0",
+      "a0": "6",
+      "a1": "8000000",
+      "a2": "0",
+      "a3": "0",
+      "pid": "{{rexec.child}}",
+      "ppid": "{{rexec.x}}",
+      "comm": "runc:[1:CHILD]",
+      "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
+      "timestamp": "{{ts}}"
+     }
+    },
+    {
+     "delay_ms": 0,
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "setns",
+      "success": "yes",
+      "exit": "0",
+      "a0": "7",
+      "a1": "4000000",
+      "a2": "0",
+      "a3": "0",
+      "pid": "{{rexec.child}}",
+      "ppid": "{{rexec.x}}",
+      "comm": "runc:[1:CHILD]",
+      "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
+      "timestamp": "{{ts}}"
+     }
+    },
+    {
+     "delay_ms": 0,
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "setns",
+      "success": "yes",
+      "exit": "0",
+      "a0": "8",
+      "a1": "40000000",
+      "a2": "0",
+      "a3": "0",
+      "pid": "{{rexec.child}}",
+      "ppid": "{{rexec.x}}",
+      "comm": "runc:[1:CHILD]",
+      "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
+      "timestamp": "{{ts}}"
+     }
+    },
+    {
+     "delay_ms": 0,
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "setns",
+      "success": "yes",
+      "exit": "0",
+      "a0": "9",
+      "a1": "20000000",
+      "a2": "0",
+      "a3": "0",
+      "pid": "{{rexec.child}}",
+      "ppid": "{{rexec.x}}",
+      "comm": "runc:[1:CHILD]",
+      "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
+      "timestamp": "{{ts}}"
+     }
+    },
+    {
+     "delay_ms": 0,
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "setns",
+      "success": "yes",
+      "exit": "0",
+      "a0": "a",
+      "a1": "20000",
+      "a2": "0",
+      "a3": "0",
+      "pid": "{{rexec.child}}",
+      "ppid": "{{rexec.x}}",
+      "comm": "runc:[1:CHILD]",
+      "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
+      "timestamp": "{{ts}}"
+     }
+    },
+    {
+     "delay_ms": 0,
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "setns",
+      "success": "yes",
+      "exit": "0",
+      "a0": "b",
+      "a1": "2000000",
+      "a2": "0",
+      "a3": "0",
+      "pid": "{{rexec.child}}",
+      "ppid": "{{rexec.x}}",
+      "comm": "runc:[1:CHILD]",
+      "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
+      "timestamp": "{{ts}}"
+     }
+    }
+   ]
   },
   {
    "weight": 0.25,
-   "name": "runc:[1:CHILD] unshares new namespaces (docker run)",
-   "event": {
-    "type": "SYSCALL",
-    "syscall": "unshare",
-    "success": "yes",
-    "exit": "0",
-    "a0": "6c020000",
-    "a1": "0",
-    "a2": "0",
-    "a3": "0",
-    "pid": "{{runcchild.pid}}",
-    "ppid": "{{runcchild.ppid}}",
-    "comm": "runc:[1:CHILD]",
-    "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
-    "timestamp": "{{ts}}"
-   }
-  },
-  {
-   "weight": 0.25,
-   "name": "runc (docker run, cgroup v2) loads the device-filter BPF program",
-   "event": {
-    "type": "SYSCALL",
-    "syscall": "bpf",
-    "success": "yes",
-    "exit": "{{fd}}",
-    "a0": "5",
-    "a1": "c000{{h6}}",
-    "a2": "90",
-    "a3": "0",
-    "pid": "{{runcx.pid}}",
-    "ppid": "{{runcx.ppid}}",
-    "comm": "runc",
-    "exe": "/usr/bin/runc",
-    "timestamp": "{{ts}}"
-   }
-  },
-  {
-   "weight": 0.25,
-   "name": "runc device filter query/attach",
-   "event": {
-    "type": "SYSCALL",
-    "syscall": "bpf",
-    "success": "yes",
-    "exit": "0",
-    "a0": "{{runcbpf}}",
-    "a1": "c000{{h6}}",
-    "a2": "{{bpfsz}}",
-    "a3": "0",
-    "pid": "{{runcx.pid}}",
-    "ppid": "{{runcx.ppid}}",
-    "comm": "runc",
-    "exe": "/usr/bin/runc",
-    "timestamp": "{{ts}}"
-   }
+   "name": "docker run through runc 1.1: memfd re-exec of runc init, runc:[1:CHILD] unshare(NEWNS|NEWUTS|NEWIPC|NEWNET|NEWPID), runc:[2:INIT] unshare(NEWCGROUP), then the device-filter BPF load/query/attach",
+   "events": [
+    {
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "pipe2",
+      "success": "yes",
+      "exit": "0",
+      "a0": "c000{{h6}}",
+      "a1": "80000",
+      "a2": "0",
+      "a3": "0",
+      "pid": "{{rrun.x}}",
+      "ppid": "{{rrun.xp}}",
+      "comm": "runc",
+      "exe": "/usr/bin/runc",
+      "timestamp": "{{ts}}"
+     }
+    },
+    {
+     "delay_ms": 4,
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "memfd_create",
+      "success": "yes",
+      "exit": "6",
+      "a0": "{{rimg.name}}",
+      "a1": "3",
+      "a2": "0",
+      "a3": "0",
+      "pid": "{{rrun.init}}",
+      "ppid": "{{rrun.x}}",
+      "comm": "exe",
+      "exe": "/usr/bin/runc",
+      "timestamp": "{{ts}}"
+     }
+    },
+    {
+     "delay_ms": 38,
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "execveat",
+      "success": "yes",
+      "exit": "0",
+      "a0": "6",
+      "a1": "{{rimg.empty}}",
+      "a2": "5{{hp}}{{h10}}",
+      "a3": "7ff{{sd}}{{h8}}",
+      "pid": "{{rrun.init}}",
+      "ppid": "{{rrun.x}}",
+      "comm": "6",
+      "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
+      "timestamp": "{{ts}}"
+     }
+    },
+    {
+     "delay_ms": 4,
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "unshare",
+      "success": "yes",
+      "exit": "0",
+      "a0": "6c020000",
+      "a1": "0",
+      "a2": "0",
+      "a3": "0",
+      "pid": "{{rrun.child}}",
+      "ppid": "{{rrun.x}}",
+      "comm": "runc:[1:CHILD]",
+      "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
+      "timestamp": "{{ts}}"
+     }
+    },
+    {
+     "delay_ms": 1,
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "unshare",
+      "success": "yes",
+      "exit": "0",
+      "a0": "2000000",
+      "a1": "0",
+      "a2": "0",
+      "a3": "0",
+      "pid": "{{rrun.init2}}",
+      "ppid": "{{rrun.x}}",
+      "comm": "runc:[2:INIT]",
+      "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
+      "timestamp": "{{ts}}"
+     }
+    },
+    {
+     "delay_ms": 18,
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "bpf",
+      "success": "yes",
+      "exit": "{{fd}}",
+      "a0": "5",
+      "a1": "c000{{h6b}}",
+      "a2": "90",
+      "a3": "0",
+      "pid": "{{rrun.x}}",
+      "ppid": "{{rrun.xp}}",
+      "comm": "runc",
+      "exe": "/usr/bin/runc",
+      "timestamp": "{{ts}}"
+     }
+    },
+    {
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "bpf",
+      "success": "yes",
+      "exit": "0",
+      "a0": "10",
+      "a1": "c000{{h6c}}",
+      "a2": "20",
+      "a3": "0",
+      "pid": "{{rrun.x}}",
+      "ppid": "{{rrun.xp}}",
+      "comm": "runc",
+      "exe": "/usr/bin/runc",
+      "timestamp": "{{ts}}"
+     }
+    },
+    {
+     "event": {
+      "type": "SYSCALL",
+      "syscall": "bpf",
+      "success": "yes",
+      "exit": "0",
+      "a0": "8",
+      "a1": "c000{{h6d}}",
+      "a2": "14",
+      "a3": "0",
+      "pid": "{{rrun.x}}",
+      "ppid": "{{rrun.xp}}",
+      "comm": "runc",
+      "exe": "/usr/bin/runc",
+      "timestamp": "{{ts}}"
+     }
+    }
+   ]
   }
  ]
 }

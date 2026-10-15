@@ -1,13 +1,13 @@
 {
  "id": "k8s-audit-control-plane",
- "version": 1,
+ "version": 2,
  "logsource": {
   "product": "kubernetes",
   "service": "audit"
  },
  "fidelity": "synthetic",
- "represents": "About 50 minutes of API-server audit traffic from the control plane of a 9-node kubeadm v1.30 cluster (kube-proxy + Cilium, CoreDNS): kubelet heartbeats, node and pod status, projected-token refreshes and Secret-volume watches; kube-controller-manager and kube-scheduler leader election; the per-controller service accounts (replicaset, deployment, daemon-set, job, cronjob, ttl-after-finished, garbage collector, endpointslice, HPA, root-ca publisher) creating and deleting pods, Jobs and EndpointSlices; add-on controller leases; coredns/kube-proxy/cilium reads and writes; and, at low weight, a control-plane kubelet restart that re-registers its four static-pod mirror pods and DaemonSet rollouts of node agents.",
- "provenance": "synthetic; event shapes from the audit.k8s.io/v1 Event type and kube-apiserver audit behaviour (one event per request, RequestReceived omitted), levels per detections/k8s/audit-policy-apiserver.yaml (Request for pods/workloads/RBAC/admission/DNS ConfigMaps, Metadata for secrets and serviceaccounts/token, reads of endpoints/events/leases/configmaps/status dropped), identities and user agents per kubeadm defaults (--use-service-account-credentials, node authorizer, system:node:<name>), request bodies per the core/v1, apps/v1 and batch/v1 types as the controllers send them (defaulted templates, no admission-injected token volume). Version strings and build hashes are illustrative; addresses are RFC1918; names are fictional. Cross-event sequences are not modelled (each event is drawn independently).",
+ "represents": "About 30 minutes of API-server audit traffic from the control plane of a 9-node kubeadm v1.30 cluster (kube-proxy + Cilium, CoreDNS): kubelet heartbeats, node and pod status, projected-token refreshes and Secret-volume watches; kube-controller-manager and kube-scheduler leader election; the per-controller service accounts (replicaset, deployment, daemon-set, job, cronjob, ttl-after-finished, garbage collector, endpointslice, HPA, root-ca publisher) creating and deleting pods, Jobs and EndpointSlices; add-on controller leases; coredns/kube-proxy/cilium reads and writes; and, at low weight, a kubeadm control-plane upgrade after which the kubelet creates mirror pods for the static pods whose manifests changed, and DaemonSet rollouts of node agents. Template weights set which behaviours appear and roughly how often relative to each other, not their production rates: 9 kubelets renewing their node leases every 10 s alone would be ~1,600 events in this window, more than the whole slice. Treat hits and rate_per_10k as presence indicators (does this benign traffic trip the rule, and by which identity), not as production false-positive rates.",
+ "provenance": "synthetic; event shapes from the audit.k8s.io/v1 Event type and kube-apiserver audit behaviour (one event per request, RequestReceived omitted), levels per detections/k8s/audit-policy-apiserver.yaml (Request for pods/workloads/RBAC/admission/DNS ConfigMaps, Metadata for secrets and serviceaccounts/token, reads of endpoints/events/leases/configmaps/status dropped), identities and user agents per kubeadm defaults (--use-service-account-credentials, node authorizer, system:node:<name>; kube-controller-manager's shared and metadata informers run as system:kube-controller-manager with UA suffix /shared-informers or /metadata-informers, its leader election as /leader-election and its own clientset as /kube-controller-manager, kube-scheduler's as /scheduler), request bodies per the core/v1, apps/v1 and batch/v1 types as the controllers send them (defaulted templates, no admission-injected token volume). Version strings and build hashes are illustrative; addresses are RFC1918; names are fictional. Cross-event sequences are not modelled (each event is drawn independently).",
  "adjacent_to": [
   "T1543.005/k8s_static_pod_mirror_create.yml (kubelet mirror-pod creates for kubeadm static pods)",
   "T1611/k8s_podspec_host_access.yml (DaemonSet node agents and static pods with hostNetwork/hostPath/privileged)",
@@ -10140,7 +10140,7 @@
   },
   {
    "weight": 0.25,
-   "name": "kubelet registers control-plane mirror pod after a kubelet restart (static pod)",
+   "name": "kubelet creates the mirror pod of a control-plane static pod whose manifest changed (kubeadm upgrade)",
    "event": {
     "kind": "Event",
     "apiVersion": "audit.k8s.io/v1",
@@ -11342,8 +11342,8 @@
    }
   },
   {
-   "weight": 1.5,
-   "name": "kcm controllers list/watch Secrets metadata (GC, quota, namespace)",
+   "weight": 0.5,
+   "name": "kube-controller-manager's shared informer watches Secrets cluster-wide (GC graph builder, quota monitors, token controller)",
    "event": {
     "kind": "Event",
     "apiVersion": "audit.k8s.io/v1",
@@ -11353,23 +11353,15 @@
     "requestURI": "/api/v1/secrets?allowWatchBookmarks=true&resourceVersion=4{{rv}}&timeout=9m12s&timeoutSeconds=552&watch=true",
     "verb": "watch",
     "user": {
-     "username": "system:serviceaccount:kube-system:{{gc_ctrl.name}}",
-     "uid": "{{gc_ctrl.uid}}",
+     "username": "system:kube-controller-manager",
      "groups": [
-      "system:serviceaccounts",
-      "system:serviceaccounts:kube-system",
       "system:authenticated"
-     ],
-     "extra": {
-      "authentication.kubernetes.io/credential-id": [
-       "JTI={{jti}}"
-      ]
-     }
+     ]
     },
     "sourceIPs": [
      "10.20.0.11"
     ],
-    "userAgent": "{{gc_ctrl.ua}}",
+    "userAgent": "kube-controller-manager/v1.30.6 (linux/amd64) kubernetes/00f20d4/shared-informers",
     "objectRef": {
      "resource": "secrets",
      "apiVersion": "v1"
@@ -11382,7 +11374,7 @@
     "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
     "annotations": {
      "authorization.k8s.io/decision": "allow",
-     "authorization.k8s.io/reason": "{{gc_ctrl.reason}}"
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"system:kube-controller-manager\" of ClusterRole \"system:kube-controller-manager\" to User \"system:kube-controller-manager\""
     }
    }
   },
@@ -11444,7 +11436,7 @@
     "sourceIPs": [
      "10.20.0.11"
     ],
-    "userAgent": "kube-controller-manager/v1.30.6 (linux/amd64) kubernetes/00f20d4",
+    "userAgent": "kube-controller-manager/v1.30.6 (linux/amd64) kubernetes/00f20d4/kube-controller-manager",
     "objectRef": {
      "resource": "serviceaccounts",
      "namespace": "kube-system",
