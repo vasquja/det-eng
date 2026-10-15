@@ -262,7 +262,10 @@ Proving the loop is automated:
   itself, so the agent can drive a detection all the way to landed. It is label-gated
   (only a PR a collaborator marks `automerge` is eligible), same-repo only (never a
   fork), honors a reviewer's `CHANGES_REQUESTED`, and guards the merge by head SHA.
-  Remove the label to veto.
+  Remove the label to veto. One-time activation: the `automerge` label must exist,
+  Actions workflow permissions must be read/write, and the branch ruleset's "Require
+  branches to be up to date before merging" must be off (a `GITHUB_TOKEN` push cannot
+  re-run CI, so a strict policy would strand behind-but-green PRs).
 
 Run the Linux loop locally:
 
