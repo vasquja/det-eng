@@ -98,17 +98,33 @@ grades those records the same way.
 - A rule with no registered positive in any validator `MANIFEST`. A documented
   telemetry gap goes in `COMPILE_ONLY` with a reason (human-approved) and still needs
   a sidecar positive.
-- A rule whose only negatives are trivial or distant: no-op runs, unrelated
-  events, a pre-emulation baseline.
-- A rule that names an emulation in its own detection (`trr9NNN`, `deteng_`).
-- A cloud rule whose near-misses all break only **marker-keyed** items: items that
-  flip when the validator gate's marker is renamed in the attack. Negatives that
-  differ from the attack only in the emulation's naming mean the rule may key on
-  the marker, not the technique. Gate each rule on a name only the emulation
+- A rule with no verified negative that breaks a **discriminating** item or a
+  filter. Trivial and distant negatives don't count: no-op runs, unrelated events, a
+  pre-emulation baseline, or a record where *no* positive item holds (an `{"x": 1}`
+  grades trivial for every rule). Neither does a near-miss that breaks only the
+  surface (`syscall`, `verb`, `eventName`), because it would pass just as well for the
+  rule with its argument deleted. A near-miss must share the branch it nearly fires.
+- A rule that keys on the emulation's naming. The rename test replaces `trr9NNN` /
+  `deteng_` in every positive with a neutral token, and the rule must still fire. A
+  cloud rule's validator gate must be a `marker(...)` on a name only the emulation
   uses (`trr90NN-...`), never on a string the rule itself matches. A gate of
   `Unauth` on a rule that keys on Cognito's `...Unauth_Role` naming proved
   nothing.
-- Any failing sidecar case.
+- Any failing sidecar case, or any file under `detections/sigma/` other than
+  `T<id>/` rule files, `.cases.jsonl` sidecars and `.md`.
+
+Two human-approved waivers exist in `check_sufficiency.py`. Never add an entry
+yourself; propose it in the PR with the reason:
+
+- `CHOKEPOINT`: the record kind itself is the technique, so every positive item is
+  a surface field.
+- `PRESENCE`: one positive item, no filter. No negative can be one flip away, so the
+  positive and the benign-corpus budget are the proof.
+
+Correlation atoms (`base:<name>`, `group-by`, `timespan`, `order`, `threshold`) are
+verified by construction: the grader repairs the named atom (unifies the pid,
+re-stamps into the window) and requires the repaired set to fire the compiled rule.
+Every event needs a parseable timestamp and a group-by value, or it grades trivial.
 
 It **warns** (never fails) on *thin* checks: a rule whose exercised-atom ratio is
 below half its platform's median, or whose negatives exercise only filters and no
@@ -160,8 +176,8 @@ processes/principals behind them. `detection-quality / benign-corpus` runs
 
 When a new rule fires on the corpus, read the explained example hit first. A precise
 rule firing on benign activity is a rule defect. A deliberately generic hunting rule
-may need a budget: **propose** one with a `why`, and say so in the PR. Budget and
-corpus changes are protected paths that need a human's approval before merge. Never
+may need a budget: **propose** one with a `why`, and say so in the PR. Budget and corpus changes are not
+content, so they need a human's approval before merge. Never
 edit the corpus to silence a rule. You may propose new slices for realistic activity,
 but a human decides what counts as benign enough.
 

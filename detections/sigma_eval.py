@@ -38,6 +38,8 @@ def _rule_dir_intruders():
     except FileNotFoundError:
         return bad
     for entry in entries:
+        if entry.is_file(follow_symlinks=False) and entry.name.endswith(".md"):
+            continue  # a top-level README cannot shadow a module
         if not (entry.is_dir(follow_symlinks=False) and _TECHNIQUE_DIR.fullmatch(entry.name)):
             bad.append(entry.name)
             continue
@@ -49,8 +51,8 @@ def _rule_dir_intruders():
 
 _intruders = _rule_dir_intruders()
 if _intruders:
-    sys.exit("refusing to import pySigma: detections/sigma/ may hold only T<id>/ "
-             "directories of *.yml, *.cases.jsonl and *.md files, because it shares "
+    sys.exit("refusing to import pySigma: detections/sigma/ may hold only *.md files "
+             "and T<id>/ directories of *.yml, *.cases.jsonl and *.md files, because it shares "
              "the `sigma` package namespace with pySigma and anything importable there "
              "would shadow pySigma's own modules. Move or delete:\n  "
              + "\n  ".join(f"detections/sigma/{p}" for p in _intruders))

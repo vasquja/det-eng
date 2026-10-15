@@ -79,7 +79,22 @@ actors show *how* a rule is noisy, and the committed snapshot tracks that over t
   deliberately generic hunting rule whose noise is the documented cost.
 - **`enforce`**: the overrun fails the `benign-corpus` check.
 
-A rule with no entry gets `default`. Every entry must carry a `why`.
+A rule with no entry gets `default`, which is **enforce at 0 hits**: a new rule must
+stay silent on the corpus, or a human approves a budget for it. Every entry must carry
+a `why`.
+
+A rule that no slice reads is not scored. A slice reads a rule when it has the
+rule's product and service; category counts only when neither names a service.
+`--check`/`--enforce` fail for an unscored rule unless `budgets.json` lists it under
+`unscored` with the reason, and a stale entry fails too. So a rule cannot drop out
+of its budget by changing its logsource.
+
+A slice can hold real multi-event behaviour as a **sequence** template, sharing one
+draw of the variables with per-step delays: runc's memfd re-exec, or a namespace
+deletion and its controller's cleanup. Events drawn independently almost never line
+up inside a correlation window. Keys that differ only by case (`requestId` and
+`RequestID`) cannot share one slice, because SQLite folds column case; split such
+records across slices.
 
 ## Tracking it over time
 
@@ -116,15 +131,27 @@ Treat the corpus like test data:
   activity, fix the rule, document the noise, or set a budget. Do not edit the
   corpus to hide the hit.
 
-**A human signs off on what counts as benign enough.** An agent may propose new
-slices, templates and budget changes. But a number of paths are protected:
+**A human signs off on what counts as benign enough, and on everything the gates
+run.** An agent may propose new slices, templates and budget changes. The
+`automerge` workflow, though, merges a pull request without a human only when
+*every* changed path is content:
 
-- `budgets.json` and anything under `slices/`;
-- the gate scripts: `check_sufficiency.py`, `rule_cases.py`, `sigma_explain.py`,
-  `score_benign.py` and `benign_corpus.py`;
-- the `detection-quality` and `automerge` workflows.
+- rules and their `.cases.jsonl` under `detections/sigma/T<id>/`;
+- cloud fixtures;
+- this directory's `scores.json` (derived; the benign-corpus check proves it
+  current);
+- `research/` (no `*.py`, nothing under `research/tools/`), `atomics/`, `docs/`,
+  `upstream/`;
+- Markdown outside `.github/` and `.claude/`.
 
-The `automerge` workflow will not merge a pull request that changes any of them
-without an approving review on its exact head commit. That review must come from
-a human collaborator who is not the pull request's author. Otherwise a human
-merges it.
+Anything else needs an approving review on the exact head commit. That includes
+`budgets.json`, `slices/`, the live workloads, every `*.py` (the gate scripts,
+`sigma_eval.py`, the validators), the workflows, and every new-technique pull
+request (it edits a validator `MANIFEST` and the workflow path filters). The
+approver must be a human with write access who is neither the pull request's
+author nor an author or committer of its commits.
+
+After approving, remove and re-add the `automerge` label, or merge by hand; an
+approval alone does not re-run `automerge`. This rail binds only the bot. Branch
+protection on `main` is what binds a manual merge: required approval of the most
+recent push, Code Owner review, required checks, no bypass.

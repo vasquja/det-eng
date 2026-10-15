@@ -105,23 +105,36 @@ it declares. An unrelated event cannot pass as a near-miss.
 
 `check_sufficiency.py` is the gate on top. It fails a rule that:
 
-- has no registered positive in a validator `MANIFEST` (documented telemetry gaps are
-  listed in its `COMPILE_ONLY`, and still need a sidecar positive);
-- has no **verified** near-miss or filtered negative, from its cases or (cloud) its
-  hard benign fixture. A no-op, an unrelated event or a pre-emulation baseline does
-  not count;
-- has a failing case;
-- names an emulation in its own detection (`trr9NNN`, `deteng_`);
-- (cloud) has near-misses that all break **marker-keyed** items only. An item is
-  marker-keyed when renaming the validator gate's marker in the attack flips it.
-  Such negatives differ from the attack only in the emulation's naming, so they
-  don't show that the rule keys on the technique.
+- **R0** cannot be split into items, or sits in a `detections/sigma/` that holds
+  anything but `T<id>/` directories of `*.yml`, `*.cases.jsonl` and `*.md`. The
+  rules directory shares the `sigma` package namespace with pySigma, so a stray
+  `.py` there would replace pySigma modules; `sigma_eval.py` refuses to load in
+  that case too.
+- **R1** has no registered positive in a validator `MANIFEST`. A documented
+  telemetry gap is listed in `COMPILE_ONLY` and still needs a sidecar positive.
+- **R2** has no **verified** negative that breaks a *discriminating* item or a
+  filter. A verified negative is a near-miss or filtered case, from the rule's
+  cases or (cloud) its hard benign fixture. A no-op, an unrelated event or a
+  pre-emulation baseline does not count, and neither does a negative that breaks
+  only the surface (`syscall`, `verb`, `eventName`).
+- **R3** has a failing case.
+- **R4** keys on the emulation's naming. The rename test replaces every emulation
+  name (`trr9NNN`, `deteng_`) in the rule's positives (its sidecar positives, and
+  for cloud the attack records) with a neutral token; the rule must still fire.
+  A cloud rule's validator gate must also be a `marker(...)`.
 
-It also warns about *thin* checks: rules that exercise far fewer of their condition
-items than the median rule of their platform (over rules with any verified
-negative), or whose negatives break only filters or only the surface (`syscall`,
-`verb`, `eventName`). It also warns about a renamed attack that stops firing, and a
-non-cloud rule with no offline positive case.
+Two waivers exist, each with a reason, in `check_sufficiency.py` (a protected
+path, so a human approves every entry):
+
+- `CHOKEPOINT`: the rule's every positive item is a surface field because the
+  record kind itself is the technique (any `add_key`, any Events delete).
+- `PRESENCE`: the rule has one positive item and no filter (any impersonated
+  request, any static-pod sandbox). No negative can be one item from firing, so
+  the proof is the positive case and the rule's benign-corpus budget.
+
+It warns (never fails) about *thin* checks: rules that exercise far fewer of their
+condition items than the median rule of their platform, or whose negatives break
+only filters.
 
 ```
 python3 detections/rule_cases.py --atoms sigma/T1040/afinet_raw_socket.yml  # the items `breaks` can name

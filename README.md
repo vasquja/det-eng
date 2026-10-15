@@ -302,10 +302,11 @@ Proving the loop is automated:
   itself, so the agent can drive a detection all the way to landed. It is label-gated
   (only a PR a collaborator marks `automerge` is eligible), same-repo only (never a
   fork), honors a reviewer's `CHANGES_REQUESTED`, and guards the merge by head SHA.
-  A pull request that changes what counts as benign enough, or the gate itself, is
-  never auto-merged without a human collaborator's approval on its head commit.
-  That covers corpus slices, budgets, the sufficiency and scoring scripts, and the
-  `detection-quality` and `automerge` workflows. Remove the label to veto.
+  It merges without a human only content: rules, their cases, cloud fixtures, the
+  derived benign scores, research notes, atomics and docs. Any code, workflow,
+  budget or corpus change, and so every new-technique PR, needs an approval on the
+  head commit from a human with write access who neither opened the PR nor
+  authored its commits. Remove the label to veto.
 
 Run the Linux loop locally:
 
