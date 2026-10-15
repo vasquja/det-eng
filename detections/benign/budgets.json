@@ -8,7 +8,7 @@
     "T1014/bpf_prog_load.yml": {
       "mode": "enforce",
       "max_hits": 17,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md L5: stock runc (cgroup-v2 device filter on every container create) and snap-confine (device-cgroup program on snap launches) are not in bpf_processes; the 2 bcc hits are documented observability noise."
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md L5: stock runc (cgroup-v2 device filter on every container create) and snap-confine (device-cgroup program on snap launches) are not in bpf_processes; the bcc (execsnoop-bpfcc, python3) hits are documented observability noise."
     },
     "T1040/afinet_raw_socket.yml": {
       "mode": "enforce",
@@ -23,7 +23,7 @@
     "T1053.007/k8s_job_create.yml": {
       "mode": "enforce",
       "max_hits": 37,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md K7: filter_controllers misses kube-system ttl-after-finished-controller and generic-garbage-collector deletes (6 of the hits); the rest is documented GitOps/CI Job deployment."
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md K7: filter_controllers misses kube-system ttl-after-finished-controller and generic-garbage-collector deletes; the rest is documented GitOps/CI Job deployment."
     },
     "T1068/dirtypipe_splice_readonly.yml": {
       "mode": "enforce",
@@ -63,7 +63,7 @@
     "T1078.004/aws_leaked_access_key_recon.yml": {
       "mode": "enforce",
       "max_hits": 283,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C2: the id_aida fallback (principalId AIDA) matches IAM-user TEMPORARY credentials too, so MFA (GetSessionToken) and console sessions fire (77 hits); the remaining off-egress long-term-key use by developers, legacy CI and a SaaS key is the documented baseline-before-alerting noise."
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C2: the id_aida fallback (principalId AIDA) matches IAM-user TEMPORARY credentials too, so MFA (GetSessionToken) and console sessions fire; the remaining off-egress long-term-key use by developers, legacy CI and a SaaS key is the documented baseline-before-alerting noise."
     },
     "T1078.004/entra_service_principal_federated_credential_signin.yml": {
       "mode": "enforce",
@@ -73,7 +73,7 @@
     "T1098.001/aws_github_oidc_role_trust_abuse.yml": {
       "mode": "enforce",
       "max_hits": 13,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C5: a wildcard inside the ref of a pinned owner/repo (refs/tags/v*) fires at high though no fork or other repo can match (4 hits); the repo:<org>/<repo>:* trusts (6) are GitHub's own documented example, a hygiene finding by design."
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C5: a wildcard inside the ref of a pinned owner/repo (refs/tags/v*) fires at high though no fork or other repo can match; the repo:<org>/<repo>:* trusts are GitHub's own documented example, a hygiene finding by design."
     },
     "T1098.001/azure_managed_identity_federated_credential_backdoor.yml": {
       "mode": "enforce",
@@ -93,7 +93,7 @@
     "T1098.006/k8s_rbac_privileged_grant.yml": {
       "mode": "enforce",
       "max_hits": 12,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md K3: the kube-system clusterrole-aggregation-controller re-applying the built-in edit/admin ClusterRoles (which carry impersonate) fires (3 hits); tenant admin/edit bindings by GitOps are documented."
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md K3: the kube-system clusterrole-aggregation-controller re-applying the built-in edit/admin ClusterRoles (which carry impersonate) fires; tenant admin/edit bindings by GitOps are documented."
     },
     "T1098.006/k8s_rbac_write.yml": {
       "mode": "enforce",
@@ -138,7 +138,7 @@
     "T1537/aws_resource_policy_made_public.yml": {
       "mode": "enforce",
       "max_hits": 36,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C3: the whole policy is matched as text, so a named Allow plus the standard DenyInsecureTransport statement (Deny, Principal '*') reads as public (13); filter_scoped also lacks aws:SourceOwner (SNS default policy, 7) and kms:CallerAccount / kms:ViaService (5). 3 hits are intentionally public resources."
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C3: the whole policy is matched as text, so a named Allow plus the standard DenyInsecureTransport statement (Deny, Principal '*') reads as public; filter_scoped also lacks aws:SourceOwner (SNS default policy) and kms:CallerAccount / kms:ViaService. The Lambda function URL AddPermission grants (principal '*', auth type NONE) are intentionally public resources."
     },
     "T1537/aws_s3_block_public_access_disabled.yml": {
       "mode": "enforce",
@@ -193,7 +193,7 @@
     "T1609/k8s_pod_ephemeral_container.yml": {
       "mode": "enforce",
       "max_hits": 10,
-      "why": "documented noise: kubectl debug with an unprivileged ephemeral container. Its committed seed (k8s-audit-human-operators v2) happens to draw no kubectl-debug event (about 4 expected in 520), so it scores 0 today; reseeds v3-v12 score 2-10, which the budget covers."
+      "why": "documented noise: kubectl debug with an unprivileged ephemeral container. Its committed seed happens to draw few or no kubectl-debug events, so its hits there can sit well below the budget, which covers the reseeds."
     },
     "T1609/k8s_pod_exec_attach.yml": {
       "mode": "enforce",
