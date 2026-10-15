@@ -62,6 +62,59 @@ def _quote(col):
     return '"' + col.replace('"', '""') + '"'
 
 
+class EventTable:
+    """Flat event dicts loaded once into an in-memory `logs` table.
+
+    Load a large event set (a benign corpus slice, a long audit log) once and run
+    many compiled rules over it, instead of rebuilding the table per rule.
+    """
+
+    def __init__(self, events):
+        self.events = events
+        self.db = sqlite3.connect(":memory:")
+        # pySigma's SQLite backend compiles a `|re` match to the SQL `REGEXP`
+        # operator, which SQLite leaves unimplemented by default. Register it with
+        # Python's `re` (full syntax, including look-around) so `|re` rules
+        # evaluate. `X REGEXP Y` calls regexp(Y, X), i.e. regexp(pattern, value).
+        self.db.create_function(
+            "regexp", 2,
+            lambda pattern, value: 1 if value is not None and re.search(pattern, str(value)) else 0)
+        columns = sorted({k for e in events for k in e} - {_ROWID})
+        self.db.execute(f"CREATE TABLE logs ({_ROWID} INTEGER PRIMARY KEY"
+                        + "".join(f", {_quote(c)}" for c in columns) + ")")
+        for rowid, event in enumerate(events):
+            cols = [c for c in columns if c in event]
+            self.db.execute(
+                f"INSERT INTO logs ({_ROWID}{''.join(', ' + _quote(c) for c in cols)}) "
+                f"VALUES (?{', ?' * len(cols)})",
+                [rowid] + [event[c] for c in cols])
+
+    def _execute(self, sql):
+        while True:
+            try:
+                return self.db.execute(sql)
+            except sqlite3.OperationalError as e:
+                missing = re.match(r"no such column: (.+)$", str(e))
+                if not missing:
+                    raise
+                self.db.execute(f"ALTER TABLE logs ADD COLUMN {_quote(missing.group(1))}")
+
+    def hit_indices(self, sql):
+        """One list of event indices per hit (see evaluate())."""
+        cur = self._execute(sql)
+        names = [d[0] for d in cur.description]
+        rows = cur.fetchall()
+        if "event_ids" in names:  # correlation alert rows
+            idx = names.index("event_ids")
+            return [[int(eid.rsplit(":", 1)[1]) for eid in json.loads(row[idx])]
+                    for row in rows]
+        idx = names.index(_ROWID)
+        return [[row[idx]] for row in rows]
+
+    def hits(self, sql):
+        return [[self.events[i] for i in hit] for hit in self.hit_indices(sql)]
+
+
 def evaluate(sql, events):
     """Run a compiled rule over flat event dicts.
 
@@ -70,39 +123,4 @@ def evaluate(sql, events):
     contributed to it. A field no event carries reads as NULL (matches nothing),
     exactly as it would in a log store that never saw the field.
     """
-    db = sqlite3.connect(":memory:")
-    # pySigma's SQLite backend compiles a `|re` match to the SQL `REGEXP` operator,
-    # which SQLite leaves unimplemented by default. Register it with Python's `re`
-    # (full syntax, including look-around) so `|re` rules evaluate. `X REGEXP Y`
-    # calls regexp(Y, X), i.e. regexp(pattern, value).
-    db.create_function(
-        "regexp", 2,
-        lambda pattern, value: 1 if value is not None and re.search(pattern, str(value)) else 0)
-    columns = sorted({k for e in events for k in e} - {_ROWID})
-    db.execute(f"CREATE TABLE logs ({_ROWID} INTEGER PRIMARY KEY"
-               + "".join(f", {_quote(c)}" for c in columns) + ")")
-    for rowid, event in enumerate(events):
-        cols = [c for c in columns if c in event]
-        db.execute(
-            f"INSERT INTO logs ({_ROWID}{''.join(', ' + _quote(c) for c in cols)}) "
-            f"VALUES (?{', ?' * len(cols)})",
-            [rowid] + [event[c] for c in cols])
-
-    while True:
-        try:
-            cur = db.execute(sql)
-            break
-        except sqlite3.OperationalError as e:
-            missing = re.match(r"no such column: (.+)$", str(e))
-            if not missing:
-                raise
-            db.execute(f"ALTER TABLE logs ADD COLUMN {_quote(missing.group(1))}")
-
-    names = [d[0] for d in cur.description]
-    rows = cur.fetchall()
-    if "event_ids" in names:  # correlation alert rows
-        idx = names.index("event_ids")
-        return [[events[int(eid.rsplit(":", 1)[1])] for eid in json.loads(row[idx])]
-                for row in rows]
-    idx = names.index(_ROWID)
-    return [[events[row[idx]]] for row in rows]
+    return EventTable(events).hits(sql)

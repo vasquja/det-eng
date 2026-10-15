@@ -1,0 +1,5 @@
+{
+  "_doc": "Per-rule false-positive budgets for detections/score_benign.py. A rule not listed uses `default`. mode `shadow`: an overrun is a CI warning. mode `enforce`: an overrun fails CI. `max_hits` is the most benign hits the rule may raise over the whole committed corpus for its logsource; optional `max_rate_per_10k` caps the rate. Every entry needs a `why`. Raising a budget, or moving a rule from enforce back to shadow, is a human decision: such a change needs a human approval before merge.",
+  "default": {"mode": "shadow", "max_hits": 0},
+  "rules": {}
+}
