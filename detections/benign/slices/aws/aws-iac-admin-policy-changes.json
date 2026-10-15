@@ -1,13 +1,13 @@
 {
  "id": "aws-iac-admin-policy-changes",
- "version": 1,
+ "version": 2,
  "logsource": {
   "product": "aws",
   "service": "cloudtrail"
  },
  "fidelity": "synthetic",
- "represents": "Infrastructure-as-code administration of one production AWS account: Terraform (terraform-apply role, assumed through a pinned GitHub OIDC environment from the self-hosted runner NAT egress) refreshing and applying S3 / SQS / SNS / KMS / Lambda / ECR / Secrets Manager / EventBridge / EFS / Glue / SSM resource policies to SPECIFIC principals, accounts, AWS service principals and the organisation; sharing snapshots and AMIs with a named DR account and the org; Block Public Access set ON; Cognito identity pools with authenticated identities only; IAM role trust for GitHub OIDC (mostly pinned subjects), IRSA and Lambda; and a platform admin (IAM Identity Center, VPN egress) making console changes. It deliberately includes common real policy idioms (Deny-insecure-transport with Principal '*', the SNS default topic policy, the KMS ViaService/CallerAccount pattern, the EFS console wizard policy, GitHub's published StringLike 'repo:<org>/<repo>:*' example) and, rarely, an intentionally public marketing static site and a public Lambda webhook URL.",
- "provenance": "synthetic; shapes from the AWS CloudTrail record contents reference, the S3 / IAM / KMS / Lambda / EC2 / RDS / SNS / SQS / ECR / EFS / Glue / EventBridge / SSM API request references, the AWS documentation policy examples (SNS default policy, KMS console default and kms:ViaService examples, EFS console policy wizard, CloudFront OAC, GitHub's configuring-openid-connect-in-amazon-web-services guide) and this repo's TRR9015 / TRR9016 / TRR9019 / TRR9021 fixtures (URL-encoded IAM policy documents, nested S3 bucketPolicy, JSON-string policies). Accounts are AWS documentation examples (123456789012 own, 111122223333 DR, 444455556666 log archive, 777788889999 partner); org o-exampleorgid; canonical id is the AWS docs example; www.example.com is RFC 2606. Terraform egress 203.0.113.0/28 and VPN 203.0.113.32/27 are inside the repo's own-egress placeholder.",
+ "represents": "Infrastructure-as-code administration of one production AWS account: Terraform (terraform-apply role, assumed through a pinned GitHub OIDC environment from the self-hosted runner NAT egress) refreshing and applying S3 / SQS / SNS / KMS / Lambda / ECR / Secrets Manager / EventBridge / EFS / Glue / SSM resource policies to SPECIFIC principals, accounts, AWS service principals and the organisation; sharing snapshots and AMIs with a named DR account and the org; Block Public Access set ON; Cognito identity pools with authenticated identities only, plus one guest-only analytics pool (allowUnauthenticatedIdentities=true) and its unauthenticated role; IAM role trust for GitHub OIDC (mostly pinned subjects), IRSA and Lambda; and a platform admin (IAM Identity Center, VPN egress) making console changes. It deliberately includes common real policy idioms (Deny-insecure-transport with Principal '*', the SNS default topic policy, the KMS ViaService/CallerAccount pattern, the EFS console wizard policy, GitHub's published StringLike 'repo:<org>/<repo>:*' example) and, rarely, an intentionally public marketing static site and a public Lambda webhook URL. Template weights deliberately over-sample the activity adjacent to the rules in adjacent_to (and their documented false-positive classes), so a rule's hits and rate_per_10k on this slice are corpus figures, not a production rate.",
+ "provenance": "synthetic; shapes from the AWS CloudTrail record contents reference, the S3 / IAM / KMS / Lambda / EC2 / RDS / SNS / SQS / ECR / EFS / Glue / EventBridge / SSM API request references, the AWS documentation policy examples (SNS default policy, KMS console default and kms:ViaService examples, EFS console policy wizard, CloudFront OAC, GitHub's configuring-openid-connect-in-amazon-web-services guide) and this repo's TRR9015 / TRR9016 / TRR9019 / TRR9021 fixtures (URL-encoded IAM policy documents, nested S3 bucketPolicy, JSON-string policies). Accounts are AWS documentation examples (123456789012 own, 111122223333 DR, 444455556666 log archive, 777788889999 partner); org o-exampleorgid; canonical id is the AWS docs example; www.example.com is RFC 2606. Terraform egress 203.0.113.0/28 and VPN 203.0.113.32/27 are inside the repo's own-egress placeholder. Credential-issuing calls take eventTime and responseElements.credentials.expiration from a pair of fixed-cadence clocks that start durationSeconds apart and step together, so every expiration is exactly eventTime + durationSeconds (the generator has no offset-from-another-variable form; the cost is a fixed issuance cadence). Every S3 bucket and other named regional resource is logged in one region (awsRegion, Host and the TLS host header agree); only unnamed Describe/List calls use the 85/15 us-east-1/us-west-2 region mix.",
  "adjacent_to": [
   "T1537/aws_resource_policy_made_public.yml",
   "T1537/aws_s3_block_public_access_disabled.yml",
@@ -69,10 +69,10 @@
   },
   "exp1": {
    "time": {
-    "start": "2026-10-08T16:00:00Z",
+    "start": "2026-10-08T16:00:30Z",
     "step_seconds": [
-     5,
-     120
+     237,
+     237
     ],
     "format": "%b %-d, %Y, %-I:%M:%S %p"
    }
@@ -116,7 +116,6 @@
    "2026-10-04"
   ],
   "nb": [
-   "example-ledger-exports-dr-usw2",
    "example-ml-feature-store-prod",
    "example-reporting-scratch-prod"
   ],
@@ -1027,7 +1026,16 @@
     "err": "ReplicationConfigurationNotFoundError",
     "msg": "The replication configuration was not found"
    }
-  ]
+  ],
+  "it1": {
+   "time": {
+    "start": "2026-10-08T15:00:30Z",
+    "step_seconds": [
+     237,
+     237
+    ]
+   }
+  }
  },
  "templates": [
   {
@@ -1040,7 +1048,7 @@
      "userName": "repo:example-org/platform-infra:environment:prod-apply",
      "identityProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
     },
-    "eventTime": "{{t}}",
+    "eventTime": "{{it1}}",
     "eventSource": "sts.amazonaws.com",
     "eventName": "AssumeRoleWithWebIdentity",
     "awsRegion": "us-east-1",
@@ -1236,7 +1244,7 @@
    "note": "terraform refresh of optional S3 sub-resources that are not configured (NoSuch* errors)"
   },
   {
-   "weight": 8,
+   "weight": 5,
    "event": {
     "eventVersion": "1.09",
     "userIdentity": {
@@ -1272,10 +1280,6 @@
     "requestParameters": {
      "bucketName": "{{nb}}",
      "Host": "{{nb}}.s3.us-east-1.amazonaws.com",
-     "CreateBucketConfiguration": {
-      "xmlns": "http://s3.amazonaws.com/doc/2006-03-01/",
-      "LocationConstraint": "us-west-2"
-     },
      "x-amz-object-ownership": "BucketOwnerEnforced"
     },
     "responseElements": null,
@@ -4885,6 +4889,187 @@
     }
    },
    "note": "public webhook receiver: Lambda function URL with AuthType NONE (verifies the webhook HMAC in code)"
+  },
+  {
+   "weight": 3,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "CreateBucket",
+    "awsRegion": "us-west-2",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "requestParameters": {
+     "bucketName": "example-ledger-exports-dr-usw2",
+     "Host": "example-ledger-exports-dr-usw2.s3.us-west-2.amazonaws.com",
+     "CreateBucketConfiguration": {
+      "xmlns": "http://s3.amazonaws.com/doc/2006-03-01/",
+      "LocationConstraint": "us-west-2"
+     },
+     "x-amz-object-ownership": "BucketOwnerEnforced"
+    },
+    "responseElements": null,
+    "additionalEventData": {
+     "SignatureVersion": "SigV4",
+     "CipherSuite": "TLS_AES_128_GCM_SHA256",
+     "AuthenticationMethod": "AuthHeader",
+     "x-amz-id-2": "{{xamzid}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "example-ledger-exports-dr-usw2.s3.us-west-2.amazonaws.com"
+    }
+   },
+   "note": "DR bucket created in us-west-2 through the provider alias for that region"
+  },
+  {
+   "weight": 2,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "cognito-identity.amazonaws.com",
+    "eventName": "CreateIdentityPool",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/cognitoidentity#1.25.3",
+    "requestParameters": {
+     "identityPoolName": "fieldserviceanalytics",
+     "allowUnauthenticatedIdentities": true,
+     "allowClassicFlow": false
+    },
+    "responseElements": {
+     "identityPoolId": "us-east-1:9e1d3c5b-2a4f-4e6d-8c0b-7a9f1e3d5c2b",
+     "identityPoolName": "fieldserviceanalytics",
+     "allowUnauthenticatedIdentities": true,
+     "allowClassicFlow": false
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "cognito-identity.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "guest-only analytics identity pool for the field-service app's pre-sign-in Amplify Analytics / Pinpoint endpoint registration (allowUnauthenticatedIdentities=true, classic flow off)"
+  },
+  {
+   "weight": 2,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "cognito-identity.amazonaws.com",
+    "eventName": "SetIdentityPoolRoles",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/cognitoidentity#1.25.3",
+    "requestParameters": {
+     "identityPoolId": "us-east-1:9e1d3c5b-2a4f-4e6d-8c0b-7a9f1e3d5c2b",
+     "roles": {
+      "unauthenticated": "arn:aws:iam::123456789012:role/Cognito_fieldserviceanalyticsUnauth_Role"
+     }
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "cognito-identity.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "the analytics pool's guest role (scoped to Pinpoint endpoint/event writes)"
   }
  ]
 }

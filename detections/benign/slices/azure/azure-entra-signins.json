@@ -1,13 +1,13 @@
 {
  "id": "azure-entra-signins",
- "version": 1,
+ "version": 2,
  "logsource": {
   "product": "azure",
   "service": "signinlogs"
  },
  "fidelity": "synthetic",
- "represents": "Microsoft Entra sign-in telemetry for one tenant across the four diagnostic categories: interactive browser / desktop sign-ins with MFA, the usual failures and interrupts (bad password, MFA required, KMSI), silent token refreshes from Teams / Outlook / Azure CLI, daemon service principals using client secrets and certificates, GitHub Actions workload identity federation from the approved CI (federatedCredentialId populated) incl. a rejected untrusted-branch run, managed-identity token requests, and two legitimate device-code sign-ins (an admin's `az login --use-device-code` on a headless VM, a Teams Rooms device).",
- "provenance": "synthetic; shapes from the Azure Monitor diagnostic-setting sign-in schemas (SignInLogs / NonInteractiveUserSignInLogs / ServicePrincipalSignInLogs / ManagedIdentitySignInLogs) and the Microsoft Graph signIn resource (authenticationProtocol, originalTransferMethod, clientCredentialType, federatedCredentialId), Entra AADSTS error codes, and this repo's TRR9017 / TRR9023 fixtures (properties.resultType as a string, status.errorCode as an int). First-party appIds are Microsoft's public ids; other ids are random GUIDs; users are role handles at example.com; ASNs are RFC 5398 documentation ASNs; addresses RFC 5737 / RFC 1918.",
+ "represents": "Microsoft Entra sign-in telemetry for one tenant across the four diagnostic categories: interactive browser / desktop sign-ins with MFA, the usual failures and interrupts (bad password, MFA required, KMSI), silent token refreshes from Teams / Outlook / Azure CLI, daemon service principals using client secrets and certificates, GitHub Actions workload identity federation from the approved CI (federatedCredentialId populated) incl. a rejected untrusted-branch run, managed-identity token requests, two legitimate interactive device-code sign-ins (an admin's `az login --use-device-code` on a headless VM, a Teams Rooms device) and the non-interactive token refreshes of those two device-code sessions (originalTransferMethod deviceCodeFlow, authenticationProtocol none). Template weights deliberately over-sample the activity adjacent to the rules in adjacent_to (and their documented false-positive classes), so a rule's hits and rate_per_10k on this slice are corpus figures, not a production rate.",
+ "provenance": "synthetic; shapes from the Azure Monitor diagnostic-setting sign-in schemas (SignInLogs / NonInteractiveUserSignInLogs / ServicePrincipalSignInLogs / ManagedIdentitySignInLogs) and the Microsoft Graph signIn resource (authenticationProtocol, originalTransferMethod, clientCredentialType, federatedCredentialId), Entra AADSTS error codes, and this repo's TRR9017 / TRR9023 fixtures (properties.resultType as a string, status.errorCode as an int). First-party appIds are Microsoft's public ids; other ids are random GUIDs; users are role handles at example.com; ASNs are RFC 5398 documentation ASNs; addresses RFC 5737 / RFC 1918. Device-code shape: the code entry and MFA in a browser are an interactive sign-in (SignInLogs, isInteractive true, authenticationProtocol deviceCode); the session's later refreshes are non-interactive and keep originalTransferMethod deviceCodeFlow without deviceCode as their authenticationProtocol (MS Learn, Conditional Access 'Authentication flows: protocol tracking' and 'Restrict device code flow for Microsoft Teams devices: validate before enforcement').",
  "adjacent_to": [
   "T1528/entra_device_code_authentication.yml",
   "T1078.004/entra_service_principal_federated_credential_signin.yml"
@@ -1448,7 +1448,7 @@
     "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
     "operationName": "Sign-in activity",
     "operationVersion": "1.0",
-    "category": "NonInteractiveUserSignInLogs",
+    "category": "SignInLogs",
     "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
     "resultType": "0",
     "resultSignature": "None",
@@ -1502,7 +1502,7 @@
        "result": "success"
       }
      ],
-     "isInteractive": false,
+     "isInteractive": true,
      "tokenIssuerType": "AzureAD",
      "riskDetail": "none",
      "riskLevelAggregated": "none",
@@ -1618,6 +1618,184 @@
     }
    },
    "note": "facilities signs a Teams Rooms device into its resource account with the remote (device code) sign-in"
+  },
+  {
+   "weight": 6,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Sign-in activity",
+    "operationVersion": "1.0",
+    "category": "NonInteractiveUserSignInLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultType": "0",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{sip}}",
+    "correlationId": "{{corr}}",
+    "Level": 4,
+    "location": "US",
+    "properties": {
+     "id": "{{sid}}",
+     "createdDateTime": "{{t}}",
+     "userDisplayName": "{{adm.dn}}",
+     "userPrincipalName": "{{adm.upn}}",
+     "userId": "{{adm.id}}",
+     "appId": "04b07795-8ddb-461a-bbee-02f9e1bf7b46",
+     "appDisplayName": "Microsoft Azure CLI",
+     "ipAddress": "{{sip}}",
+     "status": {
+      "errorCode": 0
+     },
+     "clientAppUsed": "Mobile Apps and Desktop clients",
+     "userAgent": "python-requests/2.32.3 azure-cli/2.65.0",
+     "deviceDetail": {
+      "deviceId": "",
+      "displayName": "",
+      "operatingSystem": "Linux",
+      "browser": "",
+      "isCompliant": false,
+      "isManaged": false,
+      "trustType": ""
+     },
+     "location": {
+      "city": "{{loc.city}}",
+      "state": "{{loc.state}}",
+      "countryOrRegion": "US",
+      "geoCoordinates": {
+       "latitude": "{{loc.lat}}",
+       "longitude": "{{loc.lon}}"
+      }
+     },
+     "correlationId": "{{corr}}",
+     "conditionalAccessStatus": "success",
+     "appliedConditionalAccessPolicies": [
+      {
+       "id": "a1a1a1a1-0001-4b2b-8c3c-d4d4d4d4d401",
+       "displayName": "Require MFA for all users",
+       "enforcedGrantControls": [
+        "Mfa"
+       ],
+       "enforcedSessionControls": [],
+       "result": "success"
+      }
+     ],
+     "isInteractive": false,
+     "tokenIssuerType": "AzureAD",
+     "riskDetail": "none",
+     "riskLevelAggregated": "none",
+     "riskLevelDuringSignIn": "none",
+     "riskState": "none",
+     "riskEventTypes": [],
+     "riskEventTypes_v2": [],
+     "resourceDisplayName": "Windows Azure Service Management API",
+     "resourceId": "797f4846-ba00-4fd7-ba43-dac1f8f63013",
+     "resourceTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "homeTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "authenticationRequirement": "multiFactorAuthentication",
+     "userType": "Member",
+     "flaggedForReview": false,
+     "autonomousSystemNumber": "{{asn}}",
+     "crossTenantAccessType": "none",
+     "incomingTokenType": "refreshToken",
+     "authenticationProtocol": "none",
+     "originalTransferMethod": "deviceCodeFlow",
+     "resultType": "0",
+     "resultSignature": "SUCCESS",
+     "uniqueTokenIdentifier": "{{uti}}",
+     "sessionId": "{{sess}}"
+    }
+   },
+   "note": "the Azure CLI on the headless VM refreshing the session that started with device code: protocol-tracked (originalTransferMethod deviceCodeFlow), but the refresh itself is not device code"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Sign-in activity",
+    "operationVersion": "1.0",
+    "category": "NonInteractiveUserSignInLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultType": "0",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{sip}}",
+    "correlationId": "{{corr}}",
+    "Level": 4,
+    "location": "US",
+    "properties": {
+     "id": "{{sid}}",
+     "createdDateTime": "{{t}}",
+     "userDisplayName": "{{room.dn}}",
+     "userPrincipalName": "{{room.upn}}",
+     "userId": "{{room.id}}",
+     "appId": "1fec8e78-bce4-4aaf-ab1b-5451cc387264",
+     "appDisplayName": "Microsoft Teams",
+     "ipAddress": "{{sip}}",
+     "status": {
+      "errorCode": 0
+     },
+     "clientAppUsed": "Mobile Apps and Desktop clients",
+     "userAgent": "Dalvik/2.1.0 (Linux; U; Android 12; Teams Rooms Bar) TeamsRooms/1449/1.0.96.2024082201",
+     "deviceDetail": {
+      "deviceId": "{{uuid2}}",
+      "displayName": "MTR-CONF-3A",
+      "operatingSystem": "Android",
+      "browser": "",
+      "isCompliant": true,
+      "isManaged": true,
+      "trustType": "Azure AD registered"
+     },
+     "location": {
+      "city": "{{loc.city}}",
+      "state": "{{loc.state}}",
+      "countryOrRegion": "US",
+      "geoCoordinates": {
+       "latitude": "{{loc.lat}}",
+       "longitude": "{{loc.lon}}"
+      }
+     },
+     "correlationId": "{{corr}}",
+     "conditionalAccessStatus": "notApplied",
+     "appliedConditionalAccessPolicies": [
+      {
+       "id": "a1a1a1a1-0001-4b2b-8c3c-d4d4d4d4d401",
+       "displayName": "Require MFA for all users",
+       "enforcedGrantControls": [
+        "Mfa"
+       ],
+       "enforcedSessionControls": [],
+       "result": "notApplied"
+      }
+     ],
+     "isInteractive": false,
+     "tokenIssuerType": "AzureAD",
+     "riskDetail": "none",
+     "riskLevelAggregated": "none",
+     "riskLevelDuringSignIn": "none",
+     "riskState": "none",
+     "riskEventTypes": [],
+     "riskEventTypes_v2": [],
+     "resourceDisplayName": "Microsoft Teams Services",
+     "resourceId": "cc15fd57-2c6c-4117-a88c-83b1d56b4bbe",
+     "resourceTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "homeTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "authenticationRequirement": "singleFactorAuthentication",
+     "userType": "Member",
+     "flaggedForReview": false,
+     "autonomousSystemNumber": "{{asn}}",
+     "crossTenantAccessType": "none",
+     "incomingTokenType": "refreshToken",
+     "authenticationProtocol": "none",
+     "originalTransferMethod": "deviceCodeFlow",
+     "resultType": "0",
+     "resultSignature": "SUCCESS",
+     "uniqueTokenIdentifier": "{{uti}}",
+     "sessionId": "{{sess}}"
+    }
+   },
+   "note": "the Teams Rooms device refreshing its device-code-started session (protocol-tracked, not device code itself)"
   }
  ]
 }

@@ -40,34 +40,44 @@
       "max_hits": 59,
       "why": "documented noise: low correlation anchor: routine pod and Job teardown by controllers, kubelets and Helm."
     },
+    "T1078.004/aws_cognito_identity_pool_unauth_enabled.yml": {
+      "mode": "shadow",
+      "max_hits": 2,
+      "why": "documented noise: an analytics identity pool created with guest access on purpose (Amplify Analytics default), named in the rule's falsepositives."
+    },
+    "T1078.004/aws_cognito_unauthenticated_identity_use.yml": {
+      "mode": "shadow",
+      "max_hits": 27,
+      "why": "documented noise: legitimate Cognito guest access (Amplify Analytics/Pinpoint endpoint registration and public-content reads by the pool's unauthenticated role), named in the rule's own falsepositives; allowlist intended guest pools."
+    },
     "T1078.004/aws_leaked_access_key_recon.yml": {
       "mode": "shadow",
-      "max_hits": 263,
+      "max_hits": 266,
       "why": "rule defect, fix tracked (follow-up rule-fix PR): the id_aida fallback (principalId AIDA) matches IAM-user TEMPORARY credentials too, so MFA (GetSessionToken) and console sessions fire (77 hits); the remaining off-egress long-term-key use by developers, legacy CI and a SaaS key is the documented baseline-before-alerting noise."
     },
     "T1078.004/entra_service_principal_federated_credential_signin.yml": {
       "mode": "shadow",
-      "max_hits": 52,
+      "max_hits": 54,
       "why": "documented noise: funnel rule: approved GitHub Actions workload-identity-federation sign-ins; pair with a first-seen overlay as documented."
     },
     "T1098.001/aws_github_oidc_role_trust_abuse.yml": {
       "mode": "shadow",
-      "max_hits": 10,
+      "max_hits": 13,
       "why": "rule defect, fix tracked (follow-up rule-fix PR): a wildcard inside the ref of a pinned owner/repo (refs/tags/v*) fires at high though no fork or other repo can match (4 hits); the repo:<org>/<repo>:* trusts (6) are GitHub's own documented example, a hygiene finding by design."
     },
     "T1098.001/azure_managed_identity_federated_credential_backdoor.yml": {
       "mode": "shadow",
-      "max_hits": 44,
-      "why": "documented noise: broad by design (any managed-identity FIC write): AKS workload-identity onboarding. Every ARM write logs Start and Success, so each operation counts twice."
+      "max_hits": 29,
+      "why": "rule defect, fix tracked (follow-up rule-fix PR): the operationName match is case-sensitive, so it misses the UPPERCASE form storage / Event Hub exports carry (it would miss the attack there too); the hits are AKS workload-identity onboarding in the ARM-cased form. Broad by design otherwise (any MI FIC write); every ARM write logs Start and Success, so each operation counts twice."
     },
     "T1098.001/gcp_workload_identity_federation_sa_binding.yml": {
       "mode": "shadow",
-      "max_hits": 8,
+      "max_hits": 10,
       "why": "documented noise: Google's documented GitHub WIF onboarding (per-repo attribute.repository principalSets); consider down-ranking subject-scoped members vs whole-pool members."
     },
     "T1098.003/gcp_public_iam_member_grant.yml": {
       "mode": "shadow",
-      "max_hits": 2,
+      "max_hits": 4,
       "why": "documented noise: an intentionally public Cloud Run marketing site (allUsers run.invoker), documented: allowlist by resourceName and role."
     },
     "T1098.006/k8s_rbac_privileged_grant.yml": {
@@ -90,34 +100,39 @@
       "max_hits": 3,
       "why": "documented noise: break-glass gateway role mapped to system:masters, documented in falsepositives."
     },
+    "T1199/gcp_workforce_pool_provider_no_attribute_condition.yml": {
+      "mode": "shadow",
+      "max_hits": 2,
+      "why": "documented noise: a workforce provider for a tenant-specific corporate IdP (Entra ID) created without an attributeCondition; the condition is optional and the tenant issuer already scopes trust. Consider scoping the rule to issuers other than the org's approved IdPs."
+    },
     "T1199/gcp_workforce_principalset_privileged_binding.yml": {
       "mode": "shadow",
-      "max_hits": 6,
+      "max_hits": 3,
       "why": "rule defect, fix tracked (follow-up rule-fix PR): described as privileged role + whole-pool breadth, but the regex never checks breadth, so group-scoped workforce RBAC on any *admin role fires."
     },
     "T1528/entra_device_code_authentication.yml": {
       "mode": "shadow",
-      "max_hits": 4,
+      "max_hits": 8,
       "why": "documented noise: az login --use-device-code on a headless VM and a Teams Rooms device, both named in falsepositives."
     },
     "T1528/entra_illicit_oauth_consent_grant.yml": {
       "mode": "shadow",
-      "max_hits": 30,
+      "max_hits": 37,
       "why": "rule defect, fix tracked (follow-up rule-fix PR): the bare AllPrincipals token fires on tenant-wide consent to sign-in-only scopes (User.Read openid profile email), contradicting the title and falsepositives; where user consent is disabled every SSO onboarding is AllPrincipals."
     },
     "T1537/aws_efs_file_system_policy_made_public.yml": {
       "mode": "shadow",
-      "max_hits": 3,
+      "max_hits": 6,
       "why": "rule defect, fix tracked (follow-up rule-fix PR): the EFS console policy wizard's Principal '*' conditioned on elasticfilesystem:AccessedViaMountTarget is not recognised by filter_scoped."
     },
     "T1537/aws_resource_policy_made_public.yml": {
       "mode": "shadow",
-      "max_hits": 28,
+      "max_hits": 32,
       "why": "rule defect, fix tracked (follow-up rule-fix PR): the whole policy is matched as text, so a named Allow plus the standard DenyInsecureTransport statement (Deny, Principal '*') reads as public (13); filter_scoped also lacks aws:SourceOwner (SNS default policy, 7) and kms:CallerAccount / kms:ViaService (5). 3 hits are intentionally public resources."
     },
     "T1537/aws_s3_block_public_access_disabled.yml": {
       "mode": "shadow",
-      "max_hits": 2,
+      "max_hits": 1,
       "why": "documented noise: an intentional public static-site bucket, documented."
     },
     "T1543.005/k8s_cri_static_pod_start.yml": {
@@ -137,7 +152,7 @@
     },
     "T1552.005/aws_imds_creds_used_off_instance.yml": {
       "mode": "shadow",
-      "max_hits": 11,
+      "max_hits": 6,
       "why": "documented noise: a public-subnet bastion calling from its own auto-assigned public IPv4, named in falsepositives."
     },
     "T1552.007/k8s_secret_access.yml": {

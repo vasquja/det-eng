@@ -1,13 +1,13 @@
 {
  "id": "aws-developer-iam-user-keys",
- "version": 1,
+ "version": 2,
  "logsource": {
   "product": "aws",
   "service": "cloudtrail"
  },
  "fidelity": "synthetic",
- "represents": "Human and legacy-automation access to one AWS account: developers and SREs using long-term IAM-user access keys (AKIA) from the corporate VPN / office NAT (203.0.113.32/27, 203.0.113.48/28, own IPv6) AND from home ISP connections off VPN (192.0.2.0/26) for sts get-caller-identity, MFA get-session-token and read-only Describe/List calls; the MFA-authenticated temporary sessions (ASIA) of those IAM users; IAM-user console sign-ins and console page loads; IAM Identity Center users (the majority) working from home; a legacy CI job with a stored IAM-user key on GitHub-hosted runners; an on-prem backup agent; and a third-party cost-optimisation SaaS polling with a read-only IAM-user key from its own egress (192.0.2.112/28).",
- "provenance": "synthetic; shapes from the AWS CloudTrail record contents and userIdentity reference (IAMUser with long-term and session credentials, sessionCredentialFromConsole), the CloudTrail ConsoleLogin / AwsConsoleSignIn reference, STS GetSessionToken, the S3 data-event reference, and this repo's TRR9012 fixtures. Long-term keys are AKIAEXAMPLE<id> (20 chars), sessions ASIAEXAMPLE<digits>; user names are role handles, not people; account 123456789012; addresses RFC 5737 / 2001:db8::/32.",
+ "represents": "Human and legacy-automation access to one AWS account: developers and SREs using long-term IAM-user access keys (AKIA) from the corporate VPN / office NAT (203.0.113.32/27, 203.0.113.48/28, own IPv6) AND from home ISP connections off VPN (192.0.2.0/26) for sts get-caller-identity, MFA get-session-token and read-only Describe/List calls; the MFA-authenticated temporary sessions (ASIA) of those IAM users; IAM-user console sign-ins and console page loads; IAM Identity Center users (the majority) working from home; a legacy CI job with a stored IAM-user key on GitHub-hosted runners; an on-prem backup agent; and a third-party cost-optimisation SaaS polling with a read-only IAM-user key from its own egress (192.0.2.112/28). Template weights deliberately over-sample the activity adjacent to the rules in adjacent_to (and their documented false-positive classes), so a rule's hits and rate_per_10k on this slice are corpus figures, not a production rate.",
+ "provenance": "synthetic; shapes from the AWS CloudTrail record contents and userIdentity reference (IAMUser with long-term and session credentials, sessionCredentialFromConsole), the CloudTrail ConsoleLogin / AwsConsoleSignIn reference, STS GetSessionToken, the S3 data-event reference, and this repo's TRR9012 fixtures. Long-term keys are AKIAEXAMPLE<id> (20 chars), sessions ASIAEXAMPLE<digits>; user names are role handles, not people; account 123456789012; addresses RFC 5737 / 2001:db8::/32. Credential-issuing calls take eventTime and responseElements.credentials.expiration from a pair of fixed-cadence clocks that start durationSeconds apart and step together, so every expiration is exactly eventTime + durationSeconds (the generator has no offset-from-another-variable form; the cost is a fixed issuance cadence). Every S3 bucket and other named regional resource is logged in one region (awsRegion, Host and the TLS host header agree); only unnamed Describe/List calls use the 85/15 us-east-1/us-west-2 region mix.",
  "adjacent_to": [
   "T1078.004/aws_leaked_access_key_recon.yml",
   "T1552.005/aws_imds_creds_used_off_instance.yml"
@@ -61,10 +61,10 @@
   },
   "exp12": {
    "time": {
-    "start": "2026-10-09T19:30:00Z",
+    "start": "2026-10-09T19:40:00Z",
     "step_seconds": [
-     30,
-     600
+     495,
+     495
     ],
     "format": "%b %-d, %Y, %-I:%M:%S %p"
    }
@@ -223,7 +223,16 @@
    "data.poplar",
    "dev.linden",
    "dev.aspen"
-  ]
+  ],
+  "it12": {
+   "time": {
+    "start": "2026-10-09T07:40:00Z",
+    "step_seconds": [
+     495,
+     495
+    ]
+   }
+  }
  },
  "templates": [
   {
@@ -587,12 +596,12 @@
     "eventTime": "{{t}}",
     "eventSource": "s3.amazonaws.com",
     "eventName": "GetObject",
-    "awsRegion": "{{region}}",
+    "awsRegion": "us-east-1",
     "sourceIPAddress": "{{vpnip}}",
     "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#s3.cp",
     "requestParameters": {
      "bucketName": "example-ledger-exports-prod",
-     "Host": "example-ledger-exports-prod.s3.{{region}}.amazonaws.com",
+     "Host": "example-ledger-exports-prod.s3.us-east-1.amazonaws.com",
      "key": "daily/2026-10-0{{d}}/summary.csv"
     },
     "responseElements": null,
@@ -626,7 +635,7 @@
     "tlsDetails": {
      "tlsVersion": "TLSv1.3",
      "cipherSuite": "TLS_AES_128_GCM_SHA256",
-     "clientProvidedHostHeader": "example-ledger-exports-prod.s3.{{region}}.amazonaws.com"
+     "clientProvidedHostHeader": "example-ledger-exports-prod.s3.us-east-1.amazonaws.com"
     }
    }
   },
@@ -642,7 +651,7 @@
      "accessKeyId": "{{u.akid}}",
      "userName": "{{u.name}}"
     },
-    "eventTime": "{{t}}",
+    "eventTime": "{{it12}}",
     "eventSource": "sts.amazonaws.com",
     "eventName": "GetSessionToken",
     "awsRegion": "us-east-1",
@@ -686,7 +695,7 @@
      "accessKeyId": "{{u.akid}}",
      "userName": "{{u.name}}"
     },
-    "eventTime": "{{t}}",
+    "eventTime": "{{it12}}",
     "eventSource": "sts.amazonaws.com",
     "eventName": "GetSessionToken",
     "awsRegion": "us-east-1",
@@ -1597,12 +1606,12 @@
     "eventTime": "{{t}}",
     "eventSource": "s3.amazonaws.com",
     "eventName": "PutObject",
-    "awsRegion": "{{region}}",
+    "awsRegion": "us-east-1",
     "sourceIPAddress": "{{ghip}}",
     "userAgent": "aws-cli/2.17.62 md/awscrt#0.21.5 ua/2.0 os/linux#6.8.0-1015-azure md/arch#x86_64 lang/python#3.12.6 md/pyimpl#CPython exec-env/GitHubActions cfg/retry-mode#standard md/installer#exe md/distrib#ubuntu.24 md/prompt#off md/command#s3.cp",
     "requestParameters": {
      "bucketName": "example-ci-artifacts-us-east-1",
-     "Host": "example-ci-artifacts-us-east-1.s3.{{region}}.amazonaws.com",
+     "Host": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com",
      "key": "legacy-billing/{{sha7}}.zip"
     },
     "responseElements": {
@@ -1638,7 +1647,7 @@
     "tlsDetails": {
      "tlsVersion": "TLSv1.3",
      "cipherSuite": "TLS_AES_128_GCM_SHA256",
-     "clientProvidedHostHeader": "example-ci-artifacts-us-east-1.s3.{{region}}.amazonaws.com"
+     "clientProvidedHostHeader": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com"
     }
    }
   },
@@ -1657,12 +1666,12 @@
     "eventTime": "{{t}}",
     "eventSource": "s3.amazonaws.com",
     "eventName": "PutObject",
-    "awsRegion": "{{region}}",
+    "awsRegion": "us-east-1",
     "sourceIPAddress": "{{officeip}}",
     "userAgent": "aws-sdk-go/1.55.5 (go1.22.7; linux; amd64) S3Manager restic/0.17.1",
     "requestParameters": {
      "bucketName": "example-onprem-backups",
-     "Host": "example-onprem-backups.s3.{{region}}.amazonaws.com",
+     "Host": "example-onprem-backups.s3.us-east-1.amazonaws.com",
      "key": "restic/data/{{hex2}}/{{dig}}"
     },
     "responseElements": {
@@ -1698,7 +1707,7 @@
     "tlsDetails": {
      "tlsVersion": "TLSv1.3",
      "cipherSuite": "TLS_AES_128_GCM_SHA256",
-     "clientProvidedHostHeader": "example-onprem-backups.s3.{{region}}.amazonaws.com"
+     "clientProvidedHostHeader": "example-onprem-backups.s3.us-east-1.amazonaws.com"
     }
    },
    "note": "on-prem backup agent (IAM-user key) writing through the office NAT"

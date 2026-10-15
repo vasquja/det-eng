@@ -1,12 +1,12 @@
 {
  "id": "azure-entra-audit-appmgmt",
- "version": 1,
+ "version": 2,
  "logsource": {
   "product": "azure",
   "service": "auditlogs"
  },
  "fidelity": "synthetic",
- "represents": "Microsoft Entra ID directory audit activity in one tenant: application registration administration by platform engineers and a Terraform (azuread provider) service principal -- GitHub Actions federated identity credentials from the APPROVED issuer token.actions.githubusercontent.com with repo + environment / branch subjects (added, appended, retired), client-secret rotation, certificate upload, redirect URIs, new apps and service principals; user consent and admin (AllPrincipals) consent to sign-in-only scopes (openid / profile / email / User.Read), the matching delegated permission grants, a least-privilege application permission (Sites.Selected); plus the surrounding group, user, password, PIM role activation and Conditional Access changes.",
+ "represents": "Microsoft Entra ID directory audit activity in one tenant: application registration administration by platform engineers and a Terraform (azuread provider) service principal -- GitHub Actions federated identity credentials from the APPROVED issuer token.actions.githubusercontent.com with repo + environment / branch subjects (added, appended, retired), client-secret rotation, certificate upload, redirect URIs, new apps and service principals; user consent and admin (AllPrincipals) consent to sign-in-only scopes (openid / profile / email / User.Read), the matching delegated permission grants, a least-privilege application permission (Sites.Selected); plus the surrounding group, user, password, PIM role activation and Conditional Access changes. Template weights deliberately over-sample the activity adjacent to the rules in adjacent_to (and their documented false-positive classes), so a rule's hits and rate_per_10k on this slice are corpus figures, not a production rate.",
  "provenance": "synthetic; shapes from the Azure Monitor diagnostic-setting AuditLogs schema and the Entra audit-activity reference (activity names, categories, loggedByService, modifiedProperties conventions incl. JSON-quoted values and 'Included Updated Properties'), and this repo's TRR9013 / TRR9017 fixtures (PascalCase FIC newValue, ConsentAction.Permissions text). Tenant and object ids are random GUIDs; Microsoft Graph appId is the public first-party id; users are role handles at example.com; addresses RFC 5737 (203.0.113.0/24 corporate egress, 192.0.2.0/26 home users).",
  "adjacent_to": [
   "T1098.001/entra_app_federated_credential_backdoor.yml",

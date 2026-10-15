@@ -1,13 +1,13 @@
 {
  "id": "aws-cicd-oidc-irsa",
- "version": 1,
+ "version": 2,
  "logsource": {
   "product": "aws",
   "service": "cloudtrail"
  },
  "fidelity": "synthetic",
- "represents": "CI/CD and in-cluster workload traffic in one production AWS account: GitHub Actions workflows assuming deploy roles through the GitHub OIDC provider with pinned subjects (repo + environment / branch / pull_request) from GitHub-hosted runner addresses and pushing images, artifacts and deployments; and EKS IRSA service accounts (load-balancer controller, external-dns, cluster-autoscaler, EBS CSI, Karpenter, external-secrets, an application, a self-hosted ARC runner) exchanging projected tokens and calling AWS from the cluster's NAT egress (203.0.113.0/28, the repo's own-egress placeholder), pod private IPs through VPC interface endpoints, and IPv6 (2001:db8::/32) egress.",
- "provenance": "synthetic; shapes from the AWS CloudTrail record contents / userIdentity reference, the STS AssumeRoleWithWebIdentity CloudTrail example, the S3 data-event reference, and this repo's TRR9022 and TRR9015 fixtures (detections/cloud/fixtures/trr9022, trr9015). User agents follow the published SDK user-agent formats. Session tokens are placeholders; access-key ids are ASIAEXAMPLE<digits>; account 123456789012; addresses are RFC 5737 / RFC 1918 / 2001:db8::/32. GitHub-hosted runners are modelled in 192.0.2.128/25.",
+ "represents": "CI/CD and in-cluster workload traffic in one production AWS account: GitHub Actions workflows assuming deploy roles through the GitHub OIDC provider with pinned subjects (repo + environment / branch / pull_request) from GitHub-hosted runner addresses and pushing images, artifacts and deployments; and EKS IRSA service accounts (load-balancer controller, external-dns, cluster-autoscaler, EBS CSI, Karpenter, external-secrets, an application, a self-hosted ARC runner) exchanging projected tokens and calling AWS from the cluster's NAT egress (203.0.113.0/28, the repo's own-egress placeholder), pod private IPs through VPC interface endpoints, and IPv6 (2001:db8::/32) egress. Template weights deliberately over-sample the activity adjacent to the rules in adjacent_to (and their documented false-positive classes), so a rule's hits and rate_per_10k on this slice are corpus figures, not a production rate.",
+ "provenance": "synthetic; shapes from the AWS CloudTrail record contents / userIdentity reference, the STS AssumeRoleWithWebIdentity CloudTrail example, the S3 data-event reference, and this repo's TRR9022 and TRR9015 fixtures (detections/cloud/fixtures/trr9022, trr9015). User agents follow the published SDK user-agent formats. Session tokens are placeholders; access-key ids are ASIAEXAMPLE<digits>; account 123456789012; addresses are RFC 5737 / RFC 1918 / 2001:db8::/32. GitHub-hosted runners are modelled in 192.0.2.128/25. Credential-issuing calls take eventTime and responseElements.credentials.expiration from a pair of fixed-cadence clocks that start durationSeconds apart and step together, so every expiration is exactly eventTime + durationSeconds (the generator has no offset-from-another-variable form; the cost is a fixed issuance cadence). Every S3 bucket and other named regional resource is logged in one region (awsRegion, Host and the TLS host header agree); only unnamed Describe/List calls use the 85/15 us-east-1/us-west-2 region mix.",
  "adjacent_to": [
   "T1550.001/aws_eks_irsa_web_identity_assumed_off_cluster.yml",
   "T1550.001/aws_eks_irsa_role_session_used_off_cluster.yml",
@@ -64,20 +64,20 @@
   },
   "exp1": {
    "time": {
-    "start": "2026-10-06T15:00:00Z",
+    "start": "2026-10-06T15:00:20Z",
     "step_seconds": [
-     5,
-     60
+     70,
+     70
     ],
     "format": "%b %-d, %Y, %-I:%M:%S %p"
    }
   },
   "exp24": {
    "time": {
-    "start": "2026-10-07T14:00:00Z",
+    "start": "2026-10-07T14:00:05Z",
     "step_seconds": [
-     5,
-     60
+     45,
+     45
     ],
     "format": "%b %-d, %Y, %-I:%M:%S %p"
    }
@@ -352,6 +352,24 @@
      }
     ]
    ]
+  },
+  "it1": {
+   "time": {
+    "start": "2026-10-06T14:00:20Z",
+    "step_seconds": [
+     70,
+     70
+    ]
+   }
+  },
+  "it24": {
+   "time": {
+    "start": "2026-10-06T14:00:05Z",
+    "step_seconds": [
+     45,
+     45
+    ]
+   }
   }
  },
  "templates": [
@@ -365,7 +383,7 @@
      "userName": "{{gh.sub}}",
      "identityProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
     },
-    "eventTime": "{{t}}",
+    "eventTime": "{{it1}}",
     "eventSource": "sts.amazonaws.com",
     "eventName": "AssumeRoleWithWebIdentity",
     "awsRegion": "us-east-1",
@@ -1123,12 +1141,12 @@
     "eventTime": "{{t}}",
     "eventSource": "s3.amazonaws.com",
     "eventName": "PutObject",
-    "awsRegion": "{{region}}",
+    "awsRegion": "us-east-1",
     "sourceIPAddress": "{{ghip}}",
     "userAgent": "aws-cli/2.17.62 md/awscrt#0.21.5 ua/2.0 os/linux#6.8.0-1015-azure md/arch#x86_64 lang/python#3.12.6 md/pyimpl#CPython exec-env/GitHubActions cfg/retry-mode#standard md/installer#exe md/distrib#ubuntu.24 md/prompt#off md/command#s3.cp",
     "requestParameters": {
      "bucketName": "example-ci-artifacts-us-east-1",
-     "Host": "example-ci-artifacts-us-east-1.s3.{{region}}.amazonaws.com",
+     "Host": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com",
      "key": "{{gh.repo_ecr}}/{{sha7}}/build.tar.gz"
     },
     "responseElements": {
@@ -1164,7 +1182,7 @@
     "tlsDetails": {
      "tlsVersion": "TLSv1.3",
      "cipherSuite": "TLS_AES_128_GCM_SHA256",
-     "clientProvidedHostHeader": "example-ci-artifacts-us-east-1.s3.{{region}}.amazonaws.com"
+     "clientProvidedHostHeader": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com"
     }
    },
    "note": "build artifact upload (S3 data event on the artifacts bucket)"
@@ -1179,7 +1197,7 @@
      "userName": "system:serviceaccount:{{sago.ns}}:{{sago.sa}}",
      "identityProvider": "{{sago.provider}}"
     },
-    "eventTime": "{{t}}",
+    "eventTime": "{{it24}}",
     "eventSource": "sts.amazonaws.com",
     "eventName": "AssumeRoleWithWebIdentity",
     "awsRegion": "{{sago.region}}",
@@ -1229,7 +1247,7 @@
      "userName": "system:serviceaccount:{{sago.ns}}:{{sago.sa}}",
      "identityProvider": "{{sago.provider}}"
     },
-    "eventTime": "{{t}}",
+    "eventTime": "{{it24}}",
     "eventSource": "sts.amazonaws.com",
     "eventName": "AssumeRoleWithWebIdentity",
     "awsRegion": "{{sago.region}}",
@@ -1281,7 +1299,7 @@
      "userName": "system:serviceaccount:{{sapy.ns}}:{{sapy.sa}}",
      "identityProvider": "{{sapy.provider}}"
     },
-    "eventTime": "{{t}}",
+    "eventTime": "{{it24}}",
     "eventSource": "sts.amazonaws.com",
     "eventName": "AssumeRoleWithWebIdentity",
     "awsRegion": "{{sapy.region}}",
@@ -1331,7 +1349,7 @@
      "userName": "system:serviceaccount:{{sapy.ns}}:{{sapy.sa}}",
      "identityProvider": "{{sapy.provider}}"
     },
-    "eventTime": "{{t}}",
+    "eventTime": "{{it24}}",
     "eventSource": "sts.amazonaws.com",
     "eventName": "AssumeRoleWithWebIdentity",
     "awsRegion": "{{sapy.region}}",
@@ -1383,7 +1401,7 @@
      "userName": "system:serviceaccount:{{sago.ns}}:{{sago.sa}}",
      "identityProvider": "{{sago.provider}}"
     },
-    "eventTime": "{{t}}",
+    "eventTime": "{{it24}}",
     "eventSource": "sts.amazonaws.com",
     "eventName": "AssumeRoleWithWebIdentity",
     "awsRegion": "{{sago.region}}",
@@ -2616,12 +2634,12 @@
     "eventTime": "{{t}}",
     "eventSource": "s3.amazonaws.com",
     "eventName": "GetObject",
-    "awsRegion": "{{region}}",
+    "awsRegion": "us-east-1",
     "sourceIPAddress": "{{podip}}",
     "userAgent": "Boto3/1.35.36 md/Botocore#1.35.36 ua/2.0 os/linux#5.10.225-213.878.amzn2.x86_64 md/arch#x86_64 lang/python#3.12.7 md/pyimpl#CPython cfg/retry-mode#legacy Botocore/1.35.36",
     "requestParameters": {
      "bucketName": "example-payments-config-prod",
-     "Host": "example-payments-config-prod.s3.{{region}}.amazonaws.com",
+     "Host": "example-payments-config-prod.s3.us-east-1.amazonaws.com",
      "key": "payments-api/feature-flags.json"
     },
     "responseElements": null,
@@ -2657,7 +2675,7 @@
     "tlsDetails": {
      "tlsVersion": "TLSv1.3",
      "cipherSuite": "TLS_AES_128_GCM_SHA256",
-     "clientProvidedHostHeader": "example-payments-config-prod.s3.{{region}}.amazonaws.com"
+     "clientProvidedHostHeader": "example-payments-config-prod.s3.us-east-1.amazonaws.com"
     }
    }
   },

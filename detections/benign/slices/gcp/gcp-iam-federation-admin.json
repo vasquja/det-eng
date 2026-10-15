@@ -1,13 +1,13 @@
 {
  "id": "gcp-iam-federation-admin",
- "version": 1,
+ "version": 2,
  "logsource": {
   "product": "gcp",
   "service": "gcp.audit"
  },
  "fidelity": "synthetic",
- "represents": "Google Cloud IAM and identity-federation administration across an organisation's projects: Terraform (a service account impersonated through GitHub Workload Identity Federation) granting NAMED groups and service accounts scoped roles on projects, buckets, Cloud Run, Secret Manager and Pub/Sub; GKE Workload Identity bindings (serviceAccount:<project>.svc.id.goog[ns/ksa]); SA-to-SA token-creator grants; Workload Identity pools and providers for GitHub, GitLab and AWS that all carry attribute conditions (create begin/end entries, mapping-only and tightening updates); one repository's attribute.repository principalSet bound to its deploy SA; a workforce pool with OIDC and SAML providers that carry conditions; workforce groups bound to read-only org roles and the platform-admins group to GKE admin on the prod folder; key hygiene; ADMIN_READ refresh; and, rarely, the intentionally public marketing site on Cloud Run.",
- "provenance": "synthetic; shapes from the Cloud Audit Logs LogEntry / AuditLog reference (protoPayload.authenticationInfo incl. serviceAccountDelegationInfo, requestMetadata, authorizationInfo, serviceData.policyDelta.bindingDeltas, request/response, operation first/last), the IAM workload- and workforce-identity-federation docs (provider request fields, principal identifiers) and this repo's TRR9014 / TRR9018 / TRR9020 fixtures. Org id follows the repo fixtures; project ids / numbers are made up; principals are role handles at example.com; IdPs are idp.example.com / sso.example.org; addresses RFC 5737.",
+ "represents": "Google Cloud IAM and identity-federation administration across an organisation's projects: Terraform (a service account impersonated through GitHub Workload Identity Federation) granting NAMED groups and service accounts scoped roles on projects, buckets, Cloud Run, Secret Manager and Pub/Sub; GKE Workload Identity bindings (serviceAccount:<project>.svc.id.goog[ns/ksa]); SA-to-SA token-creator grants; Workload Identity pools and providers for GitHub, GitLab and AWS that all carry attribute conditions (create begin/end entries, mapping-only and tightening updates); one repository's attribute.repository principalSet bound to its deploy SA; a workforce pool with OIDC and SAML providers that carry conditions, plus the corporate Microsoft Entra ID provider (tenant-specific issuer) created without one; workforce groups bound to read-only org roles and the platform-admins group to GKE admin on the prod folder; key hygiene; ADMIN_READ refresh; and, rarely, the intentionally public marketing site on Cloud Run. Template weights deliberately over-sample the activity adjacent to the rules in adjacent_to (and their documented false-positive classes), so a rule's hits and rate_per_10k on this slice are corpus figures, not a production rate.",
+ "provenance": "synthetic; shapes from the Cloud Audit Logs LogEntry / AuditLog reference (protoPayload.authenticationInfo incl. serviceAccountDelegationInfo, requestMetadata, authorizationInfo, serviceData.policyDelta.bindingDeltas, request/response, operation first/last), the IAM workload- and workforce-identity-federation docs (provider request fields, principal identifiers) and this repo's TRR9014 / TRR9018 / TRR9020 fixtures. Org id follows the repo fixtures; project ids / numbers are made up; principals are role handles at example.com; IdPs are idp.example.com / sso.example.org; addresses RFC 5737. The Entra ID workforce provider omits attributeCondition because the field is optional for workforce providers (gcloud 570 'iam workforce-pools providers create-oidc --help': --attribute-condition is an optional flag, 'If unspecified, all valid authentication credential will be accepted'), and Google requires a condition only where one issuer serves many tenants; a tenant-specific Entra issuer (login.microsoftonline.com/<tenant>/v2.0, the Azure slices' tenant) already limits the trust to the organisation. Request-body naming follows what each service actually logs: the legacy IAM admin service (CreateServiceAccount, CreateRole, keys) logs proto field names in snake_case with integer enums (account_id, service_account.display_name, role_id, included_permissions, stage: 2), while WorkforcePools.* and WorkloadIdentityPools.* log camelCase (workforcePoolId, workforcePoolProvider.attributeCondition, oidc.issuerUri, updateMask), as in the sanitized Cloud Audit Log captures in panther-analysis' GCP rule tests (gcp_service_account_or_keys_created, gcp_iam_custom_role_changes, gcp_workforce_pool_created_or_updated, gcp_workload_identity_pool_created_or_updated) and this repo's TRR9018 / TRR9020 fixtures. Org- and folder-level policies carry org / folder admin bindings, not a project's service agent.",
  "adjacent_to": [
   "T1098.001/gcp_workload_identity_federation_sa_binding.yml",
   "T1098.001/gcp_workload_identity_pool_provider_created.yml",
@@ -1933,15 +1933,15 @@
       "policy": {
        "bindings": [
         {
-         "role": "roles/owner",
+         "role": "roles/resourcemanager.organizationAdmin",
          "members": [
           "group:gcp-org-admins@example.com"
          ]
         },
         {
-         "role": "roles/editor",
+         "role": "roles/billing.admin",
          "members": [
-          "serviceAccount:{{proj.num}}@cloudservices.gserviceaccount.com"
+          "group:gcp-billing-admins@example.com"
          ]
         },
         {
@@ -1959,15 +1959,15 @@
       "@type": "type.googleapis.com/google.iam.v1.Policy",
       "bindings": [
        {
-        "role": "roles/owner",
+        "role": "roles/resourcemanager.organizationAdmin",
         "members": [
          "group:gcp-org-admins@example.com"
         ]
        },
        {
-        "role": "roles/editor",
+        "role": "roles/billing.admin",
         "members": [
-         "serviceAccount:{{proj.num}}@cloudservices.gserviceaccount.com"
+         "group:gcp-billing-admins@example.com"
         ]
        },
        {
@@ -2050,15 +2050,15 @@
       "policy": {
        "bindings": [
         {
-         "role": "roles/owner",
+         "role": "roles/resourcemanager.folderAdmin",
          "members": [
           "group:gcp-org-admins@example.com"
          ]
         },
         {
-         "role": "roles/editor",
+         "role": "roles/viewer",
          "members": [
-          "serviceAccount:{{proj.num}}@cloudservices.gserviceaccount.com"
+          "group:gcp-sre@example.com"
          ]
         },
         {
@@ -2076,15 +2076,15 @@
       "@type": "type.googleapis.com/google.iam.v1.Policy",
       "bindings": [
        {
-        "role": "roles/owner",
+        "role": "roles/resourcemanager.folderAdmin",
         "members": [
          "group:gcp-org-admins@example.com"
         ]
        },
        {
-        "role": "roles/editor",
+        "role": "roles/viewer",
         "members": [
-         "serviceAccount:{{proj.num}}@cloudservices.gserviceaccount.com"
+         "group:gcp-sre@example.com"
         ]
        },
        {
@@ -2167,9 +2167,13 @@
      },
      "response": {
       "@type": "type.googleapis.com/google.iam.admin.v1.ServiceAccount",
+      "display_name": "{{newsa}}",
       "email": "{{newsa}}@{{proj.id}}.iam.gserviceaccount.com",
-      "unique_id": "{{saidA}}{{saidB}}",
-      "project_id": "{{proj.id}}"
+      "etag": "MDEwMjE5MjA=",
+      "name": "projects/{{proj.id}}/serviceAccounts/{{newsa}}@{{proj.id}}.iam.gserviceaccount.com",
+      "oauth2_client_id": "{{saidA}}{{saidB}}",
+      "project_id": "{{proj.id}}",
+      "unique_id": "{{saidA}}{{saidB}}"
      }
     },
     "insertId": "{{ins}}",
@@ -2227,8 +2231,30 @@
       "role_id": "{{crole}}",
       "role": {
        "title": "{{crole}}",
-       "stage": "GA",
+       "stage": 2,
        "included_permissions": [
+        "storage.objects.get",
+        "storage.objects.list"
+       ]
+      }
+     },
+     "response": {
+      "@type": "type.googleapis.com/google.iam.admin.v1.Role",
+      "name": "projects/{{proj.id}}/roles/{{crole}}",
+      "title": "{{crole}}",
+      "included_permissions": [
+       "storage.objects.get",
+       "storage.objects.list"
+      ],
+      "stage": 2,
+      "etag": "BwYkU2b7Nc4=",
+      "group_name": "custom",
+      "group_title": "Custom"
+     },
+     "serviceData": {
+      "@type": "type.googleapis.com/google.iam.admin.v1.AuditData",
+      "permissionDelta": {
+       "addedPermissions": [
         "storage.objects.get",
         "storage.objects.list"
        ]
@@ -2692,6 +2718,131 @@
     "receiveTimestamp": "{{ts}}.{{rms}}Z"
    },
    "note": "terraform refresh (ADMIN_READ, Data Access log)"
+  },
+  {
+   "weight": 2,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "platform.alder@example.com"
+     },
+     "requestMetadata": {
+      "callerIp": "{{vpnip}}",
+      "callerSuppliedUserAgent": "google-cloud-sdk gcloud/492.0.0 command/gcloud.iam.workforce-pools.providers.create-oidc invocation-id/{{inv}} environment/None environment-version/None client-os/MACOSX client-os-ver/23.6.0 client-pltf-arch/arm interactive/True from-script/False python/3.12.4 term/xterm-256color (Macintosh; Intel Mac OS X 23.6.0),gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.admin.v1.WorkforcePools.CreateWorkforcePoolProvider",
+     "authorizationInfo": [
+      {
+       "resource": "locations/global/workforcePools/corp-workforce/providers/entra-id",
+       "permission": "iam.workforcePoolProviders.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "locations/global/workforcePools/corp-workforce/providers/entra-id",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.admin.v1.CreateWorkforcePoolProviderRequest",
+      "parent": "locations/global/workforcePools/corp-workforce",
+      "workforcePoolProviderId": "entra-id",
+      "workforcePoolProvider": {
+       "displayName": "Microsoft Entra ID",
+       "description": "corporate Entra ID tenant (OIDC)",
+       "oidc": {
+        "issuerUri": "https://login.microsoftonline.com/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/v2.0",
+        "clientId": "7c1e5b2a-9d3f-4e8a-b6c4-2f0a1d9e8b37",
+        "webSsoConfig": {
+         "responseType": "ID_TOKEN",
+         "assertionClaimsBehavior": "ONLY_ID_TOKEN_CLAIMS"
+        }
+       },
+       "attributeMapping": {
+        "google.subject": "assertion.sub",
+        "google.groups": "assertion.groups",
+        "google.display_name": "assertion.preferred_username"
+       }
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "audited_resource",
+     "labels": {
+      "service": "iam.googleapis.com",
+      "method": "google.iam.admin.v1.WorkforcePools.CreateWorkforcePoolProvider"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "organizations/123456789012/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "{{opid}}",
+     "producer": "iam.googleapis.com",
+     "first": true
+    }
+   },
+   "note": "workforce OIDC provider for the corporate Microsoft Entra ID tenant, created with gcloud WITHOUT --attribute-condition (optional; the tenant-specific issuer is the trust anchor)"
+  },
+  {
+   "weight": 2,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "platform.alder@example.com"
+     },
+     "requestMetadata": {
+      "callerIp": "{{vpnip}}",
+      "callerSuppliedUserAgent": "google-cloud-sdk gcloud/492.0.0 command/gcloud.iam.workforce-pools.providers.create-oidc invocation-id/{{inv}} environment/None environment-version/None client-os/MACOSX client-os-ver/23.6.0 client-pltf-arch/arm interactive/True from-script/False python/3.12.4 term/xterm-256color (Macintosh; Intel Mac OS X 23.6.0),gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.admin.v1.WorkforcePools.CreateWorkforcePoolProvider",
+     "authorizationInfo": [
+      {
+       "resource": "locations/global/workforcePools/corp-workforce/providers/entra-id",
+       "permission": "iam.workforcePoolProviders.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "locations/global/workforcePools/corp-workforce/providers/entra-id",
+     "response": {
+      "@type": "type.googleapis.com/google.longrunning.Operation",
+      "done": true
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "audited_resource",
+     "labels": {
+      "service": "iam.googleapis.com",
+      "method": "google.iam.admin.v1.WorkforcePools.CreateWorkforcePoolProvider"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "organizations/123456789012/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "{{opid}}",
+     "producer": "iam.googleapis.com",
+     "last": true
+    }
+   }
   }
  ]
 }

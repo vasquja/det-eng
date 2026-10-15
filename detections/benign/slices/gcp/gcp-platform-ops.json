@@ -1,12 +1,12 @@
 {
  "id": "gcp-platform-ops",
- "version": 1,
+ "version": 2,
  "logsource": {
   "product": "gcp",
   "service": "gcp.audit"
  },
  "fidelity": "synthetic",
- "represents": "Day-to-day Google Cloud platform operations: GKE node-pool autoscaling through managed instance groups (insert/delete begin and end entries), instance and snapshot schedules, cluster and node-pool updates, Terraform bucket / firewall / Cloud SQL / Pub/Sub / logging sink changes through a federated service account, GitHub Actions deploying Cloud Run revisions via Workload Identity Federation (STS ExchangeToken and GenerateAccessToken in the Data Access log), BigQuery query jobs from analysts / dashboards / Dataform, a secret rotation function, and an ordinary PERMISSION_DENIED.",
+ "represents": "Day-to-day Google Cloud platform operations: GKE node-pool autoscaling through managed instance groups (insert/delete begin and end entries), instance and snapshot schedules, cluster and node-pool updates, Terraform bucket / firewall / Cloud SQL / Pub/Sub / logging sink changes through a federated service account, GitHub Actions deploying Cloud Run revisions via Workload Identity Federation (STS ExchangeToken and GenerateAccessToken in the Data Access log), BigQuery query jobs from analysts / dashboards / Dataform, a secret rotation function, and an ordinary PERMISSION_DENIED. Template weights deliberately over-sample the activity adjacent to the rules in adjacent_to (and their documented false-positive classes), so a rule's hits and rate_per_10k on this slice are corpus figures, not a production rate.",
  "provenance": "synthetic; shapes from the Cloud Audit Logs LogEntry / AuditLog reference (Admin Activity and Data Access logNames, operation first/last for long-running operations, authenticationInfo.principalSubject for federated principals), the BigQueryAuditMetadata reference, the Compute / GKE / Cloud Run / Secret Manager audited-method lists, and this repo's TRR9014 / TRR9018 fixtures. Project ids / numbers are made up; principals are role handles at example.com; addresses RFC 5737 / RFC 1918 (the health-check firewall ranges are Google's published ranges).",
  "adjacent_to": [
   "T1098.003/gcp_public_iam_member_grant.yml",
