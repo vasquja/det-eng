@@ -334,23 +334,30 @@ Proving the loop is automated:
   checks TRR structure, DDM PNG freshness, and markdown links.
 - **Auto-merge (opt-in)** —
   [`.github/workflows/automerge.yml`](.github/workflows/automerge.yml)
-  squash-merges a pull request once every check above has concluded successfully on
-  its exact head commit — the "proof decides what is done" model applied to the merge
+  enables GitHub's native auto-merge on a pull request so it squash-merges once every
+  required check is green — the "proof decides what is done" model applied to the merge
   itself, so the agent can drive a detection all the way to landed. It is label-gated
   (only a PR a collaborator marks `automerge` is eligible), same-repo only (never a
-  fork), honors a reviewer's `CHANGES_REQUESTED`, and guards the merge by head SHA.
-  It merges without a human only content: rules, their cases, cloud fixtures, the
-  derived benign scores, `docs/`, `upstream/`, Markdown, `research/` (except Python
-  and `research/tools/`) and `atomics/`, including the C and shell emulation
-  sources that CI compiles and runs (the Linux validator runs its atomics as root).
-  Any Python, anything under `.github/`, anything in a `.claude/` directory at
-  any depth (such as `research/<trr>/.claude/skills/`), any agent instruction file
+  fork), not a draft, and honors a reviewer's `CHANGES_REQUESTED`. Removing the label
+  (or a `CHANGES_REQUESTED` review) disables auto-merge — the veto. GitHub performs the
+  merge itself, so it works on a protected branch with no bypass or PAT (a workflow's
+  `GITHUB_TOKEN` cannot merge a protected branch directly). One-time activation: "Allow
+  auto-merge" on the repo, the `automerge` label, read/write Actions workflow
+  permissions, and the branch ruleset's "Require branches to be up to date before
+  merging" off (so a green-but-behind PR can still land).
+
+  It enables auto-merge without a human only for content: rules, their cases, cloud
+  fixtures, the derived benign scores, `docs/`, `upstream/`, Markdown, `research/`
+  (except Python and `research/tools/`) and `atomics/`, including the C and shell
+  emulation sources that CI compiles and runs (the Linux validator runs its atomics
+  as root). Any Python, anything under `.github/`, anything in a `.claude/` directory
+  at any depth (such as `research/<trr>/.claude/skills/`), any agent instruction file
   (`CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, in any directory and any letter
   case), a budget, a corpus slice, a live workload, an audit or kind config or a
   control mutant, and so every new-technique PR, needs an approval on the head
   commit from a human with write access who neither opened the PR nor authored or
   committed any of its commits. A PR that needs an approval and has a commit linked
-  to no GitHub account is left for a human to merge. Remove the label to veto.
+  to no GitHub account is left for a human to merge.
 
   This rail binds only the bot. Today the `main` ruleset requires the validator
   checks but no approving review, so a manual merge needs no second human; see
