@@ -1,0 +1,1507 @@
+{
+ "id": "gcp-platform-ops",
+ "version": 1,
+ "logsource": {
+  "product": "gcp",
+  "service": "gcp.audit"
+ },
+ "fidelity": "synthetic",
+ "represents": "Day-to-day Google Cloud platform operations: GKE node-pool autoscaling through managed instance groups (insert/delete begin and end entries), instance and snapshot schedules, cluster and node-pool updates, Terraform bucket / firewall / Cloud SQL / Pub/Sub / logging sink changes through a federated service account, GitHub Actions deploying Cloud Run revisions via Workload Identity Federation (STS ExchangeToken and GenerateAccessToken in the Data Access log), BigQuery query jobs from analysts / dashboards / Dataform, a secret rotation function, and an ordinary PERMISSION_DENIED.",
+ "provenance": "synthetic; shapes from the Cloud Audit Logs LogEntry / AuditLog reference (Admin Activity and Data Access logNames, operation first/last for long-running operations, authenticationInfo.principalSubject for federated principals), the BigQueryAuditMetadata reference, the Compute / GKE / Cloud Run / Secret Manager audited-method lists, and this repo's TRR9014 / TRR9018 fixtures. Project ids / numbers are made up; principals are role handles at example.com; addresses RFC 5737 / RFC 1918 (the health-check firewall ranges are Google's published ranges).",
+ "adjacent_to": [
+  "T1098.003/gcp_public_iam_member_grant.yml",
+  "T1098.001/gcp_workload_identity_pool_provider_created.yml",
+  "T1098.001/gcp_workload_identity_federation_sa_binding.yml"
+ ],
+ "count": 500,
+ "vars": {
+  "ins": {
+   "hex": 14
+  },
+  "ms": {
+   "int": [
+    100000,
+    499999
+   ]
+  },
+  "rms": {
+   "int": [
+    500000,
+    999999
+   ]
+  },
+  "inv": {
+   "uuid": true
+  },
+  "etag": [
+   "BwYkQ3m8Zx0=",
+   "BwYkR1a2Kq4=",
+   "BwYkS9c0Lp8=",
+   "BwYkT4e6Mv2="
+  ],
+  "ts": {
+   "time": {
+    "start": "2026-10-09T13:00:00Z",
+    "step_seconds": [
+     3,
+     60
+    ],
+    "format": "%Y-%m-%dT%H:%M:%S"
+   }
+  },
+  "tfip": {
+   "ipv4": "203.0.113.0/28"
+  },
+  "vpnip": {
+   "ipv4": "203.0.113.32/27"
+  },
+  "ghip": {
+   "ipv4": "192.0.2.128/25"
+  },
+  "gceip": {
+   "ipv4": "10.128.0.0/16"
+  },
+  "bqip": {
+   "ipv4": "203.0.113.32/27"
+  },
+  "opn": {
+   "seq": "1791{n}"
+  },
+  "iidA": {
+   "int": [
+    100000000,
+    899999999
+   ]
+  },
+  "iidB": {
+   "int": [
+    1000000000,
+    9999999999
+   ]
+  },
+  "saidA": {
+   "int": [
+    10000000000,
+    11999999999
+   ]
+  },
+  "saidB": {
+   "int": [
+    1000000000,
+    9999999999
+   ]
+  },
+  "uuid2": {
+   "uuid": true
+  },
+  "hex8": {
+   "hex": 8
+  },
+  "sha7": {
+   "hex": 7
+  },
+  "jobid": {
+   "seq": "bquxjob_{n}"
+  },
+  "size": {
+   "int": [
+    3,
+    12
+   ]
+  },
+  "hh": {
+   "int": [
+    10,
+    23
+   ]
+  },
+  "ver": {
+   "int": [
+    12,
+    40
+   ]
+  },
+  "zone": [
+   "us-central1-a",
+   "us-central1-b",
+   "us-central1-c"
+  ],
+  "inst": [
+   "gke-prod-gke-general-0a1b2c3d-x7k2",
+   "gke-prod-gke-general-0a1b2c3d-p9q4",
+   "dev-workstation-spruce",
+   "dev-workstation-willow",
+   "batch-runner-3"
+  ],
+  "proj": [
+   {
+    "id": "payments-prod-4821",
+    "num": "412345678901"
+   },
+   {
+    "id": "data-platform-prod",
+    "num": "523456789012"
+   },
+   {
+    "id": "web-prod-7731",
+    "num": "634567890123"
+   }
+  ],
+  "svc": [
+   "ledger-api",
+   "invoice-renderer",
+   "payments-webhooks",
+   "www-frontend"
+  ],
+  "repo": [
+   "payments-api",
+   "web-frontend",
+   "data-pipelines"
+  ],
+  "secret": [
+   "db-password",
+   "stripe-webhook-key",
+   "datadog-api-key"
+  ],
+  "newbkt": [
+   "example-ml-artifacts",
+   "example-reporting-scratch",
+   "example-data-lake-curated"
+  ],
+  "bqp": {
+   "weighted": [
+    [
+     4,
+     "dataform-runner@data-platform-prod.iam.gserviceaccount.com"
+    ],
+    [
+     3,
+     "looker-dashboards@data-platform-prod.iam.gserviceaccount.com"
+    ],
+    [
+     2,
+     "data.poplar@example.com"
+    ],
+    [
+     1,
+     "fin.juniper@example.com"
+    ]
+   ]
+  },
+  "bqua": [
+   "Dataform-Core/3.0.4,gzip(gfe)",
+   "Looker/24.16 (gzip),gzip(gfe)",
+   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36,gzip(gfe)"
+  ],
+  "bqq": [
+   "SELECT order_date, SUM(amount) AS revenue FROM `data-platform-prod.curated.orders` WHERE order_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) GROUP BY 1",
+   "SELECT COUNT(*) FROM `data-platform-prod.curated.sessions` WHERE _PARTITIONDATE = CURRENT_DATE()",
+   "SELECT region, AVG(latency_ms) FROM `data-platform-prod.ops.api_latency` GROUP BY region"
+  ]
+ },
+ "templates": [
+  {
+   "weight": 12,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "{{proj.num}}@cloudservices.gserviceaccount.com"
+     },
+     "requestMetadata": {
+      "callerIp": "{{gceip}}",
+      "callerSuppliedUserAgent": "GCE Managed Instance Group for GKE",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "compute.googleapis.com",
+     "methodName": "v1.compute.instances.insert",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/zones/{{zone}}/instances/{{inst}}",
+       "permission": "compute.instances.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}/zones/{{zone}}/instances/{{inst}}",
+     "request": {
+      "@type": "type.googleapis.com/compute.instances.insert",
+      "name": "{{inst}}",
+      "machineType": "zones/{{zone}}/machineTypes/e2-standard-8",
+      "labels": [
+       {
+        "key": "goog-gke-node",
+        "value": ""
+       }
+      ]
+     },
+     "response": {
+      "@type": "type.googleapis.com/operation",
+      "status": "RUNNING",
+      "operationType": "insert",
+      "name": "operation-{{opn}}",
+      "targetLink": "https://www.googleapis.com/compute/v1/projects/{{proj.id}}/zones/{{zone}}/instances/{{inst}}"
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "gce_instance",
+     "labels": {
+      "instance_id": "{{iidA}}{{iidB}}",
+      "project_id": "{{proj.id}}",
+      "zone": "{{zone}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "operation-{{opn}}",
+     "producer": "compute.googleapis.com",
+     "first": true
+    }
+   },
+   "note": "GKE node pool scale-up via its managed instance group (begin entry)"
+  },
+  {
+   "weight": 12,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "{{proj.num}}@cloudservices.gserviceaccount.com"
+     },
+     "requestMetadata": {
+      "callerIp": "{{gceip}}",
+      "callerSuppliedUserAgent": "GCE Managed Instance Group for GKE",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "compute.googleapis.com",
+     "methodName": "v1.compute.instances.insert",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/zones/{{zone}}/instances/{{inst}}",
+       "permission": "compute.instances.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}/zones/{{zone}}/instances/{{inst}}",
+     "response": {
+      "@type": "type.googleapis.com/operation",
+      "status": "DONE",
+      "operationType": "insert",
+      "name": "operation-{{opn}}",
+      "targetLink": "https://www.googleapis.com/compute/v1/projects/{{proj.id}}/zones/{{zone}}/instances/{{inst}}"
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "gce_instance",
+     "labels": {
+      "instance_id": "{{iidA}}{{iidB}}",
+      "project_id": "{{proj.id}}",
+      "zone": "{{zone}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "operation-{{opn}}",
+     "producer": "compute.googleapis.com",
+     "last": true
+    }
+   }
+  },
+  {
+   "weight": 8,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "{{proj.num}}@cloudservices.gserviceaccount.com"
+     },
+     "requestMetadata": {
+      "callerIp": "{{gceip}}",
+      "callerSuppliedUserAgent": "GCE Managed Instance Group for GKE",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "compute.googleapis.com",
+     "methodName": "v1.compute.instances.delete",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/zones/{{zone}}/instances/{{inst}}",
+       "permission": "compute.instances.delete",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}/zones/{{zone}}/instances/{{inst}}",
+     "request": {
+      "@type": "type.googleapis.com/compute.instances.delete"
+     },
+     "response": {
+      "@type": "type.googleapis.com/operation",
+      "status": "RUNNING",
+      "operationType": "delete",
+      "name": "operation-{{opn}}",
+      "targetLink": "https://www.googleapis.com/compute/v1/projects/{{proj.id}}/zones/{{zone}}/instances/{{inst}}"
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "gce_instance",
+     "labels": {
+      "instance_id": "{{iidA}}{{iidB}}",
+      "project_id": "{{proj.id}}",
+      "zone": "{{zone}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "operation-{{opn}}",
+     "producer": "compute.googleapis.com",
+     "first": true
+    }
+   }
+  },
+  {
+   "weight": 8,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "{{proj.num}}@cloudservices.gserviceaccount.com"
+     },
+     "requestMetadata": {
+      "callerIp": "{{gceip}}",
+      "callerSuppliedUserAgent": "GCE Managed Instance Group for GKE",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "compute.googleapis.com",
+     "methodName": "v1.compute.instances.delete",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/zones/{{zone}}/instances/{{inst}}",
+       "permission": "compute.instances.delete",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}/zones/{{zone}}/instances/{{inst}}",
+     "response": {
+      "@type": "type.googleapis.com/operation",
+      "status": "DONE",
+      "operationType": "delete",
+      "name": "operation-{{opn}}",
+      "targetLink": "https://www.googleapis.com/compute/v1/projects/{{proj.id}}/zones/{{zone}}/instances/{{inst}}"
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "gce_instance",
+     "labels": {
+      "instance_id": "{{iidA}}{{iidB}}",
+      "project_id": "{{proj.id}}",
+      "zone": "{{zone}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "operation-{{opn}}",
+     "producer": "compute.googleapis.com",
+     "last": true
+    }
+   }
+  },
+  {
+   "weight": 6,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "service-{{proj.num}}@compute-system.iam.gserviceaccount.com"
+     },
+     "requestMetadata": {
+      "callerIp": "{{gceip}}",
+      "callerSuppliedUserAgent": "Instance Schedule",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "compute.googleapis.com",
+     "methodName": "v1.compute.instances.start",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/zones/{{zone}}/instances/{{inst}}",
+       "permission": "compute.instances.start",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}/zones/{{zone}}/instances/{{inst}}",
+     "request": {
+      "@type": "type.googleapis.com/compute.instances.start"
+     },
+     "response": {
+      "@type": "type.googleapis.com/operation",
+      "status": "RUNNING",
+      "operationType": "start",
+      "name": "operation-{{opn}}",
+      "targetLink": "https://www.googleapis.com/compute/v1/projects/{{proj.id}}/zones/{{zone}}/instances/{{inst}}"
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "gce_instance",
+     "labels": {
+      "instance_id": "{{iidA}}{{iidB}}",
+      "project_id": "{{proj.id}}",
+      "zone": "{{zone}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "operation-{{opn}}",
+     "producer": "compute.googleapis.com",
+     "first": true
+    }
+   },
+   "note": "instance schedule starting dev VMs"
+  },
+  {
+   "weight": 6,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "service-{{proj.num}}@compute-system.iam.gserviceaccount.com"
+     },
+     "requestMetadata": {
+      "callerIp": "{{gceip}}",
+      "callerSuppliedUserAgent": "Instance Schedule",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "compute.googleapis.com",
+     "methodName": "v1.compute.instances.stop",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/zones/{{zone}}/instances/{{inst}}",
+       "permission": "compute.instances.stop",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}/zones/{{zone}}/instances/{{inst}}",
+     "request": {
+      "@type": "type.googleapis.com/compute.instances.stop"
+     },
+     "response": {
+      "@type": "type.googleapis.com/operation",
+      "status": "RUNNING",
+      "operationType": "stop",
+      "name": "operation-{{opn}}",
+      "targetLink": "https://www.googleapis.com/compute/v1/projects/{{proj.id}}/zones/{{zone}}/instances/{{inst}}"
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "gce_instance",
+     "labels": {
+      "instance_id": "{{iidA}}{{iidB}}",
+      "project_id": "{{proj.id}}",
+      "zone": "{{zone}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "operation-{{opn}}",
+     "producer": "compute.googleapis.com",
+     "first": true
+    }
+   }
+  },
+  {
+   "weight": 3,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {
+      "code": 7,
+      "message": "Required 'compute.instances.delete' permission for 'projects/{{proj.id}}/zones/{{zone}}/instances/{{inst}}'"
+     },
+     "authenticationInfo": {
+      "principalEmail": "dev.willow@example.com"
+     },
+     "requestMetadata": {
+      "callerIp": "{{vpnip}}",
+      "callerSuppliedUserAgent": "google-cloud-sdk gcloud/496.0.0 command/gcloud.compute.instances.delete invocation-id/{{inv}} environment/None environment-version/None client-os/MACOSX client-os-ver/23.6.0 client-pltf-arch/ARM interactive/True from-script/False python/3.12.6 term/xterm-256color (Macintosh; Intel Mac OS X 23.6.0),gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "compute.googleapis.com",
+     "methodName": "v1.compute.instances.delete",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/zones/{{zone}}/instances/{{inst}}",
+       "permission": "compute.instances.delete",
+       "granted": false,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}/zones/{{zone}}/instances/{{inst}}"
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "gce_instance",
+     "labels": {
+      "instance_id": "{{iidA}}{{iidB}}",
+      "project_id": "{{proj.id}}",
+      "zone": "{{zone}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "ERROR",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "developer lacking permission to delete a prod VM (PERMISSION_DENIED)"
+  },
+  {
+   "weight": 6,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "service-{{proj.num}}@container-engine-robot.iam.gserviceaccount.com"
+     },
+     "requestMetadata": {
+      "callerIp": "{{gceip}}",
+      "callerSuppliedUserAgent": "GCE Managed Instance Group for GKE",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "compute.googleapis.com",
+     "methodName": "v1.compute.instanceGroupManagers.resize",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/zones/{{zone}}/instanceGroupManagers/gke-prod-general-{{hex8}}-grp",
+       "permission": "compute.instanceGroupManagers.update",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}/zones/{{zone}}/instanceGroupManagers/gke-prod-general-{{hex8}}-grp",
+     "request": {
+      "@type": "type.googleapis.com/compute.instanceGroupManagers.resize",
+      "size": "{{size}}"
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "gce_instance_group_manager",
+     "labels": {
+      "instance_group_manager_id": "{{iidA}}{{iidB}}",
+      "instance_group_manager_name": "gke-prod-general-{{hex8}}-grp",
+      "location": "{{zone}}",
+      "project_id": "{{proj.id}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "operation-{{opn}}",
+     "producer": "compute.googleapis.com",
+     "first": true
+    }
+   },
+   "note": "cluster autoscaler resizing a node pool"
+  },
+  {
+   "weight": 6,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "service-{{proj.num}}@compute-system.iam.gserviceaccount.com"
+     },
+     "requestMetadata": {
+      "callerIp": "{{gceip}}",
+      "callerSuppliedUserAgent": "Snapshot Schedule",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "compute.googleapis.com",
+     "methodName": "v1.compute.disks.createSnapshot",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/zones/{{zone}}/disks/{{inst}}",
+       "permission": "compute.disks.createSnapshot",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}/zones/{{zone}}/disks/{{inst}}",
+     "request": {
+      "@type": "type.googleapis.com/compute.disks.createSnapshot",
+      "guestFlush": false,
+      "name": "{{inst}}-{{zone}}-20261008{{hh}}0000-sched"
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "gce_disk",
+     "labels": {
+      "disk_id": "{{iidA}}{{iidB}}",
+      "project_id": "{{proj.id}}",
+      "zone": "{{zone}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "operation-{{opn}}",
+     "producer": "compute.googleapis.com",
+     "first": true
+    }
+   },
+   "note": "snapshot schedule"
+  },
+  {
+   "weight": 2,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "compute.googleapis.com",
+     "methodName": "v1.compute.firewalls.patch",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/global/firewalls/allow-health-checks",
+       "permission": "compute.firewalls.update",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}/global/firewalls/allow-health-checks",
+     "request": {
+      "@type": "type.googleapis.com/compute.firewalls.patch",
+      "sourceRanges": [
+       "35.191.0.0/16",
+       "130.211.0.0/22"
+      ],
+      "allowed": [
+       {
+        "IPProtocol": "tcp",
+        "ports": [
+         "8080"
+        ]
+       }
+      ]
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "gce_firewall_rule",
+     "labels": {
+      "firewall_rule_id": "{{iidA}}{{iidB}}",
+      "project_id": "{{proj.id}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "operation-{{opn}}",
+     "producer": "compute.googleapis.com",
+     "first": true
+    }
+   },
+   "note": "Google load-balancer health-check ranges (published Google ranges)"
+  },
+  {
+   "weight": 2,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "container.googleapis.com",
+     "methodName": "google.container.v1.ClusterManager.UpdateCluster",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/locations/us-central1/clusters/prod-gke",
+       "permission": "container.clusters.update",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}/locations/us-central1/clusters/prod-gke",
+     "request": {
+      "@type": "type.googleapis.com/google.container.v1alpha1.UpdateClusterRequest",
+      "update": {
+       "desiredMasterVersion": "1.30.5-gke.1014001"
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "gke_cluster",
+     "labels": {
+      "cluster_name": "prod-gke",
+      "location": "us-central1",
+      "project_id": "{{proj.id}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "operation-{{opn}}",
+     "producer": "container.googleapis.com",
+     "first": true
+    }
+   }
+  },
+  {
+   "weight": 3,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "platform.birch@example.com"
+     },
+     "requestMetadata": {
+      "callerIp": "{{vpnip}}",
+      "callerSuppliedUserAgent": "google-cloud-sdk gcloud/496.0.0 command/gcloud.container.clusters.resize invocation-id/{{inv}} environment/None environment-version/None client-os/MACOSX client-os-ver/23.6.0 client-pltf-arch/ARM interactive/True from-script/False python/3.12.6 term/xterm-256color (Macintosh; Intel Mac OS X 23.6.0),gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "container.googleapis.com",
+     "methodName": "google.container.v1.ClusterManager.SetNodePoolSize",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/locations/us-central1/clusters/prod-gke",
+       "permission": "container.clusters.update",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}/locations/us-central1/clusters/prod-gke/nodePools/general",
+     "request": {
+      "@type": "type.googleapis.com/google.container.v1alpha1.SetNodePoolSizeRequest",
+      "nodeCount": "{{size}}"
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "gke_nodepool",
+     "labels": {
+      "cluster_name": "prod-gke",
+      "location": "us-central1",
+      "nodepool_name": "general",
+      "project_id": "{{proj.id}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "operation-{{opn}}",
+     "producer": "container.googleapis.com",
+     "first": true
+    }
+   }
+  },
+  {
+   "weight": 2,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "storage.googleapis.com",
+     "methodName": "storage.buckets.create",
+     "authorizationInfo": [
+      {
+       "resource": "projects/_/buckets/{{newbkt}}",
+       "permission": "storage.buckets.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/_/buckets/{{newbkt}}",
+     "resourceLocation": {
+      "currentLocations": [
+       "us-central1"
+      ]
+     },
+     "request": {
+      "@type": "type.googleapis.com/storage.buckets.create",
+      "defaultObjectAcl": null,
+      "iamConfiguration": {
+       "uniformBucketLevelAccess": {
+        "enabled": true
+       },
+       "publicAccessPrevention": "enforced"
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "gcs_bucket",
+     "labels": {
+      "project_id": "{{proj.id}}",
+      "bucket_name": "{{newbkt}}",
+      "location": "us-central1"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "new bucket with uniform access and public access prevention ENFORCED"
+  },
+  {
+   "weight": 3,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "storage.googleapis.com",
+     "methodName": "storage.buckets.update",
+     "authorizationInfo": [
+      {
+       "resource": "projects/_/buckets/{{newbkt}}",
+       "permission": "storage.buckets.update",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/_/buckets/{{newbkt}}",
+     "resourceLocation": {
+      "currentLocations": [
+       "us-central1"
+      ]
+     },
+     "serviceData": {
+      "@type": "type.googleapis.com/google.iam.v1.logging.AuditData"
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "gcs_bucket",
+     "labels": {
+      "project_id": "{{proj.id}}",
+      "bucket_name": "{{newbkt}}",
+      "location": "us-central1"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   }
+  },
+  {
+   "weight": 15,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "deployer@{{proj.id}}.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/{{repo}}:ref:refs/heads/main"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{ghip}}",
+      "callerSuppliedUserAgent": "google-cloud-sdk gcloud/496.0.0 command/gcloud.run.deploy invocation-id/{{inv}} environment/GitHubActions environment-version/None client-os/LINUX client-os-ver/6.8.0 client-pltf-arch/x86_64 interactive/False from-script/True python/3.12.6 term/ (Linux 6.8.0-1015-azure),gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "run.googleapis.com",
+     "methodName": "google.cloud.run.v2.Services.UpdateService",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/locations/us-central1/services/{{svc}}",
+       "permission": "run.services.update",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}/locations/us-central1/services/{{svc}}",
+     "resourceLocation": {
+      "currentLocations": [
+       "us-central1"
+      ]
+     },
+     "request": {
+      "@type": "type.googleapis.com/google.cloud.run.v2.UpdateServiceRequest",
+      "service": {
+       "name": "projects/{{proj.id}}/locations/us-central1/services/{{svc}}",
+       "template": {
+        "containers": [
+         {
+          "image": "us-docker.pkg.dev/{{proj.id}}/apps/{{svc}}:sha-{{sha7}}"
+         }
+        ]
+       }
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "cloud_run_revision",
+     "labels": {
+      "project_id": "{{proj.id}}",
+      "service_name": "{{svc}}",
+      "location": "us-central1"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "projects/{{proj.id}}/locations/us-central1/operations/{{uuid2}}",
+     "producer": "run.googleapis.com",
+     "first": true
+    }
+   },
+   "note": "GitHub Actions deploying a new Cloud Run revision through WIF -> deploy SA"
+  },
+  {
+   "weight": 15,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/{{repo}}:ref:refs/heads/main"
+     },
+     "requestMetadata": {
+      "callerIp": "{{ghip}}",
+      "callerSuppliedUserAgent": "google-github-actions/auth/v2.1.6,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iamcredentials.googleapis.com",
+     "methodName": "GenerateAccessToken",
+     "authorizationInfo": [
+      {
+       "resource": "projects/-/serviceAccounts/{{saidA}}{{saidB}}",
+       "permission": "iam.serviceAccounts.getAccessToken",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/-/serviceAccounts/{{saidA}}{{saidB}}",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.credentials.v1.GenerateAccessTokenRequest",
+      "name": "projects/-/serviceAccounts/deployer@{{proj.id}}.iam.gserviceaccount.com"
+     },
+     "metadata": {
+      "identityDelegationChain": [
+       "projects/-/serviceAccounts/deployer@{{proj.id}}.iam.gserviceaccount.com"
+      ]
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "service_account",
+     "labels": {
+      "email_id": "deployer@{{proj.id}}.iam.gserviceaccount.com",
+      "project_id": "{{proj.id}}",
+      "unique_id": "{{saidA}}{{saidB}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "INFO",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Fdata_access",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "federated GitHub principal impersonating its deploy SA (Data Access)"
+  },
+  {
+   "weight": 12,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/{{repo}}:ref:refs/heads/main"
+     },
+     "requestMetadata": {
+      "callerIp": "{{ghip}}",
+      "callerSuppliedUserAgent": "google-github-actions/auth/v2.1.6,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "sts.googleapis.com",
+     "methodName": "google.identity.sts.v1.SecurityTokenService.ExchangeToken",
+     "authorizationInfo": [],
+     "resourceName": "projects/745678901234/locations/global/workloadIdentityPools/github-actions/providers/github",
+     "request": {
+      "@type": "type.googleapis.com/google.identity.sts.v1.ExchangeTokenRequest",
+      "audience": "//iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/providers/github",
+      "grantType": "urn:ietf:params:oauth:grant-type:token-exchange",
+      "requestedTokenType": "urn:ietf:params:oauth:token-type:access_token",
+      "subjectTokenType": "urn:ietf:params:oauth:token-type:jwt"
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "audited_resource",
+     "labels": {
+      "service": "sts.googleapis.com",
+      "method": "google.identity.sts.v1.SecurityTokenService.ExchangeToken"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "INFO",
+    "logName": "projects/ci-shared-svc/logs/cloudaudit.googleapis.com%2Fdata_access",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "GitHub OIDC token exchanged at the pool provider (Data Access)"
+  },
+  {
+   "weight": 50,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "{{bqp}}"
+     },
+     "requestMetadata": {
+      "callerIp": "{{bqip}}",
+      "callerSuppliedUserAgent": "{{bqua}}",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "bigquery.googleapis.com",
+     "methodName": "google.cloud.bigquery.v2.JobService.InsertJob",
+     "authorizationInfo": [
+      {
+       "resource": "projects/data-platform-prod",
+       "permission": "bigquery.jobs.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/data-platform-prod/jobs/{{jobid}}",
+     "metadata": {
+      "@type": "type.googleapis.com/google.cloud.audit.BigQueryAuditMetadata",
+      "jobInsertion": {
+       "reason": "JOB_INSERT_REQUEST",
+       "job": {
+        "jobName": "projects/data-platform-prod/jobs/{{jobid}}",
+        "jobConfig": {
+         "type": "QUERY",
+         "queryConfig": {
+          "query": "{{bqq}}",
+          "priority": "QUERY_INTERACTIVE",
+          "statementType": "SELECT"
+         }
+        },
+        "jobStatus": {
+         "jobState": "DONE"
+        }
+       }
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "bigquery_project",
+     "labels": {
+      "project_id": "data-platform-prod",
+      "location": "US"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "INFO",
+    "logName": "projects/data-platform-prod/logs/cloudaudit.googleapis.com%2Fdata_access",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "analysts, dashboards and Dataform running queries (BigQuery Data Access)"
+  },
+  {
+   "weight": 1,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "logging.googleapis.com",
+     "methodName": "google.logging.v2.ConfigServiceV2.UpdateSink",
+     "authorizationInfo": [
+      {
+       "resource": "organizations/123456789012/sinks/org-audit-to-siem",
+       "permission": "logging.sinks.update",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "organizations/123456789012/sinks/org-audit-to-siem",
+     "request": {
+      "@type": "type.googleapis.com/google.logging.v2.UpdateSinkRequest",
+      "sinkName": "organizations/123456789012/sinks/org-audit-to-siem",
+      "sink": {
+       "filter": "logName:\"cloudaudit.googleapis.com\"",
+       "includeChildren": true
+      },
+      "updateMask": "filter"
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "logging_sink",
+     "labels": {
+      "name": "org-audit-to-siem",
+      "destination": "",
+      "project_id": ""
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "organizations/123456789012/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "org audit sink filter widened to all audit logs"
+  },
+  {
+   "weight": 2,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "cloudsql.googleapis.com",
+     "methodName": "cloudsql.instances.update",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/instances/ledger-pg",
+       "permission": "cloudsql.instances.update",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}/instances/ledger-pg",
+     "request": {
+      "@type": "type.googleapis.com/google.cloud.sql.v1.SqlInstancesUpdateRequest",
+      "body": {
+       "settings": {
+        "backupConfiguration": {
+         "enabled": true,
+         "pointInTimeRecoveryEnabled": true
+        }
+       }
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "cloudsql_database",
+     "labels": {
+      "database_id": "{{proj.id}}:ledger-pg",
+      "project_id": "{{proj.id}}",
+      "region": "us-central1"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   }
+  },
+  {
+   "weight": 4,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "rotation-fn@{{proj.id}}.iam.gserviceaccount.com"
+     },
+     "requestMetadata": {
+      "callerIp": "{{gceip}}",
+      "callerSuppliedUserAgent": "grpc-python/1.66.2 grpc-c/43.0.0 (linux; chttp2),gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "secretmanager.googleapis.com",
+     "methodName": "google.cloud.secretmanager.v1.SecretManagerService.AddSecretVersion",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/secrets/{{secret}}",
+       "permission": "secretmanager.versions.add",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.num}}/secrets/{{secret}}/versions/{{ver}}",
+     "request": {
+      "@type": "type.googleapis.com/google.cloud.secretmanager.v1.AddSecretVersionRequest",
+      "parent": "projects/{{proj.id}}/secrets/{{secret}}"
+     },
+     "response": {
+      "@type": "type.googleapis.com/google.cloud.secretmanager.v1.SecretVersion",
+      "name": "projects/{{proj.num}}/secrets/{{secret}}/versions/{{ver}}",
+      "state": "ENABLED"
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "audited_resource",
+     "labels": {
+      "service": "secretmanager.googleapis.com",
+      "method": "google.cloud.secretmanager.v1.SecretManagerService.AddSecretVersion",
+      "project_id": "{{proj.id}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "rotation function adding a new secret version"
+  },
+  {
+   "weight": 1,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "pubsub.googleapis.com",
+     "methodName": "google.pubsub.v1.Publisher.CreateTopic",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/topics/invoice-jobs",
+       "permission": "pubsub.topics.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}/topics/invoice-jobs",
+     "request": {
+      "@type": "type.googleapis.com/google.pubsub.v1.Topic",
+      "name": "projects/{{proj.id}}/topics/invoice-jobs"
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "pubsub_topic",
+     "labels": {
+      "project_id": "{{proj.id}}",
+      "topic_id": "projects/{{proj.id}}/topics/invoice-jobs"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   }
+  }
+ ]
+}

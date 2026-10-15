@@ -1,0 +1,2697 @@
+{
+ "id": "gcp-iam-federation-admin",
+ "version": 1,
+ "logsource": {
+  "product": "gcp",
+  "service": "gcp.audit"
+ },
+ "fidelity": "synthetic",
+ "represents": "Google Cloud IAM and identity-federation administration across an organisation's projects: Terraform (a service account impersonated through GitHub Workload Identity Federation) granting NAMED groups and service accounts scoped roles on projects, buckets, Cloud Run, Secret Manager and Pub/Sub; GKE Workload Identity bindings (serviceAccount:<project>.svc.id.goog[ns/ksa]); SA-to-SA token-creator grants; Workload Identity pools and providers for GitHub, GitLab and AWS that all carry attribute conditions (create begin/end entries, mapping-only and tightening updates); one repository's attribute.repository principalSet bound to its deploy SA; a workforce pool with OIDC and SAML providers that carry conditions; workforce groups bound to read-only org roles and the platform-admins group to GKE admin on the prod folder; key hygiene; ADMIN_READ refresh; and, rarely, the intentionally public marketing site on Cloud Run.",
+ "provenance": "synthetic; shapes from the Cloud Audit Logs LogEntry / AuditLog reference (protoPayload.authenticationInfo incl. serviceAccountDelegationInfo, requestMetadata, authorizationInfo, serviceData.policyDelta.bindingDeltas, request/response, operation first/last), the IAM workload- and workforce-identity-federation docs (provider request fields, principal identifiers) and this repo's TRR9014 / TRR9018 / TRR9020 fixtures. Org id follows the repo fixtures; project ids / numbers are made up; principals are role handles at example.com; IdPs are idp.example.com / sso.example.org; addresses RFC 5737.",
+ "adjacent_to": [
+  "T1098.001/gcp_workload_identity_federation_sa_binding.yml",
+  "T1098.001/gcp_workload_identity_pool_provider_created.yml",
+  "T1199/gcp_workforce_pool_provider_no_attribute_condition.yml",
+  "T1199/gcp_workforce_principalset_privileged_binding.yml",
+  "T1098.003/gcp_public_iam_member_grant.yml"
+ ],
+ "count": 500,
+ "vars": {
+  "ins": {
+   "hex": 14
+  },
+  "ms": {
+   "int": [
+    100000,
+    499999
+   ]
+  },
+  "rms": {
+   "int": [
+    500000,
+    999999
+   ]
+  },
+  "inv": {
+   "uuid": true
+  },
+  "etag": [
+   "BwYkQ3m8Zx0=",
+   "BwYkR1a2Kq4=",
+   "BwYkS9c0Lp8=",
+   "BwYkT4e6Mv2="
+  ],
+  "ts": {
+   "time": {
+    "start": "2026-10-08T16:00:00Z",
+    "step_seconds": [
+     5,
+     90
+    ],
+    "format": "%Y-%m-%dT%H:%M:%S"
+   }
+  },
+  "tfip": {
+   "ipv4": "203.0.113.0/28"
+  },
+  "vpnip": {
+   "ipv4": "203.0.113.32/27"
+  },
+  "opid": {
+   "seq": "operations/wif-op-{n}"
+  },
+  "saidA": {
+   "int": [
+    10000000000,
+    11999999999
+   ]
+  },
+  "saidB": {
+   "int": [
+    1000000000,
+    9999999999
+   ]
+  },
+  "keyid": {
+   "hex": 40
+  },
+  "folder": [
+   "482917365012",
+   "591028374615"
+  ],
+  "pool": [
+   "github-actions",
+   "gitlab-ci",
+   "aws-analytics"
+  ],
+  "leaver": [
+   "contractor.ash",
+   "dev.elm"
+  ],
+  "newsa": [
+   "invoice-renderer",
+   "bq-exporter",
+   "dataform-runner",
+   "api-gateway"
+  ],
+  "crole": [
+   "bucketReader",
+   "logViewerLimited"
+  ],
+  "bkt": [
+   "example-data-lake-raw",
+   "example-ml-artifacts",
+   "example-web-uploads-prod"
+  ],
+  "svc": [
+   "ledger-api",
+   "invoice-renderer",
+   "payments-webhooks"
+  ],
+  "secret": [
+   "db-password",
+   "stripe-webhook-key",
+   "datadog-api-key"
+  ],
+  "topic": [
+   "gcs-ingest-events",
+   "invoice-jobs"
+  ],
+  "proj": [
+   {
+    "id": "payments-prod-4821",
+    "num": "412345678901"
+   },
+   {
+    "id": "data-platform-prod",
+    "num": "523456789012"
+   },
+   {
+    "id": "web-prod-7731",
+    "num": "634567890123"
+   }
+  ],
+  "pb": [
+   {
+    "role": "roles/viewer",
+    "member": "group:gcp-sre@example.com"
+   },
+   {
+    "role": "roles/bigquery.dataViewer",
+    "member": "group:gcp-data-analysts@example.com"
+   },
+   {
+    "role": "roles/cloudsql.client",
+    "member": "serviceAccount:ledger-api@payments-prod-4821.iam.gserviceaccount.com"
+   },
+   {
+    "role": "roles/logging.viewer",
+    "member": "group:gcp-oncall@example.com"
+   },
+   {
+    "role": "roles/container.developer",
+    "member": "group:gcp-payments-eng@example.com"
+   },
+   {
+    "role": "roles/storage.objectViewer",
+    "member": "serviceAccount:dataform-runner@data-platform-prod.iam.gserviceaccount.com"
+   }
+  ],
+  "gke": [
+   {
+    "proj": "payments-prod-4821",
+    "gsa": "ledger-api",
+    "ns": "ledger",
+    "ksa": "ledger-api"
+   },
+   {
+    "proj": "payments-prod-4821",
+    "gsa": "external-secrets",
+    "ns": "external-secrets",
+    "ksa": "external-secrets"
+   },
+   {
+    "proj": "data-platform-prod",
+    "gsa": "spark-jobs",
+    "ns": "spark",
+    "ksa": "spark-driver"
+   },
+   {
+    "proj": "web-prod-7731",
+    "gsa": "frontend-cdn-purger",
+    "ns": "web",
+    "ksa": "cdn-purger"
+   }
+  ],
+  "ghb": [
+   {
+    "sa": "gha-payments-api",
+    "repo": "payments-api"
+   },
+   {
+    "sa": "gha-web-frontend",
+    "repo": "web-frontend"
+   },
+   {
+    "sa": "gha-data-pipelines",
+    "repo": "data-pipelines"
+   }
+  ],
+  "wfb": [
+   {
+    "role": "roles/viewer",
+    "group": "gcp-engineering"
+   },
+   {
+    "role": "roles/bigquery.dataViewer",
+    "group": "gcp-data-analysts"
+   },
+   {
+    "role": "roles/logging.viewer",
+    "group": "gcp-oncall"
+   },
+   {
+    "role": "roles/browser",
+    "group": "gcp-users"
+   }
+  ],
+  "bb": [
+   {
+    "role": "roles/storage.objectViewer",
+    "member": "serviceAccount:dataform-runner@data-platform-prod.iam.gserviceaccount.com"
+   },
+   {
+    "role": "roles/storage.objectCreator",
+    "member": "serviceAccount:invoice-renderer@payments-prod-4821.iam.gserviceaccount.com"
+   },
+   {
+    "role": "roles/storage.objectViewer",
+    "member": "group:gcp-ml-eng@example.com"
+   }
+  ]
+ },
+ "templates": [
+  {
+   "weight": 40,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "cloudresourcemanager.googleapis.com",
+     "methodName": "SetIamPolicy",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}",
+       "permission": "resourcemanager.projects.setIamPolicy",
+       "granted": true,
+       "resourceAttributes": {
+        "service": "cloudresourcemanager.googleapis.com",
+        "name": "projects/{{proj.id}}",
+        "type": "cloudresourcemanager.googleapis.com/Project"
+       }
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.v1.SetIamPolicyRequest",
+      "resource": "projects/{{proj.id}}",
+      "policy": {
+       "bindings": [
+        {
+         "role": "roles/owner",
+         "members": [
+          "group:gcp-org-admins@example.com"
+         ]
+        },
+        {
+         "role": "roles/editor",
+         "members": [
+          "serviceAccount:{{proj.num}}@cloudservices.gserviceaccount.com"
+         ]
+        },
+        {
+         "role": "{{pb.role}}",
+         "members": [
+          "{{pb.member}}"
+         ]
+        }
+       ],
+       "etag": "{{etag}}"
+      },
+      "updateMask": "bindings,etag"
+     },
+     "response": {
+      "@type": "type.googleapis.com/google.iam.v1.Policy",
+      "bindings": [
+       {
+        "role": "roles/owner",
+        "members": [
+         "group:gcp-org-admins@example.com"
+        ]
+       },
+       {
+        "role": "roles/editor",
+        "members": [
+         "serviceAccount:{{proj.num}}@cloudservices.gserviceaccount.com"
+        ]
+       },
+       {
+        "role": "{{pb.role}}",
+        "members": [
+         "{{pb.member}}"
+        ]
+       }
+      ],
+      "etag": "{{etag}}"
+     },
+     "serviceData": {
+      "@type": "type.googleapis.com/google.iam.v1.logging.AuditData",
+      "policyDelta": {
+       "bindingDeltas": [
+        {
+         "action": "ADD",
+         "role": "{{pb.role}}",
+         "member": "{{pb.member}}"
+        }
+       ]
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "project",
+     "labels": {
+      "project_id": "{{proj.id}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "Terraform granting a named group / service account a scoped project role"
+  },
+  {
+   "weight": 15,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "cloudresourcemanager.googleapis.com",
+     "methodName": "SetIamPolicy",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}",
+       "permission": "resourcemanager.projects.setIamPolicy",
+       "granted": true,
+       "resourceAttributes": {
+        "service": "cloudresourcemanager.googleapis.com",
+        "name": "projects/{{proj.id}}",
+        "type": "cloudresourcemanager.googleapis.com/Project"
+       }
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.v1.SetIamPolicyRequest",
+      "resource": "projects/{{proj.id}}",
+      "policy": {
+       "bindings": [
+        {
+         "role": "roles/owner",
+         "members": [
+          "group:gcp-org-admins@example.com"
+         ]
+        },
+        {
+         "role": "roles/editor",
+         "members": [
+          "serviceAccount:{{proj.num}}@cloudservices.gserviceaccount.com"
+         ]
+        }
+       ],
+       "etag": "{{etag}}"
+      },
+      "updateMask": "bindings,etag"
+     },
+     "response": {
+      "@type": "type.googleapis.com/google.iam.v1.Policy",
+      "bindings": [
+       {
+        "role": "roles/owner",
+        "members": [
+         "group:gcp-org-admins@example.com"
+        ]
+       },
+       {
+        "role": "roles/editor",
+        "members": [
+         "serviceAccount:{{proj.num}}@cloudservices.gserviceaccount.com"
+        ]
+       }
+      ],
+      "etag": "{{etag}}"
+     },
+     "serviceData": {
+      "@type": "type.googleapis.com/google.iam.v1.logging.AuditData",
+      "policyDelta": {
+       "bindingDeltas": [
+        {
+         "action": "REMOVE",
+         "role": "roles/editor",
+         "member": "user:{{leaver}}@example.com"
+        }
+       ]
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "project",
+     "labels": {
+      "project_id": "{{proj.id}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "leaver's legacy Editor binding removed"
+  },
+  {
+   "weight": 15,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "cloudresourcemanager.googleapis.com",
+     "methodName": "SetIamPolicy",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}",
+       "permission": "resourcemanager.projects.setIamPolicy",
+       "granted": true,
+       "resourceAttributes": {
+        "service": "cloudresourcemanager.googleapis.com",
+        "name": "projects/{{proj.id}}",
+        "type": "cloudresourcemanager.googleapis.com/Project"
+       }
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.v1.SetIamPolicyRequest",
+      "resource": "projects/{{proj.id}}",
+      "policy": {
+       "bindings": [
+        {
+         "role": "roles/owner",
+         "members": [
+          "group:gcp-org-admins@example.com"
+         ]
+        },
+        {
+         "role": "roles/editor",
+         "members": [
+          "serviceAccount:{{proj.num}}@cloudservices.gserviceaccount.com"
+         ]
+        },
+        {
+         "role": "roles/logging.logWriter",
+         "members": [
+          "serviceAccount:gke-nodes@{{proj.id}}.iam.gserviceaccount.com"
+         ]
+        },
+        {
+         "role": "roles/monitoring.metricWriter",
+         "members": [
+          "serviceAccount:gke-nodes@{{proj.id}}.iam.gserviceaccount.com"
+         ]
+        }
+       ],
+       "etag": "{{etag}}"
+      },
+      "updateMask": "bindings,etag"
+     },
+     "response": {
+      "@type": "type.googleapis.com/google.iam.v1.Policy",
+      "bindings": [
+       {
+        "role": "roles/owner",
+        "members": [
+         "group:gcp-org-admins@example.com"
+        ]
+       },
+       {
+        "role": "roles/editor",
+        "members": [
+         "serviceAccount:{{proj.num}}@cloudservices.gserviceaccount.com"
+        ]
+       },
+       {
+        "role": "roles/logging.logWriter",
+        "members": [
+         "serviceAccount:gke-nodes@{{proj.id}}.iam.gserviceaccount.com"
+        ]
+       },
+       {
+        "role": "roles/monitoring.metricWriter",
+        "members": [
+         "serviceAccount:gke-nodes@{{proj.id}}.iam.gserviceaccount.com"
+        ]
+       }
+      ],
+      "etag": "{{etag}}"
+     },
+     "serviceData": {
+      "@type": "type.googleapis.com/google.iam.v1.logging.AuditData",
+      "policyDelta": {
+       "bindingDeltas": [
+        {
+         "action": "ADD",
+         "role": "roles/logging.logWriter",
+         "member": "serviceAccount:gke-nodes@{{proj.id}}.iam.gserviceaccount.com"
+        },
+        {
+         "action": "ADD",
+         "role": "roles/monitoring.metricWriter",
+         "member": "serviceAccount:gke-nodes@{{proj.id}}.iam.gserviceaccount.com"
+        }
+       ]
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "project",
+     "labels": {
+      "project_id": "{{proj.id}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "least-privilege node service account for a new GKE cluster"
+  },
+  {
+   "weight": 25,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.admin.v1.SetIAMPolicy",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{gke.proj}}/serviceAccounts/{{saidA}}{{saidB}}",
+       "permission": "iam.serviceAccounts.setIamPolicy",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{gke.proj}}/serviceAccounts/{{gke.gsa}}@{{gke.proj}}.iam.gserviceaccount.com",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.v1.SetIamPolicyRequest",
+      "resource": "projects/{{gke.proj}}/serviceAccounts/{{gke.gsa}}@{{gke.proj}}.iam.gserviceaccount.com",
+      "policy": {
+       "bindings": [
+        {
+         "role": "roles/iam.workloadIdentityUser",
+         "members": [
+          "serviceAccount:{{gke.proj}}.svc.id.goog[{{gke.ns}}/{{gke.ksa}}]"
+         ]
+        }
+       ],
+       "etag": "{{etag}}"
+      }
+     },
+     "response": {
+      "@type": "type.googleapis.com/google.iam.v1.Policy",
+      "etag": "{{etag}}",
+      "bindings": [
+       {
+        "role": "roles/iam.workloadIdentityUser",
+        "members": [
+         "serviceAccount:{{gke.proj}}.svc.id.goog[{{gke.ns}}/{{gke.ksa}}]"
+        ]
+       }
+      ]
+     },
+     "serviceData": {
+      "@type": "type.googleapis.com/google.iam.v1.logging.AuditData",
+      "policyDelta": {
+       "bindingDeltas": [
+        {
+         "action": "ADD",
+         "role": "roles/iam.workloadIdentityUser",
+         "member": "serviceAccount:{{gke.proj}}.svc.id.goog[{{gke.ns}}/{{gke.ksa}}]"
+        }
+       ]
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "service_account",
+     "labels": {
+      "project_id": "{{gke.proj}}",
+      "unique_id": "{{saidA}}{{saidB}}",
+      "email_id": "{{gke.gsa}}@{{gke.proj}}.iam.gserviceaccount.com"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{gke.proj}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "GKE Workload Identity: Kubernetes SA allowed to impersonate its Google SA"
+  },
+  {
+   "weight": 10,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "platform.birch@example.com"
+     },
+     "requestMetadata": {
+      "callerIp": "{{vpnip}}",
+      "callerSuppliedUserAgent": "google-cloud-sdk gcloud/496.0.0 command/gcloud.iam.service-accounts.add-iam-policy-binding invocation-id/{{inv}} environment/None environment-version/None client-os/MACOSX client-os-ver/23.6.0 client-pltf-arch/ARM interactive/True from-script/False python/3.12.6 term/xterm-256color (Macintosh; Intel Mac OS X 23.6.0),gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.admin.v1.SetIAMPolicy",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/serviceAccounts/{{saidA}}{{saidB}}",
+       "permission": "iam.serviceAccounts.setIamPolicy",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}/serviceAccounts/deployer@{{proj.id}}.iam.gserviceaccount.com",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.v1.SetIamPolicyRequest",
+      "resource": "projects/{{proj.id}}/serviceAccounts/deployer@{{proj.id}}.iam.gserviceaccount.com",
+      "policy": {
+       "bindings": [
+        {
+         "role": "roles/iam.serviceAccountUser",
+         "members": [
+          "group:gcp-deployers@example.com"
+         ]
+        }
+       ],
+       "etag": "{{etag}}"
+      }
+     },
+     "response": {
+      "@type": "type.googleapis.com/google.iam.v1.Policy",
+      "etag": "{{etag}}",
+      "bindings": [
+       {
+        "role": "roles/iam.serviceAccountUser",
+        "members": [
+         "group:gcp-deployers@example.com"
+        ]
+       }
+      ]
+     },
+     "serviceData": {
+      "@type": "type.googleapis.com/google.iam.v1.logging.AuditData",
+      "policyDelta": {
+       "bindingDeltas": [
+        {
+         "action": "ADD",
+         "role": "roles/iam.serviceAccountUser",
+         "member": "group:gcp-deployers@example.com"
+        }
+       ]
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "service_account",
+     "labels": {
+      "project_id": "{{proj.id}}",
+      "unique_id": "{{saidA}}{{saidB}}",
+      "email_id": "deployer@{{proj.id}}.iam.gserviceaccount.com"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "deployers group may actAs the deploy SA"
+  },
+  {
+   "weight": 6,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.admin.v1.SetIAMPolicy",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/serviceAccounts/{{saidA}}{{saidB}}",
+       "permission": "iam.serviceAccounts.setIamPolicy",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}/serviceAccounts/bq-exporter@{{proj.id}}.iam.gserviceaccount.com",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.v1.SetIamPolicyRequest",
+      "resource": "projects/{{proj.id}}/serviceAccounts/bq-exporter@{{proj.id}}.iam.gserviceaccount.com",
+      "policy": {
+       "bindings": [
+        {
+         "role": "roles/iam.serviceAccountTokenCreator",
+         "members": [
+          "serviceAccount:scheduler-runner@{{proj.id}}.iam.gserviceaccount.com"
+         ]
+        }
+       ],
+       "etag": "{{etag}}"
+      }
+     },
+     "response": {
+      "@type": "type.googleapis.com/google.iam.v1.Policy",
+      "etag": "{{etag}}",
+      "bindings": [
+       {
+        "role": "roles/iam.serviceAccountTokenCreator",
+        "members": [
+         "serviceAccount:scheduler-runner@{{proj.id}}.iam.gserviceaccount.com"
+        ]
+       }
+      ]
+     },
+     "serviceData": {
+      "@type": "type.googleapis.com/google.iam.v1.logging.AuditData",
+      "policyDelta": {
+       "bindingDeltas": [
+        {
+         "action": "ADD",
+         "role": "roles/iam.serviceAccountTokenCreator",
+         "member": "serviceAccount:scheduler-runner@{{proj.id}}.iam.gserviceaccount.com"
+        }
+       ]
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "service_account",
+     "labels": {
+      "project_id": "{{proj.id}}",
+      "unique_id": "{{saidA}}{{saidB}}",
+      "email_id": "bq-exporter@{{proj.id}}.iam.gserviceaccount.com"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "Cloud Scheduler runner SA may mint tokens for the exporter SA (SA-to-SA, no federation)"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.admin.v1.SetIAMPolicy",
+     "authorizationInfo": [
+      {
+       "resource": "projects/ci-shared-svc/serviceAccounts/{{saidA}}{{saidB}}",
+       "permission": "iam.serviceAccounts.setIamPolicy",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/ci-shared-svc/serviceAccounts/{{ghb.sa}}@ci-shared-svc.iam.gserviceaccount.com",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.v1.SetIamPolicyRequest",
+      "resource": "projects/ci-shared-svc/serviceAccounts/{{ghb.sa}}@ci-shared-svc.iam.gserviceaccount.com",
+      "policy": {
+       "bindings": [
+        {
+         "role": "roles/iam.workloadIdentityUser",
+         "members": [
+          "principalSet://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/attribute.repository/example-org/{{ghb.repo}}"
+         ]
+        }
+       ],
+       "etag": "{{etag}}"
+      }
+     },
+     "response": {
+      "@type": "type.googleapis.com/google.iam.v1.Policy",
+      "etag": "{{etag}}",
+      "bindings": [
+       {
+        "role": "roles/iam.workloadIdentityUser",
+        "members": [
+         "principalSet://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/attribute.repository/example-org/{{ghb.repo}}"
+        ]
+       }
+      ]
+     },
+     "serviceData": {
+      "@type": "type.googleapis.com/google.iam.v1.logging.AuditData",
+      "policyDelta": {
+       "bindingDeltas": [
+        {
+         "action": "ADD",
+         "role": "roles/iam.workloadIdentityUser",
+         "member": "principalSet://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/attribute.repository/example-org/{{ghb.repo}}"
+        }
+       ]
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "service_account",
+     "labels": {
+      "project_id": "ci-shared-svc",
+      "unique_id": "{{saidA}}{{saidB}}",
+      "email_id": "{{ghb.sa}}@ci-shared-svc.iam.gserviceaccount.com"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/ci-shared-svc/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "GitHub Actions onboarding: one repository's principalSet (attribute.repository) bound to its deploy SA; the pool's provider has an attributeCondition"
+  },
+  {
+   "weight": 3,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.v1.WorkloadIdentityPools.CreateWorkloadIdentityPool",
+     "authorizationInfo": [
+      {
+       "resource": "projects/745678901234/locations/global/workloadIdentityPools/{{pool}}",
+       "permission": "iam.workloadIdentityPools.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/745678901234/locations/global/workloadIdentityPools/{{pool}}",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.v1.CreateWorkloadIdentityPoolRequest",
+      "parent": "projects/745678901234/locations/global",
+      "workloadIdentityPoolId": "{{pool}}",
+      "workloadIdentityPool": {
+       "displayName": "{{pool}}",
+       "description": "CI federation pool"
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "audited_resource",
+     "labels": {
+      "service": "iam.googleapis.com",
+      "method": "google.iam.v1.WorkloadIdentityPools.CreateWorkloadIdentityPool"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/ci-shared-svc/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "{{opid}}",
+     "producer": "iam.googleapis.com",
+     "first": true
+    }
+   }
+  },
+  {
+   "weight": 3,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.v1.WorkloadIdentityPools.CreateWorkloadIdentityPool",
+     "authorizationInfo": [
+      {
+       "resource": "projects/745678901234/locations/global/workloadIdentityPools/{{pool}}",
+       "permission": "iam.workloadIdentityPools.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/745678901234/locations/global/workloadIdentityPools/{{pool}}"
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "audited_resource",
+     "labels": {
+      "service": "iam.googleapis.com",
+      "method": "google.iam.v1.WorkloadIdentityPools.CreateWorkloadIdentityPool"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/ci-shared-svc/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "{{opid}}",
+     "producer": "iam.googleapis.com",
+     "last": true
+    }
+   }
+  },
+  {
+   "weight": 4,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.v1.WorkloadIdentityPools.CreateWorkloadIdentityPoolProvider",
+     "authorizationInfo": [
+      {
+       "resource": "projects/745678901234/locations/global/workloadIdentityPools/github-actions/providers/github",
+       "permission": "iam.workloadIdentityPoolProviders.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/745678901234/locations/global/workloadIdentityPools/github-actions/providers/github",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.v1.CreateWorkloadIdentityPoolProviderRequest",
+      "parent": "projects/745678901234/locations/global/workloadIdentityPools/github-actions",
+      "workloadIdentityPoolProviderId": "github",
+      "workloadIdentityPoolProvider": {
+       "displayName": "GitHub Actions",
+       "description": "example-org repositories only",
+       "attributeMapping": {
+        "google.subject": "assertion.sub",
+        "attribute.repository": "assertion.repository",
+        "attribute.repository_owner": "assertion.repository_owner",
+        "attribute.ref": "assertion.ref"
+       },
+       "attributeCondition": "assertion.repository_owner == 'example-org'",
+       "oidc": {
+        "issuerUri": "https://token.actions.githubusercontent.com"
+       }
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "audited_resource",
+     "labels": {
+      "service": "iam.googleapis.com",
+      "method": "google.iam.v1.WorkloadIdentityPools.CreateWorkloadIdentityPoolProvider"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/ci-shared-svc/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "{{opid}}",
+     "producer": "iam.googleapis.com",
+     "first": true
+    }
+   },
+   "note": "GitHub OIDC provider WITH an attribute condition (begin entry, carries the request)"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.v1.WorkloadIdentityPools.CreateWorkloadIdentityPoolProvider",
+     "authorizationInfo": [
+      {
+       "resource": "projects/745678901234/locations/global/workloadIdentityPools/github-actions/providers/github",
+       "permission": "iam.workloadIdentityPoolProviders.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/745678901234/locations/global/workloadIdentityPools/github-actions/providers/github"
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "audited_resource",
+     "labels": {
+      "service": "iam.googleapis.com",
+      "method": "google.iam.v1.WorkloadIdentityPools.CreateWorkloadIdentityPoolProvider"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/ci-shared-svc/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "{{opid}}",
+     "producer": "iam.googleapis.com",
+     "last": true
+    }
+   },
+   "note": "...the operation's end entry (no request body)"
+  },
+  {
+   "weight": 2,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.v1.WorkloadIdentityPools.CreateWorkloadIdentityPoolProvider",
+     "authorizationInfo": [
+      {
+       "resource": "projects/745678901234/locations/global/workloadIdentityPools/aws-analytics/providers/aws-123456789012",
+       "permission": "iam.workloadIdentityPoolProviders.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/745678901234/locations/global/workloadIdentityPools/aws-analytics/providers/aws-123456789012",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.v1.CreateWorkloadIdentityPoolProviderRequest",
+      "parent": "projects/745678901234/locations/global/workloadIdentityPools/aws-analytics",
+      "workloadIdentityPoolProviderId": "aws-123456789012",
+      "workloadIdentityPoolProvider": {
+       "displayName": "AWS analytics account",
+       "attributeMapping": {
+        "google.subject": "assertion.arn",
+        "attribute.aws_role": "assertion.arn.contains('assumed-role') ? assertion.arn.extract('{account_arn}assumed-role/') + 'assumed-role/' + assertion.arn.extract('assumed-role/{role_name}/') : assertion.arn"
+       },
+       "attributeCondition": "attribute.aws_role == 'arn:aws:sts::123456789012:assumed-role/gcp-bigquery-export'",
+       "aws": {
+        "accountId": "123456789012"
+       }
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "audited_resource",
+     "labels": {
+      "service": "iam.googleapis.com",
+      "method": "google.iam.v1.WorkloadIdentityPools.CreateWorkloadIdentityPoolProvider"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/ci-shared-svc/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "{{opid}}",
+     "producer": "iam.googleapis.com",
+     "first": true
+    }
+   },
+   "note": "AWS provider restricted to one assumed role"
+  },
+  {
+   "weight": 2,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.v1.WorkloadIdentityPools.CreateWorkloadIdentityPoolProvider",
+     "authorizationInfo": [
+      {
+       "resource": "projects/745678901234/locations/global/workloadIdentityPools/aws-analytics/providers/aws-123456789012",
+       "permission": "iam.workloadIdentityPoolProviders.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/745678901234/locations/global/workloadIdentityPools/aws-analytics/providers/aws-123456789012"
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "audited_resource",
+     "labels": {
+      "service": "iam.googleapis.com",
+      "method": "google.iam.v1.WorkloadIdentityPools.CreateWorkloadIdentityPoolProvider"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/ci-shared-svc/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "{{opid}}",
+     "producer": "iam.googleapis.com",
+     "last": true
+    }
+   }
+  },
+  {
+   "weight": 2,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.v1.WorkloadIdentityPools.CreateWorkloadIdentityPoolProvider",
+     "authorizationInfo": [
+      {
+       "resource": "projects/745678901234/locations/global/workloadIdentityPools/gitlab-ci/providers/gitlab-saas",
+       "permission": "iam.workloadIdentityPoolProviders.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/745678901234/locations/global/workloadIdentityPools/gitlab-ci/providers/gitlab-saas",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.v1.CreateWorkloadIdentityPoolProviderRequest",
+      "parent": "projects/745678901234/locations/global/workloadIdentityPools/gitlab-ci",
+      "workloadIdentityPoolProviderId": "gitlab-saas",
+      "workloadIdentityPoolProvider": {
+       "displayName": "GitLab SaaS",
+       "attributeMapping": {
+        "google.subject": "assertion.sub",
+        "attribute.project_path": "assertion.project_path"
+       },
+       "attributeCondition": "assertion.namespace_path == 'example-group'",
+       "oidc": {
+        "issuerUri": "https://gitlab.com",
+        "allowedAudiences": [
+         "https://gitlab.com"
+        ]
+       }
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "audited_resource",
+     "labels": {
+      "service": "iam.googleapis.com",
+      "method": "google.iam.v1.WorkloadIdentityPools.CreateWorkloadIdentityPoolProvider"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/ci-shared-svc/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "{{opid}}",
+     "producer": "iam.googleapis.com",
+     "first": true
+    }
+   }
+  },
+  {
+   "weight": 3,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.v1.WorkloadIdentityPools.UpdateWorkloadIdentityPoolProvider",
+     "authorizationInfo": [
+      {
+       "resource": "projects/745678901234/locations/global/workloadIdentityPools/github-actions/providers/github",
+       "permission": "iam.workloadIdentityPoolProviders.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/745678901234/locations/global/workloadIdentityPools/github-actions/providers/github",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.v1.UpdateWorkloadIdentityPoolProviderRequest",
+      "updateMask": "attributeMapping",
+      "workloadIdentityPoolProvider": {
+       "name": "projects/745678901234/locations/global/workloadIdentityPools/github-actions/providers/github",
+       "attributeMapping": {
+        "google.subject": "assertion.sub",
+        "attribute.repository": "assertion.repository",
+        "attribute.repository_owner": "assertion.repository_owner",
+        "attribute.ref": "assertion.ref",
+        "attribute.environment": "assertion.environment"
+       }
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "audited_resource",
+     "labels": {
+      "service": "iam.googleapis.com",
+      "method": "google.iam.v1.WorkloadIdentityPools.UpdateWorkloadIdentityPoolProvider"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/ci-shared-svc/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "{{opid}}",
+     "producer": "iam.googleapis.com",
+     "first": true
+    }
+   },
+   "note": "field-masked update adding an attribute mapping"
+  },
+  {
+   "weight": 2,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.v1.WorkloadIdentityPools.UpdateWorkloadIdentityPoolProvider",
+     "authorizationInfo": [
+      {
+       "resource": "projects/745678901234/locations/global/workloadIdentityPools/github-actions/providers/github",
+       "permission": "iam.workloadIdentityPoolProviders.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/745678901234/locations/global/workloadIdentityPools/github-actions/providers/github",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.v1.UpdateWorkloadIdentityPoolProviderRequest",
+      "updateMask": "attributeCondition",
+      "workloadIdentityPoolProvider": {
+       "name": "projects/745678901234/locations/global/workloadIdentityPools/github-actions/providers/github",
+       "attributeCondition": "assertion.repository_owner == 'example-org' && assertion.repository_visibility != 'public'"
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "audited_resource",
+     "labels": {
+      "service": "iam.googleapis.com",
+      "method": "google.iam.v1.WorkloadIdentityPools.UpdateWorkloadIdentityPoolProvider"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/ci-shared-svc/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "{{opid}}",
+     "producer": "iam.googleapis.com",
+     "first": true
+    }
+   },
+   "note": "condition TIGHTENED (excludes public repositories)"
+  },
+  {
+   "weight": 2,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "platform.alder@example.com"
+     },
+     "requestMetadata": {
+      "callerIp": "{{vpnip}}",
+      "callerSuppliedUserAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.admin.v1.WorkforcePools.CreateWorkforcePool",
+     "authorizationInfo": [
+      {
+       "resource": "locations/global/workforcePools/corp-workforce",
+       "permission": "iam.workforcePools.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "locations/global/workforcePools/corp-workforce",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.admin.v1.CreateWorkforcePoolRequest",
+      "location": "locations/global",
+      "workforcePoolId": "corp-workforce",
+      "workforcePool": {
+       "parent": "organizations/123456789012",
+       "displayName": "Corporate workforce",
+       "sessionDuration": "3600s"
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "audited_resource",
+     "labels": {
+      "service": "iam.googleapis.com",
+      "method": "google.iam.admin.v1.WorkforcePools.CreateWorkforcePool"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "organizations/123456789012/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "{{opid}}",
+     "producer": "iam.googleapis.com",
+     "first": true
+    }
+   }
+  },
+  {
+   "weight": 2,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "platform.alder@example.com"
+     },
+     "requestMetadata": {
+      "callerIp": "{{vpnip}}",
+      "callerSuppliedUserAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.admin.v1.WorkforcePools.CreateWorkforcePoolProvider",
+     "authorizationInfo": [
+      {
+       "resource": "locations/global/workforcePools/corp-workforce/providers/corp-idp",
+       "permission": "iam.workforcePoolProviders.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "locations/global/workforcePools/corp-workforce/providers/corp-idp",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.admin.v1.CreateWorkforcePoolProviderRequest",
+      "parent": "locations/global/workforcePools/corp-workforce",
+      "workforcePoolProviderId": "corp-idp",
+      "workforcePoolProvider": {
+       "displayName": "Corporate IdP (OIDC)",
+       "description": "workforce SSO for engineers",
+       "oidc": {
+        "issuerUri": "https://idp.example.com",
+        "clientId": "gcp-workforce-federation",
+        "webSsoConfig": {
+         "responseType": "ID_TOKEN",
+         "assertionClaimsBehavior": "ONLY_ID_TOKEN_CLAIMS"
+        }
+       },
+       "attributeMapping": {
+        "google.subject": "assertion.sub",
+        "google.groups": "assertion.groups",
+        "google.display_name": "assertion.name"
+       },
+       "attributeCondition": "'gcp-users' in assertion.groups"
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "audited_resource",
+     "labels": {
+      "service": "iam.googleapis.com",
+      "method": "google.iam.admin.v1.WorkforcePools.CreateWorkforcePoolProvider"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "organizations/123456789012/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "{{opid}}",
+     "producer": "iam.googleapis.com",
+     "first": true
+    }
+   },
+   "note": "workforce OIDC provider WITH an attribute condition"
+  },
+  {
+   "weight": 2,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "platform.alder@example.com"
+     },
+     "requestMetadata": {
+      "callerIp": "{{vpnip}}",
+      "callerSuppliedUserAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.admin.v1.WorkforcePools.CreateWorkforcePoolProvider",
+     "authorizationInfo": [
+      {
+       "resource": "locations/global/workforcePools/corp-workforce/providers/corp-idp",
+       "permission": "iam.workforcePoolProviders.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "locations/global/workforcePools/corp-workforce/providers/corp-idp",
+     "response": {
+      "@type": "type.googleapis.com/google.longrunning.Operation",
+      "done": true
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "audited_resource",
+     "labels": {
+      "service": "iam.googleapis.com",
+      "method": "google.iam.admin.v1.WorkforcePools.CreateWorkforcePoolProvider"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "organizations/123456789012/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "{{opid}}",
+     "producer": "iam.googleapis.com",
+     "last": true
+    }
+   }
+  },
+  {
+   "weight": 2,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "platform.alder@example.com"
+     },
+     "requestMetadata": {
+      "callerIp": "{{vpnip}}",
+      "callerSuppliedUserAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.admin.v1.WorkforcePools.CreateWorkforcePoolProvider",
+     "authorizationInfo": [
+      {
+       "resource": "locations/global/workforcePools/corp-workforce/providers/contractor-saml",
+       "permission": "iam.workforcePoolProviders.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "locations/global/workforcePools/corp-workforce/providers/contractor-saml",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.admin.v1.CreateWorkforcePoolProviderRequest",
+      "parent": "locations/global/workforcePools/corp-workforce",
+      "workforcePoolProviderId": "contractor-saml",
+      "workforcePoolProvider": {
+       "displayName": "Contractor IdP (SAML)",
+       "saml": {
+        "idpMetadataXml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><md:EntityDescriptor xmlns:md=\"urn:oasis:names:tc:SAML:2.0:metadata\" entityID=\"https://sso.example.org/saml/metadata\"><md:IDPSSODescriptor protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\"><md:SingleSignOnService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect\" Location=\"https://sso.example.org/saml/sso\"/></md:IDPSSODescriptor></md:EntityDescriptor>"
+       },
+       "attributeMapping": {
+        "google.subject": "assertion.subject",
+        "google.groups": "assertion.attributes['groups']"
+       },
+       "attributeCondition": "'contractors-gcp' in assertion.attributes['groups'] && assertion.attributes['org'][0] == 'example-partner'"
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "audited_resource",
+     "labels": {
+      "service": "iam.googleapis.com",
+      "method": "google.iam.admin.v1.WorkforcePools.CreateWorkforcePoolProvider"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "organizations/123456789012/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "{{opid}}",
+     "producer": "iam.googleapis.com",
+     "first": true
+    }
+   },
+   "note": "workforce SAML provider for a named partner WITH an attribute condition"
+  },
+  {
+   "weight": 2,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "platform.alder@example.com"
+     },
+     "requestMetadata": {
+      "callerIp": "{{vpnip}}",
+      "callerSuppliedUserAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.admin.v1.WorkforcePools.UpdateWorkforcePoolProvider",
+     "authorizationInfo": [
+      {
+       "resource": "locations/global/workforcePools/corp-workforce/providers/corp-idp",
+       "permission": "iam.workforcePoolProviders.update",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "locations/global/workforcePools/corp-workforce/providers/corp-idp",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.admin.v1.UpdateWorkforcePoolProviderRequest",
+      "updateMask": "attributeMapping",
+      "workforcePoolProvider": {
+       "name": "locations/global/workforcePools/corp-workforce/providers/corp-idp",
+       "attributeMapping": {
+        "google.subject": "assertion.sub",
+        "google.groups": "assertion.groups",
+        "google.display_name": "assertion.name",
+        "attribute.department": "assertion.department"
+       }
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "audited_resource",
+     "labels": {
+      "service": "iam.googleapis.com",
+      "method": "google.iam.admin.v1.WorkforcePools.UpdateWorkforcePoolProvider"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "organizations/123456789012/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "{{opid}}",
+     "producer": "iam.googleapis.com",
+     "first": true
+    }
+   }
+  },
+  {
+   "weight": 2,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "platform.alder@example.com"
+     },
+     "requestMetadata": {
+      "callerIp": "{{vpnip}}",
+      "callerSuppliedUserAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.admin.v1.WorkforcePools.UpdateWorkforcePoolProvider",
+     "authorizationInfo": [
+      {
+       "resource": "locations/global/workforcePools/corp-workforce/providers/corp-idp",
+       "permission": "iam.workforcePoolProviders.update",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "locations/global/workforcePools/corp-workforce/providers/corp-idp",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.admin.v1.UpdateWorkforcePoolProviderRequest",
+      "updateMask": "attributeCondition",
+      "workforcePoolProvider": {
+       "name": "locations/global/workforcePools/corp-workforce/providers/corp-idp",
+       "attributeCondition": "'gcp-users' in assertion.groups && assertion.email.endsWith('@example.com')"
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "audited_resource",
+     "labels": {
+      "service": "iam.googleapis.com",
+      "method": "google.iam.admin.v1.WorkforcePools.UpdateWorkforcePoolProvider"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "organizations/123456789012/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z",
+    "operation": {
+     "id": "{{opid}}",
+     "producer": "iam.googleapis.com",
+     "first": true
+    }
+   },
+   "note": "workforce provider condition TIGHTENED"
+  },
+  {
+   "weight": 12,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "cloudresourcemanager.googleapis.com",
+     "methodName": "SetIamPolicy",
+     "authorizationInfo": [
+      {
+       "resource": "organizations/123456789012",
+       "permission": "resourcemanager.organizations.setIamPolicy",
+       "granted": true,
+       "resourceAttributes": {
+        "service": "cloudresourcemanager.googleapis.com",
+        "name": "organizations/123456789012",
+        "type": "cloudresourcemanager.googleapis.com/Organization"
+       }
+      }
+     ],
+     "resourceName": "organizations/123456789012",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.v1.SetIamPolicyRequest",
+      "resource": "organizations/123456789012",
+      "policy": {
+       "bindings": [
+        {
+         "role": "roles/owner",
+         "members": [
+          "group:gcp-org-admins@example.com"
+         ]
+        },
+        {
+         "role": "roles/editor",
+         "members": [
+          "serviceAccount:{{proj.num}}@cloudservices.gserviceaccount.com"
+         ]
+        },
+        {
+         "role": "{{wfb.role}}",
+         "members": [
+          "principalSet://iam.googleapis.com/locations/global/workforcePools/corp-workforce/group/{{wfb.group}}"
+         ]
+        }
+       ],
+       "etag": "{{etag}}"
+      },
+      "updateMask": "bindings,etag"
+     },
+     "response": {
+      "@type": "type.googleapis.com/google.iam.v1.Policy",
+      "bindings": [
+       {
+        "role": "roles/owner",
+        "members": [
+         "group:gcp-org-admins@example.com"
+        ]
+       },
+       {
+        "role": "roles/editor",
+        "members": [
+         "serviceAccount:{{proj.num}}@cloudservices.gserviceaccount.com"
+        ]
+       },
+       {
+        "role": "{{wfb.role}}",
+        "members": [
+         "principalSet://iam.googleapis.com/locations/global/workforcePools/corp-workforce/group/{{wfb.group}}"
+        ]
+       }
+      ],
+      "etag": "{{etag}}"
+     },
+     "serviceData": {
+      "@type": "type.googleapis.com/google.iam.v1.logging.AuditData",
+      "policyDelta": {
+       "bindingDeltas": [
+        {
+         "action": "ADD",
+         "role": "{{wfb.role}}",
+         "member": "principalSet://iam.googleapis.com/locations/global/workforcePools/corp-workforce/group/{{wfb.group}}"
+        }
+       ]
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "organization",
+     "labels": {
+      "organization_id": "123456789012"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "organizations/123456789012/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "workforce group bound to a read-only org role"
+  },
+  {
+   "weight": 2,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "cloudresourcemanager.googleapis.com",
+     "methodName": "SetIamPolicy",
+     "authorizationInfo": [
+      {
+       "resource": "folders/{{folder}}",
+       "permission": "resourcemanager.folders.setIamPolicy",
+       "granted": true,
+       "resourceAttributes": {
+        "service": "cloudresourcemanager.googleapis.com",
+        "name": "folders/{{folder}}",
+        "type": "cloudresourcemanager.googleapis.com/Folder"
+       }
+      }
+     ],
+     "resourceName": "folders/{{folder}}",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.v1.SetIamPolicyRequest",
+      "resource": "folders/{{folder}}",
+      "policy": {
+       "bindings": [
+        {
+         "role": "roles/owner",
+         "members": [
+          "group:gcp-org-admins@example.com"
+         ]
+        },
+        {
+         "role": "roles/editor",
+         "members": [
+          "serviceAccount:{{proj.num}}@cloudservices.gserviceaccount.com"
+         ]
+        },
+        {
+         "role": "roles/container.admin",
+         "members": [
+          "principalSet://iam.googleapis.com/locations/global/workforcePools/corp-workforce/group/gcp-platform-admins"
+         ]
+        }
+       ],
+       "etag": "{{etag}}"
+      },
+      "updateMask": "bindings,etag"
+     },
+     "response": {
+      "@type": "type.googleapis.com/google.iam.v1.Policy",
+      "bindings": [
+       {
+        "role": "roles/owner",
+        "members": [
+         "group:gcp-org-admins@example.com"
+        ]
+       },
+       {
+        "role": "roles/editor",
+        "members": [
+         "serviceAccount:{{proj.num}}@cloudservices.gserviceaccount.com"
+        ]
+       },
+       {
+        "role": "roles/container.admin",
+        "members": [
+         "principalSet://iam.googleapis.com/locations/global/workforcePools/corp-workforce/group/gcp-platform-admins"
+        ]
+       }
+      ],
+      "etag": "{{etag}}"
+     },
+     "serviceData": {
+      "@type": "type.googleapis.com/google.iam.v1.logging.AuditData",
+      "policyDelta": {
+       "bindingDeltas": [
+        {
+         "action": "ADD",
+         "role": "roles/container.admin",
+         "member": "principalSet://iam.googleapis.com/locations/global/workforcePools/corp-workforce/group/gcp-platform-admins"
+        }
+       ]
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "folder",
+     "labels": {
+      "folder_id": "{{folder}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "folders/{{folder}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "the platform-admins GROUP (one IdP group, not the whole pool) given GKE admin on the prod folder"
+  },
+  {
+   "weight": 8,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.admin.v1.CreateServiceAccount",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}",
+       "permission": "iam.serviceAccounts.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.admin.v1.CreateServiceAccountRequest",
+      "account_id": "{{newsa}}",
+      "service_account": {
+       "display_name": "{{newsa}}"
+      },
+      "name": "projects/{{proj.id}}"
+     },
+     "response": {
+      "@type": "type.googleapis.com/google.iam.admin.v1.ServiceAccount",
+      "email": "{{newsa}}@{{proj.id}}.iam.gserviceaccount.com",
+      "unique_id": "{{saidA}}{{saidB}}",
+      "project_id": "{{proj.id}}"
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "service_account",
+     "labels": {
+      "project_id": "{{proj.id}}",
+      "unique_id": "{{saidA}}{{saidB}}",
+      "email_id": "{{newsa}}@{{proj.id}}.iam.gserviceaccount.com"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   }
+  },
+  {
+   "weight": 2,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.admin.v1.CreateRole",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}",
+       "permission": "iam.roles.create",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}/roles/{{crole}}",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.admin.v1.CreateRoleRequest",
+      "parent": "projects/{{proj.id}}",
+      "role_id": "{{crole}}",
+      "role": {
+       "title": "{{crole}}",
+       "stage": "GA",
+       "included_permissions": [
+        "storage.objects.get",
+        "storage.objects.list"
+       ]
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "iam_role",
+     "labels": {
+      "project_id": "{{proj.id}}",
+      "role_name": "projects/{{proj.id}}/roles/{{crole}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "custom read-only role"
+  },
+  {
+   "weight": 2,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "iam.cedar@example.com"
+     },
+     "requestMetadata": {
+      "callerIp": "{{vpnip}}",
+      "callerSuppliedUserAgent": "google-cloud-sdk gcloud/496.0.0 command/gcloud.iam.service-accounts.keys.delete invocation-id/{{inv}} environment/None environment-version/None client-os/MACOSX client-os-ver/23.6.0 client-pltf-arch/ARM interactive/True from-script/False python/3.12.6 term/xterm-256color (Macintosh; Intel Mac OS X 23.6.0),gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "iam.googleapis.com",
+     "methodName": "google.iam.admin.v1.DeleteServiceAccountKey",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/serviceAccounts/{{saidA}}{{saidB}}",
+       "permission": "iam.serviceAccountKeys.delete",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}/serviceAccounts/{{saidA}}{{saidB}}/keys/{{keyid}}",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.admin.v1.DeleteServiceAccountKeyRequest",
+      "name": "projects/{{proj.id}}/serviceAccounts/legacy-exporter@{{proj.id}}.iam.gserviceaccount.com/keys/{{keyid}}"
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "service_account",
+     "labels": {
+      "project_id": "{{proj.id}}",
+      "unique_id": "{{saidA}}{{saidB}}",
+      "email_id": "legacy-exporter@{{proj.id}}.iam.gserviceaccount.com"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "key-hygiene: deleting an old user-managed SA key after moving to federation"
+  },
+  {
+   "weight": 15,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "storage.googleapis.com",
+     "methodName": "storage.setIamPermissions",
+     "authorizationInfo": [
+      {
+       "resource": "projects/_/buckets/{{bkt}}",
+       "permission": "storage.buckets.setIamPolicy",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/_/buckets/{{bkt}}",
+     "resourceLocation": {
+      "currentLocations": [
+       "us"
+      ]
+     },
+     "serviceData": {
+      "@type": "type.googleapis.com/google.iam.v1.logging.AuditData",
+      "policyDelta": {
+       "bindingDeltas": [
+        {
+         "action": "ADD",
+         "role": "{{bb.role}}",
+         "member": "{{bb.member}}"
+        }
+       ]
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "gcs_bucket",
+     "labels": {
+      "project_id": "{{proj.id}}",
+      "bucket_name": "{{bkt}}",
+      "location": "us"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "bucket IAM grant to a named service account / group"
+  },
+  {
+   "weight": 8,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "run.googleapis.com",
+     "methodName": "google.cloud.run.v2.Services.SetIamPolicy",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/locations/us-central1/services/{{svc}}",
+       "permission": "run.services.setIamPolicy",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}/locations/us-central1/services/{{svc}}",
+     "resourceLocation": {
+      "currentLocations": [
+       "us-central1"
+      ]
+     },
+     "request": {
+      "@type": "type.googleapis.com/google.iam.v1.SetIamPolicyRequest",
+      "resource": "projects/{{proj.id}}/locations/us-central1/services/{{svc}}",
+      "policy": {
+       "bindings": [
+        {
+         "role": "roles/run.invoker",
+         "members": [
+          "serviceAccount:api-gateway@{{proj.id}}.iam.gserviceaccount.com",
+          "serviceAccount:scheduler-runner@{{proj.id}}.iam.gserviceaccount.com"
+         ]
+        }
+       ]
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "cloud_run_revision",
+     "labels": {
+      "project_id": "{{proj.id}}",
+      "service_name": "{{svc}}",
+      "location": "us-central1"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "private Cloud Run service invokable only by named service accounts"
+  },
+  {
+   "weight": 8,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "secretmanager.googleapis.com",
+     "methodName": "google.cloud.secretmanager.v1.SecretManagerService.SetIamPolicy",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/secrets/{{secret}}",
+       "permission": "secretmanager.secrets.setIamPolicy",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.num}}/secrets/{{secret}}",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.v1.SetIamPolicyRequest",
+      "resource": "projects/{{proj.id}}/secrets/{{secret}}",
+      "policy": {
+       "bindings": [
+        {
+         "role": "roles/secretmanager.secretAccessor",
+         "members": [
+          "serviceAccount:{{svc}}@{{proj.id}}.iam.gserviceaccount.com"
+         ]
+        }
+       ]
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "audited_resource",
+     "labels": {
+      "service": "secretmanager.googleapis.com",
+      "method": "google.cloud.secretmanager.v1.SecretManagerService.SetIamPolicy",
+      "project_id": "{{proj.id}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   }
+  },
+  {
+   "weight": 5,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "pubsub.googleapis.com",
+     "methodName": "google.iam.v1.IAMPolicy.SetIamPolicy",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}/topics/{{topic}}",
+       "permission": "pubsub.topics.setIamPolicy",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}/topics/{{topic}}",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.v1.SetIamPolicyRequest",
+      "resource": "projects/{{proj.id}}/topics/{{topic}}",
+      "policy": {
+       "bindings": [
+        {
+         "role": "roles/pubsub.publisher",
+         "members": [
+          "serviceAccount:service-{{proj.num}}@gs-project-accounts.iam.gserviceaccount.com"
+         ]
+        }
+       ]
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "pubsub_topic",
+     "labels": {
+      "project_id": "{{proj.id}}",
+      "topic_id": "projects/{{proj.id}}/topics/{{topic}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "GCS notification service agent allowed to publish to a topic"
+  },
+  {
+   "weight": 2,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "run.googleapis.com",
+     "methodName": "google.cloud.run.v2.Services.SetIamPolicy",
+     "authorizationInfo": [
+      {
+       "resource": "projects/web-prod-7731/locations/us-central1/services/www-frontend",
+       "permission": "run.services.setIamPolicy",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/web-prod-7731/locations/us-central1/services/www-frontend",
+     "resourceLocation": {
+      "currentLocations": [
+       "us-central1"
+      ]
+     },
+     "request": {
+      "@type": "type.googleapis.com/google.iam.v1.SetIamPolicyRequest",
+      "resource": "projects/web-prod-7731/locations/us-central1/services/www-frontend",
+      "policy": {
+       "bindings": [
+        {
+         "role": "roles/run.invoker",
+         "members": [
+          "allUsers"
+         ]
+        }
+       ]
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "cloud_run_revision",
+     "labels": {
+      "project_id": "web-prod-7731",
+      "service_name": "www-frontend",
+      "location": "us-central1"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "NOTICE",
+    "logName": "projects/web-prod-7731/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "the PUBLIC marketing website on Cloud Run (allow unauthenticated, intentional)"
+  },
+  {
+   "weight": 30,
+   "event": {
+    "protoPayload": {
+     "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+     "status": {},
+     "authenticationInfo": {
+      "principalEmail": "terraform@ci-shared-svc.iam.gserviceaccount.com",
+      "serviceAccountDelegationInfo": [
+       {
+        "principalSubject": "principal://iam.googleapis.com/projects/745678901234/locations/global/workloadIdentityPools/github-actions/subject/repo:example-org/platform-infra:environment:prod-apply"
+       }
+      ]
+     },
+     "requestMetadata": {
+      "callerIp": "{{tfip}}",
+      "callerSuppliedUserAgent": "google-api-go-client/0.5 Terraform/1.9.8 (+https://www.terraform.io) Terraform-Plugin-SDK/2.33.0 terraform-provider-google/6.6.0,gzip(gfe)",
+      "requestAttributes": {
+       "time": "{{ts}}.{{ms}}Z",
+       "auth": {}
+      },
+      "destinationAttributes": {}
+     },
+     "serviceName": "cloudresourcemanager.googleapis.com",
+     "methodName": "GetIamPolicy",
+     "authorizationInfo": [
+      {
+       "resource": "projects/{{proj.id}}",
+       "permission": "resourcemanager.projects.getIamPolicy",
+       "granted": true,
+       "resourceAttributes": {}
+      }
+     ],
+     "resourceName": "projects/{{proj.id}}",
+     "request": {
+      "@type": "type.googleapis.com/google.iam.v1.GetIamPolicyRequest",
+      "resource": "projects/{{proj.id}}",
+      "options": {
+       "requestedPolicyVersion": 3
+      }
+     }
+    },
+    "insertId": "{{ins}}",
+    "resource": {
+     "type": "project",
+     "labels": {
+      "project_id": "{{proj.id}}"
+     }
+    },
+    "timestamp": "{{ts}}.{{ms}}Z",
+    "severity": "INFO",
+    "logName": "projects/{{proj.id}}/logs/cloudaudit.googleapis.com%2Fdata_access",
+    "receiveTimestamp": "{{ts}}.{{rms}}Z"
+   },
+   "note": "terraform refresh (ADMIN_READ, Data Access log)"
+  }
+ ]
+}

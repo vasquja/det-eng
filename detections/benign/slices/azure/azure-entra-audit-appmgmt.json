@@ -1,0 +1,1777 @@
+{
+ "id": "azure-entra-audit-appmgmt",
+ "version": 1,
+ "logsource": {
+  "product": "azure",
+  "service": "auditlogs"
+ },
+ "fidelity": "synthetic",
+ "represents": "Microsoft Entra ID directory audit activity in one tenant: application registration administration by platform engineers and a Terraform (azuread provider) service principal -- GitHub Actions federated identity credentials from the APPROVED issuer token.actions.githubusercontent.com with repo + environment / branch subjects (added, appended, retired), client-secret rotation, certificate upload, redirect URIs, new apps and service principals; user consent and admin (AllPrincipals) consent to sign-in-only scopes (openid / profile / email / User.Read), the matching delegated permission grants, a least-privilege application permission (Sites.Selected); plus the surrounding group, user, password, PIM role activation and Conditional Access changes.",
+ "provenance": "synthetic; shapes from the Azure Monitor diagnostic-setting AuditLogs schema and the Entra audit-activity reference (activity names, categories, loggedByService, modifiedProperties conventions incl. JSON-quoted values and 'Included Updated Properties'), and this repo's TRR9013 / TRR9017 fixtures (PascalCase FIC newValue, ConsentAction.Permissions text). Tenant and object ids are random GUIDs; Microsoft Graph appId is the public first-party id; users are role handles at example.com; addresses RFC 5737 (203.0.113.0/24 corporate egress, 192.0.2.0/26 home users).",
+ "adjacent_to": [
+  "T1098.001/entra_app_federated_credential_backdoor.yml",
+  "T1528/entra_illicit_oauth_consent_grant.yml"
+ ],
+ "count": 550,
+ "vars": {
+  "corr": {
+   "uuid": true
+  },
+  "sid": {
+   "uuid": true
+  },
+  "idsfx": {
+   "hex": 5
+  },
+  "uuid2": {
+   "uuid": true
+  },
+  "t": {
+   "time": {
+    "start": "2026-10-06T13:00:00Z",
+    "step_seconds": [
+     5,
+     90
+    ],
+    "format": "%Y-%m-%dT%H:%M:%S.%fZ"
+   }
+  },
+  "ip": {
+   "ipv4": "203.0.113.32/27"
+  },
+  "tfip": {
+   "ipv4": "203.0.113.0/28"
+  },
+  "uip": {
+   "ipv4": "192.0.2.0/26"
+  },
+  "ficid": {
+   "uuid": true
+  },
+  "ficid2": {
+   "uuid": true
+  },
+  "kid1": {
+   "uuid": true
+  },
+  "kid2": {
+   "uuid": true
+  },
+  "grantid": {
+   "hex": 32
+  },
+  "chg": {
+   "int": [
+    104000,
+    109999
+   ]
+  },
+  "aua": [
+   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 Edg/129.0.0.0"
+  ],
+  "adm": [
+   {
+    "id": "1a2b3c4d-0001-4e5f-8a9b-0c1d2e3f4a01",
+    "upn": "platform.alder@example.com"
+   },
+   {
+    "id": "1a2b3c4d-0002-4e5f-8a9b-0c1d2e3f4a02",
+    "upn": "platform.birch@example.com"
+   },
+   {
+    "id": "1a2b3c4d-0003-4e5f-8a9b-0c1d2e3f4a03",
+    "upn": "iam.cedar@example.com"
+   }
+  ],
+  "usr": [
+   {
+    "id": "2b3c4d5e-0001-4f6a-9b0c-1d2e3f4a5b01",
+    "upn": "dev.spruce@example.com"
+   },
+   {
+    "id": "2b3c4d5e-0002-4f6a-9b0c-1d2e3f4a5b02",
+    "upn": "dev.willow@example.com"
+   },
+   {
+    "id": "2b3c4d5e-0003-4f6a-9b0c-1d2e3f4a5b03",
+    "upn": "sales.hazel@example.com"
+   },
+   {
+    "id": "2b3c4d5e-0004-4f6a-9b0c-1d2e3f4a5b04",
+    "upn": "fin.juniper@example.com"
+   },
+   {
+    "id": "2b3c4d5e-0005-4f6a-9b0c-1d2e3f4a5b05",
+    "upn": "ops.larch@example.com"
+   },
+   {
+    "id": "2b3c4d5e-0006-4f6a-9b0c-1d2e3f4a5b06",
+    "upn": "hr.poplar@example.com"
+   }
+  ],
+  "app": [
+   {
+    "oid": "3c4d5e6f-0001-4a7b-8c9d-0e1f2a3b4c01",
+    "spid": "4d5e6f7a-0001-4b8c-9d0e-1f2a3b4c5d01",
+    "appid": "5e6f7a8b-0001-4c9d-8e0f-2a3b4c5d6e01",
+    "name": "payments-api-deploy",
+    "repo": "payments-api"
+   },
+   {
+    "oid": "3c4d5e6f-0002-4a7b-8c9d-0e1f2a3b4c02",
+    "spid": "4d5e6f7a-0002-4b8c-9d0e-1f2a3b4c5d02",
+    "appid": "5e6f7a8b-0002-4c9d-8e0f-2a3b4c5d6e02",
+    "name": "web-frontend-deploy",
+    "repo": "web-frontend"
+   },
+   {
+    "oid": "3c4d5e6f-0003-4a7b-8c9d-0e1f2a3b4c03",
+    "spid": "4d5e6f7a-0003-4b8c-9d0e-1f2a3b4c5d03",
+    "appid": "5e6f7a8b-0003-4c9d-8e0f-2a3b4c5d6e03",
+    "name": "data-pipelines-ci",
+    "repo": "data-pipelines"
+   },
+   {
+    "oid": "3c4d5e6f-0004-4a7b-8c9d-0e1f2a3b4c04",
+    "spid": "4d5e6f7a-0004-4b8c-9d0e-1f2a3b4c5d04",
+    "appid": "5e6f7a8b-0004-4c9d-8e0f-2a3b4c5d6e04",
+    "name": "platform-infra-terraform",
+    "repo": "platform-infra"
+   }
+  ],
+  "fa": [
+   {
+    "oid": "3c4d5e6f-0001-4a7b-8c9d-0e1f2a3b4c01",
+    "name": "payments-api-deploy",
+    "repo": "payments-api",
+    "fname": "github-production",
+    "sub": "repo:example-org/payments-api:environment:production",
+    "desc": "GitHub Actions deploy (production environment)"
+   },
+   {
+    "oid": "3c4d5e6f-0002-4a7b-8c9d-0e1f2a3b4c02",
+    "name": "web-frontend-deploy",
+    "repo": "web-frontend",
+    "fname": "github-staging",
+    "sub": "repo:example-org/web-frontend:environment:staging",
+    "desc": "GitHub Actions deploy (staging environment)"
+   },
+   {
+    "oid": "3c4d5e6f-0003-4a7b-8c9d-0e1f2a3b4c03",
+    "name": "data-pipelines-ci",
+    "repo": "data-pipelines",
+    "fname": "github-pull-request",
+    "sub": "repo:example-org/data-pipelines:pull_request",
+    "desc": "GitHub Actions PR validation (read-only role)"
+   },
+   {
+    "oid": "3c4d5e6f-0004-4a7b-8c9d-0e1f2a3b4c04",
+    "name": "platform-infra-terraform",
+    "repo": "platform-infra",
+    "fname": "github-prod-apply",
+    "sub": "repo:example-org/platform-infra:environment:prod-apply",
+    "desc": "Terraform apply from protected environment"
+   }
+  ],
+  "capp": [
+   {
+    "spid": "6f7a8b9c-0001-4d0e-9f1a-3b4c5d6e7f01",
+    "appid": "7a8b9c0d-0001-4e1f-8a2b-4c5d6e7f8a01",
+    "name": "Expense Reporting (SaaS)"
+   },
+   {
+    "spid": "6f7a8b9c-0002-4d0e-9f1a-3b4c5d6e7f02",
+    "appid": "7a8b9c0d-0002-4e1f-8a2b-4c5d6e7f8a02",
+    "name": "Engineering Wiki"
+   },
+   {
+    "spid": "6f7a8b9c-0003-4d0e-9f1a-3b4c5d6e7f03",
+    "appid": "7a8b9c0d-0003-4e1f-8a2b-4c5d6e7f8a03",
+    "name": "Learning Portal"
+   },
+   {
+    "spid": "6f7a8b9c-0004-4d0e-9f1a-3b4c5d6e7f04",
+    "appid": "7a8b9c0d-0004-4e1f-8a2b-4c5d6e7f8a04",
+    "name": "Status Page Dashboard"
+   }
+  ],
+  "uscope": [
+   "openid profile email offline_access User.Read",
+   "openid profile User.Read",
+   "User.Read offline_access",
+   "openid profile email"
+  ],
+  "rsp": [
+   {
+    "id": "8b9c0d1e-0001-4f2a-9b3c-5d6e7f8a9b01",
+    "name": "Office 365 SharePoint Online",
+    "appid": "00000003-0000-0ff1-ce00-000000000000",
+    "roleid": "20d37865-089c-4dee-8c41-6967602d4ac8",
+    "value": "Sites.Selected",
+    "dn": "Access selected site collections"
+   },
+   {
+    "id": "4d5e6f7a-0003-4b8c-9d0e-1f2a3b4c5d03",
+    "name": "data-pipelines-ci",
+    "appid": "5e6f7a8b-0003-4c9d-8e0f-2a3b4c5d6e03",
+    "roleid": "9a8b7c6d-0001-4e5f-8a9b-0c1d2e3f4a5b",
+    "value": "Pipelines.Trigger",
+    "dn": "Trigger pipeline runs"
+   }
+  ],
+  "grp": [
+   {
+    "id": "9c0d1e2f-0001-4a3b-8c4d-6e7f8a9b0c01",
+    "name": "sg-eng-payments"
+   },
+   {
+    "id": "9c0d1e2f-0002-4a3b-8c4d-6e7f8a9b0c02",
+    "name": "sg-eng-web"
+   },
+   {
+    "id": "9c0d1e2f-0003-4a3b-8c4d-6e7f8a9b0c03",
+    "name": "sg-all-employees"
+   },
+   {
+    "id": "9c0d1e2f-0004-4a3b-8c4d-6e7f8a9b0c04",
+    "name": "sg-vpn-users"
+   }
+  ],
+  "pimrole": [
+   {
+    "id": "158c047a-c907-4556-b7ef-446551a6b5f7",
+    "name": "Cloud Application Administrator"
+   },
+   {
+    "id": "fe930be7-5e62-47db-91af-98c3a49a38b1",
+    "name": "User Administrator"
+   },
+   {
+    "id": "f2ef992c-3afb-46b9-b7cf-a126ee74c451",
+    "name": "Global Reader"
+   }
+  ],
+  "just": [
+   "Onboarding new SSO app per CHG ticket",
+   "Rotate CI app credentials",
+   "Investigate sign-in issue reported by helpdesk",
+   "Quarterly access review"
+  ]
+ },
+ "templates": [
+  {
+   "weight": 30,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Update application",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{ip}}",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "Directory_{{corr}}_{{idsfx}}",
+     "category": "ApplicationManagement",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Update application",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "Core Directory",
+     "operationType": "Update",
+     "initiatedBy": {
+      "user": {
+       "id": "{{adm.id}}",
+       "displayName": null,
+       "userPrincipalName": "{{adm.upn}}",
+       "ipAddress": "{{ip}}",
+       "roles": []
+      }
+     },
+     "targetResources": [
+      {
+       "id": "{{fa.oid}}",
+       "displayName": "{{fa.name}}",
+       "type": "Application",
+       "modifiedProperties": [
+        {
+         "displayName": "FederatedIdentityCredentials",
+         "oldValue": "[]",
+         "newValue": "[{\"Id\": \"{{ficid}}\", \"Name\": \"{{fa.fname}}\", \"Audiences\": [\"api://AzureADTokenExchange\"], \"Issuer\": \"https://token.actions.githubusercontent.com\", \"Subject\": \"{{fa.sub}}\", \"Description\": \"{{fa.desc}}\"}]"
+        },
+        {
+         "displayName": "Included Updated Properties",
+         "oldValue": null,
+         "newValue": "\"FederatedIdentityCredentials\""
+        }
+       ],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": [
+      {
+       "key": "User-Agent",
+       "value": "{{aua}}"
+      }
+     ]
+    }
+   },
+   "note": "platform engineer adds a GitHub Actions FIC (approved issuer, pinned subject) in the portal"
+  },
+  {
+   "weight": 30,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Update application",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "Directory_{{corr}}_{{idsfx}}",
+     "category": "ApplicationManagement",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Update application",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "Core Directory",
+     "operationType": "Update",
+     "initiatedBy": {
+      "app": {
+       "appId": "9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+       "displayName": "terraform-entra-provisioner",
+       "servicePrincipalId": "3e2d1c0b-9a8f-4e7d-a6c5-b4a3928170f6",
+       "servicePrincipalName": null
+      }
+     },
+     "targetResources": [
+      {
+       "id": "{{fa.oid}}",
+       "displayName": "{{fa.name}}",
+       "type": "Application",
+       "modifiedProperties": [
+        {
+         "displayName": "FederatedIdentityCredentials",
+         "oldValue": "[]",
+         "newValue": "[{\"Id\": \"{{ficid}}\", \"Name\": \"{{fa.fname}}\", \"Audiences\": [\"api://AzureADTokenExchange\"], \"Issuer\": \"https://token.actions.githubusercontent.com\", \"Subject\": \"{{fa.sub}}\", \"Description\": \"{{fa.desc}}\"}]"
+        },
+        {
+         "displayName": "Included Updated Properties",
+         "oldValue": null,
+         "newValue": "\"FederatedIdentityCredentials\""
+        }
+       ],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": [
+      {
+       "key": "User-Agent",
+       "value": "Go-http-client/2.0 terraform-provider-azuread/3.0.2"
+      }
+     ]
+    }
+   },
+   "note": "Terraform (azuread provider) adds a GitHub Actions FIC"
+  },
+  {
+   "weight": 12,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Update application",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "Directory_{{corr}}_{{idsfx}}",
+     "category": "ApplicationManagement",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Update application",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "Core Directory",
+     "operationType": "Update",
+     "initiatedBy": {
+      "app": {
+       "appId": "9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+       "displayName": "terraform-entra-provisioner",
+       "servicePrincipalId": "3e2d1c0b-9a8f-4e7d-a6c5-b4a3928170f6",
+       "servicePrincipalName": null
+      }
+     },
+     "targetResources": [
+      {
+       "id": "{{fa.oid}}",
+       "displayName": "{{fa.name}}",
+       "type": "Application",
+       "modifiedProperties": [
+        {
+         "displayName": "FederatedIdentityCredentials",
+         "oldValue": "[{\"Id\": \"{{ficid2}}\", \"Name\": \"github-main-build\", \"Audiences\": [\"api://AzureADTokenExchange\"], \"Issuer\": \"https://token.actions.githubusercontent.com\", \"Subject\": \"repo:example-org/{{fa.repo}}:ref:refs/heads/main\", \"Description\": \"build on main\"}]",
+         "newValue": "[{\"Id\": \"{{ficid2}}\", \"Name\": \"github-main-build\", \"Audiences\": [\"api://AzureADTokenExchange\"], \"Issuer\": \"https://token.actions.githubusercontent.com\", \"Subject\": \"repo:example-org/{{fa.repo}}:ref:refs/heads/main\", \"Description\": \"build on main\"}, {\"Id\": \"{{ficid}}\", \"Name\": \"{{fa.fname}}\", \"Audiences\": [\"api://AzureADTokenExchange\"], \"Issuer\": \"https://token.actions.githubusercontent.com\", \"Subject\": \"{{fa.sub}}\", \"Description\": \"{{fa.desc}}\"}]"
+        },
+        {
+         "displayName": "Included Updated Properties",
+         "oldValue": null,
+         "newValue": "\"FederatedIdentityCredentials\""
+        }
+       ],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": [
+      {
+       "key": "User-Agent",
+       "value": "Go-http-client/2.0 terraform-provider-azuread/3.0.2"
+      }
+     ]
+    }
+   },
+   "note": "a second GitHub FIC (new environment) appended next to an existing main-branch FIC"
+  },
+  {
+   "weight": 8,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Update application",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{ip}}",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "Directory_{{corr}}_{{idsfx}}",
+     "category": "ApplicationManagement",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Update application",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "Core Directory",
+     "operationType": "Update",
+     "initiatedBy": {
+      "user": {
+       "id": "{{adm.id}}",
+       "displayName": null,
+       "userPrincipalName": "{{adm.upn}}",
+       "ipAddress": "{{ip}}",
+       "roles": []
+      }
+     },
+     "targetResources": [
+      {
+       "id": "{{fa.oid}}",
+       "displayName": "{{fa.name}}",
+       "type": "Application",
+       "modifiedProperties": [
+        {
+         "displayName": "FederatedIdentityCredentials",
+         "oldValue": "[{\"Id\": \"{{ficid2}}\", \"Name\": \"github-main-build\", \"Audiences\": [\"api://AzureADTokenExchange\"], \"Issuer\": \"https://token.actions.githubusercontent.com\", \"Subject\": \"repo:example-org/{{fa.repo}}:ref:refs/heads/main\", \"Description\": \"build on main\"}]",
+         "newValue": "[]"
+        },
+        {
+         "displayName": "Included Updated Properties",
+         "oldValue": null,
+         "newValue": "\"FederatedIdentityCredentials\""
+        }
+       ],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": [
+      {
+       "key": "User-Agent",
+       "value": "{{aua}}"
+      }
+     ]
+    }
+   },
+   "note": "retiring a GitHub FIC (approved issuer in oldValue, newValue empty)"
+  },
+  {
+   "weight": 40,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Update application – Certificates and secrets management ",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "Directory_{{corr}}_{{idsfx}}",
+     "category": "ApplicationManagement",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Update application – Certificates and secrets management ",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "Core Directory",
+     "operationType": "Update",
+     "initiatedBy": {
+      "app": {
+       "appId": "9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+       "displayName": "terraform-entra-provisioner",
+       "servicePrincipalId": "3e2d1c0b-9a8f-4e7d-a6c5-b4a3928170f6",
+       "servicePrincipalName": null
+      }
+     },
+     "targetResources": [
+      {
+       "id": "{{app.oid}}",
+       "displayName": "{{app.name}}",
+       "type": "Application",
+       "modifiedProperties": [
+        {
+         "displayName": "KeyDescription",
+         "oldValue": "[\"[KeyIdentifier={{kid1}},KeyType=Password,KeyUsage=Verify,DisplayName=rotated-2026q3]\"]",
+         "newValue": "[\"[KeyIdentifier={{kid1}},KeyType=Password,KeyUsage=Verify,DisplayName=rotated-2026q3]\", \"[KeyIdentifier={{kid2}},KeyType=Password,KeyUsage=Verify,DisplayName=rotated-2026q4]\"]"
+        },
+        {
+         "displayName": "Included Updated Properties",
+         "oldValue": null,
+         "newValue": "\"KeyDescription\""
+        }
+       ],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": [
+      {
+       "key": "User-Agent",
+       "value": "Go-http-client/2.0 terraform-provider-azuread/3.0.2"
+      }
+     ]
+    }
+   },
+   "note": "scheduled client-secret rotation"
+  },
+  {
+   "weight": 15,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Update application – Certificates and secrets management ",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{ip}}",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "Directory_{{corr}}_{{idsfx}}",
+     "category": "ApplicationManagement",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Update application – Certificates and secrets management ",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "Core Directory",
+     "operationType": "Update",
+     "initiatedBy": {
+      "user": {
+       "id": "{{adm.id}}",
+       "displayName": null,
+       "userPrincipalName": "{{adm.upn}}",
+       "ipAddress": "{{ip}}",
+       "roles": []
+      }
+     },
+     "targetResources": [
+      {
+       "id": "{{app.oid}}",
+       "displayName": "{{app.name}}",
+       "type": "Application",
+       "modifiedProperties": [
+        {
+         "displayName": "KeyDescription",
+         "oldValue": "[]",
+         "newValue": "[\"[KeyIdentifier={{kid2}},KeyType=AsymmetricX509Cert,KeyUsage=Verify,DisplayName=CN={{app.name}}]\"]"
+        },
+        {
+         "displayName": "Included Updated Properties",
+         "oldValue": null,
+         "newValue": "\"KeyDescription\""
+        }
+       ],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": [
+      {
+       "key": "User-Agent",
+       "value": "{{aua}}"
+      }
+     ]
+    }
+   },
+   "note": "certificate credential uploaded for a daemon app"
+  },
+  {
+   "weight": 25,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Update application",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{ip}}",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "Directory_{{corr}}_{{idsfx}}",
+     "category": "ApplicationManagement",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Update application",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "Core Directory",
+     "operationType": "Update",
+     "initiatedBy": {
+      "user": {
+       "id": "{{adm.id}}",
+       "displayName": null,
+       "userPrincipalName": "{{adm.upn}}",
+       "ipAddress": "{{ip}}",
+       "roles": []
+      }
+     },
+     "targetResources": [
+      {
+       "id": "{{app.oid}}",
+       "displayName": "{{app.name}}",
+       "type": "Application",
+       "modifiedProperties": [
+        {
+         "displayName": "AppAddress",
+         "oldValue": "[{\"AddressType\": 0, \"Address\": \"https://{{app.repo}}.example.com/signin-oidc\", \"ReplyAddressClientType\": 1, \"ReplyAddressIndex\": null, \"IsReplyAddressDefault\": false}]",
+         "newValue": "[{\"AddressType\": 0, \"Address\": \"https://{{app.repo}}.example.com/signin-oidc\", \"ReplyAddressClientType\": 1, \"ReplyAddressIndex\": null, \"IsReplyAddressDefault\": false}, {\"AddressType\": 0, \"Address\": \"https://{{app.repo}}.staging.example.com/signin-oidc\", \"ReplyAddressClientType\": 1, \"ReplyAddressIndex\": null, \"IsReplyAddressDefault\": false}]"
+        },
+        {
+         "displayName": "Included Updated Properties",
+         "oldValue": null,
+         "newValue": "\"AppAddress\""
+        }
+       ],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": [
+      {
+       "key": "User-Agent",
+       "value": "{{aua}}"
+      }
+     ]
+    }
+   },
+   "note": "redirect URI added for a staging environment"
+  },
+  {
+   "weight": 15,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Add application",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "Directory_{{corr}}_{{idsfx}}",
+     "category": "ApplicationManagement",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Add application",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "Core Directory",
+     "operationType": "Add",
+     "initiatedBy": {
+      "app": {
+       "appId": "9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+       "displayName": "terraform-entra-provisioner",
+       "servicePrincipalId": "3e2d1c0b-9a8f-4e7d-a6c5-b4a3928170f6",
+       "servicePrincipalName": null
+      }
+     },
+     "targetResources": [
+      {
+       "id": "{{app.oid}}",
+       "displayName": "{{app.name}}",
+       "type": "Application",
+       "modifiedProperties": [
+        {
+         "displayName": "AppId",
+         "oldValue": null,
+         "newValue": "\"{{uuid2}}\""
+        },
+        {
+         "displayName": "AvailableToOtherTenants",
+         "oldValue": null,
+         "newValue": "false"
+        },
+        {
+         "displayName": "DisplayName",
+         "oldValue": null,
+         "newValue": "\"{{app.name}}\""
+        },
+        {
+         "displayName": "Included Updated Properties",
+         "oldValue": null,
+         "newValue": "\"AppId, AvailableToOtherTenants, DisplayName\""
+        }
+       ],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": [
+      {
+       "key": "User-Agent",
+       "value": "Go-http-client/2.0 terraform-provider-azuread/3.0.2"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "weight": 15,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Add service principal",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "Directory_{{corr}}_{{idsfx}}",
+     "category": "ApplicationManagement",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Add service principal",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "Core Directory",
+     "operationType": "Add",
+     "initiatedBy": {
+      "app": {
+       "appId": "9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+       "displayName": "terraform-entra-provisioner",
+       "servicePrincipalId": "3e2d1c0b-9a8f-4e7d-a6c5-b4a3928170f6",
+       "servicePrincipalName": null
+      }
+     },
+     "targetResources": [
+      {
+       "id": "{{uuid2}}",
+       "displayName": "{{app.name}}",
+       "type": "ServicePrincipal",
+       "modifiedProperties": [
+        {
+         "displayName": "AccountEnabled",
+         "oldValue": "[]",
+         "newValue": "[true]"
+        },
+        {
+         "displayName": "AppPrincipalId",
+         "oldValue": "[]",
+         "newValue": "[\"{{app.appid}}\"]"
+        },
+        {
+         "displayName": "DisplayName",
+         "oldValue": "[]",
+         "newValue": "[\"{{app.name}}\"]"
+        },
+        {
+         "displayName": "ServicePrincipalType",
+         "oldValue": "[]",
+         "newValue": "[\"Application\"]"
+        }
+       ],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": [
+      {
+       "key": "User-Agent",
+       "value": "Go-http-client/2.0 terraform-provider-azuread/3.0.2"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "weight": 70,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Consent to application",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{uip}}",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "Directory_{{corr}}_{{idsfx}}",
+     "category": "ApplicationManagement",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Consent to application",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "Core Directory",
+     "operationType": "Assign",
+     "initiatedBy": {
+      "user": {
+       "id": "{{usr.id}}",
+       "displayName": null,
+       "userPrincipalName": "{{usr.upn}}",
+       "ipAddress": "{{uip}}",
+       "roles": []
+      }
+     },
+     "targetResources": [
+      {
+       "id": "{{capp.spid}}",
+       "displayName": "{{capp.name}}",
+       "type": "ServicePrincipal",
+       "modifiedProperties": [
+        {
+         "displayName": "ConsentContext.IsAdminConsent",
+         "oldValue": "",
+         "newValue": "\"False\""
+        },
+        {
+         "displayName": "ConsentContext.IsAppOnly",
+         "oldValue": "",
+         "newValue": "\"False\""
+        },
+        {
+         "displayName": "ConsentContext.OnBehalfOfAll",
+         "oldValue": "",
+         "newValue": "\"False\""
+        },
+        {
+         "displayName": "ConsentContext.Tags",
+         "oldValue": "",
+         "newValue": "\"WindowsAzureActiveDirectoryIntegratedApp\""
+        },
+        {
+         "displayName": "ConsentAction.Permissions",
+         "oldValue": "",
+         "newValue": "\"[] => [[Id: {{grantid}}, ClientId: {{capp.spid}}, PrincipalId: {{usr.id}}, ResourceId: 5a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d, ConsentType: Principal, Scope: {{uscope}}, CreatedDateTime: , LastModifiedDateTime ]]; \""
+        },
+        {
+         "displayName": "TargetId.ServicePrincipalNames",
+         "oldValue": "",
+         "newValue": "\"{{capp.appid}}\""
+        }
+       ],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": []
+    }
+   },
+   "note": "user consent to a low-privilege, verified-publisher app (openid/profile/User.Read, ConsentType Principal)"
+  },
+  {
+   "weight": 16,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Consent to application",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{ip}}",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "Directory_{{corr}}_{{idsfx}}",
+     "category": "ApplicationManagement",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Consent to application",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "Core Directory",
+     "operationType": "Assign",
+     "initiatedBy": {
+      "user": {
+       "id": "{{adm.id}}",
+       "displayName": null,
+       "userPrincipalName": "{{adm.upn}}",
+       "ipAddress": "{{ip}}",
+       "roles": []
+      }
+     },
+     "targetResources": [
+      {
+       "id": "{{capp.spid}}",
+       "displayName": "{{capp.name}}",
+       "type": "ServicePrincipal",
+       "modifiedProperties": [
+        {
+         "displayName": "ConsentContext.IsAdminConsent",
+         "oldValue": "",
+         "newValue": "\"True\""
+        },
+        {
+         "displayName": "ConsentContext.IsAppOnly",
+         "oldValue": "",
+         "newValue": "\"False\""
+        },
+        {
+         "displayName": "ConsentContext.OnBehalfOfAll",
+         "oldValue": "",
+         "newValue": "\"True\""
+        },
+        {
+         "displayName": "ConsentContext.Tags",
+         "oldValue": "",
+         "newValue": "\"WindowsAzureActiveDirectoryIntegratedApp\""
+        },
+        {
+         "displayName": "ConsentAction.Permissions",
+         "oldValue": "",
+         "newValue": "\"[] => [[Id: {{grantid}}, ClientId: {{capp.spid}}, PrincipalId: , ResourceId: 5a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d, ConsentType: AllPrincipals, Scope: User.Read openid profile email, CreatedDateTime: , LastModifiedDateTime ]]; \""
+        },
+        {
+         "displayName": "TargetId.ServicePrincipalNames",
+         "oldValue": "",
+         "newValue": "\"{{capp.appid}}\""
+        }
+       ],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": [
+      {
+       "key": "User-Agent",
+       "value": "{{aua}}"
+      }
+     ]
+    }
+   },
+   "note": "Cloud Application Administrator grants TENANT-WIDE (AllPrincipals) consent to a sign-in-only scope set for a new SSO app"
+  },
+  {
+   "weight": 16,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Add delegated permission grant",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{ip}}",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "Directory_{{corr}}_{{idsfx}}",
+     "category": "ApplicationManagement",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Add delegated permission grant",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "Core Directory",
+     "operationType": "Assign",
+     "initiatedBy": {
+      "user": {
+       "id": "{{adm.id}}",
+       "displayName": null,
+       "userPrincipalName": "{{adm.upn}}",
+       "ipAddress": "{{ip}}",
+       "roles": []
+      }
+     },
+     "targetResources": [
+      {
+       "id": "5a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+       "displayName": "Microsoft Graph",
+       "type": "ServicePrincipal",
+       "modifiedProperties": [
+        {
+         "displayName": "DelegatedPermissionGrant.Scope",
+         "oldValue": "",
+         "newValue": "\" User.Read openid profile email\""
+        },
+        {
+         "displayName": "DelegatedPermissionGrant.ConsentType",
+         "oldValue": "",
+         "newValue": "\"AllPrincipals\""
+        },
+        {
+         "displayName": "ServicePrincipal.ObjectID",
+         "oldValue": "",
+         "newValue": "\"5a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d\""
+        },
+        {
+         "displayName": "ServicePrincipal.DisplayName",
+         "oldValue": "",
+         "newValue": "\"Microsoft Graph\""
+        },
+        {
+         "displayName": "ServicePrincipal.AppId",
+         "oldValue": "",
+         "newValue": "\"00000003-0000-0000-c000-000000000000\""
+        },
+        {
+         "displayName": "ServicePrincipal.Name",
+         "oldValue": "",
+         "newValue": "\"00000003-0000-0000-c000-000000000000\""
+        }
+       ],
+       "administrativeUnits": []
+      },
+      {
+       "id": "{{capp.spid}}",
+       "displayName": null,
+       "type": "ServicePrincipal",
+       "modifiedProperties": [],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": [
+      {
+       "key": "User-Agent",
+       "value": "{{aua}}"
+      }
+     ]
+    }
+   },
+   "note": "the oauth2PermissionGrant written by that admin consent (ConsentType AllPrincipals, sign-in scopes)"
+  },
+  {
+   "weight": 35,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Add delegated permission grant",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{uip}}",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "Directory_{{corr}}_{{idsfx}}",
+     "category": "ApplicationManagement",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Add delegated permission grant",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "Core Directory",
+     "operationType": "Assign",
+     "initiatedBy": {
+      "user": {
+       "id": "{{usr.id}}",
+       "displayName": null,
+       "userPrincipalName": "{{usr.upn}}",
+       "ipAddress": "{{uip}}",
+       "roles": []
+      }
+     },
+     "targetResources": [
+      {
+       "id": "5a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+       "displayName": "Microsoft Graph",
+       "type": "ServicePrincipal",
+       "modifiedProperties": [
+        {
+         "displayName": "DelegatedPermissionGrant.Scope",
+         "oldValue": "",
+         "newValue": "\" {{uscope}}\""
+        },
+        {
+         "displayName": "DelegatedPermissionGrant.ConsentType",
+         "oldValue": "",
+         "newValue": "\"Principal\""
+        },
+        {
+         "displayName": "ServicePrincipal.ObjectID",
+         "oldValue": "",
+         "newValue": "\"5a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d\""
+        },
+        {
+         "displayName": "ServicePrincipal.DisplayName",
+         "oldValue": "",
+         "newValue": "\"Microsoft Graph\""
+        },
+        {
+         "displayName": "ServicePrincipal.AppId",
+         "oldValue": "",
+         "newValue": "\"00000003-0000-0000-c000-000000000000\""
+        },
+        {
+         "displayName": "ServicePrincipal.Name",
+         "oldValue": "",
+         "newValue": "\"00000003-0000-0000-c000-000000000000\""
+        }
+       ],
+       "administrativeUnits": []
+      },
+      {
+       "id": "{{capp.spid}}",
+       "displayName": null,
+       "type": "ServicePrincipal",
+       "modifiedProperties": [],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": []
+    }
+   },
+   "note": "the per-user grant written by a user consent"
+  },
+  {
+   "weight": 6,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Add app role assignment to service principal",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{ip}}",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "Directory_{{corr}}_{{idsfx}}",
+     "category": "ApplicationManagement",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Add app role assignment to service principal",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "Core Directory",
+     "operationType": "Assign",
+     "initiatedBy": {
+      "user": {
+       "id": "{{adm.id}}",
+       "displayName": null,
+       "userPrincipalName": "{{adm.upn}}",
+       "ipAddress": "{{ip}}",
+       "roles": []
+      }
+     },
+     "targetResources": [
+      {
+       "id": "{{rsp.id}}",
+       "displayName": "{{rsp.name}}",
+       "type": "ServicePrincipal",
+       "modifiedProperties": [
+        {
+         "displayName": "AppRole.Id",
+         "oldValue": "",
+         "newValue": "\"{{rsp.roleid}}\""
+        },
+        {
+         "displayName": "AppRole.Value",
+         "oldValue": "",
+         "newValue": "\"{{rsp.value}}\""
+        },
+        {
+         "displayName": "AppRole.DisplayName",
+         "oldValue": "",
+         "newValue": "\"{{rsp.dn}}\""
+        },
+        {
+         "displayName": "AppRoleAssignment.CreatedDateTime",
+         "oldValue": "",
+         "newValue": "\"{{t}}\""
+        },
+        {
+         "displayName": "AppRoleAssignment.LastModifiedDateTime",
+         "oldValue": "",
+         "newValue": "\"{{t}}\""
+        },
+        {
+         "displayName": "ServicePrincipal.ObjectID",
+         "oldValue": "",
+         "newValue": "\"{{rsp.id}}\""
+        },
+        {
+         "displayName": "ServicePrincipal.DisplayName",
+         "oldValue": "",
+         "newValue": "\"{{rsp.name}}\""
+        },
+        {
+         "displayName": "ServicePrincipal.AppId",
+         "oldValue": "",
+         "newValue": "\"{{rsp.appid}}\""
+        },
+        {
+         "displayName": "ServicePrincipal.Name",
+         "oldValue": "",
+         "newValue": "\"{{rsp.appid}}\""
+        }
+       ],
+       "administrativeUnits": []
+      },
+      {
+       "id": "{{app.spid}}",
+       "displayName": null,
+       "type": "ServicePrincipal",
+       "modifiedProperties": [],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": [
+      {
+       "key": "User-Agent",
+       "value": "{{aua}}"
+      }
+     ]
+    }
+   },
+   "note": "least-privilege application permission (Sites.Selected / own-app role) granted to an internal daemon"
+  },
+  {
+   "weight": 8,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Add owner to application",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{ip}}",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "Directory_{{corr}}_{{idsfx}}",
+     "category": "ApplicationManagement",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Add owner to application",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "Core Directory",
+     "operationType": "Assign",
+     "initiatedBy": {
+      "user": {
+       "id": "{{adm.id}}",
+       "displayName": null,
+       "userPrincipalName": "{{adm.upn}}",
+       "ipAddress": "{{ip}}",
+       "roles": []
+      }
+     },
+     "targetResources": [
+      {
+       "id": "{{usr.id}}",
+       "displayName": null,
+       "type": "User",
+       "userPrincipalName": "{{usr.upn}}",
+       "modifiedProperties": [
+        {
+         "displayName": "Application.ObjectID",
+         "oldValue": "",
+         "newValue": "\"{{app.oid}}\""
+        },
+        {
+         "displayName": "Application.DisplayName",
+         "oldValue": "",
+         "newValue": "\"{{app.name}}\""
+        }
+       ],
+       "administrativeUnits": []
+      },
+      {
+       "id": "{{app.oid}}",
+       "displayName": "{{app.name}}",
+       "type": "Application",
+       "modifiedProperties": [],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": [
+      {
+       "key": "User-Agent",
+       "value": "{{aua}}"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "weight": 10,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Update service principal",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "Directory_{{corr}}_{{idsfx}}",
+     "category": "ApplicationManagement",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Update service principal",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "Core Directory",
+     "operationType": "Update",
+     "initiatedBy": {
+      "app": {
+       "appId": "9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+       "displayName": "terraform-entra-provisioner",
+       "servicePrincipalId": "3e2d1c0b-9a8f-4e7d-a6c5-b4a3928170f6",
+       "servicePrincipalName": null
+      }
+     },
+     "targetResources": [
+      {
+       "id": "{{app.spid}}",
+       "displayName": "{{app.name}}",
+       "type": "ServicePrincipal",
+       "modifiedProperties": [
+        {
+         "displayName": "AppRoleAssignmentRequired",
+         "oldValue": "[false]",
+         "newValue": "[true]"
+        },
+        {
+         "displayName": "Included Updated Properties",
+         "oldValue": null,
+         "newValue": "\"AppRoleAssignmentRequired\""
+        }
+       ],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": [
+      {
+       "key": "User-Agent",
+       "value": "Go-http-client/2.0 terraform-provider-azuread/3.0.2"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "weight": 80,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Add member to group",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "Directory_{{corr}}_{{idsfx}}",
+     "category": "GroupManagement",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Add member to group",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "Core Directory",
+     "operationType": "Assign",
+     "initiatedBy": {
+      "app": {
+       "appId": "9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+       "displayName": "terraform-entra-provisioner",
+       "servicePrincipalId": "3e2d1c0b-9a8f-4e7d-a6c5-b4a3928170f6",
+       "servicePrincipalName": null
+      }
+     },
+     "targetResources": [
+      {
+       "id": "{{usr.id}}",
+       "displayName": null,
+       "type": "User",
+       "userPrincipalName": "{{usr.upn}}",
+       "modifiedProperties": [
+        {
+         "displayName": "Group.ObjectID",
+         "oldValue": null,
+         "newValue": "\"{{grp.id}}\""
+        },
+        {
+         "displayName": "Group.DisplayName",
+         "oldValue": null,
+         "newValue": "\"{{grp.name}}\""
+        },
+        {
+         "displayName": "Group.WellKnownObjectName",
+         "oldValue": null,
+         "newValue": null
+        }
+       ],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": [
+      {
+       "key": "User-Agent",
+       "value": "Go-http-client/2.0 terraform-provider-azuread/3.0.2"
+      }
+     ]
+    }
+   },
+   "note": "group membership managed from HR-driven provisioning / Terraform"
+  },
+  {
+   "weight": 25,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Remove member from group",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{ip}}",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "Directory_{{corr}}_{{idsfx}}",
+     "category": "GroupManagement",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Remove member from group",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "Core Directory",
+     "operationType": "Unassign",
+     "initiatedBy": {
+      "user": {
+       "id": "{{adm.id}}",
+       "displayName": null,
+       "userPrincipalName": "{{adm.upn}}",
+       "ipAddress": "{{ip}}",
+       "roles": []
+      }
+     },
+     "targetResources": [
+      {
+       "id": "{{usr.id}}",
+       "displayName": null,
+       "type": "User",
+       "userPrincipalName": "{{usr.upn}}",
+       "modifiedProperties": [
+        {
+         "displayName": "Group.ObjectID",
+         "oldValue": "\"{{grp.id}}\"",
+         "newValue": null
+        },
+        {
+         "displayName": "Group.DisplayName",
+         "oldValue": "\"{{grp.name}}\"",
+         "newValue": null
+        }
+       ],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": [
+      {
+       "key": "User-Agent",
+       "value": "{{aua}}"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "weight": 60,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Update user",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "Directory_{{corr}}_{{idsfx}}",
+     "category": "UserManagement",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Update user",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "Core Directory",
+     "operationType": "Update",
+     "initiatedBy": {
+      "app": {
+       "appId": "0d1e2f3a-4b5c-4d6e-8f7a-9b0c1d2e3f4a",
+       "displayName": "HR-to-Entra provisioning",
+       "servicePrincipalId": "1e2f3a4b-5c6d-4e7f-9a8b-0c1d2e3f4a5b",
+       "servicePrincipalName": null
+      }
+     },
+     "targetResources": [
+      {
+       "id": "{{usr.id}}",
+       "displayName": null,
+       "type": "User",
+       "userPrincipalName": "{{usr.upn}}",
+       "modifiedProperties": [
+        {
+         "displayName": "JobTitle",
+         "oldValue": "[\"Engineer II\"]",
+         "newValue": "[\"Senior Engineer\"]"
+        },
+        {
+         "displayName": "Included Updated Properties",
+         "oldValue": null,
+         "newValue": "\"JobTitle\""
+        }
+       ],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": []
+    }
+   }
+  },
+  {
+   "weight": 25,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Change user password",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{uip}}",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "Directory_{{corr}}_{{idsfx}}",
+     "category": "UserManagement",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Change user password",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "Core Directory",
+     "operationType": "Update",
+     "initiatedBy": {
+      "user": {
+       "id": "{{usr.id}}",
+       "displayName": null,
+       "userPrincipalName": "{{usr.upn}}",
+       "ipAddress": "{{uip}}",
+       "roles": []
+      }
+     },
+     "targetResources": [
+      {
+       "id": "{{usr.id}}",
+       "displayName": null,
+       "type": "User",
+       "userPrincipalName": "{{usr.upn}}",
+       "modifiedProperties": [],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": []
+    }
+   },
+   "note": "user changes their own password"
+  },
+  {
+   "weight": 30,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Add member to role completed (PIM activation)",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{ip}}",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "{{sid}}",
+     "category": "RoleManagement",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Add member to role completed (PIM activation)",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "PIM",
+     "operationType": "Add",
+     "initiatedBy": {
+      "user": {
+       "id": "{{adm.id}}",
+       "displayName": null,
+       "userPrincipalName": "{{adm.upn}}",
+       "ipAddress": "{{ip}}",
+       "roles": []
+      }
+     },
+     "targetResources": [
+      {
+       "id": "{{pimrole.id}}",
+       "displayName": "{{pimrole.name}}",
+       "type": "Role",
+       "modifiedProperties": [],
+       "administrativeUnits": []
+      },
+      {
+       "id": "{{adm.id}}",
+       "displayName": null,
+       "type": "User",
+       "userPrincipalName": "{{adm.upn}}",
+       "modifiedProperties": [],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": [
+      {
+       "key": "Justification",
+       "value": "{{just}}"
+      },
+      {
+       "key": "TicketNumber",
+       "value": "CHG-{{chg}}"
+      },
+      {
+       "key": "ExpirationTime",
+       "value": "{{t}}"
+      }
+     ]
+    }
+   },
+   "note": "just-in-time role activation through PIM"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Update conditional access policy",
+    "operationVersion": "1.0",
+    "category": "AuditLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{ip}}",
+    "correlationId": "{{corr}}",
+    "Level": "Informational",
+    "properties": {
+     "id": "{{sid}}",
+     "category": "Policy",
+     "correlationId": "{{corr}}",
+     "result": "success",
+     "resultReason": "",
+     "activityDisplayName": "Update conditional access policy",
+     "activityDateTime": "{{t}}",
+     "loggedByService": "Conditional Access",
+     "operationType": "Update",
+     "initiatedBy": {
+      "user": {
+       "id": "{{adm.id}}",
+       "displayName": null,
+       "userPrincipalName": "{{adm.upn}}",
+       "ipAddress": "{{ip}}",
+       "roles": []
+      }
+     },
+     "targetResources": [
+      {
+       "id": "{{uuid2}}",
+       "displayName": "Require MFA for Azure management",
+       "type": "Policy",
+       "modifiedProperties": [
+        {
+         "displayName": "ConditionalAccessPolicy",
+         "oldValue": "{\"id\": \"x\", \"displayName\": \"Require MFA for Azure management\", \"state\": \"enabledForReportingButNotEnforced\"}",
+         "newValue": "{\"id\": \"x\", \"displayName\": \"Require MFA for Azure management\", \"state\": \"enabled\"}"
+        }
+       ],
+       "administrativeUnits": []
+      }
+     ],
+     "additionalDetails": [
+      {
+       "key": "User-Agent",
+       "value": "{{aua}}"
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

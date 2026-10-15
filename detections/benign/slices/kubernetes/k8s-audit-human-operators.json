@@ -1,0 +1,3254 @@
+{
+ "id": "k8s-audit-human-operators",
+ "version": 1,
+ "logsource": {
+  "product": "kubernetes",
+  "service": "audit"
+ },
+ "fidelity": "synthetic",
+ "represents": "About 1.5 hours of interactive and read-mostly traffic on the same staging cluster: SREs and developers (OIDC users) running kubectl get/describe/logs/top, rollout restart/status, exec, port-forward to databases and dashboards, kubectl debug, Secret existence checks, `auth can-i --as` and `--as/--as-group` RBAC checks, cordon/drain, scale, manual `create job --from=cronjob`, a kubeadm break-glass read; an access gateway (Teleport kube agent) proxying engineers' requests by impersonation, including an on-call role mapped to system:masters; Prometheus scraping kubelet/cAdvisor metrics through the API server node proxy; kube-state-metrics list/watch.",
+ "provenance": "synthetic; event shapes from the audit.k8s.io/v1 Event type (impersonatedUser, objectRef.subresource, requestURI query parameters as kubectl sends them: exec and port-forward over WebSocket as verb get / response 101 for kubectl >= 1.30, SPDY as verb create), levels per detections/k8s/audit-policy-apiserver.yaml (pods/ephemeralcontainers and workload writes at Request, the rest Metadata), the Teleport kube-agent impersonation model and the Prometheus kubernetes-nodes-cadvisor scrape path. Version strings are illustrative; users are fictional @example.com; addresses RFC1918.",
+ "adjacent_to": [
+  "T1609/k8s_pod_exec_attach.yml (interactive exec by SREs and developers)",
+  "T1609/k8s_pod_ephemeral_container.yml (kubectl debug)",
+  "T1609/k8s_node_proxy_exec.yml (node-proxy metrics/stats/configz traffic, never /exec /run /attach)",
+  "T1572/k8s_pod_portforward.yml (port-forward to databases and dashboards)",
+  "T1134/k8s_impersonation.yml and k8s_impersonation_privileged.yml (auth can-i --as, access-gateway impersonation, break-glass role)",
+  "T1552.007/k8s_secret_access.yml (SRE Secret checks, kube-state-metrics)",
+  "T1053.007/k8s_job_create.yml (manual job from CronJob)",
+  "T1070/k8s_workload_deleted_evidence.yml (pod deletes, evictions)",
+  "T1685/k8s_security_tool_workload_removed.yml (scale to zero via the scale subresource)"
+ ],
+ "count": 520,
+ "vars": {
+  "auditID": {
+   "uuid": true
+  },
+  "jti": {
+   "uuid": true
+  },
+  "ms": {
+   "int": [
+    100,
+    989
+   ]
+  },
+  "us1": {
+   "int": [
+    100,
+    399
+   ]
+  },
+  "us2": {
+   "int": [
+    400,
+    999
+   ]
+  },
+  "rv": {
+   "int": [
+    8100000,
+    8999999
+   ]
+  },
+  "h16": {
+   "hex": 16
+  },
+  "t": {
+   "time": {
+    "start": "2026-10-14T08:20:00Z",
+    "step_seconds": [
+     1.0,
+     14.0
+    ],
+    "format": "%Y-%m-%dT%H:%M:%S"
+   }
+  },
+  "sre": [
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52"
+   }
+  ],
+  "human": [
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52"
+   },
+   {
+    "user": "oidc:ben.dev@example.com",
+    "groups": [
+     "oidc:team-payments",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.6.103"
+   },
+   {
+    "user": "oidc:chen.dev@example.com",
+    "groups": [
+     "oidc:team-orders",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.6.88"
+   },
+   {
+    "user": "oidc:eli.dev@example.com",
+    "groups": [
+     "oidc:team-catalog",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.7.21"
+   }
+  ],
+  "devpod": [
+   {
+    "user": "oidc:ben.dev@example.com",
+    "groups": [
+     "oidc:team-payments",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "grp": "oidc:team-payments",
+    "ip": "10.30.6.103",
+    "ns": "payments",
+    "pod": "payments-api-bgtqvq9jc-jgbt6",
+    "c": "payments-api",
+    "app": "payments-api"
+   },
+   {
+    "user": "oidc:ben.dev@example.com",
+    "groups": [
+     "oidc:team-payments",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "grp": "oidc:team-payments",
+    "ip": "10.30.6.103",
+    "ns": "payments",
+    "pod": "payments-api-bgtqvq9jc-nht48",
+    "c": "payments-api",
+    "app": "payments-api"
+   },
+   {
+    "user": "oidc:ben.dev@example.com",
+    "groups": [
+     "oidc:team-payments",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "grp": "oidc:team-payments",
+    "ip": "10.30.6.103",
+    "ns": "payments",
+    "pod": "ledger-worker-sjcvp2hwvw-dslbz",
+    "c": "ledger-worker",
+    "app": "ledger-worker"
+   },
+   {
+    "user": "oidc:ben.dev@example.com",
+    "groups": [
+     "oidc:team-payments",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "grp": "oidc:team-payments",
+    "ip": "10.30.6.103",
+    "ns": "payments",
+    "pod": "ledger-worker-sjcvp2hwvw-drvg8",
+    "c": "ledger-worker",
+    "app": "ledger-worker"
+   },
+   {
+    "user": "oidc:ben.dev@example.com",
+    "groups": [
+     "oidc:team-payments",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "grp": "oidc:team-payments",
+    "ip": "10.30.6.103",
+    "ns": "payments",
+    "pod": "payments-db-0",
+    "c": "payments-db",
+    "app": "payments-db"
+   },
+   {
+    "user": "oidc:ben.dev@example.com",
+    "groups": [
+     "oidc:team-payments",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "grp": "oidc:team-payments",
+    "ip": "10.30.6.103",
+    "ns": "payments",
+    "pod": "payments-db-1",
+    "c": "payments-db",
+    "app": "payments-db"
+   },
+   {
+    "user": "oidc:chen.dev@example.com",
+    "groups": [
+     "oidc:team-orders",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "grp": "oidc:team-orders",
+    "ip": "10.30.6.88",
+    "ns": "orders",
+    "pod": "orders-api-6jwc2vvlp-5lfj2",
+    "c": "orders-api",
+    "app": "orders-api"
+   },
+   {
+    "user": "oidc:chen.dev@example.com",
+    "groups": [
+     "oidc:team-orders",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "grp": "oidc:team-orders",
+    "ip": "10.30.6.88",
+    "ns": "orders",
+    "pod": "orders-api-6jwc2vvlp-ljfvd",
+    "c": "orders-api",
+    "app": "orders-api"
+   },
+   {
+    "user": "oidc:chen.dev@example.com",
+    "groups": [
+     "oidc:team-orders",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "grp": "oidc:team-orders",
+    "ip": "10.30.6.88",
+    "ns": "orders",
+    "pod": "orders-events-s6mnc97n2-9ffkf",
+    "c": "orders-events",
+    "app": "orders-events"
+   },
+   {
+    "user": "oidc:chen.dev@example.com",
+    "groups": [
+     "oidc:team-orders",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "grp": "oidc:team-orders",
+    "ip": "10.30.6.88",
+    "ns": "orders",
+    "pod": "orders-events-s6mnc97n2-4nlfd",
+    "c": "orders-events",
+    "app": "orders-events"
+   },
+   {
+    "user": "oidc:chen.dev@example.com",
+    "groups": [
+     "oidc:team-orders",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "grp": "oidc:team-orders",
+    "ip": "10.30.6.88",
+    "ns": "orders",
+    "pod": "orders-cache-0",
+    "c": "orders-cache",
+    "app": "orders-cache"
+   },
+   {
+    "user": "oidc:chen.dev@example.com",
+    "groups": [
+     "oidc:team-orders",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "grp": "oidc:team-orders",
+    "ip": "10.30.6.88",
+    "ns": "orders",
+    "pod": "orders-cache-1",
+    "c": "orders-cache",
+    "app": "orders-cache"
+   },
+   {
+    "user": "oidc:eli.dev@example.com",
+    "groups": [
+     "oidc:team-catalog",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "grp": "oidc:team-catalog",
+    "ip": "10.30.7.21",
+    "ns": "catalog",
+    "pod": "catalog-api-dkrjst8l8-tbktp",
+    "c": "catalog-api",
+    "app": "catalog-api"
+   },
+   {
+    "user": "oidc:eli.dev@example.com",
+    "groups": [
+     "oidc:team-catalog",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "grp": "oidc:team-catalog",
+    "ip": "10.30.7.21",
+    "ns": "catalog",
+    "pod": "catalog-api-dkrjst8l8-z9m7j",
+    "c": "catalog-api",
+    "app": "catalog-api"
+   },
+   {
+    "user": "oidc:eli.dev@example.com",
+    "groups": [
+     "oidc:team-catalog",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "grp": "oidc:team-catalog",
+    "ip": "10.30.7.21",
+    "ns": "search",
+    "pod": "search-gateway-ztkw9flcgb-g5sbm",
+    "c": "search-gateway",
+    "app": "search-gateway"
+   },
+   {
+    "user": "oidc:eli.dev@example.com",
+    "groups": [
+     "oidc:team-catalog",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "grp": "oidc:team-catalog",
+    "ip": "10.30.7.21",
+    "ns": "search",
+    "pod": "search-gateway-ztkw9flcgb-7zvk6",
+    "c": "search-gateway",
+    "app": "search-gateway"
+   }
+  ],
+  "srepod": [
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "payments",
+    "pod": "payments-api-bgtqvq9jc-jgbt6",
+    "c": "payments-api",
+    "app": "payments-api"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "payments",
+    "pod": "payments-api-bgtqvq9jc-nht48",
+    "c": "payments-api",
+    "app": "payments-api"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "payments",
+    "pod": "ledger-worker-sjcvp2hwvw-dslbz",
+    "c": "ledger-worker",
+    "app": "ledger-worker"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "payments",
+    "pod": "ledger-worker-sjcvp2hwvw-drvg8",
+    "c": "ledger-worker",
+    "app": "ledger-worker"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "orders",
+    "pod": "orders-api-6jwc2vvlp-5lfj2",
+    "c": "orders-api",
+    "app": "orders-api"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "orders",
+    "pod": "orders-api-6jwc2vvlp-ljfvd",
+    "c": "orders-api",
+    "app": "orders-api"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "orders",
+    "pod": "orders-events-s6mnc97n2-9ffkf",
+    "c": "orders-events",
+    "app": "orders-events"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "orders",
+    "pod": "orders-events-s6mnc97n2-4nlfd",
+    "c": "orders-events",
+    "app": "orders-events"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "catalog",
+    "pod": "catalog-api-dkrjst8l8-tbktp",
+    "c": "catalog-api",
+    "app": "catalog-api"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "catalog",
+    "pod": "catalog-api-dkrjst8l8-z9m7j",
+    "c": "catalog-api",
+    "app": "catalog-api"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "search",
+    "pod": "search-gateway-ztkw9flcgb-g5sbm",
+    "c": "search-gateway",
+    "app": "search-gateway"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "search",
+    "pod": "search-gateway-ztkw9flcgb-7zvk6",
+    "c": "search-gateway",
+    "app": "search-gateway"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "web",
+    "pod": "storefront-wcs4b5fwx-jrcls",
+    "c": "storefront",
+    "app": "storefront"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "web",
+    "pod": "storefront-wcs4b5fwx-9xh48",
+    "c": "storefront",
+    "app": "storefront"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "web",
+    "pod": "storefront-wcs4b5fwx-s5t42",
+    "c": "storefront",
+    "app": "storefront"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "identity",
+    "pod": "auth-service-gcp89zbkt-stjcc",
+    "c": "auth-service",
+    "app": "auth-service"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "identity",
+    "pod": "auth-service-gcp89zbkt-wj2cl",
+    "c": "auth-service",
+    "app": "auth-service"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "notifications",
+    "pod": "mailer-9m49kwzcn-cfcvh",
+    "c": "mailer",
+    "app": "mailer"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "notifications",
+    "pod": "mailer-9m49kwzcn-thrh7",
+    "c": "mailer",
+    "app": "mailer"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "monitoring",
+    "pod": "grafana-5v4t7pgv4g-fn248",
+    "c": "grafana",
+    "app": "grafana"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "monitoring",
+    "pod": "grafana-5v4t7pgv4g-hgjs6",
+    "c": "grafana",
+    "app": "grafana"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "kube-system",
+    "pod": "coredns-trj4tz9kmw-95f6c",
+    "c": "coredns",
+    "app": "coredns"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "kube-system",
+    "pod": "coredns-trj4tz9kmw-td45h",
+    "c": "coredns",
+    "app": "coredns"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "payments",
+    "pod": "payments-db-0",
+    "c": "payments-db",
+    "app": "payments-db"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "payments",
+    "pod": "payments-db-1",
+    "c": "payments-db",
+    "app": "payments-db"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "orders",
+    "pod": "orders-cache-0",
+    "c": "orders-cache",
+    "app": "orders-cache"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "orders",
+    "pod": "orders-cache-1",
+    "c": "orders-cache",
+    "app": "orders-cache"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "monitoring",
+    "pod": "prometheus-k8s-0",
+    "c": "prometheus-k8s",
+    "app": "prometheus-k8s"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "monitoring",
+    "pod": "prometheus-k8s-1",
+    "c": "prometheus-k8s",
+    "app": "prometheus-k8s"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "argocd",
+    "pod": "argocd-application-controller-0",
+    "c": "argocd-application-controller",
+    "app": "argocd-application-controller"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "payments",
+    "pod": "payments-api-bgtqvq9jc-jgbt6",
+    "c": "payments-api",
+    "app": "payments-api"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "payments",
+    "pod": "payments-api-bgtqvq9jc-nht48",
+    "c": "payments-api",
+    "app": "payments-api"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "payments",
+    "pod": "ledger-worker-sjcvp2hwvw-dslbz",
+    "c": "ledger-worker",
+    "app": "ledger-worker"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "payments",
+    "pod": "ledger-worker-sjcvp2hwvw-drvg8",
+    "c": "ledger-worker",
+    "app": "ledger-worker"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "orders",
+    "pod": "orders-api-6jwc2vvlp-5lfj2",
+    "c": "orders-api",
+    "app": "orders-api"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "orders",
+    "pod": "orders-api-6jwc2vvlp-ljfvd",
+    "c": "orders-api",
+    "app": "orders-api"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "orders",
+    "pod": "orders-events-s6mnc97n2-9ffkf",
+    "c": "orders-events",
+    "app": "orders-events"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "orders",
+    "pod": "orders-events-s6mnc97n2-4nlfd",
+    "c": "orders-events",
+    "app": "orders-events"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "catalog",
+    "pod": "catalog-api-dkrjst8l8-tbktp",
+    "c": "catalog-api",
+    "app": "catalog-api"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "catalog",
+    "pod": "catalog-api-dkrjst8l8-z9m7j",
+    "c": "catalog-api",
+    "app": "catalog-api"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "search",
+    "pod": "search-gateway-ztkw9flcgb-g5sbm",
+    "c": "search-gateway",
+    "app": "search-gateway"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "search",
+    "pod": "search-gateway-ztkw9flcgb-7zvk6",
+    "c": "search-gateway",
+    "app": "search-gateway"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "web",
+    "pod": "storefront-wcs4b5fwx-jrcls",
+    "c": "storefront",
+    "app": "storefront"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "web",
+    "pod": "storefront-wcs4b5fwx-9xh48",
+    "c": "storefront",
+    "app": "storefront"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "web",
+    "pod": "storefront-wcs4b5fwx-s5t42",
+    "c": "storefront",
+    "app": "storefront"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "identity",
+    "pod": "auth-service-gcp89zbkt-stjcc",
+    "c": "auth-service",
+    "app": "auth-service"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "identity",
+    "pod": "auth-service-gcp89zbkt-wj2cl",
+    "c": "auth-service",
+    "app": "auth-service"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "notifications",
+    "pod": "mailer-9m49kwzcn-cfcvh",
+    "c": "mailer",
+    "app": "mailer"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "notifications",
+    "pod": "mailer-9m49kwzcn-thrh7",
+    "c": "mailer",
+    "app": "mailer"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "monitoring",
+    "pod": "grafana-5v4t7pgv4g-fn248",
+    "c": "grafana",
+    "app": "grafana"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "monitoring",
+    "pod": "grafana-5v4t7pgv4g-hgjs6",
+    "c": "grafana",
+    "app": "grafana"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "kube-system",
+    "pod": "coredns-trj4tz9kmw-95f6c",
+    "c": "coredns",
+    "app": "coredns"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "kube-system",
+    "pod": "coredns-trj4tz9kmw-td45h",
+    "c": "coredns",
+    "app": "coredns"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "payments",
+    "pod": "payments-db-0",
+    "c": "payments-db",
+    "app": "payments-db"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "payments",
+    "pod": "payments-db-1",
+    "c": "payments-db",
+    "app": "payments-db"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "orders",
+    "pod": "orders-cache-0",
+    "c": "orders-cache",
+    "app": "orders-cache"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "orders",
+    "pod": "orders-cache-1",
+    "c": "orders-cache",
+    "app": "orders-cache"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "monitoring",
+    "pod": "prometheus-k8s-0",
+    "c": "prometheus-k8s",
+    "app": "prometheus-k8s"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "monitoring",
+    "pod": "prometheus-k8s-1",
+    "c": "prometheus-k8s",
+    "app": "prometheus-k8s"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "argocd",
+    "pod": "argocd-application-controller-0",
+    "c": "argocd-application-controller",
+    "app": "argocd-application-controller"
+   }
+  ],
+  "dbpod": [
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "payments",
+    "pod": "payments-db-0",
+    "port": "5432"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "orders",
+    "pod": "orders-cache-0",
+    "port": "6379"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "monitoring",
+    "pod": "prometheus-k8s-0",
+    "port": "9090"
+   },
+   {
+    "user": "oidc:ana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.4.17",
+    "ns": "monitoring",
+    "pod": "grafana-5v4t7pgv4g-fn248",
+    "port": "3000"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "payments",
+    "pod": "payments-db-0",
+    "port": "5432"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "orders",
+    "pod": "orders-cache-0",
+    "port": "6379"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "monitoring",
+    "pod": "prometheus-k8s-0",
+    "port": "9090"
+   },
+   {
+    "user": "oidc:dana.sre@example.com",
+    "groups": [
+     "oidc:platform-sre",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.4.52",
+    "ns": "monitoring",
+    "pod": "grafana-5v4t7pgv4g-fn248",
+    "port": "3000"
+   },
+   {
+    "user": "oidc:ben.dev@example.com",
+    "groups": [
+     "oidc:team-payments",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.6.103",
+    "ns": "payments",
+    "pod": "payments-db-0",
+    "port": "5432"
+   },
+   {
+    "user": "oidc:ben.dev@example.com",
+    "groups": [
+     "oidc:team-payments",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.6.103",
+    "ns": "orders",
+    "pod": "orders-cache-0",
+    "port": "6379"
+   },
+   {
+    "user": "oidc:ben.dev@example.com",
+    "groups": [
+     "oidc:team-payments",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.6.103",
+    "ns": "monitoring",
+    "pod": "prometheus-k8s-0",
+    "port": "9090"
+   },
+   {
+    "user": "oidc:ben.dev@example.com",
+    "groups": [
+     "oidc:team-payments",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.6.103",
+    "ns": "monitoring",
+    "pod": "grafana-5v4t7pgv4g-fn248",
+    "port": "3000"
+   },
+   {
+    "user": "oidc:chen.dev@example.com",
+    "groups": [
+     "oidc:team-orders",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.6.88",
+    "ns": "payments",
+    "pod": "payments-db-0",
+    "port": "5432"
+   },
+   {
+    "user": "oidc:chen.dev@example.com",
+    "groups": [
+     "oidc:team-orders",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.6.88",
+    "ns": "orders",
+    "pod": "orders-cache-0",
+    "port": "6379"
+   },
+   {
+    "user": "oidc:chen.dev@example.com",
+    "groups": [
+     "oidc:team-orders",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.6.88",
+    "ns": "monitoring",
+    "pod": "prometheus-k8s-0",
+    "port": "9090"
+   },
+   {
+    "user": "oidc:chen.dev@example.com",
+    "groups": [
+     "oidc:team-orders",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9",
+    "ip": "10.30.6.88",
+    "ns": "monitoring",
+    "pod": "grafana-5v4t7pgv4g-fn248",
+    "port": "3000"
+   },
+   {
+    "user": "oidc:eli.dev@example.com",
+    "groups": [
+     "oidc:team-catalog",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.7.21",
+    "ns": "payments",
+    "pod": "payments-db-0",
+    "port": "5432"
+   },
+   {
+    "user": "oidc:eli.dev@example.com",
+    "groups": [
+     "oidc:team-catalog",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.7.21",
+    "ns": "orders",
+    "pod": "orders-cache-0",
+    "port": "6379"
+   },
+   {
+    "user": "oidc:eli.dev@example.com",
+    "groups": [
+     "oidc:team-catalog",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.7.21",
+    "ns": "monitoring",
+    "pod": "prometheus-k8s-0",
+    "port": "9090"
+   },
+   {
+    "user": "oidc:eli.dev@example.com",
+    "groups": [
+     "oidc:team-catalog",
+     "system:authenticated"
+    ],
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5",
+    "ip": "10.30.7.21",
+    "ns": "monitoring",
+    "pod": "grafana-5v4t7pgv4g-fn248",
+    "port": "3000"
+   }
+  ],
+  "ns": [
+   "payments",
+   "orders",
+   "catalog",
+   "search",
+   "web",
+   "identity",
+   "notifications",
+   "monitoring",
+   "argocd",
+   "kube-system"
+  ],
+  "dep": [
+   {
+    "ns": "payments",
+    "name": "payments-api"
+   },
+   {
+    "ns": "payments",
+    "name": "ledger-worker"
+   },
+   {
+    "ns": "orders",
+    "name": "orders-api"
+   },
+   {
+    "ns": "orders",
+    "name": "orders-events"
+   },
+   {
+    "ns": "catalog",
+    "name": "catalog-api"
+   },
+   {
+    "ns": "search",
+    "name": "search-gateway"
+   },
+   {
+    "ns": "web",
+    "name": "storefront"
+   },
+   {
+    "ns": "identity",
+    "name": "auth-service"
+   },
+   {
+    "ns": "notifications",
+    "name": "mailer"
+   },
+   {
+    "ns": "monitoring",
+    "name": "grafana"
+   },
+   {
+    "ns": "kube-system",
+    "name": "coredns"
+   }
+  ],
+  "node": [
+   {
+    "name": "k8s-cp-01"
+   },
+   {
+    "name": "k8s-cp-02"
+   },
+   {
+    "name": "k8s-cp-03"
+   },
+   {
+    "name": "k8s-wk-01"
+   },
+   {
+    "name": "k8s-wk-02"
+   },
+   {
+    "name": "k8s-wk-03"
+   },
+   {
+    "name": "k8s-wk-04"
+   },
+   {
+    "name": "k8s-wk-05"
+   },
+   {
+    "name": "k8s-wk-06"
+   }
+  ],
+  "wk": [
+   {
+    "name": "k8s-wk-01"
+   },
+   {
+    "name": "k8s-wk-02"
+   },
+   {
+    "name": "k8s-wk-03"
+   },
+   {
+    "name": "k8s-wk-04"
+   },
+   {
+    "name": "k8s-wk-05"
+   },
+   {
+    "name": "k8s-wk-06"
+   }
+  ],
+  "nodepath": [
+   "metrics/cadvisor",
+   "metrics",
+   "metrics/resource"
+  ],
+  "adminpath": [
+   "stats/summary",
+   "configz",
+   "pods",
+   "healthz"
+  ],
+  "dbg": [
+   "debugger-7kq2m",
+   "debugger-x5vtn",
+   "debugger-h9b4w",
+   "debugger-pz2l6"
+  ],
+  "sa_target": [
+   {
+    "ns": "payments",
+    "sa": "payments-api"
+   },
+   {
+    "ns": "payments",
+    "sa": "ledger-worker"
+   },
+   {
+    "ns": "orders",
+    "sa": "orders-api"
+   },
+   {
+    "ns": "orders",
+    "sa": "orders-events"
+   },
+   {
+    "ns": "catalog",
+    "sa": "catalog-api"
+   },
+   {
+    "ns": "search",
+    "sa": "search-gateway"
+   },
+   {
+    "ns": "web",
+    "sa": "storefront"
+   },
+   {
+    "ns": "identity",
+    "sa": "auth-service"
+   },
+   {
+    "ns": "notifications",
+    "sa": "mailer"
+   },
+   {
+    "ns": "monitoring",
+    "sa": "grafana"
+   }
+  ],
+  "verb_res": [
+   "pods",
+   "deployments",
+   "secrets",
+   "configmaps",
+   "jobs"
+  ],
+  "tp_user": [
+   {
+    "user": "ana.sre@example.com",
+    "group": "platform-sre",
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5"
+   },
+   {
+    "user": "dana.sre@example.com",
+    "group": "platform-sre",
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9"
+   },
+   {
+    "user": "ben.dev@example.com",
+    "group": "team-payments",
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5"
+   },
+   {
+    "user": "chen.dev@example.com",
+    "group": "team-orders",
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9"
+   },
+   {
+    "user": "eli.dev@example.com",
+    "group": "team-catalog",
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5"
+   }
+  ],
+  "tp_sre": [
+   {
+    "user": "ana.sre@example.com",
+    "ua": "kubectl/v1.31.1 (darwin/arm64) kubernetes/948afe5"
+   },
+   {
+    "user": "dana.sre@example.com",
+    "ua": "kubectl/v1.30.5 (linux/amd64) kubernetes/74e84a9"
+   }
+  ],
+  "manual": [
+   {
+    "ns": "payments",
+    "cj": "ledger-reconcile",
+    "image": "registry.example.com/payments/ledger-worker:1.42.3",
+    "sa": "ledger-worker"
+   },
+   {
+    "ns": "orders",
+    "cj": "report-export",
+    "image": "registry.example.com/orders/reports:3.7.0",
+    "sa": "orders-reports"
+   },
+   {
+    "ns": "search",
+    "cj": "index-compact",
+    "image": "registry.example.com/search/indexer:0.31.4",
+    "sa": "search-indexer"
+   },
+   {
+    "ns": "payments",
+    "cj": "db-backup",
+    "image": "registry.example.com/platform/pg-backup:16.4-2",
+    "sa": "db-backup"
+   }
+  ],
+  "suffix": [
+   "x7k",
+   "4mq",
+   "b2z",
+   "r9t",
+   "w5c",
+   "h8n"
+  ],
+  "drain": [
+   {
+    "ns": "orders",
+    "pod": "orders-events-s6mnc97n2-4nlfd"
+   },
+   {
+    "ns": "web",
+    "pod": "storefront-wcs4b5fwx-jrcls"
+   },
+   {
+    "ns": "notifications",
+    "pod": "mailer-9m49kwzcn-thrh7"
+   },
+   {
+    "ns": "kube-system",
+    "pod": "coredns-trj4tz9kmw-td45h"
+   },
+   {
+    "ns": "payments",
+    "pod": "payments-db-0"
+   }
+  ],
+  "secret": [
+   {
+    "ns": "payments",
+    "name": "payments-api-db"
+   },
+   {
+    "ns": "payments",
+    "name": "payments-api-tls"
+   },
+   {
+    "ns": "payments",
+    "name": "payments-api-db"
+   },
+   {
+    "ns": "payments",
+    "name": "payments-api-tls"
+   },
+   {
+    "ns": "payments",
+    "name": "ledger-worker-db"
+   },
+   {
+    "ns": "payments",
+    "name": "ledger-worker-tls"
+   },
+   {
+    "ns": "payments",
+    "name": "ledger-worker-db"
+   },
+   {
+    "ns": "payments",
+    "name": "ledger-worker-tls"
+   },
+   {
+    "ns": "orders",
+    "name": "orders-api-db"
+   },
+   {
+    "ns": "orders",
+    "name": "orders-api-tls"
+   },
+   {
+    "ns": "orders",
+    "name": "orders-api-db"
+   },
+   {
+    "ns": "orders",
+    "name": "orders-api-tls"
+   },
+   {
+    "ns": "orders",
+    "name": "orders-events-db"
+   },
+   {
+    "ns": "orders",
+    "name": "orders-events-tls"
+   },
+   {
+    "ns": "orders",
+    "name": "orders-events-db"
+   },
+   {
+    "ns": "orders",
+    "name": "orders-events-tls"
+   },
+   {
+    "ns": "catalog",
+    "name": "catalog-api-db"
+   },
+   {
+    "ns": "catalog",
+    "name": "catalog-api-tls"
+   },
+   {
+    "ns": "catalog",
+    "name": "catalog-api-db"
+   },
+   {
+    "ns": "catalog",
+    "name": "catalog-api-tls"
+   },
+   {
+    "ns": "search",
+    "name": "search-gateway-db"
+   },
+   {
+    "ns": "search",
+    "name": "search-gateway-tls"
+   },
+   {
+    "ns": "search",
+    "name": "search-gateway-db"
+   },
+   {
+    "ns": "search",
+    "name": "search-gateway-tls"
+   },
+   {
+    "ns": "web",
+    "name": "storefront-db"
+   },
+   {
+    "ns": "web",
+    "name": "storefront-tls"
+   },
+   {
+    "ns": "web",
+    "name": "storefront-db"
+   },
+   {
+    "ns": "web",
+    "name": "storefront-tls"
+   },
+   {
+    "ns": "web",
+    "name": "storefront-db"
+   },
+   {
+    "ns": "web",
+    "name": "storefront-tls"
+   },
+   {
+    "ns": "identity",
+    "name": "auth-service-db"
+   },
+   {
+    "ns": "identity",
+    "name": "auth-service-tls"
+   },
+   {
+    "ns": "identity",
+    "name": "auth-service-db"
+   },
+   {
+    "ns": "identity",
+    "name": "auth-service-tls"
+   },
+   {
+    "ns": "notifications",
+    "name": "mailer-db"
+   },
+   {
+    "ns": "notifications",
+    "name": "mailer-tls"
+   },
+   {
+    "ns": "notifications",
+    "name": "mailer-db"
+   },
+   {
+    "ns": "notifications",
+    "name": "mailer-tls"
+   },
+   {
+    "ns": "monitoring",
+    "name": "grafana-db"
+   },
+   {
+    "ns": "monitoring",
+    "name": "grafana-tls"
+   },
+   {
+    "ns": "monitoring",
+    "name": "grafana-db"
+   },
+   {
+    "ns": "monitoring",
+    "name": "grafana-tls"
+   },
+   {
+    "ns": "kube-system",
+    "name": "coredns-db"
+   },
+   {
+    "ns": "kube-system",
+    "name": "coredns-tls"
+   },
+   {
+    "ns": "kube-system",
+    "name": "coredns-db"
+   },
+   {
+    "ns": "kube-system",
+    "name": "coredns-tls"
+   }
+  ]
+ },
+ "templates": [
+  {
+   "weight": 10,
+   "name": "kubectl get pods (developer, own namespace)",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/namespaces/{{devpod.ns}}/pods?limit=500",
+    "verb": "list",
+    "user": {
+     "username": "{{devpod.user}}",
+     "groups": "{{devpod.groups}}"
+    },
+    "sourceIPs": [
+     "{{devpod.ip}}"
+    ],
+    "userAgent": "{{devpod.ua}}",
+    "objectRef": {
+     "resource": "pods",
+     "namespace": "{{devpod.ns}}",
+     "apiVersion": "v1"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"all-engineers-view\" of ClusterRole \"view\" to Group \"system:authenticated\""
+    }
+   }
+  },
+  {
+   "weight": 5,
+   "name": "kubectl get pods -A (SRE)",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/pods?limit=500",
+    "verb": "list",
+    "user": {
+     "username": "{{sre.user}}",
+     "groups": "{{sre.groups}}"
+    },
+    "sourceIPs": [
+     "{{sre.ip}}"
+    ],
+    "userAgent": "{{sre.ua}}",
+    "objectRef": {
+     "resource": "pods",
+     "apiVersion": "v1"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"platform-sre-admin\" of ClusterRole \"cluster-admin\" to Group \"oidc:platform-sre\""
+    }
+   }
+  },
+  {
+   "weight": 4,
+   "name": "kubectl get/describe pod",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/namespaces/{{devpod.ns}}/pods/{{devpod.pod}}",
+    "verb": "get",
+    "user": {
+     "username": "{{devpod.user}}",
+     "groups": "{{devpod.groups}}"
+    },
+    "sourceIPs": [
+     "{{devpod.ip}}"
+    ],
+    "userAgent": "{{devpod.ua}}",
+    "objectRef": {
+     "resource": "pods",
+     "namespace": "{{devpod.ns}}",
+     "name": "{{devpod.pod}}",
+     "apiVersion": "v1"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"all-engineers-view\" of ClusterRole \"view\" to Group \"system:authenticated\""
+    }
+   }
+  },
+  {
+   "weight": 7,
+   "name": "kubectl logs -f",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/namespaces/{{devpod.ns}}/pods/{{devpod.pod}}/log?container={{devpod.c}}&follow=true&tailLines=200",
+    "verb": "get",
+    "user": {
+     "username": "{{devpod.user}}",
+     "groups": "{{devpod.groups}}"
+    },
+    "sourceIPs": [
+     "{{devpod.ip}}"
+    ],
+    "userAgent": "{{devpod.ua}}",
+    "objectRef": {
+     "resource": "pods",
+     "namespace": "{{devpod.ns}}",
+     "name": "{{devpod.pod}}",
+     "apiVersion": "v1",
+     "subresource": "log"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"all-engineers-view\" of ClusterRole \"view\" to Group \"system:authenticated\""
+    }
+   }
+  },
+  {
+   "weight": 3,
+   "name": "kubectl logs (SRE, any namespace)",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/namespaces/{{srepod.ns}}/pods/{{srepod.pod}}/log?container={{srepod.c}}&tailLines=500&timestamps=true",
+    "verb": "get",
+    "user": {
+     "username": "{{srepod.user}}",
+     "groups": "{{srepod.groups}}"
+    },
+    "sourceIPs": [
+     "{{srepod.ip}}"
+    ],
+    "userAgent": "{{srepod.ua}}",
+    "objectRef": {
+     "resource": "pods",
+     "namespace": "{{srepod.ns}}",
+     "name": "{{srepod.pod}}",
+     "apiVersion": "v1",
+     "subresource": "log"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"platform-sre-admin\" of ClusterRole \"cluster-admin\" to Group \"oidc:platform-sre\""
+    }
+   }
+  },
+  {
+   "weight": 4,
+   "name": "kubectl get deployments",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/apis/apps/v1/namespaces/{{ns}}/deployments?limit=500",
+    "verb": "list",
+    "user": {
+     "username": "{{human.user}}",
+     "groups": "{{human.groups}}"
+    },
+    "sourceIPs": [
+     "{{human.ip}}"
+    ],
+    "userAgent": "{{human.ua}}",
+    "objectRef": {
+     "resource": "deployments",
+     "namespace": "{{ns}}",
+     "apiGroup": "apps",
+     "apiVersion": "v1"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"all-engineers-view\" of ClusterRole \"view\" to Group \"system:authenticated\""
+    }
+   }
+  },
+  {
+   "weight": 2,
+   "name": "kubectl describe deployment: owned ReplicaSets",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/apis/apps/v1/namespaces/{{dep.ns}}/replicasets?labelSelector=app.kubernetes.io%2Fname%3D{{dep.name}}",
+    "verb": "list",
+    "user": {
+     "username": "{{human.user}}",
+     "groups": "{{human.groups}}"
+    },
+    "sourceIPs": [
+     "{{human.ip}}"
+    ],
+    "userAgent": "{{human.ua}}",
+    "objectRef": {
+     "resource": "replicasets",
+     "namespace": "{{dep.ns}}",
+     "apiGroup": "apps",
+     "apiVersion": "v1"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"all-engineers-view\" of ClusterRole \"view\" to Group \"system:authenticated\""
+    }
+   }
+  },
+  {
+   "weight": 1.5,
+   "name": "kubectl rollout restart",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Request",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/apis/apps/v1/namespaces/{{devpod.ns}}/deployments/{{devpod.app}}?fieldManager=kubectl-rollout",
+    "verb": "patch",
+    "user": {
+     "username": "{{devpod.user}}",
+     "groups": "{{devpod.groups}}"
+    },
+    "sourceIPs": [
+     "{{devpod.ip}}"
+    ],
+    "userAgent": "{{devpod.ua}}",
+    "objectRef": {
+     "resource": "deployments",
+     "namespace": "{{devpod.ns}}",
+     "name": "{{devpod.app}}",
+     "apiGroup": "apps",
+     "apiVersion": "v1"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestObject": {
+     "spec": {
+      "template": {
+       "metadata": {
+        "annotations": {
+         "kubectl.kubernetes.io/restartedAt": "{{t}}Z"
+        }
+       }
+      }
+     }
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by RoleBinding \"team-edit/{{devpod.ns}}\" of ClusterRole \"edit\" to Group \"{{devpod.grp}}\""
+    }
+   }
+  },
+  {
+   "weight": 1.5,
+   "name": "kubectl rollout status (watch)",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/apis/apps/v1/namespaces/{{devpod.ns}}/deployments?fieldSelector=metadata.name%3D{{devpod.app}}&resourceVersion=4{{rv}}&watch=true",
+    "verb": "watch",
+    "user": {
+     "username": "{{devpod.user}}",
+     "groups": "{{devpod.groups}}"
+    },
+    "sourceIPs": [
+     "{{devpod.ip}}"
+    ],
+    "userAgent": "{{devpod.ua}}",
+    "objectRef": {
+     "resource": "deployments",
+     "namespace": "{{devpod.ns}}",
+     "apiGroup": "apps",
+     "apiVersion": "v1"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"all-engineers-view\" of ClusterRole \"view\" to Group \"system:authenticated\""
+    }
+   }
+  },
+  {
+   "weight": 1.5,
+   "name": "kubectl exec -it (WebSocket, kubectl >= 1.30)",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseStarted",
+    "requestURI": "/api/v1/namespaces/{{srepod.ns}}/pods/{{srepod.pod}}/exec?command=sh&container={{srepod.c}}&stdin=true&stdout=true&tty=true",
+    "verb": "get",
+    "user": {
+     "username": "{{srepod.user}}",
+     "groups": "{{srepod.groups}}"
+    },
+    "sourceIPs": [
+     "{{srepod.ip}}"
+    ],
+    "userAgent": "{{srepod.ua}}",
+    "objectRef": {
+     "resource": "pods",
+     "namespace": "{{srepod.ns}}",
+     "name": "{{srepod.pod}}",
+     "apiVersion": "v1",
+     "subresource": "exec"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 101
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"platform-sre-admin\" of ClusterRole \"cluster-admin\" to Group \"oidc:platform-sre\""
+    }
+   }
+  },
+  {
+   "weight": 0.8,
+   "name": "kubectl exec (developer, one-off command)",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/namespaces/{{devpod.ns}}/pods/{{devpod.pod}}/exec?command=env&container={{devpod.c}}&stdout=true&stderr=true",
+    "verb": "get",
+    "user": {
+     "username": "{{devpod.user}}",
+     "groups": "{{devpod.groups}}"
+    },
+    "sourceIPs": [
+     "{{devpod.ip}}"
+    ],
+    "userAgent": "{{devpod.ua}}",
+    "objectRef": {
+     "resource": "pods",
+     "namespace": "{{devpod.ns}}",
+     "name": "{{devpod.pod}}",
+     "apiVersion": "v1",
+     "subresource": "exec"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 101
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by RoleBinding \"team-edit/{{devpod.ns}}\" of ClusterRole \"edit\" to Group \"{{devpod.grp}}\""
+    }
+   }
+  },
+  {
+   "weight": 1.2,
+   "name": "kubectl port-forward to a database or dashboard",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseStarted",
+    "requestURI": "/api/v1/namespaces/{{dbpod.ns}}/pods/{{dbpod.pod}}/portforward?ports={{dbpod.port}}",
+    "verb": "get",
+    "user": {
+     "username": "{{dbpod.user}}",
+     "groups": "{{dbpod.groups}}"
+    },
+    "sourceIPs": [
+     "{{dbpod.ip}}"
+    ],
+    "userAgent": "{{dbpod.ua}}",
+    "objectRef": {
+     "resource": "pods",
+     "namespace": "{{dbpod.ns}}",
+     "name": "{{dbpod.pod}}",
+     "apiVersion": "v1",
+     "subresource": "portforward"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 101
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"platform-sre-admin\" of ClusterRole \"cluster-admin\" to Group \"oidc:platform-sre\""
+    }
+   }
+  },
+  {
+   "weight": 0.4,
+   "name": "kubectl port-forward (SPDY client)",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseStarted",
+    "requestURI": "/api/v1/namespaces/{{dbpod.ns}}/pods/{{dbpod.pod}}/portforward",
+    "verb": "create",
+    "user": {
+     "username": "{{dbpod.user}}",
+     "groups": "{{dbpod.groups}}"
+    },
+    "sourceIPs": [
+     "{{dbpod.ip}}"
+    ],
+    "userAgent": "kubectl/v1.29.9 (linux/amd64) kubernetes/a3efe50",
+    "objectRef": {
+     "resource": "pods",
+     "namespace": "{{dbpod.ns}}",
+     "name": "{{dbpod.pod}}",
+     "apiVersion": "v1",
+     "subresource": "portforward"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 101
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"platform-sre-admin\" of ClusterRole \"cluster-admin\" to Group \"oidc:platform-sre\""
+    }
+   }
+  },
+  {
+   "weight": 0.5,
+   "name": "kubectl debug: ephemeral debug container in a distroless pod",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Request",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/namespaces/{{srepod.ns}}/pods/{{srepod.pod}}/ephemeralcontainers",
+    "verb": "patch",
+    "user": {
+     "username": "{{srepod.user}}",
+     "groups": "{{srepod.groups}}"
+    },
+    "sourceIPs": [
+     "{{srepod.ip}}"
+    ],
+    "userAgent": "{{srepod.ua}}",
+    "objectRef": {
+     "resource": "pods",
+     "namespace": "{{srepod.ns}}",
+     "name": "{{srepod.pod}}",
+     "apiVersion": "v1",
+     "subresource": "ephemeralcontainers"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestObject": {
+     "spec": {
+      "ephemeralContainers": [
+       {
+        "name": "{{dbg}}",
+        "image": "busybox:1.36",
+        "resources": {},
+        "terminationMessagePolicy": "File",
+        "imagePullPolicy": "IfNotPresent",
+        "stdin": true,
+        "tty": true,
+        "targetContainerName": "{{srepod.c}}"
+       }
+      ]
+     }
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"platform-sre-admin\" of ClusterRole \"cluster-admin\" to Group \"oidc:platform-sre\""
+    }
+   }
+  },
+  {
+   "weight": 0.8,
+   "name": "kubectl get secret (SRE checks a Secret exists / its keys)",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/namespaces/{{secret.ns}}/secrets/{{secret.name}}",
+    "verb": "get",
+    "user": {
+     "username": "{{sre.user}}",
+     "groups": "{{sre.groups}}"
+    },
+    "sourceIPs": [
+     "{{sre.ip}}"
+    ],
+    "userAgent": "{{sre.ua}}",
+    "objectRef": {
+     "resource": "secrets",
+     "namespace": "{{secret.ns}}",
+     "name": "{{secret.name}}",
+     "apiVersion": "v1"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"platform-sre-admin\" of ClusterRole \"cluster-admin\" to Group \"oidc:platform-sre\""
+    }
+   }
+  },
+  {
+   "weight": 0.6,
+   "name": "kubectl get secrets (list)",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/namespaces/{{secret.ns}}/secrets?limit=500",
+    "verb": "list",
+    "user": {
+     "username": "{{sre.user}}",
+     "groups": "{{sre.groups}}"
+    },
+    "sourceIPs": [
+     "{{sre.ip}}"
+    ],
+    "userAgent": "{{sre.ua}}",
+    "objectRef": {
+     "resource": "secrets",
+     "namespace": "{{secret.ns}}",
+     "apiVersion": "v1"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"platform-sre-admin\" of ClusterRole \"cluster-admin\" to Group \"oidc:platform-sre\""
+    }
+   }
+  },
+  {
+   "weight": 0.7,
+   "name": "kubectl auth can-i --as=<app service account> (SRE verifies RBAC)",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/apis/authorization.k8s.io/v1/selfsubjectaccessreviews",
+    "verb": "create",
+    "user": {
+     "username": "{{sre.user}}",
+     "groups": "{{sre.groups}}"
+    },
+    "impersonatedUser": {
+     "username": "system:serviceaccount:{{sa_target.ns}}:{{sa_target.sa}}",
+     "groups": [
+      "system:serviceaccounts",
+      "system:serviceaccounts:{{sa_target.ns}}",
+      "system:authenticated"
+     ]
+    },
+    "sourceIPs": [
+     "{{sre.ip}}"
+    ],
+    "userAgent": "{{sre.ua}}",
+    "objectRef": {
+     "resource": "selfsubjectaccessreviews",
+     "apiGroup": "authorization.k8s.io",
+     "apiVersion": "v1"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 201
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"platform-sre-impersonate\" of ClusterRole \"impersonator\" to Group \"oidc:platform-sre\""
+    }
+   }
+  },
+  {
+   "weight": 0.4,
+   "name": "kubectl get pods --as=<developer> --as-group=<team> (SRE reproduces a permission issue)",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/namespaces/{{devpod.ns}}/pods?limit=500",
+    "verb": "list",
+    "user": {
+     "username": "{{sre.user}}",
+     "groups": "{{sre.groups}}"
+    },
+    "impersonatedUser": {
+     "username": "{{devpod.user}}",
+     "groups": "{{devpod.groups}}"
+    },
+    "sourceIPs": [
+     "{{sre.ip}}"
+    ],
+    "userAgent": "{{sre.ua}}",
+    "objectRef": {
+     "resource": "pods",
+     "namespace": "{{devpod.ns}}",
+     "apiVersion": "v1"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"all-engineers-view\" of ClusterRole \"view\" to Group \"system:authenticated\""
+    }
+   }
+  },
+  {
+   "weight": 3.5,
+   "name": "access gateway (Teleport kube agent) proxies an engineer's kubectl via impersonation",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/namespaces/{{devpod.ns}}/pods?limit=500",
+    "verb": "list",
+    "user": {
+     "username": "system:serviceaccount:teleport:teleport-kube-agent",
+     "uid": "78b5c935-7a11-4254-a64b-cd2fef9b7a4a",
+     "groups": [
+      "system:serviceaccounts",
+      "system:serviceaccounts:teleport",
+      "system:authenticated"
+     ],
+     "extra": {
+      "authentication.kubernetes.io/credential-id": [
+       "JTI={{jti}}"
+      ],
+      "authentication.kubernetes.io/node-name": [
+       "k8s-wk-01"
+      ],
+      "authentication.kubernetes.io/node-uid": [
+       "a4b3ba0c-7bdf-43d0-a0da-b3ebc4f556d9"
+      ],
+      "authentication.kubernetes.io/pod-name": [
+       "teleport-kube-agent-0"
+      ],
+      "authentication.kubernetes.io/pod-uid": [
+       "2a2ed0fd-82db-45e6-8fef-99aa7c216afe"
+      ]
+     }
+    },
+    "impersonatedUser": {
+     "username": "{{tp_user.user}}",
+     "groups": [
+      "{{tp_user.group}}",
+      "system:authenticated"
+     ]
+    },
+    "sourceIPs": [
+     "10.244.3.213"
+    ],
+    "userAgent": "{{tp_user.ua}}",
+    "objectRef": {
+     "resource": "pods",
+     "namespace": "{{devpod.ns}}",
+     "apiVersion": "v1"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"all-engineers-view\" of ClusterRole \"view\" to Group \"system:authenticated\""
+    }
+   }
+  },
+  {
+   "weight": 1.5,
+   "name": "access gateway proxies kubectl logs via impersonation",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/namespaces/{{devpod.ns}}/pods/{{devpod.pod}}/log?container={{devpod.c}}&tailLines=100",
+    "verb": "get",
+    "user": {
+     "username": "system:serviceaccount:teleport:teleport-kube-agent",
+     "uid": "78b5c935-7a11-4254-a64b-cd2fef9b7a4a",
+     "groups": [
+      "system:serviceaccounts",
+      "system:serviceaccounts:teleport",
+      "system:authenticated"
+     ],
+     "extra": {
+      "authentication.kubernetes.io/credential-id": [
+       "JTI={{jti}}"
+      ],
+      "authentication.kubernetes.io/node-name": [
+       "k8s-wk-01"
+      ],
+      "authentication.kubernetes.io/node-uid": [
+       "a4b3ba0c-7bdf-43d0-a0da-b3ebc4f556d9"
+      ],
+      "authentication.kubernetes.io/pod-name": [
+       "teleport-kube-agent-0"
+      ],
+      "authentication.kubernetes.io/pod-uid": [
+       "2a2ed0fd-82db-45e6-8fef-99aa7c216afe"
+      ]
+     }
+    },
+    "impersonatedUser": {
+     "username": "{{tp_user.user}}",
+     "groups": [
+      "{{tp_user.group}}",
+      "system:authenticated"
+     ]
+    },
+    "sourceIPs": [
+     "10.244.3.213"
+    ],
+    "userAgent": "{{tp_user.ua}}",
+    "objectRef": {
+     "resource": "pods",
+     "namespace": "{{devpod.ns}}",
+     "name": "{{devpod.pod}}",
+     "apiVersion": "v1",
+     "subresource": "log"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"all-engineers-view\" of ClusterRole \"view\" to Group \"system:authenticated\""
+    }
+   }
+  },
+  {
+   "weight": 0.3,
+   "name": "access gateway: SRE on-call role mapped to system:masters (break-glass role)",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/nodes?limit=500",
+    "verb": "list",
+    "user": {
+     "username": "system:serviceaccount:teleport:teleport-kube-agent",
+     "uid": "78b5c935-7a11-4254-a64b-cd2fef9b7a4a",
+     "groups": [
+      "system:serviceaccounts",
+      "system:serviceaccounts:teleport",
+      "system:authenticated"
+     ],
+     "extra": {
+      "authentication.kubernetes.io/credential-id": [
+       "JTI={{jti}}"
+      ],
+      "authentication.kubernetes.io/node-name": [
+       "k8s-wk-01"
+      ],
+      "authentication.kubernetes.io/node-uid": [
+       "a4b3ba0c-7bdf-43d0-a0da-b3ebc4f556d9"
+      ],
+      "authentication.kubernetes.io/pod-name": [
+       "teleport-kube-agent-0"
+      ],
+      "authentication.kubernetes.io/pod-uid": [
+       "2a2ed0fd-82db-45e6-8fef-99aa7c216afe"
+      ]
+     }
+    },
+    "impersonatedUser": {
+     "username": "{{tp_sre.user}}",
+     "groups": [
+      "system:masters",
+      "system:authenticated"
+     ]
+    },
+    "sourceIPs": [
+     "10.244.3.213"
+    ],
+    "userAgent": "{{tp_sre.ua}}",
+    "objectRef": {
+     "resource": "nodes",
+     "apiVersion": "v1"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": ""
+    }
+   }
+  },
+  {
+   "weight": 5,
+   "name": "Prometheus scrapes cAdvisor/kubelet metrics through the API server node proxy",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/nodes/{{node.name}}/proxy/{{nodepath}}",
+    "verb": "get",
+    "user": {
+     "username": "system:serviceaccount:monitoring:prometheus-k8s",
+     "uid": "60aca023-c5bf-4221-bd07-4e3e462b9c62",
+     "groups": [
+      "system:serviceaccounts",
+      "system:serviceaccounts:monitoring",
+      "system:authenticated"
+     ],
+     "extra": {
+      "authentication.kubernetes.io/credential-id": [
+       "JTI={{jti}}"
+      ],
+      "authentication.kubernetes.io/node-name": [
+       "k8s-wk-04"
+      ],
+      "authentication.kubernetes.io/node-uid": [
+       "055dcefd-00ce-43d8-b04e-3f2d4f5c6ca5"
+      ],
+      "authentication.kubernetes.io/pod-name": [
+       "prometheus-k8s-0"
+      ],
+      "authentication.kubernetes.io/pod-uid": [
+       "ae909cad-9793-4a1f-8613-173617b9e4ae"
+      ]
+     }
+    },
+    "sourceIPs": [
+     "10.244.6.57"
+    ],
+    "userAgent": "Prometheus/2.54.1",
+    "objectRef": {
+     "resource": "nodes",
+     "name": "{{node.name}}",
+     "apiVersion": "v1",
+     "subresource": "proxy"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"prometheus-k8s\" of ClusterRole \"prometheus-k8s\" to ServiceAccount \"prometheus-k8s/monitoring\""
+    }
+   }
+  },
+  {
+   "weight": 0.5,
+   "name": "kubectl get --raw /api/v1/nodes/<node>/proxy/<stats|configz|pods> (SRE)",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/nodes/{{wk.name}}/proxy/{{adminpath}}",
+    "verb": "get",
+    "user": {
+     "username": "{{sre.user}}",
+     "groups": "{{sre.groups}}"
+    },
+    "sourceIPs": [
+     "{{sre.ip}}"
+    ],
+    "userAgent": "{{sre.ua}}",
+    "objectRef": {
+     "resource": "nodes",
+     "name": "{{wk.name}}",
+     "apiVersion": "v1",
+     "subresource": "proxy"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"platform-sre-admin\" of ClusterRole \"cluster-admin\" to Group \"oidc:platform-sre\""
+    }
+   }
+  },
+  {
+   "weight": 1.5,
+   "name": "kube-state-metrics re-establishes list/watch (Secrets metadata included)",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/{{verb_res}}?allowWatchBookmarks=true&resourceVersion=4{{rv}}&timeout=6m51s&timeoutSeconds=411&watch=true",
+    "verb": "watch",
+    "user": {
+     "username": "system:serviceaccount:monitoring:kube-state-metrics",
+     "uid": "696f78a7-7d96-4991-b392-e155df4a23bc",
+     "groups": [
+      "system:serviceaccounts",
+      "system:serviceaccounts:monitoring",
+      "system:authenticated"
+     ],
+     "extra": {
+      "authentication.kubernetes.io/credential-id": [
+       "JTI={{jti}}"
+      ],
+      "authentication.kubernetes.io/node-name": [
+       "k8s-wk-02"
+      ],
+      "authentication.kubernetes.io/node-uid": [
+       "8942c9a8-b51e-4d25-bdbf-5c9df52adbc9"
+      ],
+      "authentication.kubernetes.io/pod-name": [
+       "kube-state-metrics-6b9d8c7f5-x52x9"
+      ],
+      "authentication.kubernetes.io/pod-uid": [
+       "98b2ce32-e16b-4637-8f1c-613f578540bc"
+      ]
+     }
+    },
+    "sourceIPs": [
+     "10.244.4.101"
+    ],
+    "userAgent": "kube-state-metrics/v2.13.0 (linux/amd64) kubernetes/$Format",
+    "objectRef": {
+     "resource": "{{verb_res}}",
+     "apiVersion": "v1"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"kube-state-metrics\" of ClusterRole \"kube-state-metrics\" to ServiceAccount \"kube-state-metrics/monitoring\""
+    }
+   }
+  },
+  {
+   "weight": 1.5,
+   "name": "kubectl top pods",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/apis/metrics.k8s.io/v1beta1/namespaces/{{devpod.ns}}/pods",
+    "verb": "list",
+    "user": {
+     "username": "{{devpod.user}}",
+     "groups": "{{devpod.groups}}"
+    },
+    "sourceIPs": [
+     "{{devpod.ip}}"
+    ],
+    "userAgent": "{{devpod.ua}}",
+    "objectRef": {
+     "resource": "pods",
+     "namespace": "{{devpod.ns}}",
+     "apiGroup": "metrics.k8s.io",
+     "apiVersion": "v1beta1"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"all-engineers-view\" of ClusterRole \"view\" to Group \"system:authenticated\""
+    }
+   }
+  },
+  {
+   "weight": 0.3,
+   "name": "kubectl scale --replicas=0 (maintenance; scale subresource, Metadata)",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/apis/apps/v1/namespaces/{{devpod.ns}}/deployments/{{devpod.app}}/scale",
+    "verb": "patch",
+    "user": {
+     "username": "{{devpod.user}}",
+     "groups": "{{devpod.groups}}"
+    },
+    "sourceIPs": [
+     "{{devpod.ip}}"
+    ],
+    "userAgent": "{{devpod.ua}}",
+    "objectRef": {
+     "resource": "deployments",
+     "namespace": "{{devpod.ns}}",
+     "name": "{{devpod.app}}",
+     "apiGroup": "apps",
+     "apiVersion": "v1",
+     "subresource": "scale"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by RoleBinding \"team-edit/{{devpod.ns}}\" of ClusterRole \"edit\" to Group \"{{devpod.grp}}\""
+    }
+   }
+  },
+  {
+   "weight": 0.6,
+   "name": "kubectl delete pod (restart a stuck replica)",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/namespaces/{{srepod.ns}}/pods/{{srepod.pod}}",
+    "verb": "delete",
+    "user": {
+     "username": "{{srepod.user}}",
+     "groups": "{{srepod.groups}}"
+    },
+    "sourceIPs": [
+     "{{srepod.ip}}"
+    ],
+    "userAgent": "{{srepod.ua}}",
+    "objectRef": {
+     "resource": "pods",
+     "namespace": "{{srepod.ns}}",
+     "name": "{{srepod.pod}}",
+     "apiVersion": "v1"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"platform-sre-admin\" of ClusterRole \"cluster-admin\" to Group \"oidc:platform-sre\""
+    }
+   }
+  },
+  {
+   "weight": 0.3,
+   "name": "kubectl cordon",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/nodes/k8s-wk-04",
+    "verb": "patch",
+    "user": {
+     "username": "{{sre.user}}",
+     "groups": "{{sre.groups}}"
+    },
+    "sourceIPs": [
+     "{{sre.ip}}"
+    ],
+    "userAgent": "{{sre.ua}}",
+    "objectRef": {
+     "resource": "nodes",
+     "name": "k8s-wk-04",
+     "apiVersion": "v1"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"platform-sre-admin\" of ClusterRole \"cluster-admin\" to Group \"oidc:platform-sre\""
+    }
+   }
+  },
+  {
+   "weight": 0.6,
+   "name": "kubectl drain: evict a pod",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/namespaces/{{drain.ns}}/pods/{{drain.pod}}/eviction",
+    "verb": "create",
+    "user": {
+     "username": "{{sre.user}}",
+     "groups": "{{sre.groups}}"
+    },
+    "sourceIPs": [
+     "{{sre.ip}}"
+    ],
+    "userAgent": "{{sre.ua}}",
+    "objectRef": {
+     "resource": "pods",
+     "namespace": "{{drain.ns}}",
+     "name": "{{drain.pod}}",
+     "apiVersion": "v1",
+     "subresource": "eviction"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 201
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"platform-sre-admin\" of ClusterRole \"cluster-admin\" to Group \"oidc:platform-sre\""
+    }
+   }
+  },
+  {
+   "weight": 0.45,
+   "name": "kubectl create job --from=cronjob (SRE re-runs a failed scheduled job)",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Request",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/apis/batch/v1/namespaces/{{manual.ns}}/jobs?fieldManager=kubectl-create&fieldValidation=Strict",
+    "verb": "create",
+    "user": {
+     "username": "{{sre.user}}",
+     "groups": "{{sre.groups}}"
+    },
+    "sourceIPs": [
+     "{{sre.ip}}"
+    ],
+    "userAgent": "{{sre.ua}}",
+    "objectRef": {
+     "resource": "jobs",
+     "namespace": "{{manual.ns}}",
+     "name": "{{manual.cj}}-manual-{{suffix}}",
+     "apiGroup": "batch",
+     "apiVersion": "v1"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 201
+    },
+    "requestObject": {
+     "kind": "Job",
+     "apiVersion": "batch/v1",
+     "metadata": {
+      "name": "{{manual.cj}}-manual-{{suffix}}",
+      "namespace": "{{manual.ns}}",
+      "creationTimestamp": null,
+      "annotations": {
+       "cronjob.kubernetes.io/instantiate": "manual"
+      },
+      "ownerReferences": [
+       {
+        "apiVersion": "batch/v1",
+        "kind": "CronJob",
+        "name": "{{manual.cj}}",
+        "uid": "{{jti}}",
+        "controller": true
+       }
+      ]
+     },
+     "spec": {
+      "template": {
+       "metadata": {
+        "creationTimestamp": null
+       },
+       "spec": {
+        "containers": [
+         {
+          "name": "{{manual.cj}}",
+          "image": "{{manual.image}}",
+          "args": [
+           "--once"
+          ],
+          "resources": {},
+          "securityContext": {
+           "allowPrivilegeEscalation": false,
+           "capabilities": {
+            "drop": [
+             "ALL"
+            ]
+           },
+           "readOnlyRootFilesystem": true,
+           "runAsNonRoot": true,
+           "runAsUser": 10001
+          }
+         }
+        ],
+        "restartPolicy": "OnFailure",
+        "serviceAccountName": "{{manual.sa}}"
+       }
+      }
+     },
+     "status": {}
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"platform-sre-admin\" of ClusterRole \"cluster-admin\" to Group \"oidc:platform-sre\""
+    }
+   }
+  },
+  {
+   "weight": 0.3,
+   "name": "break-glass kubeadm admin.conf on a control-plane node: get nodes",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/nodes?limit=500",
+    "verb": "list",
+    "user": {
+     "username": "kubernetes-admin",
+     "groups": [
+      "kubeadm:cluster-admins",
+      "system:authenticated"
+     ]
+    },
+    "sourceIPs": [
+     "10.20.0.11"
+    ],
+    "userAgent": "kubectl/v1.30.6 (linux/amd64) kubernetes/00f20d4",
+    "objectRef": {
+     "resource": "nodes",
+     "apiVersion": "v1"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "code": 200
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "allow",
+     "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"kubeadm:cluster-admins\" of ClusterRole \"cluster-admin\" to Group \"kubeadm:cluster-admins\""
+    }
+   }
+  },
+  {
+   "weight": 0.6,
+   "name": "kubectl get pods forbidden outside the developer's namespace",
+   "event": {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "{{auditID}}",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/namespaces/kube-system/pods?limit=500",
+    "verb": "list",
+    "user": {
+     "username": "{{devpod.user}}",
+     "groups": "{{devpod.groups}}"
+    },
+    "sourceIPs": [
+     "{{devpod.ip}}"
+    ],
+    "userAgent": "{{devpod.ua}}",
+    "objectRef": {
+     "resource": "pods",
+     "namespace": "kube-system",
+     "apiVersion": "v1"
+    },
+    "responseStatus": {
+     "metadata": {},
+     "status": "Failure",
+     "message": "pods is forbidden: User \"{{devpod.user}}\" cannot list resource \"pods\" in API group \"\" in the namespace \"kube-system\"",
+     "reason": "Forbidden",
+     "details": {
+      "kind": "pods"
+     },
+     "code": 403
+    },
+    "requestReceivedTimestamp": "{{t}}.{{ms}}{{us1}}Z",
+    "stageTimestamp": "{{t}}.{{ms}}{{us2}}Z",
+    "annotations": {
+     "authorization.k8s.io/decision": "forbid",
+     "authorization.k8s.io/reason": ""
+    }
+   }
+  }
+ ]
+}

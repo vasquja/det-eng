@@ -1,0 +1,3113 @@
+{
+ "id": "linux-auditd-dev-workstation",
+ "version": 1,
+ "logsource": {
+  "product": "linux",
+  "service": "auditd"
+ },
+ "fidelity": "synthetic",
+ "represents": "About an hour of det-eng-keyed syscalls on a developer/admin workstation (Ubuntu 24.04, kernel 6.8, GNOME on Wayland, Firefox snap, Docker Engine with runc 1.1): GPU/tty ioctls, shell pipelines, git/ssh/make/gcc/go/cargo/python/node/VS Code, systemd and snap-confine cgroup-BPF loads, resolved/NetworkManager/sshd/sudo/apt, memfd shared memory (Firefox, PipeWire, mutter, Xwayland), a docker-proxy splicing a local Postgres/Redis port, docker exec/run through runc; plus admin and debugging work adjacent to the rules: gdb/dlv/strace, perf and async-profiler, bpftool and bcc execsnoop, tcpdump, ping/tracepath/mtr, `ip xfrm` and strongSwan charon-nm, `ip netns add/exec`, `unshare -rn`, systemd PrivateNetwork units, `cryptsetup open` of a LUKS2 backup disk (AF_ALG + kernel keyring), `keyctl show`, fio with io_uring.",
+ "provenance": "synthetic; event shape = detections/validate_detections.py normalize() output for SYSCALL records keyed det-eng; only syscalls in detections/audit/atomic.rules; argument encodings from the syscall ABIs (socket family/type/protocol incl. SOCK_CLOEXEC/NONBLOCK bits, setsockopt level/optname, ioctl request numbers from asm-generic/ioctls.h, sockios.h, dm-ioctl.h and drm.h, bpf(2) command numbers, ptrace(2) requests, unshare/setns CLONE_* flags, memfd_create MFD_* flags), and documented tool behaviour (iputils ping datagram ICMP, libpcap TPACKET setup, iproute2 netlink options, gdb/Go PTRACE_TRACEME in the forked inferior, strace PTRACE_SEIZE + GET_SYSCALL_INFO, Go's splice pipe pool (pipe2 O_CLOEXEC|O_NONBLOCK), runc 1.1's memfd re-exec and nsexec stage names, snap-confine's device-cgroup BPF and preserved mount namespace, cryptsetup LUKS2 AF_ALG keyslot decryption and logon key). Pointer arguments are random addresses in the right regions; pids are fixed for daemons and drawn per tool session. Events are drawn independently, so multi-syscall sequences (e.g. runc's memfd_create -> execveat in one pid) are NOT reproduced as sequences; correlation rules see only their base events here, except where one long-lived process (docker-proxy) issues both halves.",
+ "adjacent_to": [
+  "T1622/ptrace_traceme.yml (gdb and dlv inferiors call PTRACE_TRACEME)",
+  "T1068/perf_event_open_non_profiler.yml (perf allowlisted; async-profiler, bcc not)",
+  "T1014/bpf_prog_load.yml (systemd and bpftool allowlisted; snap-confine, runc, bcc not)",
+  "T1040/afpacket_raw_socket.yml (tcpdump, NetworkManager DHCP allowlisted)",
+  "T1040/afinet_raw_socket.yml (ping datagram ICMP; mtr-packet raw)",
+  "T1611/setns_namespace_join.yml (runc:[1:CHILD], ip netns exec, snap-confine)",
+  "T1068/dirtyfrag_xfrm_unshare_netlink.yml (ip xfrm / charon-nm NETLINK_XFRM; ip netns add, unshare -rn, PrivateNetwork unshare in other pids)",
+  "T1068/copyfail_af_alg_authencesn.yml (cryptsetup AF_ALG without splice)",
+  "T1068/dirtypipe_splice_readonly.yml (docker-proxy pipe2 + splice; shell pipes)",
+  "T1068/keyring_add_key_burst.yml (cryptsetup logon key; sshd keyctl)",
+  "T1620/memfd_create_execveat.yml (memfd shared memory; runc's memfd re-exec)",
+  "T1685/io_uring_setup.yml (fio io_uring benchmark)"
+ ],
+ "count": 1300,
+ "vars": {
+  "sd": [
+   "c",
+   "d",
+   "e"
+  ],
+  "hp": [
+   "5",
+   "6"
+  ],
+  "h6": {
+   "hex": 6
+  },
+  "h8": {
+   "hex": 8
+  },
+  "h10": {
+   "hex": 10
+  },
+  "fd": {
+   "weighted": [
+    [
+     30,
+     "3"
+    ],
+    [
+     25,
+     "4"
+    ],
+    [
+     18,
+     "5"
+    ],
+    [
+     12,
+     "6"
+    ],
+    [
+     9,
+     "7"
+    ],
+    [
+     7,
+     "8"
+    ],
+    [
+     5,
+     "9"
+    ],
+    [
+     4,
+     "10"
+    ],
+    [
+     3,
+     "11"
+    ],
+    [
+     3,
+     "12"
+    ],
+    [
+     2,
+     "13"
+    ],
+    [
+     2,
+     "14"
+    ],
+    [
+     2,
+     "15"
+    ],
+    [
+     1,
+     "17"
+    ],
+    [
+     1,
+     "19"
+    ],
+    [
+     1,
+     "22"
+    ],
+    [
+     1,
+     "24"
+    ],
+    [
+     1,
+     "27"
+    ],
+    [
+     1,
+     "31"
+    ],
+    [
+     1,
+     "38"
+    ]
+   ]
+  },
+  "fdx": {
+   "weighted": [
+    [
+     30,
+     "3"
+    ],
+    [
+     25,
+     "4"
+    ],
+    [
+     18,
+     "5"
+    ],
+    [
+     12,
+     "6"
+    ],
+    [
+     9,
+     "7"
+    ],
+    [
+     7,
+     "8"
+    ],
+    [
+     5,
+     "9"
+    ],
+    [
+     4,
+     "a"
+    ],
+    [
+     3,
+     "b"
+    ],
+    [
+     3,
+     "c"
+    ],
+    [
+     2,
+     "d"
+    ],
+    [
+     2,
+     "e"
+    ],
+    [
+     2,
+     "f"
+    ],
+    [
+     1,
+     "11"
+    ],
+    [
+     1,
+     "13"
+    ],
+    [
+     1,
+     "16"
+    ]
+   ]
+  },
+  "bytes": {
+   "weighted": [
+    [
+     6,
+     "8192"
+    ],
+    [
+     5,
+     "65536"
+    ],
+    [
+     4,
+     "312"
+    ],
+    [
+     3,
+     "1448"
+    ],
+    [
+     3,
+     "4096"
+    ],
+    [
+     2,
+     "16384"
+    ],
+    [
+     2,
+     "27"
+    ],
+    [
+     2,
+     "131072"
+    ],
+    [
+     1,
+     "2896"
+    ],
+    [
+     1,
+     "730"
+    ]
+   ]
+  },
+  "ts": {
+   "time": {
+    "start": "2026-10-14T13:02:00Z",
+    "step_seconds": [
+     0.05,
+     5.5
+    ],
+    "format": "%Y-%m-%d %H:%M:%S.%f"
+   }
+  },
+  "upid": {
+   "int": [
+    182000,
+    419999
+   ]
+  },
+  "sh": [
+   {
+    "pid": 201744,
+    "ppid": 3931
+   },
+   {
+    "pid": 214502,
+    "ppid": 3931
+   },
+   {
+    "pid": 268310,
+    "ppid": 3931
+   },
+   {
+    "pid": 301277,
+    "ppid": 3931
+   }
+  ],
+  "drm": [
+   "c03864bc",
+   "c0406469",
+   "c0086457",
+   "40086409",
+   "c00c642e",
+   "c02864c3",
+   "c06864b8"
+  ],
+  "ffx": [
+   {
+    "pid": 5122,
+    "comm": "firefox"
+   },
+   {
+    "pid": 5391,
+    "comm": "Isolated Web Co"
+   },
+   {
+    "pid": 5402,
+    "comm": "Isolated Web Co"
+   },
+   {
+    "pid": 5477,
+    "comm": "WebExtensions"
+   },
+   {
+    "pid": 6013,
+    "comm": "Isolated Web Co"
+   },
+   {
+    "pid": 5370,
+    "comm": "Socket Process"
+   },
+   {
+    "pid": 5455,
+    "comm": "Privileged Cont"
+   },
+   {
+    "pid": 5502,
+    "comm": "RDD Process"
+   }
+  ],
+  "gdb_s": [
+   {
+    "pid": 233811,
+    "ppid": 233790,
+    "child_hex": "39154"
+   },
+   {
+    "pid": 312009,
+    "ppid": 311987,
+    "child_hex": "4c2ca"
+   }
+  ],
+  "gdbchild": [
+   {
+    "pid": 233812,
+    "ppid": 233811
+   },
+   {
+    "pid": 312010,
+    "ppid": 312009
+   }
+  ],
+  "dlv_s": [
+   {
+    "pid": 341208,
+    "ppid": 7212
+   }
+  ],
+  "dlvchild": [
+   {
+    "pid": 341230,
+    "ppid": 341208
+   }
+  ],
+  "strace_s": [
+   {
+    "pid": 255120,
+    "ppid": 214502,
+    "tracee": "3e491"
+   },
+   {
+    "pid": 377415,
+    "ppid": 301277,
+    "tracee": "5c247"
+   }
+  ],
+  "perf_s": [
+   {
+    "pid": 287330,
+    "ppid": 268310
+   },
+   {
+    "pid": 288012,
+    "ppid": 268310
+   },
+   {
+    "pid": 395551,
+    "ppid": 201744
+   }
+  ],
+  "tcpdump_s": [
+   {
+    "pid": 222907,
+    "ppid": 222905
+   },
+   {
+    "pid": 358114,
+    "ppid": 358112
+   }
+  ],
+  "crypt_s": [
+   {
+    "pid": 242240,
+    "ppid": 242238
+   }
+  ],
+  "fio_s": [
+   {
+    "pid": 318871,
+    "ppid": 318870
+   },
+   {
+    "pid": 318872,
+    "ppid": 318870
+   },
+   {
+    "pid": 318873,
+    "ppid": 318870
+   }
+  ],
+  "ipx_s": [
+   {
+    "pid": 219883,
+    "ppid": 219881
+   },
+   {
+    "pid": 219954,
+    "ppid": 219952
+   },
+   {
+    "pid": 265016,
+    "ppid": 265014
+   }
+  ],
+  "netns_s": [
+   {
+    "pid": 390117,
+    "ppid": 390115
+   },
+   {
+    "pid": 390164,
+    "ppid": 390162
+   }
+  ],
+  "bcc_s": [
+   {
+    "pid": 372002,
+    "ppid": 372000
+   }
+  ],
+  "java_s": [
+   {
+    "pid": 8814,
+    "ppid": 7212
+   }
+  ],
+  "runcx": [
+   {
+    "pid": 406611,
+    "ppid": 3226
+   },
+   {
+    "pid": 406702,
+    "ppid": 3301
+   },
+   {
+    "pid": 411880,
+    "ppid": 3226
+   }
+  ],
+  "runcinit": [
+   {
+    "pid": 406618,
+    "ppid": 406611
+   },
+   {
+    "pid": 406709,
+    "ppid": 406702
+   },
+   {
+    "pid": 411887,
+    "ppid": 411880
+   }
+  ],
+  "runcchild": [
+   {
+    "pid": 406620,
+    "ppid": 406618
+   },
+   {
+    "pid": 406711,
+    "ppid": 406709
+   },
+   {
+    "pid": 411889,
+    "ppid": 411887
+   }
+  ],
+  "snapc": [
+   {
+    "pid": 5118,
+    "ppid": 5110
+   },
+   {
+    "pid": 7031,
+    "ppid": 7024
+   },
+   {
+    "pid": 9655,
+    "ppid": 9650
+   },
+   {
+    "pid": 244710,
+    "ppid": 244702
+   }
+  ],
+  "nsflag": {
+   "weighted": [
+    [
+     1,
+     "8000000"
+    ],
+    [
+     1,
+     "4000000"
+    ],
+    [
+     1,
+     "40000000"
+    ],
+    [
+     1,
+     "20000000"
+    ],
+    [
+     1,
+     "20000"
+    ],
+    [
+     1,
+     "2000000"
+    ]
+   ]
+  },
+  "ptrace_gdb": {
+   "weighted": [
+    [
+     5,
+     "3"
+    ],
+    [
+     6,
+     "c"
+    ],
+    [
+     4,
+     "7"
+    ],
+    [
+     3,
+     "1"
+    ],
+    [
+     2,
+     "5"
+    ],
+    [
+     2,
+     "4202"
+    ],
+    [
+     1,
+     "4200"
+    ],
+    [
+     2,
+     "6"
+    ],
+    [
+     1,
+     "4204"
+    ]
+   ]
+  },
+  "ptrace_strace": {
+   "weighted": [
+    [
+     10,
+     "18"
+    ],
+    [
+     10,
+     "420e"
+    ],
+    [
+     1,
+     "4201"
+    ],
+    [
+     1,
+     "4207"
+    ],
+    [
+     1,
+     "4208"
+    ]
+   ]
+  },
+  "ptrace_dlv": {
+   "weighted": [
+    [
+     4,
+     "4204"
+    ],
+    [
+     3,
+     "7"
+    ],
+    [
+     2,
+     "6"
+    ],
+    [
+     2,
+     "1"
+    ],
+    [
+     1,
+     "4200"
+    ],
+    [
+     1,
+     "5"
+    ]
+   ]
+  },
+  "bpftool_cmd": {
+   "weighted": [
+    [
+     3,
+     "b"
+    ],
+    [
+     3,
+     "d"
+    ],
+    [
+     3,
+     "f"
+    ],
+    [
+     1,
+     "c"
+    ],
+    [
+     1,
+     "e"
+    ]
+   ]
+  },
+  "kctl": {
+   "weighted": [
+    [
+     3,
+     "6"
+    ],
+    [
+     1,
+     "0"
+    ],
+    [
+     2,
+     "b"
+    ],
+    [
+     1,
+     "a"
+    ]
+   ]
+  },
+  "cpu": [
+   "0",
+   "1",
+   "2",
+   "3",
+   "4",
+   "5",
+   "6",
+   "7",
+   "8",
+   "9",
+   "a",
+   "b",
+   "c",
+   "d",
+   "e",
+   "f"
+  ],
+  "ioc_tty": {
+   "weighted": [
+    [
+     8,
+     "5401"
+    ],
+    [
+     4,
+     "5413"
+    ],
+    [
+     2,
+     "540f"
+    ],
+    [
+     2,
+     "5410"
+    ],
+    [
+     2,
+     "5403"
+    ],
+    [
+     1,
+     "541b"
+    ]
+   ]
+  },
+  "v6": {
+   "weighted": [
+    [
+     3,
+     "2"
+    ],
+    [
+     2,
+     "a"
+    ]
+   ]
+  },
+  "sockt": {
+   "weighted": [
+    [
+     4,
+     "80801"
+    ],
+    [
+     1,
+     "80802"
+    ]
+   ]
+  },
+  "tiocw": [
+   "5414",
+   "5413",
+   "5401"
+  ],
+  "shfd": {
+   "weighted": [
+    [
+     5,
+     "ff"
+    ],
+    [
+     2,
+     "0"
+    ],
+    [
+     1,
+     "1"
+    ],
+    [
+     1,
+     "2"
+    ]
+   ]
+  },
+  "pager": [
+   "less"
+  ],
+  "pager_exe": [
+   "/usr/bin/less"
+  ],
+  "sol": [
+   "6",
+   "1"
+  ],
+  "sopt": [
+   "1",
+   "9"
+  ],
+  "sshsol": [
+   {
+    "l": "0",
+    "o": "1"
+   },
+   {
+    "l": "6",
+    "o": "1"
+   },
+   {
+    "l": "1",
+    "o": "9"
+   }
+  ],
+  "nbio": [
+   "5421",
+   "5451"
+  ],
+  "tidhex": [
+   "2272",
+   "2290",
+   "22a1",
+   "22b3",
+   "22c0",
+   "22d4"
+  ],
+  "pts": {
+   "weighted": [
+    [
+     10,
+     {
+      "req": "18",
+      "a2": "0",
+      "a3": "0",
+      "rc": "0"
+     }
+    ],
+    [
+     6,
+     {
+      "req": "420e",
+      "a2": "58",
+      "a3": "7ffd5e1c2a40",
+      "rc": "65"
+     }
+    ],
+    [
+     4,
+     {
+      "req": "420e",
+      "a2": "58",
+      "a3": "7ffd5e1c2a40",
+      "rc": "80"
+     }
+    ],
+    [
+     1,
+     {
+      "req": "4201",
+      "a2": "0",
+      "a3": "7ffd5e1c2a40",
+      "rc": "0"
+     }
+    ],
+    [
+     1,
+     {
+      "req": "4207",
+      "a2": "0",
+      "a3": "0",
+      "rc": "0"
+     }
+    ]
+   ]
+  },
+  "perfioc": [
+   "2400",
+   "80082407"
+  ],
+  "bpfsz": [
+   "10",
+   "8",
+   "50"
+  ],
+  "ringsz": [
+   "20",
+   "40",
+   "80"
+  ],
+  "nsub": [
+   "1",
+   "4",
+   "8",
+   "10",
+   "20"
+  ],
+  "nsub_dec": [
+   "1",
+   "4",
+   "8",
+   "16",
+   "32"
+  ],
+  "pcap": [
+   {
+    "l": "107",
+    "o": "a"
+   },
+   {
+    "l": "107",
+    "o": "5"
+   },
+   {
+    "l": "107",
+    "o": "1"
+   },
+   {
+    "l": "1",
+    "o": "1a"
+   },
+   {
+    "l": "1",
+    "o": "8"
+   }
+  ],
+  "ifioc": [
+   "8933",
+   "8927",
+   "8946",
+   "8913"
+  ],
+  "pingopt": [
+   {
+    "l": "1",
+    "o": "1d"
+   },
+   {
+    "l": "0",
+    "o": "b"
+   },
+   {
+    "l": "1",
+    "o": "15"
+   }
+  ],
+  "nlopt": [
+   {
+    "l": "1",
+    "o": "7"
+   },
+   {
+    "l": "1",
+    "o": "8"
+   },
+   {
+    "l": "10e",
+    "o": "b"
+   },
+   {
+    "l": "10e",
+    "o": "c"
+   }
+  ],
+  "resopt": [
+   {
+    "l": "0",
+    "o": "b"
+   },
+   {
+    "l": "0",
+    "o": "8"
+   },
+   {
+    "l": "29",
+    "o": "19"
+   },
+   {
+    "l": "1",
+    "o": "2"
+   }
+  ],
+  "nlproto": [
+   "0",
+   "10"
+  ],
+  "sysbpf": [
+   "0",
+   "8",
+   "1c",
+   "2",
+   "10"
+  ],
+  "unixt": [
+   "80001",
+   "80002",
+   "80005"
+  ],
+  "snapbpf": [
+   "7",
+   "2",
+   "2",
+   "8"
+  ],
+  "snaprc": [
+   "0",
+   "0",
+   "4",
+   "5"
+  ],
+  "sshd_s": [
+   {
+    "pid": 228410,
+    "ppid": 1205
+   },
+   {
+    "pid": 228415,
+    "ppid": 228410
+   }
+  ],
+  "keyserial": [
+   "412290573",
+   "88213674",
+   "1023566108"
+  ],
+  "aptc": [
+   {
+    "c": "apt-get",
+    "e": "/usr/bin/apt-get"
+   },
+   {
+    "c": "dpkg",
+    "e": "/usr/bin/dpkg"
+   },
+   {
+    "c": "apt",
+    "e": "/usr/bin/apt"
+   }
+  ],
+  "keyserial_hex": [
+   "1892f2cd",
+   "5420fa2",
+   "3d0257dc"
+  ],
+  "dmioc": [
+   "c138fd00",
+   "c138fd03",
+   "c138fd06",
+   "c138fd07",
+   "c138fd09",
+   "c138fd0c",
+   "80081272"
+  ],
+  "keyrc": [
+   "0",
+   "52"
+  ],
+  "dproxy": [
+   3184,
+   3207
+  ],
+  "dsock": [
+   {
+    "a0": "1",
+    "a1": "80001",
+    "a2": "0",
+    "c": "dockerd",
+    "e": "/usr/bin/dockerd",
+    "pid": 1683
+   },
+   {
+    "a0": "10",
+    "a1": "80003",
+    "a2": "0",
+    "c": "dockerd",
+    "e": "/usr/bin/dockerd",
+    "pid": 1683
+   },
+   {
+    "a0": "1",
+    "a1": "80001",
+    "a2": "0",
+    "c": "containerd",
+    "e": "/usr/bin/containerd",
+    "pid": 1311
+   }
+  ],
+  "runcname": [
+   "5612c0e0a4f8",
+   "55f3a3c1d0f8",
+   "5603b2e9c4f8"
+  ],
+  "runcempty": [
+   "5612c0a1e2b5",
+   "55f3a3b8e2b5",
+   "5603b2d0e2b5"
+  ],
+  "runcbpf": [
+   "10",
+   "8"
+  ]
+ },
+ "templates": [
+  {
+   "weight": 14,
+   "name": "gnome-shell DRM ioctls (atomic commit, i915 execbuffer, syncobj)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "ioctl",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{fdx}}",
+    "a1": "{{drm}}",
+    "a2": "7ff{{sd}}{{h8}}",
+    "a3": "0",
+    "pid": 2611,
+    "ppid": 2398,
+    "comm": "gnome-shell",
+    "exe": "/usr/bin/gnome-shell",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 4,
+   "name": "Xwayland DRM ioctls",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "ioctl",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{fdx}}",
+    "a1": "{{drm}}",
+    "a2": "7ff{{sd}}{{h8}}",
+    "a3": "0",
+    "pid": 2790,
+    "ppid": 2611,
+    "comm": "Xwayland",
+    "exe": "/usr/bin/Xwayland",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 5,
+   "name": "firefox (snap) DRM/dmabuf ioctls from the GPU process",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "ioctl",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{fdx}}",
+    "a1": "{{drm}}",
+    "a2": "7ff{{sd}}{{h8}}",
+    "a3": "0",
+    "pid": 5122,
+    "ppid": 5110,
+    "comm": "firefox",
+    "exe": "/snap/firefox/5091/usr/lib/firefox/firefox",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 2.5,
+   "name": "firefox shared memory via memfd_create (mozilla-ipc)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "memfd_create",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "5{{hp}}{{h10}}",
+    "a1": "3",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{ffx.pid}}",
+    "ppid": 5122,
+    "comm": "{{ffx.comm}}",
+    "exe": "/snap/firefox/5091/usr/lib/firefox/firefox",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 1.5,
+   "name": "firefox Socket Process opens a TCP/UDP socket",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "{{v6}}",
+    "a1": "{{sockt}}",
+    "a2": "0",
+    "a3": "0",
+    "pid": 5370,
+    "ppid": 5122,
+    "comm": "Socket Process",
+    "exe": "/snap/firefox/5091/usr/lib/firefox/firefox",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 1.5,
+   "name": "pipewire buffer memfd",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "memfd_create",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "7f{{h10}}",
+    "a1": "3",
+    "a2": "0",
+    "a3": "0",
+    "pid": 2489,
+    "ppid": 2398,
+    "comm": "pipewire",
+    "exe": "/usr/bin/pipewire",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.5,
+   "name": "wireplumber memfd",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "memfd_create",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "5{{hp}}{{h10}}",
+    "a1": "3",
+    "a2": "0",
+    "a3": "0",
+    "pid": 2491,
+    "ppid": 2398,
+    "comm": "wireplumber",
+    "exe": "/usr/bin/wireplumber",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 1,
+   "name": "gnome-shell (mutter) anonymous-file memfd",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "memfd_create",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "5{{hp}}{{h10}}",
+    "a1": "3",
+    "a2": "0",
+    "a3": "0",
+    "pid": 2611,
+    "ppid": 2398,
+    "comm": "gnome-shell",
+    "exe": "/usr/bin/gnome-shell",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.6,
+   "name": "Xwayland shm memfd",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "memfd_create",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "5{{hp}}{{h10}}",
+    "a1": "3",
+    "a2": "0",
+    "a3": "0",
+    "pid": 2790,
+    "ppid": 2611,
+    "comm": "Xwayland",
+    "exe": "/usr/bin/Xwayland",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 1.2,
+   "name": "gnome-terminal-server resizes a pty",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "ioctl",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{fd}}",
+    "a1": "{{tiocw}}",
+    "a2": "7ff{{sd}}{{h8}}",
+    "a3": "0",
+    "pid": 3920,
+    "ppid": 2398,
+    "comm": "gnome-terminal-",
+    "exe": "/usr/libexec/gnome-terminal-server",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 7,
+   "name": "bash tty ioctls (job control, window size)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "ioctl",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{shfd}}",
+    "a1": "{{ioc_tty}}",
+    "a2": "7ff{{sd}}{{h8}}",
+    "a3": "0",
+    "pid": "{{sh.pid}}",
+    "ppid": "{{sh.ppid}}",
+    "comm": "bash",
+    "exe": "/usr/bin/bash",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 5,
+   "name": "bash creates a pipeline",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "pipe",
+    "success": "yes",
+    "exit": "0",
+    "a0": "7ff{{sd}}{{h8}}",
+    "a1": "0",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{sh.pid}}",
+    "ppid": "{{sh.ppid}}",
+    "comm": "bash",
+    "exe": "/usr/bin/bash",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 1,
+   "name": "script/subshell isatty check on a non-tty (ENOTTY)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "ioctl",
+    "success": "no",
+    "exit": "-25",
+    "a0": "{{fd}}",
+    "a1": "5401",
+    "a2": "7ff{{sd}}{{h8}}",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "bash",
+    "exe": "/usr/bin/bash",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 1,
+   "name": "less / vim terminal setup",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "ioctl",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{shfd}}",
+    "a1": "{{ioc_tty}}",
+    "a2": "7ff{{sd}}{{h8}}",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "{{pager}}",
+    "exe": "{{pager_exe}}",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 3,
+   "name": "git run-command pipe",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "pipe",
+    "success": "yes",
+    "exit": "0",
+    "a0": "7ff{{sd}}{{h8}}",
+    "a1": "0",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "git",
+    "exe": "/usr/bin/git",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 1,
+   "name": "git isatty / pager check",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "ioctl",
+    "success": "yes",
+    "exit": "0",
+    "a0": "1",
+    "a1": "5401",
+    "a2": "7ff{{sd}}{{h8}}",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "git",
+    "exe": "/usr/bin/git",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 1.2,
+   "name": "git-remote-https (libcurl) connects to the forge",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "{{v6}}",
+    "a1": "1",
+    "a2": "6",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{upid}}",
+    "comm": "git-remote-http",
+    "exe": "/usr/lib/git-core/git-remote-https",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.8,
+   "name": "git-remote-https TCP_NODELAY / keepalive",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "setsockopt",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{fd}}",
+    "a1": "{{sol}}",
+    "a2": "{{sopt}}",
+    "a3": "7ff{{sd}}{{h8}}",
+    "pid": "{{upid}}",
+    "ppid": "{{upid}}",
+    "comm": "git-remote-http",
+    "exe": "/usr/lib/git-core/git-remote-https",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 1.2,
+   "name": "ssh (git over ssh / remote admin) connects",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "2",
+    "a1": "1",
+    "a2": "6",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "ssh",
+    "exe": "/usr/bin/ssh",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 1,
+   "name": "ssh sets IP_TOS / TCP_NODELAY / SO_KEEPALIVE",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "setsockopt",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{fd}}",
+    "a1": "{{sshsol.l}}",
+    "a2": "{{sshsol.o}}",
+    "a3": "7ff{{sd}}{{h8}}",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "ssh",
+    "exe": "/usr/bin/ssh",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 1,
+   "name": "make jobserver pipe",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "pipe",
+    "success": "yes",
+    "exit": "0",
+    "a0": "7ff{{sd}}{{h8}}",
+    "a1": "0",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "make",
+    "exe": "/usr/bin/make",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 1,
+   "name": "gcc driver -pipe (DKMS / kernel-module build)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "pipe",
+    "success": "yes",
+    "exit": "0",
+    "a0": "7ff{{sd}}{{h8}}",
+    "a1": "0",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{upid}}",
+    "comm": "gcc",
+    "exe": "/usr/bin/x86_64-linux-gnu-gcc-13",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 1.5,
+   "name": "go build / go test spawning tools (os.Pipe)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "pipe2",
+    "success": "yes",
+    "exit": "0",
+    "a0": "c000{{h6}}",
+    "a1": "80000",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "go",
+    "exe": "/usr/local/go/bin/go",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.5,
+   "name": "go module download",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "{{v6}}",
+    "a1": "80801",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "go",
+    "exe": "/usr/local/go/bin/go",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.7,
+   "name": "cargo jobserver pipe",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "pipe2",
+    "success": "yes",
+    "exit": "0",
+    "a0": "7ff{{sd}}{{h8}}",
+    "a1": "80000",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "cargo",
+    "exe": "/home/dev/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 1.5,
+   "name": "python3 / pytest subprocess pipes",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "pipe2",
+    "success": "yes",
+    "exit": "0",
+    "a0": "7ff{{sd}}{{h8}}",
+    "a1": "80000",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "python3",
+    "exe": "/usr/bin/python3.12",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.5,
+   "name": "python3 connects to a local service (AF_UNIX)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "1",
+    "a1": "80001",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "python3",
+    "exe": "/usr/bin/python3.12",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 1,
+   "name": "node / npm opens a registry connection",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "{{v6}}",
+    "a1": "80801",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "node",
+    "exe": "/usr/bin/node",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 1.5,
+   "name": "node (libuv) FIONBIO / FIOCLEX on sockets and pipes",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "ioctl",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{fd}}",
+    "a1": "{{nbio}}",
+    "a2": "7ff{{sd}}{{h8}}",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "node",
+    "exe": "/usr/bin/node",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.6,
+   "name": "node child-process pipes",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "pipe2",
+    "success": "yes",
+    "exit": "0",
+    "a0": "7ff{{sd}}{{h8}}",
+    "a1": "80000",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "node",
+    "exe": "/usr/bin/node",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 1.2,
+   "name": "VS Code (Electron) extension-host pipes and sockets",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "pipe2",
+    "success": "yes",
+    "exit": "0",
+    "a0": "7ff{{sd}}{{h8}}",
+    "a1": "80000",
+    "a2": "0",
+    "a3": "0",
+    "pid": 7212,
+    "ppid": 7088,
+    "comm": "code",
+    "exe": "/usr/share/code/code",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.3,
+   "name": "async-profiler attached to a local JVM (perf_event_open per thread)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "perf_event_open",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "{{h10}}",
+    "a1": "{{tidhex}}",
+    "a2": "ffffffffffffffff",
+    "a3": "ffffffffffffffff",
+    "pid": "{{java_s.pid}}",
+    "ppid": "{{java_s.ppid}}",
+    "comm": "Attach Listener",
+    "exe": "/usr/lib/jvm/java-21-openjdk-amd64/bin/java",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "gdb ./prog: forked inferior calls PTRACE_TRACEME before exec",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "ptrace",
+    "success": "yes",
+    "exit": "0",
+    "a0": "0",
+    "a1": "0",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{gdbchild.pid}}",
+    "ppid": "{{gdbchild.ppid}}",
+    "comm": "gdb",
+    "exe": "/usr/bin/gdb",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 2,
+   "name": "gdb drives the inferior (PEEKUSER/GETREGS/CONT/PEEKTEXT/POKEDATA)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "ptrace",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{ptrace_gdb}}",
+    "a1": "{{gdb_s.child_hex}}",
+    "a2": "7f{{h10}}",
+    "a3": "0",
+    "pid": "{{gdb_s.pid}}",
+    "ppid": "{{gdb_s.ppid}}",
+    "comm": "gdb",
+    "exe": "/usr/bin/gdb",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "dlv debug (VS Code Go): Go child sets PTRACE_TRACEME via SysProcAttr",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "ptrace",
+    "success": "yes",
+    "exit": "0",
+    "a0": "0",
+    "a1": "0",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{dlvchild.pid}}",
+    "ppid": "{{dlvchild.ppid}}",
+    "comm": "dlv",
+    "exe": "/home/dev/go/bin/dlv",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.6,
+   "name": "dlv drives the debuggee",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "ptrace",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{ptrace_dlv}}",
+    "a1": "534e6",
+    "a2": "c000{{h6}}",
+    "a3": "0",
+    "pid": "{{dlv_s.pid}}",
+    "ppid": "{{dlv_s.ppid}}",
+    "comm": "dlv",
+    "exe": "/home/dev/go/bin/dlv",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "strace -f: PTRACE_SEIZE",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "ptrace",
+    "success": "yes",
+    "exit": "0",
+    "a0": "4206",
+    "a1": "{{strace_s.tracee}}",
+    "a2": "0",
+    "a3": "51",
+    "pid": "{{strace_s.pid}}",
+    "ppid": "{{strace_s.ppid}}",
+    "comm": "strace",
+    "exe": "/usr/bin/strace",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 3.5,
+   "name": "strace syscall stops (PTRACE_SYSCALL / GET_SYSCALL_INFO / GETEVENTMSG)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "ptrace",
+    "success": "yes",
+    "exit": "{{pts.rc}}",
+    "a0": "{{pts.req}}",
+    "a1": "{{strace_s.tracee}}",
+    "a2": "{{pts.a2}}",
+    "a3": "{{pts.a3}}",
+    "pid": "{{strace_s.pid}}",
+    "ppid": "{{strace_s.ppid}}",
+    "comm": "strace",
+    "exe": "/usr/bin/strace",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 2.5,
+   "name": "perf record -a / perf stat: perf_event_open per CPU",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "perf_event_open",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "5{{hp}}{{h10}}",
+    "a1": "ffffffffffffffff",
+    "a2": "{{cpu}}",
+    "a3": "ffffffffffffffff",
+    "pid": "{{perf_s.pid}}",
+    "ppid": "{{perf_s.ppid}}",
+    "comm": "perf",
+    "exe": "/usr/lib/linux-tools/6.8.0-45-generic/perf",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.6,
+   "name": "perf enables counters (PERF_EVENT_IOC_ENABLE / IOC_ID)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "ioctl",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{fd}}",
+    "a1": "{{perfioc}}",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{perf_s.pid}}",
+    "ppid": "{{perf_s.ppid}}",
+    "comm": "perf",
+    "exe": "/usr/lib/linux-tools/6.8.0-45-generic/perf",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.6,
+   "name": "bpftool prog show / map show",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "bpf",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "{{bpftool_cmd}}",
+    "a1": "7ff{{sd}}{{h8}}",
+    "a2": "{{bpfsz}}",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{upid}}",
+    "comm": "bpftool",
+    "exe": "/usr/lib/linux-tools/6.8.0-45-generic/bpftool",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "bpftool feature probe loads test programs",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "bpf",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "5",
+    "a1": "7ff{{sd}}{{h8}}",
+    "a2": "90",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{upid}}",
+    "comm": "bpftool",
+    "exe": "/usr/lib/linux-tools/6.8.0-45-generic/bpftool",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "bcc execsnoop (admin troubleshooting) loads its kprobe program",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "bpf",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "5",
+    "a1": "7ff{{sd}}{{h8}}",
+    "a2": "90",
+    "a3": "0",
+    "pid": "{{bcc_s.pid}}",
+    "ppid": "{{bcc_s.ppid}}",
+    "comm": "execsnoop-bpfcc",
+    "exe": "/usr/bin/python3.12",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "bcc execsnoop creates its perf buffer / kprobe events",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "perf_event_open",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "7ff{{sd}}{{h8}}",
+    "a1": "ffffffffffffffff",
+    "a2": "{{cpu}}",
+    "a3": "ffffffffffffffff",
+    "pid": "{{bcc_s.pid}}",
+    "ppid": "{{bcc_s.ppid}}",
+    "comm": "execsnoop-bpfcc",
+    "exe": "/usr/bin/python3.12",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "fio --ioengine=io_uring disk benchmark: ring setup",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "io_uring_setup",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "{{ringsz}}",
+    "a1": "7ff{{sd}}{{h8}}",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{fio_s.pid}}",
+    "ppid": "{{fio_s.ppid}}",
+    "comm": "fio",
+    "exe": "/usr/bin/fio",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 1,
+   "name": "fio io_uring_enter (submit + wait)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "io_uring_enter",
+    "success": "yes",
+    "exit": "{{nsub_dec}}",
+    "a0": "{{fd}}",
+    "a1": "{{nsub}}",
+    "a2": "{{nsub}}",
+    "a3": "1",
+    "pid": "{{fio_s.pid}}",
+    "ppid": "{{fio_s.ppid}}",
+    "comm": "fio",
+    "exe": "/usr/bin/fio",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.35,
+   "name": "tcpdump opens its AF_PACKET capture socket",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "11",
+    "a1": "3",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{tcpdump_s.pid}}",
+    "ppid": "{{tcpdump_s.ppid}}",
+    "comm": "tcpdump",
+    "exe": "/usr/bin/tcpdump",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.7,
+   "name": "tcpdump/libpcap socket options (PACKET_VERSION, RX_RING, ADD_MEMBERSHIP, SO_ATTACH_FILTER)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "setsockopt",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{fd}}",
+    "a1": "{{pcap.l}}",
+    "a2": "{{pcap.o}}",
+    "a3": "7ff{{sd}}{{h8}}",
+    "pid": "{{tcpdump_s.pid}}",
+    "ppid": "{{tcpdump_s.ppid}}",
+    "comm": "tcpdump",
+    "exe": "/usr/bin/tcpdump",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.3,
+   "name": "tcpdump interface ioctls",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "ioctl",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{fd}}",
+    "a1": "{{ifioc}}",
+    "a2": "7ff{{sd}}{{h8}}",
+    "a3": "0",
+    "pid": "{{tcpdump_s.pid}}",
+    "ppid": "{{tcpdump_s.ppid}}",
+    "comm": "tcpdump",
+    "exe": "/usr/bin/tcpdump",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.6,
+   "name": "ping (unprivileged ICMP datagram socket)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "3",
+    "a0": "2",
+    "a1": "2",
+    "a2": "1",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "ping",
+    "exe": "/usr/bin/ping",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.3,
+   "name": "ping source-address probe socket",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "4",
+    "a0": "2",
+    "a1": "2",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "ping",
+    "exe": "/usr/bin/ping",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "ping -6",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "3",
+    "a0": "a",
+    "a1": "2",
+    "a2": "3a",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "ping",
+    "exe": "/usr/bin/ping",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.4,
+   "name": "ping socket options (SO_TIMESTAMP, IP_RECVERR)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "setsockopt",
+    "success": "yes",
+    "exit": "0",
+    "a0": "3",
+    "a1": "{{pingopt.l}}",
+    "a2": "{{pingopt.o}}",
+    "a3": "7ff{{sd}}{{h8}}",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "ping",
+    "exe": "/usr/bin/ping",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "tracepath (UDP probes)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "3",
+    "a0": "2",
+    "a1": "2",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "tracepath",
+    "exe": "/usr/bin/tracepath",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "mtr-packet raw ICMP socket (mtr path diagnosis)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "3",
+    "a0": "2",
+    "a1": "3",
+    "a2": "1",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{upid}}",
+    "comm": "mtr-packet",
+    "exe": "/usr/bin/mtr-packet",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "mtr-packet raw IP send socket",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "4",
+    "a0": "2",
+    "a1": "3",
+    "a2": "ff",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{upid}}",
+    "comm": "mtr-packet",
+    "exe": "/usr/bin/mtr-packet",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.4,
+   "name": "ip xfrm state/policy (admin checks the IPsec VPN)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "3",
+    "a0": "10",
+    "a1": "80003",
+    "a2": "6",
+    "a3": "0",
+    "pid": "{{ipx_s.pid}}",
+    "ppid": "{{ipx_s.ppid}}",
+    "comm": "ip",
+    "exe": "/usr/bin/ip",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.4,
+   "name": "iproute2 netlink socket options (SO_SNDBUF/RCVBUF, NETLINK_EXT_ACK)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "setsockopt",
+    "success": "yes",
+    "exit": "0",
+    "a0": "3",
+    "a1": "{{nlopt.l}}",
+    "a2": "{{nlopt.o}}",
+    "a3": "7ff{{sd}}{{h8}}",
+    "pid": "{{ipx_s.pid}}",
+    "ppid": "{{ipx_s.ppid}}",
+    "comm": "ip",
+    "exe": "/usr/bin/ip",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "strongSwan charon-nm installs SAs over NETLINK_XFRM (VPN connect)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "10",
+    "a1": "80003",
+    "a2": "6",
+    "a3": "0",
+    "pid": 4410,
+    "ppid": 912,
+    "comm": "charon-nm",
+    "exe": "/usr/lib/ipsec/charon-nm",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "charon-nm route/addr netlink",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "10",
+    "a1": "80003",
+    "a2": "0",
+    "a3": "0",
+    "pid": 4410,
+    "ppid": 912,
+    "comm": "charon-nm",
+    "exe": "/usr/lib/ipsec/charon-nm",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "ip netns add (dev test namespace): unshare(CLONE_NEWNET)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "unshare",
+    "success": "yes",
+    "exit": "0",
+    "a0": "40000000",
+    "a1": "0",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{netns_s.pid}}",
+    "ppid": "{{netns_s.ppid}}",
+    "comm": "ip",
+    "exe": "/usr/bin/ip",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "ip netns exec: setns into the named netns",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "setns",
+    "success": "yes",
+    "exit": "0",
+    "a0": "5",
+    "a1": "40000000",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{netns_s.pid}}",
+    "ppid": "{{netns_s.ppid}}",
+    "comm": "ip",
+    "exe": "/usr/bin/ip",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "ip netns exec: private mount namespace for /sys",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "unshare",
+    "success": "yes",
+    "exit": "0",
+    "a0": "20000",
+    "a1": "0",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{netns_s.pid}}",
+    "ppid": "{{netns_s.ppid}}",
+    "comm": "ip",
+    "exe": "/usr/bin/ip",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "unshare -rn (hermetic test run without network)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "unshare",
+    "success": "yes",
+    "exit": "0",
+    "a0": "50000000",
+    "a1": "0",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "unshare",
+    "exe": "/usr/bin/unshare",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 3,
+   "name": "systemd-resolved upstream DNS query socket",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "{{v6}}",
+    "a1": "80802",
+    "a2": "0",
+    "a3": "0",
+    "pid": 731,
+    "ppid": 1,
+    "comm": "systemd-resolve",
+    "exe": "/usr/lib/systemd/systemd-resolved",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 2,
+   "name": "systemd-resolved socket options (IP_RECVERR, IP_PKTINFO)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "setsockopt",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{fd}}",
+    "a1": "{{resopt.l}}",
+    "a2": "{{resopt.o}}",
+    "a3": "7ff{{sd}}{{h8}}",
+    "pid": 731,
+    "ppid": 1,
+    "comm": "systemd-resolve",
+    "exe": "/usr/lib/systemd/systemd-resolved",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.3,
+   "name": "systemd-timesyncd NTP socket",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "2",
+    "a1": "80802",
+    "a2": "0",
+    "a3": "0",
+    "pid": 733,
+    "ppid": 1,
+    "comm": "systemd-timesyn",
+    "exe": "/usr/lib/systemd/systemd-timesyncd",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.6,
+   "name": "NetworkManager rtnetlink / ethtool",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "ioctl",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{fd}}",
+    "a1": "{{ifioc}}",
+    "a2": "7ff{{sd}}{{h8}}",
+    "a3": "0",
+    "pid": 912,
+    "ppid": 1,
+    "comm": "NetworkManager",
+    "exe": "/usr/sbin/NetworkManager",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.4,
+   "name": "NetworkManager netlink sockets",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "10",
+    "a1": "80003",
+    "a2": "{{nlproto}}",
+    "a3": "0",
+    "pid": 912,
+    "ppid": 1,
+    "comm": "NetworkManager",
+    "exe": "/usr/sbin/NetworkManager",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "NetworkManager internal DHCP client (AF_PACKET, DHCP renew)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "11",
+    "a1": "80802",
+    "a2": "8",
+    "a3": "0",
+    "pid": 912,
+    "ppid": 1,
+    "comm": "NetworkManager",
+    "exe": "/usr/sbin/NetworkManager",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.8,
+   "name": "systemd (PID 1) loads cgroup BPF programs for unit sandboxing / device policy",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "bpf",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "5",
+    "a1": "7ff{{sd}}{{h8}}",
+    "a2": "90",
+    "a3": "0",
+    "pid": 1,
+    "ppid": 0,
+    "comm": "systemd",
+    "exe": "/usr/lib/systemd/systemd",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.6,
+   "name": "systemd (PID 1) other bpf commands (map create, prog attach, link)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "bpf",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "{{sysbpf}}",
+    "a1": "7ff{{sd}}{{h8}}",
+    "a2": "{{bpfsz}}",
+    "a3": "0",
+    "pid": 1,
+    "ppid": 0,
+    "comm": "systemd",
+    "exe": "/usr/lib/systemd/systemd",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 1,
+   "name": "systemd (PID 1) socket activation / notify sockets",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "1",
+    "a1": "{{unixt}}",
+    "a2": "0",
+    "a3": "0",
+    "pid": 1,
+    "ppid": 0,
+    "comm": "systemd",
+    "exe": "/usr/lib/systemd/systemd",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.3,
+   "name": "systemd daemon-reload serialization memfd",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "memfd_create",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "5{{hp}}{{h10}}",
+    "a1": "b",
+    "a2": "0",
+    "a3": "0",
+    "pid": 1,
+    "ppid": 0,
+    "comm": "systemd",
+    "exe": "/usr/lib/systemd/systemd",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "systemd --user notify / bus sockets",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "1",
+    "a1": "80001",
+    "a2": "0",
+    "a3": "0",
+    "pid": 2398,
+    "ppid": 1,
+    "comm": "systemd",
+    "exe": "/usr/lib/systemd/systemd",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "PrivateNetwork= unit start (systemd-hostnamed): executor unshares a netns",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "unshare",
+    "success": "yes",
+    "exit": "0",
+    "a0": "40000000",
+    "a1": "0",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": 1,
+    "comm": "(ostnamed)",
+    "exe": "/usr/lib/systemd/systemd-executor",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "PrivateNetwork= unit start: loopback setup in the new netns",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "3",
+    "a0": "10",
+    "a1": "80003",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": 1,
+    "comm": "(ostnamed)",
+    "exe": "/usr/lib/systemd/systemd-executor",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "systemd-journald audit/netlink setup on restart",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "10",
+    "a1": "80803",
+    "a2": "9",
+    "a3": "0",
+    "pid": 412,
+    "ppid": 1,
+    "comm": "systemd-journal",
+    "exe": "/usr/lib/systemd/systemd-journald",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.6,
+   "name": "snap-confine loads the snap's device-cgroup BPF program (snap app launch)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "bpf",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "5",
+    "a1": "7ff{{sd}}{{h8}}",
+    "a2": "90",
+    "a3": "0",
+    "pid": "{{snapc.pid}}",
+    "ppid": "{{snapc.ppid}}",
+    "comm": "snap-confine",
+    "exe": "/snap/snapd/21759/usr/lib/snapd/snap-confine",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.9,
+   "name": "snap-confine pinned device map get/update and prog attach",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "bpf",
+    "success": "yes",
+    "exit": "{{snaprc}}",
+    "a0": "{{snapbpf}}",
+    "a1": "7ff{{sd}}{{h8}}",
+    "a2": "{{bpfsz}}",
+    "a3": "0",
+    "pid": "{{snapc.pid}}",
+    "ppid": "{{snapc.ppid}}",
+    "comm": "snap-confine",
+    "exe": "/snap/snapd/21759/usr/lib/snapd/snap-confine",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.4,
+   "name": "snap-confine joins the snap's preserved mount namespace",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "setns",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{fd}}",
+    "a1": "20000",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{snapc.pid}}",
+    "ppid": "{{snapc.ppid}}",
+    "comm": "snap-confine",
+    "exe": "/snap/snapd/21759/usr/lib/snapd/snap-confine",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.3,
+   "name": "snapd API / store connections",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "{{v6}}",
+    "a1": "80801",
+    "a2": "0",
+    "a3": "0",
+    "pid": 1038,
+    "ppid": 1,
+    "comm": "snapd",
+    "exe": "/snap/snapd/21759/usr/lib/snapd/snapd",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.5,
+   "name": "sshd (inbound admin session): audit netlink, keyring, pty",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "10",
+    "a1": "3",
+    "a2": "9",
+    "a3": "0",
+    "pid": "{{sshd_s.pid}}",
+    "ppid": "{{sshd_s.ppid}}",
+    "comm": "sshd",
+    "exe": "/usr/sbin/sshd",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.3,
+   "name": "sshd pam_keyinit joins a new session keyring",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "keyctl",
+    "success": "yes",
+    "exit": "{{keyserial}}",
+    "a0": "1",
+    "a1": "0",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{sshd_s.pid}}",
+    "ppid": "{{sshd_s.ppid}}",
+    "comm": "sshd",
+    "exe": "/usr/sbin/sshd",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "sshd pty controlling-terminal ioctl",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "ioctl",
+    "success": "yes",
+    "exit": "0",
+    "a0": "0",
+    "a1": "540e",
+    "a2": "1",
+    "a3": "0",
+    "pid": "{{sshd_s.pid}}",
+    "ppid": "{{sshd_s.ppid}}",
+    "comm": "sshd",
+    "exe": "/usr/sbin/sshd",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.6,
+   "name": "sudo writes its audit record (NETLINK_AUDIT)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "10",
+    "a1": "3",
+    "a2": "9",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "sudo",
+    "exe": "/usr/bin/sudo",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.3,
+   "name": "sudo tty ioctls",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "ioctl",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{shfd}}",
+    "a1": "{{ioc_tty}}",
+    "a2": "7ff{{sd}}{{h8}}",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "sudo",
+    "exe": "/usr/bin/sudo",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.5,
+   "name": "apt update: http method connects to the archive mirror",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "{{v6}}",
+    "a1": "1",
+    "a2": "6",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{upid}}",
+    "comm": "http",
+    "exe": "/usr/lib/apt/methods/http",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.5,
+   "name": "apt-get / dpkg status pipes",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "pipe",
+    "success": "yes",
+    "exit": "0",
+    "a0": "7ff{{sd}}{{h8}}",
+    "a1": "0",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{upid}}",
+    "comm": "{{aptc.c}}",
+    "exe": "{{aptc.e}}",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.3,
+   "name": "unattended-upgrades subprocess pipes",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "pipe2",
+    "success": "yes",
+    "exit": "0",
+    "a0": "7ff{{sd}}{{h8}}",
+    "a1": "80000",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": 1,
+    "comm": "unattended-upgr",
+    "exe": "/usr/bin/python3.12",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.3,
+   "name": "cryptsetup open: keyslot decryption via the kernel crypto API (AF_ALG)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "26",
+    "a1": "5",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{crypt_s.pid}}",
+    "ppid": "{{crypt_s.ppid}}",
+    "comm": "cryptsetup",
+    "exe": "/usr/sbin/cryptsetup",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "cryptsetup AF_ALG ALG_SET_KEY",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "setsockopt",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{fd}}",
+    "a1": "117",
+    "a2": "1",
+    "a3": "5{{hp}}{{h10}}",
+    "pid": "{{crypt_s.pid}}",
+    "ppid": "{{crypt_s.ppid}}",
+    "comm": "cryptsetup",
+    "exe": "/usr/sbin/cryptsetup",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "cryptsetup hands the volume key to dm-crypt via the kernel keyring (add_key logon)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "add_key",
+    "success": "yes",
+    "exit": "{{keyserial}}",
+    "a0": "5{{hp}}{{h10}}",
+    "a1": "5{{hp}}{{h10}}",
+    "a2": "5{{hp}}{{h10}}",
+    "a3": "40",
+    "pid": "{{crypt_s.pid}}",
+    "ppid": "{{crypt_s.ppid}}",
+    "comm": "cryptsetup",
+    "exe": "/usr/sbin/cryptsetup",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "cryptsetup unlinks the volume key from its thread keyring",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "keyctl",
+    "success": "yes",
+    "exit": "0",
+    "a0": "9",
+    "a1": "{{keyserial_hex}}",
+    "a2": "ffffffffffffffff",
+    "a3": "0",
+    "pid": "{{crypt_s.pid}}",
+    "ppid": "{{crypt_s.ppid}}",
+    "comm": "cryptsetup",
+    "exe": "/usr/sbin/cryptsetup",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.5,
+   "name": "cryptsetup device-mapper ioctls",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "ioctl",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{fd}}",
+    "a1": "{{dmioc}}",
+    "a2": "5{{hp}}{{h10}}",
+    "a3": "0",
+    "pid": "{{crypt_s.pid}}",
+    "ppid": "{{crypt_s.ppid}}",
+    "comm": "cryptsetup",
+    "exe": "/usr/sbin/cryptsetup",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "keyctl show @s (admin inspects the session keyring)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "keyctl",
+    "success": "yes",
+    "exit": "{{keyrc}}",
+    "a0": "{{kctl}}",
+    "a1": "{{keyserial_hex}}",
+    "a2": "7ff{{sd}}{{h8}}",
+    "a3": "0",
+    "pid": "{{upid}}",
+    "ppid": "{{sh.pid}}",
+    "comm": "keyctl",
+    "exe": "/usr/bin/keyctl",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 5,
+   "name": "docker-proxy splices a published port (localhost:5432/6379) between sockets",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "splice",
+    "success": "yes",
+    "exit": "{{bytes}}",
+    "a0": "{{fdx}}",
+    "a1": "0",
+    "a2": "{{fdx}}",
+    "a3": "0",
+    "pid": "{{dproxy}}",
+    "ppid": 1683,
+    "comm": "docker-proxy",
+    "exe": "/usr/bin/docker-proxy",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 2.5,
+   "name": "docker-proxy splice drained (EAGAIN)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "splice",
+    "success": "no",
+    "exit": "-11",
+    "a0": "{{fdx}}",
+    "a1": "0",
+    "a2": "{{fdx}}",
+    "a3": "0",
+    "pid": "{{dproxy}}",
+    "ppid": 1683,
+    "comm": "docker-proxy",
+    "exe": "/usr/bin/docker-proxy",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.4,
+   "name": "docker-proxy Go splice pipe pool refill (pipe2 O_CLOEXEC|O_NONBLOCK)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "pipe2",
+    "success": "yes",
+    "exit": "0",
+    "a0": "c000{{h6}}",
+    "a1": "80800",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{dproxy}}",
+    "ppid": 1683,
+    "comm": "docker-proxy",
+    "exe": "/usr/bin/docker-proxy",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.4,
+   "name": "dockerd / containerd unix and netlink sockets",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "socket",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "{{dsock.a0}}",
+    "a1": "{{dsock.a1}}",
+    "a2": "{{dsock.a2}}",
+    "a3": "0",
+    "pid": "{{dsock.pid}}",
+    "ppid": 1,
+    "comm": "{{dsock.c}}",
+    "exe": "{{dsock.e}}",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.3,
+   "name": "runc (docker exec/run) os.Pipe",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "pipe2",
+    "success": "yes",
+    "exit": "0",
+    "a0": "c000{{h6}}",
+    "a1": "80000",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{runcx.pid}}",
+    "ppid": "{{runcx.ppid}}",
+    "comm": "runc",
+    "exe": "/usr/bin/runc",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "runc init re-exec guard: sealed memfd copy of runc (CVE-2019-5736)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "memfd_create",
+    "success": "yes",
+    "exit": "6",
+    "a0": "{{runcname}}",
+    "a1": "3",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{runcinit.pid}}",
+    "ppid": "{{runcinit.ppid}}",
+    "comm": "exe",
+    "exe": "/usr/bin/runc",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "runc init fexecve()s the sealed copy (execveat AT_EMPTY_PATH)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "execveat",
+    "success": "yes",
+    "exit": "0",
+    "a0": "6",
+    "a1": "{{runcempty}}",
+    "a2": "5{{hp}}{{h10}}",
+    "a3": "5{{hp}}{{h10}}",
+    "pid": "{{runcinit.pid}}",
+    "ppid": "{{runcinit.ppid}}",
+    "comm": "6",
+    "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.35,
+   "name": "runc:[1:CHILD] joins the container's namespaces (docker exec)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "setns",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{fdx}}",
+    "a1": "{{nsflag}}",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{runcchild.pid}}",
+    "ppid": "{{runcchild.ppid}}",
+    "comm": "runc:[1:CHILD]",
+    "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "runc:[1:CHILD] unshares new namespaces (docker run)",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "unshare",
+    "success": "yes",
+    "exit": "0",
+    "a0": "6c020000",
+    "a1": "0",
+    "a2": "0",
+    "a3": "0",
+    "pid": "{{runcchild.pid}}",
+    "ppid": "{{runcchild.ppid}}",
+    "comm": "runc:[1:CHILD]",
+    "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "runc (docker run, cgroup v2) loads the device-filter BPF program",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "bpf",
+    "success": "yes",
+    "exit": "{{fd}}",
+    "a0": "5",
+    "a1": "c000{{h6}}",
+    "a2": "90",
+    "a3": "0",
+    "pid": "{{runcx.pid}}",
+    "ppid": "{{runcx.ppid}}",
+    "comm": "runc",
+    "exe": "/usr/bin/runc",
+    "timestamp": "{{ts}}"
+   }
+  },
+  {
+   "weight": 0.25,
+   "name": "runc device filter query/attach",
+   "event": {
+    "type": "SYSCALL",
+    "syscall": "bpf",
+    "success": "yes",
+    "exit": "0",
+    "a0": "{{runcbpf}}",
+    "a1": "c000{{h6}}",
+    "a2": "{{bpfsz}}",
+    "a3": "0",
+    "pid": "{{runcx.pid}}",
+    "ppid": "{{runcx.ppid}}",
+    "comm": "runc",
+    "exe": "/usr/bin/runc",
+    "timestamp": "{{ts}}"
+   }
+  }
+ ]
+}

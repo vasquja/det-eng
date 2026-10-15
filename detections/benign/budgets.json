@@ -1,5 +1,219 @@
 {
-  "_doc": "Per-rule false-positive budgets for detections/score_benign.py. A rule not listed uses `default`. mode `shadow`: an overrun is a CI warning. mode `enforce`: an overrun fails CI. `max_hits` is the most benign hits the rule may raise over the whole committed corpus for its logsource; optional `max_rate_per_10k` caps the rate. Every entry needs a `why`. Raising a budget, or moving a rule from enforce back to shadow, is a human decision: such a change needs a human approval before merge.",
-  "default": {"mode": "shadow", "max_hits": 0},
-  "rules": {}
+  "_doc": "Per-rule false-positive budgets for detections/score_benign.py. A rule not listed uses `default`: enforce at 0 hits, so a new rule must stay silent on the benign corpus or a human approves a budget for it. mode `shadow`: an overrun is a CI warning. mode `enforce`: an overrun fails CI. `max_hits` is the most benign hits the rule may raise over the whole committed corpus for its logsource; optional `max_rate_per_10k` caps the rate. Every entry needs a `why`: 'documented noise' (a deliberately generic or hunting rule, or a falsepositives class the rule names) or 'rule defect, fix tracked'. Raising a budget, or moving a rule from enforce to shadow, is a human decision: this file is a protected path that needs a human approval before merge.",
+  "default": {
+    "mode": "enforce",
+    "max_hits": 0
+  },
+  "rules": {
+    "T1014/bpf_prog_load.yml": {
+      "mode": "shadow",
+      "max_hits": 12,
+      "why": "rule defect, fix tracked (follow-up rule-fix PR): stock runc (cgroup-v2 device filter on every container create) and snap-confine (device-cgroup program on snap launches) are not in bpf_processes; the 2 bcc hits are documented observability noise."
+    },
+    "T1040/afinet_raw_socket.yml": {
+      "mode": "shadow",
+      "max_hits": 6,
+      "why": "documented noise: mtr's raw ICMP / IPPROTO_RAW sockets, named in the rule's falsepositives (extend allowed_processes per site)."
+    },
+    "T1053.007/k8s_cri_job_pod.yml": {
+      "mode": "shadow",
+      "max_hits": 59,
+      "why": "documented noise: low hunting rule: every CronJob child, Helm hook and manual Job pod matches by design."
+    },
+    "T1053.007/k8s_job_create.yml": {
+      "mode": "shadow",
+      "max_hits": 24,
+      "why": "rule defect, fix tracked (follow-up rule-fix PR): filter_controllers misses kube-system ttl-after-finished-controller and generic-garbage-collector deletes (6 of the hits); the rest is documented GitOps/CI Job deployment."
+    },
+    "T1068/keyring_add_key_burst.yml": {
+      "mode": "shadow",
+      "max_hits": 1,
+      "why": "rule defect, fix tracked (follow-up rule-fix PR): described as a burst detector but fires on a single add_key; cryptsetup / systemd-cryptsetup hand LUKS2 volume keys to dm-crypt via add_key('logon')."
+    },
+    "T1068/perf_event_open_non_profiler.yml": {
+      "mode": "shadow",
+      "max_hits": 5,
+      "why": "documented noise: JVM / Python profilers (documented profiler class). Note: auditd comm is the thread name, so a comm allowlist cannot cover JVM-hosted profilers; key on exe."
+    },
+    "T1070/k8s_workload_deleted_evidence.yml": {
+      "mode": "shadow",
+      "max_hits": 59,
+      "why": "documented noise: low correlation anchor: routine pod and Job teardown by controllers, kubelets and Helm."
+    },
+    "T1078.004/aws_leaked_access_key_recon.yml": {
+      "mode": "shadow",
+      "max_hits": 263,
+      "why": "rule defect, fix tracked (follow-up rule-fix PR): the id_aida fallback (principalId AIDA) matches IAM-user TEMPORARY credentials too, so MFA (GetSessionToken) and console sessions fire (77 hits); the remaining off-egress long-term-key use by developers, legacy CI and a SaaS key is the documented baseline-before-alerting noise."
+    },
+    "T1078.004/entra_service_principal_federated_credential_signin.yml": {
+      "mode": "shadow",
+      "max_hits": 52,
+      "why": "documented noise: funnel rule: approved GitHub Actions workload-identity-federation sign-ins; pair with a first-seen overlay as documented."
+    },
+    "T1098.001/aws_github_oidc_role_trust_abuse.yml": {
+      "mode": "shadow",
+      "max_hits": 10,
+      "why": "rule defect, fix tracked (follow-up rule-fix PR): a wildcard inside the ref of a pinned owner/repo (refs/tags/v*) fires at high though no fork or other repo can match (4 hits); the repo:<org>/<repo>:* trusts (6) are GitHub's own documented example, a hygiene finding by design."
+    },
+    "T1098.001/azure_managed_identity_federated_credential_backdoor.yml": {
+      "mode": "shadow",
+      "max_hits": 44,
+      "why": "documented noise: broad by design (any managed-identity FIC write): AKS workload-identity onboarding. Every ARM write logs Start and Success, so each operation counts twice."
+    },
+    "T1098.001/gcp_workload_identity_federation_sa_binding.yml": {
+      "mode": "shadow",
+      "max_hits": 8,
+      "why": "documented noise: Google's documented GitHub WIF onboarding (per-repo attribute.repository principalSets); consider down-ranking subject-scoped members vs whole-pool members."
+    },
+    "T1098.003/gcp_public_iam_member_grant.yml": {
+      "mode": "shadow",
+      "max_hits": 2,
+      "why": "documented noise: an intentionally public Cloud Run marketing site (allUsers run.invoker), documented: allowlist by resourceName and role."
+    },
+    "T1098.006/k8s_rbac_privileged_grant.yml": {
+      "mode": "shadow",
+      "max_hits": 9,
+      "why": "rule defect, fix tracked (follow-up rule-fix PR): the kube-system clusterrole-aggregation-controller re-applying the built-in edit/admin ClusterRoles (which carry impersonate) fires (3 hits); tenant admin/edit bindings by GitOps are documented."
+    },
+    "T1098.006/k8s_rbac_write.yml": {
+      "mode": "shadow",
+      "max_hits": 30,
+      "why": "documented noise: generic RBAC-write chokepoint: GitOps reconciles and the aggregation controller."
+    },
+    "T1134/k8s_impersonation.yml": {
+      "mode": "shadow",
+      "max_hits": 59,
+      "why": "documented noise: access gateway (Teleport) and admins verifying RBAC; baseline by the real actor."
+    },
+    "T1134/k8s_impersonation_privileged.yml": {
+      "mode": "shadow",
+      "max_hits": 3,
+      "why": "documented noise: break-glass gateway role mapped to system:masters, documented in falsepositives."
+    },
+    "T1199/gcp_workforce_principalset_privileged_binding.yml": {
+      "mode": "shadow",
+      "max_hits": 6,
+      "why": "rule defect, fix tracked (follow-up rule-fix PR): described as privileged role + whole-pool breadth, but the regex never checks breadth, so group-scoped workforce RBAC on any *admin role fires."
+    },
+    "T1528/entra_device_code_authentication.yml": {
+      "mode": "shadow",
+      "max_hits": 4,
+      "why": "documented noise: az login --use-device-code on a headless VM and a Teams Rooms device, both named in falsepositives."
+    },
+    "T1528/entra_illicit_oauth_consent_grant.yml": {
+      "mode": "shadow",
+      "max_hits": 30,
+      "why": "rule defect, fix tracked (follow-up rule-fix PR): the bare AllPrincipals token fires on tenant-wide consent to sign-in-only scopes (User.Read openid profile email), contradicting the title and falsepositives; where user consent is disabled every SSO onboarding is AllPrincipals."
+    },
+    "T1537/aws_efs_file_system_policy_made_public.yml": {
+      "mode": "shadow",
+      "max_hits": 3,
+      "why": "rule defect, fix tracked (follow-up rule-fix PR): the EFS console policy wizard's Principal '*' conditioned on elasticfilesystem:AccessedViaMountTarget is not recognised by filter_scoped."
+    },
+    "T1537/aws_resource_policy_made_public.yml": {
+      "mode": "shadow",
+      "max_hits": 28,
+      "why": "rule defect, fix tracked (follow-up rule-fix PR): the whole policy is matched as text, so a named Allow plus the standard DenyInsecureTransport statement (Deny, Principal '*') reads as public (13); filter_scoped also lacks aws:SourceOwner (SNS default policy, 7) and kms:CallerAccount / kms:ViaService (5). 3 hits are intentionally public resources."
+    },
+    "T1537/aws_s3_block_public_access_disabled.yml": {
+      "mode": "shadow",
+      "max_hits": 2,
+      "why": "documented noise: an intentional public static-site bucket, documented."
+    },
+    "T1543.005/k8s_cri_static_pod_start.yml": {
+      "mode": "shadow",
+      "max_hits": 13,
+      "why": "documented noise: kubeadm control-plane static pods start with config.source file; the documented suppression is name + config.hash per node."
+    },
+    "T1543.005/k8s_static_pod_mirror_create.yml": {
+      "mode": "shadow",
+      "max_hits": 1,
+      "why": "documented noise: a control-plane kubelet re-registering its mirror pod after a restart, documented."
+    },
+    "T1546/k8s_admission_webhook_created.yml": {
+      "mode": "shadow",
+      "max_hits": 4,
+      "why": "documented noise: Service-backed webhooks from installs and self-registering controllers (the URL-webhook grader correctly does not fire)."
+    },
+    "T1552.005/aws_imds_creds_used_off_instance.yml": {
+      "mode": "shadow",
+      "max_hits": 11,
+      "why": "documented noise: a public-subnet bastion calling from its own auto-assigned public IPv4, named in falsepositives."
+    },
+    "T1552.007/k8s_secret_access.yml": {
+      "mode": "shadow",
+      "max_hits": 239,
+      "why": "documented noise: generic secret-read chokepoint: GitOps, CI and controllers."
+    },
+    "T1552.007/k8s_secret_token_request.yml": {
+      "mode": "shadow",
+      "max_hits": 7,
+      "why": "documented noise: external-secrets minting tokens for Vault auth service accounts, documented."
+    },
+    "T1565.001/k8s_coredns_configmap_modified.yml": {
+      "mode": "shadow",
+      "max_hits": 3,
+      "why": "documented noise: GitOps managing the CoreDNS ConfigMap, documented."
+    },
+    "T1565.001/k8s_coredns_corefile_poisoned.yml": {
+      "mode": "shadow",
+      "max_hits": 3,
+      "why": "rule defect, fix tracked (follow-up rule-fix PR): the forward-to-IP clause matches any server block, so a private stub zone forwarding a corporate domain to RFC1918 resolvers fires at high."
+    },
+    "T1572/k8s_pod_portforward.yml": {
+      "mode": "shadow",
+      "max_hits": 14,
+      "why": "documented noise: port-forward to databases and dashboards by operators (both transports)."
+    },
+    "T1609/k8s_pod_ephemeral_container.yml": {
+      "mode": "shadow",
+      "max_hits": 4,
+      "why": "documented noise: kubectl debug with an unprivileged ephemeral container."
+    },
+    "T1609/k8s_pod_exec_attach.yml": {
+      "mode": "shadow",
+      "max_hits": 24,
+      "why": "documented noise: interactive debugging by operators."
+    },
+    "T1611/k8s_podspec_controller_host_access.yml": {
+      "mode": "shadow",
+      "max_hits": 5,
+      "why": "documented noise: GitOps server-side apply of node-agent DaemonSets (documented host-access workloads)."
+    },
+    "T1611/k8s_podspec_host_access.yml": {
+      "mode": "shadow",
+      "max_hits": 9,
+      "why": "documented noise: CNI, kube-proxy, monitoring and log-agent pods (documented host-access workloads)."
+    },
+    "T1611/setns_namespace_join.yml": {
+      "mode": "shadow",
+      "max_hits": 14,
+      "why": "rule defect, fix tracked (follow-up rule-fix PR): runc's nsexec runs as comm 'runc:[1:CHILD]' (and exe memfd:runc_cloned), not 'runc', so every container exec fires; snap-confine joins the snap mount namespace on every snap launch; ip netns exec."
+    },
+    "T1622/ptrace_traceme.yml": {
+      "mode": "shadow",
+      "max_hits": 5,
+      "why": "rule defect, fix tracked (follow-up rule-fix PR): debuggers (gdb, dlv) fork an inferior that calls PTRACE_TRACEME with the debugger's comm/exe; not in falsepositives."
+    },
+    "T1685/io_uring_setup.yml": {
+      "mode": "shadow",
+      "max_hits": 7,
+      "why": "rule defect, fix tracked (follow-up rule-fix PR): described as flagging ring creation by a non-allowlisted process, but it has no allowlist and also matches the per-I/O io_uring_enter (an fio benchmark)."
+    },
+    "T1685/k8s_admission_webhook_disabled.yml": {
+      "mode": "shadow",
+      "max_hits": 8,
+      "why": "documented noise: policy engines and PKI/injector controllers reconciling their webhook configs, documented."
+    },
+    "T1685/k8s_admission_webhook_neutered.yml": {
+      "mode": "shadow",
+      "max_hits": 4,
+      "why": "rule defect, fix tracked (follow-up rule-fix PR): grades the submitted state, not a transition: a full-object rewrite of a webhook that already fails open (Gatekeeper CA rotation, Helm upgrade) is graded as a neuter."
+    },
+    "T1685/k8s_security_tool_workload_removed.yml": {
+      "mode": "shadow",
+      "max_hits": 10,
+      "why": "documented noise: GitOps prunes and a downscaler scaling workloads, documented anchor."
+    }
+  }
 }

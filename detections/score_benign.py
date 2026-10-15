@@ -59,14 +59,17 @@ ACTOR_FIELDS = {
     ("linux", "auditd"): ["exe", "comm"],
     ("kubernetes", "audit"): ["user.username"],
     ("kubernetes", "cri"): ["metadata.namespace"],
-    ("aws", "cloudtrail"): ["userIdentity.arn", "userIdentity.principalId",
-                            "userIdentity.invokedBy", "userIdentity.type"],
+    # The session issuer (the role) before the per-session ARN, so one role used by
+    # many instances or pods counts as one actor, not one per session.
+    ("aws", "cloudtrail"): ["userIdentity.sessionContext.sessionIssuer.arn", "userIdentity.arn",
+                            "userIdentity.principalId", "userIdentity.invokedBy",
+                            "userIdentity.type"],
     ("azure", "auditlogs"): ["properties.initiatedBy.user.userPrincipalName",
                              "properties.initiatedBy.app.servicePrincipalName",
                              "properties.initiatedBy.app.displayName"],
     ("azure", "signinlogs"): ["properties.userPrincipalName", "properties.servicePrincipalName",
                               "properties.appDisplayName"],
-    ("azure", "activitylogs"): ["caller", "identity.claims.name"],
+    ("azure", "activitylogs"): ["caller", "identity.claims.name", "identity.claims.appid"],
     ("gcp", "gcp.audit"): ["protoPayload.authenticationInfo.principalEmail"],
 }
 

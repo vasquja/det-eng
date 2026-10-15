@@ -1,0 +1,1623 @@
+{
+ "id": "azure-entra-signins",
+ "version": 1,
+ "logsource": {
+  "product": "azure",
+  "service": "signinlogs"
+ },
+ "fidelity": "synthetic",
+ "represents": "Microsoft Entra sign-in telemetry for one tenant across the four diagnostic categories: interactive browser / desktop sign-ins with MFA, the usual failures and interrupts (bad password, MFA required, KMSI), silent token refreshes from Teams / Outlook / Azure CLI, daemon service principals using client secrets and certificates, GitHub Actions workload identity federation from the approved CI (federatedCredentialId populated) incl. a rejected untrusted-branch run, managed-identity token requests, and two legitimate device-code sign-ins (an admin's `az login --use-device-code` on a headless VM, a Teams Rooms device).",
+ "provenance": "synthetic; shapes from the Azure Monitor diagnostic-setting sign-in schemas (SignInLogs / NonInteractiveUserSignInLogs / ServicePrincipalSignInLogs / ManagedIdentitySignInLogs) and the Microsoft Graph signIn resource (authenticationProtocol, originalTransferMethod, clientCredentialType, federatedCredentialId), Entra AADSTS error codes, and this repo's TRR9017 / TRR9023 fixtures (properties.resultType as a string, status.errorCode as an int). First-party appIds are Microsoft's public ids; other ids are random GUIDs; users are role handles at example.com; ASNs are RFC 5398 documentation ASNs; addresses RFC 5737 / RFC 1918.",
+ "adjacent_to": [
+  "T1528/entra_device_code_authentication.yml",
+  "T1078.004/entra_service_principal_federated_credential_signin.yml"
+ ],
+ "count": 700,
+ "vars": {
+  "corr": {
+   "uuid": true
+  },
+  "sid": {
+   "uuid": true
+  },
+  "idsfx": {
+   "hex": 5
+  },
+  "uuid2": {
+   "uuid": true
+  },
+  "t": {
+   "time": {
+    "start": "2026-10-06T12:00:00Z",
+    "step_seconds": [
+     1,
+     40
+    ],
+    "format": "%Y-%m-%dT%H:%M:%S.%fZ"
+   }
+  },
+  "sip": {
+   "ipv4": "203.0.113.32/27"
+  },
+  "spsec_ip": {
+   "ipv4": "203.0.113.16/28"
+  },
+  "ghip": {
+   "ipv4": "192.0.2.128/25"
+  },
+  "miip": {
+   "ipv4": "10.50.0.0/16"
+  },
+  "uti": {
+   "hex": 22
+  },
+  "sess": {
+   "uuid": true
+  },
+  "asn": {
+   "int": [
+    64496,
+    64511
+   ]
+  },
+  "ua": [
+   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 Edg/129.0.0.0",
+   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
+  ],
+  "loc": [
+   {
+    "city": "Seattle",
+    "state": "Washington",
+    "lat": 47.6,
+    "lon": -122.33
+   },
+   {
+    "city": "Austin",
+    "state": "Texas",
+    "lat": 30.27,
+    "lon": -97.74
+   },
+   {
+    "city": "Denver",
+    "state": "Colorado",
+    "lat": 39.74,
+    "lon": -104.99
+   }
+  ],
+  "u": [
+   {
+    "dn": "Spruce (Engineering)",
+    "upn": "dev.spruce@example.com",
+    "id": "2b3c4d5e-0001-4f6a-9b0c-1d2e3f4a5b01",
+    "dev": "c0c0c0c0-0001-4a1a-8b1b-0c0c0c0c0c01",
+    "host": "LT-ENG-0412",
+    "os": "MacOs",
+    "br": "Chrome 129.0.0"
+   },
+   {
+    "dn": "Willow (Engineering)",
+    "upn": "dev.willow@example.com",
+    "id": "2b3c4d5e-0002-4f6a-9b0c-1d2e3f4a5b02",
+    "dev": "c0c0c0c0-0002-4a1a-8b1b-0c0c0c0c0c02",
+    "host": "LT-ENG-0377",
+    "os": "Windows10",
+    "br": "Edge 129.0.0"
+   },
+   {
+    "dn": "Hazel (Sales)",
+    "upn": "sales.hazel@example.com",
+    "id": "2b3c4d5e-0003-4f6a-9b0c-1d2e3f4a5b03",
+    "dev": "c0c0c0c0-0003-4a1a-8b1b-0c0c0c0c0c03",
+    "host": "LT-SLS-0102",
+    "os": "Windows10",
+    "br": "Edge 129.0.0"
+   },
+   {
+    "dn": "Juniper (Finance)",
+    "upn": "fin.juniper@example.com",
+    "id": "2b3c4d5e-0004-4f6a-9b0c-1d2e3f4a5b04",
+    "dev": "c0c0c0c0-0004-4a1a-8b1b-0c0c0c0c0c04",
+    "host": "LT-FIN-0033",
+    "os": "MacOs",
+    "br": "Safari 17.6"
+   },
+   {
+    "dn": "Larch (Operations)",
+    "upn": "ops.larch@example.com",
+    "id": "2b3c4d5e-0005-4f6a-9b0c-1d2e3f4a5b05",
+    "dev": "c0c0c0c0-0005-4a1a-8b1b-0c0c0c0c0c05",
+    "host": "LT-OPS-0219",
+    "os": "MacOs",
+    "br": "Chrome 129.0.0"
+   }
+  ],
+  "adm": [
+   {
+    "dn": "Alder (Platform)",
+    "upn": "platform.alder@example.com",
+    "id": "1a2b3c4d-0001-4e5f-8a9b-0c1d2e3f4a01"
+   },
+   {
+    "dn": "Birch (Platform)",
+    "upn": "platform.birch@example.com",
+    "id": "1a2b3c4d-0002-4e5f-8a9b-0c1d2e3f4a02"
+   }
+  ],
+  "room": [
+   {
+    "dn": "Conference Room 3A",
+    "upn": "mtr-conf-3a@example.com",
+    "id": "2b3c4d5e-00f1-4f6a-9b0c-1d2e3f4a5bf1"
+   }
+  ],
+  "spsec": [
+   {
+    "name": "hr-sync-daemon",
+    "spid": "4d5e6f7a-0101-4b8c-9d0e-1f2a3b4c5d11",
+    "appid": "5e6f7a8b-0101-4c9d-8e0f-2a3b4c5d6e11",
+    "kid": "e1e1e1e1-0101-4a2a-8b3b-c4c4c4c4c411"
+   },
+   {
+    "name": "ticketing-integration",
+    "spid": "4d5e6f7a-0102-4b8c-9d0e-1f2a3b4c5d12",
+    "appid": "5e6f7a8b-0102-4c9d-8e0f-2a3b4c5d6e12",
+    "kid": "e1e1e1e1-0102-4a2a-8b3b-c4c4c4c4c412"
+   },
+   {
+    "name": "backup-reporting",
+    "spid": "4d5e6f7a-0103-4b8c-9d0e-1f2a3b4c5d13",
+    "appid": "5e6f7a8b-0103-4c9d-8e0f-2a3b4c5d6e13",
+    "kid": "e1e1e1e1-0103-4a2a-8b3b-c4c4c4c4c413"
+   }
+  ],
+  "spcert": [
+   {
+    "name": "siem-graph-collector",
+    "spid": "4d5e6f7a-0201-4b8c-9d0e-1f2a3b4c5d21",
+    "appid": "5e6f7a8b-0201-4c9d-8e0f-2a3b4c5d6e21",
+    "kid": "e2e2e2e2-0201-4a2a-8b3b-c4c4c4c4c421",
+    "thumb": "3A1F9C0E5B7D2A4C6E8F0A1B3C5D7E9F1A2B3C4D"
+   },
+   {
+    "name": "mdm-compliance-sync",
+    "spid": "4d5e6f7a-0202-4b8c-9d0e-1f2a3b4c5d22",
+    "appid": "5e6f7a8b-0202-4c9d-8e0f-2a3b4c5d6e22",
+    "kid": "e2e2e2e2-0202-4a2a-8b3b-c4c4c4c4c422",
+    "thumb": "7C2E4A6B8D0F1A3C5E7A9B1D3F5A7C9E0B2D4F6A"
+   }
+  ],
+  "spfic": [
+   {
+    "name": "payments-api-deploy",
+    "spid": "4d5e6f7a-0001-4b8c-9d0e-1f2a3b4c5d01",
+    "appid": "5e6f7a8b-0001-4c9d-8e0f-2a3b4c5d6e01",
+    "fic": "f1f1f1f1-0001-4a2a-8b3b-c4c4c4c4c401",
+    "res": "Windows Azure Service Management API",
+    "resid": "797f4846-ba00-4fd7-ba43-dac1f8f63013"
+   },
+   {
+    "name": "web-frontend-deploy",
+    "spid": "4d5e6f7a-0002-4b8c-9d0e-1f2a3b4c5d02",
+    "appid": "5e6f7a8b-0002-4c9d-8e0f-2a3b4c5d6e02",
+    "fic": "f1f1f1f1-0002-4a2a-8b3b-c4c4c4c4c402",
+    "res": "Windows Azure Service Management API",
+    "resid": "797f4846-ba00-4fd7-ba43-dac1f8f63013"
+   },
+   {
+    "name": "platform-infra-terraform",
+    "spid": "4d5e6f7a-0004-4b8c-9d0e-1f2a3b4c5d04",
+    "appid": "5e6f7a8b-0004-4c9d-8e0f-2a3b4c5d6e04",
+    "fic": "f1f1f1f1-0004-4a2a-8b3b-c4c4c4c4c404",
+    "res": "Microsoft Graph",
+    "resid": "00000003-0000-0000-c000-000000000000"
+   }
+  ],
+  "mi": [
+   {
+    "name": "mi-aks-payments-workload",
+    "spid": "4d5e6f7a-0301-4b8c-9d0e-1f2a3b4c5d31",
+    "appid": "5e6f7a8b-0301-4c9d-8e0f-2a3b4c5d6e31",
+    "res": "Azure Key Vault",
+    "resid": "cfa8b339-82a2-471a-a3c9-0fc0be7a4093",
+    "type": "userAssigned"
+   },
+   {
+    "name": "func-invoice-renderer",
+    "spid": "4d5e6f7a-0302-4b8c-9d0e-1f2a3b4c5d32",
+    "appid": "5e6f7a8b-0302-4c9d-8e0f-2a3b4c5d6e32",
+    "res": "Azure Storage",
+    "resid": "e406a681-f3d4-42a8-90b6-c2b029497af1",
+    "type": "systemAssigned"
+   },
+   {
+    "name": "vm-build-agent-01",
+    "spid": "4d5e6f7a-0303-4b8c-9d0e-1f2a3b4c5d33",
+    "appid": "5e6f7a8b-0303-4c9d-8e0f-2a3b4c5d6e33",
+    "res": "Windows Azure Service Management API",
+    "resid": "797f4846-ba00-4fd7-ba43-dac1f8f63013",
+    "type": "systemAssigned"
+   }
+  ]
+ },
+ "templates": [
+  {
+   "weight": 90,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Sign-in activity",
+    "operationVersion": "1.0",
+    "category": "SignInLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultType": "0",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{sip}}",
+    "correlationId": "{{corr}}",
+    "Level": 4,
+    "location": "US",
+    "properties": {
+     "id": "{{sid}}",
+     "createdDateTime": "{{t}}",
+     "userDisplayName": "{{u.dn}}",
+     "userPrincipalName": "{{u.upn}}",
+     "userId": "{{u.id}}",
+     "appId": "4765445b-32c6-49b0-83e6-1d93765276ca",
+     "appDisplayName": "OfficeHome",
+     "ipAddress": "{{sip}}",
+     "status": {
+      "errorCode": 0
+     },
+     "clientAppUsed": "Browser",
+     "userAgent": "{{ua}}",
+     "deviceDetail": {
+      "deviceId": "{{u.dev}}",
+      "displayName": "{{u.host}}",
+      "operatingSystem": "{{u.os}}",
+      "browser": "{{u.br}}",
+      "isCompliant": true,
+      "isManaged": true,
+      "trustType": "Azure AD joined"
+     },
+     "location": {
+      "city": "{{loc.city}}",
+      "state": "{{loc.state}}",
+      "countryOrRegion": "US",
+      "geoCoordinates": {
+       "latitude": "{{loc.lat}}",
+       "longitude": "{{loc.lon}}"
+      }
+     },
+     "correlationId": "{{corr}}",
+     "conditionalAccessStatus": "success",
+     "appliedConditionalAccessPolicies": [
+      {
+       "id": "a1a1a1a1-0001-4b2b-8c3c-d4d4d4d4d401",
+       "displayName": "Require MFA for all users",
+       "enforcedGrantControls": [
+        "Mfa"
+       ],
+       "enforcedSessionControls": [],
+       "result": "success"
+      }
+     ],
+     "isInteractive": true,
+     "tokenIssuerType": "AzureAD",
+     "riskDetail": "none",
+     "riskLevelAggregated": "none",
+     "riskLevelDuringSignIn": "none",
+     "riskState": "none",
+     "riskEventTypes": [],
+     "riskEventTypes_v2": [],
+     "resourceDisplayName": "Office 365 Exchange Online",
+     "resourceId": "00000002-0000-0ff1-ce00-000000000000",
+     "resourceTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "homeTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "authenticationRequirement": "multiFactorAuthentication",
+     "userType": "Member",
+     "flaggedForReview": false,
+     "autonomousSystemNumber": "{{asn}}",
+     "crossTenantAccessType": "none",
+     "incomingTokenType": "none",
+     "authenticationProtocol": "none",
+     "originalTransferMethod": "none",
+     "resultType": "0",
+     "resultSignature": "SUCCESS",
+     "uniqueTokenIdentifier": "{{uti}}",
+     "sessionId": "{{sess}}"
+    }
+   },
+   "note": "interactive browser sign-in to Office with MFA satisfied"
+  },
+  {
+   "weight": 35,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Sign-in activity",
+    "operationVersion": "1.0",
+    "category": "SignInLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultType": "0",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{sip}}",
+    "correlationId": "{{corr}}",
+    "Level": 4,
+    "location": "US",
+    "properties": {
+     "id": "{{sid}}",
+     "createdDateTime": "{{t}}",
+     "userDisplayName": "{{u.dn}}",
+     "userPrincipalName": "{{u.upn}}",
+     "userId": "{{u.id}}",
+     "appId": "c44b4083-3bb0-49c1-b47d-974e53cbdf3c",
+     "appDisplayName": "Azure Portal",
+     "ipAddress": "{{sip}}",
+     "status": {
+      "errorCode": 0
+     },
+     "clientAppUsed": "Browser",
+     "userAgent": "{{ua}}",
+     "deviceDetail": {
+      "deviceId": "{{u.dev}}",
+      "displayName": "{{u.host}}",
+      "operatingSystem": "{{u.os}}",
+      "browser": "{{u.br}}",
+      "isCompliant": true,
+      "isManaged": true,
+      "trustType": "Azure AD joined"
+     },
+     "location": {
+      "city": "{{loc.city}}",
+      "state": "{{loc.state}}",
+      "countryOrRegion": "US",
+      "geoCoordinates": {
+       "latitude": "{{loc.lat}}",
+       "longitude": "{{loc.lon}}"
+      }
+     },
+     "correlationId": "{{corr}}",
+     "conditionalAccessStatus": "success",
+     "appliedConditionalAccessPolicies": [
+      {
+       "id": "a1a1a1a1-0001-4b2b-8c3c-d4d4d4d4d401",
+       "displayName": "Require MFA for all users",
+       "enforcedGrantControls": [
+        "Mfa"
+       ],
+       "enforcedSessionControls": [],
+       "result": "success"
+      }
+     ],
+     "isInteractive": true,
+     "tokenIssuerType": "AzureAD",
+     "riskDetail": "none",
+     "riskLevelAggregated": "none",
+     "riskLevelDuringSignIn": "none",
+     "riskState": "none",
+     "riskEventTypes": [],
+     "riskEventTypes_v2": [],
+     "resourceDisplayName": "Windows Azure Service Management API",
+     "resourceId": "797f4846-ba00-4fd7-ba43-dac1f8f63013",
+     "resourceTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "homeTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "authenticationRequirement": "multiFactorAuthentication",
+     "userType": "Member",
+     "flaggedForReview": false,
+     "autonomousSystemNumber": "{{asn}}",
+     "crossTenantAccessType": "none",
+     "incomingTokenType": "none",
+     "authenticationProtocol": "none",
+     "originalTransferMethod": "none",
+     "resultType": "0",
+     "resultSignature": "SUCCESS",
+     "uniqueTokenIdentifier": "{{uti}}",
+     "sessionId": "{{sess}}"
+    }
+   }
+  },
+  {
+   "weight": 30,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Sign-in activity",
+    "operationVersion": "1.0",
+    "category": "SignInLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultType": "0",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{sip}}",
+    "correlationId": "{{corr}}",
+    "Level": 4,
+    "location": "US",
+    "properties": {
+     "id": "{{sid}}",
+     "createdDateTime": "{{t}}",
+     "userDisplayName": "{{u.dn}}",
+     "userPrincipalName": "{{u.upn}}",
+     "userId": "{{u.id}}",
+     "appId": "1fec8e78-bce4-4aaf-ab1b-5451cc387264",
+     "appDisplayName": "Microsoft Teams",
+     "ipAddress": "{{sip}}",
+     "status": {
+      "errorCode": 0
+     },
+     "clientAppUsed": "Mobile Apps and Desktop clients",
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Teams/24215.1007.3082.1590 Chrome/122.0.6261.130 Electron/29.4.6 Safari/537.36",
+     "deviceDetail": {
+      "deviceId": "{{u.dev}}",
+      "displayName": "{{u.host}}",
+      "operatingSystem": "{{u.os}}",
+      "browser": "{{u.br}}",
+      "isCompliant": true,
+      "isManaged": true,
+      "trustType": "Azure AD joined"
+     },
+     "location": {
+      "city": "{{loc.city}}",
+      "state": "{{loc.state}}",
+      "countryOrRegion": "US",
+      "geoCoordinates": {
+       "latitude": "{{loc.lat}}",
+       "longitude": "{{loc.lon}}"
+      }
+     },
+     "correlationId": "{{corr}}",
+     "conditionalAccessStatus": "success",
+     "appliedConditionalAccessPolicies": [
+      {
+       "id": "a1a1a1a1-0001-4b2b-8c3c-d4d4d4d4d401",
+       "displayName": "Require MFA for all users",
+       "enforcedGrantControls": [
+        "Mfa"
+       ],
+       "enforcedSessionControls": [],
+       "result": "success"
+      }
+     ],
+     "isInteractive": true,
+     "tokenIssuerType": "AzureAD",
+     "riskDetail": "none",
+     "riskLevelAggregated": "none",
+     "riskLevelDuringSignIn": "none",
+     "riskState": "none",
+     "riskEventTypes": [],
+     "riskEventTypes_v2": [],
+     "resourceDisplayName": "Microsoft Teams Services",
+     "resourceId": "cc15fd57-2c6c-4117-a88c-83b1d56b4bbe",
+     "resourceTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "homeTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "authenticationRequirement": "multiFactorAuthentication",
+     "userType": "Member",
+     "flaggedForReview": false,
+     "autonomousSystemNumber": "{{asn}}",
+     "crossTenantAccessType": "none",
+     "incomingTokenType": "none",
+     "authenticationProtocol": "none",
+     "originalTransferMethod": "none",
+     "resultType": "0",
+     "resultSignature": "SUCCESS",
+     "uniqueTokenIdentifier": "{{uti}}",
+     "sessionId": "{{sess}}"
+    }
+   }
+  },
+  {
+   "weight": 14,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Sign-in activity",
+    "operationVersion": "1.0",
+    "category": "SignInLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultType": "50126",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{sip}}",
+    "correlationId": "{{corr}}",
+    "Level": 4,
+    "location": "US",
+    "properties": {
+     "id": "{{sid}}",
+     "createdDateTime": "{{t}}",
+     "userDisplayName": "{{u.dn}}",
+     "userPrincipalName": "{{u.upn}}",
+     "userId": "{{u.id}}",
+     "appId": "4765445b-32c6-49b0-83e6-1d93765276ca",
+     "appDisplayName": "OfficeHome",
+     "ipAddress": "{{sip}}",
+     "status": {
+      "errorCode": 50126,
+      "failureReason": "Error validating credentials due to invalid username or password.",
+      "additionalDetails": "Error validating credentials due to invalid username or password."
+     },
+     "clientAppUsed": "Browser",
+     "userAgent": "{{ua}}",
+     "deviceDetail": {
+      "deviceId": "{{u.dev}}",
+      "displayName": "{{u.host}}",
+      "operatingSystem": "{{u.os}}",
+      "browser": "{{u.br}}",
+      "isCompliant": true,
+      "isManaged": true,
+      "trustType": "Azure AD joined"
+     },
+     "location": {
+      "city": "{{loc.city}}",
+      "state": "{{loc.state}}",
+      "countryOrRegion": "US",
+      "geoCoordinates": {
+       "latitude": "{{loc.lat}}",
+       "longitude": "{{loc.lon}}"
+      }
+     },
+     "correlationId": "{{corr}}",
+     "conditionalAccessStatus": "notApplied",
+     "appliedConditionalAccessPolicies": [
+      {
+       "id": "a1a1a1a1-0001-4b2b-8c3c-d4d4d4d4d401",
+       "displayName": "Require MFA for all users",
+       "enforcedGrantControls": [
+        "Mfa"
+       ],
+       "enforcedSessionControls": [],
+       "result": "notApplied"
+      }
+     ],
+     "isInteractive": true,
+     "tokenIssuerType": "AzureAD",
+     "riskDetail": "none",
+     "riskLevelAggregated": "none",
+     "riskLevelDuringSignIn": "none",
+     "riskState": "none",
+     "riskEventTypes": [],
+     "riskEventTypes_v2": [],
+     "resourceDisplayName": "Office 365 Exchange Online",
+     "resourceId": "00000002-0000-0ff1-ce00-000000000000",
+     "resourceTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "homeTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "authenticationRequirement": "singleFactorAuthentication",
+     "userType": "Member",
+     "flaggedForReview": false,
+     "autonomousSystemNumber": "{{asn}}",
+     "crossTenantAccessType": "none",
+     "incomingTokenType": "none",
+     "authenticationProtocol": "none",
+     "originalTransferMethod": "none",
+     "resultType": "50126",
+     "resultSignature": "FAILURE",
+     "uniqueTokenIdentifier": "{{uti}}",
+     "sessionId": "{{sess}}"
+    },
+    "resultDescription": "Error validating credentials due to invalid username or password."
+   },
+   "note": "mistyped password"
+  },
+  {
+   "weight": 20,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Sign-in activity",
+    "operationVersion": "1.0",
+    "category": "SignInLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultType": "50074",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{sip}}",
+    "correlationId": "{{corr}}",
+    "Level": 4,
+    "location": "US",
+    "properties": {
+     "id": "{{sid}}",
+     "createdDateTime": "{{t}}",
+     "userDisplayName": "{{u.dn}}",
+     "userPrincipalName": "{{u.upn}}",
+     "userId": "{{u.id}}",
+     "appId": "c44b4083-3bb0-49c1-b47d-974e53cbdf3c",
+     "appDisplayName": "Azure Portal",
+     "ipAddress": "{{sip}}",
+     "status": {
+      "errorCode": 50074,
+      "failureReason": "Strong Authentication is required.",
+      "additionalDetails": "Strong Authentication is required."
+     },
+     "clientAppUsed": "Browser",
+     "userAgent": "{{ua}}",
+     "deviceDetail": {
+      "deviceId": "{{u.dev}}",
+      "displayName": "{{u.host}}",
+      "operatingSystem": "{{u.os}}",
+      "browser": "{{u.br}}",
+      "isCompliant": true,
+      "isManaged": true,
+      "trustType": "Azure AD joined"
+     },
+     "location": {
+      "city": "{{loc.city}}",
+      "state": "{{loc.state}}",
+      "countryOrRegion": "US",
+      "geoCoordinates": {
+       "latitude": "{{loc.lat}}",
+       "longitude": "{{loc.lon}}"
+      }
+     },
+     "correlationId": "{{corr}}",
+     "conditionalAccessStatus": "notApplied",
+     "appliedConditionalAccessPolicies": [
+      {
+       "id": "a1a1a1a1-0001-4b2b-8c3c-d4d4d4d4d401",
+       "displayName": "Require MFA for all users",
+       "enforcedGrantControls": [
+        "Mfa"
+       ],
+       "enforcedSessionControls": [],
+       "result": "notApplied"
+      }
+     ],
+     "isInteractive": true,
+     "tokenIssuerType": "AzureAD",
+     "riskDetail": "none",
+     "riskLevelAggregated": "none",
+     "riskLevelDuringSignIn": "none",
+     "riskState": "none",
+     "riskEventTypes": [],
+     "riskEventTypes_v2": [],
+     "resourceDisplayName": "Windows Azure Service Management API",
+     "resourceId": "797f4846-ba00-4fd7-ba43-dac1f8f63013",
+     "resourceTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "homeTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "authenticationRequirement": "multiFactorAuthentication",
+     "userType": "Member",
+     "flaggedForReview": false,
+     "autonomousSystemNumber": "{{asn}}",
+     "crossTenantAccessType": "none",
+     "incomingTokenType": "none",
+     "authenticationProtocol": "none",
+     "originalTransferMethod": "none",
+     "resultType": "50074",
+     "resultSignature": "FAILURE",
+     "uniqueTokenIdentifier": "{{uti}}",
+     "sessionId": "{{sess}}"
+    },
+    "resultDescription": "Strong Authentication is required."
+   },
+   "note": "MFA interrupt before the successful sign-in"
+  },
+  {
+   "weight": 8,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Sign-in activity",
+    "operationVersion": "1.0",
+    "category": "SignInLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultType": "50140",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{sip}}",
+    "correlationId": "{{corr}}",
+    "Level": 4,
+    "location": "US",
+    "properties": {
+     "id": "{{sid}}",
+     "createdDateTime": "{{t}}",
+     "userDisplayName": "{{u.dn}}",
+     "userPrincipalName": "{{u.upn}}",
+     "userId": "{{u.id}}",
+     "appId": "4765445b-32c6-49b0-83e6-1d93765276ca",
+     "appDisplayName": "OfficeHome",
+     "ipAddress": "{{sip}}",
+     "status": {
+      "errorCode": 50140,
+      "failureReason": "This error occurred due to 'Keep me signed in' interrupt when the user was signing in.",
+      "additionalDetails": "This error occurred due to 'Keep me signed in' interrupt when the user was signing in."
+     },
+     "clientAppUsed": "Browser",
+     "userAgent": "{{ua}}",
+     "deviceDetail": {
+      "deviceId": "{{u.dev}}",
+      "displayName": "{{u.host}}",
+      "operatingSystem": "{{u.os}}",
+      "browser": "{{u.br}}",
+      "isCompliant": true,
+      "isManaged": true,
+      "trustType": "Azure AD joined"
+     },
+     "location": {
+      "city": "{{loc.city}}",
+      "state": "{{loc.state}}",
+      "countryOrRegion": "US",
+      "geoCoordinates": {
+       "latitude": "{{loc.lat}}",
+       "longitude": "{{loc.lon}}"
+      }
+     },
+     "correlationId": "{{corr}}",
+     "conditionalAccessStatus": "notApplied",
+     "appliedConditionalAccessPolicies": [
+      {
+       "id": "a1a1a1a1-0001-4b2b-8c3c-d4d4d4d4d401",
+       "displayName": "Require MFA for all users",
+       "enforcedGrantControls": [
+        "Mfa"
+       ],
+       "enforcedSessionControls": [],
+       "result": "notApplied"
+      }
+     ],
+     "isInteractive": true,
+     "tokenIssuerType": "AzureAD",
+     "riskDetail": "none",
+     "riskLevelAggregated": "none",
+     "riskLevelDuringSignIn": "none",
+     "riskState": "none",
+     "riskEventTypes": [],
+     "riskEventTypes_v2": [],
+     "resourceDisplayName": "Office 365 Exchange Online",
+     "resourceId": "00000002-0000-0ff1-ce00-000000000000",
+     "resourceTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "homeTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "authenticationRequirement": "multiFactorAuthentication",
+     "userType": "Member",
+     "flaggedForReview": false,
+     "autonomousSystemNumber": "{{asn}}",
+     "crossTenantAccessType": "none",
+     "incomingTokenType": "none",
+     "authenticationProtocol": "none",
+     "originalTransferMethod": "none",
+     "resultType": "50140",
+     "resultSignature": "FAILURE",
+     "uniqueTokenIdentifier": "{{uti}}",
+     "sessionId": "{{sess}}"
+    },
+    "resultDescription": "This error occurred due to 'Keep me signed in' interrupt when the user was signing in."
+   }
+  },
+  {
+   "weight": 120,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Sign-in activity",
+    "operationVersion": "1.0",
+    "category": "NonInteractiveUserSignInLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultType": "0",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{sip}}",
+    "correlationId": "{{corr}}",
+    "Level": 4,
+    "location": "US",
+    "properties": {
+     "id": "{{sid}}",
+     "createdDateTime": "{{t}}",
+     "userDisplayName": "{{u.dn}}",
+     "userPrincipalName": "{{u.upn}}",
+     "userId": "{{u.id}}",
+     "appId": "1fec8e78-bce4-4aaf-ab1b-5451cc387264",
+     "appDisplayName": "Microsoft Teams",
+     "ipAddress": "{{sip}}",
+     "status": {
+      "errorCode": 0
+     },
+     "clientAppUsed": "Mobile Apps and Desktop clients",
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Teams/24215.1007.3082.1590 Chrome/122.0.6261.130 Electron/29.4.6 Safari/537.36",
+     "deviceDetail": {
+      "deviceId": "{{u.dev}}",
+      "displayName": "{{u.host}}",
+      "operatingSystem": "{{u.os}}",
+      "browser": "{{u.br}}",
+      "isCompliant": true,
+      "isManaged": true,
+      "trustType": "Azure AD joined"
+     },
+     "location": {
+      "city": "{{loc.city}}",
+      "state": "{{loc.state}}",
+      "countryOrRegion": "US",
+      "geoCoordinates": {
+       "latitude": "{{loc.lat}}",
+       "longitude": "{{loc.lon}}"
+      }
+     },
+     "correlationId": "{{corr}}",
+     "conditionalAccessStatus": "success",
+     "appliedConditionalAccessPolicies": [
+      {
+       "id": "a1a1a1a1-0001-4b2b-8c3c-d4d4d4d4d401",
+       "displayName": "Require MFA for all users",
+       "enforcedGrantControls": [
+        "Mfa"
+       ],
+       "enforcedSessionControls": [],
+       "result": "success"
+      }
+     ],
+     "isInteractive": false,
+     "tokenIssuerType": "AzureAD",
+     "riskDetail": "none",
+     "riskLevelAggregated": "none",
+     "riskLevelDuringSignIn": "none",
+     "riskState": "none",
+     "riskEventTypes": [],
+     "riskEventTypes_v2": [],
+     "resourceDisplayName": "Microsoft Teams Services",
+     "resourceId": "cc15fd57-2c6c-4117-a88c-83b1d56b4bbe",
+     "resourceTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "homeTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "authenticationRequirement": "multiFactorAuthentication",
+     "userType": "Member",
+     "flaggedForReview": false,
+     "autonomousSystemNumber": "{{asn}}",
+     "crossTenantAccessType": "none",
+     "incomingTokenType": "primaryRefreshToken",
+     "authenticationProtocol": "none",
+     "originalTransferMethod": "none",
+     "resultType": "0",
+     "resultSignature": "SUCCESS",
+     "uniqueTokenIdentifier": "{{uti}}",
+     "sessionId": "{{sess}}"
+    }
+   },
+   "note": "Teams desktop silent token refresh"
+  },
+  {
+   "weight": 90,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Sign-in activity",
+    "operationVersion": "1.0",
+    "category": "NonInteractiveUserSignInLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultType": "0",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{sip}}",
+    "correlationId": "{{corr}}",
+    "Level": 4,
+    "location": "US",
+    "properties": {
+     "id": "{{sid}}",
+     "createdDateTime": "{{t}}",
+     "userDisplayName": "{{u.dn}}",
+     "userPrincipalName": "{{u.upn}}",
+     "userId": "{{u.id}}",
+     "appId": "d3590ed6-52b3-4102-aeff-aad2292ab01c",
+     "appDisplayName": "Microsoft Office",
+     "ipAddress": "{{sip}}",
+     "status": {
+      "errorCode": 0
+     },
+     "clientAppUsed": "Mobile Apps and Desktop clients",
+     "userAgent": "Microsoft Office/16.0 (Windows NT 10.0; Microsoft Outlook 16.0.18025; Pro)",
+     "deviceDetail": {
+      "deviceId": "{{u.dev}}",
+      "displayName": "{{u.host}}",
+      "operatingSystem": "{{u.os}}",
+      "browser": "{{u.br}}",
+      "isCompliant": true,
+      "isManaged": true,
+      "trustType": "Azure AD joined"
+     },
+     "location": {
+      "city": "{{loc.city}}",
+      "state": "{{loc.state}}",
+      "countryOrRegion": "US",
+      "geoCoordinates": {
+       "latitude": "{{loc.lat}}",
+       "longitude": "{{loc.lon}}"
+      }
+     },
+     "correlationId": "{{corr}}",
+     "conditionalAccessStatus": "success",
+     "appliedConditionalAccessPolicies": [
+      {
+       "id": "a1a1a1a1-0001-4b2b-8c3c-d4d4d4d4d401",
+       "displayName": "Require MFA for all users",
+       "enforcedGrantControls": [
+        "Mfa"
+       ],
+       "enforcedSessionControls": [],
+       "result": "success"
+      }
+     ],
+     "isInteractive": false,
+     "tokenIssuerType": "AzureAD",
+     "riskDetail": "none",
+     "riskLevelAggregated": "none",
+     "riskLevelDuringSignIn": "none",
+     "riskState": "none",
+     "riskEventTypes": [],
+     "riskEventTypes_v2": [],
+     "resourceDisplayName": "Office 365 Exchange Online",
+     "resourceId": "00000002-0000-0ff1-ce00-000000000000",
+     "resourceTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "homeTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "authenticationRequirement": "multiFactorAuthentication",
+     "userType": "Member",
+     "flaggedForReview": false,
+     "autonomousSystemNumber": "{{asn}}",
+     "crossTenantAccessType": "none",
+     "incomingTokenType": "primaryRefreshToken",
+     "authenticationProtocol": "none",
+     "originalTransferMethod": "none",
+     "resultType": "0",
+     "resultSignature": "SUCCESS",
+     "uniqueTokenIdentifier": "{{uti}}",
+     "sessionId": "{{sess}}"
+    }
+   }
+  },
+  {
+   "weight": 25,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Sign-in activity",
+    "operationVersion": "1.0",
+    "category": "NonInteractiveUserSignInLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultType": "0",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{sip}}",
+    "correlationId": "{{corr}}",
+    "Level": 4,
+    "location": "US",
+    "properties": {
+     "id": "{{sid}}",
+     "createdDateTime": "{{t}}",
+     "userDisplayName": "{{u.dn}}",
+     "userPrincipalName": "{{u.upn}}",
+     "userId": "{{u.id}}",
+     "appId": "04b07795-8ddb-461a-bbee-02f9e1bf7b46",
+     "appDisplayName": "Microsoft Azure CLI",
+     "ipAddress": "{{sip}}",
+     "status": {
+      "errorCode": 0
+     },
+     "clientAppUsed": "Mobile Apps and Desktop clients",
+     "userAgent": "python-requests/2.32.3 azure-cli/2.65.0",
+     "deviceDetail": {
+      "deviceId": "{{u.dev}}",
+      "displayName": "{{u.host}}",
+      "operatingSystem": "{{u.os}}",
+      "browser": "{{u.br}}",
+      "isCompliant": true,
+      "isManaged": true,
+      "trustType": "Azure AD joined"
+     },
+     "location": {
+      "city": "{{loc.city}}",
+      "state": "{{loc.state}}",
+      "countryOrRegion": "US",
+      "geoCoordinates": {
+       "latitude": "{{loc.lat}}",
+       "longitude": "{{loc.lon}}"
+      }
+     },
+     "correlationId": "{{corr}}",
+     "conditionalAccessStatus": "success",
+     "appliedConditionalAccessPolicies": [
+      {
+       "id": "a1a1a1a1-0001-4b2b-8c3c-d4d4d4d4d401",
+       "displayName": "Require MFA for all users",
+       "enforcedGrantControls": [
+        "Mfa"
+       ],
+       "enforcedSessionControls": [],
+       "result": "success"
+      }
+     ],
+     "isInteractive": false,
+     "tokenIssuerType": "AzureAD",
+     "riskDetail": "none",
+     "riskLevelAggregated": "none",
+     "riskLevelDuringSignIn": "none",
+     "riskState": "none",
+     "riskEventTypes": [],
+     "riskEventTypes_v2": [],
+     "resourceDisplayName": "Windows Azure Service Management API",
+     "resourceId": "797f4846-ba00-4fd7-ba43-dac1f8f63013",
+     "resourceTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "homeTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "authenticationRequirement": "multiFactorAuthentication",
+     "userType": "Member",
+     "flaggedForReview": false,
+     "autonomousSystemNumber": "{{asn}}",
+     "crossTenantAccessType": "none",
+     "incomingTokenType": "refreshToken",
+     "authenticationProtocol": "none",
+     "originalTransferMethod": "none",
+     "resultType": "0",
+     "resultSignature": "SUCCESS",
+     "uniqueTokenIdentifier": "{{uti}}",
+     "sessionId": "{{sess}}"
+    }
+   },
+   "note": "Azure CLI refreshing an existing session (not device code)"
+  },
+  {
+   "weight": 8,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Sign-in activity",
+    "operationVersion": "1.0",
+    "category": "NonInteractiveUserSignInLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultType": "700082",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{sip}}",
+    "correlationId": "{{corr}}",
+    "Level": 4,
+    "location": "US",
+    "properties": {
+     "id": "{{sid}}",
+     "createdDateTime": "{{t}}",
+     "userDisplayName": "{{u.dn}}",
+     "userPrincipalName": "{{u.upn}}",
+     "userId": "{{u.id}}",
+     "appId": "d3590ed6-52b3-4102-aeff-aad2292ab01c",
+     "appDisplayName": "Microsoft Office",
+     "ipAddress": "{{sip}}",
+     "status": {
+      "errorCode": 700082,
+      "failureReason": "The refresh token has expired due to inactivity.",
+      "additionalDetails": "The refresh token has expired due to inactivity."
+     },
+     "clientAppUsed": "Mobile Apps and Desktop clients",
+     "userAgent": "Microsoft Office/16.0 (Macintosh; Mac OS X 14.6; Microsoft Outlook 16.89)",
+     "deviceDetail": {
+      "deviceId": "{{u.dev}}",
+      "displayName": "{{u.host}}",
+      "operatingSystem": "{{u.os}}",
+      "browser": "{{u.br}}",
+      "isCompliant": true,
+      "isManaged": true,
+      "trustType": "Azure AD joined"
+     },
+     "location": {
+      "city": "{{loc.city}}",
+      "state": "{{loc.state}}",
+      "countryOrRegion": "US",
+      "geoCoordinates": {
+       "latitude": "{{loc.lat}}",
+       "longitude": "{{loc.lon}}"
+      }
+     },
+     "correlationId": "{{corr}}",
+     "conditionalAccessStatus": "notApplied",
+     "appliedConditionalAccessPolicies": [
+      {
+       "id": "a1a1a1a1-0001-4b2b-8c3c-d4d4d4d4d401",
+       "displayName": "Require MFA for all users",
+       "enforcedGrantControls": [
+        "Mfa"
+       ],
+       "enforcedSessionControls": [],
+       "result": "notApplied"
+      }
+     ],
+     "isInteractive": false,
+     "tokenIssuerType": "AzureAD",
+     "riskDetail": "none",
+     "riskLevelAggregated": "none",
+     "riskLevelDuringSignIn": "none",
+     "riskState": "none",
+     "riskEventTypes": [],
+     "riskEventTypes_v2": [],
+     "resourceDisplayName": "Office 365 Exchange Online",
+     "resourceId": "00000002-0000-0ff1-ce00-000000000000",
+     "resourceTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "homeTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "authenticationRequirement": "multiFactorAuthentication",
+     "userType": "Member",
+     "flaggedForReview": false,
+     "autonomousSystemNumber": "{{asn}}",
+     "crossTenantAccessType": "none",
+     "incomingTokenType": "refreshToken",
+     "authenticationProtocol": "none",
+     "originalTransferMethod": "none",
+     "resultType": "700082",
+     "resultSignature": "FAILURE",
+     "uniqueTokenIdentifier": "{{uti}}",
+     "sessionId": "{{sess}}"
+    },
+    "resultDescription": "The refresh token has expired due to inactivity."
+   }
+  },
+  {
+   "weight": 70,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Sign-in activity",
+    "operationVersion": "1.0",
+    "category": "ServicePrincipalSignInLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultType": "0",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{spsec_ip}}",
+    "correlationId": "{{corr}}",
+    "Level": 4,
+    "location": "US",
+    "properties": {
+     "id": "{{sid}}",
+     "createdDateTime": "{{t}}",
+     "servicePrincipalName": "{{spsec.name}}",
+     "servicePrincipalId": "{{spsec.spid}}",
+     "appId": "{{spsec.appid}}",
+     "appDisplayName": "{{spsec.name}}",
+     "ipAddress": "{{spsec_ip}}",
+     "location": {
+      "city": "{{loc.city}}",
+      "state": "{{loc.state}}",
+      "countryOrRegion": "US",
+      "geoCoordinates": {}
+     },
+     "status": {
+      "errorCode": 0
+     },
+     "correlationId": "{{corr}}",
+     "conditionalAccessStatus": "notApplied",
+     "resourceDisplayName": "Microsoft Graph",
+     "resourceId": "00000003-0000-0000-c000-000000000000",
+     "resourceServicePrincipalId": "5a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+     "clientCredentialType": "clientSecret",
+     "servicePrincipalCredentialKeyId": "{{spsec.kid}}",
+     "servicePrincipalCredentialThumbprint": "",
+     "federatedCredentialId": "",
+     "autonomousSystemNumber": "{{asn}}",
+     "uniqueTokenIdentifier": "{{uti}}",
+     "resultType": "0",
+     "resultSignature": "SUCCESS"
+    }
+   },
+   "note": "daemon apps signing in with a client secret"
+  },
+  {
+   "weight": 35,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Sign-in activity",
+    "operationVersion": "1.0",
+    "category": "ServicePrincipalSignInLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultType": "0",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{spsec_ip}}",
+    "correlationId": "{{corr}}",
+    "Level": 4,
+    "location": "US",
+    "properties": {
+     "id": "{{sid}}",
+     "createdDateTime": "{{t}}",
+     "servicePrincipalName": "{{spcert.name}}",
+     "servicePrincipalId": "{{spcert.spid}}",
+     "appId": "{{spcert.appid}}",
+     "appDisplayName": "{{spcert.name}}",
+     "ipAddress": "{{spsec_ip}}",
+     "location": {
+      "city": "{{loc.city}}",
+      "state": "{{loc.state}}",
+      "countryOrRegion": "US",
+      "geoCoordinates": {}
+     },
+     "status": {
+      "errorCode": 0
+     },
+     "correlationId": "{{corr}}",
+     "conditionalAccessStatus": "notApplied",
+     "resourceDisplayName": "Microsoft Graph",
+     "resourceId": "00000003-0000-0000-c000-000000000000",
+     "resourceServicePrincipalId": "5a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+     "clientCredentialType": "clientAssertion",
+     "servicePrincipalCredentialKeyId": "{{spcert.kid}}",
+     "servicePrincipalCredentialThumbprint": "{{spcert.thumb}}",
+     "federatedCredentialId": "",
+     "autonomousSystemNumber": "{{asn}}",
+     "uniqueTokenIdentifier": "{{uti}}",
+     "resultType": "0",
+     "resultSignature": "SUCCESS"
+    }
+   },
+   "note": "daemon apps signing in with a certificate"
+  },
+  {
+   "weight": 45,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Sign-in activity",
+    "operationVersion": "1.0",
+    "category": "ServicePrincipalSignInLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultType": "0",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{ghip}}",
+    "correlationId": "{{corr}}",
+    "Level": 4,
+    "location": "US",
+    "properties": {
+     "id": "{{sid}}",
+     "createdDateTime": "{{t}}",
+     "servicePrincipalName": "{{spfic.name}}",
+     "servicePrincipalId": "{{spfic.spid}}",
+     "appId": "{{spfic.appid}}",
+     "appDisplayName": "{{spfic.name}}",
+     "ipAddress": "{{ghip}}",
+     "location": {
+      "city": "{{loc.city}}",
+      "state": "{{loc.state}}",
+      "countryOrRegion": "US",
+      "geoCoordinates": {}
+     },
+     "status": {
+      "errorCode": 0
+     },
+     "correlationId": "{{corr}}",
+     "conditionalAccessStatus": "notApplied",
+     "resourceDisplayName": "{{spfic.res}}",
+     "resourceId": "{{spfic.resid}}",
+     "resourceServicePrincipalId": "{{uuid2}}",
+     "clientCredentialType": "federatedIdentityCredential",
+     "servicePrincipalCredentialKeyId": "",
+     "servicePrincipalCredentialThumbprint": "",
+     "federatedCredentialId": "{{spfic.fic}}",
+     "autonomousSystemNumber": "{{asn}}",
+     "uniqueTokenIdentifier": "{{uti}}",
+     "resultType": "0",
+     "resultSignature": "SUCCESS"
+    }
+   },
+   "note": "GitHub Actions workload identity federation from the approved CI (federatedCredentialId set)"
+  },
+  {
+   "weight": 6,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Sign-in activity",
+    "operationVersion": "1.0",
+    "category": "ServicePrincipalSignInLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultType": "7000222",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{spsec_ip}}",
+    "correlationId": "{{corr}}",
+    "Level": 4,
+    "location": "US",
+    "properties": {
+     "id": "{{sid}}",
+     "createdDateTime": "{{t}}",
+     "servicePrincipalName": "{{spsec.name}}",
+     "servicePrincipalId": "{{spsec.spid}}",
+     "appId": "{{spsec.appid}}",
+     "appDisplayName": "{{spsec.name}}",
+     "ipAddress": "{{spsec_ip}}",
+     "location": {
+      "city": "{{loc.city}}",
+      "state": "{{loc.state}}",
+      "countryOrRegion": "US",
+      "geoCoordinates": {}
+     },
+     "status": {
+      "errorCode": 7000222,
+      "failureReason": "The provided client secret keys for app are expired."
+     },
+     "correlationId": "{{corr}}",
+     "conditionalAccessStatus": "notApplied",
+     "resourceDisplayName": "Microsoft Graph",
+     "resourceId": "00000003-0000-0000-c000-000000000000",
+     "resourceServicePrincipalId": "5a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+     "clientCredentialType": "clientSecret",
+     "servicePrincipalCredentialKeyId": "{{spsec.kid}}",
+     "servicePrincipalCredentialThumbprint": "",
+     "federatedCredentialId": "",
+     "autonomousSystemNumber": "{{asn}}",
+     "uniqueTokenIdentifier": "{{uti}}",
+     "resultType": "7000222",
+     "resultSignature": "FAILURE"
+    }
+   },
+   "note": "expired secret on a not-yet-rotated app"
+  },
+  {
+   "weight": 5,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Sign-in activity",
+    "operationVersion": "1.0",
+    "category": "ServicePrincipalSignInLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultType": "700213",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{ghip}}",
+    "correlationId": "{{corr}}",
+    "Level": 4,
+    "location": "US",
+    "properties": {
+     "id": "{{sid}}",
+     "createdDateTime": "{{t}}",
+     "servicePrincipalName": "{{spfic.name}}",
+     "servicePrincipalId": "{{spfic.spid}}",
+     "appId": "{{spfic.appid}}",
+     "appDisplayName": "{{spfic.name}}",
+     "ipAddress": "{{ghip}}",
+     "location": {
+      "city": "{{loc.city}}",
+      "state": "{{loc.state}}",
+      "countryOrRegion": "US",
+      "geoCoordinates": {}
+     },
+     "status": {
+      "errorCode": 700213,
+      "failureReason": "No matching federated identity record found for presented assertion subject."
+     },
+     "correlationId": "{{corr}}",
+     "conditionalAccessStatus": "notApplied",
+     "resourceDisplayName": "Microsoft Graph",
+     "resourceId": "00000003-0000-0000-c000-000000000000",
+     "resourceServicePrincipalId": "5a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+     "clientCredentialType": "federatedIdentityCredential",
+     "servicePrincipalCredentialKeyId": "",
+     "servicePrincipalCredentialThumbprint": "",
+     "federatedCredentialId": "",
+     "autonomousSystemNumber": "{{asn}}",
+     "uniqueTokenIdentifier": "{{uti}}",
+     "resultType": "700213",
+     "resultSignature": "FAILURE"
+    }
+   },
+   "note": "workflow run from a branch the FIC does not trust is rejected"
+  },
+  {
+   "weight": 80,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Sign-in activity",
+    "operationVersion": "1.0",
+    "category": "ManagedIdentitySignInLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultType": "0",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{miip}}",
+    "correlationId": "{{corr}}",
+    "Level": 4,
+    "location": "US",
+    "properties": {
+     "id": "{{sid}}",
+     "createdDateTime": "{{t}}",
+     "servicePrincipalName": "{{mi.name}}",
+     "servicePrincipalId": "{{mi.spid}}",
+     "appId": "{{mi.appid}}",
+     "appDisplayName": "{{mi.name}}",
+     "ipAddress": "{{miip}}",
+     "location": {
+      "city": "{{loc.city}}",
+      "state": "{{loc.state}}",
+      "countryOrRegion": "US",
+      "geoCoordinates": {}
+     },
+     "status": {
+      "errorCode": 0
+     },
+     "correlationId": "{{corr}}",
+     "conditionalAccessStatus": "notApplied",
+     "resourceDisplayName": "{{mi.res}}",
+     "resourceId": "{{mi.resid}}",
+     "resourceServicePrincipalId": "{{uuid2}}",
+     "clientCredentialType": "managedIdentity",
+     "servicePrincipalCredentialKeyId": "",
+     "servicePrincipalCredentialThumbprint": "",
+     "federatedCredentialId": "",
+     "autonomousSystemNumber": "{{asn}}",
+     "uniqueTokenIdentifier": "{{uti}}",
+     "resultType": "0",
+     "resultSignature": "SUCCESS",
+     "managedIdentityType": "{{mi.type}}"
+    }
+   },
+   "note": "managed identities (VMs, Functions, AKS workload identity) getting tokens"
+  },
+  {
+   "weight": 3,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Sign-in activity",
+    "operationVersion": "1.0",
+    "category": "NonInteractiveUserSignInLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultType": "0",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{sip}}",
+    "correlationId": "{{corr}}",
+    "Level": 4,
+    "location": "US",
+    "properties": {
+     "id": "{{sid}}",
+     "createdDateTime": "{{t}}",
+     "userDisplayName": "{{adm.dn}}",
+     "userPrincipalName": "{{adm.upn}}",
+     "userId": "{{adm.id}}",
+     "appId": "04b07795-8ddb-461a-bbee-02f9e1bf7b46",
+     "appDisplayName": "Microsoft Azure CLI",
+     "ipAddress": "{{sip}}",
+     "status": {
+      "errorCode": 0
+     },
+     "clientAppUsed": "Mobile Apps and Desktop clients",
+     "userAgent": "python-requests/2.32.3 azure-cli/2.65.0",
+     "deviceDetail": {
+      "deviceId": "",
+      "displayName": "",
+      "operatingSystem": "Linux",
+      "browser": "",
+      "isCompliant": false,
+      "isManaged": false,
+      "trustType": ""
+     },
+     "location": {
+      "city": "{{loc.city}}",
+      "state": "{{loc.state}}",
+      "countryOrRegion": "US",
+      "geoCoordinates": {
+       "latitude": "{{loc.lat}}",
+       "longitude": "{{loc.lon}}"
+      }
+     },
+     "correlationId": "{{corr}}",
+     "conditionalAccessStatus": "success",
+     "appliedConditionalAccessPolicies": [
+      {
+       "id": "a1a1a1a1-0001-4b2b-8c3c-d4d4d4d4d401",
+       "displayName": "Require MFA for all users",
+       "enforcedGrantControls": [
+        "Mfa"
+       ],
+       "enforcedSessionControls": [],
+       "result": "success"
+      }
+     ],
+     "isInteractive": false,
+     "tokenIssuerType": "AzureAD",
+     "riskDetail": "none",
+     "riskLevelAggregated": "none",
+     "riskLevelDuringSignIn": "none",
+     "riskState": "none",
+     "riskEventTypes": [],
+     "riskEventTypes_v2": [],
+     "resourceDisplayName": "Windows Azure Service Management API",
+     "resourceId": "797f4846-ba00-4fd7-ba43-dac1f8f63013",
+     "resourceTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "homeTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "authenticationRequirement": "multiFactorAuthentication",
+     "userType": "Member",
+     "flaggedForReview": false,
+     "autonomousSystemNumber": "{{asn}}",
+     "crossTenantAccessType": "none",
+     "incomingTokenType": "none",
+     "authenticationProtocol": "deviceCode",
+     "originalTransferMethod": "deviceCodeFlow",
+     "resultType": "0",
+     "resultSignature": "SUCCESS",
+     "uniqueTokenIdentifier": "{{uti}}",
+     "sessionId": "{{sess}}"
+    }
+   },
+   "note": "admin runs `az login --use-device-code` on a headless build VM (completes on own laptop)"
+  },
+  {
+   "weight": 2,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/tenants/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/providers/Microsoft.aadiam",
+    "operationName": "Sign-in activity",
+    "operationVersion": "1.0",
+    "category": "SignInLogs",
+    "tenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+    "resultType": "0",
+    "resultSignature": "None",
+    "durationMs": 0,
+    "callerIpAddress": "{{sip}}",
+    "correlationId": "{{corr}}",
+    "Level": 4,
+    "location": "US",
+    "properties": {
+     "id": "{{sid}}",
+     "createdDateTime": "{{t}}",
+     "userDisplayName": "{{room.dn}}",
+     "userPrincipalName": "{{room.upn}}",
+     "userId": "{{room.id}}",
+     "appId": "1fec8e78-bce4-4aaf-ab1b-5451cc387264",
+     "appDisplayName": "Microsoft Teams",
+     "ipAddress": "{{sip}}",
+     "status": {
+      "errorCode": 0
+     },
+     "clientAppUsed": "Mobile Apps and Desktop clients",
+     "userAgent": "Dalvik/2.1.0 (Linux; U; Android 12; Teams Rooms Bar) TeamsRooms/1449/1.0.96.2024082201",
+     "deviceDetail": {
+      "deviceId": "{{uuid2}}",
+      "displayName": "MTR-CONF-3A",
+      "operatingSystem": "Android",
+      "browser": "",
+      "isCompliant": true,
+      "isManaged": true,
+      "trustType": "Azure AD registered"
+     },
+     "location": {
+      "city": "{{loc.city}}",
+      "state": "{{loc.state}}",
+      "countryOrRegion": "US",
+      "geoCoordinates": {
+       "latitude": "{{loc.lat}}",
+       "longitude": "{{loc.lon}}"
+      }
+     },
+     "correlationId": "{{corr}}",
+     "conditionalAccessStatus": "notApplied",
+     "appliedConditionalAccessPolicies": [
+      {
+       "id": "a1a1a1a1-0001-4b2b-8c3c-d4d4d4d4d401",
+       "displayName": "Require MFA for all users",
+       "enforcedGrantControls": [
+        "Mfa"
+       ],
+       "enforcedSessionControls": [],
+       "result": "notApplied"
+      }
+     ],
+     "isInteractive": true,
+     "tokenIssuerType": "AzureAD",
+     "riskDetail": "none",
+     "riskLevelAggregated": "none",
+     "riskLevelDuringSignIn": "none",
+     "riskState": "none",
+     "riskEventTypes": [],
+     "riskEventTypes_v2": [],
+     "resourceDisplayName": "Microsoft Teams Services",
+     "resourceId": "cc15fd57-2c6c-4117-a88c-83b1d56b4bbe",
+     "resourceTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "homeTenantId": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+     "authenticationRequirement": "singleFactorAuthentication",
+     "userType": "Member",
+     "flaggedForReview": false,
+     "autonomousSystemNumber": "{{asn}}",
+     "crossTenantAccessType": "none",
+     "incomingTokenType": "none",
+     "authenticationProtocol": "deviceCode",
+     "originalTransferMethod": "deviceCodeFlow",
+     "resultType": "0",
+     "resultSignature": "SUCCESS",
+     "uniqueTokenIdentifier": "{{uti}}",
+     "sessionId": "{{sess}}"
+    }
+   },
+   "note": "facilities signs a Teams Rooms device into its resource account with the remote (device code) sign-in"
+  }
+ ]
+}

@@ -1,0 +1,4890 @@
+{
+ "id": "aws-iac-admin-policy-changes",
+ "version": 1,
+ "logsource": {
+  "product": "aws",
+  "service": "cloudtrail"
+ },
+ "fidelity": "synthetic",
+ "represents": "Infrastructure-as-code administration of one production AWS account: Terraform (terraform-apply role, assumed through a pinned GitHub OIDC environment from the self-hosted runner NAT egress) refreshing and applying S3 / SQS / SNS / KMS / Lambda / ECR / Secrets Manager / EventBridge / EFS / Glue / SSM resource policies to SPECIFIC principals, accounts, AWS service principals and the organisation; sharing snapshots and AMIs with a named DR account and the org; Block Public Access set ON; Cognito identity pools with authenticated identities only; IAM role trust for GitHub OIDC (mostly pinned subjects), IRSA and Lambda; and a platform admin (IAM Identity Center, VPN egress) making console changes. It deliberately includes common real policy idioms (Deny-insecure-transport with Principal '*', the SNS default topic policy, the KMS ViaService/CallerAccount pattern, the EFS console wizard policy, GitHub's published StringLike 'repo:<org>/<repo>:*' example) and, rarely, an intentionally public marketing static site and a public Lambda webhook URL.",
+ "provenance": "synthetic; shapes from the AWS CloudTrail record contents reference, the S3 / IAM / KMS / Lambda / EC2 / RDS / SNS / SQS / ECR / EFS / Glue / EventBridge / SSM API request references, the AWS documentation policy examples (SNS default policy, KMS console default and kms:ViaService examples, EFS console policy wizard, CloudFront OAC, GitHub's configuring-openid-connect-in-amazon-web-services guide) and this repo's TRR9015 / TRR9016 / TRR9019 / TRR9021 fixtures (URL-encoded IAM policy documents, nested S3 bucketPolicy, JSON-string policies). Accounts are AWS documentation examples (123456789012 own, 111122223333 DR, 444455556666 log archive, 777788889999 partner); org o-exampleorgid; canonical id is the AWS docs example; www.example.com is RFC 2606. Terraform egress 203.0.113.0/28 and VPN 203.0.113.32/27 are inside the repo's own-egress placeholder.",
+ "adjacent_to": [
+  "T1537/aws_resource_policy_made_public.yml",
+  "T1537/aws_s3_block_public_access_disabled.yml",
+  "T1537/aws_s3_bucket_acl_made_public.yml",
+  "T1537/aws_snapshot_or_ami_made_public.yml",
+  "T1537/aws_eventbridge_bus_made_public.yml",
+  "T1537/aws_efs_file_system_policy_made_public.yml",
+  "T1537/aws_glue_resource_policy_made_public.yml",
+  "T1537/aws_ssm_document_shared_publicly.yml",
+  "T1098.001/aws_github_oidc_role_trust_abuse.yml",
+  "T1078.004/aws_cognito_identity_pool_unauth_enabled.yml"
+ ],
+ "count": 900,
+ "vars": {
+  "eid": {
+   "uuid": true
+  },
+  "rid": {
+   "uuid": true
+  },
+  "akn": {
+   "int": [
+    100000000,
+    999999999
+   ]
+  },
+  "xamzid": {
+   "hex": 56
+  },
+  "region": {
+   "weighted": [
+    [
+     85,
+     "us-east-1"
+    ],
+    [
+     15,
+     "us-west-2"
+    ]
+   ]
+  },
+  "t": {
+   "time": {
+    "start": "2026-10-08T15:00:00Z",
+    "step_seconds": [
+     1,
+     20
+    ]
+   }
+  },
+  "sesst": {
+   "time": {
+    "start": "2026-10-08T14:20:00Z",
+    "step_seconds": [
+     1,
+     20
+    ]
+   }
+  },
+  "exp1": {
+   "time": {
+    "start": "2026-10-08T16:00:00Z",
+    "step_seconds": [
+     5,
+     120
+    ],
+    "format": "%b %-d, %Y, %-I:%M:%S %p"
+   }
+  },
+  "ctime": {
+   "time": {
+    "start": "2026-10-08T15:10:00Z",
+    "step_seconds": [
+     60,
+     600
+    ],
+    "format": "%b %-d, %Y, %-I:%M:%S %p"
+   }
+  },
+  "tfip": {
+   "ipv4": "203.0.113.0/28"
+  },
+  "vpnip": {
+   "ipv4": "203.0.113.32/27"
+  },
+  "admin": [
+   "platform.alder",
+   "platform.birch",
+   "platform.cedar"
+  ],
+  "hex16": {
+   "hex": 16
+  },
+  "kmskey": [
+   "3f2a9c1e-5b7d-4e8a-9c0f-1a2b3c4d5e6f",
+   "8d4e2f1a-0b9c-4d7e-8f6a-5b4c3d2e1f0a"
+  ],
+  "queue": [
+   "order-events-ledger",
+   "invoice-render-jobs",
+   "batch-input-notifications"
+  ],
+  "snapday": [
+   "2026-09-20",
+   "2026-09-27",
+   "2026-10-04"
+  ],
+  "nb": [
+   "example-ledger-exports-dr-usw2",
+   "example-ml-feature-store-prod",
+   "example-reporting-scratch-prod"
+  ],
+  "bk": [
+   "example-payments-config-prod",
+   "example-batch-input-prod",
+   "example-batch-output-prod",
+   "example-web-assets-prod",
+   "example-ci-artifacts-us-east-1",
+   "example-ledger-exports-prod"
+  ],
+  "tlsb": [
+   {
+    "bucket": "example-payments-config-prod",
+    "reader": "arn:aws:iam::123456789012:role/eks-prod-use1-payments-api"
+   },
+   {
+    "bucket": "example-batch-input-prod",
+    "reader": "arn:aws:iam::123456789012:role/batch-worker-instance-role"
+   },
+   {
+    "bucket": "example-ledger-exports-prod",
+    "reader": "arn:aws:iam::444455556666:role/ledger-archive-reader"
+   },
+   {
+    "bucket": "example-ci-artifacts-us-east-1",
+    "reader": "arn:aws:iam::123456789012:role/gha-deploy-payments-api"
+   }
+  ],
+  "rd": [
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketPolicy",
+    "req": {
+     "bucketName": "example-payments-config-prod",
+     "Host": "example-payments-config-prod.s3.us-east-1.amazonaws.com",
+     "policy": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-payments-config-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketAcl",
+    "req": {
+     "bucketName": "example-payments-config-prod",
+     "Host": "example-payments-config-prod.s3.us-east-1.amazonaws.com",
+     "acl": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-payments-config-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketVersioning",
+    "req": {
+     "bucketName": "example-payments-config-prod",
+     "Host": "example-payments-config-prod.s3.us-east-1.amazonaws.com",
+     "versioning": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-payments-config-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketEncryption",
+    "req": {
+     "bucketName": "example-payments-config-prod",
+     "Host": "example-payments-config-prod.s3.us-east-1.amazonaws.com",
+     "encryption": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-payments-config-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketPublicAccessBlock",
+    "req": {
+     "bucketName": "example-payments-config-prod",
+     "Host": "example-payments-config-prod.s3.us-east-1.amazonaws.com",
+     "publicAccessBlock": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-payments-config-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketTagging",
+    "req": {
+     "bucketName": "example-payments-config-prod",
+     "Host": "example-payments-config-prod.s3.us-east-1.amazonaws.com",
+     "tagging": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-payments-config-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketOwnershipControls",
+    "req": {
+     "bucketName": "example-payments-config-prod",
+     "Host": "example-payments-config-prod.s3.us-east-1.amazonaws.com",
+     "ownershipControls": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-payments-config-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketPolicy",
+    "req": {
+     "bucketName": "example-batch-input-prod",
+     "Host": "example-batch-input-prod.s3.us-east-1.amazonaws.com",
+     "policy": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-batch-input-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketAcl",
+    "req": {
+     "bucketName": "example-batch-input-prod",
+     "Host": "example-batch-input-prod.s3.us-east-1.amazonaws.com",
+     "acl": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-batch-input-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketVersioning",
+    "req": {
+     "bucketName": "example-batch-input-prod",
+     "Host": "example-batch-input-prod.s3.us-east-1.amazonaws.com",
+     "versioning": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-batch-input-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketEncryption",
+    "req": {
+     "bucketName": "example-batch-input-prod",
+     "Host": "example-batch-input-prod.s3.us-east-1.amazonaws.com",
+     "encryption": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-batch-input-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketPublicAccessBlock",
+    "req": {
+     "bucketName": "example-batch-input-prod",
+     "Host": "example-batch-input-prod.s3.us-east-1.amazonaws.com",
+     "publicAccessBlock": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-batch-input-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketTagging",
+    "req": {
+     "bucketName": "example-batch-input-prod",
+     "Host": "example-batch-input-prod.s3.us-east-1.amazonaws.com",
+     "tagging": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-batch-input-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketOwnershipControls",
+    "req": {
+     "bucketName": "example-batch-input-prod",
+     "Host": "example-batch-input-prod.s3.us-east-1.amazonaws.com",
+     "ownershipControls": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-batch-input-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketPolicy",
+    "req": {
+     "bucketName": "example-batch-output-prod",
+     "Host": "example-batch-output-prod.s3.us-east-1.amazonaws.com",
+     "policy": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-batch-output-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketAcl",
+    "req": {
+     "bucketName": "example-batch-output-prod",
+     "Host": "example-batch-output-prod.s3.us-east-1.amazonaws.com",
+     "acl": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-batch-output-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketVersioning",
+    "req": {
+     "bucketName": "example-batch-output-prod",
+     "Host": "example-batch-output-prod.s3.us-east-1.amazonaws.com",
+     "versioning": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-batch-output-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketEncryption",
+    "req": {
+     "bucketName": "example-batch-output-prod",
+     "Host": "example-batch-output-prod.s3.us-east-1.amazonaws.com",
+     "encryption": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-batch-output-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketPublicAccessBlock",
+    "req": {
+     "bucketName": "example-batch-output-prod",
+     "Host": "example-batch-output-prod.s3.us-east-1.amazonaws.com",
+     "publicAccessBlock": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-batch-output-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketTagging",
+    "req": {
+     "bucketName": "example-batch-output-prod",
+     "Host": "example-batch-output-prod.s3.us-east-1.amazonaws.com",
+     "tagging": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-batch-output-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketOwnershipControls",
+    "req": {
+     "bucketName": "example-batch-output-prod",
+     "Host": "example-batch-output-prod.s3.us-east-1.amazonaws.com",
+     "ownershipControls": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-batch-output-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketPolicy",
+    "req": {
+     "bucketName": "example-web-assets-prod",
+     "Host": "example-web-assets-prod.s3.us-east-1.amazonaws.com",
+     "policy": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-web-assets-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketAcl",
+    "req": {
+     "bucketName": "example-web-assets-prod",
+     "Host": "example-web-assets-prod.s3.us-east-1.amazonaws.com",
+     "acl": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-web-assets-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketVersioning",
+    "req": {
+     "bucketName": "example-web-assets-prod",
+     "Host": "example-web-assets-prod.s3.us-east-1.amazonaws.com",
+     "versioning": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-web-assets-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketEncryption",
+    "req": {
+     "bucketName": "example-web-assets-prod",
+     "Host": "example-web-assets-prod.s3.us-east-1.amazonaws.com",
+     "encryption": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-web-assets-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketPublicAccessBlock",
+    "req": {
+     "bucketName": "example-web-assets-prod",
+     "Host": "example-web-assets-prod.s3.us-east-1.amazonaws.com",
+     "publicAccessBlock": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-web-assets-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketTagging",
+    "req": {
+     "bucketName": "example-web-assets-prod",
+     "Host": "example-web-assets-prod.s3.us-east-1.amazonaws.com",
+     "tagging": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-web-assets-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketOwnershipControls",
+    "req": {
+     "bucketName": "example-web-assets-prod",
+     "Host": "example-web-assets-prod.s3.us-east-1.amazonaws.com",
+     "ownershipControls": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-web-assets-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketPolicy",
+    "req": {
+     "bucketName": "example-ci-artifacts-us-east-1",
+     "Host": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com",
+     "policy": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketAcl",
+    "req": {
+     "bucketName": "example-ci-artifacts-us-east-1",
+     "Host": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com",
+     "acl": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketVersioning",
+    "req": {
+     "bucketName": "example-ci-artifacts-us-east-1",
+     "Host": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com",
+     "versioning": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketEncryption",
+    "req": {
+     "bucketName": "example-ci-artifacts-us-east-1",
+     "Host": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com",
+     "encryption": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketPublicAccessBlock",
+    "req": {
+     "bucketName": "example-ci-artifacts-us-east-1",
+     "Host": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com",
+     "publicAccessBlock": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketTagging",
+    "req": {
+     "bucketName": "example-ci-artifacts-us-east-1",
+     "Host": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com",
+     "tagging": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketOwnershipControls",
+    "req": {
+     "bucketName": "example-ci-artifacts-us-east-1",
+     "Host": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com",
+     "ownershipControls": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketPolicy",
+    "req": {
+     "bucketName": "example-ledger-exports-prod",
+     "Host": "example-ledger-exports-prod.s3.us-east-1.amazonaws.com",
+     "policy": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-ledger-exports-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketAcl",
+    "req": {
+     "bucketName": "example-ledger-exports-prod",
+     "Host": "example-ledger-exports-prod.s3.us-east-1.amazonaws.com",
+     "acl": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-ledger-exports-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketVersioning",
+    "req": {
+     "bucketName": "example-ledger-exports-prod",
+     "Host": "example-ledger-exports-prod.s3.us-east-1.amazonaws.com",
+     "versioning": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-ledger-exports-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketEncryption",
+    "req": {
+     "bucketName": "example-ledger-exports-prod",
+     "Host": "example-ledger-exports-prod.s3.us-east-1.amazonaws.com",
+     "encryption": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-ledger-exports-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketPublicAccessBlock",
+    "req": {
+     "bucketName": "example-ledger-exports-prod",
+     "Host": "example-ledger-exports-prod.s3.us-east-1.amazonaws.com",
+     "publicAccessBlock": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-ledger-exports-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketTagging",
+    "req": {
+     "bucketName": "example-ledger-exports-prod",
+     "Host": "example-ledger-exports-prod.s3.us-east-1.amazonaws.com",
+     "tagging": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-ledger-exports-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "s3.amazonaws.com",
+    "name": "GetBucketOwnershipControls",
+    "req": {
+     "bucketName": "example-ledger-exports-prod",
+     "Host": "example-ledger-exports-prod.s3.us-east-1.amazonaws.com",
+     "ownershipControls": ""
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "host": "example-ledger-exports-prod.s3.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "iam.amazonaws.com",
+    "name": "GetRole",
+    "req": {
+     "roleName": "gha-deploy-payments-api"
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/iam#1.37.1",
+    "host": "iam.amazonaws.com"
+   },
+   {
+    "src": "iam.amazonaws.com",
+    "name": "GetRole",
+    "req": {
+     "roleName": "eks-prod-use1-external-dns"
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/iam#1.37.1",
+    "host": "iam.amazonaws.com"
+   },
+   {
+    "src": "iam.amazonaws.com",
+    "name": "ListRolePolicies",
+    "req": {
+     "roleName": "eks-prod-use1-karpenter"
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/iam#1.37.1",
+    "host": "iam.amazonaws.com"
+   },
+   {
+    "src": "iam.amazonaws.com",
+    "name": "ListAttachedRolePolicies",
+    "req": {
+     "roleName": "web-tier-instance-role"
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/iam#1.37.1",
+    "host": "iam.amazonaws.com"
+   },
+   {
+    "src": "iam.amazonaws.com",
+    "name": "GetPolicyVersion",
+    "req": {
+     "policyArn": "arn:aws:iam::123456789012:policy/ci-artifacts-write",
+     "versionId": "v7"
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/iam#1.37.1",
+    "host": "iam.amazonaws.com"
+   },
+   {
+    "src": "iam.amazonaws.com",
+    "name": "GetOpenIDConnectProvider",
+    "req": {
+     "openIDConnectProviderArn": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/iam#1.37.1",
+    "host": "iam.amazonaws.com"
+   },
+   {
+    "src": "kms.amazonaws.com",
+    "name": "DescribeKey",
+    "req": {
+     "keyId": "3f2a9c1e-5b7d-4e8a-9c0f-1a2b3c4d5e6f"
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/kms#1.37.2",
+    "host": "kms.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "kms.amazonaws.com",
+    "name": "GetKeyPolicy",
+    "req": {
+     "keyId": "3f2a9c1e-5b7d-4e8a-9c0f-1a2b3c4d5e6f",
+     "policyName": "default"
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/kms#1.37.2",
+    "host": "kms.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "kms.amazonaws.com",
+    "name": "GetKeyRotationStatus",
+    "req": {
+     "keyId": "8d4e2f1a-0b9c-4d7e-8f6a-5b4c3d2e1f0a"
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/kms#1.37.2",
+    "host": "kms.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "sqs.amazonaws.com",
+    "name": "GetQueueAttributes",
+    "req": {
+     "queueUrl": "https://sqs.us-east-1.amazonaws.com/123456789012/order-events-ledger",
+     "attributeNames": [
+      "All"
+     ]
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/sqs#1.34.8",
+    "host": "sqs.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "sns.amazonaws.com",
+    "name": "GetTopicAttributes",
+    "req": {
+     "topicArn": "arn:aws:sns:us-east-1:123456789012:ops-alerts"
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/sns#1.33.2",
+    "host": "sns.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "lambda.amazonaws.com",
+    "name": "GetFunction20150331v2",
+    "req": {
+     "functionName": "nightly-cost-report"
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/lambda#1.62.1",
+    "host": "lambda.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "lambda.amazonaws.com",
+    "name": "GetPolicy20150331v2",
+    "req": {
+     "functionName": "invoice-pdf-renderer"
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/lambda#1.62.1",
+    "host": "lambda.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "ec2.amazonaws.com",
+    "name": "DescribeImages",
+    "req": {
+     "imagesSet": {
+      "items": [
+       {
+        "imageId": "ami-0a1b2c3d4e5f60718"
+       }
+      ]
+     }
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/ec2#1.177.0",
+    "host": "ec2.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "ec2.amazonaws.com",
+    "name": "DescribeSnapshotAttribute",
+    "req": {
+     "snapshotId": "snap-0a1b2c3d4e5f60718",
+     "attributeType": "CREATE_VOLUME_PERMISSION"
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/ec2#1.177.0",
+    "host": "ec2.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "cognito-identity.amazonaws.com",
+    "name": "DescribeIdentityPool",
+    "req": {
+     "identityPoolId": "us-east-1:4b7c2e1d-8a9f-4c3b-9e2d-1f0a9b8c7d6e"
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/cognitoidentity#1.25.3",
+    "host": "cognito-identity.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "events.amazonaws.com",
+    "name": "DescribeEventBus",
+    "req": {
+     "name": "orders"
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/eventbridge#1.34.1",
+    "host": "events.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "elasticfilesystem.amazonaws.com",
+    "name": "DescribeFileSystemPolicy",
+    "req": {
+     "fileSystemId": "fs-0f9e8d7c6b5a49382"
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/efs#1.32.2",
+    "host": "elasticfilesystem.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "ssm.amazonaws.com",
+    "name": "DescribeDocumentPermission",
+    "req": {
+     "name": "Platform-PatchBaselineRunbook",
+     "permissionType": "Share"
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/ssm#1.52.8",
+    "host": "ssm.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "glue.amazonaws.com",
+    "name": "GetResourcePolicy",
+    "req": {},
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/glue#1.99.1",
+    "host": "glue.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "ecr.amazonaws.com",
+    "name": "GetRepositoryPolicy",
+    "req": {
+     "repositoryName": "platform/base-images"
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/ecr#1.36.2",
+    "host": "ecr.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "secretsmanager.amazonaws.com",
+    "name": "GetResourcePolicy",
+    "req": {
+     "secretId": "prod/shared/datadog-api"
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/secretsmanager#1.34.1",
+    "host": "secretsmanager.us-east-1.amazonaws.com"
+   },
+   {
+    "src": "rds.amazonaws.com",
+    "name": "DescribeDBSnapshotAttributes",
+    "req": {
+     "dBSnapshotIdentifier": "ledger-prod-weekly-2026-10-04"
+    },
+    "ua": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/rds#1.87.2",
+    "host": "rds.us-east-1.amazonaws.com"
+   }
+  ],
+  "rde": [
+   {
+    "name": "GetBucketWebsite",
+    "bucket": "example-payments-config-prod",
+    "req": {
+     "bucketName": "example-payments-config-prod",
+     "Host": "example-payments-config-prod.s3.us-east-1.amazonaws.com",
+     "website": ""
+    },
+    "err": "NoSuchWebsiteConfiguration",
+    "msg": "The specified bucket does not have a website configuration"
+   },
+   {
+    "name": "GetBucketCors",
+    "bucket": "example-payments-config-prod",
+    "req": {
+     "bucketName": "example-payments-config-prod",
+     "Host": "example-payments-config-prod.s3.us-east-1.amazonaws.com",
+     "cors": ""
+    },
+    "err": "NoSuchCORSConfiguration",
+    "msg": "The CORS configuration does not exist"
+   },
+   {
+    "name": "GetBucketReplication",
+    "bucket": "example-payments-config-prod",
+    "req": {
+     "bucketName": "example-payments-config-prod",
+     "Host": "example-payments-config-prod.s3.us-east-1.amazonaws.com",
+     "replication": ""
+    },
+    "err": "ReplicationConfigurationNotFoundError",
+    "msg": "The replication configuration was not found"
+   },
+   {
+    "name": "GetBucketWebsite",
+    "bucket": "example-batch-input-prod",
+    "req": {
+     "bucketName": "example-batch-input-prod",
+     "Host": "example-batch-input-prod.s3.us-east-1.amazonaws.com",
+     "website": ""
+    },
+    "err": "NoSuchWebsiteConfiguration",
+    "msg": "The specified bucket does not have a website configuration"
+   },
+   {
+    "name": "GetBucketCors",
+    "bucket": "example-batch-input-prod",
+    "req": {
+     "bucketName": "example-batch-input-prod",
+     "Host": "example-batch-input-prod.s3.us-east-1.amazonaws.com",
+     "cors": ""
+    },
+    "err": "NoSuchCORSConfiguration",
+    "msg": "The CORS configuration does not exist"
+   },
+   {
+    "name": "GetBucketReplication",
+    "bucket": "example-batch-input-prod",
+    "req": {
+     "bucketName": "example-batch-input-prod",
+     "Host": "example-batch-input-prod.s3.us-east-1.amazonaws.com",
+     "replication": ""
+    },
+    "err": "ReplicationConfigurationNotFoundError",
+    "msg": "The replication configuration was not found"
+   },
+   {
+    "name": "GetBucketWebsite",
+    "bucket": "example-batch-output-prod",
+    "req": {
+     "bucketName": "example-batch-output-prod",
+     "Host": "example-batch-output-prod.s3.us-east-1.amazonaws.com",
+     "website": ""
+    },
+    "err": "NoSuchWebsiteConfiguration",
+    "msg": "The specified bucket does not have a website configuration"
+   },
+   {
+    "name": "GetBucketCors",
+    "bucket": "example-batch-output-prod",
+    "req": {
+     "bucketName": "example-batch-output-prod",
+     "Host": "example-batch-output-prod.s3.us-east-1.amazonaws.com",
+     "cors": ""
+    },
+    "err": "NoSuchCORSConfiguration",
+    "msg": "The CORS configuration does not exist"
+   },
+   {
+    "name": "GetBucketReplication",
+    "bucket": "example-batch-output-prod",
+    "req": {
+     "bucketName": "example-batch-output-prod",
+     "Host": "example-batch-output-prod.s3.us-east-1.amazonaws.com",
+     "replication": ""
+    },
+    "err": "ReplicationConfigurationNotFoundError",
+    "msg": "The replication configuration was not found"
+   },
+   {
+    "name": "GetBucketWebsite",
+    "bucket": "example-web-assets-prod",
+    "req": {
+     "bucketName": "example-web-assets-prod",
+     "Host": "example-web-assets-prod.s3.us-east-1.amazonaws.com",
+     "website": ""
+    },
+    "err": "NoSuchWebsiteConfiguration",
+    "msg": "The specified bucket does not have a website configuration"
+   },
+   {
+    "name": "GetBucketCors",
+    "bucket": "example-web-assets-prod",
+    "req": {
+     "bucketName": "example-web-assets-prod",
+     "Host": "example-web-assets-prod.s3.us-east-1.amazonaws.com",
+     "cors": ""
+    },
+    "err": "NoSuchCORSConfiguration",
+    "msg": "The CORS configuration does not exist"
+   },
+   {
+    "name": "GetBucketReplication",
+    "bucket": "example-web-assets-prod",
+    "req": {
+     "bucketName": "example-web-assets-prod",
+     "Host": "example-web-assets-prod.s3.us-east-1.amazonaws.com",
+     "replication": ""
+    },
+    "err": "ReplicationConfigurationNotFoundError",
+    "msg": "The replication configuration was not found"
+   },
+   {
+    "name": "GetBucketWebsite",
+    "bucket": "example-ci-artifacts-us-east-1",
+    "req": {
+     "bucketName": "example-ci-artifacts-us-east-1",
+     "Host": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com",
+     "website": ""
+    },
+    "err": "NoSuchWebsiteConfiguration",
+    "msg": "The specified bucket does not have a website configuration"
+   },
+   {
+    "name": "GetBucketCors",
+    "bucket": "example-ci-artifacts-us-east-1",
+    "req": {
+     "bucketName": "example-ci-artifacts-us-east-1",
+     "Host": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com",
+     "cors": ""
+    },
+    "err": "NoSuchCORSConfiguration",
+    "msg": "The CORS configuration does not exist"
+   },
+   {
+    "name": "GetBucketReplication",
+    "bucket": "example-ci-artifacts-us-east-1",
+    "req": {
+     "bucketName": "example-ci-artifacts-us-east-1",
+     "Host": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com",
+     "replication": ""
+    },
+    "err": "ReplicationConfigurationNotFoundError",
+    "msg": "The replication configuration was not found"
+   },
+   {
+    "name": "GetBucketWebsite",
+    "bucket": "example-ledger-exports-prod",
+    "req": {
+     "bucketName": "example-ledger-exports-prod",
+     "Host": "example-ledger-exports-prod.s3.us-east-1.amazonaws.com",
+     "website": ""
+    },
+    "err": "NoSuchWebsiteConfiguration",
+    "msg": "The specified bucket does not have a website configuration"
+   },
+   {
+    "name": "GetBucketCors",
+    "bucket": "example-ledger-exports-prod",
+    "req": {
+     "bucketName": "example-ledger-exports-prod",
+     "Host": "example-ledger-exports-prod.s3.us-east-1.amazonaws.com",
+     "cors": ""
+    },
+    "err": "NoSuchCORSConfiguration",
+    "msg": "The CORS configuration does not exist"
+   },
+   {
+    "name": "GetBucketReplication",
+    "bucket": "example-ledger-exports-prod",
+    "req": {
+     "bucketName": "example-ledger-exports-prod",
+     "Host": "example-ledger-exports-prod.s3.us-east-1.amazonaws.com",
+     "replication": ""
+    },
+    "err": "ReplicationConfigurationNotFoundError",
+    "msg": "The replication configuration was not found"
+   }
+  ]
+ },
+ "templates": [
+  {
+   "weight": 30,
+   "event": {
+    "eventVersion": "1.08",
+    "userIdentity": {
+     "type": "WebIdentityUser",
+     "principalId": "token.actions.githubusercontent.com:sts.amazonaws.com:repo:example-org/platform-infra:environment:prod-apply",
+     "userName": "repo:example-org/platform-infra:environment:prod-apply",
+     "identityProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "sts.amazonaws.com",
+    "eventName": "AssumeRoleWithWebIdentity",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "aws-sdk-js/3.654.0 ua/2.1 os/linux#6.8.0-1015-azure lang/js md/nodejs#20.17.0 api/sts#3.654.0 configure-aws-credentials-for-github-actions",
+    "requestParameters": {
+     "roleArn": "arn:aws:iam::123456789012:role/terraform-apply",
+     "roleSessionName": "GitHubActions",
+     "durationSeconds": 3600
+    },
+    "responseElements": {
+     "credentials": {
+      "accessKeyId": "ASIAEXAMPLE{{akn}}",
+      "sessionToken": "EXAMPLE-REDACTED-SESSION-TOKEN",
+      "expiration": "{{exp1}}"
+     },
+     "subjectFromWebIdentityToken": "repo:example-org/platform-infra:environment:prod-apply",
+     "assumedRoleUser": {
+      "assumedRoleId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+      "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions"
+     },
+     "provider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+     "audience": "sts.amazonaws.com"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "sts.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "self-hosted ARC runner (cluster NAT egress) assuming terraform-apply via a pinned GitHub OIDC environment"
+  },
+  {
+   "weight": 20,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "sts.amazonaws.com",
+    "eventName": "GetCallerIdentity",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/sts#1.32.2",
+    "requestParameters": null,
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "sts.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "terraform-provider-aws account check at plan start"
+  },
+  {
+   "weight": 300,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "{{rd.src}}",
+    "eventName": "{{rd.name}}",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "{{rd.ua}}",
+    "requestParameters": "{{rd.req}}",
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "{{rd.host}}"
+    }
+   },
+   "note": "terraform plan refresh: Get/Describe of managed resources"
+  },
+  {
+   "weight": 45,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "{{rde.name}}",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "requestParameters": "{{rde.req}}",
+    "responseElements": null,
+    "errorCode": "{{rde.err}}",
+    "errorMessage": "{{rde.msg}}",
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "{{rde.bucket}}.s3.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "terraform refresh of optional S3 sub-resources that are not configured (NoSuch* errors)"
+  },
+  {
+   "weight": 8,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "CreateBucket",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "requestParameters": {
+     "bucketName": "{{nb}}",
+     "Host": "{{nb}}.s3.us-east-1.amazonaws.com",
+     "CreateBucketConfiguration": {
+      "xmlns": "http://s3.amazonaws.com/doc/2006-03-01/",
+      "LocationConstraint": "us-west-2"
+     },
+     "x-amz-object-ownership": "BucketOwnerEnforced"
+    },
+    "responseElements": null,
+    "additionalEventData": {
+     "SignatureVersion": "SigV4",
+     "CipherSuite": "TLS_AES_128_GCM_SHA256",
+     "AuthenticationMethod": "AuthHeader",
+     "x-amz-id-2": "{{xamzid}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "{{nb}}.s3.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 20,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutBucketPublicAccessBlock",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "requestParameters": {
+     "bucketName": "{{bk}}",
+     "Host": "{{bk}}.s3.us-east-1.amazonaws.com",
+     "publicAccessBlock": "",
+     "PublicAccessBlockConfiguration": {
+      "xmlns": "http://s3.amazonaws.com/doc/2006-03-01/",
+      "BlockPublicAcls": true,
+      "IgnorePublicAcls": true,
+      "BlockPublicPolicy": true,
+      "RestrictPublicBuckets": true
+     }
+    },
+    "responseElements": null,
+    "additionalEventData": {
+     "SignatureVersion": "SigV4",
+     "CipherSuite": "TLS_AES_128_GCM_SHA256",
+     "AuthenticationMethod": "AuthHeader",
+     "x-amz-id-2": "{{xamzid}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "{{bk}}.s3.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "Block Public Access set fully ON"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLESSOPLATADM:{{admin}}@example.com",
+     "arn": "arn:aws:sts::123456789012:assumed-role/AWSReservedSSO_PlatformAdmin_5e1d2c3b4a596877/{{admin}}@example.com",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLESSOPLATADM",
+       "arn": "arn:aws:iam::123456789012:role/aws-reserved/sso.amazonaws.com/AWSReservedSSO_PlatformAdmin_5e1d2c3b4a596877",
+       "accountId": "123456789012",
+       "userName": "AWSReservedSSO_PlatformAdmin_5e1d2c3b4a596877"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {}
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutAccountPublicAccessBlock",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{vpnip}}",
+    "userAgent": "AWS Internal",
+    "requestParameters": {
+     "PublicAccessBlockConfiguration": {
+      "xmlns": "http://s3.amazonaws.com/doc/2006-03-01/",
+      "BlockPublicAcls": true,
+      "IgnorePublicAcls": true,
+      "BlockPublicPolicy": true,
+      "RestrictPublicBuckets": true
+     },
+     "Host": "123456789012.s3-control.us-east-1.amazonaws.com"
+    },
+    "responseElements": null,
+    "sessionCredentialFromConsole": "true",
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "123456789012.s3-control.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "account-level BPA re-asserted ON from the console"
+  },
+  {
+   "weight": 10,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutBucketOwnershipControls",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "requestParameters": {
+     "bucketName": "{{bk}}",
+     "Host": "{{bk}}.s3.us-east-1.amazonaws.com",
+     "ownershipControls": "",
+     "OwnershipControls": {
+      "xmlns": "http://s3.amazonaws.com/doc/2006-03-01/",
+      "Rule": {
+       "ObjectOwnership": "BucketOwnerEnforced"
+      }
+     }
+    },
+    "responseElements": null,
+    "additionalEventData": {
+     "SignatureVersion": "SigV4",
+     "CipherSuite": "TLS_AES_128_GCM_SHA256",
+     "AuthenticationMethod": "AuthHeader",
+     "x-amz-id-2": "{{xamzid}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "{{bk}}.s3.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 10,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutBucketEncryption",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "requestParameters": {
+     "bucketName": "{{bk}}",
+     "Host": "{{bk}}.s3.us-east-1.amazonaws.com",
+     "encryption": "",
+     "ServerSideEncryptionConfiguration": {
+      "xmlns": "http://s3.amazonaws.com/doc/2006-03-01/",
+      "Rule": {
+       "ApplyServerSideEncryptionByDefault": {
+        "SSEAlgorithm": "aws:kms",
+        "KMSMasterKeyID": "arn:aws:kms:us-east-1:123456789012:key/3f2a9c1e-5b7d-4e8a-9c0f-1a2b3c4d5e6f"
+       },
+       "BucketKeyEnabled": true
+      }
+     }
+    },
+    "responseElements": null,
+    "additionalEventData": {
+     "SignatureVersion": "SigV4",
+     "CipherSuite": "TLS_AES_128_GCM_SHA256",
+     "AuthenticationMethod": "AuthHeader",
+     "x-amz-id-2": "{{xamzid}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "{{bk}}.s3.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 8,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutBucketVersioning",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "requestParameters": {
+     "bucketName": "{{bk}}",
+     "Host": "{{bk}}.s3.us-east-1.amazonaws.com",
+     "versioning": "",
+     "VersioningConfiguration": {
+      "xmlns": "http://s3.amazonaws.com/doc/2006-03-01/",
+      "Status": "Enabled"
+     }
+    },
+    "responseElements": null,
+    "additionalEventData": {
+     "SignatureVersion": "SigV4",
+     "CipherSuite": "TLS_AES_128_GCM_SHA256",
+     "AuthenticationMethod": "AuthHeader",
+     "x-amz-id-2": "{{xamzid}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "{{bk}}.s3.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 10,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutBucketTagging",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "requestParameters": {
+     "bucketName": "{{bk}}",
+     "Host": "{{bk}}.s3.us-east-1.amazonaws.com",
+     "tagging": "",
+     "Tagging": {
+      "xmlns": "http://s3.amazonaws.com/doc/2006-03-01/",
+      "TagSet": {
+       "Tag": [
+        {
+         "Key": "managed-by",
+         "Value": "terraform"
+        },
+        {
+         "Key": "data-classification",
+         "Value": "internal"
+        }
+       ]
+      }
+     }
+    },
+    "responseElements": null,
+    "additionalEventData": {
+     "SignatureVersion": "SigV4",
+     "CipherSuite": "TLS_AES_128_GCM_SHA256",
+     "AuthenticationMethod": "AuthHeader",
+     "x-amz-id-2": "{{xamzid}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "{{bk}}.s3.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 10,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutBucketPolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "requestParameters": {
+     "bucketName": "{{tlsb.bucket}}",
+     "Host": "{{tlsb.bucket}}.s3.us-east-1.amazonaws.com",
+     "policy": "",
+     "bucketPolicy": {
+      "Version": "2012-10-17",
+      "Statement": [
+       {
+        "Sid": "AllowNamedRoleAccess",
+        "Effect": "Allow",
+        "Principal": {
+         "AWS": "{{tlsb.reader}}"
+        },
+        "Action": [
+         "s3:GetObject",
+         "s3:ListBucket"
+        ],
+        "Resource": [
+         "arn:aws:s3:::{{tlsb.bucket}}",
+         "arn:aws:s3:::{{tlsb.bucket}}/*"
+        ]
+       },
+       {
+        "Sid": "DenyInsecureTransport",
+        "Effect": "Deny",
+        "Principal": "*",
+        "Action": "s3:*",
+        "Resource": [
+         "arn:aws:s3:::{{tlsb.bucket}}",
+         "arn:aws:s3:::{{tlsb.bucket}}/*"
+        ],
+        "Condition": {
+         "Bool": {
+          "aws:SecureTransport": "false"
+         }
+        }
+       }
+      ]
+     }
+    },
+    "responseElements": null,
+    "additionalEventData": {
+     "SignatureVersion": "SigV4",
+     "CipherSuite": "TLS_AES_128_GCM_SHA256",
+     "AuthenticationMethod": "AuthHeader",
+     "x-amz-id-2": "{{xamzid}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "{{tlsb.bucket}}.s3.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "bucket policy: named-role Allow + the standard Deny-insecure-transport statement (Principal '*' only in the Deny; AWS Security Hub S3.5)"
+  },
+  {
+   "weight": 6,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutBucketPolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "requestParameters": {
+     "bucketName": "example-web-assets-prod",
+     "Host": "example-web-assets-prod.s3.us-east-1.amazonaws.com",
+     "policy": "",
+     "bucketPolicy": {
+      "Version": "2012-10-17",
+      "Statement": [
+       {
+        "Sid": "AllowCloudFrontServicePrincipalReadOnly",
+        "Effect": "Allow",
+        "Principal": {
+         "Service": "cloudfront.amazonaws.com"
+        },
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::example-web-assets-prod/*",
+        "Condition": {
+         "StringEquals": {
+          "AWS:SourceArn": "arn:aws:cloudfront::123456789012:distribution/E2EXAMPLE7QZ0A1"
+         }
+        }
+       }
+      ]
+     }
+    },
+    "responseElements": null,
+    "additionalEventData": {
+     "SignatureVersion": "SigV4",
+     "CipherSuite": "TLS_AES_128_GCM_SHA256",
+     "AuthenticationMethod": "AuthHeader",
+     "x-amz-id-2": "{{xamzid}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "example-web-assets-prod.s3.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "CloudFront origin access control (OAC) bucket policy"
+  },
+  {
+   "weight": 5,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutBucketPolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "requestParameters": {
+     "bucketName": "example-org-shared-artifacts",
+     "Host": "example-org-shared-artifacts.s3.us-east-1.amazonaws.com",
+     "policy": "",
+     "bucketPolicy": {
+      "Version": "2012-10-17",
+      "Statement": [
+       {
+        "Sid": "OrgReadOnly",
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": [
+         "s3:GetObject",
+         "s3:ListBucket"
+        ],
+        "Resource": [
+         "arn:aws:s3:::example-org-shared-artifacts",
+         "arn:aws:s3:::example-org-shared-artifacts/*"
+        ],
+        "Condition": {
+         "StringEquals": {
+          "aws:PrincipalOrgID": "o-exampleorgid"
+         }
+        }
+       }
+      ]
+     }
+    },
+    "responseElements": null,
+    "additionalEventData": {
+     "SignatureVersion": "SigV4",
+     "CipherSuite": "TLS_AES_128_GCM_SHA256",
+     "AuthenticationMethod": "AuthHeader",
+     "x-amz-id-2": "{{xamzid}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "example-org-shared-artifacts.s3.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "organisation-scoped wildcard principal (aws:PrincipalOrgID)"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutBucketPolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "requestParameters": {
+     "bucketName": "example-alb-logs-use1",
+     "Host": "example-alb-logs-use1.s3.us-east-1.amazonaws.com",
+     "policy": "",
+     "bucketPolicy": {
+      "Version": "2012-10-17",
+      "Statement": [
+       {
+        "Sid": "AWSLogDeliveryWrite",
+        "Effect": "Allow",
+        "Principal": {
+         "Service": "logdelivery.elasticloadbalancing.amazonaws.com"
+        },
+        "Action": "s3:PutObject",
+        "Resource": "arn:aws:s3:::example-alb-logs-use1/AWSLogs/123456789012/*"
+       }
+      ]
+     }
+    },
+    "responseElements": null,
+    "additionalEventData": {
+     "SignatureVersion": "SigV4",
+     "CipherSuite": "TLS_AES_128_GCM_SHA256",
+     "AuthenticationMethod": "AuthHeader",
+     "x-amz-id-2": "{{xamzid}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "example-alb-logs-use1.s3.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutBucketPolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "requestParameters": {
+     "bucketName": "example-cloudtrail-org-logs",
+     "Host": "example-cloudtrail-org-logs.s3.us-east-1.amazonaws.com",
+     "policy": "",
+     "bucketPolicy": {
+      "Version": "2012-10-17",
+      "Statement": [
+       {
+        "Sid": "AWSCloudTrailAclCheck",
+        "Effect": "Allow",
+        "Principal": {
+         "Service": "cloudtrail.amazonaws.com"
+        },
+        "Action": "s3:GetBucketAcl",
+        "Resource": "arn:aws:s3:::example-cloudtrail-org-logs",
+        "Condition": {
+         "StringEquals": {
+          "aws:SourceArn": "arn:aws:cloudtrail:us-east-1:123456789012:trail/org-trail"
+         }
+        }
+       },
+       {
+        "Sid": "AWSCloudTrailWrite",
+        "Effect": "Allow",
+        "Principal": {
+         "Service": "cloudtrail.amazonaws.com"
+        },
+        "Action": "s3:PutObject",
+        "Resource": "arn:aws:s3:::example-cloudtrail-org-logs/AWSLogs/123456789012/*",
+        "Condition": {
+         "StringEquals": {
+          "s3:x-amz-acl": "bucket-owner-full-control",
+          "aws:SourceArn": "arn:aws:cloudtrail:us-east-1:123456789012:trail/org-trail"
+         }
+        }
+       }
+      ]
+     }
+    },
+    "responseElements": null,
+    "additionalEventData": {
+     "SignatureVersion": "SigV4",
+     "CipherSuite": "TLS_AES_128_GCM_SHA256",
+     "AuthenticationMethod": "AuthHeader",
+     "x-amz-id-2": "{{xamzid}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "example-cloudtrail-org-logs.s3.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutBucketAcl",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "requestParameters": {
+     "bucketName": "example-s3-access-logs-use1",
+     "Host": "example-s3-access-logs-use1.s3.us-east-1.amazonaws.com",
+     "acl": "",
+     "AccessControlPolicy": {
+      "AccessControlList": {
+       "Grant": [
+        {
+         "Grantee": {
+          "xsi:type": "CanonicalUser",
+          "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+          "ID": "79a59df900b949e55d96a1e698fbacedfd6e09d98eacf8f8d5218e7cd47ef2be"
+         },
+         "Permission": "FULL_CONTROL"
+        },
+        {
+         "Grantee": {
+          "xsi:type": "Group",
+          "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+          "URI": "http://acs.amazonaws.com/groups/s3/LogDelivery"
+         },
+         "Permission": "WRITE"
+        },
+        {
+         "Grantee": {
+          "xsi:type": "Group",
+          "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+          "URI": "http://acs.amazonaws.com/groups/s3/LogDelivery"
+         },
+         "Permission": "READ_ACP"
+        }
+       ]
+      },
+      "xmlns": "http://s3.amazonaws.com/doc/2006-03-01/",
+      "Owner": {
+       "ID": "79a59df900b949e55d96a1e698fbacedfd6e09d98eacf8f8d5218e7cd47ef2be"
+      }
+     }
+    },
+    "responseElements": null,
+    "additionalEventData": {
+     "SignatureVersion": "SigV4",
+     "CipherSuite": "TLS_AES_128_GCM_SHA256",
+     "AuthenticationMethod": "AuthHeader",
+     "x-amz-id-2": "{{xamzid}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "example-s3-access-logs-use1.s3.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "legacy server-access-log target bucket: ACL grant to the S3 LogDelivery group"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutBucketAcl",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "requestParameters": {
+     "bucketName": "{{bk}}",
+     "Host": "{{bk}}.s3.us-east-1.amazonaws.com",
+     "acl": "",
+     "AccessControlPolicy": {
+      "AccessControlList": {
+       "Grant": {
+        "Grantee": {
+         "xsi:type": "CanonicalUser",
+         "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+         "ID": "79a59df900b949e55d96a1e698fbacedfd6e09d98eacf8f8d5218e7cd47ef2be"
+        },
+        "Permission": "FULL_CONTROL"
+       }
+      },
+      "xmlns": "http://s3.amazonaws.com/doc/2006-03-01/",
+      "Owner": {
+       "ID": "79a59df900b949e55d96a1e698fbacedfd6e09d98eacf8f8d5218e7cd47ef2be"
+      }
+     }
+    },
+    "responseElements": null,
+    "additionalEventData": {
+     "SignatureVersion": "SigV4",
+     "CipherSuite": "TLS_AES_128_GCM_SHA256",
+     "AuthenticationMethod": "AuthHeader",
+     "x-amz-id-2": "{{xamzid}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "{{bk}}.s3.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "owner-only (private) ACL; a single grant is logged as an object, not a list"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutBucketAcl",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "requestParameters": {
+     "bucketName": "{{bk}}",
+     "Host": "{{bk}}.s3.us-east-1.amazonaws.com",
+     "acl": "",
+     "x-amz-acl": "log-delivery-write"
+    },
+    "responseElements": null,
+    "additionalEventData": {
+     "SignatureVersion": "SigV4",
+     "CipherSuite": "TLS_AES_128_GCM_SHA256",
+     "AuthenticationMethod": "AuthHeader",
+     "x-amz-id-2": "{{xamzid}}"
+    },
+    "errorCode": "AccessControlListNotSupported",
+    "errorMessage": "The bucket does not allow ACLs",
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "{{bk}}.s3.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "ACL write rejected by BucketOwnerEnforced"
+  },
+  {
+   "weight": 6,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "sqs.amazonaws.com",
+    "eventName": "SetQueueAttributes",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/sqs#1.34.8",
+    "requestParameters": {
+     "queueUrl": "https://sqs.us-east-1.amazonaws.com/123456789012/order-events-ledger",
+     "attributes": {
+      "Policy": "{\"Version\":\"2012-10-17\",\"Id\":\"arn:aws:sqs:us-east-1:123456789012:order-events-ledger/SQSDefaultPolicy\",\"Statement\":[{\"Sid\":\"topic-subscription-arn:aws:sns:us-east-1:123456789012:order-events\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"*\"},\"Action\":\"SQS:SendMessage\",\"Resource\":\"arn:aws:sqs:us-east-1:123456789012:order-events-ledger\",\"Condition\":{\"ArnLike\":{\"aws:SourceArn\":\"arn:aws:sns:us-east-1:123456789012:order-events\"}}}]}"
+     }
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "sqs.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "SNS->SQS fan-out queue policy (Principal * scoped by aws:SourceArn)"
+  },
+  {
+   "weight": 6,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "sqs.amazonaws.com",
+    "eventName": "SetQueueAttributes",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/sqs#1.34.8",
+    "requestParameters": {
+     "queueUrl": "https://sqs.us-east-1.amazonaws.com/123456789012/{{queue}}",
+     "attributes": {
+      "VisibilityTimeout": "120",
+      "MessageRetentionPeriod": "345600",
+      "RedrivePolicy": "{\"deadLetterTargetArn\":\"arn:aws:sqs:us-east-1:123456789012:{{queue}}-dlq\",\"maxReceiveCount\":5}"
+     }
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "sqs.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "sns.amazonaws.com",
+    "eventName": "SetTopicAttributes",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/sns#1.33.2",
+    "requestParameters": {
+     "topicArn": "arn:aws:sns:us-east-1:123456789012:batch-input-arrivals",
+     "attributeName": "Policy",
+     "attributeValue": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"AllowS3BucketNotifications\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"s3.amazonaws.com\"},\"Action\":\"SNS:Publish\",\"Resource\":\"arn:aws:sns:us-east-1:123456789012:batch-input-arrivals\",\"Condition\":{\"ArnLike\":{\"aws:SourceArn\":\"arn:aws:s3:::example-batch-input-prod\"},\"StringEquals\":{\"aws:SourceAccount\":\"123456789012\"}}}]}"
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "sns.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "topic policy for S3 event notifications (service principal + SourceArn/SourceAccount)"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "sns.amazonaws.com",
+    "eventName": "SetTopicAttributes",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/sns#1.33.2",
+    "requestParameters": {
+     "topicArn": "arn:aws:sns:us-east-1:123456789012:ops-alerts",
+     "attributeName": "Policy",
+     "attributeValue": "{\"Version\":\"2008-10-17\",\"Id\":\"__default_policy_ID\",\"Statement\":[{\"Sid\":\"__default_statement_ID\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"*\"},\"Action\":[\"SNS:GetTopicAttributes\",\"SNS:SetTopicAttributes\",\"SNS:AddPermission\",\"SNS:RemovePermission\",\"SNS:DeleteTopic\",\"SNS:Subscribe\",\"SNS:ListSubscriptionsByTopic\",\"SNS:Publish\"],\"Resource\":\"arn:aws:sns:us-east-1:123456789012:ops-alerts\",\"Condition\":{\"StringEquals\":{\"AWS:SourceOwner\":\"123456789012\"}}},{\"Sid\":\"AllowCloudWatchAlarmsPublish\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"cloudwatch.amazonaws.com\"},\"Action\":\"sns:Publish\",\"Resource\":\"arn:aws:sns:us-east-1:123456789012:ops-alerts\"}]}"
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "sns.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "SNS console DEFAULT topic policy (Principal AWS '*' scoped by AWS:SourceOwner = own account) kept alongside a CloudWatch publish statement"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "sns.amazonaws.com",
+    "eventName": "SetTopicAttributes",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/sns#1.33.2",
+    "requestParameters": {
+     "topicArn": "arn:aws:sns:us-east-1:123456789012:ops-alerts",
+     "attributeName": "DisplayName",
+     "attributeValue": "Ops Alerts"
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "sns.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 5,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "kms.amazonaws.com",
+    "eventName": "PutKeyPolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/kms#1.37.2",
+    "requestParameters": {
+     "keyId": "3f2a9c1e-5b7d-4e8a-9c0f-1a2b3c4d5e6f",
+     "policyName": "default",
+     "policy": "{\"Version\":\"2012-10-17\",\"Id\":\"key-consolepolicy-3\",\"Statement\":[{\"Sid\":\"Enable IAM User Permissions\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::123456789012:root\"},\"Action\":\"kms:*\",\"Resource\":\"*\"},{\"Sid\":\"Allow access for Key Administrators\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::123456789012:role/terraform-apply\"},\"Action\":[\"kms:Create*\",\"kms:Describe*\",\"kms:Enable*\",\"kms:List*\",\"kms:Put*\",\"kms:Update*\",\"kms:Revoke*\",\"kms:Disable*\",\"kms:Get*\",\"kms:Delete*\",\"kms:TagResource\",\"kms:UntagResource\",\"kms:ScheduleKeyDeletion\",\"kms:CancelKeyDeletion\"],\"Resource\":\"*\"},{\"Sid\":\"Allow use of the key\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":[\"arn:aws:iam::123456789012:role/eks-prod-use1-payments-api\",\"arn:aws:iam::123456789012:role/batch-worker-instance-role\"]},\"Action\":[\"kms:Encrypt\",\"kms:Decrypt\",\"kms:ReEncrypt*\",\"kms:GenerateDataKey*\",\"kms:DescribeKey\"],\"Resource\":\"*\"},{\"Sid\":\"Allow attachment of persistent resources\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":[\"arn:aws:iam::123456789012:role/batch-worker-instance-role\"]},\"Action\":[\"kms:CreateGrant\",\"kms:ListGrants\",\"kms:RevokeGrant\"],\"Resource\":\"*\",\"Condition\":{\"Bool\":{\"kms:GrantIsForAWSResource\":\"true\"}}}]}",
+     "bypassPolicyLockoutSafetyCheck": false
+    },
+    "responseElements": null,
+    "resources": [
+     {
+      "accountId": "123456789012",
+      "type": "AWS::KMS::Key",
+      "ARN": "arn:aws:kms:us-east-1:123456789012:key/3f2a9c1e-5b7d-4e8a-9c0f-1a2b3c4d5e6f"
+     }
+    ],
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "kms.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "key policy in the KMS console default layout (named principals only)"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "kms.amazonaws.com",
+    "eventName": "PutKeyPolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/kms#1.37.2",
+    "requestParameters": {
+     "keyId": "8d4e2f1a-0b9c-4d7e-8f6a-5b4c3d2e1f0a",
+     "policyName": "default",
+     "policy": "{\"Version\":\"2012-10-17\",\"Id\":\"ebs-default-encryption-key\",\"Statement\":[{\"Sid\":\"Enable IAM User Permissions\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::123456789012:root\"},\"Action\":\"kms:*\",\"Resource\":\"*\"},{\"Sid\":\"AllowEBSUseForPrincipalsInThisAccount\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"*\"},\"Action\":[\"kms:Encrypt\",\"kms:Decrypt\",\"kms:ReEncrypt*\",\"kms:GenerateDataKey*\",\"kms:CreateGrant\",\"kms:DescribeKey\"],\"Resource\":\"*\",\"Condition\":{\"StringEquals\":{\"kms:ViaService\":\"ec2.us-east-1.amazonaws.com\",\"kms:CallerAccount\":\"123456789012\"}}}]}",
+     "bypassPolicyLockoutSafetyCheck": false
+    },
+    "responseElements": null,
+    "resources": [
+     {
+      "accountId": "123456789012",
+      "type": "AWS::KMS::Key",
+      "ARN": "arn:aws:kms:us-east-1:123456789012:key/8d4e2f1a-0b9c-4d7e-8f6a-5b4c3d2e1f0a"
+     }
+    ],
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "kms.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "EBS default-encryption key: the documented kms:ViaService + kms:CallerAccount pattern (Principal AWS '*' limited to this account via EC2)"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "kms.amazonaws.com",
+    "eventName": "EnableKeyRotation",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/kms#1.37.2",
+    "requestParameters": {
+     "keyId": "{{kmskey}}",
+     "rotationPeriodInDays": 365
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "kms.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 6,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "lambda.amazonaws.com",
+    "eventName": "AddPermission20150331v2",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/lambda#1.62.1",
+    "requestParameters": {
+     "functionName": "arn:aws:lambda:us-east-1:123456789012:function:nightly-cost-report",
+     "statementId": "AllowEventBridgeSchedule",
+     "action": "lambda:InvokeFunction",
+     "principal": "events.amazonaws.com",
+     "sourceArn": "arn:aws:events:us-east-1:123456789012:rule/nightly-cost-report"
+    },
+    "responseElements": {
+     "statement": "{\"Sid\":\"AllowEventBridgeSchedule\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"events.amazonaws.com\"},\"Action\":\"lambda:InvokeFunction\",\"Resource\":\"arn:aws:lambda:us-east-1:123456789012:function:nightly-cost-report\",\"Condition\":{\"ArnLike\":{\"AWS:SourceArn\":\"arn:aws:events:us-east-1:123456789012:rule/nightly-cost-report\"}}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "lambda.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "lambda.amazonaws.com",
+    "eventName": "AddPermission20150331v2",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/lambda#1.62.1",
+    "requestParameters": {
+     "functionName": "arn:aws:lambda:us-east-1:123456789012:function:s3-object-tagger",
+     "statementId": "AllowS3Invoke",
+     "action": "lambda:InvokeFunction",
+     "principal": "s3.amazonaws.com",
+     "sourceArn": "arn:aws:s3:::example-batch-output-prod",
+     "sourceAccount": "123456789012"
+    },
+    "responseElements": {
+     "statement": "{\"Sid\":\"AllowS3Invoke\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"s3.amazonaws.com\"},\"Action\":\"lambda:InvokeFunction\",\"Resource\":\"arn:aws:lambda:us-east-1:123456789012:function:s3-object-tagger\",\"Condition\":{\"ArnLike\":{\"AWS:SourceArn\":\"arn:aws:s3:::example-batch-output-prod\"}}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "lambda.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "lambda.amazonaws.com",
+    "eventName": "AddPermission20150331v2",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/lambda#1.62.1",
+    "requestParameters": {
+     "functionName": "arn:aws:lambda:us-east-1:123456789012:function:invoice-pdf-renderer",
+     "statementId": "AllowApiGatewayInvoke",
+     "action": "lambda:InvokeFunction",
+     "principal": "apigateway.amazonaws.com",
+     "sourceArn": "arn:aws:execute-api:us-east-1:123456789012:a1b2c3d4e5/*/POST/invoices"
+    },
+    "responseElements": {
+     "statement": "{\"Sid\":\"AllowApiGatewayInvoke\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"apigateway.amazonaws.com\"},\"Action\":\"lambda:InvokeFunction\",\"Resource\":\"arn:aws:lambda:us-east-1:123456789012:function:invoice-pdf-renderer\",\"Condition\":{\"ArnLike\":{\"AWS:SourceArn\":\"arn:aws:execute-api:us-east-1:123456789012:a1b2c3d4e5/*/POST/invoices\"}}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "lambda.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "lambda.amazonaws.com",
+    "eventName": "AddPermission20150331v2",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/lambda#1.62.1",
+    "requestParameters": {
+     "functionName": "arn:aws:lambda:us-east-1:123456789012:function:ledger-export-hook",
+     "statementId": "AllowLogArchiveAccount",
+     "action": "lambda:InvokeFunction",
+     "principal": "444455556666"
+    },
+    "responseElements": {
+     "statement": "{\"Sid\":\"AllowLogArchiveAccount\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::444455556666:root\"},\"Action\":\"lambda:InvokeFunction\",\"Resource\":\"arn:aws:lambda:us-east-1:123456789012:function:ledger-export-hook\"}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "lambda.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "cross-account invoke grant to a named account"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "ecr.amazonaws.com",
+    "eventName": "SetRepositoryPolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/ecr#1.36.2",
+    "requestParameters": {
+     "repositoryName": "platform/base-images",
+     "registryId": "123456789012",
+     "policyText": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"OrgWidePull\",\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":[\"ecr:BatchGetImage\",\"ecr:GetDownloadUrlForLayer\",\"ecr:BatchCheckLayerAvailability\"],\"Condition\":{\"StringEquals\":{\"aws:PrincipalOrgID\":\"o-exampleorgid\"}}}]}",
+     "force": false
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "ecr.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "org-wide pull (Principal * scoped by aws:PrincipalOrgID)"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "secretsmanager.amazonaws.com",
+    "eventName": "PutResourcePolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/secretsmanager#1.34.1",
+    "requestParameters": {
+     "secretId": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/shared/datadog-api-AbCdEf",
+     "resourcePolicy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"LogArchiveShipperRead\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::444455556666:role/log-shipper\"},\"Action\":\"secretsmanager:GetSecretValue\",\"Resource\":\"*\"}]}",
+     "blockPublicPolicy": true
+    },
+    "responseElements": {
+     "aRN": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/shared/datadog-api-AbCdEf",
+     "name": "prod/shared/datadog-api"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "secretsmanager.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "events.amazonaws.com",
+    "eventName": "PutPermission",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/eventbridge#1.34.1",
+    "requestParameters": {
+     "eventBusName": "orders",
+     "action": "events:PutEvents",
+     "principal": "777788889999",
+     "statementId": "partner-777788889999"
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "events.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "event bus grant to one named partner account"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "events.amazonaws.com",
+    "eventName": "PutPermission",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/eventbridge#1.34.1",
+    "requestParameters": {
+     "eventBusName": "org-audit",
+     "action": "events:PutEvents",
+     "principal": "*",
+     "statementId": "org-accounts",
+     "condition": {
+      "type": "StringEquals",
+      "key": "aws:PrincipalOrgID",
+      "value": "o-exampleorgid"
+     }
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "events.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "organisation-wide audit bus (Principal * with an aws:PrincipalOrgID condition)"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLESSOPLATADM:{{admin}}@example.com",
+     "arn": "arn:aws:sts::123456789012:assumed-role/AWSReservedSSO_PlatformAdmin_5e1d2c3b4a596877/{{admin}}@example.com",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLESSOPLATADM",
+       "arn": "arn:aws:iam::123456789012:role/aws-reserved/sso.amazonaws.com/AWSReservedSSO_PlatformAdmin_5e1d2c3b4a596877",
+       "accountId": "123456789012",
+       "userName": "AWSReservedSSO_PlatformAdmin_5e1d2c3b4a596877"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {}
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "elasticfilesystem.amazonaws.com",
+    "eventName": "PutFileSystemPolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{vpnip}}",
+    "userAgent": "AWS Internal",
+    "requestParameters": {
+     "fileSystemId": "fs-0a1b2c3d4e5f60718",
+     "policy": "{\"Version\":\"2012-10-17\",\"Id\":\"efs-policy-wizard-7e9d1c2b-3a4f-4e5d-8c6b-1a2b3c4d5e6f\",\"Statement\":[{\"Sid\":\"efs-statement-0b3f6c2e-8a41-4d7e-9c55-2f1e0d9a8b7c\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"*\"},\"Action\":[\"elasticfilesystem:ClientRootAccess\",\"elasticfilesystem:ClientWrite\",\"elasticfilesystem:ClientMount\"],\"Resource\":\"arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0a1b2c3d4e5f60718\",\"Condition\":{\"Bool\":{\"elasticfilesystem:AccessedViaMountTarget\":\"true\"}}},{\"Sid\":\"efs-statement-5d2c1b0a-9f8e-4d7c-8b6a-5f4e3d2c1b0a\",\"Effect\":\"Deny\",\"Principal\":{\"AWS\":\"*\"},\"Action\":\"*\",\"Resource\":\"arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0a1b2c3d4e5f60718\",\"Condition\":{\"Bool\":{\"aws:SecureTransport\":\"false\"}}}]}",
+     "bypassPolicyLockoutSafetyCheck": false
+    },
+    "responseElements": {
+     "fileSystemId": "fs-0a1b2c3d4e5f60718",
+     "policy": "{\"Version\":\"2012-10-17\",\"Id\":\"efs-policy-wizard-7e9d1c2b-3a4f-4e5d-8c6b-1a2b3c4d5e6f\",\"Statement\":[{\"Sid\":\"efs-statement-0b3f6c2e-8a41-4d7e-9c55-2f1e0d9a8b7c\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"*\"},\"Action\":[\"elasticfilesystem:ClientRootAccess\",\"elasticfilesystem:ClientWrite\",\"elasticfilesystem:ClientMount\"],\"Resource\":\"arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0a1b2c3d4e5f60718\",\"Condition\":{\"Bool\":{\"elasticfilesystem:AccessedViaMountTarget\":\"true\"}}},{\"Sid\":\"efs-statement-5d2c1b0a-9f8e-4d7c-8b6a-5f4e3d2c1b0a\",\"Effect\":\"Deny\",\"Principal\":{\"AWS\":\"*\"},\"Action\":\"*\",\"Resource\":\"arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0a1b2c3d4e5f60718\",\"Condition\":{\"Bool\":{\"aws:SecureTransport\":\"false\"}}}]}"
+    },
+    "sessionCredentialFromConsole": "true",
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "elasticfilesystem.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "EFS console policy wizard output: 'Prevent anonymous access' + 'Enforce in-transit encryption' (Principal AWS '*' gated by elasticfilesystem:AccessedViaMountTarget)"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "elasticfilesystem.amazonaws.com",
+    "eventName": "PutFileSystemPolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/efs#1.32.2",
+    "requestParameters": {
+     "fileSystemId": "fs-0f9e8d7c6b5a49382",
+     "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"BatchWorkersMountReadWrite\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::123456789012:role/batch-worker-instance-role\"},\"Action\":[\"elasticfilesystem:ClientMount\",\"elasticfilesystem:ClientWrite\"],\"Resource\":\"arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0f9e8d7c6b5a49382\",\"Condition\":{\"Bool\":{\"elasticfilesystem:AccessedViaMountTarget\":\"true\"}}}]}",
+     "bypassPolicyLockoutSafetyCheck": false
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "elasticfilesystem.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "glue.amazonaws.com",
+    "eventName": "PutResourcePolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/glue#1.99.1",
+    "requestParameters": {
+     "policyInJson": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::444455556666:root\"},\"Action\":[\"glue:GetDatabase\",\"glue:GetDatabases\",\"glue:GetTable\",\"glue:GetTables\",\"glue:GetPartition\",\"glue:GetPartitions\"],\"Resource\":[\"arn:aws:glue:us-east-1:123456789012:catalog\",\"arn:aws:glue:us-east-1:123456789012:database/analytics_curated\",\"arn:aws:glue:us-east-1:123456789012:table/analytics_curated/*\"]},{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"ram.amazonaws.com\"},\"Action\":\"glue:ShareResource\",\"Resource\":[\"arn:aws:glue:us-east-1:123456789012:table/*/*\",\"arn:aws:glue:us-east-1:123456789012:database/*\",\"arn:aws:glue:us-east-1:123456789012:catalog\"]}]}",
+     "enableHybrid": "TRUE"
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "glue.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "Lake Formation cross-account catalog share to a named account + RAM"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "ssm.amazonaws.com",
+    "eventName": "ModifyDocumentPermission",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/ssm#1.52.8",
+    "requestParameters": {
+     "name": "Platform-PatchBaselineRunbook",
+     "permissionType": "Share",
+     "accountIdsToAdd": [
+      "111122223333",
+      "444455556666"
+     ],
+     "sharedDocumentVersion": "$DEFAULT"
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "ssm.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 6,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "ec2.amazonaws.com",
+    "eventName": "ModifySnapshotAttribute",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/ec2#1.177.0",
+    "requestParameters": {
+     "snapshotId": "snap-0{{hex16}}",
+     "attributeType": "CREATE_VOLUME_PERMISSION",
+     "createVolumePermission": {
+      "add": {
+       "items": [
+        {
+         "userId": "111122223333"
+        }
+       ]
+      }
+     }
+    },
+    "responseElements": {
+     "requestId": "{{rid}}",
+     "_return": true
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "ec2.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "EBS snapshot shared with the named DR account"
+  },
+  {
+   "weight": 5,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "ec2.amazonaws.com",
+    "eventName": "ModifyImageAttribute",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/ec2#1.177.0",
+    "requestParameters": {
+     "imageId": "ami-0{{hex16}}",
+     "attributeType": "launchPermission",
+     "launchPermission": {
+      "add": {
+       "items": [
+        {
+         "userId": "111122223333"
+        }
+       ]
+      }
+     }
+    },
+    "responseElements": {
+     "requestId": "{{rid}}",
+     "_return": true
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "ec2.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "golden AMI shared with the named DR account"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "ec2.amazonaws.com",
+    "eventName": "ModifyImageAttribute",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/ec2#1.177.0",
+    "requestParameters": {
+     "imageId": "ami-0{{hex16}}",
+     "attributeType": "launchPermission",
+     "launchPermission": {
+      "add": {
+       "items": [
+        {
+         "organizationArn": "arn:aws:organizations::123456789012:organization/o-exampleorgid"
+        }
+       ]
+      }
+     }
+    },
+    "responseElements": {
+     "requestId": "{{rid}}",
+     "_return": true
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "ec2.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "golden AMI shared with the AWS Organization"
+  },
+  {
+   "weight": 2,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLESSOPLATADM:{{admin}}@example.com",
+     "arn": "arn:aws:sts::123456789012:assumed-role/AWSReservedSSO_PlatformAdmin_5e1d2c3b4a596877/{{admin}}@example.com",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLESSOPLATADM",
+       "arn": "arn:aws:iam::123456789012:role/aws-reserved/sso.amazonaws.com/AWSReservedSSO_PlatformAdmin_5e1d2c3b4a596877",
+       "accountId": "123456789012",
+       "userName": "AWSReservedSSO_PlatformAdmin_5e1d2c3b4a596877"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {}
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "ec2.amazonaws.com",
+    "eventName": "ModifyImageAttribute",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{vpnip}}",
+    "userAgent": "AWS Internal",
+    "requestParameters": {
+     "imageId": "ami-0{{hex16}}",
+     "attributeType": "launchPermission",
+     "launchPermission": {
+      "remove": {
+       "items": [
+        {
+         "group": "all"
+        }
+       ]
+      }
+     }
+    },
+    "responseElements": {
+     "requestId": "{{rid}}",
+     "_return": true
+    },
+    "sessionCredentialFromConsole": "true",
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "ec2.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "hygiene: removing a stale public launch permission from an old AMI"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "rds.amazonaws.com",
+    "eventName": "ModifyDBSnapshotAttribute",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/rds#1.87.2",
+    "requestParameters": {
+     "dBSnapshotIdentifier": "ledger-prod-weekly-{{snapday}}",
+     "attributeName": "restore",
+     "valuesToAdd": [
+      "111122223333"
+     ]
+    },
+    "responseElements": {
+     "dBSnapshotIdentifier": "ledger-prod-weekly-{{snapday}}",
+     "dBSnapshotAttributes": [
+      {
+       "attributeName": "restore",
+       "attributeValues": [
+        "111122223333"
+       ]
+      }
+     ]
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "rds.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "rds.amazonaws.com",
+    "eventName": "ModifyDBClusterSnapshotAttribute",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/rds#1.87.2",
+    "requestParameters": {
+     "dBClusterSnapshotIdentifier": "orders-aurora-weekly-{{snapday}}",
+     "attributeName": "restore",
+     "valuesToAdd": [
+      "111122223333"
+     ]
+    },
+    "responseElements": {
+     "dBClusterSnapshotIdentifier": "orders-aurora-weekly-{{snapday}}",
+     "dBClusterSnapshotAttributes": [
+      {
+       "attributeName": "restore",
+       "attributeValues": [
+        "111122223333"
+       ]
+      }
+     ]
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "rds.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "cognito-identity.amazonaws.com",
+    "eventName": "CreateIdentityPool",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/cognitoidentity#1.25.3",
+    "requestParameters": {
+     "identityPoolName": "fieldservice_prod",
+     "allowUnauthenticatedIdentities": false,
+     "allowClassicFlow": false,
+     "cognitoIdentityProviders": [
+      {
+       "providerName": "cognito-idp.us-east-1.amazonaws.com/us-east-1_EXAMPLE01",
+       "clientId": "1example23456789abcdefghij",
+       "serverSideTokenCheck": true
+      }
+     ]
+    },
+    "responseElements": {
+     "identityPoolId": "us-east-1:4b7c2e1d-8a9f-4c3b-9e2d-1f0a9b8c7d6e",
+     "identityPoolName": "fieldservice_prod",
+     "allowUnauthenticatedIdentities": false,
+     "allowClassicFlow": false
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "cognito-identity.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "cognito-identity.amazonaws.com",
+    "eventName": "UpdateIdentityPool",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/cognitoidentity#1.25.3",
+    "requestParameters": {
+     "identityPoolId": "us-east-1:4b7c2e1d-8a9f-4c3b-9e2d-1f0a9b8c7d6e",
+     "identityPoolName": "fieldservice_prod",
+     "allowUnauthenticatedIdentities": false,
+     "allowClassicFlow": false,
+     "supportedLoginProviders": {
+      "accounts.google.com": "123456789012-example.apps.googleusercontent.com"
+     }
+    },
+    "responseElements": {
+     "identityPoolId": "us-east-1:4b7c2e1d-8a9f-4c3b-9e2d-1f0a9b8c7d6e",
+     "identityPoolName": "fieldservice_prod",
+     "allowUnauthenticatedIdentities": false
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "cognito-identity.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "cognito-identity.amazonaws.com",
+    "eventName": "SetIdentityPoolRoles",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/cognitoidentity#1.25.3",
+    "requestParameters": {
+     "identityPoolId": "us-east-1:4b7c2e1d-8a9f-4c3b-9e2d-1f0a9b8c7d6e",
+     "roles": {
+      "authenticated": "arn:aws:iam::123456789012:role/Cognito_fieldserviceappAuth_Role"
+     }
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "cognito-identity.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "iam.amazonaws.com",
+    "eventName": "CreateRole",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/iam#1.37.1",
+    "requestParameters": {
+     "roleName": "gha-deploy-ledger-api",
+     "assumeRolePolicyDocument": "%7B%22Version%22%3A%222012-10-17%22%2C%22Statement%22%3A%5B%7B%22Effect%22%3A%22Allow%22%2C%22Principal%22%3A%7B%22Federated%22%3A%22arn%3Aaws%3Aiam%3A%3A123456789012%3Aoidc-provider%2Ftoken.actions.githubusercontent.com%22%7D%2C%22Action%22%3A%22sts%3AAssumeRoleWithWebIdentity%22%2C%22Condition%22%3A%7B%22StringEquals%22%3A%7B%22token.actions.githubusercontent.com%3Aaud%22%3A%22sts.amazonaws.com%22%2C%22token.actions.githubusercontent.com%3Asub%22%3A%22repo%3Aexample-org%2Fledger-api%3Aenvironment%3Aproduction%22%7D%7D%7D%5D%7D",
+     "maxSessionDuration": 3600,
+     "tags": [
+      {
+       "key": "managed-by",
+       "value": "terraform"
+      }
+     ]
+    },
+    "responseElements": {
+     "role": {
+      "path": "/",
+      "roleName": "gha-deploy-ledger-api",
+      "roleId": "AROAEXAMPLEGHALEDGER1",
+      "arn": "arn:aws:iam::123456789012:role/gha-deploy-ledger-api",
+      "createDate": "{{ctime}}",
+      "assumeRolePolicyDocument": "%7B%22Version%22%3A%222012-10-17%22%2C%22Statement%22%3A%5B%7B%22Effect%22%3A%22Allow%22%2C%22Principal%22%3A%7B%22Federated%22%3A%22arn%3Aaws%3Aiam%3A%3A123456789012%3Aoidc-provider%2Ftoken.actions.githubusercontent.com%22%7D%2C%22Action%22%3A%22sts%3AAssumeRoleWithWebIdentity%22%2C%22Condition%22%3A%7B%22StringEquals%22%3A%7B%22token.actions.githubusercontent.com%3Aaud%22%3A%22sts.amazonaws.com%22%2C%22token.actions.githubusercontent.com%3Asub%22%3A%22repo%3Aexample-org%2Fledger-api%3Aenvironment%3Aproduction%22%7D%7D%7D%5D%7D"
+     }
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "iam.amazonaws.com"
+    }
+   },
+   "note": "new GitHub OIDC deploy role pinned to repo + environment"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "iam.amazonaws.com",
+    "eventName": "UpdateAssumeRolePolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/iam#1.37.1",
+    "requestParameters": {
+     "roleName": "gha-deploy-web-frontend",
+     "policyDocument": "%7B%22Version%22%3A%222012-10-17%22%2C%22Statement%22%3A%5B%7B%22Effect%22%3A%22Allow%22%2C%22Principal%22%3A%7B%22Federated%22%3A%22arn%3Aaws%3Aiam%3A%3A123456789012%3Aoidc-provider%2Ftoken.actions.githubusercontent.com%22%7D%2C%22Action%22%3A%22sts%3AAssumeRoleWithWebIdentity%22%2C%22Condition%22%3A%7B%22StringEquals%22%3A%7B%22token.actions.githubusercontent.com%3Aaud%22%3A%22sts.amazonaws.com%22%2C%22token.actions.githubusercontent.com%3Asub%22%3A%22repo%3Aexample-org%2Fweb-frontend%3Aref%3Arefs%2Fheads%2Fmain%22%7D%7D%7D%5D%7D"
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "iam.amazonaws.com"
+    }
+   },
+   "note": "GitHub OIDC trust pinned to the main branch"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "iam.amazonaws.com",
+    "eventName": "CreateRole",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/iam#1.37.1",
+    "requestParameters": {
+     "roleName": "eks-prod-use1-ledger-api",
+     "assumeRolePolicyDocument": "%7B%22Version%22%3A%222012-10-17%22%2C%22Statement%22%3A%5B%7B%22Effect%22%3A%22Allow%22%2C%22Principal%22%3A%7B%22Federated%22%3A%22arn%3Aaws%3Aiam%3A%3A123456789012%3Aoidc-provider%2Foidc.eks.us-east-1.amazonaws.com%2Fid%2FEXAMPLE5C0F1D2E3A4B5C6D7E8F90A1B%22%7D%2C%22Action%22%3A%22sts%3AAssumeRoleWithWebIdentity%22%2C%22Condition%22%3A%7B%22StringEquals%22%3A%7B%22oidc.eks.us-east-1.amazonaws.com%2Fid%2FEXAMPLE5C0F1D2E3A4B5C6D7E8F90A1B%3Asub%22%3A%22system%3Aserviceaccount%3Aledger%3Aledger-api%22%2C%22oidc.eks.us-east-1.amazonaws.com%2Fid%2FEXAMPLE5C0F1D2E3A4B5C6D7E8F90A1B%3Aaud%22%3A%22sts.amazonaws.com%22%7D%7D%7D%5D%7D",
+     "maxSessionDuration": 3600,
+     "tags": [
+      {
+       "key": "managed-by",
+       "value": "terraform"
+      }
+     ]
+    },
+    "responseElements": {
+     "role": {
+      "path": "/",
+      "roleName": "eks-prod-use1-ledger-api",
+      "roleId": "AROAEXAMPLELEDGERAPI1",
+      "arn": "arn:aws:iam::123456789012:role/eks-prod-use1-ledger-api",
+      "createDate": "{{ctime}}",
+      "assumeRolePolicyDocument": "%7B%22Version%22%3A%222012-10-17%22%2C%22Statement%22%3A%5B%7B%22Effect%22%3A%22Allow%22%2C%22Principal%22%3A%7B%22Federated%22%3A%22arn%3Aaws%3Aiam%3A%3A123456789012%3Aoidc-provider%2Foidc.eks.us-east-1.amazonaws.com%2Fid%2FEXAMPLE5C0F1D2E3A4B5C6D7E8F90A1B%22%7D%2C%22Action%22%3A%22sts%3AAssumeRoleWithWebIdentity%22%2C%22Condition%22%3A%7B%22StringEquals%22%3A%7B%22oidc.eks.us-east-1.amazonaws.com%2Fid%2FEXAMPLE5C0F1D2E3A4B5C6D7E8F90A1B%3Asub%22%3A%22system%3Aserviceaccount%3Aledger%3Aledger-api%22%2C%22oidc.eks.us-east-1.amazonaws.com%2Fid%2FEXAMPLE5C0F1D2E3A4B5C6D7E8F90A1B%3Aaud%22%3A%22sts.amazonaws.com%22%7D%7D%7D%5D%7D"
+     }
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "iam.amazonaws.com"
+    }
+   },
+   "note": "IRSA role trust (EKS OIDC provider, pinned service account)"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "iam.amazonaws.com",
+    "eventName": "CreateRole",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/iam#1.37.1",
+    "requestParameters": {
+     "roleName": "ledger-export-hook-exec",
+     "assumeRolePolicyDocument": "%7B%22Version%22%3A%222012-10-17%22%2C%22Statement%22%3A%5B%7B%22Effect%22%3A%22Allow%22%2C%22Principal%22%3A%7B%22Service%22%3A%22lambda.amazonaws.com%22%7D%2C%22Action%22%3A%22sts%3AAssumeRole%22%7D%5D%7D",
+     "maxSessionDuration": 3600,
+     "tags": [
+      {
+       "key": "managed-by",
+       "value": "terraform"
+      }
+     ]
+    },
+    "responseElements": {
+     "role": {
+      "path": "/",
+      "roleName": "ledger-export-hook-exec",
+      "roleId": "AROAEXAMPLELEDGEXPRT1",
+      "arn": "arn:aws:iam::123456789012:role/ledger-export-hook-exec",
+      "createDate": "{{ctime}}",
+      "assumeRolePolicyDocument": "%7B%22Version%22%3A%222012-10-17%22%2C%22Statement%22%3A%5B%7B%22Effect%22%3A%22Allow%22%2C%22Principal%22%3A%7B%22Service%22%3A%22lambda.amazonaws.com%22%7D%2C%22Action%22%3A%22sts%3AAssumeRole%22%7D%5D%7D"
+     }
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "iam.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "iam.amazonaws.com",
+    "eventName": "UpdateAssumeRolePolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/iam#1.37.1",
+    "requestParameters": {
+     "roleName": "gha-ci-infra-modules",
+     "policyDocument": "%7B%22Version%22%3A%222012-10-17%22%2C%22Statement%22%3A%5B%7B%22Effect%22%3A%22Allow%22%2C%22Principal%22%3A%7B%22Federated%22%3A%22arn%3Aaws%3Aiam%3A%3A123456789012%3Aoidc-provider%2Ftoken.actions.githubusercontent.com%22%7D%2C%22Action%22%3A%22sts%3AAssumeRoleWithWebIdentity%22%2C%22Condition%22%3A%7B%22StringEquals%22%3A%7B%22token.actions.githubusercontent.com%3Aaud%22%3A%22sts.amazonaws.com%22%7D%2C%22StringLike%22%3A%7B%22token.actions.githubusercontent.com%3Asub%22%3A%22repo%3Aexample-org%2Finfra-modules%3A%2A%22%7D%7D%7D%5D%7D"
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "iam.amazonaws.com"
+    }
+   },
+   "note": "GitHub's published AWS example trust: StringLike sub repo:<org>/<repo>:* (one repository, any ref)"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "iam.amazonaws.com",
+    "eventName": "UpdateAssumeRolePolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/iam#1.37.1",
+    "requestParameters": {
+     "roleName": "gha-release-cli-tool",
+     "policyDocument": "%7B%22Version%22%3A%222012-10-17%22%2C%22Statement%22%3A%5B%7B%22Effect%22%3A%22Allow%22%2C%22Principal%22%3A%7B%22Federated%22%3A%22arn%3Aaws%3Aiam%3A%3A123456789012%3Aoidc-provider%2Ftoken.actions.githubusercontent.com%22%7D%2C%22Action%22%3A%22sts%3AAssumeRoleWithWebIdentity%22%2C%22Condition%22%3A%7B%22StringEquals%22%3A%7B%22token.actions.githubusercontent.com%3Aaud%22%3A%22sts.amazonaws.com%22%7D%2C%22StringLike%22%3A%7B%22token.actions.githubusercontent.com%3Asub%22%3A%22repo%3Aexample-org%2Fcli-tool%3Aref%3Arefs%2Ftags%2Fv%2A%22%7D%7D%7D%5D%7D"
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "iam.amazonaws.com"
+    }
+   },
+   "note": "release role trusting only version tags of one repository (StringLike refs/tags/v*)"
+  },
+  {
+   "weight": 5,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "iam.amazonaws.com",
+    "eventName": "PutRolePolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/iam#1.37.1",
+    "requestParameters": {
+     "roleName": "eks-prod-use1-ledger-api",
+     "policyName": "ledger-exports-read",
+     "policyDocument": "%7B%22Version%22%3A%222012-10-17%22%2C%22Statement%22%3A%5B%7B%22Effect%22%3A%22Allow%22%2C%22Action%22%3A%5B%22s3%3AGetObject%22%2C%22s3%3AListBucket%22%5D%2C%22Resource%22%3A%5B%22arn%3Aaws%3As3%3A%3A%3Aexample-ledger-exports-prod%22%2C%22arn%3Aaws%3As3%3A%3A%3Aexample-ledger-exports-prod%2F%2A%22%5D%7D%5D%7D"
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "iam.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 5,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "iam.amazonaws.com",
+    "eventName": "AttachRolePolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/iam#1.37.1",
+    "requestParameters": {
+     "roleName": "ledger-export-hook-exec",
+     "policyArn": "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "iam.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 2,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutBucketPublicAccessBlock",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "requestParameters": {
+     "bucketName": "www.example.com",
+     "Host": "www.example.com.s3.us-east-1.amazonaws.com",
+     "publicAccessBlock": "",
+     "PublicAccessBlockConfiguration": {
+      "xmlns": "http://s3.amazonaws.com/doc/2006-03-01/",
+      "BlockPublicAcls": true,
+      "IgnorePublicAcls": true,
+      "BlockPublicPolicy": false,
+      "RestrictPublicBuckets": false
+     }
+    },
+    "responseElements": null,
+    "additionalEventData": {
+     "SignatureVersion": "SigV4",
+     "CipherSuite": "TLS_AES_128_GCM_SHA256",
+     "AuthenticationMethod": "AuthHeader",
+     "x-amz-id-2": "{{xamzid}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "www.example.com.s3.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "marketing static site on the S3 website endpoint: bucket-level BPA relaxed for the bucket policy only (intentional)"
+  },
+  {
+   "weight": 2,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutBucketPolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "requestParameters": {
+     "bucketName": "www.example.com",
+     "Host": "www.example.com.s3.us-east-1.amazonaws.com",
+     "policy": "",
+     "bucketPolicy": {
+      "Version": "2012-10-17",
+      "Statement": [
+       {
+        "Sid": "PublicReadGetObject",
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::www.example.com/*"
+       }
+      ]
+     }
+    },
+    "responseElements": null,
+    "additionalEventData": {
+     "SignatureVersion": "SigV4",
+     "CipherSuite": "TLS_AES_128_GCM_SHA256",
+     "AuthenticationMethod": "AuthHeader",
+     "x-amz-id-2": "{{xamzid}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "www.example.com.s3.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "marketing static site: public-read bucket policy (intentional)"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutBucketWebsite",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.65.3",
+    "requestParameters": {
+     "bucketName": "www.example.com",
+     "Host": "www.example.com.s3.us-east-1.amazonaws.com",
+     "website": "",
+     "WebsiteConfiguration": {
+      "xmlns": "http://s3.amazonaws.com/doc/2006-03-01/",
+      "IndexDocument": {
+       "Suffix": "index.html"
+      },
+      "ErrorDocument": {
+       "Key": "404.html"
+      }
+     }
+    },
+    "responseElements": null,
+    "additionalEventData": {
+     "SignatureVersion": "SigV4",
+     "CipherSuite": "TLS_AES_128_GCM_SHA256",
+     "AuthenticationMethod": "AuthHeader",
+     "x-amz-id-2": "{{xamzid}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "www.example.com.s3.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "lambda.amazonaws.com",
+    "eventName": "CreateFunctionUrlConfig20211031",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/lambda#1.62.1",
+    "requestParameters": {
+     "functionName": "github-webhook-receiver",
+     "authType": "NONE"
+    },
+    "responseElements": {
+     "functionUrl": "https://a1b2c3d4e5f6g7h8i9j0example.lambda-url.us-east-1.on.aws/",
+     "functionArn": "arn:aws:lambda:us-east-1:123456789012:function:github-webhook-receiver",
+     "authType": "NONE"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "lambda.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 2,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "AROAEXAMPLETFAPPLY001:GitHubActions",
+     "arn": "arn:aws:sts::123456789012:assumed-role/terraform-apply/GitHubActions",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "AROAEXAMPLETFAPPLY001",
+       "arn": "arn:aws:iam::123456789012:role/terraform-apply",
+       "accountId": "123456789012",
+       "userName": "terraform-apply"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {
+       "federatedProvider": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+       "attributes": {}
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "lambda.amazonaws.com",
+    "eventName": "AddPermission20150331v2",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{tfip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/lambda#1.62.1",
+    "requestParameters": {
+     "functionName": "github-webhook-receiver",
+     "statementId": "FunctionURLAllowPublicAccess",
+     "action": "lambda:InvokeFunctionUrl",
+     "principal": "*",
+     "functionUrlAuthType": "NONE"
+    },
+    "responseElements": {
+     "statement": "{\"Sid\":\"FunctionURLAllowPublicAccess\",\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"lambda:InvokeFunctionUrl\",\"Resource\":\"arn:aws:lambda:us-east-1:123456789012:function:github-webhook-receiver\",\"Condition\":{\"StringEquals\":{\"lambda:FunctionUrlAuthType\":\"NONE\"}}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "lambda.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "public webhook receiver: Lambda function URL with AuthType NONE (verifies the webhook HMAC in code)"
+  }
+ ]
+}
