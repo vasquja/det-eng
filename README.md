@@ -277,7 +277,7 @@ Proving the loop is automated:
   attack/benign log fixtures: every rule must fire on its attack fixture and match
   nothing in a hard benign baseline. Pure Python — no cluster, no cloud account.
 - **Detection quality** —
-  `.github/workflows/detection-quality.yml`
+  [`.github/workflows/detection-quality.yml`](.github/workflows/detection-quality.yml)
   runs on every pull request:
   - **`rule-cases`** runs every rule's sidecar cases.
   - **`check-sufficiency`** fails a rule with no registered positive, no verified

@@ -1,0 +1,251 @@
+name: detection-quality
+
+# The quality layers that sit beside the per-platform validators:
+#
+#   rule-cases         every positive / near-miss / filtered / confounder / benign case
+#                      stored next to a rule (detections/sigma/<T>/<stem>.cases.jsonl)
+#                      runs through the same pySigma backend as the validators, and
+#                      each declared `breaks` must really be the single flip that
+#                      would fire the rule (detections/rule_cases.py). Hard gate.
+#   check-sufficiency  every rule must ship a positive and at least one VERIFIED
+#                      non-trivial negative (one that shares the chokepoint and fails
+#                      a required argument or a correlation half), and no rule may key
+#                      on an emulation marker (detections/check_sufficiency.py). Hard gate.
+#   benign-corpus      every rule scored against the committed benign corpus
+#                      (detections/score_benign.py): the snapshot scores.json must be
+#                      current, and a rule in `enforce` mode must stay within its
+#                      budget. Shadow-mode overruns only warn.
+#   benign-linux-live  SHADOW. A real Ubuntu runner runs ordinary admin, developer
+#                      and service activity under the det-eng audit rules
+#                      (detections/benign/linux/), and every Linux rule is scored on
+#                      the capture. What a rule matches never fails this job; the
+#                      capture is uploaded so a human can promote a sanitized copy
+#                      into a recorded slice.
+#
+# No paths: filter on pull_request, so these checks ALWAYS report on a PR (they are
+# wired to be branch-protection required checks, and automerge waits for them).
+# The weekly schedule re-proves every rule even when nothing in the repo changed
+# (pySigma, the runner image and the kernel drift underneath the rules).
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '53 6 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  rule-cases:
+    name: rule-cases
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install requirements
+        run: pip install --quiet -r detections/requirements.txt
+
+      - name: Run the cases stored next to every rule
+        shell: bash
+        run: |
+          # shell: bash enables pipefail, so tee does not mask the exit code.
+          python3 detections/rule_cases.py | tee /tmp/rule-cases.out
+
+      - name: Publish results to job summary
+        if: always()
+        shell: bash
+        run: |
+          # shellcheck disable=SC2016  # the backticks are Markdown, not substitutions
+          {
+            echo '## Rule cases (positive, near-miss, filtered, confounder, benign)'
+            echo ''
+            echo 'Each negative must be the single item flip it declares (`breaks`), not merely a non-match.'
+            echo ''
+            echo '```'
+            cat /tmp/rule-cases.out 2>/dev/null || echo '(no output captured)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  check-sufficiency:
+    name: check-sufficiency
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install requirements
+        run: pip install --quiet -r detections/requirements.txt
+
+      - name: Check that every rule's checks are sufficient
+        shell: bash
+        run: |
+          python3 detections/check_sufficiency.py --markdown "$GITHUB_STEP_SUMMARY" \
+            | tee /tmp/sufficiency.out
+
+      - name: Publish the full log to job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo ''
+            echo '<details><summary>check_sufficiency.py output</summary>'
+            echo ''
+            echo '```'
+            cat /tmp/sufficiency.out 2>/dev/null || echo '(no output captured)'
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  benign-corpus:
+    name: benign-corpus
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install requirements
+        run: pip install --quiet -r detections/requirements.txt
+
+      - name: Score every rule against the benign corpus
+        shell: bash
+        run: |
+          # --check: scores.json must match the current rules and corpus.
+          # --enforce: an enforce-mode rule over its budget fails; shadow-mode warns.
+          python3 detections/score_benign.py --check --enforce \
+            --markdown "$GITHUB_STEP_SUMMARY" | tee /tmp/benign.out
+
+      - name: Publish the full log to job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo ''
+            echo '<details><summary>score_benign.py output (explained example hits)</summary>'
+            echo ''
+            echo '```'
+            cat /tmp/benign.out 2>/dev/null || echo '(no output captured)'
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  benign-linux-live:
+    # SHADOW: what a rule matches on the live capture never fails this job. It fails
+    # only when the capture itself is broken (auditd unavailable, or no det-eng
+    # records reached the log), the same infrastructure validate-detections needs.
+    name: benign-linux-live
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install scorer requirements
+        run: pip install --quiet -r detections/requirements.txt
+
+      - name: Install audit, build tools, the workload's tools and the capture venv
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y auditd gcc python3-venv
+          # The workload's tools. A package this image lacks only skips its workload
+          # step (workload.sh checks for each tool), so a miss is a notice, not a failure.
+          tools="tcpdump gdb strace ltrace mtr-tiny iputils-arping iputils-tracepath
+                 cryptsetup-bin keyutils fio make git curl linux-tools-common
+                 linux-tools-$(uname -r)"
+          # shellcheck disable=SC2086  # word-split the package list on purpose
+          if ! sudo apt-get install -y $tools; then
+            for pkg in $tools; do
+              sudo apt-get install -y "$pkg" >/dev/null 2>&1 \
+                || echo "::notice title=benign-linux-live::package $pkg not installed; its workload step will skip"
+            done
+          fi
+          # A venv on the SYSTEM Python runs cleanly under sudo (no LD_LIBRARY_PATH
+          # needed, unlike the setup-python interpreter), as in validate-detections.
+          /usr/bin/python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip install --quiet -r detections/requirements.txt
+
+      - name: Start auditd (room for the whole capture window)
+        shell: bash
+        run: |
+          # A busy runner under the det-eng rules (ioctl, setsockopt, pipe2 from every
+          # process) writes far more than the validator's short windows: give the log
+          # room so it does not rotate mid-capture, and the kernel a deeper backlog.
+          sudo sed -i -E 's/^\s*max_log_file\s*=.*/max_log_file = 512/' /etc/audit/auditd.conf
+          sudo systemctl start auditd || sudo service auditd start
+          # auditd re-reads auditd.conf on SIGHUP (its unit may refuse a manual restart).
+          sudo pkill -HUP -x auditd || true
+          sudo auditctl -b 32768 || true
+          sudo auditctl -s
+
+      - name: Capture the benign workload under the det-eng audit rules
+        shell: bash
+        run: |
+          # --require-audit: a broken audit setup fails instead of passing silently.
+          sudo /tmp/venv/bin/python detections/benign/linux/capture.py \
+            --out /tmp/linux-benign.jsonl --require-audit \
+            --summary-json /tmp/linux-benign-summary.json | tee /tmp/linux-capture.out
+
+      - name: Score every Linux rule on the capture (shadow)
+        shell: bash
+        run: |
+          # Shadow: hits are reported (and annotated as warnings), never enforced. Even
+          # a scorer error only warns here; the benign-corpus job gates the scorer.
+          python3 detections/score_benign.py \
+            --extra-slice /tmp/linux-benign.jsonl \
+            --extra-logsource linux/auditd \
+            --extra-label ubuntu-runner-workload \
+            --markdown "$GITHUB_STEP_SUMMARY" | tee /tmp/linux-score.out \
+            || echo "::warning title=benign-linux-live::score_benign.py exited non-zero on the live capture; see the log"
+
+      - name: Publish the capture summary to job summary
+        if: always()
+        shell: bash
+        run: |
+          # shellcheck disable=SC2016  # the backticks are Markdown, not substitutions
+          {
+            echo ''
+            echo '## Live Linux benign capture (ubuntu-latest runner, shadow)'
+            echo ''
+            echo 'Ordinary admin, developer and service activity (`detections/benign/linux/workload.sh`)'
+            echo 'under the det-eng audit rules. The capture is uploaded as the `linux-benign-capture`'
+            echo 'artifact; a human may sanitize it and promote it into a recorded slice.'
+            echo ''
+            echo '<details><summary>capture.py output (per-syscall and per-exe counts)</summary>'
+            echo ''
+            echo '```'
+            cat /tmp/linux-capture.out 2>/dev/null || echo '(no output captured)'
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the capture
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-benign-capture
+          path: |
+            /tmp/linux-benign.jsonl
+            /tmp/linux-benign-summary.json
+            /tmp/linux-capture.out
+            /tmp/linux-score.out
+          if-no-files-found: warn
+          retention-days: 30

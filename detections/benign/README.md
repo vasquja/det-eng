@@ -17,7 +17,7 @@ layer that measures that.
 
 ## What is in it
 
-Each slice is one JSON spec under `slices/<family>/`. Its `logsource`
+Each slice is one JSON spec under [`slices/<family>/`](slices/). Its `logsource`
 must match a rule's `logsource`, and the rule is then scored against every event in
 the slice. The full spec format is documented in
 [`../benign_corpus.py`](../benign_corpus.py).
@@ -43,10 +43,10 @@ Two live captures are also scored in CI, in shadow mode only. Neither is committ
 
 - **kind bootstrap + operator workload.** In `validate-apiserver-detections`, the
   API server audit log captured before the emulation runs. It includes a fresh
-  cluster's own traffic plus `k8s/workload.sh`.
+  cluster's own traffic plus [`k8s/workload.sh`](k8s/workload.sh).
 - **Ubuntu runner workload.** The `benign-linux-live` job in `detection-quality`
-  records `linux/workload.sh` under the det-eng audit rules
-  with `linux/capture.py` and uploads the capture as an
+  records [`linux/workload.sh`](linux/workload.sh) under the det-eng audit rules
+  with [`linux/capture.py`](linux/capture.py) and uploads the capture as an
   artifact.
 
 A human can sanitize a live capture and promote it into a `recorded` slice.
@@ -83,7 +83,7 @@ A rule with no entry gets `default`. Every entry must carry a `why`.
 
 ## Tracking it over time
 
-`scores.json` is the committed snapshot of every rule's score
+[`scores.json`](scores.json) is the committed snapshot of every rule's score
 (hits, rate, distinct actors, per-slice hits) and of the corpus digest. The
 `benign-corpus` check runs `score_benign.py --check`, which fails when the snapshot
 is stale. So any change that moves a rule's false-positive count (a rule edit, a
