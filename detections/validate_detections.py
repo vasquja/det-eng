@@ -290,6 +290,21 @@ def audit_log_lines():
 
 _FIELD = re.compile(r'(\w+)=("[^"]*"|\S+)')
 _STAMP = re.compile(r"audit\((\d+)\.(\d+):")
+_HEX = re.compile(r"(?:[0-9A-F]{2})+")
+
+
+def untrusted_string(value, quoted):
+    """An auditd 'untrusted string' field (comm, exe) as text.
+
+    The kernel logs such a value in double quotes when it is plain printable
+    text, and as unquoted uppercase HEX when it holds a space, a quote or a
+    non-printable byte (audit_log_untrustedstring): comm 'Attach Listener' is
+    logged as comm=417474616368204C697374656E6572. Decode that form, so a rule or
+    an allowlist that names the process sees its real name.
+    """
+    if value is None or quoted or not _HEX.fullmatch(value):
+        return value
+    return bytes.fromhex(value).decode("utf-8", "replace")
 
 
 def normalize(lines):
@@ -300,7 +315,9 @@ def normalize(lines):
         if 'key="det-eng"' not in line:
             continue
         raw, _, enriched = line.partition("\x1d")
-        f = {k: v.strip('"') for k, v in _FIELD.findall(raw)}
+        pairs = _FIELD.findall(raw)
+        f = {k: v.strip('"') for k, v in pairs}
+        quoted = {k for k, v in pairs if v.startswith('"')}
         if f.get("type") != "SYSCALL" or "syscall" not in f:
             continue
         name = dict(_FIELD.findall(enriched)).get("SYSCALL")
@@ -315,8 +332,8 @@ def normalize(lines):
             **{f"a{i}": f.get(f"a{i}") for i in range(4)},
             "pid": int(f["pid"]),
             "ppid": int(f["ppid"]),
-            "comm": f.get("comm"),
-            "exe": f.get("exe"),
+            "comm": untrusted_string(f.get("comm"), "comm" in quoted),
+            "exe": untrusted_string(f.get("exe"), "exe" in quoted),
             "timestamp": when.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
         })
     return events

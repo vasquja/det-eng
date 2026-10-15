@@ -45,8 +45,23 @@ A slice is one JSON spec under detections/benign/slices/<family>/<id>.json:
                                    a per-slice clock that only moves forward
                                    (format defaults to ISO 8601 with Z)
 
+    {"offset": {"var": "t", "seconds": n, "format": strftime}}
+                                   another time variable of the same event (or
+                                   sequence) shifted by n seconds, e.g. a
+                                   credential's expiration after its issue time
+
   Each variable is drawn once per event, so the same placeholder used twice in
   one event (an ARN and its user name) stays consistent.
+
+  A template may hold a SEQUENCE instead of one event:
+    {"weight": n, "events": [{"event": {...}}, {"delay_ms": 40, "event": {...}}]}
+  Every event of one draw shares the draw's variables (the same pid, the same
+  session), and a time variable advances only by each step's delay_ms. Real
+  multi-event behaviour -- runc's memfd re-exec, a pipe then a splice in one
+  process, a namespace deletion and its controller's cleanup -- must be written
+  as a sequence: events drawn independently almost never line up in one pid
+  inside a correlation window. `count` is the number of template draws, so a
+  sequence adds several events per draw.
 
 Expansion is deterministic, so the corpus is versioned data: the same specs
 always produce the same events, and corpus_digest() changes only when a spec
@@ -101,6 +116,9 @@ class _Gen:
         self.vars = spec.get("vars") or {}
         self.counters = {}
         self.clocks = {}
+        self.seq_base = None  # {time var: datetime} while expanding a sequence
+        self.delay_ms = 0
+        self.times = {}       # time var -> datetime of its value in this draw
 
     def _below(self, n):
         return int(self.rng.random() * n) if n > 0 else 0
@@ -140,19 +158,36 @@ class _Gen:
             return g["seq"].replace("{n}", str(n))
         if "time" in g:
             t = g["time"]
-            now = self.clocks.get(name)
-            if now is None:
-                now = datetime.fromisoformat(t["start"].replace("Z", "+00:00"))
+            if self.seq_base is not None and name in self.seq_base:
+                # a later step of a sequence: same draw, moved on by the step delays
+                now = self.seq_base[name] + timedelta(milliseconds=self.delay_ms)
             else:
-                lo, hi = t.get("step_seconds", [1, 60])
-                now = now + timedelta(seconds=lo + self.rng.random() * (hi - lo))
-            self.clocks[name] = now
-            fmt = t.get("format")
-            if fmt:
-                text = now.astimezone(timezone.utc).strftime(fmt)
-                return text[:-3] if fmt.endswith("%f") else text  # milliseconds
-            return now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                now = self.clocks.get(name)
+                if now is None:
+                    now = datetime.fromisoformat(t["start"].replace("Z", "+00:00"))
+                else:
+                    lo, hi = t.get("step_seconds", [1, 60])
+                    now = now + timedelta(seconds=lo + self.rng.random() * (hi - lo))
+                self.clocks[name] = now
+                if self.seq_base is not None:
+                    self.seq_base[name] = now
+            self.times[name] = now
+            return _fmt_time(now, t.get("format"))
+        if "offset" in g:
+            o = g["offset"]
+            base = self.times.get(o["var"])
+            if base is None:
+                raise ValueError(f"{name}: offset of {o['var']!r}, which this event has not "
+                                 "drawn yet (put the base time earlier in the template)")
+            return _fmt_time(base + timedelta(seconds=o.get("seconds", 0)), o.get("format"))
         raise ValueError(f"unknown generator for {name}: {g}")
+
+
+def _fmt_time(when, fmt):
+    if fmt:
+        text = when.astimezone(timezone.utc).strftime(fmt)
+        return text[:-3] if fmt.endswith("%f") else text  # milliseconds
+    return when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _fill(node, values, gen):
@@ -190,7 +225,22 @@ def expand(spec):
             x -= w
             if x < 0:
                 break
-        events.append(_fill(template["event"], {}, gen))
+        gen.times = {}
+        if "events" not in template:
+            events.append(_fill(template["event"], {}, gen))
+            continue
+        # A sequence: one draw of the shared variables; time moves only by delay_ms.
+        values, gen.seq_base, gen.delay_ms = {}, {}, 0
+        time_vars = {n for n, g in gen.vars.items() if isinstance(g, dict) and "time" in g}
+        try:
+            for step in template["events"]:
+                gen.delay_ms += step.get("delay_ms", 0)
+                for name in time_vars | {n for n, g in gen.vars.items()
+                                         if isinstance(g, dict) and "offset" in g}:
+                    values.pop(name, None)  # re-render the clock at this step's delay
+                events.append(_fill(step["event"], values, gen))
+        finally:
+            gen.seq_base, gen.delay_ms = None, 0
     return events
 
 
@@ -207,6 +257,9 @@ def validate_spec(spec, path):
         for k in ("count", "templates"):
             if k not in spec:
                 problems.append(f"a synthetic slice needs `{k}`")
+        for i, t in enumerate(spec.get("templates") or []):
+            if ("event" in t) == ("events" in t):
+                problems.append(f"template {i} needs exactly one of `event` or `events`")
     return problems
 
 
