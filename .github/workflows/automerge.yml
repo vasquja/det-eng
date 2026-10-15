@@ -18,7 +18,9 @@ name: automerge
 # ambiguity holds the PR out of the queue):
 #   1. Per-PR opt-in: the PR carries the `automerge` label. A label is addable only
 #      by a collaborator with triage/write access, so it IS the human opt-in.
-#      Removing the label DEQUEUES the PR.
+#      Removing the label dequeues the PR -- a best-effort, racy veto (it runs in a
+#      fresh event and can lose a race to the queue finishing the group), but a
+#      FAILED dequeue fails this workflow loudly rather than silently merging.
 #   2. Same-repo only: fork PRs are never enqueued (head.repo != base.repo). This is
 #      the key defense against a malicious outside PR.
 #   3. Open, not a draft, and the base branch is `main`.
@@ -26,25 +28,39 @@ name: automerge
 #      (nothing failed, nothing running), and there is at least one. We never queue a
 #      PR whose own-head checks are red -- that only wastes a queue cycle re-failing
 #      on the group.
-#   5. No reviewer's latest review is CHANGES_REQUESTED (a human veto is honored).
+#   5. No reviewer's latest review is CHANGES_REQUESTED. Honored at enqueue AND for
+#      the whole queue window: a CHANGES_REQUESTED review (pull_request_review) on a
+#      labeled PR dequeues it. (Lifting the veto does not auto re-enqueue; re-add the
+#      label or push to re-enter.)
 #   6. No merge conflict (`mergeable == true`, confirmed; an unknown holds). We do
 #      NOT require up-to-date-with-main here: the queue handles that.
 #   7. Enqueue is guarded by the head OID (expectedHeadOid), so a push that races the
 #      enqueue aborts it rather than queuing a moved head. A PR already in the queue
 #      is skipped (isInMergeQueue).
 #
-# The label path uses `pull_request_target`, NOT `pull_request`: it always runs THIS
-# file from base (main) with a write token, so a PR cannot ship an altered copy that
-# runs with write access. Safe because the job only reads API metadata and calls the
-# enqueue/dequeue GraphQL mutations -- it never checks out or runs PR-authored code.
-# Nothing from the event (title, branch, body, author) is interpolated into the
-# shell; github-context values come through the env: block.
+# The label and review paths use `pull_request_target` / `pull_request_review`, NOT
+# `pull_request`: they always run THIS file from base (main) with a write token, so a
+# PR cannot ship an altered copy that runs with write access. Safe because the job
+# only reads API metadata and calls the enqueue/dequeue GraphQL mutations -- it never
+# checks out or runs PR-authored code. Nothing from the event (title, branch, body,
+# author) is interpolated into the shell; context values come through the env: block.
+# The concurrency group is keyed by event action so a pending veto (unlabeled /
+# review) run is never superseded-cancelled by an enqueue run on the same head.
 #
 # Requirements (one-time): Settings -> Actions -> General -> Workflow permissions set
 # to read/write; the `automerge` label exists; and the `main` ruleset has a "Require
-# merge queue" rule. Each required-check workflow also triggers on `merge_group` so
-# the queue can run it. Until the queue rule exists, enqueue fails closed and the PR
-# simply waits -- nothing is merged unsafely.
+# merge queue" rule whose MERGE METHOD is SQUASH (or Rebase) -- NOT the default
+# "Merge commit". `main` also requires LINEAR HISTORY, and a merge commit written to
+# it by the queue would be rejected, so with the default method the queue would
+# silently stall with every entry green. Each required-check workflow also triggers
+# on `merge_group` so the queue can run it. Until the queue rule exists, enqueue
+# fails closed and the PR simply waits -- nothing is merged unsafely.
+#
+# Note: if a merge_group run fails (a real break, or a flake in the heavy validators),
+# GitHub ejects that PR from the queue and does not re-add it. The PR keeps its label
+# and its own checks stay green, but nothing re-enqueues it automatically -- remove
+# and re-add the `automerge` label (or push) to retry. This is intentional: auto
+# re-enqueue cannot tell a flake from a real break and would risk queue thrash.
 
 on:
   workflow_run:
@@ -59,6 +75,8 @@ on:
     types: [completed]
   pull_request_target:
     types: [labeled, unlabeled]
+  pull_request_review:
+    types: [submitted, dismissed, edited]
 
 permissions:
   contents: write
@@ -67,7 +85,10 @@ permissions:
   statuses: read
 
 concurrency:
-  group: automerge-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.sha }}
+  # Keyed by action too, so a pending veto run (unlabeled / review submitted) is never
+  # superseded-cancelled by an enqueue run (labeled / workflow_run completed) on the
+  # same head.
+  group: automerge-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.sha }}-${{ github.event.action }}
   cancel-in-progress: false
 
 jobs:
@@ -83,7 +104,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           ACTION: ${{ github.event.action }}
           LABEL_NAME: ${{ github.event.label.name }}
-          PR_FROM_LABEL: ${{ github.event.pull_request.number }}
+          PR_NUM: ${{ github.event.pull_request.number }}
           SHA_FROM_RUN: ${{ github.event.workflow_run.head_sha }}
           RUN_ID: ${{ github.run_id }}
         shell: bash
@@ -91,21 +112,71 @@ jobs:
           set -euo pipefail
           owner="${REPO%/*}"; name="${REPO#*/}"
 
-          dequeue() { # $1 = PR node id
+          in_merge_queue() { # $1 = PR number -> prints true | false | unknown
             gh api graphql \
-              -f query='mutation($id:ID!){dequeuePullRequest(input:{pullRequestId:$id}){mergeQueueEntry{id}}}' \
-              -f id="$1" >/dev/null 2>&1
+              -f query='query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){isInMergeQueue}}}' \
+              -f o="$owner" -f n="$name" -F p="$1" \
+              --jq '.data.repository.pullRequest.isInMergeQueue' 2>/dev/null || echo "unknown"
           }
 
-          # --- Label removed -> dequeue and stop --------------------------------
+          # Dequeue a PR as a VETO. Benign (0) if it was never queued; LOUD (1) if a
+          # queued PR could not be confirmed out of the queue -- so a dropped veto
+          # fails the run and is retried/visible instead of silently merging.
+          veto_dequeue() { # $1 = PR number
+            local pr="$1" q node out
+            q="$(in_merge_queue "$pr")"
+            if [ "$q" != "true" ]; then
+              echo "PR #$pr is not in the merge queue ($q); nothing to dequeue."
+              return 0
+            fi
+            node="$(gh api "repos/$REPO/pulls/$pr" --jq '.node_id' 2>/dev/null || true)"
+            if [ -z "$node" ]; then
+              echo "::error::Queued PR #$pr: could not read node id; dequeue NOT applied -- veto did not take."
+              return 1
+            fi
+            if ! out="$(gh api graphql \
+                 -f query='mutation($id:ID!){dequeuePullRequest(input:{pullRequestId:$id}){mergeQueueEntry{id}}}' \
+                 -f id="$node" 2>&1)"; then
+              echo "::error::Queued PR #$pr: dequeue failed; veto did not take: $out"
+              return 1
+            fi
+            if [ "$(in_merge_queue "$pr")" = "true" ]; then
+              echo "::error::PR #$pr still in the merge queue after dequeue; veto did not take."
+              return 1
+            fi
+            echo "Dequeued PR #$pr."
+            return 0
+          }
+
+          # --- Label removed -> dequeue (veto) and stop; fail CLOSED and LOUD -----
           if [ "$EVENT" = "pull_request_target" ] && [ "$ACTION" = "unlabeled" ]; then
             if [ "$LABEL_NAME" = "$LABEL" ]; then
-              node="$(gh api "repos/$REPO/pulls/$PR_FROM_LABEL" --jq '.node_id' 2>/dev/null || true)"
-              if [ -n "$node" ] && dequeue "$node"; then
-                echo "Label removed; dequeued PR #$PR_FROM_LABEL."
-              else
-                echo "Label removed; PR #$PR_FROM_LABEL was not queued (or dequeue was gated)."
-              fi
+              echo "'$LABEL' removed from PR #$PR_NUM; honoring the veto."
+              veto_dequeue "$PR_NUM" || exit 1
+            fi
+            exit 0
+          fi
+
+          # --- A review arrived -> honor a standing CHANGES_REQUESTED veto for the
+          #     whole queue window by dequeuing a labeled PR (mirror of unlabeled). --
+          if [ "$EVENT" = "pull_request_review" ]; then
+            data="$(gh api "repos/$REPO/pulls/$PR_NUM" 2>/dev/null || echo '{}')"
+            has_label="$(jq -r 'any(.labels[]?; .name==env.LABEL)' <<<"$data" 2>/dev/null || echo "false")"
+            if [ "$has_label" != "true" ]; then
+              echo "Review on PR #$PR_NUM but no '$LABEL' label; nothing to do."; exit 0
+            fi
+            # Fail closed: any API error defaults to the blocking value ("true").
+            changes_requested="$(gh api --paginate --slurp "repos/$REPO/pulls/$PR_NUM/reviews" --jq '
+              add
+              | [ .[] | select(.state=="CHANGES_REQUESTED" or .state=="APPROVED" or .state=="DISMISSED") ]
+              | group_by(.user.login)
+              | map(max_by(.submitted_at))
+              | any(.[]?; .state=="CHANGES_REQUESTED")' 2>/dev/null || echo "true")"
+            if [ "$changes_requested" = "true" ]; then
+              echo "Standing CHANGES_REQUESTED on PR #$PR_NUM; dequeuing (veto)."
+              veto_dequeue "$PR_NUM" || exit 1
+            else
+              echo "No standing CHANGES_REQUESTED on PR #$PR_NUM; leaving queue state as-is."
             fi
             exit 0
           fi
@@ -118,7 +189,7 @@ jobs:
 
           # --- Resolve the candidate open PR(s) for this event ------------------
           if [ "$EVENT" = "pull_request_target" ]; then
-            prs="$PR_FROM_LABEL"
+            prs="$PR_NUM"
           else
             # workflow_run: the PR(s) whose head commit is this run's head SHA.
             prs="$(gh api "repos/$REPO/commits/$SHA_FROM_RUN/pulls" \
@@ -138,7 +209,7 @@ jobs:
             same_repo="$(jq -r '.head.repo.full_name == .base.repo.full_name' <<<"$data")"
             head_sha="$(jq -r '.head.sha' <<<"$data")"
             node_id="$(jq -r '.node_id' <<<"$data")"
-            has_label="$(jq -r --arg l "$LABEL" 'any(.labels[]?; .name==$l)' <<<"$data")"
+            has_label="$(jq -r 'any(.labels[]?; .name==env.LABEL)' <<<"$data")"
 
             [ "$state" = "open" ]     || { echo "skip: not open";          echo "::endgroup::"; continue; }
             [ "$draft" = "false" ]    || { echo "skip: draft";             echo "::endgroup::"; continue; }
@@ -147,11 +218,7 @@ jobs:
             [ "$has_label" = "true" ] || { echo "skip: no '$LABEL' label"; echo "::endgroup::"; continue; }
 
             # --- Already in the queue? nothing to do -----------------------------
-            in_queue="$(gh api graphql \
-              -f query='query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){isInMergeQueue}}}' \
-              -f o="$owner" -f n="$name" -F p="$pr" \
-              --jq '.data.repository.pullRequest.isInMergeQueue' 2>/dev/null || echo "false")"
-            [ "$in_queue" = "true" ] && { echo "skip: already in merge queue"; echo "::endgroup::"; continue; }
+            [ "$(in_merge_queue "$pr")" = "true" ] && { echo "skip: already in merge queue"; echo "::endgroup::"; continue; }
 
             # --- A human reviewer's standing CHANGES_REQUESTED is a veto ---------
             # --slurp merges all pages into one array BEFORE aggregating (a per-page
@@ -202,7 +269,7 @@ jobs:
 
             # --- Re-read the label right before acting (honor a late veto) ------
             still_labeled="$(gh api "repos/$REPO/pulls/$pr" \
-              --jq --arg l "$LABEL" 'any(.labels[]?; .name==$l)' 2>/dev/null || echo "false")"
+              --jq 'any(.labels[]?; .name==env.LABEL)' 2>/dev/null || echo "false")"
             [ "$still_labeled" = "true" ] || { echo "skip: label removed"; echo "::endgroup::"; continue; }
 
             # --- All rails clear: enqueue, guarded by the head OID --------------
