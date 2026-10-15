@@ -805,12 +805,13 @@ along: `T1098.001/entra_app_federated_credential_backdoor` and
 2. Turn the evidence into a case: the probe or the KNOWN MISS confounder becomes a
    positive (false negative), or a filtered, near-miss or benign case (false
    positive). Relabelling or editing an existing case (its kind, `breaks` or events)
-   fails `sufficiency-ratchet` on the pull request, so `automerge` holds it and a
-   human merges it; a new case, or a reworded `why`, does not.
+   fails `sufficiency-ratchet` on the pull request, which is a human's decision (the
+   `automerge` bot turns its auto-merge off when it sees the failure); a new case,
+   or a reworded `why`, does not.
 3. Run `rule_cases.py`, `check_sufficiency.py`, the rule's validator and
    `score_benign.py --check --enforce`; regenerate `scores.json` with `--update`.
-4. Propose the lower budget (`score_benign.py --reseeds 10`) or the move to
-   `enforce` in `budgets.json`, which a human approves, and update its `why`.
+4. Propose the lower budget (`score_benign.py --reseeds 10`) in `budgets.json`,
+   which a human approves, and update its `why`.
 5. Delete the entry here, and the pointer to it in the sidecar `why`.
 
 ## Reproducing a probe

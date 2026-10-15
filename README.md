@@ -64,7 +64,7 @@ speed. So the agent works inside a method that does not trust its output:
 | Picks the technique and platform | Researches the mechanics and enumerates procedures |
 | Sets the method and the bar for "done" | Draws a Detection Data Model per procedure |
 | Reviews the reasoning and the gaps | Writes the emulation, the telemetry config, and the Sigma rules |
-| Merges, or labels `automerge` to let CI merge on green | Iterates against CI until the proof passes |
+| Merges, or labels `automerge` so GitHub merges once the required checks pass | Iterates against CI until the proof passes |
 
 ### What that looks like in practice
 
@@ -334,34 +334,76 @@ Proving the loop is automated:
   checks TRR structure, DDM PNG freshness, and markdown links.
 - **Auto-merge (opt-in)** —
   [`.github/workflows/automerge.yml`](.github/workflows/automerge.yml)
-  enables GitHub's native auto-merge on a pull request so it squash-merges once every
-  required check is green — the "proof decides what is done" model applied to the merge
-  itself, so the agent can drive a detection all the way to landed. It is label-gated
-  (only a PR a collaborator marks `automerge` is eligible), same-repo only (never a
-  fork), not a draft, and honors a reviewer's `CHANGES_REQUESTED`. Removing the label
-  (or a `CHANGES_REQUESTED` review) disables auto-merge — the veto. GitHub performs the
-  merge itself, so it works on a protected branch with no bypass or PAT (a workflow's
-  `GITHUB_TOKEN` cannot merge a protected branch directly). One-time activation: "Allow
-  auto-merge" on the repo, the `automerge` label, read/write Actions workflow
-  permissions, and the branch ruleset's "Require branches to be up to date before
-  merging" off (so a green-but-behind PR can still land).
+  never merges anything itself. It turns on GitHub's native auto-merge (squash) for a
+  pull request when every rail below holds, and turns it off when one stops holding.
+  GitHub then merges once the `main` ruleset's required checks pass (`trr-lint`,
+  `validate`, `sigma-lint`, `markdown-links`, `validate-k8s`, `validate-staticpod`,
+  `validate-cloud`, `validate-apiserver`). That is the "proof decides what is done"
+  model applied to the merge itself, so the agent can drive a detection all the way
+  to landed. Because GitHub performs the merge, this works on a protected branch with
+  no bypass actor and no PAT (a workflow's `GITHUB_TOKEN` cannot merge a protected
+  branch directly).
+
+  The rails, read from the API on every run (an error or an unreadable answer counts
+  as a failed rail):
+  - the pull request carries the `automerge` label (only a collaborator with triage
+    or write access can add it);
+  - it comes from this repository (never a fork), is open, is not a draft, and
+    targets `main`, from a branch whose name does not look like a commit SHA;
+  - no reviewer's latest decision is `CHANGES_REQUESTED`;
+  - it has no confirmed merge conflict;
+  - no check run or legacy commit status on its current head commit has failed
+    (failure, cancelled, timed out, action required, startup failure, stale); a
+    check that is still pending does not hold it;
+  - every changed path is content, or a human has approved the head commit (below).
+
+  `automerge` re-evaluates the pull request when the label is added or removed, on a
+  push, on a reopen, ready-for-review or convert-to-draft, on an edit (a base
+  change), when any CI workflow completes, and when a review is submitted, dismissed
+  or edited. A review reaches it through
+  [`automerge-review-relay.yml`](.github/workflows/automerge-review-relay.yml), whose
+  completion re-runs `automerge` from `main`'s copy, so no pull request can run its
+  own edited copy of the merge logic. Removing the label, or a `CHANGES_REQUESTED`
+  review, is the veto: it disables auto-merge, but only an auto-merge the bot enabled
+  itself. A human's own auto-merge is left alone.
+
+  Only the required checks hold GitHub's merge. A failed check that is not required
+  (the `detection-quality` checks, `sufficiency-ratchet` included) disables
+  auto-merge only if it has failed when an evaluation runs, before the required
+  checks finish. If the required checks finish first, GitHub merges, and a veto that
+  lands after that comes too late. GitHub also enables auto-merge only while it has
+  something to wait for: when the rails first hold after the required checks have
+  passed (a late label, or a late approval), GitHub refuses, the run logs a warning,
+  and a human merges the pull request, because the bot never merges directly.
+
+  One-time activation: "Allow auto-merge" on the repo, the `automerge` label,
+  read/write Actions workflow permissions,
+  [`automerge-review-relay.yml`](.github/workflows/automerge-review-relay.yml) on
+  `main` under that name, and the branch ruleset's "Require branches to be up to date
+  before merging" off (a push made with a `GITHUB_TOKEN` does not re-run CI, so with
+  it on a green-but-behind PR would wait forever).
 
   It enables auto-merge without a human only for content: rules, their cases, cloud
-  fixtures, the derived benign scores, `docs/`, `upstream/`, Markdown, `research/`
-  (except Python and `research/tools/`) and `atomics/`, including the C and shell
-  emulation sources that CI compiles and runs (the Linux validator runs its atomics
-  as root). Any Python, anything under `.github/`, anything in a `.claude/` directory
-  at any depth (such as `research/<trr>/.claude/skills/`), any agent instruction file
-  (`CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, in any directory and any letter
-  case), a budget, a corpus slice, a live workload, an audit or kind config or a
-  control mutant, and so every new-technique PR, needs an approval on the head
-  commit from a human with write access who neither opened the PR nor authored or
-  committed any of its commits. A PR that needs an approval and has a commit linked
-  to no GitHub account is left for a human to merge.
+  fixtures, the derived benign scores, `docs/` (except `docs/CODEOWNERS`),
+  `upstream/`, Markdown, and `research/` (except Python and `research/tools/`). Any
+  Python, `atomics/` other than Markdown (CI compiles and runs the emulations, and
+  the Linux validator runs them as root), anything under `.github/`,
+  `docs/CODEOWNERS`, a `.claude` directory or symlink at any depth (such as
+  `research/<trr>/.claude/skills/`), any agent instruction file (`CLAUDE.md`,
+  `CLAUDE.local.md`, `AGENTS.md`, in any directory and any letter case), a budget, a
+  corpus slice, a live workload, an audit or kind config or a control mutant, and so
+  every new-technique PR, needs an approval on the head commit, submitted after the
+  PR's last base change, from a human with write access who neither opened the PR
+  nor authored or committed any of its commits. A push after the approval disables
+  auto-merge until the new head is approved. A PR that needs an approval and has a
+  commit without a verified signature, or one linked to no GitHub account, is left
+  for a human to merge.
 
   This rail binds only the bot. Today the `main` ruleset requires the validator
-  checks but no approving review, so a manual merge needs no second human; see
-  [what a human must configure](detections/benign/README.md#branch-protection-what-binds-a-manual-merge).
+  checks but no approving review, so a manual merge needs no second human. See
+  [what a human must configure](detections/benign/README.md#branch-protection-what-binds-a-manual-merge),
+  including which `detection-quality` checks to make required so that they hold
+  the bot's merge too.
 
 Run the Linux loop locally:
 

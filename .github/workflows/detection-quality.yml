@@ -15,7 +15,8 @@ name: detection-quality
 #                      then only warns); and no rule may key on an emulation marker
 #                      (detections/check_sufficiency.py). Hard gate.
 #   sufficiency-ratchet  PULL REQUESTS ONLY. Two comparisons with the base branch,
-#                      each failing this job, so automerge holds and a human decides:
+#                      each failing this job so that a human decides (what that
+#                      failure holds: see the note below the list):
 #                      1. The base branch's own check_sufficiency.py reports the base
 #                      tree (--json), and the head runs with --baseline. It fails when
 #                      a rule loses verified negatives, exercised items, passing
@@ -48,10 +49,17 @@ name: detection-quality
 #                      capture is uploaded so a human can promote a sanitized copy
 #                      into a recorded slice.
 #
-# No paths: filter on pull_request, so these checks ALWAYS report on a PR: automerge
-# waits for every check run on the head commit. They are meant to be required checks
-# in the main ruleset too, which is not configured yet (see detections/benign/README.md,
-# "Branch protection: what binds a manual merge").
+# No paths: filter on pull_request, so these checks ALWAYS report on a PR. None of
+# them is a required check in the main ruleset yet, and GitHub's native auto-merge
+# waits only for required checks. automerge disables the auto-merge it enabled when
+# it sees one of these failed on the head commit, but it sees that only if the
+# failure comes before the required checks finish (this workflow's completion
+# re-runs automerge); if the required checks finish first, GitHub merges. Making
+# rule-cases, check-sufficiency and benign-corpus required closes that race.
+# sufficiency-ratchet stays non-required: with no bypass actors, a required ratchet
+# would block for everyone a PR it fails by design (a corrected case, an accepted
+# rise in hits). See detections/benign/README.md, "Branch protection: what binds a
+# manual merge".
 # The weekly schedule re-proves every rule even when nothing in the repo changed
 # (pySigma, the runner image and the kernel drift underneath the rules).
 

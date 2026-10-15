@@ -108,8 +108,11 @@ noisier on the committed corpus:
   until a human raises the budget or the rule is fixed;
 - on a pull request, any rise over the base branch's committed `scores.json`, even
   inside the headroom, fails `sufficiency-ratchet` (see
-  [Tracking it over time](#tracking-it-over-time)), so `automerge` holds the pull
-  request for a human.
+  [Tracking it over time](#tracking-it-over-time)), so that a human decides. That
+  check is not required, so it stops `automerge` only if it has failed when an
+  evaluation runs, before the required checks finish; if they finish first, GitHub
+  merges (see
+  [Branch protection](#branch-protection-what-binds-a-manual-merge)).
 
 Fewer hits pass both, so a rule fix that makes the rule quieter passes; lower the
 budget in the same pull request.
@@ -155,7 +158,9 @@ branch's committed `scores.json`. It scores the head's rules on the head's corpu
 and compares each rule scored in both with the base snapshot:
 
 - more hits fails, with `RISE <rule>: hits B -> H (budget M)` and the new or grown
-  actors, so `automerge` holds the pull request and a human decides;
+  actors, so that a human decides (the failure stops `automerge` only if it has
+  failed before the required checks finish; see
+  [Branch protection](#branch-protection-what-binds-a-manual-merge));
 - fewer or equal hits pass;
 - a rule absent from the base snapshot is new, and its budget alone governs it;
 - a rule in the base snapshot that is no longer scored is not compared.
@@ -196,31 +201,45 @@ Treat the corpus like test data:
 
 **A human signs off on what counts as benign enough, and on everything the gates
 run.** An agent may propose new slices, templates and budget changes. The
-`automerge` workflow, though, merges a pull request without a human only when
-*every* changed path is content:
+`automerge` workflow, though, turns on GitHub's native auto-merge for a pull request
+without a human only when *every* changed path is content:
 
 - rules and their `.cases.jsonl` under `detections/sigma/T<id>/`;
 - cloud fixtures;
 - this directory's `scores.json` (derived: the benign-corpus check proves every
   rule's score and the corpus digest current, and `sufficiency-ratchet` fails a
   rule with more hits than on the base branch);
-- `research/` (no `*.py`, nothing under `research/tools/`), `docs/`, `upstream/`;
-- `atomics/`, including the C and shell emulation sources that CI compiles and runs
-  (the Linux validator runs its atomics as root);
-- Markdown outside `.github/`, any `.claude/` directory (at the root or nested, such
-  as `research/<trr>/.claude/skills/`) and `research/tools/`, except agent
-  instruction files: `CLAUDE.md`, `CLAUDE.local.md` and `AGENTS.md` in any directory,
-  matched in any letter case (as are `.github/` and `.claude/`).
+- `research/` (no `*.py`, nothing under `research/tools/`), `docs/` (except
+  `docs/CODEOWNERS`), `upstream/`;
+- Markdown outside `.github/`, any `.claude` entry (at the root or nested, such as
+  `research/<trr>/.claude/skills/`) and `research/tools/`, except agent instruction
+  files: `CLAUDE.md`, `CLAUDE.local.md` and `AGENTS.md` in any directory, matched in
+  any letter case (as are `.github/`, `.claude` and `docs/CODEOWNERS`).
 
 Anything else needs an approving review on the exact head commit. That includes
 `budgets.json`, `slices/`, the live workloads, every `*.py` (the gate scripts,
-`sigma_eval.py`, the validators), the workflows, and every new-technique pull
-request (it edits a validator `MANIFEST` and the workflow path filters). The
-approver must be a human (not a bot) with write, maintain or admin permission who
-is neither the pull request's author nor an author or committer of any of its
-commits. A pull request that needs an approval and has a commit whose author or
-committer is linked to no GitHub account is held for a human to merge by hand: no
-approval can be shown to be independent of that commit.
+`sigma_eval.py`, the validators), the workflows, `atomics/` other than Markdown
+(the validator jobs compile, run or `kubectl apply` the atomics in the same job and
+workspace as the validator, the Linux one as root, so an atomic could rewrite its
+own gate), `docs/CODEOWNERS` (GitHub reads it when neither `.github/` nor the root
+has one), a `.claude` entry at any depth, whether a directory or a symlink (an agent
+loads a nested `.claude/skills/` for work under that directory), and every
+new-technique pull request (it edits a validator `MANIFEST`, the workflow path
+filters and its atomics). The approver must be a human (not a bot) with write,
+maintain or admin permission who is neither the pull request's author nor an author
+or committer of any of its commits, and the approval must be that reviewer's latest
+decision and must have been submitted after the pull request's last base change: a
+review records the head commit but not the base, so an approval given while the
+pull request targeted another branch does not survive a retarget to `main`. A push
+after the approval moves the head, so `automerge` disables the auto-merge it
+enabled until a human approves the new head.
+
+A commit's author and committer are e-mail addresses written by whoever made it, and
+GitHub links them to an account without checking unless the commit carries a
+verified signature. So a commit without a verified signature, or whose author or
+committer is linked to no GitHub account, is unattributed. A pull request that needs
+an approval and contains one is held for a human to merge by hand: no approval can be
+shown to be independent of that commit.
 
 Sidecar cases are content, so deleting or editing one does not need an approval by
 path. The `sufficiency-ratchet` check catches it instead. The base branch's report
@@ -232,17 +251,39 @@ and when a rule has fewer verified negatives, exercised items or passing positiv
 than on the base branch. Adding a case, or rewording a case's `why`, passes. The
 check does not compare the rule's own detection: a broadened rule that keeps every
 case passes it, and is left to its near-miss cases and the benign-hits comparison
-above. `automerge` holds a pull request with a failed check.
+above. `automerge` disables auto-merge on a pull request with a failed check on its
+head commit, but `sufficiency-ratchet` is not a required check, so its failure stops
+the bot's merge only if it has failed when an evaluation runs, before the required
+checks finish. If the required checks finish first, GitHub merges (see
+[Branch protection](#branch-protection-what-binds-a-manual-merge)).
 
-After approving, remove and re-add the `automerge` label, or merge by hand; an
-approval alone does not re-run `automerge`.
+An approval re-runs `automerge`: every review submitted, dismissed or edited starts
+[`automerge-review-relay`](../../.github/workflows/automerge-review-relay.yml), and
+its completion re-runs `automerge` from `main`'s copy. If the required checks have
+already passed by then, GitHub will not enable auto-merge (there is nothing left to
+wait for), the run logs a warning, and a human merges the pull request; the bot
+never merges directly. Approvals usually come after the checks are green, so expect
+to merge an approved pull request by hand. GitHub may also refuse to merge a pull
+request that changes `.github/workflows/` under the bot's token, which has no
+`workflows` permission; a human merges that one.
 
 ### Branch protection: what binds a manual merge
 
 This rail binds only the `automerge` bot. A human with write access can still merge
-a pull request by hand, and only the repository's branch rules bind that merge.
-They are configured in the repository settings, outside the code, and as of
-2026-10-15 (read with the GitHub API) they do **not** enforce the sign-off:
+a pull request by hand, or enable auto-merge on it themselves (`automerge` disables
+only an auto-merge that it enabled), and only the repository's branch rules bind
+that merge. The same rules decide what holds the bot's own merge: `automerge` only
+turns GitHub's native auto-merge on and off, and GitHub merges as soon as the
+required checks pass. `automerge` disables auto-merge when it sees a failed check
+on the head commit, but it looks only when an evaluation runs (a label change, a
+push, a review, or the completion of a CI workflow; a failed `detection-quality` job
+is seen once that whole workflow, or another CI workflow, completes). So a check
+that is not required holds the merge only if it has failed when an evaluation runs,
+before the required checks finish. If the required checks finish first, GitHub
+merges, and the failure comes too late.
+
+The branch rules are configured in the repository settings, outside the code, and
+as of 2026-10-15 (read with the GitHub API) they do **not** enforce the sign-off:
 
 - `main` is governed by the repository ruleset `Main` (active, with no bypass
   actors), not by classic branch protection. It requires a pull request, squash
@@ -255,9 +296,13 @@ They are configured in the repository settings, outside the code, and as of
   of the most recent push. The repository has no `CODEOWNERS` file.
 
 So today anyone with write access can merge a budget, corpus, gate or workflow
-change by hand, with no second human, once the required validator checks pass.
+change by hand, with no second human, once the required validator checks pass. And
+no `detection-quality` check holds the bot's merge reliably: a pull request whose
+`detection-quality` check fails only after its required checks have passed is
+merged by GitHub anyway.
 
-To make the sign-off bind a manual merge, a repository admin must:
+To make the sign-off bind a manual merge, and the quality checks bind every merge, a
+repository admin must:
 
 1. Add `.github/CODEOWNERS` that names the human approvers for every path that is
    not content (the list above).
@@ -266,13 +311,22 @@ To make the sign-off bind a manual merge, a repository admin must:
    care: 1 or more makes every pull request wait for a human, content included,
    which ends content-only auto-merge. With 0, Code Owner review applies to the
    code-owned paths only. Check the result on a test pull request; it was not
-   verified here.
+   verified here. The most-recent-push approval also closes a race in the bot's
+   rail: a push by a writer does not turn an enabled auto-merge off, so if the new
+   head's required checks have already passed (a commit already tested on another
+   branch), GitHub can merge it before `automerge` disables auto-merge.
 3. Add `rule-cases`, `check-sufficiency` and `benign-corpus` as required status
-   checks. Leave out `benign-linux-live` (shadow only) and `sufficiency-ratchet`:
-   the ratchet fails by design on a change a human may accept (a deleted or
-   corrected case, a deliberate rise in benign hits with a raised budget), and with
-   no bypass actors a required ratchet could never be merged past. `automerge`
-   already waits for it, and a human merging by hand sees it red and decides.
+   checks. Under native auto-merge this is what makes them hold the bot's merge
+   reliably: GitHub then waits for them and does not merge while one has failed,
+   whatever the timing. Leave out `benign-linux-live` (shadow only) and
+   `sufficiency-ratchet`. The ratchet fails by design on a change a human may
+   accept (a deleted or corrected case, a deliberate rise in benign hits with a
+   raised budget). Made required, with no bypass actors, it would block such a pull
+   request for everyone: neither the bot nor a human could merge it until an admin
+   took the ratchet out of the ruleset. Left out, it holds the bot's merge only when
+   it has failed before the required checks finish, so a content-only pull request
+   that weakens a case or makes a rule noisier can still be merged by GitHub without
+   a human. A human merging by hand sees it red and decides.
 4. Keep the ruleset free of bypass actors.
 
 Until then, the sign-off is a convention for manual merges, and a rule of the bot

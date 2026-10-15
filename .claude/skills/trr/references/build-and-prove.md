@@ -363,8 +363,17 @@ prints the committed fixture. ART format (`attack_technique`, `display_name`,
 ## CI wiring
 
 These workflows run on every PR. The `main` ruleset requires only the validator,
-`sigma-lint`, `markdown-links` and `trr-lint` checks; `automerge` waits for every check
-(see `detections/benign/README.md`, "Branch protection: what binds a manual merge"):
+`sigma-lint`, `markdown-links` and `trr-lint` checks, and GitHub's native auto-merge
+waits only for those. The `automerge` workflow turns auto-merge on when its rails
+hold and off when it sees a failed check on the head, but it sees a failed
+`detection-quality` check only if that check has failed when an evaluation runs,
+before the required checks finish; if they finish first, GitHub merges. So drive
+every check green, not only the required ones, and never rely on the bot to stop a
+PR whose `sufficiency-ratchet` or `benign-corpus` is red. GitHub also enables
+auto-merge only while a required check has yet to pass: the `automerge` label (a
+human's opt-in) must be on the PR before its required checks finish, and an
+approval that lands after they have passed leaves the merge to a human (see
+`detections/benign/README.md`, "Branch protection: what binds a manual merge"):
 
 - `validate-detections.yml`: auditd loop + `sigma check` + `markdown-links`, runs on
   every PR.

@@ -95,9 +95,11 @@ subagent: marker / existing-coverage / novelty / chokepoint) and converge on a G
   look-alike that only the filter suppresses. Optimize for the intent, not for the
   checks you already have: never relabel or weaken a case, edit the corpus, or raise
   a budget to turn a run green. A budget or corpus change is a human's call. On a
-  pull request, `sufficiency-ratchet` also holds for a human any edit to or deletion
-  of an existing case, a deleted or renamed rule, and any rise in a rule's
-  benign-corpus hits. When a
+  pull request, `sufficiency-ratchet` also fails any edit to or deletion of an
+  existing case, a deleted or renamed rule, and any rise in a rule's benign-corpus
+  hits, so that a human decides. It is not a required check, so it stops the
+  `automerge` bot only if it fails before the required checks finish: say in the PR
+  when a change needs that human decision, rather than relying on the bot. When a
   correct case or a benign hit shows the rule is wrong, record it in
   `detections/RULE_DEFECTS.md` with its evidence and the proposed fix.
 - **Review adversarially, and reproduce every finding.** Claims about a rule's behavior

@@ -167,7 +167,7 @@ it declares. An unrelated event cannot pass as a near-miss.
   (`validate_detections.py` and `sigma_explain.py` import PyYAML first, and the
   other gates import some of the standard library first), a plain-source
   `detections/<name>.py`, or a package directory. None of those paths is content,
-  so `automerge` holds them for a human.
+  so `automerge` turns on auto-merge for them only after a human approves.
 - **R1** has no registered positive in a validator `MANIFEST`, or declares a log
   source other than the one that validator proves it on (auditd: `linux/auditd`;
   API server and TRR9003: `kubernetes/audit` or `kubernetes/cri`, as the entry
@@ -263,9 +263,13 @@ CI's `sufficiency-ratchet` job runs it on every pull request, with the base
 branch's own copy of the script. The same job then runs the head's
 `score_benign.py --baseline-scores` against the base branch's committed
 `benign/scores.json`, and fails when a rule raises more benign hits than there,
-even inside its budget. Sidecars, rules and `scores.json` are content, which
-merges without a human, so a pull request that deletes or edits a case, deletes or
-renames a rule, or makes a rule noisier holds for a human instead.
+even inside its budget. Sidecars, rules and `scores.json` are content, for which
+`automerge` turns on auto-merge without a human, so the ratchet is what sends a pull
+request that deletes or edits a case, deletes or renames a rule, or makes a rule
+noisier to a human instead. It is not a required check of the `main` ruleset, so it
+stops the bot's merge only if it has failed when an `automerge` evaluation runs,
+before the required checks finish; if they finish first, GitHub merges (see
+[Branch protection](benign/README.md#branch-protection-what-binds-a-manual-merge)).
 
 A case that shows a rule defect stays as it is. Record the defect in
 [`RULE_DEFECTS.md`](RULE_DEFECTS.md), the tracker for the next rule-fix pull
