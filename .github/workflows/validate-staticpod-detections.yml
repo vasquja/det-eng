@@ -35,7 +35,6 @@ on:
   # check ALWAYS reports. The `changes` job decides from the diff whether the heavy
   # job runs; a skip on an unrelated PR counts as success. Push to main stays filtered.
   pull_request:
-  merge_group:        # the `changes` job reads the merge_group diff too (below)
   workflow_dispatch:
 
 permissions:
@@ -59,8 +58,8 @@ jobs:
       - id: f
         shell: bash
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           if [ -z "${BASE_SHA:-}" ]; then
