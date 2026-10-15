@@ -10,14 +10,27 @@ SQLite backend, and reports for each rule:
 
   hits             alerts the rule raised on benign activity
   rate_per_10k     hits per 10,000 events of the rule's logsource
-  actors           the distinct processes / principals behind those hits
+  actors           who is behind those hits: the first field present of ACTOR_FIELDS
+                   for the logsource (auditd exe, else comm; Kubernetes audit
+                   user.username; Kubernetes CRI the pod's metadata.namespace, not a
+                   principal; CloudTrail the session issuer's role ARN before
+                   userIdentity.arn, so one role counts once across its sessions;
+                   the Azure / GCP caller or principal fields)
   slices           which slices they came from
 
 Budgets (detections/benign/budgets.json) set, per rule, how many benign hits are
-acceptable and whether going over is a warning (mode "shadow", the default) or a
-failure (mode "enforce", with --enforce). A rule moves to "enforce" once its
-corpus is trusted. Raising a budget is a human decision: it means "this much
-noise is acceptable", so a budget change needs a human approval before merge.
+acceptable and whether going over is a warning (mode "shadow") or a failure
+(mode "enforce", with --enforce). budgets.json's `default` (enforce at 0 hits)
+applies to a rule with no entry; shadow at 0 is only the fallback when the file
+names no default. Every per-rule entry is "enforce" today, so a rule that gets
+noisier on the committed corpus fails CI; "shadow" is for a rule a human accepts
+while its corpus is not yet trusted. Raising a budget is a human decision: it
+means "this much noise is acceptable", so a budget change needs a human approval
+before merge. Set max_hits from the most hits over several seeds of the
+synthetic slices (--reseeds 10), not from one seed's exact count, or a routine
+version bump of a slice trips the budget. Every entry's `why` starts
+"documented noise:" or "rule defect, tracked in detections/RULE_DEFECTS.md
+<ID>:" (an ID the tracker's summary lists); any other entry is an error.
 
 A rule is scored against every slice whose product and service match its own
 logsource (category counts only when neither side names a service), so adding a
@@ -40,6 +53,7 @@ Usage:
     python3 detections/score_benign.py --check         # snapshot is current
     python3 detections/score_benign.py --update        # rewrite the snapshot
     python3 detections/score_benign.py --enforce       # fail on enforce-mode overruns
+    python3 detections/score_benign.py --reseeds 10    # most hits over 10 reseeds
     python3 detections/score_benign.py --extra-slice /tmp/pre-emulation-audit.log \\
         --extra-logsource kubernetes/audit --extra-label kind-bootstrap
 """
@@ -48,6 +62,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -58,6 +73,7 @@ import sigma_explain  # noqa: E402
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SIGMA = os.path.join(REPO, "detections", "sigma")
 BUDGETS = os.path.join(benign_corpus.ROOT, "budgets.json")
+DEFECTS = os.path.join(REPO, "detections", "RULE_DEFECTS.md")
 SNAPSHOT = os.path.join(benign_corpus.ROOT, "scores.json")
 TOP_ACTORS = 10
 
@@ -129,6 +145,40 @@ def load_budgets():
     return default, doc.get("rules", {}), doc.get("unscored", {})
 
 
+_DEFECT_WHY = re.compile(r"rule defect, tracked in detections/RULE_DEFECTS\.md ([A-Z]\d+):")
+
+
+def budget_problems(budgets):
+    """Each per-rule entry: a known mode, an integer max_hits, and a why that names
+    its class: 'documented noise:' or 'rule defect, tracked in
+    detections/RULE_DEFECTS.md <ID>:' with an ID that the tracker's summary lists."""
+    try:
+        with open(DEFECTS, encoding="utf-8") as fh:
+            tracked = set(re.findall(r"^\| \[([A-Z]\d+)\]\(", fh.read(), re.M))
+    except OSError:
+        tracked = set()
+    problems = []
+    for key, b in sorted(budgets.items()):
+        if not isinstance(b, dict):
+            problems.append(f"{key}: not an object")
+            continue
+        if b.get("mode") not in ("enforce", "shadow"):
+            problems.append(f"{key}: mode must be 'enforce' or 'shadow'")
+        if not isinstance(b.get("max_hits"), int) or isinstance(b.get("max_hits"), bool) \
+                or b["max_hits"] < 0:
+            problems.append(f"{key}: max_hits must be a non-negative integer")
+        why = b.get("why")
+        why = why.strip() if isinstance(why, str) else ""
+        m = _DEFECT_WHY.match(why)
+        if m and m.group(1) not in tracked:
+            problems.append(f"{key}: why cites RULE_DEFECTS.md {m.group(1)}, which the "
+                            "tracker's summary table does not list")
+        elif not m and not why.startswith("documented noise:"):
+            problems.append(f"{key}: why must start 'documented noise:' or 'rule defect, "
+                            "tracked in detections/RULE_DEFECTS.md <ID>:'")
+    return problems
+
+
 def budget_for(key, default, budgets):
     b = dict(default)
     b.update(budgets.get(key, {}))
@@ -161,6 +211,36 @@ def score(rules, slices):
         sc["distinct_actors"] = len(top)
         sc["actors"] = dict(top[:TOP_ACTORS])
     return scores, examples
+
+
+def reseeded(s, k):
+    """Slice s expanded at version v+k from a copy of its spec (a recorded slice as is)."""
+    if s.fidelity != "synthetic" or not k:
+        return s
+    spec = dict(s.spec, version=s.version + k)
+    return benign_corpus.Slice(spec, s.path, benign_corpus.expand(spec))
+
+
+def reseed_max(rules, slices, n):
+    """{rule key: most hits} over the committed corpus and n reseeds of each synthetic slice.
+
+    Every synthetic slice is expanded again at versions v+1..v+n (the committed specs are
+    not touched). A rule's figure is the most hits it raises with every slice at the same
+    offset, or with any one slice bumped alone, so a budget set from it holds across a
+    routine version bump, where one seed's exact count would not.
+    """
+    per = {}  # rule key -> slice id -> [hits at v, v+1, ..., v+n]
+    for s in slices:
+        for k in range(n + 1):
+            for key, sc in score(rules, [reseeded(s, k)])[0].items():
+                per.setdefault(key, {}).setdefault(s.id, [0] * (n + 1))[k] = sc["hits"]
+    most = {}
+    for key, by_slice in per.items():
+        now = sum(h[0] for h in by_slice.values())
+        together = max(sum(h[k] for h in by_slice.values()) for k in range(n + 1))
+        alone = max(now - h[0] + h[k] for h in by_slice.values() for k in range(n + 1))
+        most[key] = max(together, alone)
+    return most
 
 
 def snapshot(scores, slices):
@@ -244,6 +324,9 @@ def main():
     ap.add_argument("--json", help="write the full report as JSON to this file")
     ap.add_argument("--examples", type=int, default=1,
                     help="explained example hits to print per rule (default 1)")
+    ap.add_argument("--reseeds", type=int, default=0, metavar="N",
+                    help="also report each rule's most hits over the committed corpus and N "
+                         "reseeds of every synthetic slice: the basis for a budget's max_hits")
     args = ap.parse_args()
 
     rules = load_rules(args.rules or None)
@@ -257,6 +340,10 @@ def main():
     if no_why:
         print("ERROR: budgets.json `unscored` entries need a why (a non-empty string): "
               + ", ".join(no_why))
+        return 1
+    bad_budgets = budget_problems(budgets)
+    if bad_budgets:
+        print("ERROR: budgets.json `rules` entries are malformed:\n  " + "\n  ".join(bad_budgets))
         return 1
     scores, examples = score(rules, slices)
 
@@ -299,6 +386,17 @@ def main():
         for key in unscored:
             print(f"  {key}  " + (f"exempt: {exempt[key]}" if key in exempt
                                   else "NOT EXEMPT (no `unscored` entry in budgets.json)"))
+
+    if args.reseeds:
+        most = reseed_max(rules, slices, args.reseeds)
+        print(f"\nMost hits over the committed corpus and {args.reseeds} reseed(s) of every "
+              "synthetic slice (set max_hits from this, not from one seed's count):")
+        for r, sc, b, status in rows:
+            m = most.get(r["key"], 0)
+            if m or sc["hits"]:
+                low = "  (budget below it)" if b.get("max_hits", 0) < m else ""
+                print(f"  {r['key']:<{width}}  {b['mode']:<7} hits {sc['hits']:>5}  "
+                      f"most {m:>5}  budget {b.get('max_hits', 0):>5}{low}")
 
     if args.examples:
         for r, sc, b, status in rows:
