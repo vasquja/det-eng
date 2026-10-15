@@ -12,21 +12,30 @@ Case fields:
 
   name     unique within the file.
   kind     positive    the rule must fire (expect "match").
-           near-miss   keeps the technique's surface but breaks one required part
-                       (a wrong argument, a missing field, half a correlation).
-           filtered    the selections hold and an allowlist / `not filter` block
+           near-miss   keeps part of the technique's surface (some selection item
+                       holds) but breaks one required part (a wrong argument, a
+                       missing field, half a correlation).
+           filtered    the selections hold and an allowlist / `not filter` item
                        alone suppresses it (an allowlisted look-alike).
            confounder  a look-alike that must not fire for a reason that is not
-                       one atom (e.g. a different provenance); must not be trivial.
+                       one atom (e.g. a different provenance); must not be trivial
+                       (some positive item must hold).
            benign      ordinary activity that must not fire. Any shape.
   breaks   near-miss / filtered only: the condition atom(s) the case is built to
            flip. For a plain rule an atom is one detection ITEM, named
            `<block>.<field>` (`afinet_raw_socket.a1`, `allowed_processes.comm`),
            `<block>[i].<field>` inside a list of maps, or `<block>` for a keyword
-           list. For a correlation rule it is `base:<base rule name>`, `group-by`,
-           `timespan` or `threshold`. The runner computes which single flips
-           would fire the rule and fails the case unless every declared atom is
-           among them, so a trivial negative cannot be passed off as a near-miss.
+           list; when one map holds several items on the same field, each keeps
+           its modifiers (`selection.exe|startswith`, `selection.exe|endswith`).
+           For a correlation rule it is `base:<ref>` (the base rule's name or id,
+           as the correlation's `rules:` lists it), `group-by`, `timespan`,
+           `order` (temporal_ordered) or `threshold` (event_count / value_count).
+           The runner computes which single flips would fire the rule (for a
+           correlation: which single-atom repairs make the compiled rule fire)
+           and fails the case unless every declared atom is among them. A case
+           where no positive item holds is trivial however few flips away it is,
+           and a flip only counts through a branch the event already shares, so
+           an unrelated event cannot be passed off as a near-miss.
            (`rule_cases.py --atoms RULE` lists a rule's atoms.)
   why      one line: what the case proves.
   events   the event set, as the log source writes it (nested JSON is flattened
@@ -127,17 +136,28 @@ def run_case(rule, case):
         declared = case["breaks"] if isinstance(case["breaks"], list) else [case["breaks"]]
         unknown = [a for a in declared if a not in rule.atoms]
         if unknown:
+            ambiguous = {a: [b for b in rule.atoms if b.startswith(a + "|")] for a in unknown}
+            hint = "; ".join(f"{a} is ambiguous, name one of: {', '.join(b)}"
+                             for a, b in ambiguous.items() if b)
             return CaseResult(case, False, f"`breaks` names no condition atom: {unknown} "
-                              f"(atoms: {', '.join(rule.atoms)})", verdict)
+                              + (f"({hint})" if hint else f"(atoms: {', '.join(rule.atoms)})"),
+                              verdict)
         if verdict.kind not in sigma_explain.NON_TRIVIAL:
             return CaseResult(case, False, f"declared {kind} on {declared}, but the analysis "
-                              f"grades it {verdict.kind}: no single atom flip fires the rule",
-                              verdict)
+                              f"grades it {verdict.kind}: {_why_not(rule, verdict)}", verdict)
         wrong = [a for a in declared if a not in verdict.atoms]
         if wrong:
-            return CaseResult(case, False, f"declared to break {wrong}, but flipping that alone "
-                              f"does not fire the rule (single flips that do: "
-                              f"{', '.join(verdict.atoms)})", verdict)
+            lone = [a for a in wrong if a in verdict.lone]
+            if lone:
+                return CaseResult(case, False, f"declared to break {lone}: flipping that alone "
+                                  "fires the rule, but through a branch the case holds no item "
+                                  "of, so it is no closer to firing it than an unrelated event "
+                                  f"(single flips that count: {', '.join(verdict.atoms)})",
+                                  verdict)
+            how = "repairing that alone does not make the compiled correlation fire" \
+                if rule.is_correlation else "flipping that alone does not fire the rule"
+            return CaseResult(case, False, f"declared to break {wrong}, but {how} "
+                              f"(single atoms that do: {', '.join(verdict.atoms)})", verdict)
         if kind == "filtered" and rule.is_correlation is False and not all(
                 "-" in rule.polarity[a] for a in declared):
             return CaseResult(case, False, "a filtered case must break a `not` (filter) "
@@ -146,9 +166,31 @@ def run_case(rule, case):
         return CaseResult(case, True, f"{verdict.kind} on {', '.join(declared)}", verdict)
     if kind == "confounder" and verdict.kind == "trivial":
         return CaseResult(case, False, "a confounder must share the rule's surface, but no "
-                          "positive block holds (trivial); call it benign or make it closer",
-                          verdict)
+                          f"positive {'base' if rule.is_correlation else 'item'} holds (trivial); "
+                          "call it benign or make it closer", verdict)
     return CaseResult(case, True, f"no match ({verdict.kind})", verdict)
+
+
+def _why_not(rule, verdict):
+    """Why a non-matching verdict is not one atom away, in the grader's own terms."""
+    if verdict.mismatch:
+        return "the item-composed verdict disagrees with the compiled rule"
+    if rule.is_correlation:
+        if verdict.unseen:
+            return (f"event(s) #{', #'.join(str(i) for i in verdict.unseen)} carry no parseable "
+                    "timestamp or no group-by value, so the correlation never sees them; a "
+                    "near-miss needs every event of the set visible to it")
+        if verdict.kind == "trivial":
+            return "no base rule matches any event of the set"
+        return f"no single-atom repair ({', '.join(rule.atoms)}) makes the compiled " \
+               "correlation fire"
+    if verdict.kind == "trivial":
+        return "no positive item of the rule holds, so it is no closer to firing it than an " \
+               "unrelated event" + (f" (a flip of {', '.join(verdict.lone)} alone would fire it, "
+                                    "as it would for any event)" if verdict.lone else "")
+    return "some positive item holds, but no single item flip fires the rule" \
+        + (f" through a branch the case shares (a flip of {', '.join(verdict.lone)} would, "
+           "through a branch it holds nothing of)" if verdict.lone else "")
 
 
 def run_rule(rule_path):
