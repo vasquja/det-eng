@@ -3,17 +3,20 @@ id: df0f3701-52aa-42ff-8848-dcdaddea8143
 status: experimental
 description: |
   Detects creation or modification of a GCP Workload Identity Pool PROVIDER that trusts
-  an external OIDC/AWS/SAML issuer with NO attribute condition restricting which external
-  tokens are accepted. This is the TRR9018 companion chokepoint (Procedures A/B): the
+  an external OIDC/AWS/SAML issuer or an X.509 CA with NO attribute condition restricting
+  which external credentials are accepted, and a field-masked update that clears the
+  condition of an existing provider. This is the TRR9018 companion chokepoint (Procedures A/B): the
   external-trust half of a workload-identity-federation backdoor, where an attribute
   condition is the guardrail that limits who can federate in, and an empty/absent one
   (CEL "" = no restriction) admits any token the attribute mapping matches.
 
   It keys on a Cloud Audit Log (Admin Activity, always on)
   google.iam.v1.WorkloadIdentityPools.CreateWorkloadIdentityPoolProvider or
-  UpdateWorkloadIdentityPoolProvider under serviceName iam.googleapis.com, suppressed
-  when protoPayload.request.workloadIdentityPoolProvider.attributeCondition carries a
-  real CEL guard (it references assertion.*). Legitimate CI/CD onboarding creates real
+  UpdateWorkloadIdentityPoolProvider under serviceName iam.googleapis.com whose request
+  carries the trust block (oidc / aws / saml / x509), or an Update whose updateMask
+  names attributeCondition (the trust block is not re-sent in a field-masked update). It
+  is suppressed when protoPayload.request.workloadIdentityPoolProvider.attributeCondition
+  is non-empty. Legitimate CI/CD onboarding creates real
   providers, so pair with the issuerUri (an unexpected external issuer), the actor, and
   whether a principalSet from this pool is bound to a privileged SA (the companion
   binding rule). Provider create/update are long-running operations that emit two Admin
@@ -22,6 +25,7 @@ references:
   - https://attack.mitre.org/techniques/T1098/001/
   - https://cloud.google.com/iam/docs/workload-identity-federation
   - https://cloud.google.com/iam/docs/audit-logging
+  - https://cloud.google.com/iam/docs/reference/rest/v1/projects.locations.workloadIdentityPools.providers
   - https://github.com/panther-labs/panther-analysis/blob/develop/rules/gcp_audit_rules/gcp_workload_identity_pool_created_or_updated.yml
 author: det-eng
 date: 2026/10/12
@@ -52,6 +56,18 @@ detection:
     - protoPayload.request.workloadIdentityPoolProvider.oidc.issuerUri|contains: '://'
     - protoPayload.request.workloadIdentityPoolProvider.aws.accountId: '*'
     - protoPayload.request.workloadIdentityPoolProvider.saml.idpMetadataXml: '*'
+    # X.509 provider (a CA trust store): any client certificate that chains to one of its
+    # trust anchors is accepted (IAM API v1, WorkloadIdentityPoolProvider.x509.trustStore).
+    - protoPayload.request.workloadIdentityPoolProvider.x509.trustStore.trustAnchors|contains: 'pemCertificate'
+  # UPDATE that TOUCHES the attribute condition, mirroring the workforce sibling. Updates
+  # are field-masked (IAM API v1 providers.patch takes a required updateMask), so clearing
+  # the condition sends only {attributeCondition: ""} with updateMask attributeCondition
+  # and NO trust block, which selection_request_trust cannot see.
+  selection_update_touches_condition:
+    protoPayload.serviceName: 'iam.googleapis.com'
+    protoPayload.methodName: 'google.iam.v1.WorkloadIdentityPools.UpdateWorkloadIdentityPoolProvider'
+    operation.first: true
+    protoPayload.request.updateMask|contains: 'attributeCondition'
   filter_has_attribute_condition:
     # Suppress when ANY non-empty attribute condition is present. A substring test
     # ('assertion') both misses a restrictive condition written with attribute.* /
@@ -59,11 +75,17 @@ detection:
     # mentions 'assertion' (false negative). A non-empty test removes the former; the
     # latter is an inherent limit of not evaluating CEL (see falsepositives).
     protoPayload.request.workloadIdentityPoolProvider.attributeCondition|re: '.+'
-  condition: selection_provider_write and selection_request_trust and not filter_has_attribute_condition
+  condition: ((selection_provider_write and selection_request_trust) or selection_update_touches_condition) and not filter_has_attribute_condition
 falsepositives:
-  - Legitimate federation onboarding that intentionally uses a broad or no attribute
-    condition (rare but valid). Confirm the issuerUri and that pool principals are only
-    bound to appropriately-scoped service accounts.
+  - Legitimate federation onboarding without an attribute condition. The condition is
+    optional (the IAM API reference says that if it is unspecified, all valid
+    authentication credentials are accepted) and is commonly omitted for a single-tenant
+    issuer that the organisation controls (its own AWS account, its own OIDC issuer or
+    CA), because the issuer already scopes the trust. Multi-tenant issuers (GitHub, Terraform Cloud) require a condition.
+    Confirm the issuerUri and that pool principals are only bound to appropriately-scoped
+    service accounts; consider an allowlist of approved issuers.
+  - A legitimate update that clears a provider's attribute condition fires (a tightening
+    leaves the condition non-empty and is suppressed).
   - Known limitation, a false negative -- the suppressor tests only that SOME attribute
     condition is present, not that it is actually restrictive. A tautological CEL guard
     (for example "assertion.sub != empty") is non-empty and so is suppressed. Catching a

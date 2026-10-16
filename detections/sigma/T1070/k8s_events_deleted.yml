@@ -19,8 +19,20 @@ description: |
   Metadata level is enough (verb, resource, namespace, name, and identity are all
   present; no requestObject needed). Routine event turnover is not a false positive:
   Events expire at the etcd storage layer via the API server event-ttl, which is not
-  an API delete and writes no audit event. Baseline the system identities and any
-  known event-exporter service accounts by user.username.
+  an API delete and writes no audit event. Namespace deletion is: the namespace
+  controller (system:serviceaccount:kube-system:namespace-controller) empties a
+  namespace being deleted with one deletecollection of core Events and one of
+  events.k8s.io Events. The rule filters that identity's deletecollection only, so
+  the same identity deleting a single Event still fires. The namespace delete itself
+  is a separate event, made by the actor (verb delete, objectRef.resource
+  namespaces), and this rule does not match it. No shipped rule matches a namespace
+  delete in general: k8s_security_tool_workload_removed.yml matches only the delete
+  of the gatekeeper-system, kyverno and falco namespaces. So deleting a whole
+  namespace to destroy its Events is not detected. A namespace delete is routine
+  (CI preview environments, tenant teardown), and its record does not show why the
+  namespace was deleted; hunt for it by actor and namespace, or correlate it with
+  this identity's other writes. Baseline the system identities and any known
+  event-exporter service accounts by user.username.
 references:
   - https://attack.mitre.org/techniques/T1070/
   - https://attack.mitre.org/techniques/T1070/004/
@@ -40,9 +52,17 @@ detection:
     verb:
       - 'delete'
       - 'deletecollection'
-  condition: select_event_delete
+  filter_namespace_teardown:
+    user.username: 'system:serviceaccount:kube-system:namespace-controller'
+    verb: 'deletecollection'
+  condition: select_event_delete and not filter_namespace_teardown
 falsepositives:
   - Operators or event-exporter tools that deliberately prune Events. Baseline the
-    known identities by user.username. The kube-system controllers create Events
-    but do not delete them, so controller baseline deletion is near zero.
+    known identities by user.username.
+  - Namespace teardown in a cluster whose kube-controller-manager does not use
+    per-controller credentials. The namespace controller then deletes Events as
+    system:kube-controller-manager, which the filter does not cover; baseline that
+    identity's deletecollection there. With per-controller credentials (the kubeadm
+    and kind default) the filter removes the teardown; the benign corpus holds no
+    other controller that deletes Events through the API.
 level: medium

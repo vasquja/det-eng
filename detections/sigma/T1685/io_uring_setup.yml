@@ -1,17 +1,31 @@
-title: io_uring Ring Setup By Non-Allowlisted Process
+title: io_uring Ring Setup
 id: 4004c54e-ff12-4d89-9d07-d0d50732c410
 status: experimental
 description: |
-  Detects the `io_uring_setup(2)` syscall. io_uring performs file and network
-  I/O through a shared ring rather than the classic read()/write()/openat()
-  syscalls, so a process can act while a syscall-hooking sensor sees little or
-  nothing. This rule flags ring creation from a process outside the io_uring
-  allowlist; it also serves as a coverage check — if your pipeline never
-  records io_uring_setup at all, that is the finding.
+  Detects the `io_uring_setup(2)` syscall: the creation of an io_uring ring.
+  io_uring performs file and network I/O through a shared ring rather than the
+  classic read()/write()/openat() syscalls, so a process can act while a
+  syscall-hooking sensor sees little or nothing. Every ring user must create a
+  ring first, so ring creation is the chokepoint; it also serves as a coverage
+  check — if your pipeline never records io_uring_setup at all, that is the
+  finding.
+
+  The rule does not match `io_uring_enter(2)`. A ring user calls it for every
+  submit or reap batch, so it fires thousands of times per ring (a benign CI
+  runner capture that ran `fio --ioengine=io_uring` recorded 57,887 hits when
+  the rule still matched it) and shows no ring that the setup event did not
+  already show. A process that only receives a
+  ring fd made by another process (fd passing) is not seen at its own
+  io_uring_enter; the creating process is.
+
+  The rule has no process allowlist: which ring users to trust is a per-host
+  decision. Baseline the hosts before alerting.
 references:
   - https://man7.org/linux/man-pages/man2/io_uring_setup.2.html
+  - https://man7.org/linux/man-pages/man2/io_uring_enter.2.html
 author: det-eng
 date: 2026/10/05
+modified: 2026/10/16
 tags:
   - attack.defense-impairment
   - attack.t1685
@@ -24,12 +38,10 @@ detection:
   io_uring_setup_syscall:
     type: SYSCALL
     syscall: io_uring_setup
-  io_uring_enter_syscall:
-    type: SYSCALL
-    syscall: io_uring_enter
-  condition: io_uring_setup_syscall or io_uring_enter_syscall
+  condition: io_uring_setup_syscall
 falsepositives:
-  - Databases, proxies, and language runtimes that use io_uring for
-    performance (recent PostgreSQL, nginx builds, Node.js, some Go/Rust
-    runtimes) — baseline and allowlist their `comm` / `exe`
+  - Databases, proxies, benchmarks and language runtimes that use io_uring for
+    performance (fio, recent PostgreSQL, nginx builds, Node.js/libuv, some
+    Go/Rust runtimes). Each creates a ring at start or per worker. Baseline
+    them per host, and add a `not` filter by `exe` for the ones you trust
 level: medium

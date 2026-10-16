@@ -374,9 +374,12 @@ Procedure D and is off by default.
 Match `protoPayload.serviceName` `iam.googleapis.com` and `protoPayload.methodName`
 `CreateWorkforcePoolProvider` or `UpdateWorkforcePoolProvider` on the begin
 (`operation.first`) entry that carries a `oidc.issuerUri` or a `saml.idpMetadataXml`,
-suppressed when `protoPayload.request.workforcePoolProvider.attributeCondition` carries a
-real CEL guard (it references `assertion`). This flags providers created or loosened with no
-restriction on which external identities are admitted. It is the higher-fidelity half.
+or an `UpdateWorkforcePoolProvider` whose `updateMask` touches `attributeCondition`,
+suppressed when `protoPayload.request.workforcePoolProvider.attributeCondition` is non-empty.
+This flags providers created or loosened with no restriction on which external identities are
+admitted. It does not evaluate CEL, so a vacuous non-empty condition is suppressed. A missing
+condition is common for a tenant-specific corporate IdP, so allowlist the approved `issuerUri`
+values. It is the higher-fidelity half.
 
 - Sensor: Cloud Audit Logs (Admin Activity).
 - Rule: [`detections/sigma/T1199/gcp_workforce_pool_provider_no_attribute_condition.yml`](../../../detections/sigma/T1199/gcp_workforce_pool_provider_no_attribute_condition.yml) (built).

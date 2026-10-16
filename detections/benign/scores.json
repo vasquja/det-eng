@@ -4,15 +4,14 @@
   "rules": {
     "T1014/bpf_prog_load.yml": {
       "actors": {
-        "/snap/snapd/21759/usr/lib/snapd/snap-confine": 6,
         "/usr/bin/python3.12": 3
       },
-      "distinct_actors": 2,
+      "distinct_actors": 1,
       "events": 1394,
-      "hits": 9,
-      "rate_per_10k": 64.56,
+      "hits": 3,
+      "rate_per_10k": 21.52,
       "slices": {
-        "linux-auditd-dev-workstation": 9
+        "linux-auditd-dev-workstation": 3
       }
     },
     "T1040/afinet_raw_socket.yml": {
@@ -70,15 +69,14 @@
         "oidc:ana.sre@example.com": 2,
         "oidc:dana.sre@example.com": 1,
         "system:serviceaccount:argocd:argocd-application-controller": 13,
-        "system:serviceaccount:ci-runners:deployer": 5,
-        "system:serviceaccount:kube-system:ttl-after-finished-controller": 12
+        "system:serviceaccount:ci-runners:deployer": 5
       },
-      "distinct_actors": 5,
+      "distinct_actors": 4,
       "events": 2666,
-      "hits": 33,
-      "rate_per_10k": 123.78,
+      "hits": 21,
+      "rate_per_10k": 78.77,
       "slices": {
-        "k8s-audit-control-plane": 12,
+        "k8s-audit-control-plane": 0,
         "k8s-audit-gitops-ci": 18,
         "k8s-audit-human-operators": 3
       }
@@ -126,15 +124,13 @@
       }
     },
     "T1068/keyring_add_key_burst.yml": {
-      "actors": {
-        "/usr/sbin/cryptsetup": 2
-      },
-      "distinct_actors": 1,
+      "actors": {},
+      "distinct_actors": 0,
       "events": 1394,
-      "hits": 2,
-      "rate_per_10k": 14.35,
+      "hits": 0,
+      "rate_per_10k": 0.0,
       "slices": {
-        "linux-auditd-dev-workstation": 2
+        "linux-auditd-dev-workstation": 0
       }
     },
     "T1068/perf_event_open_non_profiler.yml": {
@@ -161,16 +157,14 @@
       }
     },
     "T1070/k8s_events_deleted.yml": {
-      "actors": {
-        "system:serviceaccount:kube-system:namespace-controller": 2
-      },
-      "distinct_actors": 1,
+      "actors": {},
+      "distinct_actors": 0,
       "events": 2666,
-      "hits": 2,
-      "rate_per_10k": 7.5,
+      "hits": 0,
+      "rate_per_10k": 0.0,
       "slices": {
         "k8s-audit-control-plane": 0,
-        "k8s-audit-gitops-ci": 2,
+        "k8s-audit-gitops-ci": 0,
         "k8s-audit-human-operators": 0
       }
     },
@@ -232,19 +226,19 @@
       "actors": {
         "arn:aws:iam::123456789012:user/ci-legacy-deployer": 22,
         "arn:aws:iam::123456789012:user/costtool-readonly": 6,
-        "arn:aws:iam::123456789012:user/data-rowan": 28,
-        "arn:aws:iam::123456789012:user/dev-alder": 33,
-        "arn:aws:iam::123456789012:user/dev-birch": 39,
-        "arn:aws:iam::123456789012:user/dev-cedar": 70,
-        "arn:aws:iam::123456789012:user/sre-maple": 68
+        "arn:aws:iam::123456789012:user/data-rowan": 22,
+        "arn:aws:iam::123456789012:user/dev-alder": 25,
+        "arn:aws:iam::123456789012:user/dev-birch": 31,
+        "arn:aws:iam::123456789012:user/dev-cedar": 41,
+        "arn:aws:iam::123456789012:user/sre-maple": 36
       },
       "distinct_actors": 7,
       "events": 4000,
-      "hits": 266,
-      "rate_per_10k": 665.0,
+      "hits": 183,
+      "rate_per_10k": 457.5,
       "slices": {
         "aws-cicd-oidc-irsa": 0,
-        "aws-developer-iam-user-keys": 266,
+        "aws-developer-iam-user-keys": 183,
         "aws-ec2-service-roles": 0,
         "aws-iac-admin-policy-changes": 0
       }
@@ -264,6 +258,19 @@
       }
     },
     "T1098.001/aws_github_oidc_role_trust_abuse.yml": {
+      "actors": {},
+      "distinct_actors": 0,
+      "events": 4000,
+      "hits": 0,
+      "rate_per_10k": 0.0,
+      "slices": {
+        "aws-cicd-oidc-irsa": 0,
+        "aws-developer-iam-user-keys": 0,
+        "aws-ec2-service-roles": 0,
+        "aws-iac-admin-policy-changes": 0
+      }
+    },
+    "T1098.001/aws_github_oidc_role_trust_ref_wildcard.yml": {
       "actors": {
         "arn:aws:iam::123456789012:role/terraform-apply": 13
       },
@@ -280,17 +287,17 @@
     },
     "T1098.001/azure_managed_identity_federated_credential_backdoor.yml": {
       "actors": {
-        "5e6f7a8b-0004-4c9d-8e0f-2a3b4c5d6e04": 18,
-        "9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d": 9,
+        "5e6f7a8b-0004-4c9d-8e0f-2a3b4c5d6e04": 11,
+        "9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d": 5,
         "Alder (Platform)": 1,
-        "Birch (Platform)": 1
+        "Birch (Platform)": 2
       },
       "distinct_actors": 4,
       "events": 300,
-      "hits": 29,
-      "rate_per_10k": 966.67,
+      "hits": 19,
+      "rate_per_10k": 633.33,
       "slices": {
-        "azure-activity-mi-admin": 29
+        "azure-activity-mi-admin": 19
       }
     },
     "T1098.001/entra_app_federated_credential_backdoor.yml": {
@@ -342,16 +349,15 @@
     },
     "T1098.006/k8s_rbac_privileged_grant.yml": {
       "actors": {
-        "system:serviceaccount:argocd:argocd-application-controller": 5,
-        "system:serviceaccount:kube-system:clusterrole-aggregation-controller": 2
+        "system:serviceaccount:argocd:argocd-application-controller": 5
       },
-      "distinct_actors": 2,
+      "distinct_actors": 1,
       "events": 2666,
-      "hits": 7,
-      "rate_per_10k": 26.26,
+      "hits": 5,
+      "rate_per_10k": 18.75,
       "slices": {
         "k8s-audit-control-plane": 0,
-        "k8s-audit-gitops-ci": 7,
+        "k8s-audit-gitops-ci": 5,
         "k8s-audit-human-operators": 0
       }
     },
@@ -442,32 +448,26 @@
       }
     },
     "T1528/entra_illicit_oauth_consent_grant.yml": {
-      "actors": {
-        "iam.cedar@example.com": 13,
-        "platform.alder@example.com": 9,
-        "platform.birch@example.com": 15
-      },
-      "distinct_actors": 3,
+      "actors": {},
+      "distinct_actors": 0,
       "events": 550,
-      "hits": 37,
-      "rate_per_10k": 672.73,
+      "hits": 0,
+      "rate_per_10k": 0.0,
       "slices": {
-        "azure-entra-audit-appmgmt": 37
+        "azure-entra-audit-appmgmt": 0
       }
     },
     "T1537/aws_efs_file_system_policy_made_public.yml": {
-      "actors": {
-        "arn:aws:iam::123456789012:role/aws-reserved/sso.amazonaws.com/AWSReservedSSO_PlatformAdmin_5e1d2c3b4a596877": 6
-      },
-      "distinct_actors": 1,
+      "actors": {},
+      "distinct_actors": 0,
       "events": 4000,
-      "hits": 6,
-      "rate_per_10k": 15.0,
+      "hits": 0,
+      "rate_per_10k": 0.0,
       "slices": {
         "aws-cicd-oidc-irsa": 0,
         "aws-developer-iam-user-keys": 0,
         "aws-ec2-service-roles": 0,
-        "aws-iac-admin-policy-changes": 6
+        "aws-iac-admin-policy-changes": 0
       }
     },
     "T1537/aws_eventbridge_bus_made_public.yml": {
@@ -498,17 +498,17 @@
     },
     "T1537/aws_resource_policy_made_public.yml": {
       "actors": {
-        "arn:aws:iam::123456789012:role/terraform-apply": 32
+        "arn:aws:iam::123456789012:role/terraform-apply": 3
       },
       "distinct_actors": 1,
       "events": 4000,
-      "hits": 32,
-      "rate_per_10k": 80.0,
+      "hits": 3,
+      "rate_per_10k": 7.5,
       "slices": {
         "aws-cicd-oidc-irsa": 0,
         "aws-developer-iam-user-keys": 0,
         "aws-ec2-service-roles": 0,
-        "aws-iac-admin-policy-changes": 32
+        "aws-iac-admin-policy-changes": 3
       }
     },
     "T1537/aws_s3_block_public_access_disabled.yml": {
@@ -712,16 +712,14 @@
       }
     },
     "T1565.001/k8s_coredns_corefile_poisoned.yml": {
-      "actors": {
-        "system:serviceaccount:argocd:argocd-application-controller": 4
-      },
-      "distinct_actors": 1,
+      "actors": {},
+      "distinct_actors": 0,
       "events": 2666,
-      "hits": 4,
-      "rate_per_10k": 15.0,
+      "hits": 0,
+      "rate_per_10k": 0.0,
       "slices": {
         "k8s-audit-control-plane": 0,
-        "k8s-audit-gitops-ci": 4,
+        "k8s-audit-gitops-ci": 0,
         "k8s-audit-human-operators": 0
       }
     },
@@ -813,22 +811,28 @@
       }
     },
     "T1611/setns_namespace_join.yml": {
-      "actors": {
-        "/memfd:runc_cloned:/proc/self/exe (deleted)": 30,
-        "/snap/snapd/21759/usr/lib/snapd/snap-confine": 2,
-        "/usr/bin/ip": 5
-      },
-      "distinct_actors": 3,
+      "actors": {},
+      "distinct_actors": 0,
       "events": 1394,
-      "hits": 37,
-      "rate_per_10k": 265.42,
+      "hits": 0,
+      "rate_per_10k": 0.0,
       "slices": {
-        "linux-auditd-dev-workstation": 37
+        "linux-auditd-dev-workstation": 0
       }
     },
     "T1620/memfd_create_execveat.yml": {
+      "actors": {},
+      "distinct_actors": 0,
+      "events": 1394,
+      "hits": 0,
+      "rate_per_10k": 0.0,
+      "slices": {
+        "linux-auditd-dev-workstation": 0
+      }
+    },
+    "T1622/ptrace_traceme.yml": {
       "actors": {
-        "/usr/bin/runc": 5
+        "/home/dev/go/bin/dlv": 5
       },
       "distinct_actors": 1,
       "events": 1394,
@@ -838,29 +842,16 @@
         "linux-auditd-dev-workstation": 5
       }
     },
-    "T1622/ptrace_traceme.yml": {
-      "actors": {
-        "/home/dev/go/bin/dlv": 5,
-        "/usr/bin/gdb": 10
-      },
-      "distinct_actors": 2,
-      "events": 1394,
-      "hits": 15,
-      "rate_per_10k": 107.6,
-      "slices": {
-        "linux-auditd-dev-workstation": 15
-      }
-    },
     "T1685/io_uring_setup.yml": {
       "actors": {
-        "/usr/bin/fio": 12
+        "/usr/bin/fio": 2
       },
       "distinct_actors": 1,
       "events": 1394,
-      "hits": 12,
-      "rate_per_10k": 86.08,
+      "hits": 2,
+      "rate_per_10k": 14.35,
       "slices": {
-        "linux-auditd-dev-workstation": 12
+        "linux-auditd-dev-workstation": 2
       }
     },
     "T1685/k8s_admission_webhook_disabled.yml": {
@@ -880,16 +871,14 @@
       }
     },
     "T1685/k8s_admission_webhook_neutered.yml": {
-      "actors": {
-        "system:serviceaccount:gatekeeper-system:gatekeeper-admin": 1
-      },
-      "distinct_actors": 1,
+      "actors": {},
+      "distinct_actors": 0,
       "events": 2666,
-      "hits": 1,
-      "rate_per_10k": 3.75,
+      "hits": 0,
+      "rate_per_10k": 0.0,
       "slices": {
         "k8s-audit-control-plane": 0,
-        "k8s-audit-gitops-ci": 1,
+        "k8s-audit-gitops-ci": 0,
         "k8s-audit-human-operators": 0
       }
     },

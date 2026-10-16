@@ -47,11 +47,19 @@ rules:
   # --- TRR9005 + TRR9007: workload controllers at Request (embedded templates) ---
   # TRR9005 keys on batch writes; TRR9007 grades the embedded pod template. Keep
   # delete too, so TRR9005 teardown is visible.
+  # TRR9008: the scale subresources too. Audit resource matching is exact, so
+  # "deployments" does not cover "deployments/scale"; without these entries a
+  # `kubectl scale --replicas=0` falls to the Metadata catch-all with no
+  # requestObject, and the scale-to-zero rule cannot see spec.replicas. A scale
+  # body is a Scale object or a {"spec":{"replicas":N}} patch: no pod template, no
+  # secret. (Only update and patch exist on a scale subresource; its get stays at
+  # the Metadata catch-all.)
   - level: Request
     verbs: ["create", "update", "patch", "delete"]
     resources:
       - group: "apps"
-        resources: ["deployments", "daemonsets", "statefulsets", "replicasets"]
+        resources: ["deployments", "daemonsets", "statefulsets", "replicasets",
+                    "deployments/scale", "statefulsets/scale", "replicasets/scale"]
       - group: "batch"
         resources: ["jobs", "cronjobs"]
       - group: ""
@@ -82,6 +90,11 @@ rules:
   # a poisoning edit from a benign one. Scoped by resourceNames to the three DNS
   # ConfigMaps only, so no other kube-system ConfigMap has its body copied into the log.
   # Writes only; reads stay dropped by the None rule below. Above the catch-all so it wins.
+  # resourceNames needs a name when the policy is evaluated: a PATCH or PUT to the named
+  # object (kubectl patch/edit/replace, and server-side apply, which creates the object
+  # by a PATCH) is logged here at Request, but a create (a POST to the collection, as
+  # `kubectl create configmap` sends) names no object, so it falls to the Metadata
+  # catch-all with no body. The TRR9027 emulation writes by name for that reason.
   - level: Request
     namespaces: ["kube-system"]
     verbs: ["create", "update", "patch", "delete"]

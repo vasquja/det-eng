@@ -99,8 +99,10 @@ must run at `Request` level. The shared audit policy keeps configmap writes at
 `Metadata` through its catch-all; this report adds a `Request`-level rule for writes
 to the three DNS ConfigMaps in `kube-system` (`coredns`, `kube-dns`,
 `coredns-custom`, by `resourceNames`), the way the policy already raises
-`admissionregistration` and pods to `Request`. A `create` carries no name for
-`resourceNames` to match, so creates of those ConfigMaps stay at `Metadata`.
+`admissionregistration` and pods to `Request`. A `create` (a POST to the collection)
+carries no name for `resourceNames` to match, so a plain create of those ConfigMaps
+stays at `Metadata`. A server-side apply that creates one is a PATCH to the named
+object, so it is logged at `Request`.
 
 ### What a poisoned Corefile looks like
 
@@ -108,7 +110,24 @@ A default Corefile forwards upstream with `forward . /etc/resolv.conf` and runs 
 `rewrite`, `template`, or `hosts` plugin. A poisoning edit shows up as one of: a
 `rewrite` or `template` plugin (neither is in a default Corefile), or a `forward` to
 an explicit IP address (the default forwards to a file, not a literal IP). Those are
-the content signals the grader keys on.
+the content signals the grader keys on. A `forward` to an IP is a poisoning signal
+only in the root server block (the block for zone `.`, which serves every name): a
+stub zone (a `corp.example.com:53` block with `forward . 10.10.0.53`) that sends one private
+domain to a corporate resolver is routine, and its audit record does not differ
+from a targeted redirect of one domain, so the grader leaves stub zones to the
+chokepoint.
+
+To find the root block, the grader must read the Corefile as CoreDNS does. The
+Caddyfile parser that CoreDNS uses accepts more than one layout for the same block:
+the opening brace on the key line or on a later line, no braces at all for a
+single-block Corefile, a key list separated by commas and continued onto the next
+line, and a directive on the brace line. Comments and quoted tokens can hold a
+brace that is not structure. An adversary writes the whole Corefile, so each of
+these layouts must grade. The grader therefore reads the Corefile from its top,
+token by token, skips the server blocks before the root block, and checks the
+`forward` directives of the root block only. It does not follow an `import` (a
+snippet or a file), and it reads only three levels of nested braces; a forward that
+reaches the root block that way is seen by the chokepoint only.
 
 ### Why the technique works
 
@@ -209,8 +228,9 @@ Corefile, so the audit policy must record the DNS ConfigMap writes at `Request` 
 The shared policy keeps configmap writes at `Metadata` via its catch-all, so this
 report adds a `Request`-level rule scoped by `resourceNames` to `coredns`, `kube-dns`
 and `coredns-custom` in `kube-system` (no other ConfigMap's body is copied into the
-log). Patches, updates and deletes of those three are logged at `Request`; a `create`
-has no name for `resourceNames` to match, so it stays at `Metadata`.
+log). Patches, updates and deletes of those three are logged at `Request`, and so is a
+server-side apply that creates one (a PATCH by name); a plain `create` has no name for
+`resourceNames` to match, so it stays at `Metadata`.
 
 **Strategy 1 — chokepoint (covers A, B, C).**
 Match an audit event where `objectRef.resource` is `configmaps`,
@@ -226,8 +246,10 @@ counterpart, stated as a backstop.
 
 **Strategy 2 — content grader (grades A; needs Request level).**
 On top of the chokepoint, match a write whose `requestObject.data.Corefile` carries a
-`rewrite` or `template` plugin, or a `forward` to an explicit IP address. This
-separates a poisoning edit from a benign Corefile change.
+`rewrite`, `template` or `hosts` plugin, or a root-block `forward` to an explicit IP
+address. This separates a poisoning edit from a benign Corefile change. A stub zone
+that forwards one domain to an IP is not graded (a private stub zone is routine and
+looks the same as a targeted redirect); the chokepoint sees it.
 
 - Sensor: API server audit log at Request level.
 - Rule: `detections/sigma/T1565.001/k8s_coredns_corefile_poisoned.yml` (built).
@@ -258,11 +280,13 @@ The tests run in a lab cluster with the shared audit policy. The lab is a `kind`
 cluster; its config and audit policy are in
 [`detections/k8s/`](../../../detections/k8s/). Every procedure's write carries the
 sentinel token `trr9027` (a `forward` to a sentinel `.invalid` zone that no workload
-resolves), but only Procedure A's `coredns` patch is logged with its body, so only A's
-sentinel reaches the log and the validator proves Procedure A only. The B and C creates
-are logged at `Metadata`: the policy's `Request` rule is scoped by `resourceNames`, and a
-`create` names no object when the policy is evaluated, so they carry no body and no
-sentinel, and only the chokepoint rule sees them. **Procedure A captures and restores
+resolves). Every write is a request to the named object: A patches `coredns`, and B and
+C create `kube-dns` and `coredns-custom` by server-side apply (a PATCH by name). The
+policy's `Request` rule is scoped by `resourceNames`, which a named write meets, so each
+write reaches the log with its body and sentinel, and the validator proves A, B and C.
+B and C run only when no ConfigMap of that name exists (a GKE `kube-dns` or an AKS
+`coredns-custom` is never touched), and cleanup deletes only the ConfigMaps the
+emulation labelled `app.kubernetes.io/part-of=trr9027`. **Procedure A captures and restores
 the original Corefile** so cluster DNS is unchanged after the run. Procedures B and C
 operate on ConfigMaps that a CoreDNS `kind` cluster does not read (`kube-dns`,
 `coredns-custom`), so they are inert, and are deleted on cleanup. One script drives
@@ -274,8 +298,8 @@ Atomic Red Team wrappers in
 | Procedure | Test | Status |
 |-----------|------|--------|
 | TRR9027.K8S.A | `emulate.sh a` — patch the `coredns` Corefile with a sentinel forward, then restore. | **built** |
-| TRR9027.K8S.B | `emulate.sh b` — create a `kube-dns` ConfigMap with a stubDomains redirect (inert). | **built** |
-| TRR9027.K8S.C | `emulate.sh c` — create a `coredns-custom` ConfigMap with a forward snippet (inert). | **built** |
+| TRR9027.K8S.B | `emulate.sh b` — create a `kube-dns` ConfigMap with a stubDomains redirect by server-side apply (inert). | **built** |
+| TRR9027.K8S.C | `emulate.sh c` — create a `coredns-custom` ConfigMap with a forward snippet by server-side apply (inert). | **built** |
 
 ## Detections
 
@@ -287,9 +311,9 @@ Atomic Red Team wrappers in
 The validator
 [`detections/validate_apiserver_detections.py`](../../../detections/validate_apiserver_detections.py)
 reads the API server audit log the emulation produced and asserts that the chokepoint
-and the grader both match Procedure A's `coredns` write, which it tells apart by the
-`trr9027` sentinel in the logged Corefile. B and C's creates reach the log at `Metadata`
-with no sentinel, so the validator does not prove them. The workflow
+matches each procedure's own write (A `coredns`, B `kube-dns`, C `coredns-custom`), and
+that the grader matches Procedure A's `coredns` write. It tells the emulation's writes
+apart by the `trr9027` sentinel in the logged body. The workflow
 [`validate-apiserver-detections.yml`](../../../.github/workflows/validate-apiserver-detections.yml)
 runs the loop on a `kind` cluster, with a negative control on the pre-emulation log.
 
@@ -308,6 +332,9 @@ grader that separates a poisoning edit from a benign one.
   <https://coredns.io/plugins/rewrite/>
 - CoreDNS, forward plugin:
   <https://coredns.io/plugins/forward/>
+- CoreDNS Caddyfile lexer and parser (server block addresses, braceless blocks,
+  directives):
+  <https://github.com/coredns/caddy/blob/master/caddyfile/parse.go>
 - Kubernetes documentation, Auditing:
   <https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/>
 - Microsoft Threat Matrix for Kubernetes, CoreDNS poisoning:

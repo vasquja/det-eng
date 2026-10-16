@@ -75,7 +75,14 @@ Inside the decoded policy, a GitHub-OIDC statement has `Principal.Federated` end
 `sts:AssumeRoleWithWebIdentity`. The trust is over-broad when any of these hold:
 
 - the subject condition `token.actions.githubusercontent.com:sub` uses a wildcard
-  (`*`) in the org/repo/ref position (a `StringLike` such as `repo:org/*`);
+  (`*`) in the org/repo/ref position (a `StringLike` such as `repo:org/*`). A wildcard
+  before any segment that pins one repository (`repo:org/*`, `repo:*`, or a customized
+  subject-claim template such as `repository_owner_id:1234567:*`) lets other
+  repositories, forks included, assume the role. A wildcard after a pinned repository
+  (`repo:org/app:ref:refs/tags/v*`, `repo:org/app:*`, the immutable form
+  `repo:org@1/app@2:*`, or `repository_id:7654321:*` in a customized template) lets only
+  that repository's other branches, tags, environments or pull requests assume it, which
+  is narrower (formats: GitHub Docs, "OpenID Connect reference");
 - there is **no** GitHub-OIDC scoping claim at all (only `aud`, or no `Condition`) —
   AWS warns this lets any GitHub repository in the world assume the role. A trust
   scoped by another claim instead of `sub` (e.g. `:repository` or `:environment`) is
@@ -230,22 +237,29 @@ it does **not** test the audience pin (absence of a literal `aud":"sts` substrin
 evidence of an unpinned aud). A production pipeline should URL-decode and JSON-parse the
 trust policy to judge the sub and aud precisely.
 
+The wildcard is graded by position. A wildcard before any `repo:` or `repository_id:`
+segment with a fixed value (an org-wide or any-repository sub), and a trust with no
+scoping claim, fire the high rule. A wildcard after a pinned repository fires a separate
+low rule, so one write raises one alert.
+
 - Sensor: CloudTrail.
-- Rule: [`detections/sigma/T1098.001/aws_github_oidc_role_trust_abuse.yml`](../../../detections/sigma/T1098.001/aws_github_oidc_role_trust_abuse.yml) (built).
+- Rule (high): [`detections/sigma/T1098.001/aws_github_oidc_role_trust_abuse.yml`](../../../detections/sigma/T1098.001/aws_github_oidc_role_trust_abuse.yml) (built).
+- Rule (low): [`detections/sigma/T1098.001/aws_github_oidc_role_trust_ref_wildcard.yml`](../../../detections/sigma/T1098.001/aws_github_oidc_role_trust_ref_wildcard.yml) (built).
 
 **Demonstrated gaps.** Procedure D is a precursor (informational); Procedure E needs a
 per-role sub allowlist; a pre-existing over-broad trust leaves no grant event; a sub
 pinned to a repo the attacker actually controls is not wildcard-shaped and is not
-flagged; the substring wildcard test cannot tell an org/repo wildcard from a
-ref/branch wildcard (decode-and-parse to disambiguate).
+flagged; a customized template that pins the repository through another claim (a
+`repo_property_*` custom property) is graded high, because the regex knows only the
+`repo:` and `repository_id:` pins (decode-and-parse to disambiguate).
 
 **Coverage summary.**
 
 | Procedure | Covered by | How |
 |-----------|-----------|-----|
-| A | Strategy 1 | wildcard sub in the trust policy |
+| A | Strategy 1 | wildcard sub in the trust policy (high before a repository pin, low after it) |
 | B | Strategy 1 | no GitHub-OIDC sub condition (or unpinned aud) |
-| C | Strategy 1 | same, at role creation (`assumeRolePolicyDocument`) |
+| C | Strategy 1 | same as A and B, at role creation (`assumeRolePolicyDocument`) |
 | D | precursor | `iam:CreateOpenIDConnectProvider` (informational) |
 | E | — (needs baseline / gap) | `sts:AssumeRoleWithWebIdentity` sub not on a per-role allowlist |
 
@@ -258,9 +272,16 @@ creates a throwaway IAM role with an over-broad GitHub-OIDC trust in **your own
 account** and deletes it, guarded by `TRR9015_LIVE=1`; it is **not run in CI**. The
 proven half is committed CloudTrail fixtures
 ([`detections/cloud/fixtures/trr9015/`](../../../detections/cloud/fixtures/trr9015/)):
-an attack set (a wildcard-sub grant, a missing-sub grant, and a create-time grant) and
-a benign baseline (a correctly-scoped `StringEquals` trust, and the OIDC-provider
-creation precursor, which must not fire).
+an attack set (a wildcard-sub grant, a missing-sub grant, a create-time grant, and a
+ref-wildcard grant on a pinned repository) and a benign baseline (a correctly-scoped
+`StringEquals` trust, and the OIDC-provider creation precursor, which must not fire).
+Provenance: the live emulation runs one `iam create-role` with the sub
+`repo:trr9015-example/*:*`, which is the shape of the create-time record. The records
+are documentation-derived, not captured: no emulation step writes the
+`UpdateAssumeRolePolicy` grants, the missing-sub grant, or the ref-wildcard grant (role
+`trr9015-github-release`, sub `repo:trr9015-example/deploy:*`). The ref-wildcard record
+is the only attack record of the low rule; its sub format is from GitHub Docs ("OpenID
+Connect reference").
 
 | Procedure | Test | Status |
 |-----------|------|--------|
@@ -275,11 +296,13 @@ creation precursor, which must not fire).
 | Strategy | Covers | Sigma rule | Sensor |
 |----------|--------|------------|--------|
 | 1 (grant chokepoint) | A, B, C | [`detections/sigma/T1098.001/aws_github_oidc_role_trust_abuse.yml`](../../../detections/sigma/T1098.001/aws_github_oidc_role_trust_abuse.yml) | CloudTrail |
+| 1 (ref wildcard on a pinned repository, low) | A, C | [`detections/sigma/T1098.001/aws_github_oidc_role_trust_ref_wildcard.yml`](../../../detections/sigma/T1098.001/aws_github_oidc_role_trust_ref_wildcard.yml) | CloudTrail |
 
 The validator
 [`detections/validate_cloud_detections.py`](../../../detections/validate_cloud_detections.py)
-runs the rule over the attack set (all three grants must fire, carrying a `trr9015-`
-marker) and the benign baseline (nothing fires). The baseline is four records: a
+runs each rule over the attack set (the high rule must fire on the three over-broad
+grants and the low rule on the ref-wildcard grant, each carrying a `trr9015-` marker)
+and the benign baseline (nothing fires). The baseline is four records: a
 correctly-scoped `StringEquals` trust, the OIDC-provider creation precursor, a trust
 whose `aud` is a JSON array, and a trust scoped by `:repository` with no `sub` — the
 last two are the false-positive cases the review surfaced. The pass demonstrates the

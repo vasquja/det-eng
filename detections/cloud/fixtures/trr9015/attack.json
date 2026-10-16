@@ -85,5 +85,34 @@
     "managementEvent": true,
     "recipientAccountId": "123456789012",
     "eventCategory": "Management"
+  },
+  {
+    "eventVersion": "1.09",
+    "userIdentity": {
+      "type": "IAMUser",
+      "principalId": "AIDA1EXAMPLETRR90151",
+      "arn": "arn:aws:iam::123456789012:user/trr9015-ci-admin",
+      "accountId": "123456789012",
+      "accessKeyId": "AKIA1EXAMPLETRR9015A",
+      "userName": "trr9015-ci-admin"
+    },
+    "eventTime": "2026-10-12T18:47:30Z",
+    "eventSource": "iam.amazonaws.com",
+    "eventName": "UpdateAssumeRolePolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "198.51.100.23",
+    "userAgent": "aws-cli/2.15.30 Python/3.11.6 Linux/6.1.0 command/iam",
+    "requestParameters": {
+      "roleName": "trr9015-github-release",
+      "policyDocument": "%7B%22Version%22%3A%222012-10-17%22%2C%22Statement%22%3A%5B%7B%22Effect%22%3A%22Allow%22%2C%22Principal%22%3A%7B%22Federated%22%3A%22arn%3Aaws%3Aiam%3A%3A123456789012%3Aoidc-provider%2Ftoken.actions.githubusercontent.com%22%7D%2C%22Action%22%3A%22sts%3AAssumeRoleWithWebIdentity%22%2C%22Condition%22%3A%7B%22StringEquals%22%3A%7B%22token.actions.githubusercontent.com%3Aaud%22%3A%22sts.amazonaws.com%22%7D%2C%22StringLike%22%3A%7B%22token.actions.githubusercontent.com%3Asub%22%3A%22repo%3Atrr9015-example%2Fdeploy%3A%2A%22%7D%7D%7D%5D%7D"
+    },
+    "responseElements": null,
+    "requestID": "b4f1c2a9-9015-4b2e-9a1c-updaterefwild",
+    "eventID": "7a6c5d4e-9015-4098-8765-updaterefwild",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management"
   }
 ]

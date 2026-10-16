@@ -353,12 +353,12 @@ COMPILE_ONLY = {
         "node file-access telemetry (open of the projected service-account token) is not "
         "collected on the kind CI cluster; validate_apiserver_detections.py compiles the rule "
         "but cannot match-gate it",
-        "d18f7d7bb4e66140adc3bd05adb5aa87b464397ed7612439b52872d0df0e1914"),
+        "6f804a1c8803da991d9e40ab979849b1b861a50c69d4ad0f22affa72dde2de8c"),
     "T1543.005/linux_static_pod_manifest_write.yml": Waiver(
         "node file-write telemetry (a manifest dropped in the kubelet's staticPodPath) is not "
         "collected on the kind CI cluster; validate_staticpod_detections.py compiles the rule "
         "but cannot match-gate it",
-        "10d6917afde97ae9871f2446a55e6b094111a8076196967b43a07d5fe280524f"),
+        "92bcf921011c78b176ffff52be16597931125706c5468bd6ee120f3ecaadd40d"),
 }
 
 # Pure-surface rules: every positive item is a SURFACE_FIELDS field, so the rule
@@ -373,14 +373,6 @@ COMPILE_ONLY = {
 # benign corpus: the rule must be scored there, under a budget. A human decides
 # each entry, with the reason, and approves the change.
 PRESENCE = {
-    "T1134/k8s_impersonation.yml": Waiver(
-        "TRR9009: any request carrying impersonatedUser is the technique; the API server "
-        "stamps it only for an impersonated request, so presence is the chokepoint",
-        "8598e83d949f32f868b3a11c8b986b7ca5c311a3266209455784b0f9d229cd47"),
-    "T1053.007/k8s_cri_job_pod.yml": Waiver(
-        "TRR9005 node-runtime fallback: a pod sandbox carrying the job-name label is a Job's "
-        "pod; a low-severity hunting rule bounded by its benign-corpus budget",
-        "dd3cf0fd1af3bcd4586191338aed9cbbbf9f0fabe71102b2828de4b2f2eaeb72"),
     "T1543.005/k8s_cri_static_pod_start.yml": Waiver(
         "TRR9003 chokepoint: the kubelet stamps config.source file/http only on a pod it ran "
         "from a node-local or URL manifest (api otherwise)",
@@ -392,11 +384,11 @@ CHOKEPOINT = {
     "T1053.007/k8s_job_create.yml": Waiver(
         "TRR9005 chokepoint: every Job/CronJob procedure is a batch/v1 write; the "
         "controllers' own writes are filtered",
-        "1c857d69494bb99c723d3530a1b0bca1da2f10fe9f3fab79f7b2ad5b94f7cc3f"),
+        "9aef8a175ef6b85b20a2c68b478d6455a7e279926494c209578a61ca4f9670ed"),
     "T1068/copyfail_af_alg_authencesn.yml base:copyfail_splice": Waiver(
         "splice(2) is the CopyFail page-cache write itself; the AF_ALG base carries the "
         "argument (a0 = AF_ALG) and the same-pid 5s correlation narrows it",
-        "0b9f45023ac8016d09c0fdc60b4a3642bf2e83702993cd5bc8c4b6cca2966897"),
+        "d3f704de9aa8ca79e9fd20b94254d1ebf60f752bafee68a2c6beaf081a8bf075"),
     "T1068/dirtypipe_splice_readonly.yml base:dirtypipe_pipe_create": Waiver(
         "pipe(2)/pipe2(2) is the DirtyPipe setup step; auditd records no descriptor type, so "
         "the pipe-then-splice sequence on one pid within 5s is the whole signal",
@@ -407,26 +399,26 @@ CHOKEPOINT = {
         "a326cb4dee31ba4faf8865b404af703ccf3538e84f2af02905397d62c5215cf6"),
     "T1068/keyring_add_key_burst.yml": Waiver(
         "add_key(2) itself is the keyring-stuffing primitive; the keyring users are filtered",
-        "a2b8ed413767592bca987001ac70204ef5a67079a1fea4971c14e284add87b7f"),
+        "51caa54f21d7669146021a14f15ca149e75d51caddacb485cd1c9d7782ebf4b5"),
     "T1068/perf_event_open_non_profiler.yml": Waiver(
         "perf_event_open(2) itself is the escalation surface; profilers are filtered",
-        "c5a2981b447ed7a7af1bc2f0ba0af676af1e0a29903f222b3e3a766d2466cadf"),
+        "0557818f5fa23c8ea7901df11c09746ab76bf2143a46dd0d222a733d08ef0582"),
     "T1068/userfaultfd_syscall.yml": Waiver(
         "userfaultfd(2) itself is the exploit timing primitive and is rare outside CRIU/QEMU",
         "ada55f947b8af992be5f43d7b7961bfd55b1432904c9918840a2b94fa2368c98"),
     "T1070/k8s_events_deleted.yml": Waiver(
         "TRR9010 chokepoint: deleting Events is the evidence removal",
-        "72ad91074862cb63acccb94ac1bc381e030a32587b8d1c2315370b28f02147aa"),
+        "ace07f555c4a711ec3133d4c127ff2d512b5723832757ed48ebb1a5619956f56"),
     "T1070/k8s_workload_deleted_evidence.yml": Waiver(
         "TRR9010 low-fidelity fallback by design: any pod/job delete",
-        "6ebb782a6613f3a5bf11d2f20c0518aa6e313ec2c6761483852251e617b80961"),
+        "afda1ea36151eeb0db79c1c0b6be0705b1796bcee0dccd85b0edeb4597385c6e"),
     "T1098.001/azure_managed_identity_federated_credential_backdoor.yml": Waiver(
         "the Activity Log carries no issuer/subject, so the FIC write operation is the "
         "whole signal (TRR9013 procedure C)",
-        "8a7b2d2ac00c745fa8fef0c0cb7636aca0f7855db5ad9cc50ba20247833c9cb1"),
+        "c0bfbeb8b050bf244bf38774692f2e08e0bb534e5b897b81066e3c229dee2cda"),
     "T1098.006/k8s_rbac_write.yml": Waiver(
         "TRR9004 chokepoint: every grant passes through an RBAC write",
-        "792519439219c31634c90239820252c9b290d8886dc207a5ca4294a04fb19bd5"),
+        "3868d4ebbf33980dd6ce221cd128d71fb4f212c4d0f678fd72d643dbee6b4e0b"),
     "T1546/k8s_admission_webhook_created.yml": Waiver(
         "TRR9025 chokepoint: creating an admission controller object",
         "118564279afcfcfef6afacfd241e9feb60f7768a5a5248998f6be0ccbff47638"),
@@ -447,18 +439,18 @@ CHOKEPOINT = {
         "efcf8dad25a63e1bbb805b035d9b8dc596b91679261b33cfc83a2c9f685a173b"),
     "T1611/setns_namespace_join.yml": Waiver(
         "setns(2) itself is the namespace-join primitive; container runtimes are filtered",
-        "fc785a1679f43811e4444ccfb087e245ff10d0492116702f405c4a94c2177cb3"),
+        "d52e76374c66d0abf7a0af32e0a7e61b4a0616128e0cf2ae673692c36903f68b"),
     "T1620/memfd_create_execveat.yml base:memfd_exec_execveat": Waiver(
         "execveat(2) of the anonymous file is the fileless execution itself; the "
         "memfd_create-then-execveat sequence on one pid within 10s is the whole signal",
-        "f95a395d9414ed81cb038403fe16609b64551e7419f9b76de1880a0d6235e7c4"),
+        "f42fb15b7c95c47eb4aec680f736901c26dd14ce2296fc73af452895934dd757"),
     "T1620/memfd_create_execveat.yml base:memfd_exec_memfd_create": Waiver(
         "memfd_create(2) is the anonymous in-memory file of fileless execution; the "
         "memfd_create-then-execveat sequence on one pid within 10s is the whole signal",
-        "f95a395d9414ed81cb038403fe16609b64551e7419f9b76de1880a0d6235e7c4"),
+        "f42fb15b7c95c47eb4aec680f736901c26dd14ce2296fc73af452895934dd757"),
     "T1685/io_uring_setup.yml": Waiver(
-        "creating or entering an io_uring ring is the sensor-evasion surface",
-        "3f3a92f2619b105d96b031c63c1a9e0a42fa4e0e73432bc59ee0d3f60950f6fa"),
+        "creating an io_uring ring is the sensor-evasion surface",
+        "b50573eddab59ad45de592ca2f1fe47f1cdcb700f3440aaf8da792129da08357"),
     "T1685/k8s_admission_webhook_disabled.yml": Waiver(
         "TRR9008 chokepoint: any delete/update/patch of an admission control object",
         "bdbd86cc9b08db8665df9b0a33549391048be94b1ccf8e0d98b58c3eb0fd921e"),

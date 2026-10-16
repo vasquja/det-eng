@@ -13,6 +13,28 @@ description: |
   AF_ALG is unusual on production workloads outside specific crypto
   daemons; AF_ALG followed by splice() from the same PID is rarer still.
 
+  One stock tool makes the same sequence: libkcapi opens the AF_ALG socket,
+  creates a pipe at handle init, and sends every update of 32 KiB or more
+  (len >= 1<<15 in lib/kcapi-md.c) through vmsplice() and splice(pipe -> op
+  fd). `kcapi-hasher` (also run as sha256sum, sha256hmac, fipshmac and the
+  other names it is linked as) and `kcapi-dgst` hash a file this way. The
+  AF_ALG base filters these two hash tools by `exe`, paired with the names
+  they run as. The uninjected hash tools only compute a message digest, which
+  is not the authencesn AEAD decrypt that the CopyFail write needs. `kcapi-enc`,
+  which runs AEAD ciphers and could, is not filtered.
+
+  Filter limits. The filter trusts the binary and the name, not the code that
+  runs in the process. Pairing exe with comm stops an exploit that only names
+  itself sha256sum (prctl) or that only sits at an allowed path. It does not
+  stop code injected into the real tool: kcapi-hasher and kcapi-dgst are
+  ordinary, dynamically linked binaries that are not setuid, so an
+  unprivileged user can run them with LD_PRELOAD (or ptrace a running copy).
+  The injected code keeps the tool's comm and exe, binds its AF_ALG socket to
+  authencesn and splices, and the AF_ALG base suppresses it. A process in a
+  container controls both values, because the kernel logs `exe` relative to
+  the process's own root. auditd does not decode the AF_ALG bind (the cipher
+  name), so the rule cannot tell a digest from the AEAD.
+
   Each syscall is a separate audit event, so this is a Sigma correlation
   rule: the two base rules below each match one event, and the correlation
   fires when both occur for the same pid within 5 seconds. A plain
@@ -20,9 +42,10 @@ description: |
   event and can never match.
 references:
   - https://github.com/Smarttfoxx/copyfail
+  - https://github.com/smuellerDD/libkcapi/blob/master/lib/kcapi-kernel-if.c
 author: det-eng
 date: 2026/05/15
-modified: 2026/10/09
+modified: 2026/10/16
 tags:
   - attack.privilege-escalation
   - attack.t1068
@@ -36,9 +59,15 @@ correlation:
     - pid
   timespan: 5s
 falsepositives:
-  - Userland crypto frameworks (e.g. cryptsetup, kcapi-tools, some VPN clients)
-    that legitimately combine AF_ALG with file I/O. Baseline known-good
-    processes (`auid`, `comm`) before promoting to alerting.
+  - Userland crypto frameworks (e.g. kcapi-enc and other libkcapi callers, some
+    VPN clients) that legitimately combine AF_ALG with splice. Baseline
+    known-good processes (`auid`, `exe`) before promoting to alerting.
+  - libkcapi hash tools installed at a path that `kcapi_hash_tools` does not
+    list — extend it
+  - Not a false positive but a known miss — the CopyFail sequence from code
+    injected into kcapi-hasher or kcapi-dgst (LD_PRELOAD, ptrace) is
+    suppressed by `kcapi_hash_tools`. On hosts without libkcapi tools, remove
+    `kcapi_hash_tools`
 level: high
 ---
 title: AF_ALG Socket (CopyFail Base Event)
@@ -56,7 +85,31 @@ detection:
     type: SYSCALL
     syscall: socket
     a0: '26'  # AF_ALG = 38 decimal = 0x26 hex; auditd logs args in hex
-  condition: af_alg_socket
+  kcapi_hash_tools:
+    # kcapi-hasher is installed once and symlinked under these names (libkcapi
+    # Makefile.am hasher_links); exe is the link target, comm the link name.
+    - comm:
+        - kcapi-hasher
+        - sha1sum
+        - sha224sum
+        - sha256sum
+        - sha384sum
+        - sha512sum
+        - md5sum
+        - sm3sum
+        - sha3sum
+        - fipscheck
+        - fipshmac
+        - sha1hmac
+        - sha224hmac
+        - sha256hmac
+        - sha384hmac
+        - sha512hmac
+        - sm3hmac
+      exe: /usr/bin/kcapi-hasher
+    - comm: kcapi-dgst
+      exe: /usr/bin/kcapi-dgst
+  condition: af_alg_socket and not kcapi_hash_tools
 level: informational
 ---
 title: splice Syscall (CopyFail Base Event)

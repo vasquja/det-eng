@@ -4,8 +4,10 @@ status: experimental
 description: |
   Detects a pod that belongs to a Kubernetes Job running on a node: a pod sandbox
   the container runtime reports whose labels carry batch.kubernetes.io/job-name
-  (the label the Job controller stamps on every Pod it creates). This is the
-  TRR9005 Strategy 2 node-runtime fallback. It sees the EXECUTED pod, which the
+  (the label the Job API stamps on every Pod template from Kubernetes v1.27), or,
+  for a cluster before v1.27, both legacy labels job-name and controller-uid
+  (the only ones stamped there; v1.27 and later stamp the legacy pair too). This
+  is the TRR9005 Strategy 2 node-runtime fallback. It sees the EXECUTED pod, which the
   API server chokepoint rule (k8s_job_create.yml) does not, for two reasons: that
   rule excludes the job and cronjob controllers to survive the fan-out noise, so
   the recurring executions a CronJob drives never match it; and if an operator
@@ -40,7 +42,13 @@ logsource:
 detection:
   select_job_pod:
     labels.batch.kubernetes.io/job-name|exists: true
-  condition: select_job_pod
+  # Before v1.27 the Job API stamps only the unprefixed job-name and
+  # controller-uid labels on the pod template. Both together mark a Job's pod; a
+  # hand-made pod labelled job-name alone does not match.
+  select_legacy_job_pod:
+    labels.job-name|exists: true
+    labels.controller-uid|exists: true
+  condition: select_job_pod or select_legacy_job_pod
 falsepositives:
   - Every legitimate Job and CronJob execution produces a Job pod and matches this
     rule. It is high volume by design; use it for correlation and hunting, and

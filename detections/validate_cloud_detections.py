@@ -113,6 +113,15 @@ MANIFEST = [
      "GitHub-OIDC role-trust abuse (over-broad sub)",
      marker("trr9015-", "requestParameters.roleName", "requestParameters.policyDocument",
             "userIdentity.arn")),
+    # A wildcard after a pinned repository in the sub is graded low by its own rule; the
+    # high rule above keeps the wildcard before a repository pin and the absent sub. This
+    # rule's only attack record (role trr9015-github-release) is synthetic and
+    # documentation-derived (GitHub Docs sub formats); no emulation step writes it.
+    ("TRR9015", "T1098.001", "aws_github_oidc_role_trust_ref_wildcard.yml",
+     "trr9015/attack.json", "trr9015/benign.json", "AWS",
+     "GitHub-OIDC role trust with a ref wildcard on a pinned repo (low)",
+     marker("trr9015-", "requestParameters.roleName", "requestParameters.policyDocument",
+            "userIdentity.arn")),
     # --- Round 2: TRR9016-9019 (external-cloud identity & exposure chokepoints) ---
     ("TRR9016", "T1078.004", "aws_cognito_unauthenticated_identity_use.yml",
      "trr9016/attack.json", "trr9016/benign.json", "AWS",

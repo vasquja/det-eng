@@ -10,6 +10,39 @@ fires on its paired atomic.
 > covers the procedure. See the worked example:
 > [`research/trr9001/lin`](../research/trr9001/lin/README.md).
 
+## How a rule earns its place
+
+Firing on its own attack emulation is not enough. A rule can do that and still
+be noisy on normal activity, or have tests so easy that they prove nothing.
+So every rule must pass four kinds of check:
+
+1. **It fires on the attack.** The validators run the technique's emulation
+   (on a real auditd VM, a live `kind` cluster, or recorded cloud audit logs)
+   and check that the rule matches the telemetry it produced.
+2. **Its tests are hard to fake.** Next to each rule is a test file
+   (`<rule>.cases.jsonl`) with **near-miss** examples: events that look almost
+   exactly like the attack but are wrong in one key detail. A checker proves
+   each near-miss really is one detail away from firing the rule, and fails a
+   rule whose tests are trivial, or that only works because it matches the
+   emulation's own file or process names. See
+   [Rule test cases and the sufficiency gate](#rule-test-cases-and-the-sufficiency-gate).
+3. **It stays quiet on ordinary activity.** Every rule is run over a library of
+   realistic normal activity (admin work, CI jobs, Kubernetes controllers,
+   cloud console use) and gets a hit **budget**. Going over the budget fails CI,
+   and the scores are saved, so any change in a rule's noise shows up in review.
+   See [The benign corpus](#the-benign-corpus-false-positive-scores).
+4. **Its failures explain themselves.** When a check fails, it names the
+   event, the field, the value it saw and what the rule wanted, so the fix
+   starts from evidence. See [Explained failures](#explained-failures).
+
+CI also compares each pull request with `main`, so tests cannot be quietly
+deleted or weakened, and a rule cannot quietly get noisier.
+
+When these checks were first run against the existing rules, they found
+problems the old tests had missed: attack variants a rule misses, and routine
+activity a rule fires on. Each one is recorded, with its evidence and the
+proposed fix, in [`RULE_DEFECTS.md`](RULE_DEFECTS.md) until the rule is fixed.
+
 ## The three layers
 
 1. **Atomic** (`atomics/<TECH>/`) — the stimulus. It emits the syscall
@@ -224,8 +257,7 @@ and the gate prints the new digest for a human to re-approve. Its `level`,
 - `CHOKEPOINT` (R2): every positive item is a surface field because the record
   kind itself is the technique (any `add_key`, any Events delete). Any verified
   negative then counts. One base of a correlation is waived as `<rule> base:<name>`.
-- `PRESENCE` (R2): one positive item and no filter (any impersonated request, any
-  static-pod sandbox). No negative can be one item from firing, so the proof is the
+- `PRESENCE` (R2): one positive item and no filter (any static-pod sandbox). No negative can be one item from firing, so the proof is the
   positive case and the rule's benign-corpus budget.
 - `PLATFORM_NAMING` (R4): the rule keys on a platform's naming template that
   follows the emulation's name (Cognito's `Cognito_<pool>Unauth_Role`); the rename
@@ -449,7 +481,8 @@ privileged/hostPath fields, the bound role, the group subject, and the webhook
 `clientConfig`; an update, patch or delete of the three `kube-system` DNS
 ConfigMaps (`coredns`, `kube-dns`, `coredns-custom`) is at `Request` so the Corefile
 is present (a create names no object when the policy is evaluated, so it is logged
-at `Metadata` with no body: [`RULE_DEFECTS.md`](RULE_DEFECTS.md) P2); Secrets and
+at `Metadata` with no body, so the emulation writes procedures B and C by server-side
+apply, a patch by name: [`RULE_DEFECTS.md`](RULE_DEFECTS.md) K9); Secrets and
 `serviceaccounts/token` stay at `Metadata`, never higher, because `RequestResponse`
 would copy the Secret data and the signed token into the log.
 
@@ -459,9 +492,9 @@ controller Secret reads, the kube-proxy and kindnet privileged pods, and the
 bootstrap coredns ConfigMap. So the validator gates each rule on the emulation's
 own marker — a `trr9004-`/`trr9005-`/`trr9007-`/`trr9025-`/`trr9026-` object name,
 the `trr9006` namespace with a non-system caller, a `trr9005-` Job label on the node
-sensor, or the `trr9027` sentinel in procedure A's DNS-ConfigMap patch (procedures
-B and C create their ConfigMaps, which are logged with no body, so this validator
-proves TRR9027 on procedure A only) — and the negative control proves a pass depends
+sensor, or the `trr9027` sentinel in each procedure's DNS-ConfigMap write (procedure A patches
+`coredns`; B and C create `kube-dns` and `coredns-custom` by server-side apply, a
+patch by name that the policy logs with its body, so each is proven separately) — and the negative control proves a pass depends
 on the emulation, not the baseline.
 
 ```
@@ -531,6 +564,8 @@ policy) for a more precise match.
 All Sigma rules are `status: experimental`. Levels are set by how rare the
 syscall is: `high` where it is genuinely unusual (userfaultfd, memfd->execveat,
 setns), `medium` where benign software also uses it (splice, raw sockets,
-add_key, perf_event_open, io_uring, bpf). The `medium` rules ship with a
-process allowlist and documented false positives; baseline them before you
-alert.
+add_key, perf_event_open, io_uring, bpf). Most `medium` rules ship with a
+process allowlist (by `comm`, and where it can be forged also by `exe`) and
+documented false positives; `io_uring_setup` has none by design. Baseline them
+before you alert. An allowlist trusts the binary, not code injected into it
+([`RULE_DEFECTS.md`](RULE_DEFECTS.md) L14).

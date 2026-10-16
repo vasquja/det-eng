@@ -214,14 +214,18 @@ dropped. No policy change is needed.
 **Strategy 1 — chokepoint (covers A, B, C).**
 Match audit events where `objectRef.resource` is `events` and `verb` is `delete` or
 `deletecollection`. Do not pin the apiGroup (so events.k8s.io is covered) and do not
-match `delete` only (so the bulk `deletecollection` wipe is covered). Baseline the
-system identities and any event-exporter service accounts by `user.username`.
+match `delete` only (so the bulk `deletecollection` wipe is covered). Filter one
+request: the namespace controller's `deletecollection` of the Events of a namespace
+being deleted (`system:serviceaccount:kube-system:namespace-controller`), which every
+namespace teardown makes. Baseline the other system identities and any event-exporter
+service accounts by `user.username`.
 
 - Sensor: API server audit log.
 - Rule: `detections/sigma/T1070/k8s_events_deleted.yml` (built).
 
 **Strategy 2 — workload-record fallback (covers D).**
-Match a delete of a Pod or a Job. This is low fidelity; use it for correlation only
+Match a delete or deletecollection of Pods or Jobs (the namespace controller's
+teardown sweep is filtered). This is low fidelity; use it for correlation only
 — the same identity that also deleted Events, a deletion in a sensitive namespace,
 or a Job whose creation the identity made.
 
@@ -242,6 +246,15 @@ is structurally blind to it. This is the inverse of the TRR9002 and TRR9006 Proc
 E gaps: same lesson, a different layer. The lab demonstrates it read-only, by showing
 the audit log path on the node and noting that a truncation there emits no API event.
 
+A second, smaller gap is at the API: deleting a whole namespace destroys its Events,
+but the Events are then deleted by the namespace controller, not by the actor, and
+the chokepoint filters that sweep. The actor's own record is a `delete` of
+`namespaces`, which no shipped rule matches in general (only the three policy-engine
+namespaces of TRR9008 are matched). A namespace delete is routine (CI preview
+environments, tenant teardown) and its record does not show why, so it is left to
+hunting and correlation by actor and namespace. Case `namespace-delete-known-miss` in
+the chokepoint's sidecar records this miss.
+
 **Coverage summary.**
 
 | Procedure | Covered by | How |
@@ -252,7 +265,8 @@ the audit log path on the node and noting that a truncation there emits no API e
 | D | Strategy 2 (fallback) | `delete pods`/`jobs` |
 | E | Strategy 3 (node sensor); the gap | audit-log file cleared; no audit event |
 
-One chokepoint rule covers every API-level event deletion. A low-fidelity fallback
+One chokepoint rule covers every API-level event deletion that the actor makes; an
+Events wipe through a namespace delete is not covered. A low-fidelity fallback
 covers workload-record deletion. A node sensor covers the audit-log clearing the API
 server never sees.
 

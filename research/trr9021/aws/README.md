@@ -124,8 +124,12 @@ The field that separates attack from benign is the **grantee token with no effec
   organization-wide bus and is effectively private.
 - **EFS (C) and Glue (D):** a policy statement with `Effect "Allow"` and `Principal` equal to the
   string `"*"` or the object `{"AWS":"*"}`, and **none** of the scoping condition keys
-  `aws:PrincipalOrgID` / `aws:SourceArn` / `aws:SourceAccount` / `aws:SourceVpc` present. The EFS
-  policy sits in `requestParameters.policy`; the Glue policy sits in `requestParameters.policyInJson`.
+  `aws:PrincipalOrgID` / `aws:SourceArn` / `aws:SourceAccount` / `aws:SourceVpc` present. For EFS,
+  `aws:SourceOwner` and `elasticfilesystem:AccessedViaMountTarget` set to `true` (the console
+  wizard's condition) also scope a statement, and the scope must sit in the same statement: the EFS
+  User Guide ("Blocking public access" > "The meaning of 'public'") counts a policy as non-public
+  only if it grants access only to fixed values of those keys. The EFS policy sits in
+  `requestParameters.policy`; the Glue policy sits in `requestParameters.policyInJson`.
 - **SSM (E):** `requestParameters.accountIdsToAdd` containing `"All"` (case-insensitive; the CLI
   constrains the value to `(?i)all` or a 12-digit account ID). A share to a named 12-digit account is
   not public.
@@ -323,6 +327,12 @@ validator runs the rules over. Every object is named `trr9021-*`, the public sou
 TEST-NET address `198.51.100.23`, the benign source IP is the RFC 1918 egress address `10.0.4.9`, the
 account is the AWS documentation account `123456789012`, and each record carries the full
 `eventType` / `managementEvent` / `eventCategory` / `readOnly` / `recipientAccountId` envelope.
+The records are documentation-derived, not captured from a run. The emulation's procedure A uses
+the canned ACL `--acl public-read`, and procedures C and D have no live step, so no emulation step
+writes the two `PutBucketAcl` grant records or the EFS and Glue records. The second `PutBucketAcl`
+record, whose `AccessControlList.Grant` is a single object (one `AllUsers` `READ` grant), takes its
+shape from the `PutBucketAcl` example in the S3 User Guide ("CloudTrail log file entries for Amazon
+S3").
 
 | Procedure | Test | Status |
 |-----------|------|--------|
@@ -359,7 +369,9 @@ beyond the 90-day Event history, so a trail or CloudTrail Lake is the deployment
 (`condition.key` set, or `aws:PrincipalOrgID` / `aws:SourceArn` / `aws:SourceAccount` in the policy).
 
 **Strategy 3 — public EFS file-system policy (covers C).** Match `PutFileSystemPolicy` and fire on an
-`Allow` + `Principal "*"` token in `requestParameters.policy` with no scoping condition.
+`Allow` + `Principal "*"` token in `requestParameters.policy` unless every statement that allows the
+public principal carries a scoping condition key, or `elasticfilesystem:AccessedViaMountTarget` set
+to `true`, in that same statement.
 
 **Strategy 4 — public Glue resource policy (covers D).** Match `PutResourcePolicy` on
 `glue.amazonaws.com` only and fire on an `Allow` + `Principal "*"` token in
@@ -391,8 +403,12 @@ the Glue rule must ignore, proving the `eventSource` pin works.
   encoding-agnostic (TRR9019 precedent). Confirm with one real capture at build time.
 - **Per-statement scoping and decoy conditions** (inherited from TRR9019): a policy can mix an
   org-scoped statement with a second unconditioned `Principal "*"` statement, or add a wildcard-value
-  decoy condition. The stateless committed rules match tokens across the whole document; a production
-  pipeline should JSON-decode and evaluate scope per statement and reject wildcard condition values.
+  decoy condition. The EFS rule evaluates the scoping filters per statement with a bounded regex, so
+  it fires on the mix, but it checks only that a key is present, not its value, and it still reads
+  the `Allow` and the `"*"` across the whole document (a named-principal `Allow` next to a public
+  `Deny` with no scoping key fires). The EventBridge and Glue rules match tokens across the whole
+  document. A production pipeline should JSON-decode and evaluate scope per statement and reject
+  wildcard condition values.
 - **Named-foreign-account exposure** (a 12-digit partner account rather than `"*"` / `All`) is
   cross-account exposure too, but telling a hostile account from a legitimate partner needs an
   organization allowlist a stateless rule cannot carry. It is left to a production pipeline.
@@ -449,6 +465,12 @@ Red Team nor Atomic Red Team ships.
   <https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutPermission.html>
 - AWS, EFS `PutFileSystemPolicy` API (resource-based `Policy`):
   <https://docs.aws.amazon.com/efs/latest/ug/API_PutFileSystemPolicy.html>
+- AWS, EFS Blocking public access ("The meaning of 'public'": the non-public condition keys,
+  including `elasticfilesystem:AccessedViaMountTarget` set to `true`):
+  <https://docs.aws.amazon.com/efs/latest/ug/access-control-block-public-access.html>
+- AWS, CloudTrail log file entries for Amazon S3 (a `PutBucketAcl` record whose single `Grant` is
+  an object):
+  <https://docs.aws.amazon.com/AmazonS3/latest/userguide/cloudtrail-logging-understanding-s3-entries.html>
 - AWS, Glue `PutResourcePolicy` API (`PolicyInJson`):
   <https://docs.aws.amazon.com/glue/latest/webapi/API_PutResourcePolicy.html>
 - AWS, SSM `ModifyDocumentPermission` API (`AccountIdsToAdd = All` for public):

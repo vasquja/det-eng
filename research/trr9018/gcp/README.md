@@ -221,8 +221,10 @@ pool already has a binding, so nothing new appears beside the edited provider.
   (`operation.first`) entry carries the request body.
 - **Impact:** widens who can federate into an already-bound service account.
 - **Covered by:** the provider rule
-  (`gcp_workload_identity_pool_provider_created`) — it fires on `Create` **or**
-  `Update` when the resulting provider has no real `attributeCondition`.
+  (`gcp_workload_identity_pool_provider_created`) — it fires on a `Create` or `Update`
+  that carries a trust block and no `attributeCondition`, and on an `Update` whose
+  `updateMask` touches `attributeCondition` and leaves it empty (a field-masked update
+  sends no trust block).
 
 #### Detection Data Model — `TRR9018.GCP.B`
 
@@ -236,7 +238,10 @@ Source: [`ddms/trr9018_gcp_b.json`](ddms/trr9018_gcp_b.json) (Arrows app format)
 provider rule matches **`Create` or `Update`**, so it fires on this path too; no committed
 fixture carries an `Update`, so Procedure B's coverage is proven through the recorded
 `Create` provider fixture, which carries an empty `attributeCondition` (`""`), while its
-benign twin carries `assertion.repository=='trr9018-corp/deploy'` and is suppressed.
+benign twin carries `assertion.repository=='trr9018-corp/deploy'` and is suppressed. The
+rule's sidecar cases add a field-masked `Update` (`updateMask` `attributeCondition`, an
+empty condition, no trust block) that fires, and a tightening `Update` that is suppressed;
+their shape follows the IAM API v1 `providers.patch` method (required `updateMask`).
 
 ### Procedure C: Bind a principalSet to an already-trusted pool's SA  (`TRR9018.GCP.C`)
 
@@ -373,10 +378,12 @@ one `{…}` element so the three conditions co-occur. This catches both the set 
 
 **Strategy 2 — provider-trust companion (covers A, B).**
 Match `protoPayload.serviceName` `iam.googleapis.com` and `protoPayload.methodName`
-`CreateWorkloadIdentityPoolProvider` or `UpdateWorkloadIdentityPoolProvider`, suppressed
-when `protoPayload.request.workloadIdentityPoolProvider.attributeCondition` carries a real
-CEL guard (it references `assertion`). This flags providers created or loosened with no
-restriction on which external tokens are admitted.
+`CreateWorkloadIdentityPoolProvider` or `UpdateWorkloadIdentityPoolProvider` (the
+`operation.first` entry) whose request carries a trust block (`oidc`, `aws`, `saml` or
+`x509`), or an `Update` whose `updateMask` touches `attributeCondition`, suppressed when
+`protoPayload.request.workloadIdentityPoolProvider.attributeCondition` is non-empty. This
+flags providers created or loosened with no restriction on which external tokens are
+admitted. The rule does not evaluate CEL, so a vacuous non-empty condition is suppressed.
 
 - Sensor: Cloud Audit Logs (Admin Activity).
 - Rule: [`detections/sigma/T1098.001/gcp_workload_identity_pool_provider_created.yml`](../../../detections/sigma/T1098.001/gcp_workload_identity_pool_provider_created.yml) (built).

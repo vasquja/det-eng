@@ -11,17 +11,28 @@ description: |
 
   Every path puts its dangerous field in the pod spec, and the pod spec is the
   request body the API server records, so one admission-time rule covers all four.
-  It also catches a privileged ephemeral container
-  (requestObject.spec.ephemeralContainers), and an attempt that admission REJECTS,
-  because requestObject is logged with the 403 as well.
+  The privileged and capability checks read the containers, the initContainers
+  (an init container runs on the node with its own securityContext) and the
+  ephemeralContainers (kubectl debug patches the pods/ephemeralcontainers
+  subresource: --profile=sysadmin sets privileged, --profile=general adds
+  SYS_PTRACE). The rule also catches an attempt that admission REJECTS, because
+  requestObject is logged with the 403 as well.
 
   The rule needs audit level Request (or higher): requestObject is absent at
   Metadata, so a Metadata-only policy makes this rule blind. The host-namespace
   fields (hostPID/hostNetwork/hostIPC) are top-level booleans; the container and
-  volume fields are in JSON-serialized arrays, matched with |contains, and listed
-  in both the spaced (Request-body) and compact (Go) forms so the rule is portable
-  across a det-eng audit log and a production SIEM. The capability names use the
-  short form (no CAP_ prefix) that the PodSpec serializes.
+  volume fields are in JSON-serialized arrays. privileged is matched with
+  |contains in both the spaced (Request-body) and compact (Go) forms, so the rule
+  is portable across a det-eng audit log and a production SIEM. A capability
+  matches only inside a capabilities "add" list, and a hostPath only as a volume
+  source key ("hostPath": {), with |re patterns that accept either form. A
+  container name, an env value, a "drop" list or a volume name that spells a
+  capability or "hostpath" does not fire. "ALL" grants every capability and is on
+  the list. The capability match is case-insensitive (|re|i) and accepts an
+  optional CAP_ prefix, because the API server does not validate the names and
+  the runtimes normalise them: containerd upper-cases each added name and tests
+  ALL with EqualFold, and CRI-O also keeps a CAP_ prefix in any case. So
+  "sys_admin", "all" and "Cap_Sys_Admin" grant the capability and fire.
 
   This is noisy without baselining: kube-proxy, the CNI DaemonSet (kindnet,
   Calico, Cilium), and other infrastructure legitimately request host access.
@@ -61,30 +72,27 @@ detection:
       - '"privileged": true'
       - '"privileged":true'
   sel_caps:
-    requestObject.spec.containers|contains:
-      - '"SYS_ADMIN"'
-      - '"SYS_PTRACE"'
-      - '"SYS_MODULE"'
-      - '"DAC_READ_SEARCH"'
-      - '"SYS_BOOT"'
-      - '"SYS_RAWIO"'
-      - '"NET_ADMIN"'
-      - '"BPF"'
-      - '"SYSLOG"'
+    requestObject.spec.containers|re|i: '"add":\s*\[[^\]]*"(?:(?:CAP_)?(?:SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)"'
+  sel_caps_init:
+    requestObject.spec.initContainers|re|i: '"add":\s*\[[^\]]*"(?:(?:CAP_)?(?:SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)"'
+  sel_caps_ephem:
+    requestObject.spec.ephemeralContainers|re|i: '"add":\s*\[[^\]]*"(?:(?:CAP_)?(?:SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)"'
   sel_hostpath:
-    requestObject.spec.volumes|contains: '"hostPath"'
+    requestObject.spec.volumes|re: '"hostPath":\s*\{'
   sel_hostpid:
     requestObject.spec.hostPID: true
   sel_hostnet:
     requestObject.spec.hostNetwork: true
   sel_hostipc:
     requestObject.spec.hostIPC: true
-  condition: selection_pod and (sel_privileged or sel_privileged_init or sel_privileged_ephem or sel_caps or sel_hostpath or sel_hostpid or sel_hostnet or sel_hostipc)
+  condition: selection_pod and (sel_privileged or sel_privileged_init or sel_privileged_ephem or sel_caps or sel_caps_init or sel_caps_ephem or sel_hostpath or sel_hostpid or sel_hostnet or sel_hostipc)
 falsepositives:
   - Infrastructure that legitimately needs host access. kube-proxy runs privileged
     and hostNetwork; the CNI DaemonSet (kindnet, Calico, Cilium) runs privileged
     with hostPath mounts; monitoring and storage agents mount host paths. Baseline
     these by exact pod name, image, and identity -- not by the dangerous field or
     the namespace.
-  - Operators debugging with a privileged pod. Baseline the known identities.
+  - Operators debugging with a privileged pod, or with kubectl debug
+    --profile=general or sysadmin (an ephemeral container that adds SYS_PTRACE or
+    is privileged). Baseline the known identities.
 level: high

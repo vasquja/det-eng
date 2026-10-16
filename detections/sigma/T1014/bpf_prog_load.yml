@@ -7,11 +7,29 @@ description: |
   program is the first step of an eBPF rootkit or a BPF-based
   privilege-escalation chain. Fidelity rises when a program load is followed
   by an attach (bpf PROG_ATTACH, or perf_event_open + PERF_EVENT_IOC_SET_BPF).
+
+  Two filters suppress stock loaders. `bpf_processes` matches by `comm`.
+  `runtime_images` matches by `exe`: runc, which loads a cgroup-v2 device-filter
+  program for every container it creates (paired with comm `runc`), and
+  snap-confine, which loads a device-cgroup program on snap launches.
+
+  Filter limits: a process sets its own comm with prctl(PR_SET_NAME), so each
+  `bpf_processes` entry suppresses a process that renames itself. Pairing exe
+  with comm stops that rename, but not code injected into the real binary
+  (LD_PRELOAD or ptrace keep its comm and exe), and a process in a container
+  controls both values, because the kernel logs `exe` relative to the
+  process's own root. Except for socket filters where
+  kernel.unprivileged_bpf_disabled is 0, BPF_PROG_LOAD needs CAP_BPF or
+  CAP_SYS_ADMIN, so an attacker who passes these filters usually already has
+  that privilege.
 references:
   - https://man7.org/linux/man-pages/man2/bpf.2.html
   - https://github.com/kris-nova/boopkit
+  - https://github.com/opencontainers/runc/blob/v1.1.12/libcontainer/cgroups/ebpf/ebpf_linux.go
+  - https://github.com/snapcore/snapd/blob/master/cmd/libsnap-confine-private/device-cgroup-support.c
 author: det-eng
 date: 2026/10/05
+modified: 2026/10/16
 tags:
   - attack.stealth
   - attack.t1014
@@ -34,9 +52,24 @@ detection:
       - falco
       - tetragon
       - node_exporter
-  condition: bpf_prog_load and not bpf_processes
+  runtime_images:
+    # runc on cgroup v2 loads a BPF_PROG_TYPE_CGROUP_DEVICE
+    # program for every container it creates.
+    - comm: runc
+      exe:
+        - /usr/bin/runc
+        - /usr/sbin/runc
+        - /usr/local/bin/runc
+        - /usr/local/sbin/runc
+    # snap-confine loads the snap's device-cgroup program on cgroup v2 hosts.
+    - exe|re: '^(/usr/lib/snapd|/usr/libexec/snapd|/snap/(snapd|core[0-9]*)/[0-9]+/usr/lib/snapd)/snap-confine$'
+  condition: bpf_prog_load and not bpf_processes and not runtime_images
 falsepositives:
   - Observability and networking stacks that load eBPF legitimately
     (systemd, Cilium, Falco, Tetragon, bpftrace) — baseline and extend
     `bpf_processes` for the host
+  - bcc tools (execsnoop-bpfcc and others) run by an administrator; they run
+    as python3, so neither filter can name them safely
+  - runc installed at a path that `runtime_images` does not list (for example
+    a k3s data directory) — extend `runtime_images`
 level: medium

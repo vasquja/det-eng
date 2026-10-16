@@ -7,8 +7,8 @@
   "rules": {
     "T1014/bpf_prog_load.yml": {
       "mode": "enforce",
-      "max_hits": 17,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md L5: stock runc (cgroup-v2 device filter on every container create) and snap-confine (device-cgroup program on snap launches) are not in bpf_processes; the bcc (execsnoop-bpfcc, python3) hits are documented observability noise."
+      "max_hits": 3,
+      "why": "documented noise: bcc observability tools (execsnoop-bpfcc, run as python3) load kprobe programs; runc's device filter and snap-confine are filtered by exe."
     },
     "T1040/afinet_raw_socket.yml": {
       "mode": "enforce",
@@ -22,28 +22,18 @@
     },
     "T1053.007/k8s_job_create.yml": {
       "mode": "enforce",
-      "max_hits": 37,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md K7: filter_controllers misses kube-system ttl-after-finished-controller and generic-garbage-collector deletes; the rest is documented GitOps/CI Job deployment."
+      "max_hits": 28,
+      "why": "documented noise: GitOps/CI Job and CronJob deployment; the ttl-after-finished and garbage-collector controllers and the namespace-controller teardown are filtered."
     },
     "T1068/dirtypipe_splice_readonly.yml": {
       "mode": "enforce",
       "max_hits": 18,
       "why": "documented noise: Go TCP proxies (docker-proxy) take a fresh pipe2 and splice through it on a new connection, the zero-copy proxy class the rule's falsepositives name; baseline by exe."
     },
-    "T1068/keyring_add_key_burst.yml": {
-      "mode": "enforce",
-      "max_hits": 5,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md L7: described as a burst detector but fires on a single add_key; cryptsetup / systemd-cryptsetup hand LUKS2 volume keys to dm-crypt via add_key('logon')."
-    },
     "T1068/perf_event_open_non_profiler.yml": {
       "mode": "enforce",
       "max_hits": 12,
       "why": "documented noise: JVM / Python profilers (documented profiler class). Note: auditd comm is the thread name, so a comm allowlist cannot cover JVM-hosted profilers; key on exe."
-    },
-    "T1070/k8s_events_deleted.yml": {
-      "mode": "enforce",
-      "max_hits": 8,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md K8: the kube-system namespace-controller deletecollections core/v1 and events.k8s.io Events in every namespace being deleted; the rule's falsepositives wrongly say kube-system controllers never delete Events. Filter or baseline that identity's deletecollection."
     },
     "T1070/k8s_workload_deleted_evidence.yml": {
       "mode": "enforce",
@@ -62,23 +52,23 @@
     },
     "T1078.004/aws_leaked_access_key_recon.yml": {
       "mode": "enforce",
-      "max_hits": 283,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C2: the id_aida fallback (principalId AIDA) matches IAM-user TEMPORARY credentials too, so MFA (GetSessionToken) and console sessions fire; the remaining off-egress long-term-key use by developers, legacy CI and a SaaS key is the documented baseline-before-alerting noise."
+      "max_hits": 204,
+      "why": "documented noise: off-egress use of long-term access keys by developers, legacy CI and a SaaS integration; baseline before alerting. Temporary (ASIA) credentials no longer match."
     },
     "T1078.004/entra_service_principal_federated_credential_signin.yml": {
       "mode": "enforce",
       "max_hits": 55,
       "why": "documented noise: funnel rule: approved GitHub Actions workload-identity-federation sign-ins; pair with a first-seen overlay as documented."
     },
-    "T1098.001/aws_github_oidc_role_trust_abuse.yml": {
+    "T1098.001/aws_github_oidc_role_trust_ref_wildcard.yml": {
       "mode": "enforce",
       "max_hits": 13,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C5: a wildcard inside the ref of a pinned owner/repo (refs/tags/v*) fires at high though no fork or other repo can match; the repo:<org>/<repo>:* trusts are GitHub's own documented example, a hygiene finding by design."
+      "why": "documented noise: a tag or any-ref wildcard on one pinned repository (terraform release roles); graded low."
     },
     "T1098.001/azure_managed_identity_federated_credential_backdoor.yml": {
       "mode": "enforce",
-      "max_hits": 36,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C1: the operationName match is case-sensitive, so it misses the UPPERCASE form storage / Event Hub exports carry (it would miss the attack there too); the hits are AKS workload-identity onboarding in the ARM-cased form. Broad by design otherwise (any MI FIC write); every ARM write logs Start and Success, so each operation counts twice."
+      "max_hits": 30,
+      "why": "documented noise: AKS workload-identity onboarding writes managed-identity federated credentials; the rule grades every such write by design."
     },
     "T1098.001/gcp_workload_identity_federation_sa_binding.yml": {
       "mode": "enforce",
@@ -92,8 +82,8 @@
     },
     "T1098.006/k8s_rbac_privileged_grant.yml": {
       "mode": "enforce",
-      "max_hits": 12,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md K3: the kube-system clusterrole-aggregation-controller re-applying the built-in edit/admin ClusterRoles (which carry impersonate) fires; tenant admin/edit bindings by GitOps are documented."
+      "max_hits": 9,
+      "why": "documented noise: tenant admin/edit bindings written by GitOps (Argo CD application controller); the aggregation controller's routine re-aggregation is filtered."
     },
     "T1098.006/k8s_rbac_write.yml": {
       "mode": "enforce",
@@ -118,27 +108,17 @@
     "T1199/gcp_workforce_principalset_privileged_binding.yml": {
       "mode": "enforce",
       "max_hits": 6,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C6: described as privileged role + whole-pool breadth, but the regex never checks breadth, so group-scoped workforce RBAC on any *admin role fires."
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C6: a grant of any admin role to a group- or attribute-scoped workforce principal set fires (terraform granting roles/container.admin to one IdP group); requiring a whole-pool member would drop TRR9020 Procedure C."
     },
     "T1528/entra_device_code_authentication.yml": {
       "mode": "enforce",
       "max_hits": 8,
       "why": "documented noise: az login --use-device-code on a headless VM and a Teams Rooms device, both named in falsepositives."
     },
-    "T1528/entra_illicit_oauth_consent_grant.yml": {
-      "mode": "enforce",
-      "max_hits": 40,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C4: the bare AllPrincipals token fires on tenant-wide consent to sign-in-only scopes (User.Read openid profile email), contradicting the title and falsepositives; where user consent is disabled every SSO onboarding is AllPrincipals."
-    },
-    "T1537/aws_efs_file_system_policy_made_public.yml": {
-      "mode": "enforce",
-      "max_hits": 10,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C9: the EFS console policy wizard's Principal '*' conditioned on elasticfilesystem:AccessedViaMountTarget is not recognised by filter_scoped."
-    },
     "T1537/aws_resource_policy_made_public.yml": {
       "mode": "enforce",
-      "max_hits": 36,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C3: the whole policy is matched as text, so a named Allow plus the standard DenyInsecureTransport statement (Deny, Principal '*') reads as public; filter_scoped also lacks aws:SourceOwner (SNS default policy) and kms:CallerAccount / kms:ViaService. The Lambda function URL AddPermission grants (principal '*', auth type NONE) are intentionally public resources."
+      "max_hits": 7,
+      "why": "documented noise: Lambda function URL AddPermission grants (principal '*', auth type NONE) are intentionally public resources."
     },
     "T1537/aws_s3_block_public_access_disabled.yml": {
       "mode": "enforce",
@@ -180,11 +160,6 @@
       "max_hits": 7,
       "why": "documented noise: GitOps managing the CoreDNS ConfigMap, documented."
     },
-    "T1565.001/k8s_coredns_corefile_poisoned.yml": {
-      "mode": "enforce",
-      "max_hits": 7,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md K9: the forward-to-IP clause matches any server block, so a private stub zone forwarding a corporate domain to RFC1918 resolvers fires at high."
-    },
     "T1572/k8s_pod_portforward.yml": {
       "mode": "enforce",
       "max_hits": 18,
@@ -210,35 +185,20 @@
       "max_hits": 14,
       "why": "documented noise: CNI, kube-proxy, monitoring and log-agent pods (documented host-access workloads)."
     },
-    "T1611/setns_namespace_join.yml": {
-      "mode": "enforce",
-      "max_hits": 54,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md L1: runc's nsexec runs as comm 'runc:[1:CHILD]' (and exe /memfd:runc_cloned:/proc/self/exe (deleted)); it does one setns per namespace, about six per container exec, not 'runc', so every container exec fires; snap-confine joins the snap mount namespace on every snap launch; ip netns exec."
-    },
-    "T1620/memfd_create_execveat.yml": {
-      "mode": "enforce",
-      "max_hits": 11,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md L2: runc < 1.2 re-executes itself from a memfd on every container start and exec (memfd_create, then execveat in the same pid ~40 ms later), so every Docker/containerd container start fires this high-severity rule; allowlist the runc memfd image by exe or require a non-runtime parent."
-    },
     "T1622/ptrace_traceme.yml": {
       "mode": "enforce",
-      "max_hits": 15,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md L6: debuggers (gdb, dlv) fork an inferior that calls PTRACE_TRACEME with the debugger's comm/exe; not in falsepositives."
+      "max_hits": 5,
+      "why": "documented noise: the Go debugger dlv starts its inferior with PTRACE_TRACEME and is not allowlisted; allowlist it per host."
     },
     "T1685/io_uring_setup.yml": {
       "mode": "enforce",
-      "max_hits": 18,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md L4: described as flagging ring creation by a non-allowlisted process, but it has no allowlist and also matches the per-I/O io_uring_enter (an fio benchmark)."
+      "max_hits": 6,
+      "why": "documented noise: a benchmark (fio) creating io_uring rings; the rule has no allowlist by design, so baseline ring users per host."
     },
     "T1685/k8s_admission_webhook_disabled.yml": {
       "mode": "enforce",
       "max_hits": 11,
       "why": "documented noise: policy engines and PKI/injector controllers reconciling their webhook configs, documented."
-    },
-    "T1685/k8s_admission_webhook_neutered.yml": {
-      "mode": "enforce",
-      "max_hits": 5,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md K4: grades the submitted state, not a transition: a full-object rewrite of a webhook that already fails open (Gatekeeper CA rotation, Helm upgrade) is graded as a neuter."
     },
     "T1685/k8s_security_tool_workload_removed.yml": {
       "mode": "enforce",

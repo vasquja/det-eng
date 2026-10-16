@@ -3,10 +3,16 @@ id: 88d1a6c2-828a-44f0-98a7-2fb824f97ada
 status: experimental
 description: |
   Detects deletion of a Pod or a Job through the API server: an audit event whose
-  verb is delete and whose objectRef.resource is pods or jobs. This is the TRR9010
-  Strategy 2 fallback, covering Procedure D. After running a malicious workload, an
-  adversary deletes the Pod (and the Job that spawned it) to remove the record of
-  what ran.
+  verb is delete or deletecollection and whose objectRef.resource is pods or jobs.
+  This is the TRR9010 Strategy 2 fallback, covering Procedure D. After running a
+  malicious workload, an adversary deletes the Pod (and the Job that spawned it) to
+  remove the record of what ran. A DELETE on the collection URL (client-go DeleteCollection, or a raw
+  DELETE with a label selector) removes many Pods or Jobs in one request and is
+  recorded as verb deletecollection, so the rule matches it too. It leaves out one
+  deletecollection: the namespace controller's sweep of a namespace being deleted
+  (system:serviceaccount:kube-system:namespace-controller), which empties every
+  namespace on teardown. The namespace delete itself is a separate event, made by
+  the actor, that this rule does not match.
 
   This is LOW fidelity by design: deleting pods and jobs is routine teardown. Do not
   alert on it standalone. Use it only for correlation -- the same identity that also
@@ -27,11 +33,16 @@ logsource:
   service: audit
 detection:
   select_workload_delete:
-    verb: 'delete'
+    verb:
+      - 'delete'
+      - 'deletecollection'
     objectRef.resource:
       - 'pods'
       - 'jobs'
-  condition: select_workload_delete
+  filter_namespace_teardown:
+    user.username: 'system:serviceaccount:kube-system:namespace-controller'
+    verb: 'deletecollection'
+  condition: select_workload_delete and not filter_namespace_teardown
 falsepositives:
   - Routine teardown of pods and jobs by operators, controllers, and GitOps. This
     rule is a correlation anchor only; do not alert standalone. Baseline the

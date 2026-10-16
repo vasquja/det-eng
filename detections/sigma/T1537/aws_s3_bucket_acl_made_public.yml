@@ -10,12 +10,15 @@ description: |
   It keys on the default-logged CloudTrail management event s3.amazonaws.com / PutBucketAcl in
   either of the two shapes AWS records: the canned-ACL header
   requestParameters.x-amz-acl = public-read / public-read-write, OR an explicit grant list
-  requestParameters.AccessControlPolicy.AccessControlList.Grant[] naming a Grantee group URI
-  http://acs.amazonaws.com/groups/global/AllUsers or .../AuthenticatedUsers. It requires success
+  requestParameters.AccessControlPolicy.AccessControlList.Grant naming a Grantee group URI
+  http://acs.amazonaws.com/groups/global/AllUsers or .../AuthenticatedUsers. Grant is an array
+  when the ACL has two or more grants and a single object when it has one (CloudTrail converts
+  the request XML), so both forms are matched. It requires success
   (no errorCode) because, under S3 Object-Ownership "bucket owner enforced", ACLs are disabled and
   a PutBucketAcl fails with AccessControlListNotSupported -- a failed attempt changes nothing.
 references:
   - https://attack.mitre.org/techniques/T1537/
+  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/cloudtrail-logging-understanding-s3-entries.html
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketAcl.html
   - https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html
   - https://github.com/elastic/detection-rules/blob/main/rules/integrations/aws/collection_s3_bucket_acl_public_access_new_identity.toml
@@ -40,7 +43,8 @@ detection:
         - 'public-read'
         - 'public-read-write'
         - 'authenticated-read'
-    # Explicit grant list (AccessControlPolicy).
+    # Explicit grant list (AccessControlPolicy) with two or more grants: CloudTrail logs
+    # Grant as a JSON array, which flattens to one text field.
     - requestParameters.AccessControlPolicy.AccessControlList.Grant|contains:
         - 'http://acs.amazonaws.com/groups/global/AllUsers'
         - 'http://acs.amazonaws.com/groups/global/AuthenticatedUsers'
@@ -50,6 +54,13 @@ detection:
     - requestParameters.x-amz-grant-full-control|contains: ['global/AllUsers', 'global/AuthenticatedUsers']
     - requestParameters.x-amz-grant-read-acp|contains: ['global/AllUsers', 'global/AuthenticatedUsers']
     - requestParameters.x-amz-grant-write-acp|contains: ['global/AllUsers', 'global/AuthenticatedUsers']
+    # Explicit grant list with a single grant: CloudTrail converts the request XML to
+    # JSON, so one <Grant> element is logged as an object, not a one-element array (the
+    # PutBucketAcl example in the S3 User Guide, 'CloudTrail log file entries for Amazon
+    # S3'), and flattens to ...Grant.Grantee.URI.
+    - requestParameters.AccessControlPolicy.AccessControlList.Grant.Grantee.URI:
+        - 'http://acs.amazonaws.com/groups/global/AllUsers'
+        - 'http://acs.amazonaws.com/groups/global/AuthenticatedUsers'
   filter_failed:
     errorCode: '*'
   condition: selection_acl_write and selection_public_grant and not filter_failed

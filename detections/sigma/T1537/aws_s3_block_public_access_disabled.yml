@@ -9,14 +9,16 @@ description: |
   silently ineffective. Disabling it is therefore an enabling precondition for public
   exposure, and on its own is a strong signal.
 
-  It fires on three default-logged management events under s3.amazonaws.com /
-  s3-control.amazonaws.com:
+  It fires on these default-logged management events (CloudTrail event names, which name
+  the resource level, not the API action):
     - PutBucketPublicAccessBlock        (per-bucket)
     - PutAccountPublicAccessBlock       (account-wide, blast radius = every bucket)
-    - DeletePublicAccessBlock           (removes the config entirely -> all four controls off)
+    - DeleteBucketPublicAccessBlock     (per-bucket delete -> all four controls off; the
+                                         API-action name DeletePublicAccessBlock is matched too)
+    - DeleteAccountPublicAccessBlock    (account-wide delete, documented by the S3 User Guide)
   For the two Put* calls it requires at least one of the four controls
   (BlockPublicAcls / IgnorePublicAcls / BlockPublicPolicy / RestrictPublicBuckets) set to
-  false; DeletePublicAccessBlock is unconditional because deleting the config disables all
+  false; a delete is unconditional because deleting the config disables all
   four. A Put* that sets every control true is a hardening action and is excluded (the
   benign control).
 
@@ -29,6 +31,7 @@ references:
   - https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_control_PutPublicAccessBlock.html
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_control_DeletePublicAccessBlock.html
+  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/cloudtrail-logging-s3-info.html
 author: det-eng
 date: 2026/10/12
 tags:
@@ -61,7 +64,18 @@ detection:
       - 'PutAccountPublicAccessBlock'
     requestParameters.PublicAccessBlockConfiguration.RestrictPublicBuckets: false
   selection_delete:
-    eventName: 'DeletePublicAccessBlock'
+    # CloudTrail names an S3 event after the resource level, not the API action: the
+    # account-level DeletePublicAccessBlock (S3 Control) is logged as
+    # DeleteAccountPublicAccessBlock (S3 User Guide, 'Amazon S3 account-level actions
+    # tracked by CloudTrail logging'), and the put/get pairs are Put/Get
+    # {Bucket,Account}PublicAccessBlock. By the same convention the bucket-level delete is
+    # DeleteBucketPublicAccessBlock; the API-action name is kept in case the bucket-level
+    # delete is logged under it. Each name is a BPA delete, so the list adds no false
+    # positive.
+    eventName:
+      - 'DeleteBucketPublicAccessBlock'
+      - 'DeleteAccountPublicAccessBlock'
+      - 'DeletePublicAccessBlock'
   filter_failed:
     # A denied / failed call carries an errorCode and changed nothing.
     errorCode: '*'

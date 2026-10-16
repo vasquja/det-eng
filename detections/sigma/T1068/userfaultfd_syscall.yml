@@ -1,4 +1,4 @@
-title: userfaultfd Syscall By Non-Allowlisted Process
+title: userfaultfd Syscall
 id: 62eb1523-a86a-4867-a0f6-68d6ca0b0ff1
 status: experimental
 description: |
@@ -7,10 +7,21 @@ description: |
   in use-after-free and heap-spray privilege-escalation exploits. Outside a
   small set of consumers (CRIU, QEMU post-copy migration, some databases and
   JITs) it is very rare, so the syscall alone is a strong anchor.
+
+  The rule has no process allowlist, by design: no consumer's telemetry is
+  recorded here, and the consumers differ per host. Baseline the hosts that run
+  CRIU or QEMU live migration and add a `not` filter by `exe` there.
+
+  Coverage gap: since Linux 6.1 a process can also get a userfaultfd from the
+  /dev/userfaultfd device (open + ioctl USERFAULTFD_IOC_NEW), which makes no
+  userfaultfd() syscall. Recent QEMU tries the device first. Access to the
+  device is controlled by its file permissions.
 references:
   - https://man7.org/linux/man-pages/man2/userfaultfd.2.html
+  - https://github.com/qemu/qemu/blob/master/util/userfaultfd.c
 author: det-eng
 date: 2026/10/05
+modified: 2026/10/16
 tags:
   - attack.privilege-escalation
   - attack.t1068
@@ -23,7 +34,7 @@ detection:
     syscall: userfaultfd
   condition: userfaultfd_syscall
 falsepositives:
-  - CRIU checkpoint/restore, QEMU live-migration, and some databases/JITs
-    that use userfaultfd legitimately — baseline and allowlist their
-    `comm` / `exe` before alerting
+  - CRIU checkpoint/restore (lazy pages), QEMU post-copy live migration, and
+    some databases/JITs that use userfaultfd legitimately. The rule does not
+    filter them; baseline them and add a `not` filter by `exe` before alerting
 level: high

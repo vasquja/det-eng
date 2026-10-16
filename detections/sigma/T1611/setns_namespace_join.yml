@@ -7,11 +7,40 @@ description: |
   another process's namespace is the core of a container-escape primitive
   (T1611). Inside a container, any setns toward a host namespace fd is a
   strong escape indicator.
+
+  Two filters suppress stock runtime behaviour. `runtime_processes` matches
+  runtimes and admin tools by `comm`. `runtime_images` matches by `exe` plus the
+  exact behaviour of each tool: runc's nsexec children (comm `runc:[0:PARENT]`,
+  `runc:[1:CHILD]`, `runc:[2:INIT]`, set with prctl(PR_SET_NAME)) running from
+  the runc binary, from runc's `/memfd:runc_cloned:` re-exec image (runc < 1.2,
+  and the fallback of later versions), or from runc's sealed overlayfs clone
+  (runc >= 1.2), which the kernel logs as `/runc`; snap-confine joining a snap's
+  mount namespace (nstype CLONE_NEWNS, a1 0x20000); and iproute2's `ip netns
+  exec` joining a network namespace (nstype CLONE_NEWNET, a1 0x40000000).
+
+  Filter limits. These filters trust values that the process can choose. A
+  process sets its own comm with prctl(PR_SET_NAME), so the comm-only
+  `runtime_processes` entries (for example `nsenter`) suppress any setns from a
+  process that renames itself. The kernel logs `exe` relative to the
+  process's own root (d_path), so a process in a container can put a binary at
+  `/runc` or `/usr/bin/runc` in its root; and a process can name a memfd
+  `runc_cloned:...` and execute it. Pairing each exe entry with runc's comm, or
+  with the one nstype that snap-confine or `ip` joins, stops a process that
+  only renames itself or only sits at an allowed path, and keeps every mount or
+  pid namespace join by a binary at an `ip` path. It does not stop a process
+  that sets both values. A setns into a namespace that the caller does not
+  own needs CAP_SYS_ADMIN, so the attacker these filters let through is one
+  that is already privileged, for example in a privileged container.
 references:
   - https://man7.org/linux/man-pages/man2/setns.2.html
   - https://nvd.nist.gov/vuln/detail/CVE-2022-0492
+  - https://github.com/opencontainers/runc/blob/v1.2.0/libcontainer/nsenter/nsexec.c
+  - https://github.com/opencontainers/runc/blob/v1.5.1/libcontainer/exeseal/overlayfs_linux.go
+  - https://github.com/snapcore/snapd/blob/master/cmd/snap-confine/ns-support.c
+  - https://github.com/iproute2/iproute2/blob/main/lib/namespace.c
 author: det-eng
 date: 2026/10/05
+modified: 2026/10/16
 tags:
   - attack.privilege-escalation
   - attack.t1611
@@ -35,8 +64,45 @@ detection:
       - systemd
       - conmon
       - podman
-  condition: setns_syscall and not runtime_processes
+  runtime_images:
+    # runc's nsexec children setns() into each namespace of a container on
+    # every exec (and into a pre-made netns on run). runc < 1.2 re-executes
+    # itself from a memfd named runc_cloned:/proc/self/exe; runc >= 1.2 uses an
+    # overlayfs clone (entry [4] below) or the same memfd as a fallback.
+    - comm|startswith: 'runc:['
+      exe:
+        - /usr/bin/runc
+        - /usr/sbin/runc
+        - /usr/local/bin/runc
+        - /usr/local/sbin/runc
+    - comm|startswith: 'runc:['
+      exe|startswith: '/memfd:runc_cloned:'
+    # snap-confine joins the snap's preserved mount namespace on each launch.
+    - exe|re: '^(/usr/lib/snapd|/usr/libexec/snapd|/snap/(snapd|core[0-9]*)/[0-9]+/usr/lib/snapd)/snap-confine$'
+      a1: '20000'  # CLONE_NEWNS
+    # `ip netns exec <name>` joins a named network namespace.
+    - exe:
+        - /usr/bin/ip
+        - /usr/sbin/ip
+        - /bin/ip
+        - /sbin/ip
+      a1: '40000000'  # CLONE_NEWNET
+    # runc >= 1.2 (libcontainer/exeseal sealedOverlayfs) executes `runc init`
+    # from the runc binary opened through a detached overlayfs mount. d_path
+    # renders a file on a detached mount from that mount's root, so audit logs
+    # exe=/runc (the basename of the installed binary), whatever the root of
+    # the process. Recorded with runc 1.5.1: /proc/<pid>/exe of runc:[1:CHILD]
+    # during its setns() calls is /runc.
+    - comm|startswith: 'runc:['
+      exe: /runc
+  condition: setns_syscall and not runtime_processes and not runtime_images
 falsepositives:
   - Container runtimes and orchestration agents not covered by the allowlist
-    (kubelet, CNI plugins, LXC) — baseline and extend `runtime_processes`
+    (kubelet, CNI plugins, LXC, crun) — baseline and extend `runtime_processes`
+  - runc < 1.2 installed at a path that `runtime_images` does not list (for
+    example a k3s data directory), and runc >= 1.2 installed under a file name
+    other than `runc` (its overlayfs clone is logged as `/<file name>`), or
+    falling back to an O_TMPFILE copy when neither overlayfs nor memfd is
+    available. Extend `runtime_images` with the exe that your sensor reports
+    for `runc:[1:CHILD]`
 level: high

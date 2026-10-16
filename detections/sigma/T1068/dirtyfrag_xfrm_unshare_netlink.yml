@@ -2,8 +2,8 @@ title: Namespace Unshare Followed By NETLINK_XFRM Socket (DirtyFrag xfrm-ESP CVE
 id: 0dd82b3d-38dd-4739-b491-01d24e900193
 status: experimental
 description: |
-  Detects a process performing unshare(CLONE_NEWUSER | CLONE_NEWNET) and
-  then opening an AF_NETLINK socket on the NETLINK_XFRM (protocol 6)
+  Detects a process performing unshare() with CLONE_NEWNET set (alone, with
+  CLONE_NEWUSER, or with any other flags) and then opening an AF_NETLINK socket on the NETLINK_XFRM (protocol 6)
   channel — the setup sequence used by the DirtyFrag xfrm-ESP
   (CVE-2026-43284) page-cache write primitive.
 
@@ -19,9 +19,10 @@ description: |
   single event and can never match.
 references:
   - https://github.com/V4bel/dirtyfrag
+  - https://man7.org/linux/man-pages/man2/unshare.2.html
 author: det-eng
 date: 2026/05/15
-modified: 2026/10/09
+modified: 2026/10/16
 tags:
   - attack.privilege-escalation
   - attack.t1068
@@ -55,10 +56,14 @@ detection:
   unshare_user_net:
     type: SYSCALL
     syscall: unshare
-    # CLONE_NEWNET (0x40000000) | CLONE_NEWUSER (0x10000000) = 0x50000000
-    a0|contains:
-      - '50000000'
-      - '40000000'  # CLONE_NEWNET alone is also part of the chain
+    # Test the CLONE_NEWNET bit (0x40000000, bit 30), not a substring: the
+    # exploit can add any other flag (CLONE_NEWUSER 0x10000000, CLONE_NEWNS
+    # 0x20000, CLONE_NEWIPC 0x8000000, ...). auditd logs a0 as lowercase hex
+    # with no leading zeros (kernel/auditsc.c: "a0=%lx"), and unshare(2)
+    # rejects every flag above bit 30 with EINVAL (kernel/fork.c
+    # check_unshare_flags), so on a call that succeeds bit 30 is set exactly
+    # when the value has 8 digits and the first is 4-7 or c-f.
+    a0|re: '^[4-7c-f][0-9a-f]{7}$'
   condition: unshare_user_net
 level: informational
 ---

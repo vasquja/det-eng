@@ -241,7 +241,9 @@ scheduled run. Baseline the other legitimate automation identities.
 - Rule: `detections/sigma/T1053.007/k8s_job_create.yml` (built).
 
 **Strategy 2 — node-runtime fallback (covers the executed Pod).**
-Match a Pod sandbox whose labels carry `batch.kubernetes.io/job-name`. This sees
+Match a Pod sandbox whose labels carry `batch.kubernetes.io/job-name` (stamped
+from Kubernetes v1.27), or both legacy labels `job-name` and `controller-uid` (the
+only ones before v1.27). This sees
 the executed Pod, which the chokepoint rule does not: the recurring executions a
 CronJob drives (the chokepoint excludes the controllers), and any execution when
 the `batch` group is absent from the audit policy. It fires on every Job pod, so

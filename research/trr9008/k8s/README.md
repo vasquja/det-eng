@@ -92,8 +92,15 @@ the requestObject, which exists only at Request level.
 Deleting or scaling the policy engine's own workload is an apps-group write, not an
 admissionregistration one. A `kubectl patch` of spec.replicas to 0 is on the
 deployments resource. A `kubectl scale` uses the deployments/scale subresource,
-which an audit policy must list explicitly (as */scale) to capture with a body,
-because Kubernetes audit resource matching is exact.
+which an audit policy must list explicitly (as deployments/scale) to capture with a
+body, because Kubernetes audit resource matching is exact. The shipped policy
+(`detections/k8s/audit-policy-apiserver.yaml`) lists deployments/scale,
+statefulsets/scale and replicasets/scale at Request. A JSON patch
+(`kubectl patch --type=json`) carries an ops array, not a spec, so a scale to zero
+is an op on /spec/replicas. Deleting the engine's whole namespace removes its
+workloads too: the API server records the actor's namespace delete, and then the
+namespace controller deletes the workloads with one deletecollection per resource
+type.
 
 ### Why the technique works
 
@@ -179,17 +186,30 @@ Source: [`ddms/trr9008_k8s_c.json`](ddms/trr9008_k8s_c.json) (Arrows app format)
 
 **DDM summary.** Same chokepoint, verb `update` or `patch`. The disarming field
 (failurePolicy Ignore, rules []) is in `requestObject` and needs Request level. A
-full-object write (a PUT, or a strategic-merge patch) carries the webhooks list; a
-JSON patch carries only the ops array, so it fires the chokepoint but not the
-grader.
+patch body is logged raw and keeps `"rules": []`, or `"rules": null` for a
+strategic merge patch (the `kubectl patch` default). A PUT is logged as the
+decoded, defaulted object re-encoded; `rules` is `omitempty`, so an emptied list
+leaves no `rules` key, and the grader matches a webhook whose `clientConfig` is
+followed directly by `failurePolicy`. That test assumes the API server's Go field
+order reaches the SIEM; a pipeline that sorts keys makes every update match. A
+JSON patch carries only the ops array, and the grader reads it for an operation
+that sets `/webhooks/N/failurePolicy` to Ignore or removes or empties
+`/webhooks/N/rules`; for an operation on the whole list, a whole webhook or its
+`matchConditions` whose value fails open or adds the literal `false`; and for an
+operation on the whole list or a whole webhook that leaves no non-empty `rules`
+list. A `matchConditions` expression that is the literal `false` is graded too.
+A selector that matches nothing, an always-false expression that is not the
+literal `false`, and a JSON merge patch that replaces the list with a webhook
+without `rules` cannot be told from a legitimate edit; they fire the chokepoint
+only.
 
 ### Procedure D: Remove the enforcer's workload  (`TRR9008.K8S.D`)
 
 The adversary deletes or scales to zero the Deployment or DaemonSet that serves the
-webhook, so the endpoint is gone.
+webhook, or deletes the engine's namespace, so the endpoint is gone.
 
 - **Prerequisites:** `delete` or `patch`/`update` on the policy engine's
-  Deployment/DaemonSet.
+  Deployment/DaemonSet (or its scale subresource), or `delete` on its namespace.
 - **Mechanics:** with failurePolicy already Ignore, admission then fails open.
 - **Impact:** enforcement stops without touching the webhook config.
 - **Tools on this path:** `kubectl delete`/`scale`/`patch`, any client.
@@ -234,9 +254,13 @@ failurePolicy to Ignore or an empty rules list. This needs Request level.
 - Rule: `detections/sigma/T1685/k8s_admission_webhook_neutered.yml` (built).
 
 **Strategy 3 — enforcer removal (covers D).**
-Match an apps-group write that deletes a Deployment/DaemonSet, or scales one to zero
-(requestObject.spec.replicas 0). Correlate with the policy engine's namespace or
-app labels.
+Match an apps-group write that deletes a Deployment/DaemonSet (verb delete or
+deletecollection), or scales one to zero: requestObject.spec.replicas 0 on the
+resource or on its scale subresource, or a JSON-patch op that sets /spec/replicas
+to 0 or copies or moves a value into it. The namespace controller's teardown
+deletecollection is filtered; the rule matches the delete of the engine's default
+namespace (gatekeeper-system, kyverno, falco) instead. Correlate with the policy
+engine's namespace or app labels.
 
 - Sensor: API server audit log.
 - Rule: `detections/sigma/T1685/k8s_security_tool_workload_removed.yml` (built).
@@ -281,7 +305,7 @@ with Atomic Red Team wrappers in
 | TRR9008.K8S.A | `emulate_k8s.sh a` — apply then delete a no-op ValidatingWebhookConfiguration. | **built** |
 | TRR9008.K8S.B | `emulate_k8s.sh b` — apply then delete a no-op MutatingWebhookConfiguration. | **built** |
 | TRR9008.K8S.C | `emulate_k8s.sh c` — neuter a webhook config (failurePolicy Ignore, rules []). | **built** |
-| TRR9008.K8S.D | `emulate_k8s.sh d` — create a pause Deployment, scale it to zero, delete it. | **built** |
+| TRR9008.K8S.D | `emulate_k8s.sh d` — create a pause Deployment, scale it to zero with `kubectl scale` and with a patch, delete it. | **built** |
 
 ## Detections
 

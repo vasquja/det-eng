@@ -113,13 +113,19 @@ tenants. The relevant names are:
 - `AppRole.Value` — the application permission on `Add app role assignment to
   service principal`.
 
-A grant is high-risk when its scope list contains `offline_access` together with
-a data scope (`Mail.Read`, `Mail.ReadWrite`, `Mail.Send`, `MailboxSettings.*`,
-`Files.Read.All`, `Files.ReadWrite.All`, `Sites.ReadWrite.All`, `Chat.Read*`,
-`EWS.AccessAsUser.All`, `full_access_as_app`), or any `*.ReadWrite.All`,
-`RoleManagement.ReadWrite.Directory` or `AppRoleAssignment.ReadWrite.All`, or
-when the consent is tenant-wide (`ConsentType` `AllPrincipals` /
-`IsAdminConsent` `True`).
+A grant is high-risk when its scope list contains a data scope (`Mail.*`,
+`MailboxSettings.*`, `Files.*`, `Contacts.*`, `People.*`, `Notes.*`,
+`Directory.AccessAsUser.All`, `Sites.ReadWrite.All`, `Chat.Read*`,
+`EWS.AccessAsUser.All`, `full_access_as_app`), usually with `offline_access`, or any
+`*.Read.All` / `*.ReadWrite.All`, `RoleManagement.ReadWrite.Directory` or
+`AppRoleAssignment.ReadWrite.All`. The delegated forms count: Microsoft's incident-response
+playbook ("App consent grant investigation") lists `Mail.*` (not `Mail.ReadBasic`),
+`Contacts.*`, `MailboxSettings.*`, `People.*`, `Files.*`, `Notes.*` and
+`Directory.AccessAsUser.All` as the delegated permissions misused in consent phishing.
+Tenant-wide consent (`ConsentType` `AllPrincipals` / `IsAdminConsent` `True`) raises the
+impact of such a grant, but it is not a discriminator on its own: where user consent is
+disabled, every single-sign-on onboarding is an `AllPrincipals` consent to sign-in scopes
+(`User.Read openid profile email`).
 
 ### Encoding gotcha: the scope list is a double-encoded string
 
@@ -229,8 +235,9 @@ Source: [`ddms/trr9017_azr_b.json`](ddms/trr9017_azr_b.json) (Arrows app format)
 
 **DDM summary.** Same shaded audit chokepoint as A; the signal that raises
 severity is `ConsentType` `AllPrincipals` / `IsAdminConsent` `True` /
-`OnBehalfOfAll` `True`. The consent rule matches it structurally through the
-`ConsentType: AllPrincipals` token.
+`OnBehalfOfAll` `True`. The consent rule fires on a tenant-wide grant through its
+high-privilege scope (delegated `Mail.Read` or `Files.ReadWrite`, for example), the same
+way as for A. A tenant-wide consent to sign-in-only scopes does not fire.
 
 ### Procedure C: Application-permission (app role) grant to a service principal  (`TRR9017.AZR.C`)
 
@@ -404,8 +411,8 @@ non-interactive sign-in alone.
 
 | Procedure | Covered by | How |
 |-----------|-----------|-----|
-| A | Strategy 1 | audit grant event; `offline_access` + `Mail.*`/`Files.*`, `ConsentType` Principal |
-| B | Strategy 1 | same event; `ConsentType` AllPrincipals / `IsAdminConsent` True |
+| A | Strategy 1 | audit grant event; a data scope (`Mail.*`/`Files.*`/`Contacts.*`/`Notes.*`/...), `ConsentType` Principal |
+| B | Strategy 1 | same event; the high-privilege scope fires (`ConsentType` AllPrincipals raises the impact, not the match) |
 | C | Strategy 1 | `Add app role assignment to service principal`; `AppRole.Value` |
 | D | Strategy 2 | sign-in `authenticationProtocol` deviceCode (union both tables) |
 | E | Strategy 1 (grant); gap at token use | same audit grant event; use is M365 data plane |
@@ -459,6 +466,10 @@ T1528, which neither Stratus Red Team nor Atomic Red Team ships.
 - Microsoft, oAuth2PermissionGrant resource (`consentType` AllPrincipals /
   Principal, space-separated `scope`):
   <https://learn.microsoft.com/graph/api/resources/oauth2permissiongrant?view=graph-rest-1.0>
+- Microsoft, incident-response playbook "App consent grant investigation" (the
+  delegated permissions misused in consent phishing: `Mail.*`, `Contacts.*`,
+  `MailboxSettings.*`, `People.*`, `Files.*`, `Notes.*`, `Directory.AccessAsUser.All`):
+  <https://learn.microsoft.com/security/operations/incident-response-playbook-app-consent#consent-terminologies>
 - Atomic Red Team, T1528 Steal Application Access Token (consent / device-code is
   only a `[CONTRIBUTE A TEST]` placeholder):
   <https://github.com/redcanaryco/atomic-red-team/blob/master/atomics/T1528/T1528.md>

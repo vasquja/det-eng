@@ -11,8 +11,9 @@ description: |
     - the binding grants a powerful built-in ClusterRole (roleRef.name is
       cluster-admin, admin, or edit);
     - a subject is a built-in group that covers many principals at once
-      (system:authenticated, system:unauthenticated, or system:anonymous) -- a
-      mass grant;
+      (system:authenticated, system:unauthenticated, system:anonymous,
+      system:serviceaccounts, or system:serviceaccounts:<namespace>) -- a mass
+      grant;
     - the written role carries a wildcard rule ("*") or one of the escalation
       verbs escalate, bind, or impersonate.
 
@@ -21,6 +22,33 @@ description: |
   because the audit backend stores an array field as JSON text. roleRef is an
   object, not an array, so it flattens to dotted scalar fields matched by
   equality.
+
+  A JSON patch (kubectl patch --type=json) logs requestObject as the list of
+  operations, not as an object, so requestObject.rules and .subjects do not
+  exist. For that form the rule reads the whole operation list: an operation on
+  /rules whose text carries "*", escalate, bind or impersonate, or an operation
+  on /subjects that names one of the groups above. A merge or strategic merge
+  patch carries the rules or subjects list itself and is graded like a create.
+
+  A patch or update of a built-in binding whose roleRef is cluster-admin
+  (cluster-admin, kubeadm:cluster-admins) also matches, by name: roleRef is
+  immutable and a patch does not carry it, so this is how the rule sees a
+  subject appended to that binding (Procedure E). A subject appended to any
+  other existing binding is graded only when it is one of the groups above;
+  otherwise only the chokepoint k8s_rbac_write sees it.
+
+  The kube-system clusterrole-aggregation-controller re-applies the built-in
+  aggregated ClusterRoles admin and edit, and both carry impersonate on
+  serviceaccounts. That identity on those two names is filtered, but only while
+  the written rules carry no wildcard, no escalate or bind, and no impersonate
+  on users, groups, uids or userextras. view is never filtered. So when an
+  adversary labels an existing powerful role for aggregation (kubectl label
+  clusterrole cluster-admin rbac.authorization.k8s.io/aggregate-to-view=true),
+  the label patch carries no rules and does not fire, but the controller's
+  write of view, edit or admin that now carries the wildcard does. Residual: an
+  aggregated impersonate rule is recognised only in the Go field order the
+  controller writes (verbs, apiGroups, resources); a pipeline that re-orders keys
+  leaves it filtered.
 
   Metadata level cannot feed this rule: roleRef, subjects, and rules all live in
   requestObject. Without Request level a binding to view and a binding to
@@ -59,13 +87,52 @@ detection:
       - '"name":"system:unauthenticated"'
       - '"name": "system:anonymous"'
       - '"name":"system:anonymous"'
+      - '"name": "system:serviceaccounts"'
+      - '"name":"system:serviceaccounts"'
+      - '"name": "system:serviceaccounts:'
+      - '"name":"system:serviceaccounts:'
   sel_dangerous_rules:
     requestObject.rules|contains:
       - '"\*"'
       - '"escalate"'
       - '"bind"'
       - '"impersonate"'
-  condition: select_rbac_write and (sel_powerful_roleref or sel_group_subject or sel_dangerous_rules)
+  # A JSON patch (kubectl patch --type=json) logs requestObject as the list of
+  # operations, so requestObject.rules and .subjects do not exist; the whole
+  # operation list is one JSON text in requestObject.
+  sel_jsonpatch_rules_path:
+    requestObject|re: '"path":\s*"/rules'
+  sel_jsonpatch_rules_grant:
+    requestObject|re: '"(?:\*|escalate|bind|impersonate)"'
+  sel_jsonpatch_subjects_path:
+    requestObject|re: '"path":\s*"/subjects'
+  sel_jsonpatch_group_subject:
+    requestObject|re: '"name":\s*"system:(?:authenticated|unauthenticated|anonymous|serviceaccounts(?::[^"]+)?)"'
+  # The built-in bindings whose roleRef is cluster-admin. roleRef is immutable,
+  # so a patch or update of one of these names (which carries no roleRef when it
+  # is a patch) changes who holds cluster-admin.
+  sel_builtin_admin_binding:
+    objectRef.resource: 'clusterrolebindings'
+    objectRef.name:
+      - 'cluster-admin'
+      - 'kubeadm:cluster-admins'
+  # The kube-system clusterrole-aggregation-controller re-applies the built-in
+  # aggregated ClusterRoles admin and edit, and both carry impersonate on
+  # serviceaccounts. Only that identity on only those names is excluded, and
+  # only while the written rules carry nothing more than the built-in roles do.
+  # view is not excluded: the built-in view carries no dangerous rule.
+  filter_aggregation_controller:
+    user.username: 'system:serviceaccount:kube-system:clusterrole-aggregation-controller'
+    objectRef.resource: 'clusterroles'
+    objectRef.name:
+      - 'admin'
+      - 'edit'
+  # More than the built-in admin and edit carry: a wildcard, escalate or bind, or
+  # impersonate on users, groups, uids or userextras. The controller writes the
+  # rule in Go field order (verbs, apiGroups, resources).
+  sel_agg_beyond_builtin:
+    requestObject.rules|re: '"(?:\*|escalate|bind)"|"impersonate"[^\]]*\],\s*"apiGroups":\s*\[[^\]]*\],\s*"resources":\s*\[[^\]]*"(?:users|groups|uids|userextras)'
+  condition: select_rbac_write and (sel_powerful_roleref or sel_group_subject or sel_dangerous_rules or sel_builtin_admin_binding or (sel_jsonpatch_rules_path and sel_jsonpatch_rules_grant) or (sel_jsonpatch_subjects_path and sel_jsonpatch_group_subject)) and not (filter_aggregation_controller and not sel_agg_beyond_builtin)
 falsepositives:
   - Legitimate administration that genuinely needs power, for example an operator
     install that creates a ClusterRole with a wildcard rule, or a platform team
@@ -73,4 +140,10 @@ falsepositives:
     automation identities that do this.
   - A role with apiGroups ["*"] but narrow verbs is common and matches the
     wildcard clause. Confirm the matched rule before escalating.
+  - An operator that aggregates a rule with a wildcard (for example verbs ["*"]
+    on its own CRDs) into admin or edit makes each re-aggregation by the
+    clusterrole-aggregation-controller fire, as the operator's own role write
+    does. Baseline that operator's aggregated role, not the controller.
+  - Tooling that labels or annotates the cluster-admin or kubeadm:cluster-admins
+    binding fires on that patch. Confirm the patch body before escalating.
 level: high

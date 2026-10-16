@@ -58,9 +58,13 @@ detection:
     protoPayload.request.workforcePoolProvider.attributeCondition|re: '.+'
   condition: ((selection_create and selection_create_trust) or selection_update_touches_condition) and not filter_has_attribute_condition
 falsepositives:
-  - Legitimate workforce-federation onboarding that intentionally uses a broad or no attribute
-    condition (rare but valid). Confirm the issuerUri and that workforce principals are only bound
-    to appropriately-scoped roles.
+  - Legitimate workforce-federation onboarding without an attribute condition. This is common,
+    not rare. For a tenant-specific corporate IdP (one Entra ID or Okta tenant) the condition is
+    optional and often omitted, because the tenant's issuer already scopes the trust (the IAM
+    API reference for WorkforcePoolProvider.attributeCondition says that if it is unspecified,
+    all valid authentication credentials are accepted). Allowlist the organisation's approved
+    issuerUri values (or SAML IdP entity IDs), confirm the issuer of any other hit, and check
+    that workforce principals are only bound to appropriately-scoped roles.
   - A legitimate update that clears or tightens a provider's attribute condition is in scope of the
     Update branch (it touches attributeCondition). A tightening is suppressed by the non-empty
     filter; a legitimate clearing fires -- a real-but-noteworthy signal, same class as broad onboarding.
