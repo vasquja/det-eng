@@ -131,8 +131,28 @@ mapping matches is admitted.
 
 **Binding leg — the privileged role to a `/workforcePools/` member.** Within one
 `bindingDeltas` element: `action` is `ADD`, `member` contains `/workforcePools/`, and `role`
-is privileged (`roles/owner`, `roles/editor`, or an `*Admin` role). The member formats
-(Principal identifiers doc) are:
+is privileged. Privilege is graded with the member's breadth. A role that controls the
+resource or its IAM is privileged at every member scope. The rule matches the whole role
+value for these roles:
+
+- `roles/owner` and `roles/editor`;
+- a `roles/iam.*` admin, creator or user role, for example `roles/iam.securityAdmin`,
+  `roles/iam.serviceAccountTokenCreator` or `roles/iam.serviceAccountKeyAdmin`;
+- `roles/resourcemanager.projectIamAdmin`, `folderIamAdmin`, `organizationIamAdmin`,
+  `folderAdmin` or `organizationAdmin`;
+- `roles/orgpolicy.policyAdmin`, which can remove the org policies that limit IAM grants;
+- a custom role (`projects/P/roles/ID` or `organizations/O/roles/ID`) whose ID contains
+  `Owner`, `Editor` or `Admin`.
+
+Any other role whose name contains `owner`, `editor` or `admin` is privileged only when
+granted to the whole pool. These are predefined service-level roles, for example
+`roles/container.admin`, `roles/secretmanager.admin`, `roles/bigquery.dataEditor`,
+`roles/bigquery.dataOwner` or `roles/compute.securityAdmin`. This boundary is a trade-off
+(C6 in [`RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md)). Some service-level roles
+control security (`roles/secretmanager.admin`, `roles/cloudkms.admin`, `roles/logging.admin`,
+`roles/accesscontextmanager.policyAdmin`). When such a role is granted to one IdP group, the
+rule does not fire. A human approves the boundary. The member formats (Principal
+identifiers doc) are:
 
 - single: `principal://iam.googleapis.com/locations/global/workforcePools/POOL_ID/subject/SUBJECT`
 - group: `principalSet://iam.googleapis.com/locations/global/workforcePools/POOL_ID/group/GROUP_ID`
@@ -147,9 +167,11 @@ A rule keyed on `/workforcePools/` does not fire on `/workloadIdentityPools/` an
 
 Unlike the workload binding — where the member *type* is the clean separator — legitimate
 workforce federation **routinely** binds `principalSet`s to resource roles; that is the
-product's purpose. The binding separator is therefore the role **privilege** (and the
-whole-pool `/*` breadth as enrichment), which makes the binding rule a **medium-fidelity**
-privilege heuristic, not a pure type discriminator.
+product's purpose. The binding separator is therefore the role **privilege**, graded with
+the whole-pool `/*` breadth, which makes the binding rule a **medium-fidelity** privilege
+heuristic, not a pure type discriminator. A service-level role granted to one IdP
+group, attribute set or subject is the same audit record as routine workforce RBAC, so the
+rule leaves it out; only a baseline of approved groups (enrichment) could separate the two.
 
 ### Encoding and always-on notes
 
@@ -389,9 +411,14 @@ values. It is the higher-fidelity half.
 Match `protoPayload.serviceName` `cloudresourcemanager.googleapis.com` and
 `protoPayload.methodName` ending `SetIamPolicy` where one
 `serviceData.policyDelta.bindingDeltas` element has `action` `ADD`, a `member` containing
-`/workforcePools/`, and a privileged `role` (`roles/owner`, `roles/editor`, or an `*Admin`
-role) — matched with a regex bounded to one `{…}` element, one value per order of the three
-parts (portable: no lookahead), so the three conditions co-occur. This catches both the set form `principalSet://` and the single-subject form
+`/workforcePools/`, and a privileged `role`. At any member scope, the role is one that
+controls the resource or its IAM: `roles/owner`, `roles/editor`, a `roles/iam.*` admin,
+creator or user role, a resource-manager IAM or hierarchy admin role,
+`roles/orgpolicy.policyAdmin`, or a custom role whose ID contains `Owner`, `Editor` or
+`Admin`. For the whole pool (`…/POOL_ID/*`), any role whose name contains `owner`, `editor`
+or `admin` also matches. The match is a regex bounded to one `{…}` element, with one value
+per order of the three parts (portable: no lookaround), so the three conditions co-occur.
+This catches both the set form `principalSet://` and the single-subject form
 `principal://`. It is a medium-fidelity privilege heuristic.
 
 - Sensor: Cloud Audit Logs (Admin Activity).
@@ -423,8 +450,13 @@ role plus the `/workforcePools/` member, not on the method alone.
   CEL evaluation in the pipeline. This is an inherent limit shared with TRR9018 — document
   it, do not claim to catch it.
 - **Binding leg is a privilege heuristic.** Legitimate workforce federation routinely binds
-  `principalSet`s to resource roles; a break-glass admin group bound to a privileged role
-  false-positives. Enrich with the provider's `attributeCondition` (does a no-condition
+  `principalSet`s to resource roles; a break-glass admin group bound to an owner, editor or
+  IAM-control role false-positives, and so does a custom role whose ID contains `Owner`,
+  `Editor` or `Admin` but whose permissions are narrow. A predefined service-level role whose
+  name contains `owner`, `editor` or `admin` (for example `roles/secretmanager.admin` or
+  `roles/bigquery.dataOwner`) granted to a group, an attribute set or one subject is not
+  matched (it is the same record as routine RBAC); an attacker who uses that scope and role
+  class is missed unless the pipeline baselines the approved groups. Enrich with the provider's `attributeCondition` (does a no-condition
   provider exist?), the `issuerUri`, the whole-pool `/*` breadth, the actor, and the caller
   IP before paging.
 - **Structural sibling of TRR9014.** The binding rule keys on the same always-on

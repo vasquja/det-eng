@@ -1,0 +1,81 @@
+title: Kubernetes Namespace Deleted (Hunting)
+id: 693accbd-bbe5-4a61-bd78-32aec5b72cd5
+status: experimental
+description: |
+  Hunting rule for TRR9010 Procedure F: an accepted DELETE of a whole namespace. A
+  namespace delete destroys every Event in the namespace (and every workload record),
+  but the Events are then deleted by the namespace controller
+  (system:serviceaccount:kube-system:namespace-controller), whose deletecollection
+  sweep k8s_events_deleted.yml filters as teardown. The actor's own request is this
+  record: verb delete on objectRef.resource namespaces. So this rule is the only
+  record of that cover-up that names the actor.
+
+  It matches only a delete the API server accepted (responseStatus.code 200, or 202
+  when the server answers before the delete completes). A refused delete (403
+  forbidden, 404 not found, 409 conflict) destroys nothing; the namespace and its
+  Events stay. The namespace lifecycle does not make this request itself: the
+  namespace controller finalizes a namespace with an update of namespaces/finalize
+  and namespaces/status, not with a delete. The garbage collector
+  (system:serviceaccount:kube-system:generic-garbage-collector) deletes a namespace
+  only when the namespace has an ownerReference whose owner was deleted (tenant and
+  hierarchical-namespace operators set one); the owner's delete is itself audited as
+  the actor's request, so that identity is filtered.
+
+  A namespace delete is routine (CI preview environments, tenant teardown, GitOps
+  pruning), and its record does not show why the namespace was deleted. So this is a
+  low-level hunting rule, not an alert: baseline the identities that delete
+  namespaces by design (CI deployers, GitOps controllers, tenant operators) by
+  user.username and objectRef.name, and correlate a hit with the same actor's other
+  writes (an Events delete, a workload delete, an RBAC or admission change) in the
+  same window. Metadata level is enough: verb, resource, name, identity and
+  responseStatus.code are all in the record.
+
+  A server-side dry run deletes nothing and is filtered: '?dryRun=All' in
+  requestURI, or dryRun ["All"] in the DeleteOptions body (requestObject). kubectl
+  delete --dry-run=server sends the dry run in the body, which a Metadata-level
+  record does not hold, so at Metadata level that dry run still fires.
+references:
+  - https://attack.mitre.org/techniques/T1070/
+  - https://kubernetes.io/docs/tasks/administer-cluster/namespaces/#deleting-a-namespace
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+author: det-eng
+date: 2026/10/16
+tags:
+  - attack.stealth
+  - attack.t1070
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_namespace_delete:
+    objectRef.resource: 'namespaces'
+    verb: 'delete'
+  # The API server accepted the delete: the namespace goes to Terminating and the
+  # namespace controller empties it. A refused request destroys nothing.
+  sel_accepted:
+    responseStatus.code:
+      - 200
+      - 202
+  # Lifecycle: the garbage collector deletes a namespace whose owner was deleted
+  # (the owner's delete is the actor's own audited request).
+  filter_lifecycle_garbage_collector:
+    user.username: 'system:serviceaccount:kube-system:generic-garbage-collector'
+  # A server-side dry run is authorized, admitted and answered (200) like the real
+  # delete, but persists nothing. The dry run is in the query (?dryRun=All, the
+  # whole parameter, so a value of another parameter that mentions it does not
+  # count) or in the DeleteOptions body (kubectl delete --dry-run=server), which
+  # the record holds only at Request level or higher.
+  filter_dry_run:
+    - requestURI|re:
+        - '[?&]dryRun=All$'
+        - '[?&]dryRun=All\&'
+    - requestObject.dryRun|contains: 'All'
+  condition: select_namespace_delete and sel_accepted and not filter_lifecycle_garbage_collector and not filter_dry_run
+falsepositives:
+  - CI and preview-environment teardown, tenant offboarding and GitOps pruning delete
+    namespaces by design. Baseline those identities (and their namespace name
+    patterns); this rule is for hunting and correlation, not a standalone alert.
+  - Planned removal of an application or an add-on with its namespace.
+  - kubectl delete namespace --dry-run=server logged at Metadata level (the dry run
+    is in the request body, which that level does not record).
+level: low

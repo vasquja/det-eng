@@ -3,9 +3,10 @@ id: 3624a6fc-655b-4bd0-9ae9-7b902f8e8d44
 status: experimental
 description: |
   Detects a GCP IAM policy change that binds a Workforce Identity Federation principalSet
-  directly to a PRIVILEGED project / folder / organisation role (Owner, Editor, or an *Admin
-  role). This is the TRR9020 backdoor leg: an external, org-scoped human identity federated
-  through a workforce pool is granted a powerful resource role with no service-account or
+  directly to a PRIVILEGED project / folder / organisation role (Owner, Editor, an
+  IAM-control role, or a service-level owner/editor/admin role granted to the whole pool).
+  This is the TRR9020 backdoor leg: an external, org-scoped human identity federated through
+  a workforce pool is granted a powerful resource role with no service-account or
   workloadIdentityUser step. It is the GCP twin of TRR9018's workload-pool binding, on a
   different service, method, member family, and target.
 
@@ -14,8 +15,8 @@ description: |
   (protoPayload.serviceData.policyDelta.bindingDeltas) adds, in one binding, a privileged role
   to a member that is a workforce principalSet -- member containing /workforcePools/ (the single
   form principal:// and the set form principalSet://). The three conditions are required on the
-  SAME delta element (a regex with lookaheads bounded to one {...}), so a REMOVE, or an unrelated
-  ADD elsewhere, does not fire.
+  SAME delta element (a portable regex, no lookaround, kept inside one {...} by [^}]*, with one
+  value per order of the three parts), so a REMOVE, or an unrelated ADD elsewhere, does not fire.
 
   The discriminator vs TRR9018 is the member: workforce members are anchored at
   locations/global/workforcePools/ with NO project number, whereas workload members embed a
@@ -23,13 +24,23 @@ description: |
   on /workforcePools/ and does not fire on workload bindings. Field-model note: the delta array is
   matched as text; on a structured backend, evaluate bindingDeltas element-wise.
 
-  Breadth is NOT checked: every workforce member form fires -- the whole pool (.../POOL_ID/*),
-  a group (/group/GROUP_ID), an attribute set (/attribute.NAME/VALUE) and a single subject
-  (principal://.../subject/SUBJECT) -- because TRR9020 Procedure C installs the backdoor with
-  any of them. So ordinary workforce RBAC that grants an *Admin role to an IdP group fires too.
-  The privileged-role requirement is the only heuristic; enrich with the member's breadth (a
-  whole-pool /* member is the strongest signal), the provider's attributeCondition, the pool,
-  the actor, and the role before paging.
+  Two tiers, keyed on the role and the member's breadth (C6). (1) A role that controls the
+  resource or its IAM, matched as the whole role value -- roles/owner, roles/editor, a
+  roles/iam.* admin, creator or user role (iam.securityAdmin, service-account admin, key
+  admin, token creator and user, role admins, pool admins), a resource-manager IAM or
+  hierarchy admin (projectIamAdmin, folderIamAdmin, organizationIamAdmin, folderAdmin,
+  organizationAdmin), roles/orgpolicy.policyAdmin, or a custom role (projects/P/roles/ID,
+  organizations/O/roles/ID) whose ID carries Owner, Editor or Admin -- fires at every member
+  scope: the whole pool (.../POOL_ID/*), a group (/group/GROUP_ID), an attribute set
+  (/attribute.NAME/VALUE) and a single subject (principal://.../subject/SUBJECT), because
+  TRR9020 Procedure C installs the backdoor with any of them. (2) Any other role whose name
+  carries owner, editor or admin -- a predefined service-level role such as
+  roles/container.admin, roles/secretmanager.admin, roles/bigquery.dataEditor,
+  roles/bigquery.dataOwner, roles/pubsub.editor or roles/compute.securityAdmin -- fires only
+  when granted to the whole pool. So ordinary workforce RBAC that grants a service-level role
+  to an IdP group, an attribute set or one person does not fire. The tier boundary is a
+  trade-off (see falsepositives). The role name is a heuristic for privilege; enrich with the
+  provider's attributeCondition, the pool, the actor, and the role before paging.
 references:
   - https://attack.mitre.org/techniques/T1199/
   - https://cloud.google.com/iam/docs/workforce-identity-federation
@@ -51,26 +62,64 @@ detection:
     protoPayload.methodName|endswith: 'SetIamPolicy'
   selection_workforce_privileged_binding:
     # One binding delta object ('{' up to its first '}') that holds action ADD, a
-    # /workforcePools/ member and a privileged role, in any order: portable regex (no
-    # lookahead), one value per order of the three parts. The role test is NOT anchored to
-    # the predefined "roles/" prefix, so a custom project/organisation role
-    # (projects/<id>/roles/... or organizations/<org>/roles/...) whose name carries
-    # owner/editor/admin is caught too; benign scoped roles (viewer, a reader custom role)
-    # do not match. Owner/Editor/Admin are case-insensitive via explicit classes.
+    # /workforcePools/ member of any scope (whole pool, /group/, /attribute.NAME/VALUE or a
+    # single principal:// subject) and a role that controls the resource or its IAM. The
+    # role value is matched whole, from its first character to its closing quote:
+    #   roles/owner, roles/editor (the basic roles);
+    #   roles/iam.*Admin, *Creator or *User (iam.securityAdmin, serviceAccountAdmin,
+    #   serviceAccountKeyAdmin, serviceAccountTokenCreator, serviceAccountOpenIdTokenCreator,
+    #   serviceAccountUser, workloadIdentityUser, roleAdmin, organizationRoleAdmin,
+    #   denyAdmin, workloadIdentityPoolAdmin, workforcePoolAdmin, ...);
+    #   roles/resourcemanager.projectIamAdmin, folderIamAdmin, organizationIamAdmin,
+    #   folderAdmin, organizationAdmin;
+    #   roles/orgpolicy.policyAdmin (can lift the org policies that limit IAM grants);
+    #   a custom role (projects/P/roles/ID or organizations/O/roles/ID) whose ID carries
+    #   Owner, Editor or Admin.
+    # Each lets the holder grant itself more, act as a service account, or remove the
+    # guardrail on grants. A predefined service-level role that only carries owner, editor
+    # or admin in its name (roles/bigquery.dataEditor, roles/pubsub.editor,
+    # roles/compute.securityAdmin, roles/secretmanager.admin, ...) is NOT in this tier; it
+    # fires only through the whole-pool selection below (C6). In any order: portable regex
+    # (no lookaround), one value per order of the three parts. This keeps TRR9020
+    # Procedure C at every member scope it uses.
     protoPayload.serviceData.policyDelta.bindingDeltas|re:
-      - '\{[^}]*\"action\": \"ADD\"[^}]*/workforcePools/[^}]*\"role\": \"[^"]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^"]*\"'
-      - '\{[^}]*\"action\": \"ADD\"[^}]*\"role\": \"[^"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^"}]*\"[^}]*/workforcePools/'
-      - '\{[^}]*/workforcePools/[^}]*\"action\": \"ADD\"[^}]*\"role\": \"[^"]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^"]*\"'
-      - '\{[^}]*/workforcePools/[^}]*\"role\": \"[^"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^"}]*\"[^}]*\"action\": \"ADD\"'
-      - '\{[^}]*\"role\": \"[^"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^"}]*\"[^}]*\"action\": \"ADD\"[^}]*/workforcePools/'
-      - '\{[^}]*\"role\": \"[^"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^"}]*\"[^}]*/workforcePools/[^}]*\"action\": \"ADD\"'
-  condition: selection_setiam and selection_workforce_privileged_binding
+      - '\{[^}]*\"action\": \"ADD\"[^}]*\"role\": \"(roles/(owner|editor)|roles/iam\.[^\"}]*([Aa]dmin|[Cc]reator|[Uu]ser)|roles/resourcemanager\.((project|folder|organization)IamAdmin|(folder|organization)Admin)|roles/orgpolicy\.policyAdmin|(projects|organizations)/[^/\"}]*/roles/[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin))\"[^}]*/workforcePools/'
+      - '\{[^}]*\"action\": \"ADD\"[^}]*/workforcePools/[^}]*\"role\": \"(roles/(owner|editor)|roles/iam\.[^\"}]*([Aa]dmin|[Cc]reator|[Uu]ser)|roles/resourcemanager\.((project|folder|organization)IamAdmin|(folder|organization)Admin)|roles/orgpolicy\.policyAdmin|(projects|organizations)/[^/\"}]*/roles/[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin))\"'
+      - '\{[^}]*\"role\": \"(roles/(owner|editor)|roles/iam\.[^\"}]*([Aa]dmin|[Cc]reator|[Uu]ser)|roles/resourcemanager\.((project|folder|organization)IamAdmin|(folder|organization)Admin)|roles/orgpolicy\.policyAdmin|(projects|organizations)/[^/\"}]*/roles/[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin))\"[^}]*\"action\": \"ADD\"[^}]*/workforcePools/'
+      - '\{[^}]*\"role\": \"(roles/(owner|editor)|roles/iam\.[^\"}]*([Aa]dmin|[Cc]reator|[Uu]ser)|roles/resourcemanager\.((project|folder|organization)IamAdmin|(folder|organization)Admin)|roles/orgpolicy\.policyAdmin|(projects|organizations)/[^/\"}]*/roles/[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin))\"[^}]*/workforcePools/[^}]*\"action\": \"ADD\"'
+      - '\{[^}]*/workforcePools/[^}]*\"action\": \"ADD\"[^}]*\"role\": \"(roles/(owner|editor)|roles/iam\.[^\"}]*([Aa]dmin|[Cc]reator|[Uu]ser)|roles/resourcemanager\.((project|folder|organization)IamAdmin|(folder|organization)Admin)|roles/orgpolicy\.policyAdmin|(projects|organizations)/[^/\"}]*/roles/[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin))\"'
+      - '\{[^}]*/workforcePools/[^}]*\"role\": \"(roles/(owner|editor)|roles/iam\.[^\"}]*([Aa]dmin|[Cc]reator|[Uu]ser)|roles/resourcemanager\.((project|folder|organization)IamAdmin|(folder|organization)Admin)|roles/orgpolicy\.policyAdmin|(projects|organizations)/[^/\"}]*/roles/[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin))\"[^}]*\"action\": \"ADD\"'
+  selection_workforce_pool_wide_admin_binding:
+    # A grant of any role whose name carries owner, editor or admin (a service-level
+    # role such as roles/container.admin, roles/secretmanager.admin,
+    # roles/bigquery.dataEditor or roles/compute.securityAdmin) to the WHOLE workforce
+    # pool (principalSet://.../workforcePools/POOL/*): every identity the pool's providers
+    # accept gets it. The same role granted to a group, an attribute set or one subject is
+    # routine workforce RBAC (C6) and is not matched here.
+    protoPayload.serviceData.policyDelta.bindingDeltas|re:
+      - '\{[^}]*\"action\": \"ADD\"[^}]*\"principalSet://iam\.googleapis\.com/locations/global/workforcePools/[^/\"}]*/\*\"[^}]*\"role\": \"[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^\"}]*\"'
+      - '\{[^}]*\"action\": \"ADD\"[^}]*\"role\": \"[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^\"}]*\"[^}]*\"principalSet://iam\.googleapis\.com/locations/global/workforcePools/[^/\"}]*/\*\"'
+      - '\{[^}]*\"principalSet://iam\.googleapis\.com/locations/global/workforcePools/[^/\"}]*/\*\"[^}]*\"action\": \"ADD\"[^}]*\"role\": \"[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^\"}]*\"'
+      - '\{[^}]*\"principalSet://iam\.googleapis\.com/locations/global/workforcePools/[^/\"}]*/\*\"[^}]*\"role\": \"[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^\"}]*\"[^}]*\"action\": \"ADD\"'
+      - '\{[^}]*\"role\": \"[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^\"}]*\"[^}]*\"action\": \"ADD\"[^}]*\"principalSet://iam\.googleapis\.com/locations/global/workforcePools/[^/\"}]*/\*\"'
+      - '\{[^}]*\"role\": \"[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^\"}]*\"[^}]*\"principalSet://iam\.googleapis\.com/locations/global/workforcePools/[^/\"}]*/\*\"[^}]*\"action\": \"ADD\"'
+  condition: selection_setiam and (selection_workforce_privileged_binding or selection_workforce_pool_wide_admin_binding)
 falsepositives:
-  - Group-scoped workforce RBAC (IaC granting an *Admin role such as roles/container.admin to
-    one IdP group) and a legitimate break-glass admin group federated through a workforce pool
-    and intentionally bound to a privileged role. Enrich with the member's breadth (whole pool
-    /* versus a group or a subject), the pool provider's attributeCondition (does a
-    no-condition provider exist?), the actor, and the caller IP.
+  - A legitimate break-glass admin group federated through a workforce pool and bound to
+    roles/owner, roles/editor or an IAM-administration role fires. Enrich with the pool
+    provider's attributeCondition (does a no-condition provider exist?), the actor, and the
+    caller IP.
+  - Residual false negative (C6 trade-off) -- a predefined service-level role whose name carries
+    owner, editor or admin (roles/container.admin, roles/secretmanager.admin,
+    roles/cloudkms.admin, roles/logging.admin, roles/accesscontextmanager.policyAdmin,
+    roles/billing.admin, roles/bigquery.dataOwner, ...) granted to a group, an attribute set or
+    one subject is not matched, because in the audit record it is the same grant as routine
+    workforce RBAC, and only a baseline of approved groups (enrichment) could tell them apart.
+    Some of these roles control security (secrets, keys, audit logs, VPC-SC perimeters); move a
+    role into the any-scope tier if the organisation never grants it to IdP groups.
+  - A custom role whose ID carries Owner, Editor or Admin fires at every member scope, even
+    when its permissions are narrow (for example a custom dataEditor role granted to a group).
+    Allowlist such roles by name.
   - Residual false negative -- a custom role that is privileged in effect but is NOT named with
     owner/editor/admin is missed. The name is only a heuristic for privilege; the role's actual
     permission set would be needed to catch it.

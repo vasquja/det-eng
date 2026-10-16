@@ -366,16 +366,19 @@ no anchors and matches the whole value, so a search-style `|re` needs `.*` aroun
 (drop it where the pattern starts with `^` or ends with `$`); pySigma's Lucene backend
 does not add it today, and it renders `|re|i` as `(?i)`, which Lucene does not parse.
 In Python, RE2 and PCRE `.` does not match a line break unless `|re|s` is set; in
-Lucene it always does. `\s` is `[\t\n\r ]` in Lucene, ASCII whitespace in RE2, and
-Unicode whitespace in Python and KQL. A long pattern can also exceed Lucene's default
-determinization budget (`max_determinized_states`, 10,000): a check with Lucene 10.1's
-`RegExp` found that every `|re` value parses, and that each value inside the budget,
-wrapped in `.*`, gives the same verdict as Python on every case, fixture and
-benign-corpus value of its field. The statement-level policy values of
-`T1537/aws_resource_policy_made_public.yml` and
-`aws_efs_file_system_policy_made_public.yml` and the JSON-patch values of
-`T1685/k8s_security_tool_workload_removed.yml` need a larger budget (or a pipeline that
-decodes the policy or patch).
+Lucene it always does. `\s` is `[\t\n\r ]` in Lucene (no vertical tab or form
+feed), ASCII whitespace without the vertical tab in RE2, and Unicode whitespace in
+Python and KQL. A rule that must split on the blanks of a Unicode-aware parser (the
+CoreDNS Corefile lexer) lists U+00A0 and U+0085 as literal characters in its class;
+write such a value as a YAML double-quoted string with `\u00A0`/`\u0085` escapes,
+because PyYAML folds a raw U+0085 into a line break. No portable construct names a
+carriage return, vertical tab or form feed alone. A long pattern can also exceed
+Lucene's default determinization budget (`max_determinized_states`, 10,000): a check
+with Lucene 10.1's `RegExp` found that every `|re` value parses and fits the budget
+(the largest, a JSON-patch root grammar of
+`T1565.001/k8s_coredns_corefile_poisoned.yml`, needs 7,986 states), and that each
+value, wrapped in `.*`, gives the same verdict as Python and RE2 on every case, fixture
+and benign-corpus value of its field.
 
 ## The benign corpus (false-positive scores)
 
@@ -532,23 +535,31 @@ validator (`validate_apiserver_detections.py`), and one workflow
 | TRR9005 | Jobs/CronJobs (T1053.007) | `sigma/T1053.007/k8s_job_create.yml` + a node-runtime job-pod rule | Request |
 | TRR9006 | Secrets (T1552.007) | `sigma/T1552.007/k8s_secret_access.yml` + a TokenRequest rule | Metadata |
 | TRR9007 | Dangerous pod spec (T1611) | `sigma/T1611/k8s_podspec_host_access.yml` + a controller rule | Request |
-| TRR9008 | Disable admission control (T1685) | `sigma/T1685/k8s_admission_webhook_disabled.yml` + a neuter grader + a workload-removal rule | Request |
+| TRR9008 | Disable admission control (T1685) | `sigma/T1685/k8s_admission_webhook_disabled.yml` + a neuter grader + a workload-removal rule | Request (RequestResponse for webhook-configuration update and patch) |
 | TRR9009 | Impersonation (T1134) | `sigma/T1134/k8s_impersonation.yml` + a privileged-target rule | Metadata |
-| TRR9010 | Indicator removal (T1070) | `sigma/T1070/k8s_events_deleted.yml` + a workload-deletion rule | Metadata |
+| TRR9010 | Indicator removal (T1070) | `sigma/T1070/k8s_events_deleted.yml` + a workload-deletion rule + a namespace-delete hunting rule | Metadata |
 | TRR9025 | Malicious admission webhook (T1546) | `sigma/T1546/k8s_admission_webhook_created.yml` + a Request-level body grader | Request |
 | TRR9026 | Pod port-forward (T1572) | `sigma/T1572/k8s_pod_portforward.yml` (verb-agnostic subresource) | Metadata |
-| TRR9027 | Cluster DNS poisoning (T1565.001) | `sigma/T1565.001/k8s_coredns_configmap_modified.yml` + a Request-level Corefile grader | Metadata + Request |
+| TRR9027 | Cluster DNS poisoning (T1565.001) | `sigma/T1565.001/k8s_coredns_configmap_modified.yml` + a Corefile grader | Metadata + RequestResponse (the three DNS ConfigMaps) + Request (kube-system ConfigMap creates; drop that rule where Helm stores releases in kube-system ConfigMaps) |
 
 The audit **level** is per technique: pods, workload controllers, RBAC, and
 admission-webhook creates are logged at `Request` so `requestObject` carries the
 privileged/hostPath fields, the bound role, the group subject, and the webhook
-`clientConfig`; an update, patch or delete of the three `kube-system` DNS
-ConfigMaps (`coredns`, `kube-dns`, `coredns-custom`) is at `Request` so the Corefile
-is present (a create names no object when the policy is evaluated, so it is logged
-at `Metadata` with no body, so the emulation writes procedures B and C by server-side
-apply, a patch by name: [`RULE_DEFECTS.md`](RULE_DEFECTS.md) K9); Secrets and
-`serviceaccounts/token` stay at `Metadata`, never higher, because `RequestResponse`
-would copy the Secret data and the signed token into the log.
+`clientConfig`. An update or patch of a webhook configuration is at `RequestResponse`,
+so the stored webhooks are graded whatever the patch type. An update, patch or delete
+of the three `kube-system` DNS ConfigMaps (`coredns`, `kube-dns`, `coredns-custom`) is
+at `RequestResponse`, so the stored Corefile is graded whatever the patch type; every
+ConfigMap create in `kube-system` is at `Request` (a create names no object when the
+policy is evaluated, so the rule cannot name the three), so a delete-and-recreate
+(TRR9027 Procedure D) is graded. Two costs come with these levels:
+- A Corefile can hold plugin credentials (route53 `aws_access_key`, azure `secret`,
+  tsig `secret`); every write to it then copies them into the log.
+- Helm 2 (Tiller), and Helm 3 with `HELM_DRIVER=configmap`, store each release in
+  `kube-system` as a ConfigMap whose body holds the rendered manifests, Secret data
+  included. Such a cluster must drop the create rule.
+
+Secrets and `serviceaccounts/token` stay at `Metadata`, never higher, because
+`RequestResponse` would copy the Secret data and the signed token into the log.
 
 These rules are intentionally generic, and a fresh `kind` cluster is full of
 baseline matches: bootstrap RBAC writes, controller-created Jobs and Pods,
@@ -558,8 +569,10 @@ own marker — a `trr9004-`/`trr9005-`/`trr9007-`/`trr9025-`/`trr9026-` object n
 the `trr9006` namespace with a non-system caller, a `trr9005-` Job label on the node
 sensor, or the `trr9027` sentinel in each procedure's DNS-ConfigMap write (procedure A patches
 `coredns`; B and C create `kube-dns` and `coredns-custom` by server-side apply, a
-patch by name that the policy logs with its body, so each is proven separately) — and the negative control proves a pass depends
-on the emulation, not the baseline.
+patch by name that the policy logs with its body; D deletes `coredns` and recreates it
+with the sentinel, then restores the saved object and fails the step unless the restored
+Corefile matches byte for byte; each is proven separately) — and the negative control
+proves a pass depends on the emulation, not the baseline.
 
 ```
 python3 detections/validate_apiserver_detections.py --dry-run     # compile only

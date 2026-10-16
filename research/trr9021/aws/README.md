@@ -123,7 +123,8 @@ The field that separates attack from benign is the **grantee token with no effec
   `"*"` grant that carries an `aws:PrincipalOrgID` condition (`requestParameters.condition.key`) is an
   organization-wide bus and is effectively private.
 - **EFS (C) and Glue (D):** a policy statement with `Effect "Allow"` and `Principal` equal to the
-  string `"*"` or the object `{"AWS":"*"}`, and **none** of the scoping condition keys
+  string `"*"` or the object `{"AWS":"*"}` (or `"*"` as any entry of an `AWS` list, such as
+  `{"AWS":["arn:aws:iam::123456789012:root","*"]}`), and **none** of the scoping condition keys
   `aws:PrincipalOrgID` / `aws:SourceArn` / `aws:SourceAccount` / `aws:SourceVpc` present. For EFS,
   `aws:SourceOwner` and `elasticfilesystem:AccessedViaMountTarget` set to `true` (the console
   wizard's condition) also scope a statement, and the scope must sit in the same statement: the EFS
@@ -369,9 +370,10 @@ beyond the 90-day Event history, so a trail or CloudTrail Lake is the deployment
 (`condition.key` set, or `aws:PrincipalOrgID` / `aws:SourceArn` / `aws:SourceAccount` in the policy).
 
 **Strategy 3 — public EFS file-system policy (covers C).** Match `PutFileSystemPolicy` and fire on an
-`Allow` + `Principal "*"` token in `requestParameters.policy` unless every statement that allows the
-public principal carries a scoping condition key, or `elasticfilesystem:AccessedViaMountTarget` set
-to `true`, in that same statement.
+`Allow` + `Principal "*"` token (a string, or any entry of an `AWS` list) in
+`requestParameters.policy` unless every statement that allows the public principal carries a
+scoping condition key, or `elasticfilesystem:AccessedViaMountTarget` set to `true`, in that same
+statement.
 
 **Strategy 4 — public Glue resource policy (covers D).** Match `PutResourcePolicy` on
 `glue.amazonaws.com` only and fire on an `Allow` + `Principal "*"` token in
@@ -405,10 +407,11 @@ the Glue rule must ignore, proving the `eventSource` pin works.
   org-scoped statement with a second unconditioned `Principal "*"` statement, or add a wildcard-value
   decoy condition. The EFS rule evaluates the scoping filters per statement with a bounded,
   portable regex (no lookahead), so it fires on the mix, but it checks only that a key is present in
-  the statement's `Condition`, not its value, and it still reads the `Allow` and the `"*"` across
-  the whole document (a named-principal `Allow` next to a public `Deny` with no scoping key fires).
-  With two or more public `Allow` statements it fires even when each is scoped (a portable regex
-  cannot test "every statement"). The EventBridge and Glue rules match tokens across the whole
+  the statement's `Condition`, not its value, and when it finds no public `Allow` statement it
+  still reads the `Allow` and the `"*"` across the whole document (a named-principal `Allow` next
+  to a public `Deny` with no scoping key fires).
+  It tests statements 1 to 5 one by one, so a policy whose public `Allow` statements are all scoped
+  is quiet; a public `Allow` at statement 6 or later fires without a scope test. The EventBridge and Glue rules match tokens across the whole
   document. A production pipeline should JSON-decode and evaluate scope per statement and reject
   wildcard condition values.
 - **Named-foreign-account exposure** (a 12-digit partner account rather than `"*"` / `All`) is

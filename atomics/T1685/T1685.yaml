@@ -99,7 +99,11 @@ atomic_tests:
     description: |
       Applies an enforcing (failurePolicy Fail) but harmless webhook config, then
       merge-patches it to failurePolicy Ignore with an empty rules list, so the request
-      body carries the neuter markers the severity rule grades (verb=patch).
+      body carries the neuter markers the severity rule grades (verb=patch). Then four
+      more neuter shapes, each on its own harmless config (trr9008-neuter-merge, -json,
+      -const, -nssel): a merge patch and a JSON patch that replace the webhooks list and
+      drop rules (graded from the stored object, RequestResponse), a constant-false
+      matchCondition, and a namespaceSelector that matches no namespace.
       Chokepoint rule: detections/sigma/T1685/k8s_admission_webhook_disabled.yml
       Severity rule: detections/sigma/T1685/k8s_admission_webhook_neutered.yml
     supported_platforms:
@@ -110,7 +114,7 @@ atomic_tests:
       command: |
         bash #{source_dir}/emulate_k8s.sh c
       cleanup_command: |
-        kubectl delete validatingwebhookconfiguration trr9008-neuter --ignore-not-found
+        kubectl delete validatingwebhookconfiguration trr9008-neuter trr9008-neuter-merge trr9008-neuter-json trr9008-neuter-const trr9008-neuter-nssel --ignore-not-found
     input_arguments:
       source_dir:
         description: Path to the atomic source directory.

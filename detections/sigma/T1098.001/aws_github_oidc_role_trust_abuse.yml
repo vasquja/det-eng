@@ -27,16 +27,18 @@ description: |
 
   Implementation note: this is the substring/regex approximation the research
   recommends when a pipeline cannot decode the policy; it operates on the URL-encoded
-  text and is NOT serialization-independent (a JSON array, added whitespace, or a key
-  order it does not anticipate can change the match). A production pipeline should
+  text and is NOT serialization-independent (added whitespace, or a key order it does
+  not anticipate, can change the match; a list-valued sub is read per element). A production pipeline should
   URL-decode and JSON-parse the trust policy and judge the sub precisely. The aud pin
   is intentionally NOT tested here -- the absence of a literal `aud":"sts` substring is
   not evidence of an unpinned audience (aud is commonly a JSON array), so an aud test
   belongs only in a decode-and-parse pipeline. The regexes are portable (no lookaround):
-  the per-segment test is split into the items below, which is exact for a trust with
-  one GitHub sub condition (on well-formed percent-encoding, which CloudTrail always
-  writes); with two or more sub conditions in one trust, any wildcard grades high, so a
-  pinned sub cannot hide an org-wide one.
+  the per-segment test is split into the items below for a trust with one GitHub sub
+  condition, and a trust with two or more sub conditions or a list of sub values is
+  graded per sub value (sub_high_*): it is high when any one value has a wildcard that no
+  repository pin precedes, so a pinned sub cannot hide an org-wide one, and a trust whose
+  every wildcard follows a pinned repository is graded low by the sibling rule (exact on
+  well-formed percent-encoding, which CloudTrail always writes).
 
   Blind spots (see the TRR): exploiting a PRE-EXISTING over-broad trust emits only the
   use event (sts:AssumeRoleWithWebIdentity) and no grant -- catchable only with a
@@ -84,12 +86,15 @@ detection:
   # Connect reference' (example subject claims, immutable subject claims, customizing the
   # subject claims). A wildcard on a claim other than sub is not a broad sub.
   #
-  # Portable regex only (no lookaround): the per-segment test is split into the items
-  # below and combined in the condition. Each regex reads percent-encoded text a token at
-  # a time ('[^%]' or '%' and two characters), so '%22' (end of the sub value), '%2A' and
-  # '%3A' are never split. On a single GitHub sub condition the result is the same as
-  # the per-segment test; with two or more sub conditions in one policy (sub_multi_*)
-  # any wildcard grades high, so a pinned sub cannot hide an org-wide one.
+  # Portable regex only (no lookaround). Each regex reads percent-encoded text a token at a
+  # time ('[^%]' or '%' and two characters), so '%22' (end of the sub value), '%2A' and
+  # '%3A' are never split. A trust with ONE string sub value is graded by the items
+  # sub_any_wildcard, sub_wildcard and sub_pinned, combined in the condition. A trust with
+  # two or more sub conditions, or a list of sub values (sub_multi_*), is graded per sub
+  # value by sub_high_*: high when ANY one value has a wildcard that no repository pin
+  # precedes, so a pinned sub cannot hide an org-wide one, and a trust whose every
+  # wildcard follows a pinned repository is the low sibling rule's case (C16). On one sub
+  # value the two tests give the same grade.
   #
   # A wildcard anywhere in a sub value.
   sub_any_wildcard_update:
@@ -108,11 +113,26 @@ detection:
     requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(([^%]|%([^2%]|2[^2A%]))*%3A)?repo(sitory_id)?%3A([^%]|%([^23%]|2[^2A%]|3[^A%]))+%3A'
   sub_pinned_create:
     requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(([^%]|%([^2%]|2[^2A%]))*%3A)?repo(sitory_id)?%3A([^%]|%([^23%]|2[^2A%]|3[^A%]))+%3A'
-  # Two or more GitHub sub conditions in one policy.
+  # Two or more GitHub sub conditions in one policy, or a sub condition whose value is a
+  # list (IAM policy grammar: a condition value is a string or a list of strings).
   sub_multi_update:
-    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22.*githubusercontent\.com%3Asub%22'
+    requestParameters.policyDocument|re:
+      - 'githubusercontent\.com%3Asub%22.*githubusercontent\.com%3Asub%22'
+      - 'githubusercontent\.com%3Asub%22%3A%5B'
   sub_multi_create:
-    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22.*githubusercontent\.com%3Asub%22'
+    requestParameters.assumeRolePolicyDocument|re:
+      - 'githubusercontent\.com%3Asub%22.*githubusercontent\.com%3Asub%22'
+      - 'githubusercontent\.com%3Asub%22%3A%5B'
+  # Per sub value (a string value, or each element of a list value): a wildcard that no
+  # repository pin precedes. The value is read segment by segment (':' is %3A): a segment
+  # that is not 'repo' or 'repository_id' may be followed by any segment; 'repo' or
+  # 'repository_id' must be followed by an empty segment (a non-empty one is a pin), or by
+  # the '*' that ends the match. 'repo' and 'repository_id' are matched exactly: a longer
+  # segment ('repository_owner_id', 'repos') is not a pin key.
+  sub_high_update:
+    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A(%5B(%22([^%]|%([^2%]|2[^2%]))*%22%2C)*)?%22((([^r%]|%([^23%]|2[^2A%]|3[^A%])|r([^e%]|e([^p%]|p([^o%]|o([^s%]|s([^i%]|i([^t%]|t([^o%]|o([^r%]|r([^y%]|y([^_%]|_([^i%]|i(d([^%]|%([^23%]|2[^2A%]|3[^A%]))|[^d%])))))))))))))([^%]|%([^23%]|2[^2A%]|3[^A%]))*|(r(e(p(os(i(t(o(r(y(_(i)?)?)?)?)?)?)?)?)?)?)?)%3A|repo(sitory_id)?%3A%3A)*(repo(sitory_id)?%3A)?([^%]|%([^23%]|2[^2A%]|3[^A%]))*%2A'
+  sub_high_create:
+    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22%3A(%5B(%22([^%]|%([^2%]|2[^2%]))*%22%2C)*)?%22((([^r%]|%([^23%]|2[^2A%]|3[^A%])|r([^e%]|e([^p%]|p([^o%]|o([^s%]|s([^i%]|i([^t%]|t([^o%]|o([^r%]|r([^y%]|y([^_%]|_([^i%]|i(d([^%]|%([^23%]|2[^2A%]|3[^A%]))|[^d%])))))))))))))([^%]|%([^23%]|2[^2A%]|3[^A%]))*|(r(e(p(os(i(t(o(r(y(_(i)?)?)?)?)?)?)?)?)?)?)?)%3A|repo(sitory_id)?%3A%3A)*(repo(sitory_id)?%3A)?([^%]|%([^23%]|2[^2A%]|3[^A%]))*%2A'
   # ANY GitHub-OIDC scoping claim present (sub, repository, environment, ...), so a
   # trust scoped by :repository or :environment without a :sub is NOT "worldwide".
   scoping_claim_update:
@@ -122,9 +142,10 @@ detection:
   condition: >
     selection_grant and (oidc_update or oidc_create) and
     (((sub_any_wildcard_update or sub_any_wildcard_create) and
+      not (sub_multi_update or sub_multi_create) and
       not ((sub_pinned_update or sub_pinned_create)
-           and not (sub_wildcard_update or sub_wildcard_create)
-           and not (sub_multi_update or sub_multi_create)))
+           and not (sub_wildcard_update or sub_wildcard_create)))
+     or ((sub_multi_update or sub_multi_create) and (sub_high_update or sub_high_create))
      or not (scoping_claim_update or scoping_claim_create))
 falsepositives:
   - Orgs that deliberately use an org-wide StringLike repo:org/* for shared or
@@ -136,7 +157,6 @@ falsepositives:
     'repository_id:' segment with a fixed value comes before the wildcard. A template
     that pins the repository through another claim (a repo_property_* custom property,
     for example) and then uses a wildcard is graded high.
-  - A trust with two or more GitHub sub conditions is graded high when any of them has a
-    wildcard, even when every wildcard follows a pinned repository (the sibling low rule
-    then stays quiet).
+  - A '?' (the StringLike single-character wildcard) is not graded as a wildcard; only '*'
+    is.
 level: high

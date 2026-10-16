@@ -96,6 +96,29 @@ atomic_tests:
         type: string
         default: PathToAtomicsFolder/T1070/src
 
+  - name: "TRR9010.K8S.F — delete a whole namespace to destroy its Events"
+    auto_generated_guid: 5c0f7a2e-93d4-4b8e-a1f6-2d7e9c4b3a18
+    description: |
+      Creates a throwaway namespace trr9010-ns-f with a harmless Event in it, then deletes
+      the whole namespace. The namespace controller deletes the Events in a teardown sweep
+      that the Events chokepoint filters, so the actor's own record is the accepted
+      namespace delete. Low fidelity (namespace deletion is routine); a hunting rule.
+      Rule: detections/sigma/T1070/k8s_namespace_deleted.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh f
+      cleanup_command: |
+        kubectl delete namespace trr9010-ns-f --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1070/src
+
   - name: "TRR9010.K8S — node-local audit-log clearing (detection gap)"
     auto_generated_guid: dc47a964-afc9-4ac2-8e98-749f4e4079b1
     description: |

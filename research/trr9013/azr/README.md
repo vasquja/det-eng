@@ -206,9 +206,19 @@ is unapproved too. This covers Procedure B
 (a repoint **to** an unapproved issuer makes that issuer appear in `newValue`). Match
 the modified property over any element (not index 0), and do not hard-require
 `targetResources.type` `Application` (a service-principal-object FIC is
-`ServicePrincipal`). Caveat: the matched text spans `oldValue` and `newValue`, so
-repointing or removing an already-present unapproved issuer (a benign remediation) can
-also fire; a decode-and-parse pipeline that reads only `newValue` avoids this.
+`ServicePrincipal`). The issuer test reads only the `newValue` of the modified property
+whose `displayName` is `FederatedIdentityCredentials` (Graph `modifiedProperty`: `oldValue`
+is the value before the update, `newValue` the value after it), so repointing or removing
+an unapproved issuer (a remediation: the issuer is then only in `oldValue`) does not fire.
+Any update of an application whose credential array still holds an unapproved issuer
+after the change does fire, because `newValue` carries the whole array. The test does not
+depend on the key order of the modified-property element: Microsoft documents
+`displayName`, `oldValue`, `newValue`, but a pipeline that re-serialises the record can
+write the keys in any order. Two values read forward from `displayName`; a third value
+starts at the `newValue` key, reads only that string, and then requires `displayName`
+`FederatedIdentityCredentials` later in the same element. The sidecar has cases for the
+documented order, the sorted order and the three orders with `displayName` last or between
+the values, for adds and for a removal or a repoint away (C13).
 
 - Sensor: Entra ID audit log.
 - Rule: [`detections/sigma/T1098.001/entra_app_federated_credential_backdoor.yml`](../../../detections/sigma/T1098.001/entra_app_federated_credential_backdoor.yml) (built).

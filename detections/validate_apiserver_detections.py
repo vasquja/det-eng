@@ -11,7 +11,7 @@ key on the same API server audit log (plus one node runtime sensor rule):
   * TRR9007 (T1611, dangerous pod spec)  - pod + controller requestObject
   * TRR9008 (T1685, disable or modify tools) - admissionregistration disable + grade
   * TRR9009 (T1134, impersonation)       - impersonatedUser presence
-  * TRR9010 (T1070, indicator removal)   - events delete/deletecollection
+  * TRR9010 (T1070, indicator removal)   - events delete/deletecollection + namespace delete
   * TRR9025 (T1546, malicious admission webhook) - admissionregistration create + grade
   * TRR9026 (T1572, pod port-forward)    - pods/portforward subresource (verb-agnostic)
   * TRR9027 (T1565.001, cluster DNS poison) - kube-system DNS ConfigMap write + Corefile grade
@@ -44,8 +44,11 @@ kindnet privileged pods). The gate is:
     requestObject (the coredns ConfigMap exists at bootstrap, so the name alone is not
     enough; the sentinel identifies the emulation's own write and excludes the
     restore). The chokepoint is gated once per procedure, on its ConfigMap's name:
-    A coredns, B kube-dns, C coredns-custom. Every procedure writes by name (B and C by
-    server-side apply), so the policy logs each with its body and sentinel.
+    A coredns, B kube-dns, C coredns-custom, and D the create (POST) of a recreated
+    coredns. A, B and C write by name (B and C by server-side apply), which the policy
+    logs at RequestResponse by resourceNames; D's create names no object, and the policy
+    logs it by its kube-system ConfigMap create rule at Request. Each carries its body
+    and sentinel.
 
 Rules in each technique folder that are NOT match-gated here (the Linux file-event
 token-read rule, for example) are still COMPILED, so a broken rule fails the run.
@@ -155,13 +158,13 @@ def coredns_gate(e):
 
     The coredns ConfigMap exists at bootstrap and kube-dns/coredns-custom may be created by
     other tooling, so name + namespace alone is not enough. The emulation puts its unique
-    'trr9027' sentinel into every write's body. The audit policy's Request rule for these
-    ConfigMaps is scoped by resourceNames, which only a request to the named object meets
-    (a create names no object when the policy is evaluated), so every procedure writes by
-    name: A patches coredns, and B and C create kube-dns and coredns-custom by server-side
-    apply, a PATCH to the named object. Each is logged with its body and sentinel. The
-    restore write carries the original Corefile and no sentinel, so it is correctly
-    excluded.
+    'trr9027' sentinel into every write's body. The audit policy's RequestResponse rule for
+    these ConfigMaps is scoped by resourceNames, which only a request to the named object
+    meets: A patches coredns, and B and C create kube-dns and coredns-custom by server-side
+    apply, a PATCH to the named object. D's plain create names no object when the policy is
+    evaluated, so the policy's kube-system ConfigMap create rule (Request) logs it. Each is
+    logged with its body and sentinel. The restore write carries the original Corefile and
+    no sentinel, so it is correctly excluded.
     """
     if e.get("objectRef.namespace") != "kube-system":
         return False
@@ -176,6 +179,18 @@ def coredns_gate_named(name):
         return e.get("objectRef.name") == name and coredns_gate(e)
     gate.describe = (f"objectRef.namespace == 'kube-system', objectRef.name == {name!r}, and "
                      "some field contains 'trr9027'")
+    return gate
+
+
+def coredns_gate_created(name):
+    """TRR9027 D: the sentinel-marked CREATE (a POST to the collection) of DNS ConfigMap
+    `name`. A create names no object when the audit policy is evaluated, so only the
+    policy's kube-system ConfigMap create rule (Request) puts its body, and so the
+    sentinel, into the log; at Metadata no create would pass this gate."""
+    def gate(e):
+        return e.get("verb") == "create" and coredns_gate_named(name)(e)
+    gate.describe = (f"verb == 'create', objectRef.namespace == 'kube-system', objectRef.name == "
+                     f"{name!r}, and some field contains 'trr9027'")
     return gate
 
 
@@ -212,6 +227,19 @@ MANIFEST = [
      "admission-control disable chokepoint", name_prefix("trr9008-")),
     ("T1685", "k8s_admission_webhook_neutered.yml", "audit", "9008 sev",
      "webhook neuter severity (Request)", name_prefix("trr9008-")),
+    # Procedure C's other request shapes, each on its own object. merge and json leave no
+    # neuter marker in the request body: only the stored object (responseObject, which
+    # the policy records at RequestResponse for an update or patch) shows the lost rules.
+    ("T1685", "k8s_admission_webhook_neutered.yml", "audit", "9008 C merge",
+     "neuter: merge patch replaces the webhooks list without rules (responseObject)",
+     name_prefix("trr9008-neuter-merge")),
+    ("T1685", "k8s_admission_webhook_neutered.yml", "audit", "9008 C json",
+     "neuter: JSON patch replaces the list, one webhook loses its rules (responseObject)",
+     name_prefix("trr9008-neuter-json")),
+    ("T1685", "k8s_admission_webhook_neutered.yml", "audit", "9008 C const",
+     "neuter: constant-false matchCondition (1 == 2)", name_prefix("trr9008-neuter-const")),
+    ("T1685", "k8s_admission_webhook_neutered.yml", "audit", "9008 C nssel",
+     "neuter: namespaceSelector that matches no namespace", name_prefix("trr9008-neuter-nssel")),
     ("T1685", "k8s_security_tool_workload_removed.yml", "audit", "9008 D",
      "enforcer workload removal fallback", name_prefix("trr9008-")),
     ("T1685", "k8s_security_tool_workload_removed.yml", "audit", "9008 D scale",
@@ -225,6 +253,9 @@ MANIFEST = [
      "events-deletion chokepoint (delete + deletecollection)", trr9010_gate),
     ("T1070", "k8s_workload_deleted_evidence.yml", "audit", "9010 D",
      "workload-record deletion fallback", trr9010_gate),
+    ("T1070", "k8s_namespace_deleted.yml", "audit", "9010 F",
+     "namespace-delete hunting rule: the actor's own accepted delete of trr9010-ns-f",
+     trr9010_gate),
     ("T1546", "k8s_admission_webhook_created.yml", "audit", "9025 A-C",
      "malicious admission-webhook create chokepoint", name_prefix("trr9025-")),
     ("T1546", "k8s_malicious_admission_webhook_created.yml", "audit", "9025 sev",
@@ -241,6 +272,12 @@ MANIFEST = [
      coredns_gate_named("coredns-custom")),
     ("T1565.001", "k8s_coredns_corefile_poisoned.yml", "audit", "9027 sev",
      "CoreDNS Corefile poison grader (Request)", coredns_gate),
+    ("T1565.001", "k8s_coredns_configmap_modified.yml", "audit", "9027 D",
+     "cluster DNS ConfigMap write chokepoint: coredns deleted and created again (POST)",
+     coredns_gate_created("coredns")),
+    ("T1565.001", "k8s_coredns_corefile_poisoned.yml", "audit", "9027 D create",
+     "Corefile grader on a recreated coredns (create body at Request; stub-zone forward to a "
+     "public IP)", coredns_gate_created("coredns")),
 ]
 
 # Folders whose other rules are compiled (not match-gated) so a break still fails.

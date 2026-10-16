@@ -13,7 +13,10 @@
 # Run ONE procedure:
 #   ./emulate_k8s.sh a      delete a ValidatingWebhookConfiguration
 #   ./emulate_k8s.sh b      delete a MutatingWebhookConfiguration
-#   ./emulate_k8s.sh c      neuter a webhook config in place (failurePolicy Ignore, rules [])
+#   ./emulate_k8s.sh c      neuter a webhook config in place (failurePolicy Ignore, rules []), then
+#                           four more neuters of their own configs: a merge patch and a JSON
+#                           patch that replace the webhooks list and drop rules, a constant
+#                           matchCondition, and a namespaceSelector that matches no namespace
 #   ./emulate_k8s.sh d      scale-to-zero (kubectl scale, then patch) and delete a stand-in enforcer Deployment
 #   ./emulate_k8s.sh gap    node-local bypass demonstration (read-only)
 #   ./emulate_k8s.sh all    every item, in order, then clean up
@@ -32,7 +35,8 @@ log() { printf '[trr9008] %s\n' "$*" >&2; }
 
 cleanup() {
   log "cleanup: removing every trr9008- object"
-  kubectl delete validatingwebhookconfiguration trr9008-vwc trr9008-neuter --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete validatingwebhookconfiguration trr9008-vwc trr9008-neuter trr9008-neuter-merge \
+    trr9008-neuter-json trr9008-neuter-const trr9008-neuter-nssel --ignore-not-found >/dev/null 2>&1 || true
   kubectl delete mutatingwebhookconfiguration trr9008-mwc --ignore-not-found >/dev/null 2>&1 || true
   kubectl delete namespace "$NS" --ignore-not-found >/dev/null 2>&1 || true
 }
@@ -61,6 +65,51 @@ procedure_c() {
     '{"webhooks":[{"name":"w.trr9008.example.com","admissionReviewVersions":["v1"],"sideEffects":"None","failurePolicy":"Ignore","clientConfig":{"service":{"namespace":"trr9008","name":"trr9008-nosvc","path":"/nope","port":443}},"rules":[]}]}' \
     >/dev/null 2>&1 || true
   kubectl delete validatingwebhookconfiguration trr9008-neuter --ignore-not-found >/dev/null 2>&1 || true
+  procedure_c_variants
+}
+
+# The same harmless enforcing config under another name ($1), for one neuter variant.
+_apply_neuter_copy() {
+  sed "s/^  name: trr9008-neuter\$/  name: $1/" "$SCRIPT_DIR/k8s-neuter-vwc.yaml" \
+    | kubectl apply -f - >/dev/null 2>&1 || true
+}
+
+# Procedure C, more request shapes of the same in-place neuter. Each runs on its own
+# harmless config (rules match only the bogus trr9008.example.com group), so the
+# validator proves each shape on its own object name. The audit policy logs these
+# patches at RequestResponse, so responseObject carries the stored object after each.
+#   merge  - a JSON merge patch replaces the whole webhooks list with a webhook that
+#            has no rules key: the request body shows no neuter marker; only the
+#            stored object shows that the webhook lost its rules.
+#   json   - a JSON patch replaces the whole list, keeping rules on one webhook and
+#            dropping them from a second one.
+#   const  - a matchConditions entry whose CEL expression names no variable and is
+#            false (1 == 2), so the webhook skips every request.
+#   nssel  - a namespaceSelector that requires kubernetes.io/metadata.name to be
+#            absent; the API server sets that label on every namespace.
+procedure_c_variants() {
+  local w='{"name":"w.trr9008.example.com","admissionReviewVersions":["v1"],"sideEffects":"None","clientConfig":{"service":{"namespace":"trr9008","name":"trr9008-nosvc","path":"/nope","port":443}}'
+  local r='"rules":[{"apiGroups":["trr9008.example.com"],"apiVersions":["v1"],"operations":["CREATE"],"resources":["widgets"],"scope":"Namespaced"}]'
+  log "C: merge patch replaces the webhooks list of trr9008-neuter-merge with a webhook without rules"
+  _apply_neuter_copy trr9008-neuter-merge
+  kubectl patch validatingwebhookconfiguration trr9008-neuter-merge --type=merge \
+    -p "{\"webhooks\":[${w}}]}" >/dev/null 2>&1 || true
+  log "C: JSON patch replaces the webhooks list of trr9008-neuter-json, dropping rules from one webhook"
+  _apply_neuter_copy trr9008-neuter-json
+  kubectl patch validatingwebhookconfiguration trr9008-neuter-json --type=json \
+    -p "[{\"op\":\"replace\",\"path\":\"/webhooks\",\"value\":[${w},${r}},${w/w.trr9008/w2.trr9008}}]}]" >/dev/null 2>&1 || true
+  log "C: add a constant-false matchCondition (1 == 2) to trr9008-neuter-const"
+  _apply_neuter_copy trr9008-neuter-const
+  kubectl patch validatingwebhookconfiguration trr9008-neuter-const --type=merge \
+    -p '{"webhooks":[{"name":"w.trr9008.example.com","admissionReviewVersions":["v1"],"sideEffects":"None","clientConfig":{"service":{"namespace":"trr9008","name":"trr9008-nosvc","path":"/nope","port":443}},"rules":[{"apiGroups":["trr9008.example.com"],"apiVersions":["v1"],"operations":["CREATE"],"resources":["widgets"],"scope":"Namespaced"}],"matchConditions":[{"name":"never","expression":"1 == 2"}]}]}' \
+    >/dev/null 2>&1 || true
+  log "C: set a namespaceSelector on trr9008-neuter-nssel that matches no namespace"
+  _apply_neuter_copy trr9008-neuter-nssel
+  kubectl patch validatingwebhookconfiguration trr9008-neuter-nssel \
+    -p '{"webhooks":[{"name":"w.trr9008.example.com","namespaceSelector":{"matchExpressions":[{"key":"kubernetes.io/metadata.name","operator":"DoesNotExist"}]}}]}' \
+    >/dev/null 2>&1 || true
+  kubectl delete validatingwebhookconfiguration trr9008-neuter-merge trr9008-neuter-json \
+    trr9008-neuter-const trr9008-neuter-nssel --ignore-not-found >/dev/null 2>&1 || true
 }
 
 # Procedure D — remove a stand-in for the enforcer's workload (delete + scale-to-zero).

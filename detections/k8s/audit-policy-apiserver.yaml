@@ -16,6 +16,17 @@
 #     the schedule) is present. Metadata would make those rules blind.
 #   * RBAC (TRR9004): Request level, so requestObject (roleRef / subjects / rules)
 #     is present to grade a dangerous grant.
+#   * Admission-control objects (TRR9008, TRR9025): update and patch at
+#     RequestResponse, so responseObject (the stored object after the write) shows
+#     a webhook that lost its rules whatever the patch type; create and delete at
+#     Request. They hold no secret (a caBundle is a public CA certificate).
+#   * Cluster DNS ConfigMaps (TRR9027): writes to coredns / kube-dns /
+#     coredns-custom at RequestResponse (the stored Corefile too), and every ConfigMap
+#     create in kube-system at Request, so the Corefile is present. That create rule
+#     also logs the body of every other ConfigMap created in kube-system, which can
+#     hold secrets (Helm release payloads; see the rule), and a Corefile can hold
+#     credentials (route53, azure, tsig). Read the two TRR9027 rules below before you
+#     deploy this policy.
 #   * Secrets and serviceaccounts/token (TRR9006): Metadata level, NEVER Request or
 #     RequestResponse -- those copy the Secret's base64 data and the signed token
 #     into the log, turning the log itself into a credential store.
@@ -72,36 +83,97 @@ rules:
       - group: "rbac.authorization.k8s.io"
         resources: ["roles", "clusterroles", "rolebindings", "clusterrolebindings"]
 
-  # --- TRR9008: admission-control writes at Request (requestObject.webhooks) ---
-  # Delete fires the chokepoint at Metadata anyway, but Request is needed to GRADE a
-  # neuter (failurePolicy: Ignore / rules: []), which lives only in requestObject.
-  # create is recorded too, so the policy also serves a future malicious-webhook
-  # persistence report; the TRR9008 chokepoint still excludes create.
-  - level: Request
-    verbs: ["create", "update", "patch", "delete", "deletecollection"]
+  # --- TRR9008: admission-control updates and patches at RequestResponse ---
+  # The neuter grader reads the request body (failurePolicy: Ignore / rules: []) and,
+  # for an update or patch, the STORED object after the write (responseObject, which
+  # only RequestResponse records). The request body of a JSON merge patch or a JSON
+  # patch that replaces the webhooks list cannot show that a webhook lost its rules
+  # (the patch type is not logged); the stored object can. These objects hold no
+  # secret: a webhook's clientConfig is a Service reference or a URL (the API rejects
+  # user:password@ in a webhook URL) and a caBundle, which is a public CA
+  # certificate; a ValidatingAdmissionPolicy holds CEL expressions. The response is
+  # the whole object (with managedFields), so these records are larger.
+  - level: RequestResponse
+    verbs: ["update", "patch"]
     resources:
       - group: "admissionregistration.k8s.io"
         resources: ["validatingwebhookconfigurations", "mutatingwebhookconfigurations",
                      "validatingadmissionpolicies", "validatingadmissionpolicybindings"]
 
-  # --- TRR9027: cluster DNS ConfigMap writes in kube-system at Request ---
+  # --- TRR9008 / TRR9025: admission-control creates and deletes at Request ---
+  # Delete fires the chokepoint at Metadata anyway; create at Request carries the
+  # webhook clientConfig the TRR9025 malicious-webhook grader reads.
+  - level: Request
+    verbs: ["create", "delete", "deletecollection"]
+    resources:
+      - group: "admissionregistration.k8s.io"
+        resources: ["validatingwebhookconfigurations", "mutatingwebhookconfigurations",
+                     "validatingadmissionpolicies", "validatingadmissionpolicybindings"]
+
+  # --- TRR9027: cluster DNS ConfigMap writes in kube-system at RequestResponse ---
   # The coredns Corefile (and the kube-dns/coredns-custom redirects) live in
   # requestObject.data, which only Request level records, so the content grader can tell
-  # a poisoning edit from a benign one. Scoped by resourceNames to the three DNS
-  # ConfigMaps only, so no other kube-system ConfigMap has its body copied into the log.
+  # a poisoning edit from a benign one. RequestResponse adds responseObject, the stored
+  # ConfigMap after the write: its Corefile is a plain string whatever the patch type,
+  # so a JSON patch is graded by the same grammar as a full-object write. Scoped by
+  # resourceNames to the three DNS ConfigMaps only, so no other kube-system ConfigMap has
+  # its body copied into the log by this rule.
+  # What it copies into the log: the full Corefile, twice (request and stored object),
+  # on every write, and every other data key of these ConfigMaps (k3s NodeHosts, the
+  # coredns-custom snippets). A Corefile can hold credentials inline: the route53
+  # plugin's aws_access_key (an AWS access key ID and secret key; deprecated but still
+  # read), the azure plugin's 'secret' (a client secret), and the tsig plugin's
+  # 'secret NAME KEY' (CoreDNS plugin documentation). Then the
+  # audit log holds those credentials, as readable as the ConfigMap, and kept as long
+  # as the log. Keep such credentials out of the Corefile (the route53 plugin can read
+  # the AWS SDK credential chain, for example an IRSA role), or protect and retain the
+  # audit log as you would the credential.
   # Writes only; reads stay dropped by the None rule below. Above the catch-all so it wins.
   # resourceNames needs a name when the policy is evaluated: a PATCH or PUT to the named
   # object (kubectl patch/edit/replace, and server-side apply, which creates the object
-  # by a PATCH) is logged here at Request, but a create (a POST to the collection, as
+  # by a PATCH) is logged here at RequestResponse, but a create (a POST to the collection, as
   # `kubectl create configmap` sends) names no object, so it falls to the Metadata
-  # catch-all with no body. The TRR9027 emulation writes by name for that reason.
-  - level: Request
+  # catch-all with no body; the create rule below logs it at Request. The TRR9027
+  # emulation writes by name for that reason (procedure D proves the create rule).
+  - level: RequestResponse
     namespaces: ["kube-system"]
     verbs: ["create", "update", "patch", "delete"]
     resources:
       - group: ""
         resources: ["configmaps"]
         resourceNames: ["coredns", "kube-dns", "coredns-custom"]
+
+  # --- TRR9027: ConfigMap creates in kube-system at Request ---
+  # The rule above cannot select a create (a POST to the collection names no object when
+  # the policy is evaluated; the RBAC documentation says the same for a create, and the
+  # audit policy matches the same request attributes), so a delete-and-recreate of coredns would
+  # reach the log with no body. This rule logs every ConfigMap CREATE in kube-system at
+  # Request, so the Corefile grader sees a recreated coredns too. What it adds to the
+  # log: the full body of EVERY ConfigMap created in kube-system. The API documents
+  # Secrets, not ConfigMaps, for confidential data, but some tools store secrets in
+  # kube-system ConfigMaps anyway:
+  #   - Helm release storage. Helm 2 (Tiller) stores each release revision as a
+  #     ConfigMap in Tiller's namespace (kube-system by default), and Helm 3 does the
+  #     same in the release namespace when HELM_DRIVER=configmap (a release installed
+  #     into kube-system). The release payload (base64 of gzip, decodable by anyone who
+  #     reads the log) holds the rendered manifests, Secret data included, and the
+  #     chart values (passwords, tokens). Each upgrade creates a new revision ConfigMap,
+  #     so this rule logs every one.
+  #   - Any add-on that keeps a credential in a kube-system ConfigMap.
+  # Other kube-system creates are cluster bootstrap (kubeadm-config, kubelet-config,
+  # kube-proxy, coredns, extension-apiserver-authentication and kube-root-ca.crt, which
+  # hold configuration and public CA certificates) and add-on installs. Updates,
+  # patches and reads of the other kube-system ConfigMaps stay at Metadata or None.
+  # A cluster that runs Helm 2/Tiller, or Helm 3 with HELM_DRIVER=configmap into
+  # kube-system, or an add-on that keeps a credential in a kube-system ConfigMap, MUST
+  # drop this rule (or move that storage to Secrets: Helm 3's default driver) and
+  # accept that the grader sees a recreated coredns at the chokepoint only.
+  - level: Request
+    namespaces: ["kube-system"]
+    verbs: ["create"]
+    resources:
+      - group: ""
+        resources: ["configmaps"]
 
   # --- TRR9006: Secret reads at Metadata (NEVER Request/RequestResponse) ---
   # Above every None rule, so a secret read is always recorded. Metadata carries

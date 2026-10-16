@@ -44,16 +44,11 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | ID | Rule | Problem | Kind | Severity |
 |----|------|---------|------|----------|
 | [L14](#l14-exe-and-comm-allowlists-trust-the-binary-not-the-code-in-it) | three Linux rules | allowlisted tools that ordinary users run (kcapi, debuggers) hide injected code | evasion | medium |
-| [K4](#k4-k8s_admission_webhook_neutered-neuters-the-audit-record-cannot-show) | `T1685/k8s_admission_webhook_neutered` | never-matching selectors, merge-patch list replacement, key-order dependence | false negative, false positive | low |
-| [K9](#k9-k8s_coredns_corefile_poisoned-what-the-root-scoped-grader-does-not-grade) | `T1565.001/k8s_coredns_corefile_poisoned` | creates, stub zones and imports are seen by the chokepoint only | description, policy gap | low |
-| [K13](#k13-no-rule-matches-a-namespace-delete) | `T1070/k8s_events_deleted` | a user's namespace delete (which destroys its Events) matches no rule | false negative | low |
-| [C6](#c6-gcp_workforce_principalset_privileged_binding-group-scoped-admin-grants-fire) | `T1199/gcp_workforce_principalset_privileged_binding` | group-scoped grants of any admin role fire | false positive | medium |
-| [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss | false negative (documented) | low |
-| [C13](#c13-entra_app_federated_credential_backdoor-a-credential-removal-fires) | `T1098.001/entra_app_federated_credential_backdoor` | the issuer regex also reads `oldValue`, so a removal fires | false positive (unverified) | low |
-| [C14](#c14-aws_resource_policy_made_public-a-single-statement-object) | `T1537/aws_resource_policy_made_public` | a policy whose `Statement` is one object, not a list, misses | false negative | low |
-| [C15](#c15-public-policy-rules-several-scoped-public-statements-fire) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | two or more scoped public Allow statements fire | false positive | low |
-| [C16](#c16-aws_github_oidc_role_trust_abuse-several-sub-conditions-grade-high) | `T1098.001/aws_github_oidc_role_trust_abuse` | a trust with several `sub` conditions grades high even when every wildcard is pinned | false positive (grading) | low |
-| [S1](#s1-large-patterns-exceed-elasticsearchs-default-regex-budget) | three rules | some patterns exceed Elasticsearch's default determinization budget | portability | low |
+| [K4](#k4-k8s_admission_webhook_neutered-neuters-the-audit-record-cannot-show) | `T1685/k8s_admission_webhook_neutered` | selectors on other labels, self-contradicting selectors or conditions, variable-bound constants | false negative | low |
+| [K9](#k9-k8s_coredns_corefile_poisoned-what-the-corefile-grader-does-not-grade) | `T1565.001/k8s_coredns_corefile_poisoned` | private non-cluster stub zones, `import`, mid-token CR, `#<TAB>` comments | false negative, false positive | low |
+| [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
+| [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
+| [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
 
 ## Linux (auditd and node file events)
 
@@ -114,72 +109,83 @@ whether `arping` belongs in the allowlist.
 ### K4. k8s_admission_webhook_neutered: neuters the audit record cannot show
 
 - **Rule**: [`sigma/T1685/k8s_admission_webhook_neutered.yml`](sigma/T1685/k8s_admission_webhook_neutered.yml) (level high).
-- **Kind**: false negative, false positive. **Severity**: low.
-- **Problem**: the rule cannot tell these from a legitimate edit: a
-  `namespaceSelector`/`objectSelector` that matches nothing; a `matchConditions`
-  expression that is always false but is not the literal `false`; a `--type=merge`
-  patch that replaces the webhooks list with a webhook that has no `rules` key (the
-  patch type is not logged); a JSON patch that replaces the whole list and drops
-  `rules` for only some webhooks. Its update branch (`sel_rules_omitted`) assumes the
-  API server's Go field order, so it fires on every full-object update if the log
-  pipeline sorts keys.
-- **Evidence**: the rule's description and falsepositives ("Key order").
+- **Kind**: false negative. **Severity**: low.
+- **Problem**: the shipped policy now logs webhook-configuration update and patch at
+  RequestResponse, so merge-patch and JSON-patch list replacements, rule-less webhooks
+  in sorted key order, escaped-blank constants (`"false\n"`) and `kubernetes.io/metadata.name
+  In [""]` selectors are graded. What is left cannot be told from a legitimate edit in
+  one record:
+  1. a `namespaceSelector`/`objectSelector` on a label other than
+     `kubernetes.io/metadata.name` that matches nothing, or a
+     `kubernetes.io/metadata.name In` list that names no real namespace;
+  2. a selector or condition that contradicts itself (the same key with `Exists` and
+     `DoesNotExist`, `In` and `NotIn` of one value): equality of two keys needs a
+     back-reference, which the portable subset lacks;
+  3. a `matchConditions` expression that reads a variable but never matches in
+     practice, or a constant built with a macro that binds a variable
+     (`[1].all(x, x > 1)`); constants are matched only when written from literals,
+     operators, `in` and a fixed list of functions (`size`, `int`, `string`, `matches`, ...);
+  4. at Request level (a policy without the RequestResponse rule), list replacements and
+     JSON-patch selectors are seen by the chokepoint only.
+- **Evidence**: cases `matchconditions-size-of-object-labels`,
+  `namespace-selector-name-notin-empty-string`,
+  `stored-namespace-selector-name-in-real-namespace`; the rule's description ("Blind
+  spots").
 - **Fix**: needs the cluster's labels or the old object (enrichment); none planned in
   Sigma.
 
-### K9. k8s_coredns_corefile_poisoned: what the root-scoped grader does not grade
+### K9. k8s_coredns_corefile_poisoned: what the Corefile grader does not grade
 
 - **Rule**: [`sigma/T1565.001/k8s_coredns_corefile_poisoned.yml`](sigma/T1565.001/k8s_coredns_corefile_poisoned.yml) (level high).
-- **Kind**: description, policy gap. **Severity**: low.
-- **Problem**:
-  1. The `create` verb grades only under a policy that logs ConfigMap creates at
-     Request. The shipped policy logs a create at Metadata, so a delete-and-recreate
-     of `coredns` is seen by the chokepoint only.
-  2. The forward-to-IP clause grades only the root server block. A stub zone or a
-     domain-scoped forward to an IP is graded by the chokepoint only, because its
-     record does not differ from a private stub zone.
-  3. The clause is a simplified Caddyfile grammar written in portable regex. It
-     does not follow `import` (snippets or files) and reads at most three nested
-     brace levels. A brace inside a quoted or longer token counts as a brace, a `#`
-     inside a token starts a comment, a tab inside a comment ends it (full-object
-     form), and tab-separated root keys are not recognised.
-  4. The plugin clause fires on a commented-out directive written `#<TAB>rewrite`
-     (false positive): the portable subset cannot say "line break only".
-- **Evidence**: confounders `poisoned-but-wrong-name`, `-wrong-namespace`,
-  `-verb-delete`; near-misses `private-stub-zone-forward`,
-  `jsonpatch-private-stub-zone-forward`, `stub-before-root-forwards-ip`; positives
-  `root-after-stub-block`, `root-after-tab-separated-import`.
-- **Fix**: none planned for 2 to 4; 1 is a policy-scope decision.
-
-### K13. No rule matches a namespace delete
-
-- **Rule**: [`sigma/T1070/k8s_events_deleted.yml`](sigma/T1070/k8s_events_deleted.yml) (and none other).
-- **Kind**: false negative. **Severity**: low.
-- **Problem**: deleting a namespace destroys its Events. The namespace controller's
-  sweep is filtered as teardown, and the actor's own `delete` of the namespace is
-  matched by no rule (except `k8s_security_tool_workload_removed` for
-  gatekeeper-system, kyverno and falco).
-- **Evidence**: case `namespace-delete-known-miss` (confounder, KNOWN MISS); corpus
-  `k8s-audit-gitops-ci`, where a CI deployer deletes `preview-pr-*` namespaces
-  routinely.
-- **Fix**: a low-level hunting rule on `namespaces` `delete` that baselines lifecycle
-  identities; its budget is a human decision.
-- **Then**: relabel `namespace-delete-known-miss` as that rule's positive.
+- **Kind**: false negative, false positive. **Severity**: low.
+- **Problem**: the shipped policy now logs the three DNS ConfigMaps at RequestResponse
+  and kube-system ConfigMap creates at Request, so a delete-and-recreate, a JSON patch
+  (through the stored Corefile), quoted directives, directives on the brace line,
+  `{$VAR}` placeholders, NBSP/NEL blanks, IPv4-mapped public targets and forwards of the
+  cluster zone are graded. What is left:
+  1. a forward of a zone other than the cluster zone to a **private** address, outside
+     the root block: its record differs from a corporate stub zone only in the zone name
+     and the address, so it is seen by the chokepoint only;
+  2. the root-block grammar does not follow `import`; in the JSON-patch text (no
+     responseObject) it reads one nested brace level, `#` comments as plain text and no
+     quoted `import` path, because the full grammar exceeds Lucene's budget there;
+  3. CoreDNS drops a carriage return even inside a token (`ho<CR>sts`) and splits on
+     `unicode.IsSpace`; no portable construct names CR, VT or FF alone, and the forward
+     grammars rely on `\s`, which holds NBSP and NEL only in Python;
+  4. a commented-out directive written `#<TAB>rewrite` fires the plugin clause (false
+     positive): the portable subset cannot say "line break only";
+  5. the cluster-zone clause knows only `cluster.local`, and entries in k3s's
+     `NodeHosts` data key are not graded.
+- **Evidence**: near-misses `private-stub-zone-forward`,
+  `jsonpatch-private-stub-zone-forward`, `stub-before-root-forwards-ip`,
+  `lookalike-zone-mycluster-local`, `stub-zone-forward-ipv4-mapped-private`; positives
+  `root-after-stub-block`, `jsonpatch-root-after-stub-block`,
+  `stub-zone-forward-ipv4-mapped-public`; filtered `k3s-node-controller-nodehosts-update`,
+  `minikube-default-annotation-patch`.
+- **Fix**: none planned for 1 to 5.
 
 ## Cloud (AWS, Azure, GCP)
 
-### C6. gcp_workforce_principalset_privileged_binding: group-scoped admin grants fire
+### C6. gcp_workforce_principalset_privileged_binding: where the privileged-role tier ends
 
 - **Rule**: [`sigma/T1199/gcp_workforce_principalset_privileged_binding.yml`](sigma/T1199/gcp_workforce_principalset_privileged_binding.yml) (level medium).
-- **Kind**: false positive. **Severity**: medium.
-- **Problem**: a grant of any role containing `admin` to a group- or attribute-scoped
-  workforce principal set fires. The description now says so. Requiring a whole-pool
-  member would drop TRR9020 Procedure C, whose backdoor scopes are exactly
-  `/group/<id>` and `/attribute.NAME/VALUE`.
-- **Evidence**: corpus `gcp-iam-federation-admin` (terraform granting
-  `roles/container.admin` to one IdP group); budgets.json `why`.
-- **Fix**: a narrower privileged-role list, or a baseline of approved groups; a
-  human decision.
+- **Kind**: false negative, false positive (trade-off). **Severity**: low.
+- **Problem**: the rule now has two tiers. A role that controls IAM fires at every member
+  scope: `roles/owner`, `roles/editor`, `roles/iam.*Admin|Creator|User`,
+  `roles/resourcemanager.{project,folder,organization}IamAdmin`,
+  `roles/resourcemanager.{folder,organization}Admin`, `roles/orgpolicy.policyAdmin`, and a
+  custom role whose ID contains `Owner`, `Editor` or `Admin`. Any other role whose name
+  contains owner, editor or admin (`roles/secretmanager.admin`, `roles/cloudkms.admin`,
+  `roles/logging.admin`, `roles/bigquery.dataOwner`, ...) fires only when granted to the
+  whole pool. So a backdoor that uses such a service-level role at `/group/` or
+  `/attribute.` scope is missed, and a narrow custom role named `*Admin` fires at every
+  scope. The corpus hits went from 3 to 0 (`gcp-iam-federation-admin`).
+- **Evidence**: cases `group-scoped-container-admin`, `group-scoped-bigquery-data-editor`,
+  `group-scoped-compute-security-admin`, `subject-scoped-bigquery-data-owner` (near-miss);
+  `group-scoped-orgpolicy-policy-admin`, `group-scoped-custom-admin-role`,
+  `whole-pool-bigquery-data-editor` (positive).
+- **Fix**: a human approves where the tier boundary sits, or a pipeline baselines the
+  approved groups so every admin role can fire at every scope.
 
 ### C12. aws_cognito_unauthenticated_identity_use: keyed on the console's role name
 
@@ -190,77 +196,53 @@ whether `arping` belongs in the allowlist.
   has a site-specific name is missed. The rule's description says so.
 - **Evidence**: the `PLATFORM_NAMING` waiver in
   [`check_sufficiency.py`](check_sufficiency.py) keeps only `Unauth` through the
-  rename test for this reason.
-- **Fix**: find a signal of a guest identity that does not depend on the role name;
-  until then the waiver and the description stay.
+  rename test for this reason. [TRR9016](../research/trr9016/aws/README.md) (Blind spots)
+  sets out what the documents confirm: the guest fact is the token's `amr` claim, which
+  no documented default-trail field carries. Two points are **unverified**: what
+  `webIdFederationData.attributes` holds for a guest (the fixtures' `attributes: {}` is
+  synthetic), and whether the enhanced flow's background `AssumeRoleWithWebIdentity`
+  reaches the customer trail with `policyArns` naming
+  `AmazonCognitoUnauthenticatedIdentities`, which would be a guest marker independent of
+  the role name.
+- **Fix**: capture one guest and one signed-in issuance live, in both flows. If either
+  unverified field separates them, key the rule on it and drop the waiver; if not, the
+  entry stays as a proven telemetry limit.
 
-### C13. entra_app_federated_credential_backdoor: a credential removal fires
-
-- **Rule**: [`sigma/T1098.001/entra_app_federated_credential_backdoor.yml`](sigma/T1098.001/entra_app_federated_credential_backdoor.yml).
-- **Kind**: false positive (unverified). **Severity**: low.
-- **Problem**: the issuer regex reads the whole `targetResources` text, including
-  `oldValue`, so removing a federated credential with an unapproved issuer fires.
-- **Evidence**: reported by the cloud rule-fix review; no recorded removal event.
-- **Fix**: key on `newValue` only, once a removal record's shape is documented.
-
-### C14. aws_resource_policy_made_public: a single statement object
-
-- **Rule**: [`sigma/T1537/aws_resource_policy_made_public.yml`](sigma/T1537/aws_resource_policy_made_public.yml) (level high).
-- **Kind**: false negative. **Severity**: low.
-- **Problem**: a policy whose `Statement` is one object rather than a list flattens to
-  `...Statement.*` field names that the rule does not read. It also missed before
-  the per-statement fix.
-- **Evidence**: reported by the cloud rule-fix review.
-- **Fix**: read both flattenings, with a positive case for each.
-
-### C15. Public-policy rules: several scoped public statements fire
+### C15. Public-policy rules: a public statement after the fifth, and scope-key presence
 
 - **Rules**: [`sigma/T1537/aws_resource_policy_made_public.yml`](sigma/T1537/aws_resource_policy_made_public.yml),
   [`sigma/T1537/aws_efs_file_system_policy_made_public.yml`](sigma/T1537/aws_efs_file_system_policy_made_public.yml).
 - **Kind**: false positive. **Severity**: low.
-- **Problem**: "this statement has no scoping key" cannot be written in portable
-  regex, so the scoping filter applies only when the policy has one public Allow
-  statement. A policy with two or more public Allow statements that are all scoped
-  (an SQS queue subscribed to two SNS topics) fires. A scoping key named only
-  outside the statement's Condition (in a Sid) no longer suppresses: the earlier
-  rule allowed that evasion.
-- **Evidence**: cases `sqs-two-scoped-public-statements-fire`,
-  `efs-two-org-scoped-public-statements-fire`, `sqs-public-allow-scoping-key-only-in-sid`.
-- **Fix**: decode the policy JSON in the log pipeline and test each statement, or a
-  count-based pattern per statement.
-
-### C16. aws_github_oidc_role_trust_abuse: several sub conditions grade high
-
-- **Rule**: [`sigma/T1098.001/aws_github_oidc_role_trust_abuse.yml`](sigma/T1098.001/aws_github_oidc_role_trust_abuse.yml) (level high).
-- **Kind**: false positive (grading). **Severity**: low.
-- **Problem**: the portable rewrite grades a trust per document, not per `sub`
-  value. A trust with two or more `sub` conditions and any wildcard grades high, even
-  when each wildcard sits after a pinned repository; the low rule then stays quiet,
-  so a write still fires exactly one of the two rules.
-- **Evidence**: case `two-subs-pinned-ref-wildcards-grade-high`.
-- **Fix**: decode the trust policy and grade each `sub` value.
-
-## Sigma backend portability
-
-### S1. Large patterns exceed Elasticsearch's default regex budget
-
-- **Rules**: [`aws_resource_policy_made_public`](sigma/T1537/aws_resource_policy_made_public.yml),
-  [`aws_efs_file_system_policy_made_public`](sigma/T1537/aws_efs_file_system_policy_made_public.yml),
-  [`k8s_security_tool_workload_removed`](sigma/T1685/k8s_security_tool_workload_removed.yml).
-- **Kind**: portability. **Severity**: low.
-- **Problem**: every pattern is in the portable subset (`.github/scripts/check_sigma_regex.py`),
-  but some statement-level values exceed Lucene's default `max_determinized_states`
-  (10000), so Elasticsearch rejects them unless the budget is raised.
-- **Evidence**: a Lucene 10.1 build of `RegExp` run over every pattern wrapped in `.*`.
-- **Fix**: raise the budget for these rules, or decode the JSON in the pipeline so
-  shorter patterns suffice.
+- **Problem**: statements 1 to 5 are now tested one by one against their own
+  Condition, so two to five scoped public Allow statements no longer fire. A public
+  Allow at statement 6 or later fires without a scope test, on purpose (a fixed-length
+  portable pattern). A scoping key is checked for presence in the statement's
+  Condition, not for its value.
+- **Evidence**: cases `sqs-two-scoped-public-statements-fire` and
+  `efs-two-org-scoped-public-statements-fire` (now filtered),
+  `sqs-6-scoped-public-statements-beyond-limit-fire`,
+  `sqs-public-allow-scoping-key-as-condition-value`,
+  `efs-public-allow-scoping-key-as-condition-value`.
+- **Fix**: decode the policy JSON in the log pipeline and test each statement.
 
 ## Checks to add
 
-- `T1098.001/entra_app_federated_credential_backdoor` has a sidecar now, but still warns
-  as thin (R5): it needs a near-miss that keeps the unapproved-issuer item and breaks
-  only `targetResources` `FederatedIdentityCredentials`. No documented Entra record of
-  that shape is known.
+None open. (The thin-negative warning on
+`T1098.001/entra_app_federated_credential_backdoor` is gone: its reordered remove and
+repoint-away near-misses pass `check_sufficiency.py`.)
+
+## Closed entries
+
+An ID stays retired after its entry closes. A sidecar `why` that names a closed ID
+points here.
+
+| ID | Closed by | Proof |
+|----|-----------|-------|
+| K13 | new hunting rule `T1070/k8s_namespace_deleted` (level low) | positive `namespace-delete-payments`; filtered dry-run and garbage-collector cases; budget 4 (`k8s-audit-gitops-ci`) |
+| C13 | `entra_app_federated_credential_backdoor` reads only `newValue`, in any key order | near-misses `fic-with-unapproved-issuer-removed`, `fic-repointed-away-new-value-first` and the other reordered cases |
+| C14 | `aws_resource_policy_made_public` reads a `Statement` that is one object | positives `s3-single-statement-object-public-read`, `sqs-single-statement-object-public-send`, `efs-single-statement-object-public-mount` |
+| C16 | `aws_github_oidc_role_trust_abuse` grades each `sub` value | near-miss `two-subs-pinned-ref-wildcards-grade-high`; positive `two-subs-pinned-ref-wildcards-go-to-high-rule` of the low rule |
+| S1 | every `\|re` value fits Lucene's default `max_determinized_states` (10000) | a Lucene 10.1 `RegExp` build over all 236 values wrapped in `.*`: largest 7,986 states (the CoreDNS JSON-patch root grammar) |
 
 ## Closing an entry
 
@@ -277,7 +259,8 @@ whether `arping` belongs in the allowlist.
    `score_benign.py --check --enforce`; regenerate `scores.json` with `--update`.
 4. Propose the lower budget (`score_benign.py --reseeds 10`) in `budgets.json`,
    which a human approves, and update its `why`.
-5. Delete the entry here, and the pointer to it in the sidecar `why`.
+5. Delete the entry here and add a row to [Closed entries](#closed-entries); a sidecar
+   `why` may keep the retired ID as a pointer.
 
 ## Reproducing a probe
 

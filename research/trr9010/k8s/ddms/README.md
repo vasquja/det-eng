@@ -19,3 +19,4 @@ shared by A–C).
 | `trr9010_k8s_c` | TRR9010.K8S.C — delete an Event (events.k8s.io) | events-delete audit event (apiGroup-agnostic) |
 | `trr9010_k8s_d` | TRR9010.K8S.D — delete a Pod or Job | pod/job-delete audit event (fallback) |
 | `trr9010_k8s_e` | TRR9010.K8S.E — clear the audit log on the node | node file sensor; no audit event (the gap) |
+| `trr9010_k8s_f` | TRR9010.K8S.F — delete a whole namespace | namespace-delete audit event (hunting) |

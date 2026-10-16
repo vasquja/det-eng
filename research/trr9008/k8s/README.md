@@ -85,7 +85,8 @@ objectRef.name with an empty objectRef.namespace; the gate for an emulation is t
 name, not the namespace. A delete is fully described at Metadata level. A neuter
 via update or patch is not: at Metadata you see that a webhook config changed but
 not that failurePolicy became Ignore or rules became empty. Grading the neuter needs
-the requestObject, which exists only at Request level.
+the requestObject, which exists only at Request level, and for some patches the stored
+object after the write (responseObject), which exists only at RequestResponse level.
 
 ### Removing the enforcer is a different edge
 
@@ -189,19 +190,50 @@ Source: [`ddms/trr9008_k8s_c.json`](ddms/trr9008_k8s_c.json) (Arrows app format)
 patch body is logged raw and keeps `"rules": []`, or `"rules": null` for a
 strategic merge patch (the `kubectl patch` default). A PUT is logged as the
 decoded, defaulted object re-encoded; `rules` is `omitempty`, so an emptied list
-leaves no `rules` key, and the grader matches a webhook whose `clientConfig` is
-followed directly by `failurePolicy`. That test assumes the API server's Go field
-order reaches the SIEM; a pipeline that sorts keys makes every update match. A
+leaves no `rules` key. The grader reads that gap from the keys around it, in the
+API server's Go field order (`name`, `clientConfig`, then directly `failurePolicy`)
+and in the order a key-sorting pipeline delivers (a validating webhook's `name`,
+`namespaceSelector`, `objectSelector`, then directly `sideEffects`; a mutating
+webhook's `reinvocationPolicy`, then directly `sideEffects`); each test needs the
+context of its own order, so a webhook that keeps its rules matches neither. A
 JSON patch carries only the ops array, and the grader reads it for an operation
 that sets `/webhooks/N/failurePolicy` to Ignore or removes or empties
 `/webhooks/N/rules`; for an operation on the whole list, a whole webhook or its
-`matchConditions` whose value fails open or adds the literal `false`; and for an
+`matchConditions` whose value fails open or adds a constant condition; and for an
 operation on the whole list or a whole webhook that leaves no non-empty `rules`
-list. A `matchConditions` expression that is the literal `false` is graded too.
-A selector that matches nothing, an always-false expression that is not the
-literal `false`, and a JSON merge patch that replaces the list with a webhook
-without `rules` cannot be told from a legitimate edit; they fire the chokepoint
-only.
+list. A `matchConditions` expression that names no variable (`object`, `oldObject`,
+`request`, `authorizer`) is a constant, the same for every request. The grader
+matches such an expression when it is built only from literals, operators, brackets,
+`in` and a fixed list of standard functions (`size`, `int`, `uint`, `double`,
+`string`, `bytes`, `bool`, `dyn`, `type`, `matches`, `startsWith`, `endsWith`,
+`contains`), with blanks between them, also the JSON escapes `\n`, `\t` and `\r` (a
+YAML block scalar ends `false` with a line break): `false`, `1 == 2`, `!true`,
+`size([]) > 0`. A constant written in another way (a macro with its own bound
+variable, such as `[1].all(x, x > 1)`, or a function outside the list) is not
+matched. A `namespaceSelector` that requires the `kubernetes.io/metadata.name` label
+to be absent or empty (`DoesNotExist`, a `matchLabels` value `""`, or `In` with only
+the empty string as values) is graded too: the API server sets that label to the
+namespace's name on every namespace, so it matches none.
+
+A JSON merge patch (`--type=merge`) that replaces the webhooks list with a webhook
+without `rules` looks like a strategic merge patch that leaves rules unchanged (the
+patch type is not logged), and a JSON patch that replaces the whole list can drop
+`rules` from one webhook only. For an update or patch the policy records the stored
+object after the write (`responseObject`, RequestResponse level), and the grader reads
+it for a webhook without rules, a constant condition or a never-matching
+`namespaceSelector`, whatever the patch type. It grades the stored state, not the
+change: the earlier state is only in the record of the object's previous write, at
+any time before, and a Sigma correlation can neither reach back an unbounded time nor
+compare a webhook across two records. A selector on any other label that matches
+nothing (or `kubernetes.io/metadata.name In` names that no namespace has), and a
+condition that reads a variable but never matches in practice
+(`request.name == 'no-such-object'`), cannot be told from a legitimate narrowing:
+whether they match depends on the labels and requests of the cluster, which the
+record does not carry. A selector or condition that contradicts itself (the same key
+with `Exists` and `DoesNotExist`, or `In` and `NotIn` of the same value) matches
+nothing on any cluster, but the grader does not detect it either: comparing two keys
+or values for equality needs a back-reference, which the portable regex subset does
+not have. They fire the chokepoint only.
 
 ### Procedure D: Remove the enforcer's workload  (`TRR9008.K8S.D`)
 
@@ -233,8 +265,11 @@ node sensor covers the control-plane bypass the API server never sees.
 
 **Telemetry requirement.** The audit policy must record the
 admissionregistration.k8s.io group for the write verbs at **Request** level, so the
-neuter's requestObject is visible, and the apps group at Request (already recorded)
-for Procedure D. Put the admission rule above the catch-all. Baseline the actor,
+neuter's requestObject is visible, and its updates and patches at
+**RequestResponse**, so the stored object (responseObject) shows a webhook that lost
+its rules whatever the patch type; and the apps group at Request (already recorded)
+for Procedure D. Webhook configurations hold no secret: a caBundle is a public CA
+certificate, and the API rejects credentials in a webhook URL. Put the admission rule above the catch-all. Baseline the actor,
 not the object.
 
 **Strategy 1 — chokepoint (covers A, B, C).**
@@ -246,11 +281,14 @@ and cluster-upgrade tooling by `user.username`.
 - Sensor: API server audit log.
 - Rule: `detections/sigma/T1685/k8s_admission_webhook_disabled.yml` (built).
 
-**Strategy 2 — severity (grades C; needs Request level).**
+**Strategy 2 — severity (grades C; needs Request level, RequestResponse for the
+stored object).**
 On top of the chokepoint, match a webhook write whose `requestObject.webhooks` sets
-failurePolicy to Ignore or an empty rules list. This needs Request level.
+failurePolicy to Ignore, an empty rules list, a constant matchCondition or a
+never-matching namespaceSelector, or whose stored object (`responseObject.webhooks`)
+has a webhook without rules, a constant condition or such a selector.
 
-- Sensor: API server audit log at Request level.
+- Sensor: API server audit log at Request and RequestResponse level.
 - Rule: `detections/sigma/T1685/k8s_admission_webhook_neutered.yml` (built).
 
 **Strategy 3 — enforcer removal (covers D).**
@@ -291,7 +329,7 @@ the neuter. A fallback covers the enforcer-workload removal.
 ## Available Emulation Tests
 
 The tests run in a lab cluster with the shared audit policy (now recording the
-admission group at Request level). The lab is a `kind` cluster; its config and audit
+admission group at Request level, and its updates and patches at RequestResponse). The lab is a `kind` cluster; its config and audit
 policy are in [`detections/k8s/`](../../../detections/k8s/). Every object is named
 `trr9008-*`, and every webhook is a no-op (failurePolicy Ignore, rules scoped to a
 bogus apiGroup) that cannot affect a real admission request. One script drives them:
@@ -304,7 +342,7 @@ with Atomic Red Team wrappers in
 |-----------|------|--------|
 | TRR9008.K8S.A | `emulate_k8s.sh a` — apply then delete a no-op ValidatingWebhookConfiguration. | **built** |
 | TRR9008.K8S.B | `emulate_k8s.sh b` — apply then delete a no-op MutatingWebhookConfiguration. | **built** |
-| TRR9008.K8S.C | `emulate_k8s.sh c` — neuter a webhook config (failurePolicy Ignore, rules []). | **built** |
+| TRR9008.K8S.C | `emulate_k8s.sh c` — neuter a webhook config (failurePolicy Ignore, rules []), then four more shapes on their own configs: a merge patch and a JSON patch that replace the webhooks list and drop rules, a constant-false matchCondition, and a namespaceSelector that matches no namespace. | **built** |
 | TRR9008.K8S.D | `emulate_k8s.sh d` — create a pause Deployment, scale it to zero with `kubectl scale` and with a patch, delete it. | **built** |
 
 ## Detections
@@ -312,7 +350,7 @@ with Atomic Red Team wrappers in
 | Strategy | Covers | Sigma rule | Sensor |
 |----------|--------|------------|--------|
 | 1 (chokepoint) | A, B, C | [`detections/sigma/T1685/k8s_admission_webhook_disabled.yml`](../../../detections/sigma/T1685/k8s_admission_webhook_disabled.yml) | API server audit log |
-| 2 (severity) | grades C | [`detections/sigma/T1685/k8s_admission_webhook_neutered.yml`](../../../detections/sigma/T1685/k8s_admission_webhook_neutered.yml) | API server audit log (Request) |
+| 2 (severity) | grades C | [`detections/sigma/T1685/k8s_admission_webhook_neutered.yml`](../../../detections/sigma/T1685/k8s_admission_webhook_neutered.yml) | API server audit log (Request, RequestResponse) |
 | 3 (fallback) | D | [`detections/sigma/T1685/k8s_security_tool_workload_removed.yml`](../../../detections/sigma/T1685/k8s_security_tool_workload_removed.yml) | API server audit log |
 
 The validator
