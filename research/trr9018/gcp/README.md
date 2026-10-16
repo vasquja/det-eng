@@ -136,9 +136,9 @@ which still contains `/workloadIdentityPools/` and so is still caught.
   `cloudaudit.googleapis.com%2Factivity` (percent-encoded `%2F`), not a decoded slash.
 - `bindingDeltas` is a nested **array**, and one `SetIAMPolicy` may carry several
   deltas (some benign). The three sub-conditions (`action`, `role`, `member`) must
-  co-occur on the **same** element. The binding rule uses a regex with lookaheads
-  bounded to a single `{…}` element so a `REMOVE`, or an unrelated `ADD` elsewhere in
-  the policy, does not fire. On a structured backend, evaluate the array element-wise.
+  co-occur on the **same** element. The binding rule uses a regex bounded to a single
+  `{…}` element, one value per order of the three parts (portable: no lookahead), so a
+  `REMOVE`, or an unrelated `ADD` elsewhere in the policy, does not fire. On a structured backend, evaluate the array element-wise.
 - The delta may also appear under `protoPayload.metadata` in some entries rather than
   `protoPayload.serviceData` — evaluate both paths.
 - `member` prefix hazard: `principalSet://` contains the substring `principal`; use an
@@ -369,8 +369,9 @@ Match `protoPayload.serviceName` `iam.googleapis.com` and `protoPayload.methodNa
 `google.iam.admin.v1.SetIAMPolicy` where one `serviceData.policyDelta.bindingDeltas`
 element has `action` `ADD`, `role` in
 {`roles/iam.workloadIdentityUser`, `roles/iam.serviceAccountTokenCreator`}, and a
-`member` containing `/workloadIdentityPools/` — matched with a lookahead regex bounded to
-one `{…}` element so the three conditions co-occur. This catches both the set form
+`member` containing `/workloadIdentityPools/` — matched with a regex bounded to one `{…}`
+element, one value per order of the three parts (portable: no lookahead), so the three
+conditions co-occur. This catches both the set form
 `principalSet://` and the single-subject form `principal://`.
 
 - Sensor: Cloud Audit Logs (Admin Activity).

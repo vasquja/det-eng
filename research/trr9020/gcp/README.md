@@ -166,8 +166,9 @@ privilege heuristic, not a pure type discriminator.
   the "no condition" branch.
 - `bindingDeltas` is a nested **array**, and one `SetIamPolicy` may carry several deltas
   (some benign). The three sub-conditions (`action`, `member`, `role`) must co-occur on the
-  **same** element. The binding rule uses a regex with lookaheads bounded to a single
-  `{…}` element so a `REMOVE`, or an unrelated `ADD` elsewhere in the policy, does not fire.
+  **same** element. The binding rule uses a regex bounded to a single `{…}` element, one
+  value per order of the three parts (portable: no lookahead), so a `REMOVE`, or an
+  unrelated `ADD` elsewhere in the policy, does not fire.
   On a structured backend, evaluate the array element-wise.
 - `member` prefix hazard: `principalSet://` contains the substring `principal`; match on
   the shared `/workforcePools/` path so both `principal://` and `principalSet://` are caught
@@ -389,8 +390,8 @@ Match `protoPayload.serviceName` `cloudresourcemanager.googleapis.com` and
 `protoPayload.methodName` ending `SetIamPolicy` where one
 `serviceData.policyDelta.bindingDeltas` element has `action` `ADD`, a `member` containing
 `/workforcePools/`, and a privileged `role` (`roles/owner`, `roles/editor`, or an `*Admin`
-role) — matched with a lookahead regex bounded to one `{…}` element so the three conditions
-co-occur. This catches both the set form `principalSet://` and the single-subject form
+role) — matched with a regex bounded to one `{…}` element, one value per order of the three
+parts (portable: no lookahead), so the three conditions co-occur. This catches both the set form `principalSet://` and the single-subject form
 `principal://`. It is a medium-fidelity privilege heuristic.
 
 - Sensor: Cloud Audit Logs (Admin Activity).

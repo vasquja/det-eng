@@ -50,11 +50,20 @@ detection:
     protoPayload.serviceName: 'cloudresourcemanager.googleapis.com'
     protoPayload.methodName|endswith: 'SetIamPolicy'
   selection_workforce_privileged_binding:
-    # Role lookahead is NOT anchored to the predefined "roles/" prefix, so a custom
-    # project/organisation role (projects/<id>/roles/... or organizations/<org>/roles/...) whose
-    # name carries owner/editor/admin is caught too; benign scoped roles (viewer, a reader custom
-    # role) do not match. Owner/Editor/Admin are case-insensitive via explicit classes.
-    protoPayload.serviceData.policyDelta.bindingDeltas|re: '\{(?=[^}]*"action": "ADD")(?=[^}]*/workforcePools/)(?=[^}]*"role": "[^"]*(?:[Oo]wner|[Ee]ditor|[Aa]dmin)[^"]*")'
+    # One binding delta object ('{' up to its first '}') that holds action ADD, a
+    # /workforcePools/ member and a privileged role, in any order: portable regex (no
+    # lookahead), one value per order of the three parts. The role test is NOT anchored to
+    # the predefined "roles/" prefix, so a custom project/organisation role
+    # (projects/<id>/roles/... or organizations/<org>/roles/...) whose name carries
+    # owner/editor/admin is caught too; benign scoped roles (viewer, a reader custom role)
+    # do not match. Owner/Editor/Admin are case-insensitive via explicit classes.
+    protoPayload.serviceData.policyDelta.bindingDeltas|re:
+      - '\{[^}]*\"action\": \"ADD\"[^}]*/workforcePools/[^}]*\"role\": \"[^"]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^"]*\"'
+      - '\{[^}]*\"action\": \"ADD\"[^}]*\"role\": \"[^"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^"}]*\"[^}]*/workforcePools/'
+      - '\{[^}]*/workforcePools/[^}]*\"action\": \"ADD\"[^}]*\"role\": \"[^"]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^"]*\"'
+      - '\{[^}]*/workforcePools/[^}]*\"role\": \"[^"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^"}]*\"[^}]*\"action\": \"ADD\"'
+      - '\{[^}]*\"role\": \"[^"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^"}]*\"[^}]*\"action\": \"ADD\"[^}]*/workforcePools/'
+      - '\{[^}]*\"role\": \"[^"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^"}]*\"[^}]*/workforcePools/[^}]*\"action\": \"ADD\"'
   condition: selection_setiam and selection_workforce_privileged_binding
 falsepositives:
   - Group-scoped workforce RBAC (IaC granting an *Admin role such as roles/container.admin to

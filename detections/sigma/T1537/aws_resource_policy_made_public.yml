@@ -25,10 +25,14 @@ description: |
   Encoding note (see the TRR): S3 requestParameters.bucketPolicy is a nested JSON object,
   while the KMS/SQS/SNS/ECR/Secrets policies are JSON-encoded strings; this rule matches
   the public-principal and the scoping-condition tokens as text across both
-  representations (compact and spaced). The statement walk is a bounded regex (nested
-  objects up to two levels below a statement, which covers Principal and Condition); it
-  checks that a scoping key is present, not its value or operator, so a production
-  pipeline should still JSON-decode the policies and evaluate each condition. It does not
+  representations (compact and spaced). The statement test is a bounded, portable regex
+  (no lookahead; whole nested objects up to two levels below a statement, which covers
+  Principal and Condition); it checks that a scoping key is present in the statement's
+  Condition, not its value or operator, so a production pipeline should still JSON-decode
+  the policies and evaluate each condition. A portable regex cannot test that EVERY
+  public statement is scoped, so the scoping filter applies only to a policy with one
+  public Allow statement: a policy with two or more public Allow statements fires even
+  when each one is scoped (see falsepositives). It does not
   cover object-level ACLs (an S3 data event) -- see the Block-Public-Access and
   bucket-ACL paths and the TRR gaps.
 references:
@@ -61,48 +65,72 @@ detection:
       - 'SetQueueAttributes'
   public_principal:
     # One statement that both Allows and names the public principal ("*" or
-    # {"AWS": "*"}, also inside a list of AWS principals). The regex starts at a
-    # statement's opening brace and looks ahead only inside that statement: it may step
-    # over nested objects up to two levels deep (a Principal object, a Condition block)
-    # but never over the statement's closing brace. So a named-principal Allow next to a
-    # Deny with Principal "*" (the DenyInsecureTransport statement that Security Hub S3.5
-    # recommends on every bucket) is not public. The '*' stays a LITERAL (a |contains
-    # '"AWS":"*"' would be a Sigma wildcard that also matches named principals). Optional
-    # whitespace covers the nested-object (S3 bucketPolicy) and the JSON-string
-    # (KMS/ECR/SNS/SQS/Secrets, compact or spaced) encodings.
-    - requestParameters.bucketPolicy.Statement|re: '\{(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Effect"\s*:\s*"Allow")(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Principal"\s*:\s*(?:"\*"|\{[^{}]*"AWS"\s*:\s*(?:"\*"|\[[^\]]*"\*")))'
-    - requestParameters.policy|re: '\{(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Effect"\s*:\s*"Allow")(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Principal"\s*:\s*(?:"\*"|\{[^{}]*"AWS"\s*:\s*(?:"\*"|\[[^\]]*"\*")))'
-    - requestParameters.policyText|re: '\{(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Effect"\s*:\s*"Allow")(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Principal"\s*:\s*(?:"\*"|\{[^{}]*"AWS"\s*:\s*(?:"\*"|\[[^\]]*"\*")))'
-    - requestParameters.resourcePolicy|re: '\{(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Effect"\s*:\s*"Allow")(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Principal"\s*:\s*(?:"\*"|\{[^{}]*"AWS"\s*:\s*(?:"\*"|\[[^\]]*"\*")))'
-    - requestParameters.attributeValue|re: '\{(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Effect"\s*:\s*"Allow")(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Principal"\s*:\s*(?:"\*"|\{[^{}]*"AWS"\s*:\s*(?:"\*"|\[[^\]]*"\*")))'
-    - requestParameters.attributes.Policy|re: '\{(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Effect"\s*:\s*"Allow")(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Principal"\s*:\s*(?:"\*"|\{[^{}]*"AWS"\s*:\s*(?:"\*"|\[[^\]]*"\*")))'
+    # {"AWS": "*"}, also inside a list of AWS principals). Portable regex (no
+    # lookahead): "Effect": "Allow" and the public "Principal", in either order, with
+    # only whole nested objects between them (up to two levels: a Principal object, a
+    # Condition block), so both sit in the same statement and the walk never crosses a
+    # statement's closing brace. So a named-principal Allow next to a Deny with Principal
+    # "*" (the DenyInsecureTransport statement that Security Hub S3.5 recommends on every
+    # bucket) is not public. The '*' stays a LITERAL (a |contains '"AWS":"*"' would be a
+    # Sigma wildcard that also matches named principals). Optional whitespace covers the
+    # nested-object (S3 bucketPolicy) and the JSON-string (KMS/ECR/SNS/SQS/Secrets, compact
+    # or spaced) encodings. The same values apply to each service's policy field (YAML
+    # anchor and aliases).
+    - requestParameters.bucketPolicy.Statement|re: &public_allow_statement
+        - '\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\"))'
+        - '\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"'
+    - requestParameters.policy|re: *public_allow_statement
+    - requestParameters.policyText|re: *public_allow_statement
+    - requestParameters.resourcePolicy|re: *public_allow_statement
+    - requestParameters.attributeValue|re: *public_allow_statement
+    - requestParameters.attributes.Policy|re: *public_allow_statement
   filter_scoped:
-    # The policy is NOT public when every statement that Allows the public principal
-    # carries a scoping condition key IN THAT SAME STATEMENT, and S3 and EFS document
-    # this per grant: one unscoped public statement makes the whole policy public (S3
-    # User Guide, 'Blocking public access' > 'The meaning of "public"': "if you add a
-    # public statement to the policy, RestrictPublicBuckets takes effect"). So the
-    # filter holds only when (1) no statement is an Allow + public principal that lacks
-    # all of the keys below (the negative lookahead walks each statement, stepping over
-    # nested objects up to two levels deep), and (2) one of the keys occurs. An attacker
-    # who appends an unconditioned public Allow next to the SNS default statement
-    # (AWS:SourceOwner) or the EBS key-policy statement (kms:CallerAccount) is therefore
-    # NOT filtered. Keys: aws:PrincipalOrgID, aws:PrincipalAccount, aws:SourceArn,
-    # aws:SourceAccount, aws:SourceOwner (the SNS default topic policy writes
-    # 'AWS:SourceOwner'; the match is case-insensitive), aws:SourceVpc (a prefix of
-    # aws:SourceVpce, so it covers both) and kms:CallerAccount (the KMS key policy that
+    # A public Allow statement (as above) that carries a scoping condition key IN THAT
+    # SAME STATEMENT, inside an operator block of its Condition, in any order of Effect,
+    # Principal and Condition (one value per order). S3 and EFS judge "public" per grant:
+    # one unscoped public statement makes the whole policy public (S3 User Guide, 'Blocking
+    # public access' > 'The meaning of "public"': "if you add a public statement to the
+    # policy, RestrictPublicBuckets takes effect"). The condition therefore applies this
+    # filter only when the policy holds ONE public Allow statement
+    # (public_principal_second_statement is false): then that statement is the one this
+    # filter found scoped. With two or more public Allow statements the rule fires even when
+    # every one is scoped (a documented false positive; a portable regex cannot test
+    # "every statement"), so an attacker who appends an unconditioned public Allow next to
+    # the SNS default statement (AWS:SourceOwner) or the EBS key-policy statement
+    # (kms:CallerAccount) is NOT filtered. Keys: aws:PrincipalOrgID, aws:PrincipalAccount,
+    # aws:SourceArn, aws:SourceAccount, aws:SourceOwner (the SNS default topic policy writes
+    # 'AWS:SourceOwner'; every letter is matched in either case), aws:SourceVpc (a prefix
+    # of aws:SourceVpce, so it covers both) and kms:CallerAccount (the KMS key policy that
     # lets every principal of one account use a key through a service, the EBS
-    # default-encryption pattern). 'kms:ViaService' alone is not here: it limits the
-    # path, not the account. Text match only: a key's VALUE is not checked (a wildcard
-    # value, which S3 still counts as public, is filtered), a key's name anywhere in the
-    # public statement (even in its Sid) counts as scoping it, and a key in a Deny
-    # statement does not scope an Allow.
-    - requestParameters.bucketPolicy.Statement|re: '^(?![\s\S]*\{(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Effect"\s*:\s*"Allow")(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Principal"\s*:\s*(?:"\*"|\{[^{}]*"AWS"\s*:\s*(?:"\*"|\[[^\]]*"\*")))(?:(?:(?!(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount))[^{}])|\{(?:(?:(?!(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount))[^{}])|\{(?:(?!(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount))[^{}])*\})*\})*\})[\s\S]*?(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount)'
-    - requestParameters.policy|re: '^(?![\s\S]*\{(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Effect"\s*:\s*"Allow")(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Principal"\s*:\s*(?:"\*"|\{[^{}]*"AWS"\s*:\s*(?:"\*"|\[[^\]]*"\*")))(?:(?:(?!(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount))[^{}])|\{(?:(?:(?!(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount))[^{}])|\{(?:(?!(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount))[^{}])*\})*\})*\})[\s\S]*?(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount)'
-    - requestParameters.policyText|re: '^(?![\s\S]*\{(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Effect"\s*:\s*"Allow")(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Principal"\s*:\s*(?:"\*"|\{[^{}]*"AWS"\s*:\s*(?:"\*"|\[[^\]]*"\*")))(?:(?:(?!(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount))[^{}])|\{(?:(?:(?!(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount))[^{}])|\{(?:(?!(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount))[^{}])*\})*\})*\})[\s\S]*?(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount)'
-    - requestParameters.resourcePolicy|re: '^(?![\s\S]*\{(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Effect"\s*:\s*"Allow")(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Principal"\s*:\s*(?:"\*"|\{[^{}]*"AWS"\s*:\s*(?:"\*"|\[[^\]]*"\*")))(?:(?:(?!(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount))[^{}])|\{(?:(?:(?!(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount))[^{}])|\{(?:(?!(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount))[^{}])*\})*\})*\})[\s\S]*?(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount)'
-    - requestParameters.attributeValue|re: '^(?![\s\S]*\{(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Effect"\s*:\s*"Allow")(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Principal"\s*:\s*(?:"\*"|\{[^{}]*"AWS"\s*:\s*(?:"\*"|\[[^\]]*"\*")))(?:(?:(?!(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount))[^{}])|\{(?:(?:(?!(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount))[^{}])|\{(?:(?!(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount))[^{}])*\})*\})*\})[\s\S]*?(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount)'
-    - requestParameters.attributes.Policy|re: '^(?![\s\S]*\{(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Effect"\s*:\s*"Allow")(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Principal"\s*:\s*(?:"\*"|\{[^{}]*"AWS"\s*:\s*(?:"\*"|\[[^\]]*"\*")))(?:(?:(?!(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount))[^{}])|\{(?:(?:(?!(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount))[^{}])|\{(?:(?!(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount))[^{}])*\})*\})*\})[\s\S]*?(?i:aws:PrincipalOrgID|aws:PrincipalAccount|aws:SourceArn|aws:SourceAccount|aws:SourceOwner|aws:SourceVpc|kms:CallerAccount)'
+    # default-encryption pattern). 'kms:ViaService' alone is not here: it limits the path,
+    # not the account. Text match only: a key's VALUE is not checked (a wildcard value, which
+    # S3 still counts as public, is filtered), a key outside the Condition block (in a Sid,
+    # say) does not scope the statement, and a key in a Deny statement does not scope an
+    # Allow.
+    - requestParameters.bucketPolicy.Statement|re: &scoped_public_allow_statement
+        - '\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Condition\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*([Aa][Ww][Ss]:([Pp][Rr][Ii][Nn][Cc][Ii][Pp][Aa][Ll]([Oo][Rr][Gg][Ii][Dd]|[Aa][Cc][Cc][Oo][Uu][Nn][Tt])|[Ss][Oo][Uu][Rr][Cc][Ee]([Aa][Rr][Nn]|[Aa][Cc][Cc][Oo][Uu][Nn][Tt]|[Oo][Ww][Nn][Ee][Rr]|[Vv][Pp][Cc]))|[Kk][Mm][Ss]:[Cc][Aa][Ll][Ll][Ee][Rr][Aa][Cc][Cc][Oo][Uu][Nn][Tt])'
+        - '\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Condition\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*([Aa][Ww][Ss]:([Pp][Rr][Ii][Nn][Cc][Ii][Pp][Aa][Ll]([Oo][Rr][Gg][Ii][Dd]|[Aa][Cc][Cc][Oo][Uu][Nn][Tt])|[Ss][Oo][Uu][Rr][Cc][Ee]([Aa][Rr][Nn]|[Aa][Cc][Cc][Oo][Uu][Nn][Tt]|[Oo][Ww][Nn][Ee][Rr]|[Vv][Pp][Cc]))|[Kk][Mm][Ss]:[Cc][Aa][Ll][Ll][Ee][Rr][Aa][Cc][Cc][Oo][Uu][Nn][Tt])[^{}]*\}([^{}]|\{[^{}]*\})*\}([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\"))'
+        - '\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Condition\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*([Aa][Ww][Ss]:([Pp][Rr][Ii][Nn][Cc][Ii][Pp][Aa][Ll]([Oo][Rr][Gg][Ii][Dd]|[Aa][Cc][Cc][Oo][Uu][Nn][Tt])|[Ss][Oo][Uu][Rr][Cc][Ee]([Aa][Rr][Nn]|[Aa][Cc][Cc][Oo][Uu][Nn][Tt]|[Oo][Ww][Nn][Ee][Rr]|[Vv][Pp][Cc]))|[Kk][Mm][Ss]:[Cc][Aa][Ll][Ll][Ee][Rr][Aa][Cc][Cc][Oo][Uu][Nn][Tt])'
+        - '\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Condition\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*([Aa][Ww][Ss]:([Pp][Rr][Ii][Nn][Cc][Ii][Pp][Aa][Ll]([Oo][Rr][Gg][Ii][Dd]|[Aa][Cc][Cc][Oo][Uu][Nn][Tt])|[Ss][Oo][Uu][Rr][Cc][Ee]([Aa][Rr][Nn]|[Aa][Cc][Cc][Oo][Uu][Nn][Tt]|[Oo][Ww][Nn][Ee][Rr]|[Vv][Pp][Cc]))|[Kk][Mm][Ss]:[Cc][Aa][Ll][Ll][Ee][Rr][Aa][Cc][Cc][Oo][Uu][Nn][Tt])[^{}]*\}([^{}]|\{[^{}]*\})*\}([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"'
+        - '\"Condition\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*([Aa][Ww][Ss]:([Pp][Rr][Ii][Nn][Cc][Ii][Pp][Aa][Ll]([Oo][Rr][Gg][Ii][Dd]|[Aa][Cc][Cc][Oo][Uu][Nn][Tt])|[Ss][Oo][Uu][Rr][Cc][Ee]([Aa][Rr][Nn]|[Aa][Cc][Cc][Oo][Uu][Nn][Tt]|[Oo][Ww][Nn][Ee][Rr]|[Vv][Pp][Cc]))|[Kk][Mm][Ss]:[Cc][Aa][Ll][Ll][Ee][Rr][Aa][Cc][Cc][Oo][Uu][Nn][Tt])[^{}]*\}([^{}]|\{[^{}]*\})*\}([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\"))'
+        - '\"Condition\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*([Aa][Ww][Ss]:([Pp][Rr][Ii][Nn][Cc][Ii][Pp][Aa][Ll]([Oo][Rr][Gg][Ii][Dd]|[Aa][Cc][Cc][Oo][Uu][Nn][Tt])|[Ss][Oo][Uu][Rr][Cc][Ee]([Aa][Rr][Nn]|[Aa][Cc][Cc][Oo][Uu][Nn][Tt]|[Oo][Ww][Nn][Ee][Rr]|[Vv][Pp][Cc]))|[Kk][Mm][Ss]:[Cc][Aa][Ll][Ll][Ee][Rr][Aa][Cc][Cc][Oo][Uu][Nn][Tt])[^{}]*\}([^{}]|\{[^{}]*\})*\}([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"'
+    - requestParameters.policy|re: *scoped_public_allow_statement
+    - requestParameters.policyText|re: *scoped_public_allow_statement
+    - requestParameters.resourcePolicy|re: *scoped_public_allow_statement
+    - requestParameters.attributeValue|re: *scoped_public_allow_statement
+    - requestParameters.attributes.Policy|re: *scoped_public_allow_statement
+  public_principal_second_statement:
+    # Two public Allow statements (as in public_principal) in one policy.
+    - requestParameters.bucketPolicy.Statement|re: &two_public_allow_statements
+        - '\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\"))[\s\S]*\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\"))'
+        - '\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\"))[\s\S]*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"'
+        - '\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"[\s\S]*\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\"))'
+        - '\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"[\s\S]*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"'
+    - requestParameters.policy|re: *two_public_allow_statements
+    - requestParameters.policyText|re: *two_public_allow_statements
+    - requestParameters.resourcePolicy|re: *two_public_allow_statements
+    - requestParameters.attributeValue|re: *two_public_allow_statements
+    - requestParameters.attributes.Policy|re: *two_public_allow_statements
   selection_lambda:
     eventName|startswith: 'AddPermission'
     requestParameters.principal|re: '^\*$'
@@ -113,7 +141,7 @@ detection:
   filter_failed:
     # Denied / failed mutating calls carry an errorCode and did not change state.
     errorCode: '*'
-  condition: ((selection_policy_write and public_principal and not filter_scoped) or (selection_lambda and not filter_lambda_scoped)) and not filter_failed
+  condition: ((selection_policy_write and public_principal and not (filter_scoped and not public_principal_second_statement)) or (selection_lambda and not filter_lambda_scoped)) and not filter_failed
 falsepositives:
   - Intentionally public static-website buckets, public datasets, and public container
     images; allowlist by resource name.
@@ -129,4 +157,9 @@ falsepositives:
   - A scoping key whose value is a wildcard (StringLike aws:SourceVpc "vpc-*"), which S3
     still counts as public, is filtered, because the rule checks that the key is present
     in the statement, not its value.
+  - A policy with two or more public Allow statements fires even when every one is scoped
+    (an SQS queue subscribed to two SNS topics, one aws:SourceArn statement each), because a
+    portable regex cannot test "every statement". Decode the policy to clear it.
+  - A scoping key named outside the statement's Condition block (in its Sid, say) does
+    not scope the statement, so such a public Allow fires.
 level: high

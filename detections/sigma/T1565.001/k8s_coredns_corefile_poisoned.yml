@@ -14,18 +14,27 @@ description: |
   /etc/resolv.conf, not to a literal IP), i.e. all resolution redirected to an
   attacker-controlled target.
 
-  The plugin match uses |re anchored to a directive position ('(?m)^\s*(rewrite|
-  template|hosts)\s'), so it tolerates tab-separated directives and does NOT fire on a
-  '#'-commented line that merely mentions the word. The forward-to-IP match reads the
-  Corefile from its top the way CoreDNS's Caddyfile parser does (the grammar is in
-  the comment above sel_rogue_forward). It skips the server blocks before the root
-  block, finds the block whose address list holds the root zone ('.', '.:53',
-  'dns://.:53'), and then a 'forward' directive in that block whose FROM is the
-  root and one of whose targets is an IPv4 or IPv6 literal. The layouts CoreDNS
-  accepts all match: the brace on the key line or a later line, no braces at all
-  (a single-block Corefile), a comma-separated key list continued onto the next
-  line, the forward on the brace line, and comments or quoted tokens that hold a
-  brace. An IP that appears only in a comment does not match. A forward in any
+  The plugin match uses |re anchored to a directive position (the start of the
+  Corefile or a line break, then blanks: '^\s*(rewrite|template|hosts)\s' and
+  '[^\S ]\s*(rewrite|template|hosts)\s'), so it tolerates tab-separated directives
+  and does not fire on a line commented as '# rewrite ...' (a space after the '#').
+  A comment with a tab after the '#' ('#<TAB>rewrite ...') does fire: the portable
+  subset cannot say "line break only", and the class '[^\S ]' also matches a tab. The
+  forward-to-IP match reads the Corefile from its top with a simplified form of
+  CoreDNS's Caddyfile grammar (in the comment above sel_rogue_forward), written in
+  portable regex only (no lookaround, no possessive quantifiers). It skips the server
+  blocks before the root block, finds the block whose address list holds the root
+  zone ('.', '.:53', 'dns://.:53'), and then a 'forward' directive in that block whose
+  FROM is the root and one of whose targets is an IPv4 or IPv6 literal. These layouts
+  match: the brace on the key line or a later line, no braces at all (a single-block
+  Corefile), a comma-separated key list continued onto the next line, the forward on
+  the brace line, and a comment that holds a brace. An IP that appears only in a
+  comment does not match. The simplified grammar misses a root-block forward when a
+  brace sits inside a quoted token or inside a longer token before it (rewrite's
+  '{1}' and template's '{{ .Name }}' are such tokens, but those plugins fire the plugin
+  clause anyway), when a '#' inside a token or (full-object form only) a tab inside a
+  comment followed by a brace shifts the brace count, or when the root block's keys
+  are separated by tabs. A forward in any
   other server block -- a stub zone such as a 'corp.example.com:53' block with
   'forward . 10.10.0.53' -- or a forward of one domain inside the root block does
   not fire this rule: a private stub zone to a corporate resolver is routine, and
@@ -33,8 +42,7 @@ description: |
   attacker resolver. The chokepoint still sees every
   such write; triage it there. The grader also does not follow an 'import' (a
   forward that comes from a snippet or a file), reads only three nested brace
-  levels, and does not treat a quoted '"{"' token as a brace; such a Corefile is
-  seen by the chokepoint only. A full-object or strategic-merge patch carries the
+  levels; such a Corefile is seen by the chokepoint only. A full-object or strategic-merge patch carries the
   Corefile at requestObject.data.Corefile (a string), matched directly; a JSON patch
   (kubectl patch --type=json) submits an ops array, so requestObject is one JSON text
   field in which a line break is the two characters backslash-n -- the rule matches
@@ -81,34 +89,44 @@ detection:
       - 'patch'
       - 'create'
   # Strategic-merge / full-object write: the Corefile is a dotted string field.
+  # A plugin directive at the start of a line: at the start of the Corefile, or after
+  # a line break ('[^\S ]' is whitespace other than a space). A '#' comment that
+  # mentions the word does not match.
   sel_poison_plugin:
-    requestObject.data.Corefile|re: '(?m)^\s*(?:rewrite|template|hosts)\s'
-  # The forward-to-IP clause reads the Corefile the way CoreDNS's Caddyfile parser
-  # (github.com/coredns/caddy, caddyfile/lexer.go and parse.go) does, so a layout
-  # that CoreDNS accepts cannot hide the root block from it, and a forward in any
-  # other server block cannot pass for one in the root block. The regex is built from
-  # these parts, in this order:
-  #   token    whitespace-separated; '"' at token start opens a quoted token (with
-  #            backslash escapes); '#' at token start comments to the end of the
-  #            line, and '#' inside a token drops only the rest of that token;
-  #            '{' and '}' are structure only as whole tokens.
-  #   start    \A: the scan starts at the top of the Corefile, not at any line.
-  #   skip     whole server blocks before the root block (keys, '{', a body nested
-  #            up to three brace levels, '}'), and top-level 'import X' lines.
-  #   keys     the root block's address list: tokens separated by blanks, or by a
-  #            token-final ',' that continues the list (also onto the next line);
-  #            one key is the root zone '.', '.:PORT' or 'dns://.:PORT' (quoted too).
-  #   open     '{' on the key line or on a later line, or no brace at all (a
-  #            braceless block, whose directives start on the next line).
-  #   body     directives up to the forward: whole tokens and whole nested blocks,
-  #            never the root block's own closing '}'.
-  #   forward  at a directive position: the first token after '{', or the first
-  #            token of a line at the body's top level. FROM is the root ('.',
-  #            '.:PORT', 'dns://.'), as CoreDNS normalizes it; one of the TO
-  #            tokens on the same line starts with an IPv4 or IPv6 literal
-  #            (optionally 'scheme://' or '[').
+    requestObject.data.Corefile|re:
+      - '^\s*(rewrite|template|hosts)\s'
+      - '[^\S ]\s*(rewrite|template|hosts)\s'
+  # The forward-to-IP clause reads the Corefile with a simplified form of CoreDNS's
+  # Caddyfile grammar (github.com/coredns/caddy, caddyfile/lexer.go and parse.go), so
+  # that a forward in any other server block cannot pass for one in the root block.
+  # Portable regex only (no lookaround, no possessive quantifiers, no \A or \n): a
+  # line break is '[^\S ]' (whitespace other than a space). The parts, in order:
+  #   start    '^': the scan starts at the top of the Corefile, not at any line.
+  #   skip     blank lines, '#' comments (to the end of the line) and top-level
+  #            'import X' lines, and whole server blocks before the root block (key
+  #            text, '{', a body nested up to three brace levels, '}').
+  #   keys     the root block's address list: tokens separated by spaces, or by a ','
+  #            that continues the list (also onto the next line); one key is the root
+  #            zone '.', '.:PORT' or 'dns://.:PORT' (quoted too).
+  #   open     value 1: '{' on the key line or on a later line. Value 2: no brace at
+  #            all (a single, braceless block, whose directives start on the next
+  #            line; its first directive is not '{').
+  #   body     directives up to the forward: text, '#' comments and whole nested
+  #            blocks, never the root block's own closing '}'.
+  #   forward  at a directive position: right after '{', or after a line break at the
+  #            body's top level. FROM is the root ('.', '.:PORT', 'dns://.'); the
+  #            targets before the IP are paths or URLs (a token with a '/'); then a
+  #            target that starts with an IPv4 or IPv6 literal (optionally
+  #            'scheme://' or '['). A '#' ends the target list, so an IP in a comment
+  #            does not count.
+  # Simpler than CoreDNS (see the description): a brace inside a quoted token or
+  # inside a longer token counts as a brace, a '#' inside a token starts a comment, a
+  # tab inside a comment ends the comment, and root keys must be separated by spaces
+  # or commas, not tabs.
   sel_rogue_forward:
-    requestObject.data.Corefile|re: '\A(?:(?:\s|#[^\n]*(?![^\n]))*(?:(?:"(?:[^"\\]|\\[\s\S])*"|(?:[{}][^\s#]+|[^\s#\"{}][^\s#]*)(?:#\S*)?(?!\S))(?:(?:(?<=,)(?:\s|#[^\n]*(?![^\n]))*|(?<!,)[^\S\n]+)(?:"(?:[^"\\]|\\[\s\S])*"|(?:[{}][^\s#]+|[^\s#\"{}][^\s#]*)(?:#\S*)?(?!\S)))*+(?:\s|#[^\n]*(?![^\n]))*\{(?:#\S*)?(?!\S)(?:(?:\s|#[^\n]*(?![^\n]))*(?:(?:"(?:[^"\\]|\\[\s\S])*"|(?:[{}][^\s#]+|[^\s#\"{}][^\s#]*)(?:#\S*)?(?!\S))|\{(?:#\S*)?(?!\S)(?:(?:\s|#[^\n]*(?![^\n]))*(?:(?:"(?:[^"\\]|\\[\s\S])*"|(?:[{}][^\s#]+|[^\s#\"{}][^\s#]*)(?:#\S*)?(?!\S))|\{(?:#\S*)?(?!\S)(?:(?:\s|#[^\n]*(?![^\n]))*(?:"(?:[^"\\]|\\[\s\S])*"|(?:[{}][^\s#]+|[^\s#\"{}][^\s#]*)(?:#\S*)?(?!\S)))*(?:\s|#[^\n]*(?![^\n]))*\}(?:#\S*)?(?!\S)))*(?:\s|#[^\n]*(?![^\n]))*\}(?:#\S*)?(?!\S)))*(?:\s|#[^\n]*(?![^\n]))*\}(?:#\S*)?(?!\S)|import(?:#\S*)?(?!\S)[^\S\n]+(?:"(?:[^"\\]|\\[\s\S])*"|(?:[{}][^\s#]+|[^\s#\"{}][^\s#]*)(?:#\S*)?(?!\S))))*?(?:\s|#[^\n]*(?![^\n]))*(?=(?:(?:"(?:[^"\\]|\\[\s\S])*"|(?:[{}][^\s#]+|[^\s#\"{}][^\s#]*)(?:#\S*)?(?!\S))(?:(?<=,)(?:\s|#[^\n]*(?![^\n]))*|(?<!,)[^\S\n]+))*?"?(?:dns://)?\.(?::\d+)?"?,?(?:#\S*)?(?!\S))(?:"(?:[^"\\]|\\[\s\S])*"|(?:[{}][^\s#]+|[^\s#\"{}][^\s#]*)(?:#\S*)?(?!\S))(?:(?:(?<=,)(?:\s|#[^\n]*(?![^\n]))*|(?<!,)[^\S\n]+)(?:"(?:[^"\\]|\\[\s\S])*"|(?:[{}][^\s#]+|[^\s#\"{}][^\s#]*)(?:#\S*)?(?!\S)))*+(?:(?:\s|#[^\n]*(?![^\n]))*\{(?:#\S*)?(?!\S)|[^\S\n]*(?:#[^\n]*(?![^\n]))?\n(?!(?:\s|#[^\n]*(?![^\n]))*\{(?:#\S*)?(?!\S)))(?:(?:(?:\s|#[^\n]*(?![^\n]))*(?:(?:"(?:[^"\\]|\\[\s\S])*"|(?:[{}][^\s#]+|[^\s#\"{}][^\s#]*)(?:#\S*)?(?!\S))|\{(?:#\S*)?(?!\S)(?:(?:\s|#[^\n]*(?![^\n]))*(?:(?:"(?:[^"\\]|\\[\s\S])*"|(?:[{}][^\s#]+|[^\s#\"{}][^\s#]*)(?:#\S*)?(?!\S))|\{(?:#\S*)?(?!\S)(?:(?:\s|#[^\n]*(?![^\n]))*(?:"(?:[^"\\]|\\[\s\S])*"|(?:[{}][^\s#]+|[^\s#\"{}][^\s#]*)(?:#\S*)?(?!\S)))*(?:\s|#[^\n]*(?![^\n]))*\}(?:#\S*)?(?!\S)))*(?:\s|#[^\n]*(?![^\n]))*\}(?:#\S*)?(?!\S)))*?[^\S\n]*(?:#[^\n]*(?![^\n]))?\n)?(?:\s|#[^\n]*(?![^\n]))*"?forward"?(?:#\S*)?(?!\S)[^\S\n]+"?(?:[a-z0-9]+://)?\.(?::\d+)?"?(?:#\S*)?(?!\S)[^\S\n]+(?:(?:"(?:[^"\\]|\\[\s\S])*"|(?:[{}][^\s#]+|[^\s#\"{}][^\s#]*)(?:#\S*)?(?!\S))[^\S\n]+)*?"?(?:[a-z0-9]+://)?\[?(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
+    requestObject.data.Corefile|re:
+      - '^(\s|\#(\S| )*[^\S ]|import\s+[^\s{}#]+)*([^\s{}#][^{}#]*\{([^{}#]|\#(\S| )*[^\S ]|\{([^{}#]|\#(\S| )*[^\S ]|\{([^{}#]|\#(\S| )*[^\S ])*\})*\})*\}(\s|\#(\S| )*[^\S ]|import\s+[^\s{}#]+)*)*([^\s{}#,]+(,\s*| +))*\"?(dns://)?\.(:[0-9]+)?\"?((,\s*| +)[^\s{}#,]+)*\s*\{(([^{}#]|\#(\S| )*[^\S ]|\{([^{}#]|\#(\S| )*[^\S ]|\{([^{}#]|\#(\S| )*[^\S ])*\})*\})*([^\S ]|\#(\S| )*[^\S ]))?\s*\"?forward\"?\s+\"?([a-z0-9]+://)?\.(:[0-9]+)?\"?(\s+[^\s#{}/]*/[^\s#{}]*)*\s+\"?([a-z0-9]+://)?\[?([0-9]{1,3}(\.[0-9]{1,3}){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
+      - '^(\s|\#(\S| )*[^\S ]|import\s+[^\s{}#]+)*([^\s{}#,]+(,\s*| +))*\"?(dns://)?\.(:[0-9]+)?\"?((,\s*| +)[^\s{}#,]+)* *(\#(\S| )*[^\S ]|[^\S ])(\s|\#(\S| )*[^\S ]|import\s+[^\s{}#]+)*([^{}#\s]([^{}#]|\#(\S| )*[^\S ]|\{([^{}#]|\#(\S| )*[^\S ]|\{([^{}#]|\#(\S| )*[^\S ])*\})*\})*([^\S ]|\#(\S| )*[^\S ]))?\s*\"?forward\"?\s+\"?([a-z0-9]+://)?\.(:[0-9]+)?\"?(\s+[^\s#{}/]*/[^\s#{}]*)*\s+\"?([a-z0-9]+://)?\[?([0-9]{1,3}(\.[0-9]{1,3}){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
   # JSON patch (kubectl patch --type=json): requestObject is an ops array flattened to
   # one text field, so the Corefile is not at .data.Corefile -- match the raw form too.
   sel_poison_plugin_raw:
@@ -118,11 +136,16 @@ detection:
       - 'hosts '
   # The same grammar on the JSON text: the scan starts at a JSON string value
   # (':' then '"'), a line break is backslash-n, a blank is a space or backslash
-  # r/t/f, a quote is backslash-quote, and an unescaped '"' ends the Corefile.
+  # r/t/f, a quote is backslash-quote, and an unescaped '"' ends the Corefile. Here a
+  # comment runs to the next backslash-n, so a tab inside it does not end it.
   sel_rogue_forward_raw:
-    requestObject|re: ':\s*"(?:(?:(?:[ ]|\\[nrtf])|#(?:[^"\\]|\\[^n])*(?=\\n|"))*(?:(?:\\"(?:[^"\\]|\\[^"\\]|\\\\(?:[^"\\]|\\.))*\\"|(?:[{}](?:[^\s#"\\]|\\[^nrtf])+|(?:[^\s#"\\{}]|\\[^nrtf"])(?:[^\s#"\\]|\\[^nrtf])*)(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf]))(?:(?:(?<=,)(?:(?:[ ]|\\[nrtf])|#(?:[^"\\]|\\[^n])*(?=\\n|"))*|(?<!,)(?:[ ]|\\[rtf])+)(?:\\"(?:[^"\\]|\\[^"\\]|\\\\(?:[^"\\]|\\.))*\\"|(?:[{}](?:[^\s#"\\]|\\[^nrtf])+|(?:[^\s#"\\{}]|\\[^nrtf"])(?:[^\s#"\\]|\\[^nrtf])*)(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf])))*+(?:(?:[ ]|\\[nrtf])|#(?:[^"\\]|\\[^n])*(?=\\n|"))*\{(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf])(?:(?:(?:[ ]|\\[nrtf])|#(?:[^"\\]|\\[^n])*(?=\\n|"))*(?:(?:\\"(?:[^"\\]|\\[^"\\]|\\\\(?:[^"\\]|\\.))*\\"|(?:[{}](?:[^\s#"\\]|\\[^nrtf])+|(?:[^\s#"\\{}]|\\[^nrtf"])(?:[^\s#"\\]|\\[^nrtf])*)(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf]))|\{(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf])(?:(?:(?:[ ]|\\[nrtf])|#(?:[^"\\]|\\[^n])*(?=\\n|"))*(?:(?:\\"(?:[^"\\]|\\[^"\\]|\\\\(?:[^"\\]|\\.))*\\"|(?:[{}](?:[^\s#"\\]|\\[^nrtf])+|(?:[^\s#"\\{}]|\\[^nrtf"])(?:[^\s#"\\]|\\[^nrtf])*)(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf]))|\{(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf])(?:(?:(?:[ ]|\\[nrtf])|#(?:[^"\\]|\\[^n])*(?=\\n|"))*(?:\\"(?:[^"\\]|\\[^"\\]|\\\\(?:[^"\\]|\\.))*\\"|(?:[{}](?:[^\s#"\\]|\\[^nrtf])+|(?:[^\s#"\\{}]|\\[^nrtf"])(?:[^\s#"\\]|\\[^nrtf])*)(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf])))*(?:(?:[ ]|\\[nrtf])|#(?:[^"\\]|\\[^n])*(?=\\n|"))*\}(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf])))*(?:(?:[ ]|\\[nrtf])|#(?:[^"\\]|\\[^n])*(?=\\n|"))*\}(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf])))*(?:(?:[ ]|\\[nrtf])|#(?:[^"\\]|\\[^n])*(?=\\n|"))*\}(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf])|import(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf])(?:[ ]|\\[rtf])+(?:\\"(?:[^"\\]|\\[^"\\]|\\\\(?:[^"\\]|\\.))*\\"|(?:[{}](?:[^\s#"\\]|\\[^nrtf])+|(?:[^\s#"\\{}]|\\[^nrtf"])(?:[^\s#"\\]|\\[^nrtf])*)(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf]))))*?(?:(?:[ ]|\\[nrtf])|#(?:[^"\\]|\\[^n])*(?=\\n|"))*(?=(?:(?:\\"(?:[^"\\]|\\[^"\\]|\\\\(?:[^"\\]|\\.))*\\"|(?:[{}](?:[^\s#"\\]|\\[^nrtf])+|(?:[^\s#"\\{}]|\\[^nrtf"])(?:[^\s#"\\]|\\[^nrtf])*)(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf]))(?:(?<=,)(?:(?:[ ]|\\[nrtf])|#(?:[^"\\]|\\[^n])*(?=\\n|"))*|(?<!,)(?:[ ]|\\[rtf])+))*?(?:\\")?(?:dns://)?\.(?::\d+)?(?:\\")?,?(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf]))(?:\\"(?:[^"\\]|\\[^"\\]|\\\\(?:[^"\\]|\\.))*\\"|(?:[{}](?:[^\s#"\\]|\\[^nrtf])+|(?:[^\s#"\\{}]|\\[^nrtf"])(?:[^\s#"\\]|\\[^nrtf])*)(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf]))(?:(?:(?<=,)(?:(?:[ ]|\\[nrtf])|#(?:[^"\\]|\\[^n])*(?=\\n|"))*|(?<!,)(?:[ ]|\\[rtf])+)(?:\\"(?:[^"\\]|\\[^"\\]|\\\\(?:[^"\\]|\\.))*\\"|(?:[{}](?:[^\s#"\\]|\\[^nrtf])+|(?:[^\s#"\\{}]|\\[^nrtf"])(?:[^\s#"\\]|\\[^nrtf])*)(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf])))*+(?:(?:(?:[ ]|\\[nrtf])|#(?:[^"\\]|\\[^n])*(?=\\n|"))*\{(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf])|(?:[ ]|\\[rtf])*(?:#(?:[^"\\]|\\[^n])*(?=\\n|"))?\\n(?!(?:(?:[ ]|\\[nrtf])|#(?:[^"\\]|\\[^n])*(?=\\n|"))*\{(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf])))(?:(?:(?:(?:[ ]|\\[nrtf])|#(?:[^"\\]|\\[^n])*(?=\\n|"))*(?:(?:\\"(?:[^"\\]|\\[^"\\]|\\\\(?:[^"\\]|\\.))*\\"|(?:[{}](?:[^\s#"\\]|\\[^nrtf])+|(?:[^\s#"\\{}]|\\[^nrtf"])(?:[^\s#"\\]|\\[^nrtf])*)(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf]))|\{(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf])(?:(?:(?:[ ]|\\[nrtf])|#(?:[^"\\]|\\[^n])*(?=\\n|"))*(?:(?:\\"(?:[^"\\]|\\[^"\\]|\\\\(?:[^"\\]|\\.))*\\"|(?:[{}](?:[^\s#"\\]|\\[^nrtf])+|(?:[^\s#"\\{}]|\\[^nrtf"])(?:[^\s#"\\]|\\[^nrtf])*)(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf]))|\{(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf])(?:(?:(?:[ ]|\\[nrtf])|#(?:[^"\\]|\\[^n])*(?=\\n|"))*(?:\\"(?:[^"\\]|\\[^"\\]|\\\\(?:[^"\\]|\\.))*\\"|(?:[{}](?:[^\s#"\\]|\\[^nrtf])+|(?:[^\s#"\\{}]|\\[^nrtf"])(?:[^\s#"\\]|\\[^nrtf])*)(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf])))*(?:(?:[ ]|\\[nrtf])|#(?:[^"\\]|\\[^n])*(?=\\n|"))*\}(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf])))*(?:(?:[ ]|\\[nrtf])|#(?:[^"\\]|\\[^n])*(?=\\n|"))*\}(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf])))*?(?:[ ]|\\[rtf])*(?:#(?:[^"\\]|\\[^n])*(?=\\n|"))?\\n)?(?:(?:[ ]|\\[nrtf])|#(?:[^"\\]|\\[^n])*(?=\\n|"))*(?:\\")?forward(?:\\")?(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf])(?:[ ]|\\[rtf])+(?:\\")?(?:[a-z0-9]+://)?\.(?::\d+)?(?:\\")?(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf])(?:[ ]|\\[rtf])+(?:(?:\\"(?:[^"\\]|\\[^"\\]|\\\\(?:[^"\\]|\\.))*\\"|(?:[{}](?:[^\s#"\\]|\\[^nrtf])+|(?:[^\s#"\\{}]|\\[^nrtf"])(?:[^\s#"\\]|\\[^nrtf])*)(?:#(?:[^\s"\\]|\\[^nrtf])*)?(?=[ "]|\\[nrtf]))(?:[ ]|\\[rtf])+)*?(?:\\")?(?:[a-z0-9]+://)?\[?(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
+    requestObject|re:
+      - ':\s*\"(( |\\[nrtf])|\#([^"\\]|\\[^n])*\\n|import( |\\[rtf])+(\\\"[^"\\]*\\\"|[^\s{}#"\\]+))*([^\s{}#"\\]([^{}#"\\]|\\.)*\{([^{}#"\\]|\\.|\#([^"\\]|\\[^n])*\\n|\{([^{}#"\\]|\\.|\#([^"\\]|\\[^n])*\\n|\{([^{}#"\\]|\\.|\#([^"\\]|\\[^n])*\\n)*\})*\})*\}(( |\\[nrtf])|\#([^"\\]|\\[^n])*\\n|import( |\\[rtf])+(\\\"[^"\\]*\\\"|[^\s{}#"\\]+))*)*([^\s{}#,"\\]+(,( |\\[nrtf])*| +))*(\\\")?(dns://)?\.(:[0-9]+)?(\\\")?((,( |\\[nrtf])*| +)[^\s{}#,"\\]+)*( |\\[nrtf])*\{(([^{}#"\\]|\\.|\#([^"\\]|\\[^n])*\\n|\{([^{}#"\\]|\\.|\#([^"\\]|\\[^n])*\\n|\{([^{}#"\\]|\\.|\#([^"\\]|\\[^n])*\\n)*\})*\})*(\\[nrtf]|\#([^"\\]|\\[^n])*\\n))?( |\\[nrtf])*(\\\")?forward(\\\")?( |\\[nrtf])+(\\\")?([a-z0-9]+://)?\.(:[0-9]+)?(\\\")?(( |\\[nrtf])+[^\s#{}/"\\]*/[^\s#{}"\\]*)*( |\\[nrtf])+(\\\")?([a-z0-9]+://)?\[?([0-9]{1,3}(\.[0-9]{1,3}){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
+      - ':\s*\"(( |\\[nrtf])|\#([^"\\]|\\[^n])*\\n|import( |\\[rtf])+(\\\"[^"\\]*\\\"|[^\s{}#"\\]+))*([^\s{}#,"\\]+(,( |\\[nrtf])*| +))*(\\\")?(dns://)?\.(:[0-9]+)?(\\\")?((,( |\\[nrtf])*| +)[^\s{}#,"\\]+)* *(\#([^"\\]|\\[^n])*\\n|\\[nrtf])(( |\\[nrtf])|\#([^"\\]|\\[^n])*\\n|import( |\\[rtf])+(\\\"[^"\\]*\\\"|[^\s{}#"\\]+))*([^{}#\s"\\]([^{}#"\\]|\\.|\#([^"\\]|\\[^n])*\\n|\{([^{}#"\\]|\\.|\#([^"\\]|\\[^n])*\\n|\{([^{}#"\\]|\\.|\#([^"\\]|\\[^n])*\\n)*\})*\})*(\\[nrtf]|\#([^"\\]|\\[^n])*\\n))?( |\\[nrtf])*(\\\")?forward(\\\")?( |\\[nrtf])+(\\\")?([a-z0-9]+://)?\.(:[0-9]+)?(\\\")?(( |\\[nrtf])+[^\s#{}/"\\]*/[^\s#{}"\\]*)*( |\\[nrtf])+(\\\")?([a-z0-9]+://)?\[?([0-9]{1,3}(\.[0-9]{1,3}){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
   condition: select_dns_configmap_write and (sel_poison_plugin or sel_rogue_forward or sel_poison_plugin_raw or sel_rogue_forward_raw)
 falsepositives:
+  - A commented-out rewrite, template or hosts line written as '#<TAB>directive'
+    fires the plugin clause (see the description).
   - A cluster whose legitimate Corefile forwards the root zone to an explicit
     upstream IP (a VPC resolver, a corporate DNS) matches the forward-to-IP clause.
     Baseline your own Corefile and the known DNS operators, and triage the diff.

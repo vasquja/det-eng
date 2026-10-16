@@ -45,7 +45,17 @@ detection:
     protoPayload.serviceName: 'iam.googleapis.com'
     protoPayload.methodName: 'google.iam.admin.v1.SetIAMPolicy'
   selection_wif_binding_added:
-    protoPayload.serviceData.policyDelta.bindingDeltas|re: '\{(?=[^}]*"action": "ADD")(?=[^}]*/workloadIdentityPools/)(?=[^}]*(?:roles/iam\.workloadIdentityUser|roles/iam\.serviceAccountTokenCreator))'
+    # One binding delta object ('{' up to its first '}') that holds all three of: action
+    # ADD, a /workloadIdentityPools/ member, and the workloadIdentityUser or
+    # serviceAccountTokenCreator role. Portable regex (no lookahead): one value per order
+    # of the three parts, so the parts may come in any order inside the object.
+    protoPayload.serviceData.policyDelta.bindingDeltas|re:
+      - '\{[^}]*\"action\": \"ADD\"[^}]*/workloadIdentityPools/[^}]*roles/iam\.(workloadIdentityUser|serviceAccountTokenCreator)'
+      - '\{[^}]*\"action\": \"ADD\"[^}]*roles/iam\.(workloadIdentityUser|serviceAccountTokenCreator)[^}]*/workloadIdentityPools/'
+      - '\{[^}]*/workloadIdentityPools/[^}]*\"action\": \"ADD\"[^}]*roles/iam\.(workloadIdentityUser|serviceAccountTokenCreator)'
+      - '\{[^}]*/workloadIdentityPools/[^}]*roles/iam\.(workloadIdentityUser|serviceAccountTokenCreator)[^}]*\"action\": \"ADD\"'
+      - '\{[^}]*roles/iam\.(workloadIdentityUser|serviceAccountTokenCreator)[^}]*\"action\": \"ADD\"[^}]*/workloadIdentityPools/'
+      - '\{[^}]*roles/iam\.(workloadIdentityUser|serviceAccountTokenCreator)[^}]*/workloadIdentityPools/[^}]*\"action\": \"ADD\"'
   condition: selection_setiam and selection_wif_binding_added
 falsepositives:
   - Legitimate CI/CD onboarding (GitHub Actions, GitLab, AWS/Azure OIDC) and IaC create

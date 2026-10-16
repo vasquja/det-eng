@@ -124,10 +124,20 @@ single-block Corefile, a key list separated by commas and continued onto the nex
 line, and a directive on the brace line. Comments and quoted tokens can hold a
 brace that is not structure. An adversary writes the whole Corefile, so each of
 these layouts must grade. The grader therefore reads the Corefile from its top,
-token by token, skips the server blocks before the root block, and checks the
-`forward` directives of the root block only. It does not follow an `import` (a
-snippet or a file), and it reads only three levels of nested braces; a forward that
-reaches the root block that way is seen by the chokepoint only.
+skips the server blocks before the root block, and checks the `forward` directives
+of the root block only. It does not follow an `import` (a snippet or a file), and it
+reads only three levels of nested braces; a forward that reaches the root block that
+way is seen by the chokepoint only.
+
+The grader is a portable regular expression (no lookaround, no possessive
+quantifiers; see `detections/README.md`, "Portable regular expressions"), so it reads
+a slightly simpler grammar than CoreDNS's lexer: a `#` comment ends at a line break
+(in the full-object form also at a tab), a brace inside a quoted token or inside a
+longer token counts as a brace, a `#` inside a token starts a comment, and the root
+block's keys must be separated by spaces or a comma, not by tabs. A Corefile that
+relies on one of these to hide a root-block forward is seen by the chokepoint only;
+the `template` and `rewrite` plugins, whose arguments often hold braces, fire the
+plugin clause anyway.
 
 ### Why the technique works
 

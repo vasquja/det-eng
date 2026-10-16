@@ -318,6 +318,65 @@ python3 detections/rule_cases.py                     # every rule's cases
 python3 detections/check_sufficiency.py              # the gate (CI: detection-quality / check-sufficiency)
 ```
 
+## Portable regular expressions
+
+The validators prove every rule with pySigma's SQLite backend, whose `REGEXP` is
+Python's `re`. Python accepts constructs that other Sigma backends reject or read
+differently, so every `|re` value must stay inside a subset that each main backend
+runs with the same meaning. [`check_sigma_regex.py`](../.github/scripts/check_sigma_regex.py)
+enforces it (CI: `validate-detections` / `sigma-lint`):
+
+```
+python3 .github/scripts/check_sigma_regex.py                # every |re value in detections/sigma
+python3 .github/scripts/check_sigma_regex.py --require-re2  # also compile each one with RE2 (pip install google-re2)
+```
+
+**The subset** is the intersection of these sources:
+
+| Source | What it allows |
+|--------|----------------|
+| [Sigma specification, modifiers appendix](https://github.com/SigmaHQ/sigma-specification/blob/main/specification/sigma-appendix-modifiers.md) (`re`, sub-modifiers `i` `m` `s`) | "PCRE with the following metacharacters": `.`, `^ $`, `* + ? {n,m}`, `[a-z] [^a-z]`, `\|`, `()`; "other metacharacters are unsupported" |
+| [RE2 syntax](https://github.com/google/re2/wiki/Syntax) (Go-based backends) and the [KQL regex dialect](https://learn.microsoft.com/kusto/query/regex) (Microsoft Sentinel) | RE2: no lookaround, no backreferences, no possessive quantifiers, no atomic groups, no `\Z`, repetition counts up to 1000. KQL documents its own dialect (lazy quantifiers, inline flags, `\<` `\>` word boundaries, class set operators), so the subset avoids the constructs whose meaning differs |
+| [Lucene RegExp](https://github.com/apache/lucene/blob/main/lucene/core/src/java/org/apache/lucene/util/automaton/RegExp.java) (Elasticsearch [`regexp` / `query_string`](https://github.com/elastic/elasticsearch/blob/main/docs/reference/query-languages/query-dsl/regexp-syntax.md) and ES\|QL `RLIKE`) | no anchors (a pattern matches the whole value), no `(?` groups or inline flags; `"` `#` `@` `&` `~` `<` `>` are operators; a backslash before a letter other than `d D s S w W` is an error (Lucene 9+) |
+| Splunk (PCRE) | everything above |
+
+So a `|re` value may use: literal characters; a backslash before a punctuation
+character (a literal); `.`; `^` only as the first character and `$` only as the last;
+greedy `* + ?` and `{n}` `{n,}` `{n,m}` (n, m at most 1000); `[...]` and `[^...]` with
+ranges; `|`; plain `( )` groups; `\s` and `\S`; the sub-modifiers `|i` and `|s`. Written
+differently:
+
+| Construct | Write instead |
+|-----------|---------------|
+| `(?=` `(?!` `(?<=` `(?<!` lookaround | split the test into Sigma items, values or selections and combine them in the condition |
+| `(?:...)` | `(...)` (no rule uses a backreference, so the groups match the same) |
+| `(?i)` and other inline flags | the `\|re\|i` (or `\|re\|s`) sub-modifier |
+| `\d` `\w` `\D` `\W` | `[0-9]` `[A-Za-z0-9_]` `[^0-9]` `[^A-Za-z0-9_]` (Python and KQL read the shorthand as Unicode classes) |
+| `\n` `\t` `\x..` `\u....` | `\s`, `\S`, or a class such as `[^\S ]` (whitespace other than a space); Lucene rejects the escape, and a raw line break ends a KQL or SPL string literal |
+| `\A` `\Z` `\z` `\b` | `^` first or `$` last; a class for a word edge |
+| lazy `*?` or possessive `*+`, atomic `(?>` | the greedy form (a lazy quantifier does not change whether a regex matches) |
+| bare `"` `#` `@` `&` `~` | `\"` `\#` `\@` `\&` `\~` (inside `[...]` they are plain) |
+| bare `<` `>` | `[<]` `[>]` (`\<` is a word boundary in KQL) |
+| a bare `{` `}` `]` outside a quantifier or class | `\{` `\}` `\]` |
+| `[` and `&&` `--` `~~` `\|\|` inside a class | an escaped `\[`; KQL reads the pairs as set operators |
+| a value over 1000 characters | Elasticsearch's `index.max_regex_length` default; split it |
+
+**Differences no lint removes.** A backend must still translate the edges: Lucene has
+no anchors and matches the whole value, so a search-style `|re` needs `.*` around it
+(drop it where the pattern starts with `^` or ends with `$`); pySigma's Lucene backend
+does not add it today, and it renders `|re|i` as `(?i)`, which Lucene does not parse.
+In Python, RE2 and PCRE `.` does not match a line break unless `|re|s` is set; in
+Lucene it always does. `\s` is `[\t\n\r ]` in Lucene, ASCII whitespace in RE2, and
+Unicode whitespace in Python and KQL. A long pattern can also exceed Lucene's default
+determinization budget (`max_determinized_states`, 10,000): a check with Lucene 10.1's
+`RegExp` found that every `|re` value parses, and that each value inside the budget,
+wrapped in `.*`, gives the same verdict as Python on every case, fixture and
+benign-corpus value of its field. The statement-level policy values of
+`T1537/aws_resource_policy_made_public.yml` and
+`aws_efs_file_system_policy_made_public.yml` and the JSON-patch values of
+`T1685/k8s_security_tool_workload_removed.yml` need a larger budget (or a pipeline that
+decodes the policy or patch).
+
 ## The benign corpus (false-positive scores)
 
 The hard gate answers "does the rule key on the technique?". The **benign corpus**

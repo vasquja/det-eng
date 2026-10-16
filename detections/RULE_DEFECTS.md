@@ -51,6 +51,9 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss | false negative (documented) | low |
 | [C13](#c13-entra_app_federated_credential_backdoor-a-credential-removal-fires) | `T1098.001/entra_app_federated_credential_backdoor` | the issuer regex also reads `oldValue`, so a removal fires | false positive (unverified) | low |
 | [C14](#c14-aws_resource_policy_made_public-a-single-statement-object) | `T1537/aws_resource_policy_made_public` | a policy whose `Statement` is one object, not a list, misses | false negative | low |
+| [C15](#c15-public-policy-rules-several-scoped-public-statements-fire) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | two or more scoped public Allow statements fire | false positive | low |
+| [C16](#c16-aws_github_oidc_role_trust_abuse-several-sub-conditions-grade-high) | `T1098.001/aws_github_oidc_role_trust_abuse` | a trust with several `sub` conditions grades high even when every wildcard is pinned | false positive (grading) | low |
+| [S1](#s1-large-patterns-exceed-elasticsearchs-default-regex-budget) | three rules | some patterns exceed Elasticsearch's default determinization budget | portability | low |
 
 ## Linux (auditd and node file events)
 
@@ -135,12 +138,18 @@ whether `arping` belongs in the allowlist.
   2. The forward-to-IP clause grades only the root server block. A stub zone or a
      domain-scoped forward to an IP is graded by the chokepoint only, because its
      record does not differ from a private stub zone.
-  3. The clause does not follow `import` (snippets or files), reads at most three
-     nested brace levels, and does not treat a quoted `"{"` token as a brace.
+  3. The clause is a simplified Caddyfile grammar written in portable regex. It
+     does not follow `import` (snippets or files) and reads at most three nested
+     brace levels. A brace inside a quoted or longer token counts as a brace, a `#`
+     inside a token starts a comment, a tab inside a comment ends it (full-object
+     form), and tab-separated root keys are not recognised.
+  4. The plugin clause fires on a commented-out directive written `#<TAB>rewrite`
+     (false positive): the portable subset cannot say "line break only".
 - **Evidence**: confounders `poisoned-but-wrong-name`, `-wrong-namespace`,
   `-verb-delete`; near-misses `private-stub-zone-forward`,
-  `jsonpatch-private-stub-zone-forward`.
-- **Fix**: none planned for 2 and 3; 1 is a policy-scope decision.
+  `jsonpatch-private-stub-zone-forward`, `stub-before-root-forwards-ip`; positives
+  `root-after-stub-block`, `root-after-tab-separated-import`.
+- **Fix**: none planned for 2 to 4; 1 is a policy-scope decision.
 
 ### K13. No rule matches a namespace delete
 
@@ -204,11 +213,54 @@ whether `arping` belongs in the allowlist.
 - **Evidence**: reported by the cloud rule-fix review.
 - **Fix**: read both flattenings, with a positive case for each.
 
+### C15. Public-policy rules: several scoped public statements fire
+
+- **Rules**: [`sigma/T1537/aws_resource_policy_made_public.yml`](sigma/T1537/aws_resource_policy_made_public.yml),
+  [`sigma/T1537/aws_efs_file_system_policy_made_public.yml`](sigma/T1537/aws_efs_file_system_policy_made_public.yml).
+- **Kind**: false positive. **Severity**: low.
+- **Problem**: "this statement has no scoping key" cannot be written in portable
+  regex, so the scoping filter applies only when the policy has one public Allow
+  statement. A policy with two or more public Allow statements that are all scoped
+  (an SQS queue subscribed to two SNS topics) fires. A scoping key named only
+  outside the statement's Condition (in a Sid) no longer suppresses: the earlier
+  rule allowed that evasion.
+- **Evidence**: cases `sqs-two-scoped-public-statements-fire`,
+  `efs-two-org-scoped-public-statements-fire`, `sqs-public-allow-scoping-key-only-in-sid`.
+- **Fix**: decode the policy JSON in the log pipeline and test each statement, or a
+  count-based pattern per statement.
+
+### C16. aws_github_oidc_role_trust_abuse: several sub conditions grade high
+
+- **Rule**: [`sigma/T1098.001/aws_github_oidc_role_trust_abuse.yml`](sigma/T1098.001/aws_github_oidc_role_trust_abuse.yml) (level high).
+- **Kind**: false positive (grading). **Severity**: low.
+- **Problem**: the portable rewrite grades a trust per document, not per `sub`
+  value. A trust with two or more `sub` conditions and any wildcard grades high, even
+  when each wildcard sits after a pinned repository; the low rule then stays quiet,
+  so a write still fires exactly one of the two rules.
+- **Evidence**: case `two-subs-pinned-ref-wildcards-grade-high`.
+- **Fix**: decode the trust policy and grade each `sub` value.
+
+## Sigma backend portability
+
+### S1. Large patterns exceed Elasticsearch's default regex budget
+
+- **Rules**: [`aws_resource_policy_made_public`](sigma/T1537/aws_resource_policy_made_public.yml),
+  [`aws_efs_file_system_policy_made_public`](sigma/T1537/aws_efs_file_system_policy_made_public.yml),
+  [`k8s_security_tool_workload_removed`](sigma/T1685/k8s_security_tool_workload_removed.yml).
+- **Kind**: portability. **Severity**: low.
+- **Problem**: every pattern is in the portable subset (`.github/scripts/check_sigma_regex.py`),
+  but some statement-level values exceed Lucene's default `max_determinized_states`
+  (10000), so Elasticsearch rejects them unless the budget is raised.
+- **Evidence**: a Lucene 10.1 build of `RegExp` run over every pattern wrapped in `.*`.
+- **Fix**: raise the budget for these rules, or decode the JSON in the pipeline so
+  shorter patterns suffice.
+
 ## Checks to add
 
-- `T1098.001/entra_app_federated_credential_backdoor` warns as thin (R5): it needs a
-  near-miss that keeps the unapproved-issuer item and breaks only `targetResources`
-  `FederatedIdentityCredentials`. No documented Entra record of that shape is known.
+- `T1098.001/entra_app_federated_credential_backdoor` has a sidecar now, but still warns
+  as thin (R5): it needs a near-miss that keeps the unapproved-issuer item and breaks
+  only `targetResources` `FederatedIdentityCredentials`. No documented Entra record of
+  that shape is known.
 
 ## Closing an entry
 

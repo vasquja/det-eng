@@ -14,8 +14,11 @@ description: |
   aws:SourceArn / aws:SourceAccount / aws:SourceVpc / aws:SourceOwner, or
   elasticfilesystem:AccessedViaMountTarget set to true), as EFS itself judges "public". The
   policy arrives as a JSON string that this rule matches as text (the same approach TRR9019 took
-  for mixed-encoding policy services); the statement walk checks that a key is present, not its
-  value, so a production pipeline should still JSON-decode and evaluate each condition.
+  for mixed-encoding policy services); the statement test is a portable regex (no lookahead) that
+  checks that a key is present in the statement's Condition, not its value, so a production
+  pipeline should still JSON-decode and evaluate each condition. A portable regex cannot test that
+  EVERY public statement is scoped, so the scoping filters apply only to a policy with one public
+  Allow statement (see falsepositives).
 references:
   - https://attack.mitre.org/techniques/T1537/
   - https://docs.aws.amazon.com/efs/latest/ug/API_PutFileSystemPolicy.html
@@ -37,39 +40,74 @@ detection:
   selection_allow:
     # Require an Allow statement, so a Deny-only policy (e.g. an enforce-in-transit-encryption
     # policy: Effect Deny + Principal "*" + aws:SecureTransport=false) does not fire.
-    requestParameters.policy|re: '"Effect"\s*:\s*"Allow"'
+    requestParameters.policy|re: '\"Effect\"\s*:\s*\"Allow\"'
   selection_public_principal:
     # Literal asterisk principal, string OR single-element array ["*"], matched with a regex so
     # the '*' is NOT a Sigma wildcard (a |contains '"AWS":"*"' would match any named principal).
-    requestParameters.policy|re: '"(?:Principal|AWS)"\s*:\s*\[?\s*"\*"'
+    requestParameters.policy|re: '\"(Principal|AWS)\"\s*:\s*\[?\s*\"\*\"'
+  public_allow_statement:
+    # One statement that both Allows and names the public principal: "Effect": "Allow" and
+    # the public "Principal", in either order, with only whole nested objects (up to two
+    # levels) between them, so both sit in the same statement. Portable regex (no lookahead).
+    requestParameters.policy|re:
+      - '\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\"))'
+      - '\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"'
+  public_allow_statement_2:
+    # Two such statements in one policy.
+    requestParameters.policy|re:
+      - '\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\"))[\s\S]*\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\"))'
+      - '\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\"))[\s\S]*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"'
+      - '\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"[\s\S]*\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\"))'
+      - '\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"[\s\S]*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"'
   filter_scoped:
-    # Not public when every statement that Allows the public principal is scoped IN
-    # THAT SAME STATEMENT, by one of the keys below or by the mount-target key (EFS User
-    # Guide, 'Blocking public access' > 'The meaning of "public"': a policy is non-public
-    # only if it grants access only to fixed values of those keys). The filter holds
-    # when (1) no statement is an Allow + public principal that lacks every key and the
-    # mount-target key set to true (the negative lookahead walks each statement,
-    # stepping over nested objects up to two levels deep), and (2) one of the keys
-    # occurs. So an unconditioned public Allow next to an org-scoped statement fires.
-    # Text match: a key's value is not checked, and a key's name anywhere in the public
-    # statement counts as scoping it.
-    requestParameters.policy|re: '^(?![\s\S]*\{(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Effect"\s*:\s*"Allow")(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Principal"\s*:\s*(?:"\*"|\{[^{}]*"AWS"\s*:\s*(?:"\*"|\[[^\]]*"\*")))(?:(?:(?!(?i:aws:PrincipalOrgID|aws:SourceArn|aws:SourceAccount|aws:SourceVpc|aws:SourceOwner|elasticfilesystem:AccessedViaMountTarget"\s*:\s*"?true))[^{}])|\{(?:(?:(?!(?i:aws:PrincipalOrgID|aws:SourceArn|aws:SourceAccount|aws:SourceVpc|aws:SourceOwner|elasticfilesystem:AccessedViaMountTarget"\s*:\s*"?true))[^{}])|\{(?:(?!(?i:aws:PrincipalOrgID|aws:SourceArn|aws:SourceAccount|aws:SourceVpc|aws:SourceOwner|elasticfilesystem:AccessedViaMountTarget"\s*:\s*"?true))[^{}])*\})*\})*\})[\s\S]*?(?i:aws:PrincipalOrgID|aws:SourceArn|aws:SourceAccount|aws:SourceVpc|aws:SourceOwner)'
+    # A public Allow statement that is scoped IN THAT SAME STATEMENT by one of the keys
+    # below, inside an operator block of its Condition (EFS User Guide, 'Blocking public
+    # access' > 'The meaning of "public"': a policy is non-public only if it grants access
+    # only to fixed values of those keys). One value per order of Effect, Principal and
+    # Condition; every letter of a key matches in either case (condition keys are
+    # case-insensitive). The condition applies the filter only when the policy holds ONE
+    # public Allow statement, so an unconditioned public Allow next to an org-scoped
+    # statement fires; with two or more public Allow statements the rule fires even when
+    # each is scoped (a documented false positive: a portable regex cannot test "every
+    # statement"). Text match: a key's value is not checked, and a key outside the
+    # statement's Condition (in a Sid, say) does not scope it.
+    requestParameters.policy|re:
+      - '\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Condition\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*([Aa][Ww][Ss]:([Pp][Rr][Ii][Nn][Cc][Ii][Pp][Aa][Ll][Oo][Rr][Gg][Ii][Dd]|[Ss][Oo][Uu][Rr][Cc][Ee]([Aa][Rr][Nn]|[Aa][Cc][Cc][Oo][Uu][Nn][Tt]|[Vv][Pp][Cc]|[Oo][Ww][Nn][Ee][Rr])))'
+      - '\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Condition\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*([Aa][Ww][Ss]:([Pp][Rr][Ii][Nn][Cc][Ii][Pp][Aa][Ll][Oo][Rr][Gg][Ii][Dd]|[Ss][Oo][Uu][Rr][Cc][Ee]([Aa][Rr][Nn]|[Aa][Cc][Cc][Oo][Uu][Nn][Tt]|[Vv][Pp][Cc]|[Oo][Ww][Nn][Ee][Rr])))[^{}]*\}([^{}]|\{[^{}]*\})*\}([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\"))'
+      - '\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Condition\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*([Aa][Ww][Ss]:([Pp][Rr][Ii][Nn][Cc][Ii][Pp][Aa][Ll][Oo][Rr][Gg][Ii][Dd]|[Ss][Oo][Uu][Rr][Cc][Ee]([Aa][Rr][Nn]|[Aa][Cc][Cc][Oo][Uu][Nn][Tt]|[Vv][Pp][Cc]|[Oo][Ww][Nn][Ee][Rr])))'
+      - '\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Condition\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*([Aa][Ww][Ss]:([Pp][Rr][Ii][Nn][Cc][Ii][Pp][Aa][Ll][Oo][Rr][Gg][Ii][Dd]|[Ss][Oo][Uu][Rr][Cc][Ee]([Aa][Rr][Nn]|[Aa][Cc][Cc][Oo][Uu][Nn][Tt]|[Vv][Pp][Cc]|[Oo][Ww][Nn][Ee][Rr])))[^{}]*\}([^{}]|\{[^{}]*\})*\}([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"'
+      - '\"Condition\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*([Aa][Ww][Ss]:([Pp][Rr][Ii][Nn][Cc][Ii][Pp][Aa][Ll][Oo][Rr][Gg][Ii][Dd]|[Ss][Oo][Uu][Rr][Cc][Ee]([Aa][Rr][Nn]|[Aa][Cc][Cc][Oo][Uu][Nn][Tt]|[Vv][Pp][Cc]|[Oo][Ww][Nn][Ee][Rr])))[^{}]*\}([^{}]|\{[^{}]*\})*\}([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\"))'
+      - '\"Condition\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*([Aa][Ww][Ss]:([Pp][Rr][Ii][Nn][Cc][Ii][Pp][Aa][Ll][Oo][Rr][Gg][Ii][Dd]|[Ss][Oo][Uu][Rr][Cc][Ee]([Aa][Rr][Nn]|[Aa][Cc][Cc][Oo][Uu][Nn][Tt]|[Vv][Pp][Cc]|[Oo][Ww][Nn][Ee][Rr])))[^{}]*\}([^{}]|\{[^{}]*\})*\}([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"'
   filter_mount_target:
     # The EFS console's policy wizard scopes its public Allow with Bool
     # elasticfilesystem:AccessedViaMountTarget = true, so only clients that reach a mount
     # target in the file system's VPC get in. The EFS User Guide ('The meaning of
     # "public"') lists that key among the conditions that make a file system policy
-    # non-public, and shows the wizard policy with it set to true as non-public. Same
-    # per-statement test as filter_scoped: the filter holds only when (1) no statement
-    # is an Allow + public principal without the key set to true (or a filter_scoped
-    # key), and (2) one public Allow carries the key set to true in an operator block
-    # of its Condition. So the key in a Deny statement, or in one Allow next to a
-    # second, unconditioned public Allow, does not suppress, and the value false is not
-    # filtered. Condition keys are case-insensitive, so the match is too.
-    requestParameters.policy|re: '^(?![\s\S]*\{(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Effect"\s*:\s*"Allow")(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Principal"\s*:\s*(?:"\*"|\{[^{}]*"AWS"\s*:\s*(?:"\*"|\[[^\]]*"\*")))(?:(?:(?!(?i:aws:PrincipalOrgID|aws:SourceArn|aws:SourceAccount|aws:SourceVpc|aws:SourceOwner|elasticfilesystem:AccessedViaMountTarget"\s*:\s*"?true))[^{}])|\{(?:(?:(?!(?i:aws:PrincipalOrgID|aws:SourceArn|aws:SourceAccount|aws:SourceVpc|aws:SourceOwner|elasticfilesystem:AccessedViaMountTarget"\s*:\s*"?true))[^{}])|\{(?:(?!(?i:aws:PrincipalOrgID|aws:SourceArn|aws:SourceAccount|aws:SourceVpc|aws:SourceOwner|elasticfilesystem:AccessedViaMountTarget"\s*:\s*"?true))[^{}])*\})*\})*\})[\s\S]*?(?i:\{(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Effect"\s*:\s*"Allow")(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Principal"\s*:\s*(?:"\*"|\{[^{}]*"AWS"\s*:\s*(?:"\*"|\[[^\]]*"\*")))(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Condition"\s*:\s*\{(?:[^{}]|\{[^{}]*\})*?\{[^{}]*"elasticfilesystem:AccessedViaMountTarget"\s*:\s*"?true))'
+    # non-public, and shows the wizard policy with it set to true as non-public. A public
+    # Allow statement that carries the key set to true in an operator block of its own
+    # Condition (same per-statement test and the same one-public-statement rule as
+    # filter_scoped). So the key in a Deny statement, or in one Allow next to a second,
+    # unconditioned public Allow, does not suppress, and the value false is not filtered.
+    # Condition keys are case-insensitive, so the key and 'true' match in either case.
+    requestParameters.policy|re:
+      - '\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Condition\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*\"[Ee][Ll][Aa][Ss][Tt][Ii][Cc][Ff][Ii][Ll][Ee][Ss][Yy][Ss][Tt][Ee][Mm]:[Aa][Cc][Cc][Ee][Ss][Ss][Ee][Dd][Vv][Ii][Aa][Mm][Oo][Uu][Nn][Tt][Tt][Aa][Rr][Gg][Ee][Tt]\"\s*:\s*\"?[Tt][Rr][Uu][Ee]'
+      - '\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Condition\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*\"[Ee][Ll][Aa][Ss][Tt][Ii][Cc][Ff][Ii][Ll][Ee][Ss][Yy][Ss][Tt][Ee][Mm]:[Aa][Cc][Cc][Ee][Ss][Ss][Ee][Dd][Vv][Ii][Aa][Mm][Oo][Uu][Nn][Tt][Tt][Aa][Rr][Gg][Ee][Tt]\"\s*:\s*\"?[Tt][Rr][Uu][Ee][^{}]*\}([^{}]|\{[^{}]*\})*\}([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\"))'
+      - '\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Condition\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*\"[Ee][Ll][Aa][Ss][Tt][Ii][Cc][Ff][Ii][Ll][Ee][Ss][Yy][Ss][Tt][Ee][Mm]:[Aa][Cc][Cc][Ee][Ss][Ss][Ee][Dd][Vv][Ii][Aa][Mm][Oo][Uu][Nn][Tt][Tt][Aa][Rr][Gg][Ee][Tt]\"\s*:\s*\"?[Tt][Rr][Uu][Ee]'
+      - '\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Condition\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*\"[Ee][Ll][Aa][Ss][Tt][Ii][Cc][Ff][Ii][Ll][Ee][Ss][Yy][Ss][Tt][Ee][Mm]:[Aa][Cc][Cc][Ee][Ss][Ss][Ee][Dd][Vv][Ii][Aa][Mm][Oo][Uu][Nn][Tt][Tt][Aa][Rr][Gg][Ee][Tt]\"\s*:\s*\"?[Tt][Rr][Uu][Ee][^{}]*\}([^{}]|\{[^{}]*\})*\}([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"'
+      - '\"Condition\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*\"[Ee][Ll][Aa][Ss][Tt][Ii][Cc][Ff][Ii][Ll][Ee][Ss][Yy][Ss][Tt][Ee][Mm]:[Aa][Cc][Cc][Ee][Ss][Ss][Ee][Dd][Vv][Ii][Aa][Mm][Oo][Uu][Nn][Tt][Tt][Aa][Rr][Gg][Ee][Tt]\"\s*:\s*\"?[Tt][Rr][Uu][Ee][^{}]*\}([^{}]|\{[^{}]*\})*\}([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\"))'
+      - '\"Condition\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*\"[Ee][Ll][Aa][Ss][Tt][Ii][Cc][Ff][Ii][Ll][Ee][Ss][Yy][Ss][Tt][Ee][Mm]:[Aa][Cc][Cc][Ee][Ss][Ss][Ee][Dd][Vv][Ii][Aa][Mm][Oo][Uu][Nn][Tt][Tt][Aa][Rr][Gg][Ee][Tt]\"\s*:\s*\"?[Tt][Rr][Uu][Ee][^{}]*\}([^{}]|\{[^{}]*\})*\}([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Principal\"\s*:\s*(\"\*\"|\{[^{}]*\"AWS\"\s*:\s*(\"\*\"|\[[^\]]*\"\*\")[^{}]*\})([^{}]|\{([^{}]|\{[^{}]*\})*\})*\"Effect\"\s*:\s*\"Allow\"'
+  scoping_key_present:
+    # A scoping key anywhere in the policy. When the policy holds no public Allow
+    # statement (an Allow for a named principal next to a Deny with Principal "*"), the
+    # document-level selections above still hold, and the rule fires only if no scoping
+    # key occurs at all (see falsepositives: per-statement limitation).
+    requestParameters.policy|re|i: 'aws:PrincipalOrgID|aws:SourceArn|aws:SourceAccount|aws:SourceVpc|aws:SourceOwner'
   filter_failed:
     errorCode: '*'
-  condition: selection_efs_policy and selection_allow and selection_public_principal and not filter_scoped and not filter_mount_target and not filter_failed
+  condition: >
+    selection_efs_policy and selection_allow and selection_public_principal and not filter_failed and
+    ((public_allow_statement and not ((filter_scoped or filter_mount_target) and not public_allow_statement_2))
+     or (not public_allow_statement and not scoping_key_present))
 falsepositives:
   - A file-system policy granting a named account scoped by aws:PrincipalOrgID / aws:SourceArn is
     not public and is excluded. So is the EFS console wizard's policy, which grants the AWS
@@ -81,4 +119,6 @@ falsepositives:
     and the Principal "*" selections are still matched across the whole document. So an Allow for
     a named principal next to a Deny with Principal "*" (for example an enforce-in-transit
     encryption statement) and no scoping key fires. Decode per statement in a production pipeline.
+  - A policy with two or more public Allow statements fires even when each one is scoped (by a key
+    or by the mount-target condition), because a portable regex cannot test "every statement".
 level: high

@@ -240,7 +240,10 @@ trust policy to judge the sub and aud precisely.
 The wildcard is graded by position. A wildcard before any `repo:` or `repository_id:`
 segment with a fixed value (an org-wide or any-repository sub), and a trust with no
 scoping claim, fire the high rule. A wildcard after a pinned repository fires a separate
-low rule, so one write raises one alert.
+low rule, so one write raises one alert. The rules use portable regex only (no
+lookaround): the per-segment test is split into Sigma items, which is exact for a trust
+with one GitHub `sub` condition; with two or more `sub` conditions any wildcard grades
+high.
 
 - Sensor: CloudTrail.
 - Rule (high): [`detections/sigma/T1098.001/aws_github_oidc_role_trust_abuse.yml`](../../../detections/sigma/T1098.001/aws_github_oidc_role_trust_abuse.yml) (built).

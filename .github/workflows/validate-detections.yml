@@ -64,6 +64,9 @@ jobs:
     # Lints the Sigma rules with the official pySigma validators (sigma-cli).
     # Parse/condition ERRORS fail the job; best-practice ISSUES are reported
     # in the summary, not gated (several are expected for auditd rules).
+    # Then check_sigma_regex.py fails the job on any |re value outside the
+    # portable regex subset (detections/README.md, "Portable regular
+    # expressions"), compiling each value with Python re and RE2.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -77,8 +80,11 @@ jobs:
           python3 -m venv /tmp/sigmaenv
           /tmp/sigmaenv/bin/pip install --quiet --upgrade pip
           /tmp/sigmaenv/bin/pip install --quiet sigma-cli
+          # RE2 (the engine behind KQL and Go backends) for the regex lint.
+          /tmp/sigmaenv/bin/pip install --quiet google-re2==1.1.20251105
 
       - name: Sigma check
+        shell: bash
         run: |
           # Exclude the three validators that fetch external taxonomies over
           # the network (ATT&CK, D3FEND, CAR) so the gate stays offline and
@@ -87,6 +93,14 @@ jobs:
           /tmp/sigmaenv/bin/sigma check \
             -x attacktag -x d3_fendtag -x cartag \
             detections/sigma/ | tee /tmp/sigma.out
+
+      - name: Portable regex lint
+        if: always()
+        shell: bash
+        run: |
+          # shell: bash enables pipefail, so tee does not mask the exit code.
+          /tmp/sigmaenv/bin/python .github/scripts/check_sigma_regex.py --require-re2 \
+            | tee /tmp/sigma-regex.out
 
       - name: Publish results to job summary
         if: always()
@@ -99,6 +113,12 @@ jobs:
             echo ''
             echo '```'
             cat /tmp/sigma.out 2>/dev/null || echo '(no output captured)'
+            echo '```'
+            echo ''
+            echo '## Portable regex lint (check_sigma_regex.py)'
+            echo ''
+            echo '```'
+            cat /tmp/sigma-regex.out 2>/dev/null || echo '(no output captured)'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 

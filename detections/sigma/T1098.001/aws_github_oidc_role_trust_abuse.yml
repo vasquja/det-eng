@@ -32,7 +32,11 @@ description: |
   URL-decode and JSON-parse the trust policy and judge the sub precisely. The aud pin
   is intentionally NOT tested here -- the absence of a literal `aud":"sts` substring is
   not evidence of an unpinned audience (aud is commonly a JSON array), so an aud test
-  belongs only in a decode-and-parse pipeline.
+  belongs only in a decode-and-parse pipeline. The regexes are portable (no lookaround):
+  the per-segment test is split into the items below, which is exact for a trust with
+  one GitHub sub condition (on well-formed percent-encoding, which CloudTrail always
+  writes); with two or more sub conditions in one trust, any wildcard grades high, so a
+  pinned sub cannot hide an org-wide one.
 
   Blind spots (see the TRR): exploiting a PRE-EXISTING over-broad trust emits only the
   use event (sts:AssumeRoleWithWebIdentity) and no grant -- catchable only with a
@@ -64,33 +68,63 @@ detection:
     requestParameters.policyDocument|contains: 'token.actions.githubusercontent.com'
   oidc_create:
     requestParameters.assumeRolePolicyDocument|contains: 'token.actions.githubusercontent.com'
-  # A wildcard '*' (encoded %2A) in the sub value BEFORE any segment that pins one
-  # repository. A pin is 'repo:<value>:' or 'repository_id:<value>:' at a segment start
-  # (after the opening quote or a ':' %3A), with a value that has no '*'. So with the
-  # default template 'repo:org/*', 'repo:*', 'repo:org/*:*' and '*' match, and so do
-  # customized subject-claim templates that pin no repository
-  # ('repository_owner_id:1234567:*', 'repository_owner:org:*', a wildcard
-  # job_workflow_ref): any repository of the owner, or any caller, can match those.
-  # A wildcard after a pinned repository ('repo:org/app:ref:refs/tags/v*',
-  # 'repo:org/app:*', 'repo:org@1/app@2:*', 'repository_owner_id:1:repository_id:9:*')
-  # does not: no fork or other repository can match it. That case is the low-level
-  # sibling rule aws_github_oidc_role_trust_ref_wildcard.yml. Template formats: GitHub
-  # Docs, 'OpenID Connect reference' (example subject claims, immutable subject claims,
-  # customizing the subject claims). A wildcard on a claim other than sub is not a
-  # broad sub.
+  # The trust policy is URL-encoded, so ':' is %3A, '"' is %22 and '*' is %2A, and the
+  # sub value runs from 'githubusercontent.com:sub":"' to the next %22. A sub is graded
+  # high when it has a wildcard before any segment that pins one repository. A pin is
+  # 'repo:<value>:' or 'repository_id:<value>:' at a segment start (the value start or
+  # after a ':'), with a value that has no '*'. So with the default template
+  # 'repo:org/*', 'repo:*', 'repo:org/*:*' and '*' are high, and so are customized
+  # subject-claim templates that pin no repository ('repository_owner_id:1234567:*',
+  # 'repository_owner:org:*', a wildcard job_workflow_ref): any repository of the owner,
+  # or any caller, can match those. A wildcard after a pinned repository
+  # ('repo:org/app:ref:refs/tags/v*', 'repo:org/app:*', 'repo:org@1/app@2:*',
+  # 'repository_owner_id:1:repository_id:9:*') is not: no fork or other repository can
+  # match it. That case is the low-level sibling rule
+  # aws_github_oidc_role_trust_ref_wildcard.yml. Template formats: GitHub Docs, 'OpenID
+  # Connect reference' (example subject claims, immutable subject claims, customizing the
+  # subject claims). A wildcard on a claim other than sub is not a broad sub.
+  #
+  # Portable regex only (no lookaround): the per-segment test is split into the items
+  # below and combined in the condition. Each regex reads percent-encoded text a token at
+  # a time ('[^%]' or '%' and two characters), so '%22' (end of the sub value), '%2A' and
+  # '%3A' are never split. On a single GitHub sub condition the result is the same as
+  # the per-segment test; with two or more sub conditions in one policy (sub_multi_*)
+  # any wildcard grades high, so a pinned sub cannot hide an org-wide one.
+  #
+  # A wildcard anywhere in a sub value.
+  sub_any_wildcard_update:
+    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22([^%]|%([^2%]|2[^2%]))*%2A'
+  sub_any_wildcard_create:
+    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22([^%]|%([^2%]|2[^2%]))*%2A'
+  # A wildcard in the owner/repo part of the default template: in the first segment
+  # ('*', 'org/*') or right after 'repo:' ('repo:org/*', 'repo:*'), before any ':'.
   sub_wildcard_update:
-    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(?:(?!%22|%2A|(?:(?<=%22)|(?<=%3A))(?:repo|repository_id)%3A(?:(?!%22|%3A|%2A).)+%3A).)*%2A'
+    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(repo%3A)?([^%]|%([^23%]|2[^2%]|3[^A%]))*%2A'
   sub_wildcard_create:
-    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(?:(?!%22|%2A|(?:(?<=%22)|(?<=%3A))(?:repo|repository_id)%3A(?:(?!%22|%3A|%2A).)+%3A).)*%2A'
+    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(repo%3A)?([^%]|%([^23%]|2[^2%]|3[^A%]))*%2A'
+  # A repository pin ('repo:<value>:' or 'repository_id:<value>:' at a segment start)
+  # before the first wildcard of a sub value.
+  sub_pinned_update:
+    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(([^%]|%([^2%]|2[^2A%]))*%3A)?repo(sitory_id)?%3A([^%]|%([^23%]|2[^2A%]|3[^A%]))+%3A'
+  sub_pinned_create:
+    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(([^%]|%([^2%]|2[^2A%]))*%3A)?repo(sitory_id)?%3A([^%]|%([^23%]|2[^2A%]|3[^A%]))+%3A'
+  # Two or more GitHub sub conditions in one policy.
+  sub_multi_update:
+    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22.*githubusercontent\.com%3Asub%22'
+  sub_multi_create:
+    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22.*githubusercontent\.com%3Asub%22'
   # ANY GitHub-OIDC scoping claim present (sub, repository, environment, ...), so a
   # trust scoped by :repository or :environment without a :sub is NOT "worldwide".
   scoping_claim_update:
-    requestParameters.policyDocument|re: 'githubusercontent\.com%3A(?:sub|repository|repository_owner|repository_id|environment|actor|ref|workflow_ref|job_workflow_ref)%22'
+    requestParameters.policyDocument|re: 'githubusercontent\.com%3A(sub|repository|repository_owner|repository_id|environment|actor|ref|workflow_ref|job_workflow_ref)%22'
   scoping_claim_create:
-    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3A(?:sub|repository|repository_owner|repository_id|environment|actor|ref|workflow_ref|job_workflow_ref)%22'
+    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3A(sub|repository|repository_owner|repository_id|environment|actor|ref|workflow_ref|job_workflow_ref)%22'
   condition: >
     selection_grant and (oidc_update or oidc_create) and
-    (sub_wildcard_update or sub_wildcard_create
+    (((sub_any_wildcard_update or sub_any_wildcard_create) and
+      not ((sub_pinned_update or sub_pinned_create)
+           and not (sub_wildcard_update or sub_wildcard_create)
+           and not (sub_multi_update or sub_multi_create)))
      or not (scoping_claim_update or scoping_claim_create))
 falsepositives:
   - Orgs that deliberately use an org-wide StringLike repo:org/* for shared or
@@ -102,4 +136,7 @@ falsepositives:
     'repository_id:' segment with a fixed value comes before the wildcard. A template
     that pins the repository through another claim (a repo_property_* custom property,
     for example) and then uses a wildcard is graded high.
+  - A trust with two or more GitHub sub conditions is graded high when any of them has a
+    wildcard, even when every wildcard follows a pinned repository (the sibling low rule
+    then stays quiet).
 level: high

@@ -70,11 +70,11 @@ detection:
       - '"privileged": true'
       - '"privileged":true'
   sel_caps_tmpl:
-    requestObject.spec.template.spec.containers|re|i: '"add":\s*\[[^\]]*"(?:(?:CAP_)?(?:SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)"'
+    requestObject.spec.template.spec.containers|re|i: '\"add\":\s*\[[^\]]*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
   sel_caps_init_tmpl:
-    requestObject.spec.template.spec.initContainers|re|i: '"add":\s*\[[^\]]*"(?:(?:CAP_)?(?:SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)"'
+    requestObject.spec.template.spec.initContainers|re|i: '\"add\":\s*\[[^\]]*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
   sel_hostpath_tmpl:
-    requestObject.spec.template.spec.volumes|re: '"hostPath":\s*\{'
+    requestObject.spec.template.spec.volumes|re: '\"hostPath\":\s*\{'
   sel_hostpid_tmpl:
     requestObject.spec.template.spec.hostPID: true
   sel_hostnet_tmpl:
@@ -90,11 +90,11 @@ detection:
       - '"privileged": true'
       - '"privileged":true'
   sel_caps_cj:
-    requestObject.spec.jobTemplate.spec.template.spec.containers|re|i: '"add":\s*\[[^\]]*"(?:(?:CAP_)?(?:SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)"'
+    requestObject.spec.jobTemplate.spec.template.spec.containers|re|i: '\"add\":\s*\[[^\]]*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
   sel_caps_init_cj:
-    requestObject.spec.jobTemplate.spec.template.spec.initContainers|re|i: '"add":\s*\[[^\]]*"(?:(?:CAP_)?(?:SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)"'
+    requestObject.spec.jobTemplate.spec.template.spec.initContainers|re|i: '\"add\":\s*\[[^\]]*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
   sel_hostpath_cj:
-    requestObject.spec.jobTemplate.spec.template.spec.volumes|re: '"hostPath":\s*\{'
+    requestObject.spec.jobTemplate.spec.template.spec.volumes|re: '\"hostPath\":\s*\{'
   sel_hostpid_cj:
     requestObject.spec.jobTemplate.spec.template.spec.hostPID: true
   sel_hostnet_cj:

@@ -403,10 +403,12 @@ the Glue rule must ignore, proving the `eventSource` pin works.
   encoding-agnostic (TRR9019 precedent). Confirm with one real capture at build time.
 - **Per-statement scoping and decoy conditions** (inherited from TRR9019): a policy can mix an
   org-scoped statement with a second unconditioned `Principal "*"` statement, or add a wildcard-value
-  decoy condition. The EFS rule evaluates the scoping filters per statement with a bounded regex, so
-  it fires on the mix, but it checks only that a key is present, not its value, and it still reads
-  the `Allow` and the `"*"` across the whole document (a named-principal `Allow` next to a public
-  `Deny` with no scoping key fires). The EventBridge and Glue rules match tokens across the whole
+  decoy condition. The EFS rule evaluates the scoping filters per statement with a bounded,
+  portable regex (no lookahead), so it fires on the mix, but it checks only that a key is present in
+  the statement's `Condition`, not its value, and it still reads the `Allow` and the `"*"` across
+  the whole document (a named-principal `Allow` next to a public `Deny` with no scoping key fires).
+  With two or more public `Allow` statements it fires even when each is scoped (a portable regex
+  cannot test "every statement"). The EventBridge and Glue rules match tokens across the whole
   document. A production pipeline should JSON-decode and evaluate scope per statement and reject
   wildcard condition values.
 - **Named-foreign-account exposure** (a 12-digit partner account rather than `"*"` / `All`) is
