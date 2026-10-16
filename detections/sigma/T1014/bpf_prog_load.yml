@@ -10,23 +10,53 @@ description: |
 
   Two filters suppress stock loaders. `bpf_processes` matches by `comm`.
   `runtime_images` matches by `exe`: runc, which loads a cgroup-v2 device-filter
-  program for every container it creates (paired with comm `runc`), and
-  snap-confine, which loads a device-cgroup program on snap launches.
+  program for every container it creates (paired with comm `runc` and euid 0),
+  and snap-confine, which loads a device-cgroup program on snap launches.
 
   Filter limits: a process sets its own comm with prctl(PR_SET_NAME), so each
   `bpf_processes` entry suppresses a process that renames itself. Pairing exe
-  with comm stops that rename, but not code injected into the real binary
-  (LD_PRELOAD or ptrace keep its comm and exe), and a process in a container
-  controls both values, because the kernel logs `exe` relative to the
-  process's own root. Except for socket filters where
-  kernel.unprivileged_bpf_disabled is 0, BPF_PROG_LOAD needs CAP_BPF or
-  CAP_SYS_ADMIN, so an attacker who passes these filters usually already has
-  that privilege.
+  with comm stops that rename. runc is not setuid, so any user can run it with
+  LD_PRELOAD (or under ptrace); the injected load keeps runc's comm and exe but
+  carries the user's euid, so the runc entry's euid 0 condition makes it fire.
+  That matters where kernel.unprivileged_bpf_disabled is 0: an unprivileged
+  user can then load socket-filter programs, the path of several verifier
+  privilege escalations. Rootless runc does not load the device filter: it
+  first asks the kernel which programs are attached (BPF_PROG_QUERY), which
+  needs CAP_NET_ADMIN, and it ignores that error and skips the load.
+  snap-confine has no euid condition: snapd before 2.70 installs it set-user-ID
+  root (euid 0, the caller's uid), and snapd 2.70 and later with file
+  capabilities (the caller's uid and euid), so a euid 0 condition would fire
+  on every snap launch on a newer snapd. Both make the kernel start the real
+  binary in secure-execution mode (AT_SECURE), where the loader ignores an
+  LD_PRELOAD path, and its changed credentials stop the caller from ptracing
+  it, so an unprivileged user cannot inject code into the real snap-confine.
+  But the snap-confine entry matches the path alone, and the kernel logs `exe`
+  relative to the process's own root and mounts: any user who can create a user
+  namespace (unshare -rm, then a tmpfs over /snap or a chroot) can run a binary
+  of their own from a snap-confine path, for example
+  /snap/snapd/1/usr/lib/snapd/snap-confine. auditd logs that process with the
+  user's host uid and euid, the same ids that a snap-confine from snapd >= 2.70
+  has, so its socket-filter load passes the filter (see case
+  snap-confine-path-in-user-namespace-known-miss). On hosts without snapd,
+  remove the snap-confine entry. The runc entry does not have this gap: the
+  same binary at a runc path with comm runc carries a non-zero euid and fires.
+  A process that already runs as root can inject into runc and keep all three
+  values, and root in a container without user namespace remapping passes the
+  runc entry. Except for socket filters where kernel.unprivileged_bpf_disabled
+  is 0, BPF_PROG_LOAD needs CAP_BPF or CAP_SYS_ADMIN, so an attacker who passes
+  these filters usually already has that privilege; the unprivileged
+  socket-filter load is the case where the runc entry's euid condition matters.
 references:
   - https://man7.org/linux/man-pages/man2/bpf.2.html
   - https://github.com/kris-nova/boopkit
   - https://github.com/opencontainers/runc/blob/v1.1.12/libcontainer/cgroups/ebpf/ebpf_linux.go
   - https://github.com/snapcore/snapd/blob/master/cmd/libsnap-confine-private/device-cgroup-support.c
+  - https://github.com/opencontainers/runc/blob/v1.1.12/libcontainer/cgroups/fs2/fs2.go
+  - https://github.com/torvalds/linux/blob/v6.8/kernel/bpf/syscall.c
+  - https://github.com/canonical/snapd/blob/2.70/cmd/Makefile.am
+  - https://github.com/canonical/snapd/blob/2.69/cmd/Makefile.am
+  - https://man7.org/linux/man-pages/man8/ld.so.8.html
+  - https://man7.org/linux/man-pages/man7/user_namespaces.7.html
 author: det-eng
 date: 2026/10/05
 modified: 2026/10/16
@@ -54,14 +84,19 @@ detection:
       - node_exporter
   runtime_images:
     # runc on cgroup v2 loads a BPF_PROG_TYPE_CGROUP_DEVICE
-    # program for every container it creates.
+    # program for every container it creates, as root (euid 0; auditd logs it
+    # as decimal text). Rootless runc never gets to the load: its
+    # BPF_PROG_QUERY fails with EPERM first, and fs2 ignores that error.
     - comm: runc
       exe:
         - /usr/bin/runc
         - /usr/sbin/runc
         - /usr/local/bin/runc
         - /usr/local/sbin/runc
+      euid: '0'
     # snap-confine loads the snap's device-cgroup program on cgroup v2 hosts.
+    # snapd >= 2.70 installs it with file capabilities, so it keeps the
+    # caller's euid (before 2.70: set-user-ID root); no euid condition.
     - exe|re: '^(/usr/lib/snapd|/usr/libexec/snapd|/snap/(snapd|core[0-9]*)/[0-9]+/usr/lib/snapd)/snap-confine$'
   condition: bpf_prog_load and not bpf_processes and not runtime_images
 falsepositives:
@@ -72,4 +107,8 @@ falsepositives:
     as python3, so neither filter can name them safely
   - runc installed at a path that `runtime_images` does not list (for example
     a k3s data directory) — extend `runtime_images`
+  - Not a false positive but a known miss — an unprivileged user with a user
+    namespace can run a binary from a snap-confine path (exe relative to its
+    own mounts), which the snap-confine entry suppresses whatever its euid.
+    Remove the snap-confine entry on hosts without snapd
 level: medium

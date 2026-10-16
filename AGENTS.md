@@ -121,5 +121,7 @@ Each validator's details are in [`detections/README.md`](detections/README.md).
   With the label, the `automerge` workflow turns on GitHub's native auto-merge only
   while its rails hold: a pull request that changes anything but content (rules,
   cases, fixtures, docs) also needs an approval on its head commit from an
-  independent human. Do not add that label yourself. Budgets, corpus slices and
+  independent human. With one maintainer, who authors your pull requests, that
+  approval cannot exist, so such a pull request waits for the maintainer to merge it
+  by hand. Do not add that label yourself. Budgets, corpus slices and
   check waivers are human decisions too: propose them in the pull request.

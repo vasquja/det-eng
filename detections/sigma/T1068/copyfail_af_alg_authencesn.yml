@@ -33,7 +33,10 @@ description: |
   authencesn and splices, and the AF_ALG base suppresses it. A process in a
   container controls both values, because the kernel logs `exe` relative to
   the process's own root. auditd does not decode the AF_ALG bind (the cipher
-  name), so the rule cannot tell a digest from the AEAD.
+  name), so the rule cannot tell a digest from the AEAD. The filter has no
+  euid condition: any user hashes files with these tools (sha256hmac, the
+  sha*sum links), so the hash tool's euid is any user's, the same as the
+  injected code's, and CopyFail is an exploit that an unprivileged user runs.
 
   Each syscall is a separate audit event, so this is a Sigma correlation
   rule: the two base rules below each match one event, and the correlation

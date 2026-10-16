@@ -14,24 +14,38 @@ description: |
 
   Two filters suppress stock keyring users. `keyring_processes` matches by
   `comm`. `luks_images` matches cryptsetup and systemd-cryptsetup by `exe`
-  paired with their comm: they hand every LUKS2 volume key to dm-crypt with
-  add_key("logon", ...).
+  paired with their comm and with euid 0: when they unlock a LUKS2 volume they
+  hand its volume key to dm-crypt with add_key("logon", ...). An unlock creates
+  or resumes a dm-crypt device, and every device-mapper ioctl needs
+  CAP_SYS_ADMIN, so a real LUKS unlock runs as root. Not every add_key from
+  cryptsetup is an unlock: from cryptsetup 2.7.1, `cryptsetup open
+  --test-passphrase --link-vk-to-keyring ...` loads the volume key into the
+  keyring (a "logon" key, then the linked key, often a "user" key) and never
+  reaches device-mapper, so any user can run it on a LUKS image that the user
+  can read. It runs as that user and fires, once per key (see falsepositives).
 
   Filter limits. A filter trusts the name and the binary, not the code that
   runs in the process. A process sets its own comm with prctl(PR_SET_NAME), so
   each `keyring_processes` entry suppresses a process that renames itself.
   Pairing exe with comm stops that rename, and a binary that only sits at an
-  allowed path. It does not stop code injected into the real binary:
-  cryptsetup is an ordinary, dynamically linked binary that is not setuid, so
-  an unprivileged user can run it with LD_PRELOAD (or ptrace a running copy),
-  and the injected add_key calls keep comm `cryptsetup` and its exe. A
-  process in a container controls both values, because the kernel logs `exe`
-  relative to the process's own root. The event schema has no uid, so the
-  filter cannot require the root that a LUKS unlock runs as.
+  allowed path. The euid condition stops code injected into the real binary by
+  an unprivileged user: cryptsetup is an ordinary, dynamically linked binary
+  that is not setuid, so any user can run it with LD_PRELOAD (or ptrace a copy
+  that the user runs), and the injected add_key calls keep comm `cryptsetup` and
+  its exe, but they carry that user's euid and now fire. It does not stop a
+  process that already runs as root: it can inject into cryptsetup and keep all
+  three values. A process in a container controls comm and exe, because the
+  kernel logs `exe` relative to the process's own root; auditd logs the euid in
+  the initial user namespace, so only root in a container without user
+  namespace remapping (host uid 0) passes the filter.
 references:
   - https://man7.org/linux/man-pages/man2/add_key.2.html
   - https://nvd.nist.gov/vuln/detail/CVE-2016-0728
   - https://gitlab.com/cryptsetup/cryptsetup/-/blob/main/lib/utils_keyring.c
+  - https://gitlab.com/cryptsetup/cryptsetup/-/blob/v2.7.0/lib/setup.c
+  - https://gitlab.com/cryptsetup/cryptsetup/-/blob/v2.7.1/src/utils_luks.c
+  - https://gitlab.com/cryptsetup/cryptsetup/-/blob/main/man/common_options.adoc
+  - https://github.com/torvalds/linux/blob/v6.8/drivers/md/dm-ioctl.c
 author: det-eng
 date: 2026/10/05
 modified: 2026/10/16
@@ -56,27 +70,41 @@ detection:
       - systemd
       - sshd
   luks_images:
-    # LUKS2 unlock: the volume key goes to dm-crypt as a "logon" key.
+    # LUKS2 unlock: the volume key goes to dm-crypt as a "logon" key. The
+    # unlock then creates or resumes the dm-crypt device, and dm-ioctl.c
+    # ctl_ioctl() refuses every device-mapper ioctl without CAP_SYS_ADMIN, so an
+    # unlock runs as root (euid 0). lib/setup.c also loads the key with no
+    # device name when CRYPT_ACTIVATE_KEYRING_KEY is set (cryptsetup >= 2.7.1:
+    # --test-passphrase --link-vk-to-keyring), which any user can run; that run
+    # is not suppressed. auditd logs euid as decimal text.
     - comm: cryptsetup
       exe:
         - /usr/sbin/cryptsetup
         - /sbin/cryptsetup
         - /usr/bin/cryptsetup
+      euid: '0'
     # comm is the 15-character truncation of systemd-cryptsetup. systemd >= 256
-    # installs the binary in /usr/bin with a link in /usr/lib/systemd.
+    # installs the binary in /usr/bin with a link in /usr/lib/systemd. systemd
+    # runs it as root from systemd-cryptsetup@.service.
     - comm: systemd-cryptse
       exe:
         - /usr/lib/systemd/systemd-cryptsetup
         - /lib/systemd/systemd-cryptsetup
         - /usr/bin/systemd-cryptsetup
+      euid: '0'
   condition: add_key_syscall and not keyring_processes and not luks_images
 falsepositives:
   - Administrators adding keys with `keyctl add` or `keyctl padd` (one hit per
     key)
   - Kerberos/GSSAPI and NFS idmapping components not covered by the allowlist
   - eCryptfs and fscrypt key setup — extend `keyring_processes` for the host
+  - A user who runs `cryptsetup open --test-passphrase --link-vk-to-keyring
+    ...` (cryptsetup >= 2.7.1) on a LUKS2 image that the user can read. It
+    checks the passphrase and links the volume key into a keyring without
+    unlocking, so it runs without root and each of its add_key calls (the
+    "logon" key and the linked key) fires. Baseline it by `auid` and `exe`
   - Not a false positive but a known miss — add_key calls from code injected
-    into cryptsetup or systemd-cryptsetup (LD_PRELOAD, ptrace) are suppressed
-    by `luks_images`. On hosts that never unlock LUKS volumes, remove
-    `luks_images`
+    (LD_PRELOAD, ptrace) into cryptsetup or systemd-cryptsetup by a process that
+    already runs as root are suppressed by `luks_images`. On hosts that never
+    unlock LUKS volumes, remove `luks_images`
 level: medium

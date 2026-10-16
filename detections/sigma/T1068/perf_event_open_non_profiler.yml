@@ -10,20 +10,27 @@ description: |
 
   Two filters suppress profilers. `profiler_processes` matches by `comm`.
   `profiler_images` matches by `exe`: the Datadog system-probe, which opens perf
-  events for its eBPF probes from the Datadog install tree, paired with its comm.
+  events for its eBPF probes from the Datadog install tree, paired with its comm
+  and with euid 0. The Datadog packages run the main Agent as the `dd-agent`
+  user but system-probe as root (its systemd unit sets no User=).
   A comm allowlist cannot cover a profiler that runs inside a JVM
   (async-profiler): auditd's comm is then the thread name, such as `Attach
   Listener`, and the exe is the JVM itself.
 
   Filter limits: a process sets its own comm with prctl(PR_SET_NAME), so each
   `profiler_processes` entry suppresses a process that renames itself. Pairing
-  exe with comm stops that rename, but not code injected into the real binary
-  (LD_PRELOAD or ptrace keep its comm and exe), and a process in a container
-  controls both values, because the kernel logs `exe` relative to the
-  process's own root.
+  exe with comm stops that rename. The euid condition stops code that an
+  unprivileged user injects into system-probe (ptrace, or LD_PRELOAD where the
+  binary is dynamically linked): it keeps the comm and exe, but carries that
+  user's euid and fires. A process that already runs as root can inject into
+  system-probe and keep all three values. A process in a container controls
+  comm and exe, because the kernel logs `exe` relative to the process's own
+  root; auditd logs euid in the initial user namespace, so only root in a
+  container without user namespace remapping passes `profiler_images`.
 references:
   - https://man7.org/linux/man-pages/man2/perf_event_open.2.html
   - https://nvd.nist.gov/vuln/detail/CVE-2013-2094
+  - https://github.com/DataDog/datadog-agent/blob/main/pkg/fleet/installer/packages/embedded/tmpl/datadog-agent-sysprobe.service.tmpl
 author: det-eng
 date: 2026/10/05
 modified: 2026/10/16
@@ -47,9 +54,12 @@ detection:
       - node_exporter
   profiler_images:
     # Datadog system-probe (eBPF network and security probes); the Datadog
-    # Agent installs under /opt/datadog-agent.
+    # Agent installs under /opt/datadog-agent. Its unit
+    # (datadog-agent-sysprobe.service) sets no User=, so it runs as root,
+    # unlike the main Agent (User=dd-agent). auditd logs euid as decimal text.
     comm: system-probe
     exe|startswith: '/opt/datadog-agent/'
+    euid: '0'
   condition: perf_syscall and not profiler_processes and not profiler_images
 falsepositives:
   - Profilers, APM agents, and language runtimes/JITs that sample with
@@ -57,4 +67,7 @@ falsepositives:
     `exe`) before alerting
   - In-JVM profilers such as async-profiler, whose events carry a JVM thread
     name as comm and the JVM as exe
+  - A Datadog system-probe that is configured to run as a user other than root
+    (the packages and the Helm chart run it as root) — extend
+    `profiler_images` with that user's euid
 level: medium

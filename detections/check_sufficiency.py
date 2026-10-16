@@ -399,10 +399,10 @@ CHOKEPOINT = {
         "a326cb4dee31ba4faf8865b404af703ccf3538e84f2af02905397d62c5215cf6"),
     "T1068/keyring_add_key_burst.yml": Waiver(
         "add_key(2) itself is the keyring-stuffing primitive; the keyring users are filtered",
-        "51caa54f21d7669146021a14f15ca149e75d51caddacb485cd1c9d7782ebf4b5"),
+        "c1d0096671aea15afb5a06895b4bb399e006046a57b65cb478abdb6e996be76a"),
     "T1068/perf_event_open_non_profiler.yml": Waiver(
         "perf_event_open(2) itself is the escalation surface; profilers are filtered",
-        "0557818f5fa23c8ea7901df11c09746ab76bf2143a46dd0d222a733d08ef0582"),
+        "dd058958fc30b77e80437825eb503a9ff2a8b403c5ed99b19cd4af3d2410f985"),
     "T1068/userfaultfd_syscall.yml": Waiver(
         "userfaultfd(2) itself is the exploit timing primitive and is rare outside CRIU/QEMU",
         "ada55f947b8af992be5f43d7b7961bfd55b1432904c9918840a2b94fa2368c98"),
@@ -443,11 +443,11 @@ CHOKEPOINT = {
     "T1620/memfd_create_execveat.yml base:memfd_exec_execveat": Waiver(
         "execveat(2) of the anonymous file is the fileless execution itself; the "
         "memfd_create-then-execveat sequence on one pid within 10s is the whole signal",
-        "f42fb15b7c95c47eb4aec680f736901c26dd14ce2296fc73af452895934dd757"),
+        "655e1e5a6b78cfe16bb304363669fef0a4af4c23b937f0283f2161ebbe23da8a"),
     "T1620/memfd_create_execveat.yml base:memfd_exec_memfd_create": Waiver(
         "memfd_create(2) is the anonymous in-memory file of fileless execution; the "
         "memfd_create-then-execveat sequence on one pid within 10s is the whole signal",
-        "f42fb15b7c95c47eb4aec680f736901c26dd14ce2296fc73af452895934dd757"),
+        "655e1e5a6b78cfe16bb304363669fef0a4af4c23b937f0283f2161ebbe23da8a"),
     "T1685/io_uring_setup.yml": Waiver(
         "creating an io_uring ring is the sensor-evasion surface",
         "b50573eddab59ad45de592ca2f1fe47f1cdcb700f3440aaf8da792129da08357"),

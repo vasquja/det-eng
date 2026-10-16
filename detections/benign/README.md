@@ -282,52 +282,45 @@ that is not required holds the merge only if it has failed when an evaluation ru
 before the required checks finish. If the required checks finish first, GitHub
 merges, and the failure comes too late.
 
-The branch rules are configured in the repository settings, outside the code, and
-as of 2026-10-15 (read with the GitHub API) they do **not** enforce the sign-off:
+#### With a single maintainer
 
-- `main` is governed by the repository ruleset `Main` (active, with no bypass
-  actors), not by classic branch protection. It requires a pull request, squash
-  merges and a linear history, and blocks deletion and force pushes.
-- It requires these status checks: `trr-lint`, `validate`, `sigma-lint`,
-  `markdown-links`, `validate-k8s`, `validate-staticpod`, `validate-cloud`,
-  `validate-apiserver`. It does not require the `detection-quality` checks
-  (`rule-cases`, `check-sufficiency`, `sufficiency-ratchet`, `benign-corpus`).
-- It requires **no** approving review, **no** Code Owner review and **no** approval
-  of the most recent push. The repository has no `CODEOWNERS` file.
+This repository has one maintainer, and the agent opens its pull requests under that
+maintainer's account. GitHub does not let anyone approve their own pull request, so
+the bot's approval rail can never be met on these pull requests. That is the intended
+outcome:
 
-So today anyone with write access can merge a budget, corpus, gate or workflow
-change by hand, with no second human, once the required validator checks pass. And
-no `detection-quality` check holds the bot's merge reliably: a pull request whose
-`detection-quality` check fails only after its required checks have passed is
-merged by GitHub anyway.
+- A content-only pull request (rules, cases, fixtures, docs) auto-merges once its
+  required checks pass, if it carries the `automerge` label.
+- Any other pull request (Python, workflows, budgets, waivers, the corpus, atomics)
+  never auto-merges. It waits for the maintainer to merge it by hand, and that merge
+  is the sign-off.
 
-To make the sign-off bind a manual merge, and the quality checks bind every merge, a
-repository admin must:
+Configure the `Main` ruleset for this:
 
-1. Add `.github/CODEOWNERS` that names the human approvers for every path that is
-   not content (the list above).
-2. In the `Main` ruleset, turn on "Require review from Code Owners" and "Require
-   approval of the most recent reviewable push". Choose the approval count with
-   care: 1 or more makes every pull request wait for a human, content included,
-   which ends content-only auto-merge. With 0, Code Owner review applies to the
-   code-owned paths only. Check the result on a test pull request; it was not
-   verified here. The most-recent-push approval also closes a race in the bot's
-   rail: a push by a writer does not turn an enabled auto-merge off, so if the new
-   head's required checks have already passed (a commit already tested on another
-   branch), GitHub can merge it before `automerge` disables auto-merge.
-3. Add `rule-cases`, `check-sufficiency` and `benign-corpus` as required status
-   checks. Under native auto-merge this is what makes them hold the bot's merge
-   reliably: GitHub then waits for them and does not merge while one has failed,
-   whatever the timing. Leave out `benign-linux-live` (shadow only) and
-   `sufficiency-ratchet`. The ratchet fails by design on a change a human may
-   accept (a deleted or corrected case, a deliberate rise in benign hits with a
-   raised budget). Made required, with no bypass actors, it would block such a pull
-   request for everyone: neither the bot nor a human could merge it until an admin
-   took the ratchet out of the ruleset. Left out, it holds the bot's merge only when
-   it has failed before the required checks finish, so a content-only pull request
-   that weakens a case or makes a rule noisier can still be merged by GitHub without
-   a human. A human merging by hand sees it red and decides.
+1. **Require no approving review**, and no Code Owner review or most-recent-push
+   approval. A maintainer cannot approve their own pull request, so a required
+   approval would block every pull request. A `CODEOWNERS` file adds nothing with one
+   owner.
+2. **Require `rule-cases`, `check-sufficiency` and `benign-corpus`** as status checks,
+   with the validator checks already required. GitHub's native auto-merge waits only
+   for required checks, so without these a content-only pull request could auto-merge
+   before a failing case, gate or budget check finished.
+3. **Leave `sufficiency-ratchet` not required.** It fails by design on a change the
+   maintainer may accept (an edited or relabelled case, a deliberate rise in benign
+   hits with a raised budget). Made required, with no bypass actors, it would block
+   such a pull request for everyone. Left out, it still holds the bot's merge when it
+   fails before the required checks finish, and a maintainer merging by hand sees it
+   red and decides.
 4. Keep the ruleset free of bypass actors.
 
-Until then, the sign-off is a convention for manual merges, and a rule of the bot
-only.
+#### With a second approver
+
+To put a second signature on record, open the agent's pull requests from a separate
+account (a GitHub App or a machine user) so that the maintainer can approve them.
+Then the bot's rail applies as written above: a non-content pull request auto-merges
+only after the maintainer approves its head commit. To make the same rule bind a
+manual merge, add `.github/CODEOWNERS` naming the approvers for every non-content
+path, and turn on "Require review from Code Owners" and "Require approval of the most
+recent reviewable push" in the ruleset. Keep the approval count at 0: 1 or more makes
+every pull request wait for a human, content included, which ends content-only
+auto-merge.

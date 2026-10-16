@@ -29,7 +29,8 @@ Controls then test the test. Each must FAIL; one that passes fails the run:
 
 Event schema the rules assume (one event per auditd SYSCALL record):
   type=SYSCALL, syscall=<name>, success, exit, a0..a3 (raw hex, as auditd logs
-  them), pid, ppid, comm, exe, timestamp. auditd's ENRICHED log format carries
+  them), pid, ppid, uid, euid, auid (decimal text, as auditd logs them; an unset
+  auid is 4294967295), comm, exe, timestamp. auditd's ENRICHED log format carries
   the syscall name (SYSCALL=); for RAW format it is resolved with ausyscall. A
   log pipeline that feeds these rules to a SIEM must deliver the same shape.
 
@@ -289,6 +290,12 @@ def audit_log_lines():
 
 
 _FIELD = re.compile(r'(\w+)=("[^"]*"|\S+)')
+# The SYSCALL record's credential fields that a rule may read. uid is the real
+# user, euid the effective user that the kernel checks for privilege, auid the
+# login uid that pam_loginuid sets at login and every child inherits (sudo and su
+# keep it). suid, fsuid and the group ids are in the record too, but no rule
+# reads them.
+CRED_FIELDS = ("uid", "euid", "auid")
 _STAMP = re.compile(r"audit\((\d+)\.(\d+):")
 _HEX = re.compile(r"(?:[0-9A-F]{2})+")
 
@@ -332,6 +339,11 @@ def normalize(lines):
             **{f"a{i}": f.get(f"a{i}") for i in range(4)},
             "pid": int(f["pid"]),
             "ppid": int(f["ppid"]),
+            # Credentials as text, exactly as the kernel logs them: decimal ids in
+            # the initial user namespace (from_kuid(&init_user_ns, ...)), so root in
+            # a rootless container reads as the host user. An unset login uid is
+            # auid=4294967295 ((u32)-1, AUDIT_UID_UNSET): daemons and their children.
+            **{k: f.get(k) for k in CRED_FIELDS},
             "comm": untrusted_string(f.get("comm"), "comm" in quoted),
             "exe": untrusted_string(f.get("exe"), "exe" in quoted),
             "timestamp": when.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],

@@ -31,8 +31,24 @@ description: |
   that sets both values. A setns into a namespace that the caller does not
   own needs CAP_SYS_ADMIN, so the attacker these filters let through is one
   that is already privileged, for example in a privileged container.
+
+  The filters have no euid condition. runc is not setuid, so any user can run
+  it with LD_PRELOAD and keep comm `runc:[1:CHILD]` and its exe, but setns()
+  into a namespace needs CAP_SYS_ADMIN in the user namespace that owns it (and
+  CAP_SYS_CHROOT for a mount namespace), so an unprivileged user can only join
+  namespaces under a user namespace that its own uid created, which is not an
+  escape. A process that can join a host namespace already has root in the
+  initial user namespace, and root passes any euid condition. The same holds
+  for a binary that an unprivileged user runs from an allowed path (a
+  snap-confine, ip or runc path) inside a user namespace of its own, where it
+  controls the mounts that `exe` is logged against: its setns can only join
+  that user's own namespaces. A euid 0 condition would also fire on every
+  rootless container exec: rootless runc (rootless Docker or Podman with runc)
+  runs its nsexec children as the user, which auditd logs as the user's host
+  uid.
 references:
   - https://man7.org/linux/man-pages/man2/setns.2.html
+  - https://man7.org/linux/man-pages/man7/user_namespaces.7.html
   - https://nvd.nist.gov/vuln/detail/CVE-2022-0492
   - https://github.com/opencontainers/runc/blob/v1.2.0/libcontainer/nsenter/nsexec.c
   - https://github.com/opencontainers/runc/blob/v1.5.1/libcontainer/exeseal/overlayfs_linux.go

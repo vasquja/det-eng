@@ -123,7 +123,12 @@ counts as a broken control and fails the run.
 
 One event per auditd `SYSCALL` record: `type`, `syscall` (the **name**),
 `success`, `exit`, `a0`..`a3` (raw hex, exactly as auditd logs them), `pid`,
-`ppid`, `comm`, `exe`, `timestamp`. auditd's `ENRICHED` log format carries the
+`ppid`, `uid`, `euid`, `auid`, `comm`, `exe`, `timestamp`. The ids are decimal text,
+as the kernel sees them from the host (root in a user-namespace-remapped container
+shows as its host uid), and an unset `auid` is `4294967295`. Allowlist entries for
+tools that always run as root also require `euid` `0`, so code injected into those
+tools by an ordinary user still fires; a pipeline that drops `euid` makes those
+entries fire on the real tools instead of hiding them. auditd's `ENRICHED` log format carries the
 syscall name (`SYSCALL=`); with `RAW` format the validator resolves it with
 `ausyscall`. `comm` and `exe` are text: the kernel logs a value that holds a
 space, a double quote or a non-printable byte as unquoted uppercase hex

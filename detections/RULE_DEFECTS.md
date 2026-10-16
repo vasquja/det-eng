@@ -43,7 +43,7 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 
 | ID | Rule | Problem | Kind | Severity |
 |----|------|---------|------|----------|
-| [L14](#l14-exe-and-comm-allowlists-trust-the-binary-not-the-code-in-it) | seven Linux rules | an allowlisted binary run with injected code (LD_PRELOAD) keeps its comm and exe | evasion | medium |
+| [L14](#l14-exe-and-comm-allowlists-trust-the-binary-not-the-code-in-it) | three Linux rules | allowlisted tools that ordinary users run (kcapi, debuggers) hide injected code | evasion | medium |
 | [K4](#k4-k8s_admission_webhook_neutered-neuters-the-audit-record-cannot-show) | `T1685/k8s_admission_webhook_neutered` | never-matching selectors, merge-patch list replacement, key-order dependence | false negative, false positive | low |
 | [K9](#k9-k8s_coredns_corefile_poisoned-what-the-root-scoped-grader-does-not-grade) | `T1565.001/k8s_coredns_corefile_poisoned` | creates, stub zones and imports are seen by the chokepoint only | description, policy gap | low |
 | [K13](#k13-no-rule-matches-a-namespace-delete) | `T1070/k8s_events_deleted` | a user's namespace delete (which destroys its Events) matches no rule | false negative | low |
@@ -56,27 +56,45 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 
 ### L14. Exe and comm allowlists trust the binary, not the code in it
 
-- **Rules**: [`setns_namespace_join`](sigma/T1611/setns_namespace_join.yml),
-  [`memfd_create_execveat`](sigma/T1620/memfd_create_execveat.yml),
-  [`keyring_add_key_burst`](sigma/T1068/keyring_add_key_burst.yml),
-  [`copyfail_af_alg_authencesn`](sigma/T1068/copyfail_af_alg_authencesn.yml),
-  [`perf_event_open_non_profiler`](sigma/T1068/perf_event_open_non_profiler.yml),
+- **Rules**: [`copyfail_af_alg_authencesn`](sigma/T1068/copyfail_af_alg_authencesn.yml) (level high),
   [`ptrace_traceme`](sigma/T1622/ptrace_traceme.yml),
-  [`bpf_prog_load`](sigma/T1014/bpf_prog_load.yml).
-- **Kind**: evasion. **Severity**: medium.
-- **Problem**: the filters pair a process's `exe` with its `comm`, which stops a
-  `prctl` rename or a binary copied to an allowlisted path. They do not stop code
-  injected into the real binary: any user can run a non-setuid allowlisted binary
-  (runc, cryptsetup, kcapi-hasher, gdb) with `LD_PRELOAD`, or ptrace it, and its
-  `comm` and `exe` stay the same. A process in a container controls both values.
-- **Evidence**: cases `ldpreload-into-runc-as-exe-known-miss`,
-  `ldpreload-into-cryptsetup-known-miss` and `ldpreload-into-kcapi-hasher-known-miss`;
-  `LD_PRELOAD` runs recorded as uid 65534 into `/usr/bin/runc` and `/usr/bin/gdb`.
-- **Fix**: carry `uid`/`auid` in the auditd event schema (`normalize()` in
-  `validate_detections.py` and the Linux corpus templates), and require uid 0 for the
-  root-only tools. A single-event rule on `execveat` with `exe` starting `/memfd:`
-  would also close the memfd gap.
-- **Then**: relabel the three known-miss cases as positives.
+  [`setns_namespace_join`](sigma/T1611/setns_namespace_join.yml).
+- **Kind**: evasion. **Severity**: medium (the copyfail gap is an unprivileged path to
+  a high rule); low for the others.
+- **Already fixed**: the auditd events and the Linux corpus carry `uid`, `euid` and
+  `auid`, and the entries for tools that always run as root require `euid` 0
+  (`keyring_add_key_burst`, `memfd_create_execveat`, `bpf_prog_load`'s runc entry,
+  `perf_event_open_non_profiler`'s system-probe). Code an ordinary user injects into
+  those tools now fires (cases `ldpreload-into-cryptsetup-known-miss` and
+  `ldpreload-into-runc-as-exe-known-miss`, now positives).
+- **Problem** (what remains):
+  1. `copyfail_af_alg_authencesn` `kcapi_hash_tools`: any user runs the libkcapi
+     hash tools, and auditd does not decode the AF_ALG cipher name, so an
+     unprivileged `LD_PRELOAD` into `kcapi-hasher` or `kcapi-dgst` still hides the
+     CopyFail sequence.
+  2. `ptrace_traceme` `debugger_images`: gdb, gdbserver and lldb-server run as any
+     user, so no id separates a debugger's inferior from injected code.
+  3. `setns_namespace_join` `runtime_images` has no `euid` condition by design: an
+     unprivileged setns cannot join a namespace it does not own, and rootless runc
+     runs as the user.
+  4. Every entry: a process that already has `euid` 0 (including root in a container
+     without user-namespace remapping) can still inject into an allowlisted binary or
+     place a binary at the logged path.
+  5. The snap-confine entries (`bpf_prog_load`, `setns_namespace_join`) have no `euid`
+     condition, because snap-confine runs as the caller on snapd 2.70 and later.
+     Secure-execution mode blocks injection into the real binary, but any user who
+     can create a user namespace can run their own binary at a snap-confine path, so
+     an unprivileged BPF socket-filter load (with `unprivileged_bpf_disabled=0`) is
+     hidden. Remove the snap-confine entries on hosts without snapd.
+- **Evidence**: cases `ldpreload-into-kcapi-hasher-known-miss`,
+  `ldpreload-into-gdb-known-miss` and `snap-confine-path-in-user-namespace-known-miss`
+  (filtered, KNOWN MISS).
+- **Fix**: remove the kcapi filter on hosts without the libkcapi tools; baseline
+  debugger use per host. No Sigma-level fix is known for 1 and 2.
+- **New false positives, documented in the rules**: rootless runc < 1.2 fires
+  `memfd_create_execveat` on every container start and exec; a user running
+  `cryptsetup open --test-passphrase --link-vk-to-keyring` (cryptsetup 2.7.1 and
+  later) fires `keyring_add_key_burst` once per key.
 
 ### Live-capture hits not yet attributed
 

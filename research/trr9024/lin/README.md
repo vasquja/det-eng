@@ -214,17 +214,36 @@ Procedure A. The rule has two filters. `bpf_processes` allowlists the known eBPF
 loaders by `comm` (`systemd`, `bpftool`, `bpftrace`, `cilium-agent`, `falco`,
 `tetragon`, `node_exporter`). `runtime_images` filters stock runtime behaviour by
 `exe`: runc, which loads a cgroup-v2 device-filter program for every container it
-creates (the runc install paths, paired with comm `runc`), and snap-confine, which
-loads a device-cgroup program on snap launches (by its snapd install path). The
-rule fires on any other process that loads a program. Tune both filters for your
-fleet — observability and networking stacks load eBPF legitimately. A filter
-trusts the name and the binary, not the code that runs in it: a process can set
-its own `comm` with `prctl`, a process in a container controls the path that the
-kernel logs as `exe` (it is relative to the process's root), and code injected
-into an allowlisted binary keeps both values. Except for socket filters where
-`kernel.unprivileged_bpf_disabled` is 0, loading a program needs `CAP_BPF` or
-`CAP_SYS_ADMIN`, so this is usually an evasion for an attacker who already has
-that privilege.
+creates (the runc install paths, paired with comm `runc` and `euid` 0), and
+snap-confine, which loads a device-cgroup program on snap launches (by its snapd
+install path). The rule fires on any other process that loads a program. Tune
+both filters for your fleet — observability and networking stacks load eBPF
+legitimately. A filter trusts the name and the binary, not the code that runs in
+it: a process can set its own `comm` with `prctl`, a process in a container
+controls the path that the kernel logs as `exe` (it is relative to the process's
+root), and code injected into an allowlisted binary (`LD_PRELOAD`, `ptrace`)
+keeps both values. The `euid` 0 condition on the runc entry closes that
+injection for an unprivileged user: runc is not setuid, so the injected load
+carries the user's `euid` and fires. Rootful runc runs as root, and rootless runc
+never loads the device filter (its `BPF_PROG_QUERY` fails without
+`CAP_NET_ADMIN` and runc skips the load), so the condition adds no noise.
+snap-confine has no `euid` condition: snapd before 2.70 installs it set-user-ID
+root, and snapd 2.70 and later with file capabilities, so on a newer snapd it
+runs with the caller's `euid`. Either way the kernel starts the real binary in
+secure-execution mode, where `ld.so` ignores an `LD_PRELOAD` path, and makes it
+non-dumpable, so the caller cannot `ptrace` it. The snap-confine entry still
+matches the path alone, and `exe` is logged relative to the process's own root
+and mounts: any user who can create a user namespace (`unshare -rm`, then a
+`tmpfs` over `/snap` or a `chroot`) can run a binary of their own from a
+snap-confine path such as `/snap/snapd/1/usr/lib/snapd/snap-confine`, and its
+load passes the filter, because it carries the same host `uid` and `euid` as a
+snap-confine from snapd 2.70 or later. Remove the snap-confine entry on hosts
+without snapd. A process that already runs as root can still inject into runc.
+Except for socket filters where `kernel.unprivileged_bpf_disabled` is 0, loading
+a program needs `CAP_BPF` or `CAP_SYS_ADMIN`, so this is usually an evasion for
+an attacker who already has that privilege. The unprivileged socket-filter load
+is where the runc entry's `euid` condition matters; through a snap-confine path
+it is still a known miss.
 - Sensor: `auditd` `bpf` rule (already in `atomic.rules`).
 - Rule: [`detections/sigma/T1014/bpf_prog_load.yml`](../../../detections/sigma/T1014/bpf_prog_load.yml)
   (`bpf a0=5 and not bpf_processes and not runtime_images`).
