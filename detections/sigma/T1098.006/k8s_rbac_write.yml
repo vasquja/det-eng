@@ -2,9 +2,10 @@ title: Kubernetes RBAC Object Written
 id: a333aae1-9e88-401c-9258-dc7ae6327485
 status: experimental
 description: |
-  Detects any write (create, update, patch, delete) to a Kubernetes RBAC object
-  in the rbac.authorization.k8s.io API group: roles, clusterroles, rolebindings,
-  and clusterrolebindings. This is the TRR9004 Strategy 1 chokepoint. Every path
+  Detects any write (create, update, patch, delete, deletecollection) to a
+  Kubernetes RBAC object in the rbac.authorization.k8s.io API group: roles,
+  clusterroles, rolebindings, and clusterrolebindings. This is the TRR9004
+  Strategy 1 chokepoint. Every path
   that grants, widens, or persists a permission has to pass through the API
   server as an rbac write to take effect, so one rule covers all five procedures:
   binding a powerful ClusterRole (A), a namespaced RoleBinding that references a
@@ -12,12 +13,18 @@ description: |
   built-in group for a mass grant (D), and patching an existing binding or role
   (E).
 
-  The verb is the ordinary create/update/patch/delete. The special RBAC
-  authorization verbs escalate and bind are NOT the audit verb: they are
+  The verb is the ordinary create/update/patch/delete/deletecollection. The
+  special RBAC authorization verbs escalate and bind are NOT the audit verb: they are
   authorization checks on the write, and they appear in the written role's rules
   (requestObject) or in the event annotations, not in the verb field. There is no
   separate `replace` audit verb: an HTTP PUT (kubectl replace, or apply sent as
-  PUT) is recorded as verb=update, so the four verbs here are complete.
+  PUT) is recorded as verb=update. A DELETE on a collection URL (client-go
+  DeleteCollection, or a raw DELETE with a label selector) is recorded as
+  verb=deletecollection and removes many roles or bindings in one request, so the
+  rule matches it too. The one deletecollection it leaves out is the namespace
+  controller's sweep of a namespace being deleted
+  (system:serviceaccount:kube-system:namespace-controller); the namespace delete
+  itself names the actor.
 
   This is noisy by design: a kubeadm cluster writes dozens of RBAC objects at
   bootstrap, and kube-controller-manager reconciles the default roles and
@@ -47,7 +54,11 @@ detection:
       - 'update'
       - 'patch'
       - 'delete'
-  condition: select_rbac_write
+      - 'deletecollection'
+  filter_namespace_teardown:
+    user.username: 'system:serviceaccount:kube-system:namespace-controller'
+    verb: 'deletecollection'
+  condition: select_rbac_write and not filter_namespace_teardown
 falsepositives:
   - Cluster bootstrap and reconcile. kubeadm and the API server create and
     reconcile the default roles and bindings at start; kube-controller-manager

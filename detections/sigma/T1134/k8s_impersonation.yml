@@ -21,6 +21,18 @@ description: |
   probe. This rule fires on all impersonation; the companion
   (k8s_impersonation_privileged.yml) raises severity on powerful targets.
 
+  A DENIED probe (the caller lacks the impersonate verb) carries no
+  impersonatedUser: the impersonation filter refuses the request before it swaps
+  the identity. The audit filter runs outside the impersonation filter, so the
+  refusal is still recorded under the real caller, with code 403 and the Status
+  message "... cannot impersonate resource ...", which the audit event keeps at
+  Metadata level. The rule matches that too (second selection). Source:
+  kubernetes v1.32 apiserver filters/impersonation.go (Forbidden before
+  LogImpersonatedUser), responsewriters/errors.go (forbiddenMessage),
+  audit/request.go (LogResponseObject copies the Status message at every level)
+  and server/config.go (WithAudit wraps WithImpersonation). Not yet recorded on a
+  live cluster.
+
   Metadata level is enough: impersonatedUser is a top-level audit event field.
   Request/RequestResponse are not needed. There is no node-sensor fallback:
   impersonation is implemented wholly inside the API server, so the audit log is the
@@ -41,11 +53,21 @@ logsource:
 detection:
   select_impersonation:
     impersonatedUser.username: '*'
-  condition: select_impersonation
+  # A caller without the impersonate verb is refused by the impersonation filter
+  # before the identity is swapped, so no impersonatedUser is stamped. The audit
+  # filter wraps the impersonation filter, so the refusal is still recorded, with
+  # the 403 Status message "<resource> \"<name>\" is forbidden: User \"<caller>\"
+  # cannot impersonate resource \"users|groups|serviceaccounts|uids|userextras/..\"".
+  select_denied_impersonation:
+    responseStatus.code: 403
+    responseStatus.message|contains: 'cannot impersonate resource'
+  condition: select_impersonation or select_denied_impersonation
 falsepositives:
   - Tools that legitimately impersonate the logged-in user, such as the Kubernetes
     Dashboard and other UIs, kubectl-sudo, oauth2-proxy gateways, and GitOps or CI
     that impersonates a target service account. Baseline by the REAL actor
     (user.username and user.groups), never by the impersonated identity.
   - Cloud break-glass and admin tooling. Baseline the known callers per cluster.
+  - A denied impersonation is also a misconfigured tool or a user who typed --as
+    by mistake. Triage the real caller and the borrowed identity in the message.
 level: medium

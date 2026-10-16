@@ -196,8 +196,11 @@ Match any audit event that carries `impersonatedUser.username`. This is stronger
 than the upstream Elastic rule, which matches only a hard-coded list of privileged
 impersonated identities and only when the request was allowed: that misses an
 arbitrary borrowed user, an unlisted-but-powerful service account, and a denied
-probe. Baseline benign impersonators by the REAL actor (`user.username`,
-`user.groups`): the Dashboard and other UIs, kubectl-sudo, GitOps/CI, and gateways.
+probe. A probe that the impersonation check itself denies (the caller lacks the
+`impersonate` verb) carries no `impersonatedUser`: the filter refuses it before it
+swaps the identity. The rule also matches that refusal, a 403 whose message says
+`cannot impersonate resource`. Baseline benign impersonators by the REAL actor
+(`user.username`, `user.groups`): the Dashboard and other UIs, kubectl-sudo, GitOps/CI, and gateways.
 
 - Sensor: API server audit log.
 - Rule: `detections/sigma/T1134/k8s_impersonation.yml` (built).

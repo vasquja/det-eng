@@ -3,21 +3,45 @@ id: 735935d9-dca5-42b4-a9be-70c942592a62
 status: experimental
 description: |
   Detects the removal of a workload that enforces security: a delete of a
-  Deployment or DaemonSet, or a scale-to-zero (a patch or update that sets
-  spec.replicas to 0). This is the TRR9008 Strategy 2 fallback, covering Procedure
-  D. An adversary who does not want to touch the admission webhook configuration
-  can instead remove the enforcer itself -- delete or scale down the Gatekeeper,
-  Kyverno, or Falco Deployment/DaemonSet -- so the webhook endpoint is gone; paired
-  with a failurePolicy of Ignore, admission then fails open and nothing blocks.
+  Deployment or DaemonSet (one object, or a deletecollection), a scale-to-zero (an
+  update or patch that sets spec.replicas to 0), or the delete of a policy engine's
+  default namespace. This is the TRR9008 Strategy 2 fallback, covering Procedure D.
+  An adversary who does not want to touch the admission webhook configuration can
+  instead remove the enforcer itself -- delete or scale down the Gatekeeper,
+  Kyverno, or Falco Deployment/DaemonSet, or delete its whole namespace -- so the
+  webhook endpoint is gone; paired with a failurePolicy of Ignore, admission then
+  fails open and nothing blocks.
 
   This is a different edge than the admission-config chokepoint: it is an apps-group
   write, not an admissionregistration one. It is noisy on its own (deployments are
   scaled and deleted routinely), so correlate with the policy engine's namespace or
   app labels (gatekeeper-system, kyverno, falco) and baseline normal scaling.
-  Scale-to-zero via "kubectl scale" uses the deployments/scale subresource, which
-  an audit policy must list explicitly (as */scale) to capture with a body; a scale
-  via "kubectl patch" of spec.replicas is on the deployments resource and is
-  covered here.
+
+  The scale-to-zero has three request shapes, all matched. A strategic-merge or
+  merge patch, or a full update, carries requestObject.spec.replicas = 0. A JSON
+  patch (kubectl patch --type=json) carries an ops array, which the audit log keeps
+  as one text field, so the rule matches an op whose path is /spec/replicas and
+  whose value is 0 in that text (a JSON-patch test op on that path also matches; it
+  is rare). The API server ignores op keys it does not know, so the match skips
+  whole strings and nested objects (two levels) between the keys; an extra key
+  nested deeper splits the op and is not matched. A copy or move op whose target
+  path is /spec/replicas also matches: it sets the replica count from another field
+  (for example an added /spec/minReadySeconds of 0), so the value is not in the
+  request, and such a write is not routine. kubectl scale writes the deployments/scale subresource
+  (objectRef.resource deployments, objectRef.subresource scale,
+  requestObject.spec.replicas = 0); an audit policy must list deployments/scale
+  explicitly to record that body, as the shipped
+  detections/k8s/audit-policy-apiserver.yaml does. A policy that logs the
+  subresource at Metadata hides the kubectl scale form from this rule.
+
+  A DELETE on the collection URL (client-go DeleteCollection, or a raw DELETE with
+  a label selector) is recorded as verb deletecollection and removes every matching
+  Deployment or DaemonSet in one request. The namespace controller makes one such
+  deletecollection per resource type for every namespace being deleted
+  (system:serviceaccount:kube-system:namespace-controller); the rule filters that
+  sweep and matches the namespace delete instead, for the default namespaces of
+  the three engines it names. A cluster that installs its enforcer in another
+  namespace must add that name to sel_enforcer_namespace_delete.
 references:
   - https://attack.mitre.org/techniques/T1685/
   - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
@@ -36,16 +60,51 @@ detection:
       - 'deployments'
       - 'daemonsets'
   sel_delete:
-    verb: 'delete'
+    verb:
+      - 'delete'
+      - 'deletecollection'
   sel_scale_zero:
     verb:
       - 'update'
       - 'patch'
     requestObject.spec.replicas: 0
-  condition: select_apps and (sel_delete or sel_scale_zero)
+  # JSON patch: requestObject is an ops array, kept as one JSON text field. Match an
+  # op object with path /spec/replicas and value 0, in either key order, or a copy
+  # or move whose target path is /spec/replicas (its value comes from another field
+  # and is not in the request). Between the keys, the match skips whole JSON strings
+  # and up to two levels of nested objects, so an extra key the API server ignores
+  # (one whose value is an object) does not split the op; it never crosses the op's
+  # own closing brace into the next op.
+  sel_scale_zero_jsonpatch:
+    verb: 'patch'
+    requestObject|re:
+      - '\{(?:(?:[^{}"]|"(?:[^"\\]|\\.)*")|\{(?:(?:[^{}"]|"(?:[^"\\]|\\.)*")|\{(?:[^{}"]|"(?:[^"\\]|\\.)*")*\})*\})*"path"\s*:\s*"/spec/replicas"(?:(?:[^{}"]|"(?:[^"\\]|\\.)*")|\{(?:(?:[^{}"]|"(?:[^"\\]|\\.)*")|\{(?:[^{}"]|"(?:[^"\\]|\\.)*")*\})*\})*"value"\s*:\s*0\s*[,}]'
+      - '\{(?:(?:[^{}"]|"(?:[^"\\]|\\.)*")|\{(?:(?:[^{}"]|"(?:[^"\\]|\\.)*")|\{(?:[^{}"]|"(?:[^"\\]|\\.)*")*\})*\})*"value"\s*:\s*0\s*,(?:(?:[^{}"]|"(?:[^"\\]|\\.)*")|\{(?:(?:[^{}"]|"(?:[^"\\]|\\.)*")|\{(?:[^{}"]|"(?:[^"\\]|\\.)*")*\})*\})*"path"\s*:\s*"/spec/replicas"'
+      - '\{(?:(?:[^{}"]|"(?:[^"\\]|\\.)*")|\{(?:(?:[^{}"]|"(?:[^"\\]|\\.)*")|\{(?:[^{}"]|"(?:[^"\\]|\\.)*")*\})*\})*"op"\s*:\s*"(?:copy|move)"(?:(?:[^{}"]|"(?:[^"\\]|\\.)*")|\{(?:(?:[^{}"]|"(?:[^"\\]|\\.)*")|\{(?:[^{}"]|"(?:[^"\\]|\\.)*")*\})*\})*"path"\s*:\s*"/spec/replicas"'
+      - '\{(?:(?:[^{}"]|"(?:[^"\\]|\\.)*")|\{(?:(?:[^{}"]|"(?:[^"\\]|\\.)*")|\{(?:[^{}"]|"(?:[^"\\]|\\.)*")*\})*\})*"path"\s*:\s*"/spec/replicas"(?:(?:[^{}"]|"(?:[^"\\]|\\.)*")|\{(?:(?:[^{}"]|"(?:[^"\\]|\\.)*")|\{(?:[^{}"]|"(?:[^"\\]|\\.)*")*\})*\})*"op"\s*:\s*"(?:copy|move)"'
+  # The namespace controller's teardown sweep of a namespace being deleted.
+  filter_namespace_teardown:
+    user.username: 'system:serviceaccount:kube-system:namespace-controller'
+    verb: 'deletecollection'
+  # Deleting the enforcer's namespace removes its workloads; the default namespaces
+  # of Gatekeeper, Kyverno and Falco. Extend with the names your cluster uses.
+  sel_enforcer_namespace_delete:
+    objectRef.resource: 'namespaces'
+    verb: 'delete'
+    objectRef.name:
+      - 'gatekeeper-system'
+      - 'kyverno'
+      - 'falco'
+  condition: >-
+    (select_apps and (sel_delete or sel_scale_zero or sel_scale_zero_jsonpatch)
+    and not filter_namespace_teardown) or sel_enforcer_namespace_delete
 falsepositives:
   - Routine scaling and teardown of deployments and daemonsets. This rule is a
     correlation anchor; alert only when the target is a known security workload
     (by namespace or app label) or when it correlates with an admission-config
     change by the same identity. Baseline controllers and GitOps.
+  - Scale-to-zero schedulers (kube-downscaler, KEDA, an off-hours GitOps overlay)
+    scale workloads to 0 by design. Baseline those identities.
+  - Planned removal of Gatekeeper, Kyverno or Falco (its namespace deleted on
+    uninstall).
 level: medium

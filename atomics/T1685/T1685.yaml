@@ -17,8 +17,9 @@ atomic_tests:
       sysctl. Behavioral signature only — not a working exploit.
 
       Detection guidance:
-        * `io_uring_setup` / `io_uring_enter` syscalls from a process outside
-          the io_uring-using allowlist (databases, proxies, some runtimes)
+        * `io_uring_setup` (ring creation) from a process not baselined for
+          the host (databases, proxies and some runtimes use io_uring). Do not
+          alert on `io_uring_enter`: a ring user calls it for every I/O batch
         * Confirm your sensor records io_uring at all — many only hook the
           classic I/O syscalls
     supported_platforms:
@@ -120,7 +121,8 @@ atomic_tests:
     auto_generated_guid: 685c887d-91a9-47ee-b2d8-71f7fd8693d6
     description: |
       In a throwaway namespace, creates a harmless pause Deployment as a stand-in for a
-      policy engine, scales it to zero (patch replicas 0), then deletes it. Removing or
+      policy engine, scales it to zero twice (kubectl scale, which writes the
+      deployments/scale subresource, then a patch of spec.replicas to 0), then deletes it. Removing or
       scaling down the enforcer removes the webhook endpoint; with failurePolicy Ignore,
       admission then fails open. Never touches a real Gatekeeper/Kyverno/Falco workload.
       Rule: detections/sigma/T1685/k8s_security_tool_workload_removed.yml

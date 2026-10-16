@@ -14,7 +14,7 @@
 #   ./emulate_k8s.sh a      delete a ValidatingWebhookConfiguration
 #   ./emulate_k8s.sh b      delete a MutatingWebhookConfiguration
 #   ./emulate_k8s.sh c      neuter a webhook config in place (failurePolicy Ignore, rules [])
-#   ./emulate_k8s.sh d      delete + scale-to-zero a stand-in enforcer Deployment
+#   ./emulate_k8s.sh d      scale-to-zero (kubectl scale, then patch) and delete a stand-in enforcer Deployment
 #   ./emulate_k8s.sh gap    node-local bypass demonstration (read-only)
 #   ./emulate_k8s.sh all    every item, in order, then clean up
 #
@@ -64,12 +64,16 @@ procedure_c() {
 }
 
 # Procedure D — remove a stand-in for the enforcer's workload (delete + scale-to-zero).
-# Uses a harmless pause pod, NEVER a real Gatekeeper/Kyverno/Falco workload.
+# Uses a harmless pause pod, NEVER a real Gatekeeper/Kyverno/Falco workload. Two
+# scale-to-zero shapes: kubectl scale writes the deployments/scale subresource (the audit
+# policy lists it at Request, so its body is logged), and kubectl patch writes
+# spec.replicas on the deployments resource.
 procedure_d() {
   kubectl get namespace "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS" >/dev/null 2>&1 || true
-  log "D: create stand-in deployment trr9008-deploy, scale it to zero, then delete it"
+  log "D: create stand-in deployment trr9008-deploy, scale it to zero (scale, then patch), then delete it"
   kubectl -n "$NS" create deployment trr9008-deploy \
     --image=registry.k8s.io/pause:3.9 --replicas=1 >/dev/null 2>&1 || true
+  kubectl -n "$NS" scale deployment trr9008-deploy --replicas=0 >/dev/null 2>&1 || true
   kubectl -n "$NS" patch deployment trr9008-deploy -p '{"spec":{"replicas":0}}' >/dev/null 2>&1 || true
   kubectl -n "$NS" delete deployment trr9008-deploy --ignore-not-found >/dev/null 2>&1 || true
 }

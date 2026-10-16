@@ -7,17 +7,53 @@ description: |
   audit level Request or higher). This is the TRR9008 severity layer on top of the
   chokepoint (k8s_admission_webhook_disabled.yml): the chokepoint flags every
   admissionregistration write, this rule picks out the ones that disarm the
-  webhook. It matches when the submitted webhooks list sets failurePolicy to Ignore
-  (so an outage of the webhook endpoint is silently allowed -- fail-open) or sets
-  an empty rules list (so the webhook never fires).
+  webhook. It matches an update or patch whose body:
 
-  The match uses |contains against the JSON-serialized webhooks array in both the
-  spaced (request-body) and compact (Go) forms, because the audit backend stores
-  an array field as JSON text. It matches a full-object write (an update/PUT via
-  kubectl replace or apply, or a strategic-merge patch) where requestObject carries
-  the webhooks list. A JSON patch (--type=json) submits an ops array, not the
-  object, so its requestObject does not carry the failurePolicy field -- that
-  variant fires the chokepoint but not this grader; triage it from the chokepoint.
+    - sets failurePolicy to Ignore (an outage of the webhook endpoint is then
+      silently allowed -- fail-open);
+    - sets an empty rules list, or deletes it (the webhook never fires). A patch
+      body is logged raw and keeps "rules": [] or, for a strategic merge patch
+      (the kubectl patch default), "rules": null. An update (PUT, kubectl
+      replace) is logged as the decoded, defaulted object re-encoded in Go field
+      order; rules is omitempty, so an emptied list leaves no rules key and
+      clientConfig is followed directly by the defaulted failurePolicy;
+    - adds a matchConditions CEL expression that is the literal false;
+    - is a JSON patch (--type=json, logged as the raw operation list in
+      requestObject) with one operation that sets /webhooks/N/failurePolicy to
+      Ignore, or that removes or empties /webhooks/N/rules; or an operation on
+      the whole webhooks list, a whole webhook or its matchConditions whose value
+      fails open or adds the literal false; or an operation on the whole list or
+      a whole webhook that leaves no non-empty rules list (a webhook without
+      rules, or a remove of the webhook).
+
+  The body matches use |contains or |re against the JSON-serialized arrays and
+  accept both the spaced (request-body) and compact (Go) forms.
+
+  The rule grades the submitted state, not a transition: no old value is logged.
+  Policy engines that reconcile their own webhooks with a full-object update
+  rewrite a webhook that fails open by design (the Gatekeeper cert-controller
+  rotating its CA, Kyverno's validate.kyverno.svc-ignore). Those writes are
+  filtered only for the engine's own service account (gatekeeper-system:
+  gatekeeper-admin, kyverno:kyverno-admission-controller) on its own
+  configurations. An adversary who holds one of those tokens can neuter that
+  engine's webhook unseen by this rule; the chokepoint still records the write.
+  Install the engines in another namespace and the filter must follow.
+
+  Blind spots: a namespaceSelector or objectSelector that matches nothing, and a
+  matchConditions expression that is always false but not the literal false,
+  cannot be told from a legitimate narrowing without the cluster's labels. A JSON
+  merge patch (--type=merge) that replaces the webhooks list with a webhook that
+  has no rules key cannot be told from a strategic merge patch that leaves rules
+  unchanged (the patch type is not logged), and a JSON patch that replaces the
+  whole list keeps rules for one webhook while it drops them for another is
+  missed. Triage those from the chokepoint.
+
+  Key order: the update branch (clientConfig followed directly by
+  failurePolicy) assumes the API server's Go field order reaches the SIEM
+  unchanged. A log pipeline that re-encodes the event with sorted keys puts
+  clientConfig next to failurePolicy in every webhook, so every full-object
+  update then fires. Disable that branch, or keep the original field order, on
+  such a pipeline.
 
   Metadata level cannot feed this rule: the webhooks list lives only in
   requestObject. Without Request level a neuter and a benign edit are
@@ -45,9 +81,60 @@ detection:
       - '"failurePolicy":"Ignore"'
       - '"rules": []'
       - '"rules":[]'
-  condition: select_adm_modify and sel_neuter
+      - '"rules": null'
+      - '"rules":null'
+  # update (PUT) logs the decoded, defaulted object re-encoded. Webhook fields
+  # encode in Go field order (name, clientConfig, rules, failurePolicy), rules is
+  # omitempty and failurePolicy is always defaulted, so an emptied rules list
+  # shows as clientConfig followed directly by failurePolicy.
+  sel_update:
+    verb: 'update'
+  sel_rules_omitted:
+    requestObject.webhooks|re: '"clientConfig":\s*\{(?:[^{}]|\{[^{}]*\})*\},\s*"failurePolicy"'
+  # A matchConditions CEL expression that is the literal false never matches.
+  sel_matchcondition_false:
+    requestObject.webhooks|re: '"expression":\s*"\s*false\s*"'
+  # A JSON patch (--type=json) logs requestObject as the raw operation list. One
+  # operation that sets a webhook's failurePolicy to Ignore, or that removes or
+  # empties a webhook's rules list.
+  sel_jsonpatch_fail_open:
+    requestObject|re: '\{[^{}]*(?:"/webhooks/\d+/failurePolicy"[^{}]*"Ignore"|"Ignore"[^{}]*"/webhooks/\d+/failurePolicy")[^{}]*\}'
+  sel_jsonpatch_rules_cleared:
+    requestObject|re: '\{[^{}]*(?:"/webhooks/\d+/rules"[^{}]*(?:"remove"|\[\s*\])|(?:"remove"|\[\s*\])[^{}]*"/webhooks/\d+/rules")[^{}]*\}'
+  # A JSON patch operation on the whole webhooks list, on one whole webhook, or on
+  # a webhook's matchConditions, whose value fails open or adds the literal-false
+  # condition. An operation on the whole list or one whole webhook that leaves
+  # no non-empty rules list (a webhook value with no rules, or a remove) disarms
+  # it too. A deeper path (/webhooks/N/clientConfig/caBundle) does not match.
+  sel_jsonpatch_whole_webhook:
+    requestObject|re: '"path":\s*"/webhooks(?:/(?:\d+|-))?"'
+  sel_jsonpatch_matchconditions:
+    requestObject|re: '"path":\s*"/webhooks/(?:\d+|-)/matchConditions(?:/(?:\d+|-))?"'
+  sel_jsonpatch_neuter_value:
+    requestObject|re: '"failurePolicy":\s*"Ignore"|"expression":\s*"\s*false\s*"'
+  sel_jsonpatch_rules_kept:
+    requestObject|re: '"rules":\s*\[\s*\{'
+  # Policy engines that reconcile their own fail-open webhooks with a full-object
+  # update (no old value is logged, so their writes look like a neuter): the
+  # Gatekeeper cert-controller rotating its CA, and Kyverno's admission
+  # controller (validate.kyverno.svc-ignore). Each is excluded only for its own
+  # service account on its own configurations.
+  filter_policy_engine_reconcile:
+    - user.username: 'system:serviceaccount:gatekeeper-system:gatekeeper-admin'
+      objectRef.name:
+        - 'gatekeeper-validating-webhook-configuration'
+        - 'gatekeeper-mutating-webhook-configuration'
+    - user.username: 'system:serviceaccount:kyverno:kyverno-admission-controller'
+      objectRef.name|startswith: 'kyverno-'
+  condition: select_adm_modify and (sel_neuter or (sel_update and sel_rules_omitted) or sel_matchcondition_false or sel_jsonpatch_fail_open or sel_jsonpatch_rules_cleared or ((sel_jsonpatch_whole_webhook or sel_jsonpatch_matchconditions) and sel_jsonpatch_neuter_value) or (sel_jsonpatch_whole_webhook and not sel_jsonpatch_rules_kept)) and not filter_policy_engine_reconcile
 falsepositives:
   - An operator deliberately setting failurePolicy to Ignore during maintenance,
     or a webhook with legitimately empty rules. Triage every hit against the actor
     and the webhook.
+  - A full-object rewrite (kubectl replace, helm upgrade --force) of a webhook
+    that already fails open by design, by an identity other than the policy
+    engine's own reconciler.
+  - Every full-object update (for example cert-manager's cainjector rotating a
+    caBundle) when the log pipeline sorts JSON keys; see Key order above.
+  - A JSON patch that removes an obsolete webhook from a configuration.
 level: high

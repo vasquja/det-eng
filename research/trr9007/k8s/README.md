@@ -97,12 +97,20 @@ split into two kinds, matched two ways:
   `hostIPC` stay real booleans. A rule matches them with `: true`, which a Sigma
   backend compiles to an equality that a stored boolean satisfies.
 - **JSON-string arrays.** `requestObject.spec.containers`, `initContainers`,
-  `ephemeralContainers`, and `volumes` become JSON text. A rule matches them with
-  `|contains` on substrings — `"privileged": true`, `"hostPath"`, `"SYS_ADMIN"` —
-  and lists both the spaced (request-body) and compact (Go) forms so the rule is
-  portable. The capability names use the short form, with no `CAP_` prefix, that
-  the PodSpec serializes. Matching `"privileged": true` as a substring, not the
-  bare key, is deliberate: it does not match a benign `"privileged": false`.
+  `ephemeralContainers`, and `volumes` become JSON text. A rule matches
+  `"privileged": true` with `|contains` and lists both the spaced (request-body)
+  and compact (Go) forms so the rule is portable. Matching `"privileged": true`,
+  not the bare key, is deliberate: it does not match a benign
+  `"privileged": false`. A capability is matched with `|re` only inside a
+  capabilities `"add"` list (`"add":\s*\[[^\]]*"SYS_ADMIN"`), and a hostPath only
+  as a volume source key (`"hostPath":\s*\{`). A bare substring would also match a
+  container named `syslog`, an env value, a `drop` list or a volume named
+  `hostpath`. `ALL` grants every capability and is on the list. The API server
+  does not validate capability names, and the runtimes normalise them: containerd
+  upper-cases each added name (`"CAP_"+ToUpper`) and tests `ALL` with
+  `EqualFold`; CRI-O does the same and also keeps a `CAP_` prefix in any case. So
+  `sys_admin`, `all` and `Cap_Sys_Admin` grant the capability, and the rule
+  matches the names case-insensitively (`|re|i`) with an optional `CAP_` prefix.
 
 A pod created through a workload controller puts the same fields one level
 deeper, under `requestObject.spec.template.spec.*` (and, for a CronJob,

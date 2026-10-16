@@ -37,11 +37,15 @@ kindnet privileged pods). The gate is:
     too; a 'list' has no objectRef.name, so the namespace + non-system-caller pair
     is the only gate that spans A/B/C/D).
   * TRR9025 / TRR9026 : objectRef.name begins with 'trr9025-' / 'trr9026-'.
-  * TRR9027 (procedure A only): objectRef.name is a cluster-DNS ConfigMap (coredns /
-    kube-dns / coredns-custom) in kube-system AND the write carries the 'trr9027'
-    sentinel in its requestObject (the coredns ConfigMap exists at bootstrap, so the
-    name alone is not enough; the sentinel identifies the emulation's own write and
-    excludes the restore). B and C's creates are logged at Metadata, with no body.
+  * TRR9008 D (scale): objectRef.name begins with 'trr9008-' AND objectRef.subresource
+    is 'scale' (the kubectl scale write, which the audit policy must log at Request).
+  * TRR9027: objectRef.name is a cluster-DNS ConfigMap (coredns / kube-dns /
+    coredns-custom) in kube-system AND the write carries the 'trr9027' sentinel in its
+    requestObject (the coredns ConfigMap exists at bootstrap, so the name alone is not
+    enough; the sentinel identifies the emulation's own write and excludes the
+    restore). The chokepoint is gated once per procedure, on its ConfigMap's name:
+    A coredns, B kube-dns, C coredns-custom. Every procedure writes by name (B and C by
+    server-side apply), so the policy logs each with its body and sentinel.
 
 Rules in each technique folder that are NOT match-gated here (the Linux file-event
 token-read rule, for example) are still COMPILED, so a broken rule fails the run.
@@ -93,6 +97,17 @@ def name_prefix(prefix):
     return gate
 
 
+def scale_subresource(prefix):
+    """TRR9008 D: the kubectl scale write (the deployments/scale subresource) of an object
+    whose name begins with `prefix`. Proves the audit policy logs */scale at Request: a
+    Metadata record has no requestObject, so the rule cannot match it."""
+    def gate(e):
+        return ((e.get("objectRef.name") or "").startswith(prefix)
+                and e.get("objectRef.subresource") == "scale")
+    gate.describe = f"objectRef.name begins with {prefix!r} and objectRef.subresource == 'scale'"
+    return gate
+
+
 def job_label_prefix(prefix):
     def gate(e):
         return (e.get("labels.batch.kubernetes.io/job-name") or "").startswith(prefix)
@@ -140,20 +155,28 @@ def coredns_gate(e):
 
     The coredns ConfigMap exists at bootstrap and kube-dns/coredns-custom may be created by
     other tooling, so name + namespace alone is not enough. The emulation puts its unique
-    'trr9027' sentinel into every write's body, but only procedure A's coredns patch is
-    logged with its body: the audit policy's Request rule for these ConfigMaps is scoped by
-    resourceNames, and a create names no object when the policy is evaluated, so procedures
-    B and C (the kube-dns and coredns-custom creates) are logged at Metadata, with no
-    requestObject and so no sentinel. This gate therefore marks procedure A only (label
-    '9027 A'); the chokepoint rule still sees B and C, but this validator does not prove
-    them. The restore write carries the original Corefile and no sentinel, so it is
-    correctly excluded.
+    'trr9027' sentinel into every write's body. The audit policy's Request rule for these
+    ConfigMaps is scoped by resourceNames, which only a request to the named object meets
+    (a create names no object when the policy is evaluated), so every procedure writes by
+    name: A patches coredns, and B and C create kube-dns and coredns-custom by server-side
+    apply, a PATCH to the named object. Each is logged with its body and sentinel. The
+    restore write carries the original Corefile and no sentinel, so it is correctly
+    excluded.
     """
     if e.get("objectRef.namespace") != "kube-system":
         return False
     if (e.get("objectRef.name") or "") not in ("coredns", "kube-dns", "coredns-custom"):
         return False
     return any("trr9027" in str(v) for v in e.values())
+
+
+def coredns_gate_named(name):
+    """TRR9027, one procedure: the sentinel-marked write to the DNS ConfigMap `name`."""
+    def gate(e):
+        return e.get("objectRef.name") == name and coredns_gate(e)
+    gate.describe = (f"objectRef.namespace == 'kube-system', objectRef.name == {name!r}, and "
+                     "some field contains 'trr9027'")
+    return gate
 
 
 # What each named gate requires, for the MISS explanation (the factories above set theirs).
@@ -191,6 +214,9 @@ MANIFEST = [
      "webhook neuter severity (Request)", name_prefix("trr9008-")),
     ("T1685", "k8s_security_tool_workload_removed.yml", "audit", "9008 D",
      "enforcer workload removal fallback", name_prefix("trr9008-")),
+    ("T1685", "k8s_security_tool_workload_removed.yml", "audit", "9008 D scale",
+     "enforcer scale-to-zero via kubectl scale (deployments/scale at Request)",
+     scale_subresource("trr9008-")),
     ("T1134", "k8s_impersonation.yml", "audit", "9009 A-D",
      "impersonation presence chokepoint", impersonation_gate),
     ("T1134", "k8s_impersonation_privileged.yml", "audit", "9009 sev",
@@ -206,7 +232,13 @@ MANIFEST = [
     ("T1572", "k8s_pod_portforward.yml", "audit", "9026 A-B",
      "pod port-forward chokepoint (verb-agnostic subresource)", name_prefix("trr9026-")),
     ("T1565.001", "k8s_coredns_configmap_modified.yml", "audit", "9027 A",
-     "cluster DNS ConfigMap write chokepoint", coredns_gate),
+     "cluster DNS ConfigMap write chokepoint: coredns patch", coredns_gate_named("coredns")),
+    ("T1565.001", "k8s_coredns_configmap_modified.yml", "audit", "9027 B",
+     "cluster DNS ConfigMap write chokepoint: kube-dns server-side apply",
+     coredns_gate_named("kube-dns")),
+    ("T1565.001", "k8s_coredns_configmap_modified.yml", "audit", "9027 C",
+     "cluster DNS ConfigMap write chokepoint: coredns-custom server-side apply",
+     coredns_gate_named("coredns-custom")),
     ("T1565.001", "k8s_coredns_corefile_poisoned.yml", "audit", "9027 sev",
      "CoreDNS Corefile poison grader (Request)", coredns_gate),
 ]
