@@ -25,24 +25,39 @@ description: |
   container start and exec (CVE-2019-5736 mitigation): `runc init`, started as
   /proc/self/exe (comm `exe`) from the runc binary, calls memfd_create and then
   fexecve (execveat with AT_EMPTY_PATH) in the same pid. The memfd_create base
-  filters that one caller: comm `exe` together with a runc install path.
+  filters that one caller: comm `exe` together with a runc install path and
+  euid 0. A rootful runtime (Docker, containerd, rootful Podman) runs runc as
+  root.
 
   Filter limit: the filter trusts the binary and the name, not the code that
   runs in the process, and both values are cheap to obtain. /usr/bin/runc is
   an ordinary world-executable, dynamically linked binary, so any local user
   can run it through a symlink named `exe` (which sets comm `exe`) with
   LD_PRELOAD, and the injected code's memfd_create and execveat of its own
-  payload are suppressed. A process in a container controls its root, so it can
-  put any binary at /usr/bin/runc and re-exec it through /proc/self/exe (comm
-  `exe`). The filter cannot be moved to the execveat base: the memfd name
+  payload keep the comm and exe. The euid condition makes that run fire,
+  because it carries the user's euid, not root's. It does not stop a process
+  that already runs as root. A process in a container controls its root, so it
+  can put any binary at /usr/bin/runc and re-exec it through /proc/self/exe
+  (comm `exe`); auditd logs euid in the initial user namespace, so only root in
+  a container without user namespace remapping (host uid 0) passes the filter.
+  The filter cannot be moved to the execveat base: the memfd name
   (`runc_cloned:`) in the new image's exe is chosen by the caller, so that is
-  weaker still. The event schema has no uid, so the filter cannot require the
-  root that runc init runs as.
+  weaker still.
+
+  Rootless runc (rootless Docker or Podman with runc) runs `runc init` as the
+  user. runc < 1.2 clones itself into a memfd there too, so on a host with
+  rootless runc < 1.2 each rootless container start or exec fires (see
+  falsepositives). runc >= 1.2 clones the binary in the runc parent before it
+  starts `runc init`, so its memfd_create and the execve of `runc init` are in
+  different pids and do not correlate.
 references:
   - https://man7.org/linux/man-pages/man2/memfd_create.2.html
   - https://man7.org/linux/man-pages/man2/execveat.2.html
   - https://github.com/opencontainers/runc/blob/v1.1.12/libcontainer/nsenter/cloned_binary.c
   - https://github.com/opencontainers/runc/blob/v1.1.12/libcontainer/factory_linux.go
+  - https://github.com/opencontainers/runc/blob/v1.1.12/libcontainer/nsenter/nsexec.c
+  - https://github.com/opencontainers/runc/blob/v1.2.0/libcontainer/container_linux.go
+  - https://github.com/torvalds/linux/blob/v6.8/kernel/audit.c
 author: det-eng
 date: 2026/10/05
 modified: 2026/10/16
@@ -63,6 +78,10 @@ falsepositives:
     (some JITs, container image tools) — rare; baseline before alerting
   - runc < 1.2 installed at a path that `runc_init` does not list (for example
     a k3s data directory) — extend `runc_init.exe`
+  - Rootless runc < 1.2 (rootless Docker, or Podman with runc) runs `runc init`
+    as the user, so it fires on every container start and exec. Upgrade runc,
+    or add that user's euid to a copy of `runc_init` on that host, which
+    reopens the filter limit for that user
   - Hosts without runc < 1.2 do not need `runc_init`; remove it there to close
     the filter limit described above
 level: high
@@ -83,13 +102,15 @@ detection:
     syscall: memfd_create
   runc_init:
     # runc < 1.2: `runc init` (exec'd as /proc/self/exe, so comm "exe") clones
-    # the runc binary into a memfd named runc_cloned:/proc/self/exe.
+    # the runc binary into a memfd named runc_cloned:/proc/self/exe. A rootful
+    # runtime runs it as root; auditd logs euid as decimal text.
     comm: exe
     exe:
       - /usr/bin/runc
       - /usr/sbin/runc
       - /usr/local/bin/runc
       - /usr/local/sbin/runc
+    euid: '0'
   condition: memfd_create_syscall and not runc_init
 level: informational
 ---

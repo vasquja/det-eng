@@ -24,7 +24,9 @@ description: |
   `LD_PRELOAD=inj.so /usr/bin/gdb -batch` as uid 65534 called
   ptrace(PTRACE_TRACEME) with comm gdb and exe /usr/bin/gdb).
   A process in a container controls both values, because the kernel logs
-  `exe` relative to the process's own root.
+  `exe` relative to the process's own root. The filter has no euid condition:
+  developers run gdb, gdbserver and lldb-server as themselves, so the euid of a
+  debugger's inferior is any user's, the same as the injected code's.
 references:
   - https://man7.org/linux/man-pages/man2/ptrace.2.html
   - https://sourceware.org/git/?p=binutils-gdb.git;a=blob;f=gdb/inf-ptrace.c

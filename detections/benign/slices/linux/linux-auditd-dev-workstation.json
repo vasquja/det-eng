@@ -1,25 +1,25 @@
 {
  "id": "linux-auditd-dev-workstation",
- "version": 2,
+ "version": 3,
  "logsource": {
   "product": "linux",
   "service": "auditd"
  },
  "fidelity": "synthetic",
- "represents": "About an hour (the v2 expansion spans 58 minutes) of det-eng-keyed syscalls on a developer/admin workstation (Ubuntu 24.04, kernel 6.8, GNOME on Wayland, Firefox snap, Docker Engine with runc 1.1): GPU/tty ioctls, shell pipelines, git/ssh/make/gcc/go/cargo/python/node/VS Code, systemd and snap-confine cgroup-BPF loads, resolved/NetworkManager/sshd/sudo/apt, memfd shared memory (Firefox, PipeWire, mutter, Xwayland), a docker-proxy splicing a local Postgres/Redis port, docker exec/run through runc; plus admin and debugging work adjacent to the rules: gdb/dlv/strace, perf and async-profiler, bpftool and bcc execsnoop, tcpdump, ping/tracepath/mtr, `ip xfrm` and strongSwan charon-nm, `ip netns add/exec`, `unshare -rn`, systemd PrivateNetwork units, `cryptsetup open` of a LUKS2 backup disk (AF_ALG + kernel keyring), `keyctl show`, fio with io_uring. Template weights set which behaviours appear and roughly how often relative to each other, not their production call rates: a real fio io_uring run issues thousands of io_uring_enter calls a second where this slice has a handful, and a busy docker-proxy splices far more. Treat hits and rate_per_10k as presence indicators (does this benign behaviour trip the rule, and by which actor), not as production false-positive rates.",
- "provenance": "synthetic; event shape = detections/validate_detections.py normalize() output for SYSCALL records keyed det-eng; only syscalls in detections/audit/atomic.rules; argument encodings from the syscall ABIs (socket family/type/protocol incl. SOCK_CLOEXEC/NONBLOCK bits, setsockopt level/optname, ioctl request numbers from asm-generic/ioctls.h, sockios.h, dm-ioctl.h and drm.h, bpf(2) command numbers, ptrace(2) requests, unshare/setns CLONE_* flags, memfd_create MFD_* flags), and documented tool behaviour (iputils ping datagram ICMP, libpcap TPACKET setup, iproute2 netlink options, gdb/Go PTRACE_TRACEME in the forked inferior, strace PTRACE_SEIZE + GET_SYSCALL_INFO, Go's splice pipe pool (pipe2 O_CLOEXEC|O_NONBLOCK), runc 1.1's memfd re-exec and nsexec stage names, snap-confine's device-cgroup BPF and preserved mount namespace, cryptsetup LUKS2 AF_ALG keyslot decryption and logon key). Pointer arguments are random addresses in the right regions; pids are fixed for daemons and drawn per tool session. int -1 arguments are logged as 32-bit ffffffff, as glibc's variadic syscall() passes an int. Multi-syscall behaviour is written as sequences that share one draw (same pid, milliseconds apart), so correlation rules see it as it happens: runc 1.1's memfd re-exec on every container start (runc init, comm exe: memfd_create(MFD_CLOEXEC|MFD_ALLOW_SEALING), then ~40 ms later execveat(fd, \"\", AT_EMPTY_PATH) whose record already carries the new image's comm (the fd number) and exe (the memfd)), followed by nsexec's runc:[1:CHILD] (cloned with CLONE_PARENT, so a child of the runc create/exec process) setns()ing into each namespace (docker exec) or unsharing new ones, with runc:[2:INIT] unsharing the cgroup namespace and runc loading, querying and attaching its cgroup-v2 device filter (docker run); and docker-proxy's Go splice path on a new connection with an empty pipe pool (socket to the backend, then per direction pipe2 and two splices through that pipe). Everything else is drawn independently. comm/exe values are in normalize() output form: auditd hex-encodes a comm or exe containing a space, and normalize() decodes it, so they read as plain text.",
+ "represents": "About an hour (the v3 expansion spans 60 minutes) of det-eng-keyed syscalls on a developer/admin workstation (Ubuntu 24.04, kernel 6.8, GNOME on Wayland, Firefox snap, Docker Engine with runc 1.1): GPU/tty ioctls, shell pipelines, git/ssh/make/gcc/go/cargo/python/node/VS Code, systemd and snap-confine cgroup-BPF loads, resolved/NetworkManager/sshd/sudo/apt, memfd shared memory (Firefox, PipeWire, mutter, Xwayland), a docker-proxy splicing a local Postgres/Redis port, docker exec/run through runc; plus admin and debugging work adjacent to the rules: gdb/dlv/strace, perf and async-profiler, bpftool and bcc execsnoop, tcpdump, ping/tracepath/mtr, `ip xfrm` and strongSwan charon-nm, `ip netns add/exec`, `unshare -rn`, systemd PrivateNetwork units, `cryptsetup open` of a LUKS2 backup disk (AF_ALG + kernel keyring), `keyctl show`, fio with io_uring. Template weights set which behaviours appear and roughly how often relative to each other, not their production call rates: a real fio io_uring run issues thousands of io_uring_enter calls a second where this slice has a handful, and a busy docker-proxy splices far more. Treat hits and rate_per_10k as presence indicators (does this benign behaviour trip the rule, and by which actor), not as production false-positive rates.",
+ "provenance": "synthetic; event shape = detections/validate_detections.py normalize() output for SYSCALL records keyed det-eng; only syscalls in detections/audit/atomic.rules; argument encodings from the syscall ABIs (socket family/type/protocol incl. SOCK_CLOEXEC/NONBLOCK bits, setsockopt level/optname, ioctl request numbers from asm-generic/ioctls.h, sockios.h, dm-ioctl.h and drm.h, bpf(2) command numbers, ptrace(2) requests, unshare/setns CLONE_* flags, memfd_create MFD_* flags), and documented tool behaviour (iputils ping datagram ICMP, libpcap TPACKET setup, iproute2 netlink options, gdb/Go PTRACE_TRACEME in the forked inferior, strace PTRACE_SEIZE + GET_SYSCALL_INFO, Go's splice pipe pool (pipe2 O_CLOEXEC|O_NONBLOCK), runc 1.1's memfd re-exec and nsexec stage names, snap-confine's device-cgroup BPF and preserved mount namespace, cryptsetup LUKS2 AF_ALG keyslot decryption and logon key). Pointer arguments are random addresses in the right regions; pids are fixed for daemons and drawn per tool session. int -1 arguments are logged as 32-bit ffffffff, as glibc's variadic syscall() passes an int. Multi-syscall behaviour is written as sequences that share one draw (same pid, milliseconds apart), so correlation rules see it as it happens: runc 1.1's memfd re-exec on every container start (runc init, comm exe: memfd_create(MFD_CLOEXEC|MFD_ALLOW_SEALING), then ~40 ms later execveat(fd, \"\", AT_EMPTY_PATH) whose record already carries the new image's comm (the fd number) and exe (the memfd)), followed by nsexec's runc:[1:CHILD] (cloned with CLONE_PARENT, so a child of the runc create/exec process) setns()ing into each namespace (docker exec) or unsharing new ones, with runc:[2:INIT] unsharing the cgroup namespace and runc loading, querying and attaching its cgroup-v2 device filter (docker run); and docker-proxy's Go splice path on a new connection with an empty pipe pool (socket to the backend, then per direction pipe2 and two splices through that pipe). Everything else is drawn independently. comm/exe values are in normalize() output form: auditd hex-encodes a comm or exe containing a space, and normalize() decodes it, so they read as plain text. v3 adds each event's credentials as normalize() emits them (uid, euid, auid: decimal text in the initial user namespace, auid 4294967295 when unset), with the draws, weights and every other field unchanged, so v3 differs from v2 only in those fields and in the reseed that the version bump causes. Who runs what: the GNOME session, shells, developer tools, debuggers (gdb, dlv, strace), the JVM, fio, ping/tracepath, mtr-packet (file capability cap_net_raw, so it keeps the user's ids), `unshare -rn` (root only inside its own user namespace; auditd logs the host uid), keyctl and the systemd --user manager are the desktop user, uid=euid=auid=1000. snap-confine from the snapd snap of this host (revision 21759, a snapd release before 2.70, which installs it set-user-ID root; 2.70 and later use file capabilities and keep the caller's euid) is uid=1000, euid=0, auid=1000. Admin work run with sudo from that session (perf, bpftool, bcc execsnoop, tcpdump before it drops privileges, ip xfrm and ip netns, apt-get/dpkg/apt, cryptsetup open) and sshd's privileged monitor for the user's session are uid=euid=0 with auid=1000; sudo itself (set-user-ID root) is uid=1000, euid=0, auid=1000; apt's http method drops to _apt (uid=euid=42, auid=1000). System daemons and everything they start (systemd PID 1 and its executor, journald, NetworkManager and charon-nm, snapd, unattended-upgrades, dockerd, containerd, docker-proxy and rootful runc with its runc init and nsexec children) are uid=euid=0 with auid unset (4294967295); systemd-resolved and systemd-timesyncd run as their own system users (uid=euid 991 and 996 here: sysusers.d allocates these per host, so the numbers are illustrative).",
  "adjacent_to": [
-  "T1622/ptrace_traceme.yml (gdb and dlv inferiors call PTRACE_TRACEME)",
+  "T1622/ptrace_traceme.yml (gdb and dlv inferiors call PTRACE_TRACEME; gdb filtered by exe, dlv not)",
   "T1068/perf_event_open_non_profiler.yml (perf allowlisted; async-profiler, bcc not)",
-  "T1014/bpf_prog_load.yml (systemd and bpftool allowlisted; snap-confine, runc, bcc not)",
+  "T1014/bpf_prog_load.yml (systemd and bpftool allowlisted by comm; snap-confine filtered by exe, runc by comm, exe and euid 0; bcc not)",
   "T1040/afpacket_raw_socket.yml (tcpdump, NetworkManager DHCP allowlisted)",
   "T1040/afinet_raw_socket.yml (ping datagram ICMP; mtr-packet raw)",
   "T1611/setns_namespace_join.yml (runc:[1:CHILD], ip netns exec, snap-confine)",
   "T1068/dirtyfrag_xfrm_unshare_netlink.yml (ip xfrm / charon-nm NETLINK_XFRM; ip netns add, unshare -rn, PrivateNetwork unshare in other pids)",
   "T1068/copyfail_af_alg_authencesn.yml (cryptsetup AF_ALG without splice)",
   "T1068/dirtypipe_splice_readonly.yml (docker-proxy pipe2 + splice on a new connection: expected to fire; shell pipes)",
-  "T1068/keyring_add_key_burst.yml (cryptsetup logon key; sshd keyctl)",
-  "T1620/memfd_create_execveat.yml (memfd shared memory; runc 1.1's memfd re-exec on every docker run/exec: expected to fire)",
+  "T1068/keyring_add_key_burst.yml (cryptsetup logon key as root under sudo, filtered by comm, exe and euid 0; sshd keyctl)",
+  "T1620/memfd_create_execveat.yml (memfd shared memory; runc 1.1's memfd re-exec on every docker run/exec, filtered by comm, exe and euid 0)",
   "T1685/io_uring_setup.yml (fio io_uring benchmark)"
  ],
  "count": 1300,
@@ -1934,6 +1934,9 @@
     "a3": "0",
     "pid": 2611,
     "ppid": 2398,
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "gnome-shell",
     "exe": "/usr/bin/gnome-shell",
     "timestamp": "{{ts}}"
@@ -1953,6 +1956,9 @@
     "a3": "0",
     "pid": 2790,
     "ppid": 2611,
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "Xwayland",
     "exe": "/usr/bin/Xwayland",
     "timestamp": "{{ts}}"
@@ -1972,6 +1978,9 @@
     "a3": "0",
     "pid": 5122,
     "ppid": 5110,
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "firefox",
     "exe": "/snap/firefox/5091/usr/lib/firefox/firefox",
     "timestamp": "{{ts}}"
@@ -1991,6 +2000,9 @@
     "a3": "0",
     "pid": "{{ffx.pid}}",
     "ppid": 5122,
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "{{ffx.comm}}",
     "exe": "/snap/firefox/5091/usr/lib/firefox/firefox",
     "timestamp": "{{ts}}"
@@ -2010,6 +2022,9 @@
     "a3": "0",
     "pid": 5370,
     "ppid": 5122,
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "Socket Process",
     "exe": "/snap/firefox/5091/usr/lib/firefox/firefox",
     "timestamp": "{{ts}}"
@@ -2029,6 +2044,9 @@
     "a3": "0",
     "pid": 2489,
     "ppid": 2398,
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "pipewire",
     "exe": "/usr/bin/pipewire",
     "timestamp": "{{ts}}"
@@ -2048,6 +2066,9 @@
     "a3": "0",
     "pid": 2491,
     "ppid": 2398,
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "wireplumber",
     "exe": "/usr/bin/wireplumber",
     "timestamp": "{{ts}}"
@@ -2067,6 +2088,9 @@
     "a3": "0",
     "pid": 2611,
     "ppid": 2398,
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "gnome-shell",
     "exe": "/usr/bin/gnome-shell",
     "timestamp": "{{ts}}"
@@ -2086,6 +2110,9 @@
     "a3": "0",
     "pid": 2790,
     "ppid": 2611,
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "Xwayland",
     "exe": "/usr/bin/Xwayland",
     "timestamp": "{{ts}}"
@@ -2105,6 +2132,9 @@
     "a3": "0",
     "pid": 3920,
     "ppid": 2398,
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "gnome-terminal-",
     "exe": "/usr/libexec/gnome-terminal-server",
     "timestamp": "{{ts}}"
@@ -2124,6 +2154,9 @@
     "a3": "0",
     "pid": "{{sh.pid}}",
     "ppid": "{{sh.ppid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "bash",
     "exe": "/usr/bin/bash",
     "timestamp": "{{ts}}"
@@ -2143,6 +2176,9 @@
     "a3": "0",
     "pid": "{{sh.pid}}",
     "ppid": "{{sh.ppid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "bash",
     "exe": "/usr/bin/bash",
     "timestamp": "{{ts}}"
@@ -2162,6 +2198,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "bash",
     "exe": "/usr/bin/bash",
     "timestamp": "{{ts}}"
@@ -2181,6 +2220,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "{{pager}}",
     "exe": "{{pager_exe}}",
     "timestamp": "{{ts}}"
@@ -2200,6 +2242,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "git",
     "exe": "/usr/bin/git",
     "timestamp": "{{ts}}"
@@ -2219,6 +2264,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "git",
     "exe": "/usr/bin/git",
     "timestamp": "{{ts}}"
@@ -2238,6 +2286,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{upid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "git-remote-http",
     "exe": "/usr/lib/git-core/git-remote-https",
     "timestamp": "{{ts}}"
@@ -2257,6 +2308,9 @@
     "a3": "7ff{{sd}}{{h8}}",
     "pid": "{{upid}}",
     "ppid": "{{upid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "git-remote-http",
     "exe": "/usr/lib/git-core/git-remote-https",
     "timestamp": "{{ts}}"
@@ -2276,6 +2330,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "ssh",
     "exe": "/usr/bin/ssh",
     "timestamp": "{{ts}}"
@@ -2295,6 +2352,9 @@
     "a3": "7ff{{sd}}{{h8}}",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "ssh",
     "exe": "/usr/bin/ssh",
     "timestamp": "{{ts}}"
@@ -2314,6 +2374,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "make",
     "exe": "/usr/bin/make",
     "timestamp": "{{ts}}"
@@ -2333,6 +2396,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{upid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "gcc",
     "exe": "/usr/bin/x86_64-linux-gnu-gcc-13",
     "timestamp": "{{ts}}"
@@ -2352,6 +2418,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "go",
     "exe": "/usr/local/go/bin/go",
     "timestamp": "{{ts}}"
@@ -2371,6 +2440,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "go",
     "exe": "/usr/local/go/bin/go",
     "timestamp": "{{ts}}"
@@ -2390,6 +2462,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "cargo",
     "exe": "/home/dev/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
     "timestamp": "{{ts}}"
@@ -2409,6 +2484,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "python3",
     "exe": "/usr/bin/python3.12",
     "timestamp": "{{ts}}"
@@ -2428,6 +2506,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "python3",
     "exe": "/usr/bin/python3.12",
     "timestamp": "{{ts}}"
@@ -2447,6 +2528,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "node",
     "exe": "/usr/bin/node",
     "timestamp": "{{ts}}"
@@ -2466,6 +2550,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "node",
     "exe": "/usr/bin/node",
     "timestamp": "{{ts}}"
@@ -2485,6 +2572,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "node",
     "exe": "/usr/bin/node",
     "timestamp": "{{ts}}"
@@ -2504,6 +2594,9 @@
     "a3": "0",
     "pid": 7212,
     "ppid": 7088,
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "code",
     "exe": "/usr/share/code/code",
     "timestamp": "{{ts}}"
@@ -2523,6 +2616,9 @@
     "a3": "ffffffff",
     "pid": "{{java_s.pid}}",
     "ppid": "{{java_s.ppid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "Attach Listener",
     "exe": "/usr/lib/jvm/java-21-openjdk-amd64/bin/java",
     "timestamp": "{{ts}}"
@@ -2542,6 +2638,9 @@
     "a3": "0",
     "pid": "{{gdbchild.pid}}",
     "ppid": "{{gdbchild.ppid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "gdb",
     "exe": "/usr/bin/gdb",
     "timestamp": "{{ts}}"
@@ -2561,6 +2660,9 @@
     "a3": "{{ptrace_gdb.a3}}",
     "pid": "{{gdb_s.pid}}",
     "ppid": "{{gdb_s.ppid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "gdb",
     "exe": "/usr/bin/gdb",
     "timestamp": "{{ts}}"
@@ -2580,6 +2682,9 @@
     "a3": "0",
     "pid": "{{dlvchild.pid}}",
     "ppid": "{{dlvchild.ppid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "dlv",
     "exe": "/home/dev/go/bin/dlv",
     "timestamp": "{{ts}}"
@@ -2599,6 +2704,9 @@
     "a3": "{{ptrace_dlv.a3}}",
     "pid": "{{dlv_s.pid}}",
     "ppid": "{{dlv_s.ppid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "dlv",
     "exe": "/home/dev/go/bin/dlv",
     "timestamp": "{{ts}}"
@@ -2618,6 +2726,9 @@
     "a3": "5f",
     "pid": "{{strace_s.pid}}",
     "ppid": "{{strace_s.ppid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "strace",
     "exe": "/usr/bin/strace",
     "timestamp": "{{ts}}"
@@ -2637,6 +2748,9 @@
     "a3": "{{pts.a3}}",
     "pid": "{{strace_s.pid}}",
     "ppid": "{{strace_s.ppid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "strace",
     "exe": "/usr/bin/strace",
     "timestamp": "{{ts}}"
@@ -2656,6 +2770,9 @@
     "a3": "ffffffff",
     "pid": "{{perf_s.pid}}",
     "ppid": "{{perf_s.ppid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "perf",
     "exe": "/usr/lib/linux-tools/6.8.0-45-generic/perf",
     "timestamp": "{{ts}}"
@@ -2675,6 +2792,9 @@
     "a3": "0",
     "pid": "{{perf_s.pid}}",
     "ppid": "{{perf_s.ppid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "perf",
     "exe": "/usr/lib/linux-tools/6.8.0-45-generic/perf",
     "timestamp": "{{ts}}"
@@ -2694,6 +2814,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{upid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "bpftool",
     "exe": "/usr/lib/linux-tools/6.8.0-45-generic/bpftool",
     "timestamp": "{{ts}}"
@@ -2713,6 +2836,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{upid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "bpftool",
     "exe": "/usr/lib/linux-tools/6.8.0-45-generic/bpftool",
     "timestamp": "{{ts}}"
@@ -2732,6 +2858,9 @@
     "a3": "0",
     "pid": "{{bcc_s.pid}}",
     "ppid": "{{bcc_s.ppid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "execsnoop-bpfcc",
     "exe": "/usr/bin/python3.12",
     "timestamp": "{{ts}}"
@@ -2751,6 +2880,9 @@
     "a3": "ffffffff",
     "pid": "{{bcc_s.pid}}",
     "ppid": "{{bcc_s.ppid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "execsnoop-bpfcc",
     "exe": "/usr/bin/python3.12",
     "timestamp": "{{ts}}"
@@ -2770,6 +2902,9 @@
     "a3": "0",
     "pid": "{{fio_s.pid}}",
     "ppid": "{{fio_s.ppid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "fio",
     "exe": "/usr/bin/fio",
     "timestamp": "{{ts}}"
@@ -2789,6 +2924,9 @@
     "a3": "1",
     "pid": "{{fio_s.pid}}",
     "ppid": "{{fio_s.ppid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "fio",
     "exe": "/usr/bin/fio",
     "timestamp": "{{ts}}"
@@ -2808,6 +2946,9 @@
     "a3": "0",
     "pid": "{{tcpdump_s.pid}}",
     "ppid": "{{tcpdump_s.ppid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "tcpdump",
     "exe": "/usr/bin/tcpdump",
     "timestamp": "{{ts}}"
@@ -2827,6 +2968,9 @@
     "a3": "7ff{{sd}}{{h8}}",
     "pid": "{{tcpdump_s.pid}}",
     "ppid": "{{tcpdump_s.ppid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "tcpdump",
     "exe": "/usr/bin/tcpdump",
     "timestamp": "{{ts}}"
@@ -2846,6 +2990,9 @@
     "a3": "0",
     "pid": "{{tcpdump_s.pid}}",
     "ppid": "{{tcpdump_s.ppid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "tcpdump",
     "exe": "/usr/bin/tcpdump",
     "timestamp": "{{ts}}"
@@ -2865,6 +3012,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "ping",
     "exe": "/usr/bin/ping",
     "timestamp": "{{ts}}"
@@ -2884,6 +3034,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "ping",
     "exe": "/usr/bin/ping",
     "timestamp": "{{ts}}"
@@ -2903,6 +3056,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "ping",
     "exe": "/usr/bin/ping",
     "timestamp": "{{ts}}"
@@ -2922,6 +3078,9 @@
     "a3": "7ff{{sd}}{{h8}}",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "ping",
     "exe": "/usr/bin/ping",
     "timestamp": "{{ts}}"
@@ -2941,6 +3100,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "tracepath",
     "exe": "/usr/bin/tracepath",
     "timestamp": "{{ts}}"
@@ -2960,6 +3122,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{upid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "mtr-packet",
     "exe": "/usr/bin/mtr-packet",
     "timestamp": "{{ts}}"
@@ -2979,6 +3144,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{upid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "mtr-packet",
     "exe": "/usr/bin/mtr-packet",
     "timestamp": "{{ts}}"
@@ -2998,6 +3166,9 @@
     "a3": "0",
     "pid": "{{ipx_s.pid}}",
     "ppid": "{{ipx_s.ppid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "ip",
     "exe": "/usr/bin/ip",
     "timestamp": "{{ts}}"
@@ -3017,6 +3188,9 @@
     "a3": "7ff{{sd}}{{h8}}",
     "pid": "{{ipx_s.pid}}",
     "ppid": "{{ipx_s.ppid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "ip",
     "exe": "/usr/bin/ip",
     "timestamp": "{{ts}}"
@@ -3036,6 +3210,9 @@
     "a3": "0",
     "pid": 4410,
     "ppid": 912,
+    "uid": "0",
+    "euid": "0",
+    "auid": "4294967295",
     "comm": "charon-nm",
     "exe": "/usr/lib/ipsec/charon-nm",
     "timestamp": "{{ts}}"
@@ -3055,6 +3232,9 @@
     "a3": "0",
     "pid": 4410,
     "ppid": 912,
+    "uid": "0",
+    "euid": "0",
+    "auid": "4294967295",
     "comm": "charon-nm",
     "exe": "/usr/lib/ipsec/charon-nm",
     "timestamp": "{{ts}}"
@@ -3074,6 +3254,9 @@
     "a3": "0",
     "pid": "{{netns_s.pid}}",
     "ppid": "{{netns_s.ppid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "ip",
     "exe": "/usr/bin/ip",
     "timestamp": "{{ts}}"
@@ -3093,6 +3276,9 @@
     "a3": "0",
     "pid": "{{netns_s.pid}}",
     "ppid": "{{netns_s.ppid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "ip",
     "exe": "/usr/bin/ip",
     "timestamp": "{{ts}}"
@@ -3112,6 +3298,9 @@
     "a3": "0",
     "pid": "{{netns_s.pid}}",
     "ppid": "{{netns_s.ppid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "ip",
     "exe": "/usr/bin/ip",
     "timestamp": "{{ts}}"
@@ -3131,6 +3320,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "unshare",
     "exe": "/usr/bin/unshare",
     "timestamp": "{{ts}}"
@@ -3150,6 +3342,9 @@
     "a3": "0",
     "pid": 731,
     "ppid": 1,
+    "uid": "991",
+    "euid": "991",
+    "auid": "4294967295",
     "comm": "systemd-resolve",
     "exe": "/usr/lib/systemd/systemd-resolved",
     "timestamp": "{{ts}}"
@@ -3169,6 +3364,9 @@
     "a3": "7ff{{sd}}{{h8}}",
     "pid": 731,
     "ppid": 1,
+    "uid": "991",
+    "euid": "991",
+    "auid": "4294967295",
     "comm": "systemd-resolve",
     "exe": "/usr/lib/systemd/systemd-resolved",
     "timestamp": "{{ts}}"
@@ -3188,6 +3386,9 @@
     "a3": "0",
     "pid": 733,
     "ppid": 1,
+    "uid": "996",
+    "euid": "996",
+    "auid": "4294967295",
     "comm": "systemd-timesyn",
     "exe": "/usr/lib/systemd/systemd-timesyncd",
     "timestamp": "{{ts}}"
@@ -3207,6 +3408,9 @@
     "a3": "0",
     "pid": 912,
     "ppid": 1,
+    "uid": "0",
+    "euid": "0",
+    "auid": "4294967295",
     "comm": "NetworkManager",
     "exe": "/usr/sbin/NetworkManager",
     "timestamp": "{{ts}}"
@@ -3226,6 +3430,9 @@
     "a3": "0",
     "pid": 912,
     "ppid": 1,
+    "uid": "0",
+    "euid": "0",
+    "auid": "4294967295",
     "comm": "NetworkManager",
     "exe": "/usr/sbin/NetworkManager",
     "timestamp": "{{ts}}"
@@ -3245,6 +3452,9 @@
     "a3": "0",
     "pid": 912,
     "ppid": 1,
+    "uid": "0",
+    "euid": "0",
+    "auid": "4294967295",
     "comm": "NetworkManager",
     "exe": "/usr/sbin/NetworkManager",
     "timestamp": "{{ts}}"
@@ -3264,6 +3474,9 @@
     "a3": "0",
     "pid": 1,
     "ppid": 0,
+    "uid": "0",
+    "euid": "0",
+    "auid": "4294967295",
     "comm": "systemd",
     "exe": "/usr/lib/systemd/systemd",
     "timestamp": "{{ts}}"
@@ -3283,6 +3496,9 @@
     "a3": "0",
     "pid": 1,
     "ppid": 0,
+    "uid": "0",
+    "euid": "0",
+    "auid": "4294967295",
     "comm": "systemd",
     "exe": "/usr/lib/systemd/systemd",
     "timestamp": "{{ts}}"
@@ -3302,6 +3518,9 @@
     "a3": "0",
     "pid": 1,
     "ppid": 0,
+    "uid": "0",
+    "euid": "0",
+    "auid": "4294967295",
     "comm": "systemd",
     "exe": "/usr/lib/systemd/systemd",
     "timestamp": "{{ts}}"
@@ -3321,6 +3540,9 @@
     "a3": "0",
     "pid": 1,
     "ppid": 0,
+    "uid": "0",
+    "euid": "0",
+    "auid": "4294967295",
     "comm": "systemd",
     "exe": "/usr/lib/systemd/systemd",
     "timestamp": "{{ts}}"
@@ -3340,6 +3562,9 @@
     "a3": "0",
     "pid": 2398,
     "ppid": 1,
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "systemd",
     "exe": "/usr/lib/systemd/systemd",
     "timestamp": "{{ts}}"
@@ -3359,6 +3584,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": 1,
+    "uid": "0",
+    "euid": "0",
+    "auid": "4294967295",
     "comm": "(ostnamed)",
     "exe": "/usr/lib/systemd/systemd-executor",
     "timestamp": "{{ts}}"
@@ -3378,6 +3606,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": 1,
+    "uid": "0",
+    "euid": "0",
+    "auid": "4294967295",
     "comm": "(ostnamed)",
     "exe": "/usr/lib/systemd/systemd-executor",
     "timestamp": "{{ts}}"
@@ -3397,6 +3628,9 @@
     "a3": "0",
     "pid": 412,
     "ppid": 1,
+    "uid": "0",
+    "euid": "0",
+    "auid": "4294967295",
     "comm": "systemd-journal",
     "exe": "/usr/lib/systemd/systemd-journald",
     "timestamp": "{{ts}}"
@@ -3416,6 +3650,9 @@
     "a3": "0",
     "pid": "{{snapc.pid}}",
     "ppid": "{{snapc.ppid}}",
+    "uid": "1000",
+    "euid": "0",
+    "auid": "1000",
     "comm": "snap-confine",
     "exe": "/snap/snapd/21759/usr/lib/snapd/snap-confine",
     "timestamp": "{{ts}}"
@@ -3435,6 +3672,9 @@
     "a3": "0",
     "pid": "{{snapc.pid}}",
     "ppid": "{{snapc.ppid}}",
+    "uid": "1000",
+    "euid": "0",
+    "auid": "1000",
     "comm": "snap-confine",
     "exe": "/snap/snapd/21759/usr/lib/snapd/snap-confine",
     "timestamp": "{{ts}}"
@@ -3454,6 +3694,9 @@
     "a3": "0",
     "pid": "{{snapc.pid}}",
     "ppid": "{{snapc.ppid}}",
+    "uid": "1000",
+    "euid": "0",
+    "auid": "1000",
     "comm": "snap-confine",
     "exe": "/snap/snapd/21759/usr/lib/snapd/snap-confine",
     "timestamp": "{{ts}}"
@@ -3473,6 +3716,9 @@
     "a3": "0",
     "pid": 1038,
     "ppid": 1,
+    "uid": "0",
+    "euid": "0",
+    "auid": "4294967295",
     "comm": "snapd",
     "exe": "/snap/snapd/21759/usr/lib/snapd/snapd",
     "timestamp": "{{ts}}"
@@ -3492,6 +3738,9 @@
     "a3": "0",
     "pid": "{{sshd_s.pid}}",
     "ppid": "{{sshd_s.ppid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "sshd",
     "exe": "/usr/sbin/sshd",
     "timestamp": "{{ts}}"
@@ -3511,6 +3760,9 @@
     "a3": "0",
     "pid": "{{sshd_s.pid}}",
     "ppid": "{{sshd_s.ppid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "sshd",
     "exe": "/usr/sbin/sshd",
     "timestamp": "{{ts}}"
@@ -3530,6 +3782,9 @@
     "a3": "0",
     "pid": "{{sshd_s.pid}}",
     "ppid": "{{sshd_s.ppid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "sshd",
     "exe": "/usr/sbin/sshd",
     "timestamp": "{{ts}}"
@@ -3549,6 +3804,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "0",
+    "auid": "1000",
     "comm": "sudo",
     "exe": "/usr/bin/sudo",
     "timestamp": "{{ts}}"
@@ -3568,6 +3826,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "0",
+    "auid": "1000",
     "comm": "sudo",
     "exe": "/usr/bin/sudo",
     "timestamp": "{{ts}}"
@@ -3587,6 +3848,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{upid}}",
+    "uid": "42",
+    "euid": "42",
+    "auid": "1000",
     "comm": "http",
     "exe": "/usr/lib/apt/methods/http",
     "timestamp": "{{ts}}"
@@ -3606,6 +3870,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{upid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "{{aptc.c}}",
     "exe": "{{aptc.e}}",
     "timestamp": "{{ts}}"
@@ -3625,6 +3892,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": 1,
+    "uid": "0",
+    "euid": "0",
+    "auid": "4294967295",
     "comm": "unattended-upgr",
     "exe": "/usr/bin/python3.12",
     "timestamp": "{{ts}}"
@@ -3644,6 +3914,9 @@
     "a3": "0",
     "pid": "{{crypt_s.pid}}",
     "ppid": "{{crypt_s.ppid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "cryptsetup",
     "exe": "/usr/sbin/cryptsetup",
     "timestamp": "{{ts}}"
@@ -3663,6 +3936,9 @@
     "a3": "5{{hp}}{{h10}}",
     "pid": "{{crypt_s.pid}}",
     "ppid": "{{crypt_s.ppid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "cryptsetup",
     "exe": "/usr/sbin/cryptsetup",
     "timestamp": "{{ts}}"
@@ -3682,6 +3958,9 @@
     "a3": "40",
     "pid": "{{crypt_s.pid}}",
     "ppid": "{{crypt_s.ppid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "cryptsetup",
     "exe": "/usr/sbin/cryptsetup",
     "timestamp": "{{ts}}"
@@ -3701,6 +3980,9 @@
     "a3": "0",
     "pid": "{{crypt_s.pid}}",
     "ppid": "{{crypt_s.ppid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "cryptsetup",
     "exe": "/usr/sbin/cryptsetup",
     "timestamp": "{{ts}}"
@@ -3720,6 +4002,9 @@
     "a3": "0",
     "pid": "{{crypt_s.pid}}",
     "ppid": "{{crypt_s.ppid}}",
+    "uid": "0",
+    "euid": "0",
+    "auid": "1000",
     "comm": "cryptsetup",
     "exe": "/usr/sbin/cryptsetup",
     "timestamp": "{{ts}}"
@@ -3739,6 +4024,9 @@
     "a3": "0",
     "pid": "{{upid}}",
     "ppid": "{{sh.pid}}",
+    "uid": "1000",
+    "euid": "1000",
+    "auid": "1000",
     "comm": "keyctl",
     "exe": "/usr/bin/keyctl",
     "timestamp": "{{ts}}"
@@ -3758,6 +4046,9 @@
     "a3": "0",
     "pid": "{{dproxy}}",
     "ppid": 1683,
+    "uid": "0",
+    "euid": "0",
+    "auid": "4294967295",
     "comm": "docker-proxy",
     "exe": "/usr/bin/docker-proxy",
     "timestamp": "{{ts}}"
@@ -3777,6 +4068,9 @@
     "a3": "0",
     "pid": "{{dproxy}}",
     "ppid": 1683,
+    "uid": "0",
+    "euid": "0",
+    "auid": "4294967295",
     "comm": "docker-proxy",
     "exe": "/usr/bin/docker-proxy",
     "timestamp": "{{ts}}"
@@ -3798,6 +4092,9 @@
       "a3": "0",
       "pid": "{{dproxy}}",
       "ppid": 1683,
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "docker-proxy",
       "exe": "/usr/bin/docker-proxy",
       "timestamp": "{{ts}}"
@@ -3816,6 +4113,9 @@
       "a3": "0",
       "pid": "{{dproxy}}",
       "ppid": 1683,
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "docker-proxy",
       "exe": "/usr/bin/docker-proxy",
       "timestamp": "{{ts}}"
@@ -3833,6 +4133,9 @@
       "a3": "0",
       "pid": "{{dproxy}}",
       "ppid": 1683,
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "docker-proxy",
       "exe": "/usr/bin/docker-proxy",
       "timestamp": "{{ts}}"
@@ -3850,6 +4153,9 @@
       "a3": "0",
       "pid": "{{dproxy}}",
       "ppid": 1683,
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "docker-proxy",
       "exe": "/usr/bin/docker-proxy",
       "timestamp": "{{ts}}"
@@ -3868,6 +4174,9 @@
       "a3": "0",
       "pid": "{{dproxy}}",
       "ppid": 1683,
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "docker-proxy",
       "exe": "/usr/bin/docker-proxy",
       "timestamp": "{{ts}}"
@@ -3885,6 +4194,9 @@
       "a3": "0",
       "pid": "{{dproxy}}",
       "ppid": 1683,
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "docker-proxy",
       "exe": "/usr/bin/docker-proxy",
       "timestamp": "{{ts}}"
@@ -3902,6 +4214,9 @@
       "a3": "0",
       "pid": "{{dproxy}}",
       "ppid": 1683,
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "docker-proxy",
       "exe": "/usr/bin/docker-proxy",
       "timestamp": "{{ts}}"
@@ -3923,6 +4238,9 @@
     "a3": "0",
     "pid": "{{dsock.pid}}",
     "ppid": 1,
+    "uid": "0",
+    "euid": "0",
+    "auid": "4294967295",
     "comm": "{{dsock.c}}",
     "exe": "{{dsock.e}}",
     "timestamp": "{{ts}}"
@@ -3944,6 +4262,9 @@
       "a3": "0",
       "pid": "{{rexec.x}}",
       "ppid": "{{rexec.xp}}",
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "runc",
       "exe": "/usr/bin/runc",
       "timestamp": "{{ts}}"
@@ -3962,6 +4283,9 @@
       "a3": "0",
       "pid": "{{rexec.init}}",
       "ppid": "{{rexec.x}}",
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "exe",
       "exe": "/usr/bin/runc",
       "timestamp": "{{ts}}"
@@ -3980,6 +4304,9 @@
       "a3": "7ff{{sd}}{{h8}}",
       "pid": "{{rexec.init}}",
       "ppid": "{{rexec.x}}",
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "6",
       "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
       "timestamp": "{{ts}}"
@@ -3998,6 +4325,9 @@
       "a3": "0",
       "pid": "{{rexec.child}}",
       "ppid": "{{rexec.x}}",
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "runc:[1:CHILD]",
       "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
       "timestamp": "{{ts}}"
@@ -4016,6 +4346,9 @@
       "a3": "0",
       "pid": "{{rexec.child}}",
       "ppid": "{{rexec.x}}",
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "runc:[1:CHILD]",
       "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
       "timestamp": "{{ts}}"
@@ -4034,6 +4367,9 @@
       "a3": "0",
       "pid": "{{rexec.child}}",
       "ppid": "{{rexec.x}}",
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "runc:[1:CHILD]",
       "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
       "timestamp": "{{ts}}"
@@ -4052,6 +4388,9 @@
       "a3": "0",
       "pid": "{{rexec.child}}",
       "ppid": "{{rexec.x}}",
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "runc:[1:CHILD]",
       "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
       "timestamp": "{{ts}}"
@@ -4070,6 +4409,9 @@
       "a3": "0",
       "pid": "{{rexec.child}}",
       "ppid": "{{rexec.x}}",
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "runc:[1:CHILD]",
       "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
       "timestamp": "{{ts}}"
@@ -4088,6 +4430,9 @@
       "a3": "0",
       "pid": "{{rexec.child}}",
       "ppid": "{{rexec.x}}",
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "runc:[1:CHILD]",
       "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
       "timestamp": "{{ts}}"
@@ -4111,6 +4456,9 @@
       "a3": "0",
       "pid": "{{rrun.x}}",
       "ppid": "{{rrun.xp}}",
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "runc",
       "exe": "/usr/bin/runc",
       "timestamp": "{{ts}}"
@@ -4129,6 +4477,9 @@
       "a3": "0",
       "pid": "{{rrun.init}}",
       "ppid": "{{rrun.x}}",
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "exe",
       "exe": "/usr/bin/runc",
       "timestamp": "{{ts}}"
@@ -4147,6 +4498,9 @@
       "a3": "7ff{{sd}}{{h8}}",
       "pid": "{{rrun.init}}",
       "ppid": "{{rrun.x}}",
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "6",
       "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
       "timestamp": "{{ts}}"
@@ -4165,6 +4519,9 @@
       "a3": "0",
       "pid": "{{rrun.child}}",
       "ppid": "{{rrun.x}}",
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "runc:[1:CHILD]",
       "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
       "timestamp": "{{ts}}"
@@ -4183,6 +4540,9 @@
       "a3": "0",
       "pid": "{{rrun.init2}}",
       "ppid": "{{rrun.x}}",
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "runc:[2:INIT]",
       "exe": "/memfd:runc_cloned:/proc/self/exe (deleted)",
       "timestamp": "{{ts}}"
@@ -4201,6 +4561,9 @@
       "a3": "0",
       "pid": "{{rrun.x}}",
       "ppid": "{{rrun.xp}}",
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "runc",
       "exe": "/usr/bin/runc",
       "timestamp": "{{ts}}"
@@ -4218,6 +4581,9 @@
       "a3": "0",
       "pid": "{{rrun.x}}",
       "ppid": "{{rrun.xp}}",
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "runc",
       "exe": "/usr/bin/runc",
       "timestamp": "{{ts}}"
@@ -4235,6 +4601,9 @@
       "a3": "0",
       "pid": "{{rrun.x}}",
       "ppid": "{{rrun.xp}}",
+      "uid": "0",
+      "euid": "0",
+      "auid": "4294967295",
       "comm": "runc",
       "exe": "/usr/bin/runc",
       "timestamp": "{{ts}}"
