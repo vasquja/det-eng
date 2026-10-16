@@ -10,6 +10,39 @@ fires on its paired atomic.
 > covers the procedure. See the worked example:
 > [`research/trr9001/lin`](../research/trr9001/lin/README.md).
 
+## How a rule earns its place
+
+Firing on its own attack emulation is not enough. A rule can do that and still
+be noisy on normal activity, or have tests so easy that they prove nothing.
+So every rule must pass four kinds of check:
+
+1. **It fires on the attack.** The validators run the technique's emulation
+   (on a real auditd VM, a live `kind` cluster, or recorded cloud audit logs)
+   and check that the rule matches the telemetry it produced.
+2. **Its tests are hard to fake.** Next to each rule is a test file
+   (`<rule>.cases.jsonl`) with **near-miss** examples: events that look almost
+   exactly like the attack but are wrong in one key detail. A checker proves
+   each near-miss really is one detail away from firing the rule, and fails a
+   rule whose tests are trivial, or that only works because it matches the
+   emulation's own file or process names. See
+   [Rule test cases and the sufficiency gate](#rule-test-cases-and-the-sufficiency-gate).
+3. **It stays quiet on ordinary activity.** Every rule is run over a library of
+   realistic normal activity (admin work, CI jobs, Kubernetes controllers,
+   cloud console use) and gets a hit **budget**. Going over the budget fails CI,
+   and the scores are saved, so any change in a rule's noise shows up in review.
+   See [The benign corpus](#the-benign-corpus-false-positive-scores).
+4. **Its failures explain themselves.** When a check fails, it names the
+   event, the field, the value it saw and what the rule wanted, so the fix
+   starts from evidence. See [Explained failures](#explained-failures).
+
+CI also compares each pull request with `main`, so tests cannot be quietly
+deleted or weakened, and a rule cannot quietly get noisier.
+
+When these checks were first run against the existing rules, they found
+problems the old tests had missed: attack variants a rule misses, and routine
+activity a rule fires on. Each one is recorded, with its evidence and the
+proposed fix, in [`RULE_DEFECTS.md`](RULE_DEFECTS.md) until the rule is fixed.
+
 ## The three layers
 
 1. **Atomic** (`atomics/<TECH>/`) — the stimulus. It emits the syscall
