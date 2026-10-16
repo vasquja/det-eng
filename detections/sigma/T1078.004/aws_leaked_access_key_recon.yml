@@ -11,8 +11,10 @@ description: |
   organisation's known-good egress. This is the TRR9012 chokepoint (Procedure A, and
   the Procedure C STS pivot's first call, which is signed by the leaked key).
 
-  The identity is type IAMUser with a long-term key: accessKeyId begins AKIA, OR (when
-  AWS omits/blanks accessKeyId, as it documents it may) principalId begins AIDA. That
+  The identity is type IAMUser with a long-term key: accessKeyId begins AKIA, OR (only
+  when AWS omits or blanks accessKeyId, as it documents it may) principalId begins
+  AIDA. An IAM user's temporary credentials (accessKeyId ASIA, from GetSessionToken,
+  an MFA session or a console session) keep the AIDA principalId and are excluded. That
   identity is shared with legitimate IAM-user automation -- audit tools, IaC, backup
   agents -- so it is NOT an alert on its own. This rule is single-event: it flags each
   such call, scoped to the orientation/enumeration/pivot verbs AND excluding the org's
@@ -48,8 +50,15 @@ detection:
     userIdentity.type: 'IAMUser'
   id_akia:
     userIdentity.accessKeyId|startswith: 'AKIA'
+  # The AIDA branch is the fallback for a record whose accessKeyId AWS omitted or
+  # left empty. An IAM user's temporary credentials (sts:GetSessionToken, an MFA
+  # session, a console session) also carry principalId AIDA..., but with an ASIA
+  # accessKeyId: requiring the key to be absent or empty keeps them out.
   id_aida:
     userIdentity.principalId|startswith: 'AIDA'
+    userIdentity.accessKeyId:
+      - null
+      - ''
   selection_orientation_or_enum:
     eventName:
       - 'GetCallerIdentity'

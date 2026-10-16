@@ -16,7 +16,10 @@ description: |
   properties.targetResources[].modifiedProperties[] (newValue of ConsentAction.Permissions
   / DelegatedPermissionGrant.Scope / AppRole.Value). Those nested values are searchable
   as text here (the newValue is a JSON-encoded string with a space-separated Scope
-  list), so the rule matches the high-risk scope tokens with |contains.
+  list), so the rule matches the high-risk scope tokens with |contains. Tenant-wide
+  consent (ConsentType AllPrincipals) is not a discriminator on its own: an admin
+  consent to sign-in-only scopes does not fire, and an admin consent to a
+  high-privilege scope fires on that scope.
 
   Implementation note: a production pipeline should parse the scope list and apply a
   known-good app-ID allowlist (legitimate SaaS onboarding requests the same scopes).
@@ -27,6 +30,7 @@ references:
   - https://learn.microsoft.com/entra/identity/enterprise-apps/app-perms-audit-logs
   - https://learn.microsoft.com/entra/architecture/security-operations-applications
   - https://learn.microsoft.com/graph/api/resources/oauth2permissiongrant?view=graph-rest-1.0
+  - https://learn.microsoft.com/security/operations/incident-response-playbook-app-consent#consent-terminologies
 author: det-eng
 date: 2026/10/12
 tags:
@@ -46,13 +50,24 @@ detection:
       - 'Add app role assignment to service principal'
   selection_high_privilege_scope:
     properties.targetResources|contains:
-      # Mailbox / files / chat data scopes (delegated or application).
+      # Mailbox / files / contacts / notes / chat data scopes, delegated or application.
+      # Microsoft's incident-response playbook 'App consent grant investigation' lists
+      # the root delegated permissions misused in consent phishing: Mail.* (not
+      # Mail.ReadBasic), Contacts.*, MailboxSettings.*, People.*, Files.*, Notes.* and
+      # Directory.AccessAsUser.All, and says the DELEGATED Mail.Read / Files.Read are
+      # high-risk too. So 'Files.Read' (a substring of Files.ReadWrite and the .All forms)
+      # and 'Contacts.Read' cover the delegated forms, which a tenant-wide grant gives
+      # for every user's mailbox or OneDrive (TRR9017 Procedure B).
       - 'Mail.Read'
       - 'Mail.ReadWrite'
       - 'Mail.Send'
       - 'MailboxSettings'
-      - 'Files.Read.All'
-      - 'Files.ReadWrite.All'
+      - 'Files.Read'
+      - 'Contacts.Read'
+      - 'People.Read'
+      - 'Notes.Read'
+      - 'Notes.Create'
+      - 'Directory.AccessAsUser.All'
       - 'Sites.ReadWrite.All'
       - 'Chat.Read'
       - 'EWS.AccessAsUser.All'
@@ -67,17 +82,26 @@ detection:
       - '.ReadWrite.All'
       - 'RoleManagement.ReadWrite.Directory'
       - 'AppRoleAssignment.ReadWrite.All'
-      # Tenant-wide (admin) consent: AllPrincipals appears in ConsentAction.Permissions
-      # AND in DelegatedPermissionGrant.ConsentType -- match the bare token so either
-      # representation triggers.
-      - 'AllPrincipals'
+      # Tenant-wide (admin) consent is NOT a token here. ConsentType AllPrincipals says
+      # who the grant covers, not what it grants: where user consent is disabled
+      # (Microsoft's recommended setting) every SSO onboarding is an AllPrincipals
+      # consent to sign-in scopes (User.Read openid profile email). A tenant-wide grant
+      # of a high-privilege scope (Procedure B) fires on the scope token above.
   condition: selection_grant and selection_high_privilege_scope
 falsepositives:
   - Legitimate high-privilege SaaS onboarding (backup/migration/CRM/security tools)
-    requests the same scopes, and admins legitimately grant tenant-wide (AllPrincipals)
-    consent. Maintain a known-good app-ID allowlist and layer first-seen / initiator-risk.
+    requests the same scopes, also as a tenant-wide (AllPrincipals) admin consent.
+    Maintain a known-good app-ID allowlist and layer first-seen / initiator-risk.
   - Low-risk SSO consent (openid/profile/email/User.Read, and offline_access on its own)
-    is routine and is excluded by the scope discriminator.
+    is routine and is excluded by the scope discriminator, also when an admin grants it
+    tenant-wide (ConsentType AllPrincipals).
+  - The tokens are substrings, so the narrow forms fire too, such as Mail.ReadBasic
+    (which Microsoft's playbook leaves out of Mail.*), Files.ReadWrite.AppFolder and
+    Files.Read.Selected. Triage by the parsed scope list.
+  - Not covered, a tenant-wide consent to a data scope outside the list (for example
+    Calendars.Read, or ARM user_impersonation, which most Azure tooling requests). The
+    playbook does not list Calendars.*; user_impersonation would fire on routine
+    onboarding.
   - Coverage gap -- resource-specific consent (RSC) is logged as "Grant contextual consent
     to application" under properties.category GroupManagement, so it is NOT matched by the
     ApplicationManagement gate here. Add that activity/category for RSC coverage.

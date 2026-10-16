@@ -157,5 +157,54 @@
     "managementEvent": true,
     "recipientAccountId": "123456789012",
     "eventCategory": "Management"
+  },
+  {
+    "eventVersion": "1.09",
+    "userIdentity": {
+      "type": "IAMUser",
+      "arn": "arn:aws:iam::123456789012:user/trr9021-operator",
+      "accountId": "123456789012",
+      "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+      "userName": "trr9021-operator"
+    },
+    "eventTime": "2026-10-13T12:00:30Z",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutBucketAcl",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "198.51.100.23",
+    "userAgent": "aws-cli/2.15.30",
+    "requestParameters": {
+      "bucketName": "trr9021-exposed-bucket",
+      "AccessControlPolicy": {
+        "AccessControlList": {
+          "Grant": {
+            "Grantee": {
+              "xsi:type": "Group",
+              "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+              "URI": "http://acs.amazonaws.com/groups/global/AllUsers"
+            },
+            "Permission": "READ"
+          }
+        },
+        "xmlns": "http://s3.amazonaws.com/doc/2006-03-01/",
+        "Owner": {
+          "ID": "ownercanonicalidtrr9021"
+        }
+      },
+      "host": [
+        "trr9021-exposed-bucket.s3.us-east-1.amazonaws.com"
+      ],
+      "acl": [
+        ""
+      ]
+    },
+    "responseElements": null,
+    "requestID": "req-PutBucketAcl-single",
+    "eventID": "evt-PutBucketAcl-single-24",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management"
   }
 ]

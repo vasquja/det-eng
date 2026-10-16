@@ -21,10 +21,15 @@ description: |
   locations/global/workforcePools/ with NO project number, whereas workload members embed a
   project number (.../projects/<number>/locations/global/workloadIdentityPools/). This rule keys
   on /workforcePools/ and does not fire on workload bindings. Field-model note: the delta array is
-  matched as text; on a structured backend, evaluate bindingDeltas element-wise. Legitimate
-  workforce federation routinely binds principalSets to roles, so the privileged-role +
-  whole-pool-breadth requirement is a heuristic -- enrich with the provider's attributeCondition,
-  the pool, the actor, and the role before paging.
+  matched as text; on a structured backend, evaluate bindingDeltas element-wise.
+
+  Breadth is NOT checked: every workforce member form fires -- the whole pool (.../POOL_ID/*),
+  a group (/group/GROUP_ID), an attribute set (/attribute.NAME/VALUE) and a single subject
+  (principal://.../subject/SUBJECT) -- because TRR9020 Procedure C installs the backdoor with
+  any of them. So ordinary workforce RBAC that grants an *Admin role to an IdP group fires too.
+  The privileged-role requirement is the only heuristic; enrich with the member's breadth (a
+  whole-pool /* member is the strongest signal), the provider's attributeCondition, the pool,
+  the actor, and the role before paging.
 references:
   - https://attack.mitre.org/techniques/T1199/
   - https://cloud.google.com/iam/docs/workforce-identity-federation
@@ -52,9 +57,11 @@ detection:
     protoPayload.serviceData.policyDelta.bindingDeltas|re: '\{(?=[^}]*"action": "ADD")(?=[^}]*/workforcePools/)(?=[^}]*"role": "[^"]*(?:[Oo]wner|[Ee]ditor|[Aa]dmin)[^"]*")'
   condition: selection_setiam and selection_workforce_privileged_binding
 falsepositives:
-  - A legitimate break-glass admin group federated through a workforce pool and intentionally
-    bound to a privileged role. Enrich with the pool provider's attributeCondition (does a
-    no-condition provider exist?), whole-pool /* breadth, the actor, and the caller IP.
+  - Group-scoped workforce RBAC (IaC granting an *Admin role such as roles/container.admin to
+    one IdP group) and a legitimate break-glass admin group federated through a workforce pool
+    and intentionally bound to a privileged role. Enrich with the member's breadth (whole pool
+    /* versus a group or a subject), the pool provider's attributeCondition (does a
+    no-condition provider exist?), the actor, and the caller IP.
   - Residual false negative -- a custom role that is privileged in effect but is NOT named with
     owner/editor/admin is missed. The name is only a heuristic for privilege; the role's actual
     permission set would be needed to catch it.

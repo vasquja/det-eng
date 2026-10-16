@@ -1,0 +1,74 @@
+title: AWS IAM Role Trusts GitHub OIDC With a Ref Wildcard on a Pinned Repository
+id: 00a7140b-c3d9-466e-b88e-3065acf5b5af
+related:
+  - id: 0269a7bb-c5f0-4279-a1c5-aec6998bac5a
+    type: similar
+status: experimental
+description: |
+  Detects an IAM role trust-policy write that trusts the GitHub Actions OIDC provider
+  (token.actions.githubusercontent.com) with a subject (sub) condition that pins the
+  owner and the repository but has a wildcard ('*', encoded %2A) after them, in the ref
+  or event part: for example repo:org/app:* or repo:org/app:ref:refs/tags/v*. This is
+  the lower-severity half of the TRR9015 over-broad-sub check (Procedures A and C). No
+  fork and no other repository can match such a sub, but any branch, tag, environment
+  or pull-request workflow of that one repository can assume the role, so a user with
+  push access to the repository can bypass the branch or environment protection the
+  role relied on.
+
+  A wildcard in the owner/repo segment (repo:org/*, repo:*, *), or in a customized
+  subject-claim template before any repository pin (repository_owner_id:1234567:*), is
+  the high-level rule aws_github_oidc_role_trust_abuse.yml, and so is a trust with no
+  GitHub-OIDC scoping claim at all. This rule excludes those, so one write fires one of
+  the two rules. A customized template that pins repository_id and then has a wildcard
+  (repository_owner_id:1:repository_id:9:*) is graded here.
+
+  It reads the URL-encoded trust policy in requestParameters.policyDocument
+  (iam:UpdateAssumeRolePolicy) or requestParameters.assumeRolePolicyDocument
+  (iam:CreateRole), as the sibling rule does, with the same limits: the regex reads a
+  single-string sub value (not a JSON array of patterns), and a production pipeline
+  should URL-decode and JSON-parse the policy.
+references:
+  - https://attack.mitre.org/techniques/T1098/001/
+  - https://docs.github.com/actions/reference/security/oidc
+  - https://docs.github.com/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services
+  - https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_create_for-idp_oidc.html
+author: det-eng
+date: 2026/10/16
+tags:
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1098.001
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_grant:
+    eventName:
+      - 'UpdateAssumeRolePolicy'
+      - 'CreateRole'
+  oidc_update:
+    requestParameters.policyDocument|contains: 'token.actions.githubusercontent.com'
+  oidc_create:
+    requestParameters.assumeRolePolicyDocument|contains: 'token.actions.githubusercontent.com'
+  # A wildcard anywhere inside the sub value.
+  sub_wildcard_update:
+    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(?:(?!%22).)*?%2A'
+  sub_wildcard_create:
+    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(?:(?!%22).)*?%2A'
+  # A wildcard before any segment that pins one repository ('repo:<value>:' or
+  # 'repository_id:<value>:' with no '*'), in the default or a customized subject-claim
+  # template, belongs to the high-level sibling rule (same regex there).
+  owner_repo_wildcard_update:
+    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(?:(?!%22|%2A|(?:(?<=%22)|(?<=%3A))(?:repo|repository_id)%3A(?:(?!%22|%3A|%2A).)+%3A).)*%2A'
+  owner_repo_wildcard_create:
+    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(?:(?!%22|%2A|(?:(?<=%22)|(?<=%3A))(?:repo|repository_id)%3A(?:(?!%22|%3A|%2A).)+%3A).)*%2A'
+  condition: >
+    selection_grant and (oidc_update or oidc_create) and
+    (sub_wildcard_update or sub_wildcard_create) and
+    not (owner_repo_wildcard_update or owner_repo_wildcard_create)
+falsepositives:
+  - Release workflows that trust every tag of one repository (repo:org/app:ref:refs/tags/v*)
+    and roles shared by every workflow of one repository (repo:org/app:*) are common and
+    usually deliberate. Review whether the role needs branch or environment pinning;
+    allowlist by role name.
+level: low

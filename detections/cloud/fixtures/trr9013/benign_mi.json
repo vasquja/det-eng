@@ -15,5 +15,30 @@
       "statusCode": "Created",
       "message": "Microsoft.ManagedIdentity/userAssignedIdentities/write"
     }
+  },
+  {
+    "time": "2026-10-12T15:10:01.6Z",
+    "resourceId": "/SUBSCRIPTIONS/11111111-2222-3333-4444-555555555555/RESOURCEGROUPS/TRR9013-RG/PROVIDERS/MICROSOFT.MANAGEDIDENTITY/USERASSIGNEDIDENTITIES/TRR9013-MI/FEDERATEDIDENTITYCREDENTIALS/TRR9013-MI-BACKDOOR",
+    "operationName": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+    "category": "Administrative",
+    "resultType": "Start",
+    "resultSignature": "Started.",
+    "durationMs": 0,
+    "callerIpAddress": "198.51.100.77",
+    "correlationId": "aa11bb22-cc33-dd44-ee55-ff6677889900",
+    "identity": {
+      "authorization": {
+        "scope": "/subscriptions/.../userAssignedIdentities/trr9013-mi"
+      },
+      "claims": {
+        "name": "trr9013-attacker@trr9013-corp.onmicrosoft.com"
+      }
+    },
+    "level": "Informational",
+    "location": "global",
+    "properties": {
+      "entity": ".../userAssignedIdentities/trr9013-mi/federatedIdentityCredentials/trr9013-mi-backdoor",
+      "message": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write"
+    }
   }
 ]

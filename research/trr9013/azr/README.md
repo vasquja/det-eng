@@ -212,7 +212,12 @@ also fire; a decode-and-parse pipeline that reads only `newValue` avoids this.
 
 **Strategy 2 — managed-identity variant (covers C).**
 Match the Azure Activity Log Administrative operation
-`Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write`.
+`Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write`,
+case-insensitively: storage and Event Hub exports carry `operationName` in upper case, and
+their top-level `category` can hold the operation type (`Write`) instead of
+`Administrative` (MS Learn, "Azure Activity Log event schema"). ARM logs a `Start` and a
+`Success` record for each write; the rule drops the `Start` record, so one write raises one
+alert, and a refused write (`Failure`) still fires.
 
 - Sensor: Azure Activity Log.
 - Rule: [`detections/sigma/T1098.001/azure_managed_identity_federated_credential_backdoor.yml`](../../../detections/sigma/T1098.001/azure_managed_identity_federated_credential_backdoor.yml) (built).

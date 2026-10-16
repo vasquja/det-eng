@@ -85,9 +85,15 @@ The field that separates attack from benign is the **grantee token with no effec
 
 - **Policy writes (Family A):** a `Statement` with `Effect "Allow"` and `Principal` equal to the
   string `"*"` **or** the object `{"AWS":"*"}` (both shapes mean public — the committed rule
-  matches both), **and** none of the scoping condition keys `aws:PrincipalOrgID`, `aws:SourceArn`,
-  `aws:SourceAccount`, `aws:SourceVpce`/`aws:SourceVpc` present. A wildcard principal that **is**
-  scoped by one of those keys is effectively private and must not fire. A grant to a *named*
+  matches both), **and** none of the scoping condition keys `aws:PrincipalOrgID`,
+  `aws:PrincipalAccount`, `aws:SourceArn`, `aws:SourceAccount`, `aws:SourceOwner`,
+  `aws:SourceVpce`/`aws:SourceVpc` or `kms:CallerAccount` present **in that same statement**. A
+  wildcard principal that **is** scoped by one of those keys is effectively private and must not
+  fire. Scope is judged per statement: the S3 User Guide ("Blocking public access" > "The meaning of
+  'public'") says a policy with fixed-principal grants becomes public "if you add a public
+  statement to the policy", so a scoped statement (the SNS default `AWS:SourceOwner` statement, the
+  EBS `kms:CallerAccount` key-policy statement) does not hide an unconditioned public `Allow` next
+  to it. A grant to a *named*
   12-digit foreign account (`{"AWS":"arn:aws:iam::<acct>:root"}`) is cross-account exposure too,
   but telling a hostile account from a legitimate partner needs an organization-account allowlist
   that a stateless rule cannot carry — so the committed rule covers only the **public** (`*`)
@@ -99,7 +105,11 @@ The field that separates attack from benign is the **grantee token with no effec
   A share to a named account carries a `userId` (EC2) or a 12-digit account ID (RDS) instead of
   `all`.
 - **Guardrail removal (Family C):** any flag in `PublicAccessBlockConfiguration` set to `false`,
-  or `DeletePublicAccessBlock` (which removes all four controls at once).
+  or a delete of the configuration (which removes all four controls at once). The API action is
+  `DeletePublicAccessBlock`, but CloudTrail logs it under a different event name: the S3 User Guide
+  ("Logging Amazon S3 API calls using AWS CloudTrail") gives `DeleteAccountPublicAccessBlock` for
+  the account level, and the bucket-level delete follows the same convention
+  (`DeleteBucketPublicAccessBlock`).
 
 The committed benign baseline is a **close negative control**: it is the same
 `s3.amazonaws.com` / `PutBucketPolicy` / `Effect "Allow"` / `Principal "*"` / `readOnly false`
@@ -137,7 +147,7 @@ camelCase elsewhere.
 |-----------|----|------|-------------|
 | A | TRR9019.AWS.A | Public / foreign resource-based policy write | policy write naming `Principal "*"`, no condition |
 | B | TRR9019.AWS.B | Public disk-image / snapshot share | share attribute add `group=all` / `valuesToAdd "all"` |
-| C | TRR9019.AWS.C | Block Public Access disabled or deleted | BPA flag `false` or `DeletePublicAccessBlock` |
+| C | TRR9019.AWS.C | Block Public Access disabled or deleted | BPA flag `false` or `DeleteBucketPublicAccessBlock` / `DeleteAccountPublicAccessBlock` |
 | D | TRR9019.AWS.D | Public bucket ACL (AllUsers) | `PutBucketAcl` grantee `.../groups/global/AllUsers` |
 | E | TRR9019.AWS.E | Object-level ACL / data-plane exposure | `PutObjectAcl` / `PutObject` `x-amz-acl=public-read` |
 
@@ -234,14 +244,18 @@ default-logged management events under `s3.amazonaws.com` / `s3-control.amazonaw
 - `PutBucketPublicAccessBlock` (per-bucket) — at least one of the four
   `PublicAccessBlockConfiguration` controls set to `false`.
 - `PutAccountPublicAccessBlock` (account-wide — blast radius is every bucket) — same test.
-- `DeletePublicAccessBlock` — removes the configuration entirely, turning all four controls off;
-  `requestParameters` is just the bucket name, so the match is unconditional.
+- `DeleteBucketPublicAccessBlock` / `DeleteAccountPublicAccessBlock` (the CloudTrail event names
+  of the `DeletePublicAccessBlock` API action at bucket and account level) — removes the
+  configuration entirely, turning all four controls off; `requestParameters` is just the bucket
+  name (or account), so the match is unconditional. The committed rule also matches the API-action
+  name `DeletePublicAccessBlock`, because no recorded bucket-level delete confirms its event name.
 
 A `Put*` call that sets all four controls to `true` is a hardening action and is excluded (the
 benign control).
 
-- **Prerequisites:** `s3:PutBucketPublicAccessBlock` or `s3:PutAccountPublicAccessBlock` /
-  `s3:DeletePublicAccessBlock`.
+- **Prerequisites:** `s3:PutBucketPublicAccessBlock` or `s3:PutAccountPublicAccessBlock`. The
+  delete operations need the same permissions as the put operations; there is no separate delete
+  permission (S3 User Guide, "Blocking public access to your Amazon S3 storage").
 - **Mechanics:** pairs naturally with a Procedure A `PutBucketPolicy` to complete the exposure.
 - **Impact:** the guardrail that overrides public policies and ACLs is removed.
 
@@ -252,9 +266,11 @@ benign control).
 Source: [`ddms/trr9019_aws_c.json`](ddms/trr9019_aws_c.json) (Arrows app format).
 
 **DDM summary.** The shaded node is the CloudTrail management event (`eventName`
-`PutBucketPublicAccessBlock` / `PutAccountPublicAccessBlock` / `DeletePublicAccessBlock`, a
-`PublicAccessBlockConfiguration` flag `false` or the config deleted). Its role is the enabling
-precondition: once BPA is off, public bucket policies and ACLs take effect.
+`PutBucketPublicAccessBlock` / `PutAccountPublicAccessBlock` / `DeleteBucketPublicAccessBlock` /
+`DeleteAccountPublicAccessBlock`, a `PublicAccessBlockConfiguration` flag `false` or the config
+deleted). The DDM source still labels the delete with the API-action name
+`DeletePublicAccessBlock`. Its role is the enabling precondition: once BPA is off, public bucket
+policies and ACLs take effect.
 
 ### Procedure D: Public bucket ACL (AllUsers)  (`TRR9019.AWS.D`)
 
@@ -338,10 +354,11 @@ selectors, which are off by default. Multi-account organizations must capture me
 and pivot on `recipientAccountId`.
 
 **Strategy 1 — resource-policy exposure (covers A).**
-Match the policy-write events and fire when the policy names `Effect "Allow"` + `Principal "*"` (or
-`{"AWS":"*"}`) with **no** scoping condition (`aws:PrincipalOrgID` / `aws:SourceArn` /
-`aws:SourceAccount` / `aws:SourceVpce` / `aws:SourceVpc`). For Lambda, public = `principal "*"` with
-no `sourceArn`. This matches the public-principal and scoping-condition tokens as text across both
+Match the policy-write events and fire when one statement of the policy names `Effect "Allow"` +
+`Principal "*"` (or `{"AWS":"*"}`) with **no** scoping condition key in that statement
+(`aws:PrincipalOrgID` / `aws:PrincipalAccount` / `aws:SourceArn` / `aws:SourceAccount` /
+`aws:SourceOwner` / `aws:SourceVpce` / `aws:SourceVpc` / `kms:CallerAccount`). For Lambda, public =
+`principal "*"` with no `sourceArn`. This matches the public-principal and scoping-condition tokens as text across both
 the nested-object (S3) and escaped-string (ECR / KMS / SNS / SQS / Secrets Manager / Lambda)
 representations.
 
@@ -352,7 +369,8 @@ Match `ModifyImageAttribute` / `ModifySnapshotAttribute` with an add-list `group
 
 **Strategy 3 — Block Public Access weakened (covers C).**
 Match `PutBucketPublicAccessBlock` / `PutAccountPublicAccessBlock` with at least one control set to
-`false`, or `DeletePublicAccessBlock` unconditionally. A `Put*` setting all four controls to `true`
+`false`, or `DeleteBucketPublicAccessBlock` / `DeleteAccountPublicAccessBlock` (and the API-action
+name `DeletePublicAccessBlock`) unconditionally. A `Put*` setting all four controls to `true`
 is hardening and is excluded.
 
 **The hard negative control.** The benign baseline is the same S3 `PutBucketPolicy` /
@@ -369,9 +387,11 @@ org-scoped share.
 - **Procedure E (object ACL / data-plane)** is an S3 data event, off by default; even with data
   events on, the read stays invisible.
 - **Per-statement scoping:** a policy can mix one org-scoped statement with a second unconditioned
-  `Principal "*"` statement. The committed rules match condition tokens across the whole document; a
-  production pipeline should JSON-decode and evaluate the scoping condition **per statement**, and
-  require the condition key to use a non-wildcard value (reject decoy conditions).
+  `Principal "*"` statement. The resource-policy rule walks each statement with a bounded regex, so
+  it fires on that mix, but it only checks that a scoping key is present in the public statement. A
+  key with a wildcard value (a decoy condition), or a key name in the statement's `Sid`, still
+  suppresses it, and a `Deny` that carries the key does not. A production pipeline should
+  JSON-decode the policy and evaluate each condition, and require a non-wildcard value.
 - **BPA-neutralized policy writes:** a public policy while BPA is still on does not actually expose
   data. A mature pipeline correlates the Strategy 1 policy write with current BPA state — which is
   why Strategy 3 matters as the precondition.
@@ -417,8 +437,12 @@ only, except public Lambda) nor Atomic Red Team (no T1537 atomics) ships.
   <https://attack.mitre.org/techniques/T1537/>
 - AWS, S3 access policy language overview (bucket policies, `Principal`, `Condition`):
   <https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-policy-language-overview.html>
-- AWS, S3 Block Public Access:
+- AWS, S3 Block Public Access ("The meaning of 'public'": per-grant evaluation and the
+  non-public condition keys; the delete operations need the put permissions):
   <https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html>
+- AWS, Logging Amazon S3 API calls using AWS CloudTrail (account-level event names:
+  "DeletePublicAccessBlock is DeleteAccountPublicAccessBlock"):
+  <https://docs.aws.amazon.com/AmazonS3/latest/userguide/cloudtrail-logging-s3-info.html>
 - AWS, Lambda `AddPermission` API (resource-based policy, `Principal`, `SourceArn`):
   <https://docs.aws.amazon.com/lambda/latest/api/API_AddPermission.html>
 - AWS, EC2 `ModifyImageAttribute` API (`LaunchPermission`, `group all`):

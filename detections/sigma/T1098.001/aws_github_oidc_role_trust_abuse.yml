@@ -15,10 +15,15 @@ description: |
   requestParameters.policyDocument (UpdateAssumeRolePolicy) or
   requestParameters.assumeRolePolicyDocument (CreateRole). The rule anchors on the
   issuer host, which is percent-encoding-invariant (letters and dots are not encoded),
-  then flags over-broad trust: a wildcard ('%2A') WITHIN the sub value (scoped by regex
-  to the sub, so a wildcard on another claim does not trigger it), OR no GitHub-OIDC
-  scoping claim at all (no sub, repository, environment, ...). A trust scoped by an
-  exact sub, or by :repository / :environment, is suppressed.
+  then flags over-broad trust: a wildcard ('%2A') in the sub value before any segment
+  that pins one repository (repo:org/*, repo:*, *, or a customized template such as
+  repository_owner_id:1234567:*; scoped by regex to the sub, so a wildcard on another
+  claim does not trigger it), OR no GitHub-OIDC scoping claim at all (no sub,
+  repository, environment, ...). A trust scoped by an exact sub, or by :repository /
+  :environment, is suppressed. A wildcard only inside the ref of a pinned owner/repo
+  (repo:org/app:ref:refs/tags/v*, repo:org/app:*) lets no fork or other repository
+  assume the role; it is graded low by the sibling rule
+  aws_github_oidc_role_trust_ref_wildcard.yml, not here.
 
   Implementation note: this is the substring/regex approximation the research
   recommends when a pipeline cannot decode the policy; it operates on the URL-encoded
@@ -37,6 +42,7 @@ description: |
 references:
   - https://attack.mitre.org/techniques/T1098/001/
   - https://docs.github.com/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services
+  - https://docs.github.com/actions/reference/security/oidc
   - https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_create_for-idp_oidc.html
   - https://github.com/DataDog/stratus-red-team/blob/main/v2/internal/attacktechniques/aws/persistence/iam-backdoor-role/main.go
 author: det-eng
@@ -58,12 +64,24 @@ detection:
     requestParameters.policyDocument|contains: 'token.actions.githubusercontent.com'
   oidc_create:
     requestParameters.assumeRolePolicyDocument|contains: 'token.actions.githubusercontent.com'
-  # Wildcard '*' (encoded %2A) INSIDE the sub value only -- not anywhere else in the
-  # policy (a wildcard on job_workflow_ref etc. is not a broad sub).
+  # A wildcard '*' (encoded %2A) in the sub value BEFORE any segment that pins one
+  # repository. A pin is 'repo:<value>:' or 'repository_id:<value>:' at a segment start
+  # (after the opening quote or a ':' %3A), with a value that has no '*'. So with the
+  # default template 'repo:org/*', 'repo:*', 'repo:org/*:*' and '*' match, and so do
+  # customized subject-claim templates that pin no repository
+  # ('repository_owner_id:1234567:*', 'repository_owner:org:*', a wildcard
+  # job_workflow_ref): any repository of the owner, or any caller, can match those.
+  # A wildcard after a pinned repository ('repo:org/app:ref:refs/tags/v*',
+  # 'repo:org/app:*', 'repo:org@1/app@2:*', 'repository_owner_id:1:repository_id:9:*')
+  # does not: no fork or other repository can match it. That case is the low-level
+  # sibling rule aws_github_oidc_role_trust_ref_wildcard.yml. Template formats: GitHub
+  # Docs, 'OpenID Connect reference' (example subject claims, immutable subject claims,
+  # customizing the subject claims). A wildcard on a claim other than sub is not a
+  # broad sub.
   sub_wildcard_update:
-    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(?:(?!%22).)*?%2A'
+    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(?:(?!%22|%2A|(?:(?<=%22)|(?<=%3A))(?:repo|repository_id)%3A(?:(?!%22|%3A|%2A).)+%3A).)*%2A'
   sub_wildcard_create:
-    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(?:(?!%22).)*?%2A'
+    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(?:(?!%22|%2A|(?:(?<=%22)|(?<=%3A))(?:repo|repository_id)%3A(?:(?!%22|%3A|%2A).)+%3A).)*%2A'
   # ANY GitHub-OIDC scoping claim present (sub, repository, environment, ...), so a
   # trust scoped by :repository or :environment without a :sub is NOT "worldwide".
   scoping_claim_update:
@@ -80,4 +98,8 @@ falsepositives:
     necessarily compromise.
   - A legitimately scoped multi-pattern StringLike list can look wildcard-shaped over
     the encoded string; decode-then-parse to confirm before alerting.
+  - A customized subject-claim template is graded by whether a 'repo:' or
+    'repository_id:' segment with a fixed value comes before the wildcard. A template
+    that pins the repository through another claim (a repo_property_* custom property,
+    for example) and then uses a wildcard is graded high.
 level: high

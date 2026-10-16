@@ -9,11 +9,13 @@ description: |
 
   It keys on the default-logged CloudTrail management event
   elasticfilesystem.amazonaws.com / PutFileSystemPolicy, matching an Allow + Principal "*" token
-  in requestParameters.policy and suppressing when a scoping condition
-  (aws:PrincipalOrgID / aws:SourceArn / aws:SourceAccount / aws:SourceVpc) is present. The policy
-  arrives as a document whose exact encoding this rule matches as text across representations
-  (the same approach TRR9019 took for mixed-encoding policy services); a production pipeline should
-  JSON-decode and evaluate scope per statement.
+  in requestParameters.policy and suppressing only when every statement that Allows the public
+  principal carries a scoping condition key in that same statement (aws:PrincipalOrgID /
+  aws:SourceArn / aws:SourceAccount / aws:SourceVpc / aws:SourceOwner, or
+  elasticfilesystem:AccessedViaMountTarget set to true), as EFS itself judges "public". The
+  policy arrives as a JSON string that this rule matches as text (the same approach TRR9019 took
+  for mixed-encoding policy services); the statement walk checks that a key is present, not its
+  value, so a production pipeline should still JSON-decode and evaluate each condition.
 references:
   - https://attack.mitre.org/techniques/T1537/
   - https://docs.aws.amazon.com/efs/latest/ug/API_PutFileSystemPolicy.html
@@ -41,23 +43,42 @@ detection:
     # the '*' is NOT a Sigma wildcard (a |contains '"AWS":"*"' would match any named principal).
     requestParameters.policy|re: '"(?:Principal|AWS)"\s*:\s*\[?\s*"\*"'
   filter_scoped:
-    requestParameters.policy|contains:
-      - 'aws:PrincipalOrgID'
-      - 'aws:SourceArn'
-      - 'aws:SourceAccount'
-      - 'aws:SourceVpc'
-      - 'aws:SourceOwner'
+    # Not public when every statement that Allows the public principal is scoped IN
+    # THAT SAME STATEMENT, by one of the keys below or by the mount-target key (EFS User
+    # Guide, 'Blocking public access' > 'The meaning of "public"': a policy is non-public
+    # only if it grants access only to fixed values of those keys). The filter holds
+    # when (1) no statement is an Allow + public principal that lacks every key and the
+    # mount-target key set to true (the negative lookahead walks each statement,
+    # stepping over nested objects up to two levels deep), and (2) one of the keys
+    # occurs. So an unconditioned public Allow next to an org-scoped statement fires.
+    # Text match: a key's value is not checked, and a key's name anywhere in the public
+    # statement counts as scoping it.
+    requestParameters.policy|re: '^(?![\s\S]*\{(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Effect"\s*:\s*"Allow")(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Principal"\s*:\s*(?:"\*"|\{[^{}]*"AWS"\s*:\s*(?:"\*"|\[[^\]]*"\*")))(?:(?:(?!(?i:aws:PrincipalOrgID|aws:SourceArn|aws:SourceAccount|aws:SourceVpc|aws:SourceOwner|elasticfilesystem:AccessedViaMountTarget"\s*:\s*"?true))[^{}])|\{(?:(?:(?!(?i:aws:PrincipalOrgID|aws:SourceArn|aws:SourceAccount|aws:SourceVpc|aws:SourceOwner|elasticfilesystem:AccessedViaMountTarget"\s*:\s*"?true))[^{}])|\{(?:(?!(?i:aws:PrincipalOrgID|aws:SourceArn|aws:SourceAccount|aws:SourceVpc|aws:SourceOwner|elasticfilesystem:AccessedViaMountTarget"\s*:\s*"?true))[^{}])*\})*\})*\})[\s\S]*?(?i:aws:PrincipalOrgID|aws:SourceArn|aws:SourceAccount|aws:SourceVpc|aws:SourceOwner)'
+  filter_mount_target:
+    # The EFS console's policy wizard scopes its public Allow with Bool
+    # elasticfilesystem:AccessedViaMountTarget = true, so only clients that reach a mount
+    # target in the file system's VPC get in. The EFS User Guide ('The meaning of
+    # "public"') lists that key among the conditions that make a file system policy
+    # non-public, and shows the wizard policy with it set to true as non-public. Same
+    # per-statement test as filter_scoped: the filter holds only when (1) no statement
+    # is an Allow + public principal without the key set to true (or a filter_scoped
+    # key), and (2) one public Allow carries the key set to true in an operator block
+    # of its Condition. So the key in a Deny statement, or in one Allow next to a
+    # second, unconditioned public Allow, does not suppress, and the value false is not
+    # filtered. Condition keys are case-insensitive, so the match is too.
+    requestParameters.policy|re: '^(?![\s\S]*\{(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Effect"\s*:\s*"Allow")(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Principal"\s*:\s*(?:"\*"|\{[^{}]*"AWS"\s*:\s*(?:"\*"|\[[^\]]*"\*")))(?:(?:(?!(?i:aws:PrincipalOrgID|aws:SourceArn|aws:SourceAccount|aws:SourceVpc|aws:SourceOwner|elasticfilesystem:AccessedViaMountTarget"\s*:\s*"?true))[^{}])|\{(?:(?:(?!(?i:aws:PrincipalOrgID|aws:SourceArn|aws:SourceAccount|aws:SourceVpc|aws:SourceOwner|elasticfilesystem:AccessedViaMountTarget"\s*:\s*"?true))[^{}])|\{(?:(?!(?i:aws:PrincipalOrgID|aws:SourceArn|aws:SourceAccount|aws:SourceVpc|aws:SourceOwner|elasticfilesystem:AccessedViaMountTarget"\s*:\s*"?true))[^{}])*\})*\})*\})[\s\S]*?(?i:\{(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Effect"\s*:\s*"Allow")(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Principal"\s*:\s*(?:"\*"|\{[^{}]*"AWS"\s*:\s*(?:"\*"|\[[^\]]*"\*")))(?=(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?"Condition"\s*:\s*\{(?:[^{}]|\{[^{}]*\})*?\{[^{}]*"elasticfilesystem:AccessedViaMountTarget"\s*:\s*"?true))'
   filter_failed:
     errorCode: '*'
-  condition: selection_efs_policy and selection_allow and selection_public_principal and not filter_scoped and not filter_failed
+  condition: selection_efs_policy and selection_allow and selection_public_principal and not filter_scoped and not filter_mount_target and not filter_failed
 falsepositives:
   - A file-system policy granting a named account scoped by aws:PrincipalOrgID / aws:SourceArn is
-    not public and is excluded.
+    not public and is excluded. So is the EFS console wizard's policy, which grants the AWS
+    principal '*' only through a mount target (elasticfilesystem:AccessedViaMountTarget set to
+    true), a condition that EFS itself counts as non-public.
   - Intentionally shared file systems; allowlist by file-system ID. Pair with EFS Block Public
     Access status.
-  - Per-statement limitation -- the Allow and the Principal "*" are matched across the whole
-    document, so a policy that mixes a scoped Allow with a separate public Deny does not fire
-    (good), but one mixing a scoped Allow with a second public Allow statement is a true positive
-    that the stateless match cannot separate from the scoped statement. Decode per statement in a
-    production pipeline.
+  - Per-statement limitation -- the scoping filters are evaluated per statement, but the Allow
+    and the Principal "*" selections are still matched across the whole document. So an Allow for
+    a named principal next to a Deny with Principal "*" (for example an enforce-in-transit
+    encryption statement) and no scoping key fires. Decode per statement in a production pipeline.
 level: high
