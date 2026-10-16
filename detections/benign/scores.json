@@ -168,6 +168,20 @@
         "k8s-audit-human-operators": 0
       }
     },
+    "T1070/k8s_namespace_deleted.yml": {
+      "actors": {
+        "system:serviceaccount:ci-runners:deployer": 1
+      },
+      "distinct_actors": 1,
+      "events": 2666,
+      "hits": 1,
+      "rate_per_10k": 3.75,
+      "slices": {
+        "k8s-audit-control-plane": 0,
+        "k8s-audit-gitops-ci": 1,
+        "k8s-audit-human-operators": 0
+      }
+    },
     "T1070/k8s_workload_deleted_evidence.yml": {
       "actors": {
         "system:node:k8s-wk-01": 3,
@@ -421,15 +435,13 @@
       }
     },
     "T1199/gcp_workforce_principalset_privileged_binding.yml": {
-      "actors": {
-        "terraform@ci-shared-svc.iam.gserviceaccount.com": 3
-      },
-      "distinct_actors": 1,
+      "actors": {},
+      "distinct_actors": 0,
       "events": 1000,
-      "hits": 3,
-      "rate_per_10k": 30.0,
+      "hits": 0,
+      "rate_per_10k": 0.0,
       "slices": {
-        "gcp-iam-federation-admin": 3,
+        "gcp-iam-federation-admin": 0,
         "gcp-platform-ops": 0
       }
     },

@@ -391,9 +391,11 @@ org-scoped share.
   portable regex (no lookahead), so it fires on that mix, but it only checks that a scoping key is
   present in the public statement's `Condition`. A key with a wildcard value (a decoy condition)
   still suppresses it, a key name only in the statement's `Sid` does not, and a `Deny` that carries
-  the key does not. A portable regex cannot test that *every* public statement is scoped, so a
-  policy with two or more public `Allow` statements fires even when each one is scoped (a
-  documented false positive, for example an SQS queue subscribed to two SNS topics). A production pipeline should
+  the key does not. The rule reads the statement list as JSON tokens and tests statements 1
+  to 5 one by one, each on its own `Condition`, so a policy whose public `Allow` statements
+  are all scoped (an SQS queue subscribed to several SNS topics) is quiet; a public `Allow` at
+  statement 6 or later fires without a scope test (a false positive on purpose). A
+  `Statement` that is one object rather than a list is read too. A production pipeline should
   JSON-decode the policy and evaluate each condition, and require a non-wildcard value.
 - **BPA-neutralized policy writes:** a public policy while BPA is still on does not actually expose
   data. A mature pipeline correlates the Strategy 1 policy write with current BPA state — which is

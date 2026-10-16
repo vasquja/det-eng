@@ -333,7 +333,7 @@
         "D": "Remove the enforcer's workload"
       },
       "pub_date": "2026-10-12",
-      "last_update": "2026-10-12",
+      "last_update": "2026-10-16",
       "path": "trr9008/k8s/README.md",
       "tests": {
         "A": {
@@ -419,10 +419,11 @@
         "B": "Bulk-wipe Events (deletecollection)",
         "C": "Delete an Event (events.k8s.io group)",
         "D": "Delete a Pod or Job (workload record)",
-        "E": "Clear the audit log on the node (the gap)"
+        "E": "Clear the audit log on the node (the gap)",
+        "F": "Delete a whole namespace"
       },
       "pub_date": "2026-10-12",
-      "last_update": "2026-10-12",
+      "last_update": "2026-10-16",
       "path": "trr9010/k8s/README.md",
       "tests": {
         "A": {
@@ -443,6 +444,10 @@
         },
         "E": {
           "text": "det-eng node audit-log clearing detection-gap demonstration",
+          "url": "../atomics/T1070/src/emulate.sh"
+        },
+        "F": {
+          "text": "det-eng namespace delete behavioral emulation (throwaway namespace with an Event)",
           "url": "../atomics/T1070/src/emulate.sh"
         }
       }
@@ -535,7 +540,7 @@
         "D": "Use the backdoor (token exchange)"
       },
       "pub_date": "2026-10-12",
-      "last_update": "2026-10-12",
+      "last_update": "2026-10-16",
       "path": "trr9013/azr/README.md",
       "tests": {
         "A": {
@@ -637,7 +642,7 @@
         "E": "Pool-ID discovery (gap)"
       },
       "pub_date": "2026-10-12",
-      "last_update": "2026-10-12",
+      "last_update": "2026-10-16",
       "path": "trr9016/aws/README.md",
       "tests": {
         "C": {
@@ -769,7 +774,7 @@
         "D": "Use of the backdoor (sign-in / token exchange) -- gap"
       },
       "pub_date": "2026-10-13",
-      "last_update": "2026-10-13",
+      "last_update": "2026-10-16",
       "path": "trr9020/gcp/README.md",
       "tests": {
         "C": {
@@ -801,7 +806,7 @@
         "E": "SSM document shared publicly"
       },
       "pub_date": "2026-10-13",
-      "last_update": "2026-10-13",
+      "last_update": "2026-10-16",
       "path": "trr9021/aws/README.md",
       "tests": {
         "A": {
@@ -1006,10 +1011,11 @@
       "procedures": {
         "A": "Repoint the coredns Corefile",
         "B": "Edit the legacy kube-dns ConfigMap",
-        "C": "Inject via coredns-custom import"
+        "C": "Inject via coredns-custom import",
+        "D": "Recreate the coredns ConfigMap"
       },
       "pub_date": "2026-10-14",
-      "last_update": "2026-10-14",
+      "last_update": "2026-10-16",
       "path": "trr9027/k8s/README.md",
       "tests": {
         "A": {
@@ -1022,6 +1028,10 @@
         },
         "C": {
           "text": "det-eng coredns-custom import injection behavioral emulation (inert)",
+          "url": "../atomics/T1565.001/src/emulate.sh"
+        },
+        "D": {
+          "text": "det-eng coredns delete-and-recreate behavioral emulation (sentinel stub zone, restores original)",
           "url": "../atomics/T1565.001/src/emulate.sh"
         }
       }

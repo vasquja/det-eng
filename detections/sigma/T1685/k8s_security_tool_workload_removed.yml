@@ -24,7 +24,8 @@ description: |
   whose value is 0 in that text (a JSON-patch test op on that path also matches; it
   is rare). The API server ignores op keys it does not know, so the match skips
   whole strings and nested objects (two levels) between the keys; an extra key
-  nested deeper splits the op and is not matched. A copy or move op whose target
+  nested deeper, or a brace inside a string inside a nested object, splits the op
+  and is not matched. A copy or move op whose target
   path is /spec/replicas also matches: it sets the replica count from another field
   (for example an added /spec/minReadySeconds of 0), so the value is not in the
   request, and such a write is not routine. kubectl scale writes the deployments/scale subresource
@@ -74,14 +75,19 @@ detection:
   # and is not in the request). Between the keys, the match skips whole JSON strings
   # and up to two levels of nested objects, so an extra key the API server ignores
   # (one whose value is an object) does not split the op; it never crosses the op's
-  # own closing brace into the next op.
+  # own closing brace into the next op. Strings are read as whole tokens at the op's
+  # own level only: inside a nested object the match skips any text but a brace
+  # (a brace inside a string there splits the op, like a third nesting level). That
+  # keeps each value inside Lucene's default determinization budget (10,000; about
+  # 3,800 states, against about 15,000 when strings were also read inside nested
+  # objects), so Elasticsearch runs it without a raised max_determinized_states.
   sel_scale_zero_jsonpatch:
     verb: 'patch'
     requestObject|re:
-      - '\{(([^{}"]|\"([^"\\]|\\.)*\")|\{(([^{}"]|\"([^"\\]|\\.)*\")|\{([^{}"]|\"([^"\\]|\\.)*\")*\})*\})*\"path\"\s*:\s*\"/spec/replicas\"(([^{}"]|\"([^"\\]|\\.)*\")|\{(([^{}"]|\"([^"\\]|\\.)*\")|\{([^{}"]|\"([^"\\]|\\.)*\")*\})*\})*\"value\"\s*:\s*0\s*[,}]'
-      - '\{(([^{}"]|\"([^"\\]|\\.)*\")|\{(([^{}"]|\"([^"\\]|\\.)*\")|\{([^{}"]|\"([^"\\]|\\.)*\")*\})*\})*\"value\"\s*:\s*0\s*,(([^{}"]|\"([^"\\]|\\.)*\")|\{(([^{}"]|\"([^"\\]|\\.)*\")|\{([^{}"]|\"([^"\\]|\\.)*\")*\})*\})*\"path\"\s*:\s*\"/spec/replicas\"'
-      - '\{(([^{}"]|\"([^"\\]|\\.)*\")|\{(([^{}"]|\"([^"\\]|\\.)*\")|\{([^{}"]|\"([^"\\]|\\.)*\")*\})*\})*\"op\"\s*:\s*\"(copy|move)\"(([^{}"]|\"([^"\\]|\\.)*\")|\{(([^{}"]|\"([^"\\]|\\.)*\")|\{([^{}"]|\"([^"\\]|\\.)*\")*\})*\})*\"path\"\s*:\s*\"/spec/replicas\"'
-      - '\{(([^{}"]|\"([^"\\]|\\.)*\")|\{(([^{}"]|\"([^"\\]|\\.)*\")|\{([^{}"]|\"([^"\\]|\\.)*\")*\})*\})*\"path\"\s*:\s*\"/spec/replicas\"(([^{}"]|\"([^"\\]|\\.)*\")|\{(([^{}"]|\"([^"\\]|\\.)*\")|\{([^{}"]|\"([^"\\]|\\.)*\")*\})*\})*\"op\"\s*:\s*\"(copy|move)\"'
+      - '\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec/replicas\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"value\"\s*:\s*0\s*[,}]'
+      - '\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"value\"\s*:\s*0\s*,([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec/replicas\"'
+      - '\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"op\"\s*:\s*\"(copy|move)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec/replicas\"'
+      - '\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec/replicas\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"op\"\s*:\s*\"(copy|move)\"'
   # The namespace controller's teardown sweep of a namespace being deleted.
   filter_namespace_teardown:
     user.username: 'system:serviceaccount:kube-system:namespace-controller'

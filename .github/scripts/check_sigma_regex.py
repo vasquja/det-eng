@@ -37,7 +37,8 @@ Rejected (each with a message naming the rule, the field and the construct):
   before a letter or digit; lazy and possessive quantifiers; a bare `"` `#`
   `@` `&` `~` (write `\\"`, ...); a bare `<` `>` (write `[<]` `[>]`: `\\<` is
   a word boundary in KQL); a bare `{` `}` `]` outside a quantifier or class;
-  `[` and the set operators `&& -- ~~ ||` inside a class; a raw control
+  `[`, a bare `-` first or last, and the set operators `&& -- ~~ ||` inside a
+  class; a raw control
   character (tab, line break); the `m` sub-modifier; and a pattern longer
   than MAX_LEN (1000) characters, Elasticsearch's index.max_regex_length
   default.
@@ -241,8 +242,12 @@ def _scan_class(pattern, start):
     if i < n and pattern[i] == "]":
         findings.append((i, "] first in a class (write \\])"))
         i += 1
+    body = i
     while i < n and pattern[i] != "]":
         ch = pattern[i]
+        if ch == "-" and (i == body or (i + 1 < n and pattern[i + 1] == "]")):
+            findings.append((i, "bare - at the start or end of a class (Lucene can read it "
+                                "as a range; write \\-)"))
         if ch == "\\":
             if i + 1 >= n:
                 findings.append((i, "trailing backslash"))

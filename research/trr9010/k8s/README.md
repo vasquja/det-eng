@@ -95,6 +95,7 @@ sensor and a continuity check on the audit pipeline.
 | C | TRR9010.K8S.C | Delete an Event (events.k8s.io group) | `delete events` (events.k8s.io) |
 | D | TRR9010.K8S.D | Delete a Pod or Job (workload record) | `delete pods`/`jobs` |
 | E | TRR9010.K8S.E | Clear the audit log on the node | node filesystem (no API call) |
+| F | TRR9010.K8S.F | Delete a whole namespace | `delete namespaces` |
 
 > A tool is not a procedure. `kubectl delete`, a client library, and a raw HTTP
 > client all produce the same audit shape.
@@ -199,12 +200,39 @@ Source: [`ddms/trr9010_k8s_e.json`](ddms/trr9010_k8s_e.json) (Arrows app format)
 node file sensor watching the audit log path, and to a continuity check on the audit
 pipeline — an unexplained gap or a truncation of the log is itself the signal.
 
+### Procedure F: Delete a whole namespace  (`TRR9010.K8S.F`)
+
+The adversary deletes the namespace that holds their activity. Every Event in it (and
+every workload record) goes with it.
+
+- **Prerequisites:** `delete` on `namespaces`.
+- **Mechanics:** one DELETE of the namespace. The API server sets it Terminating and
+  answers 200; the namespace controller then empties it, with one `deletecollection`
+  per resource type (core Events and events.k8s.io Events among them), and finalizes it.
+- **Impact:** every record in the namespace is gone, and the Events are deleted by
+  the namespace controller, not by the actor.
+- **Tools on this path:** `kubectl delete namespace`, any client.
+
+#### Detection Data Model — `TRR9010.K8S.F`
+
+![DDM - Delete a whole namespace](ddms/trr9010_k8s_f.png)
+
+Source: [`ddms/trr9010_k8s_f.json`](ddms/trr9010_k8s_f.json) (Arrows app format).
+
+**DDM summary.** The shaded node is the actor's own record: an accepted `delete` of
+`namespaces` (`responseStatus.code` 200). The namespace controller's sweep that
+follows is filtered by the Events chokepoint as teardown, because every namespace
+deletion makes it. A namespace delete is routine (CI preview environments, tenant
+teardown), so this is a hunting signal (Strategy 4), not an alert.
+
 ## Detection Strategy
 
-Compare the five DDMs. Procedures A, B, and C all delete Events, so each leaves the
+Compare the six DDMs. Procedures A, B, and C all delete Events, so each leaves the
 same kind of audit event — one chokepoint rule covers all three. Procedure D is a
 different resource and a low-fidelity fallback. Procedure E never reaches the API
-server, so no audit rule can see it; a node sensor covers it.
+server, so no audit rule can see it; a node sensor covers it. Procedure F deletes the
+Events through the namespace controller, so its only actor record is the namespace
+delete, which a low-level hunting rule matches.
 
 **Telemetry requirement.** The audit policy must record delete and deletecollection
 on `events` at Metadata level. The shared policy's catch-all Metadata rule already
@@ -239,6 +267,24 @@ continuity check on the audit pipeline. No API event exists for this path.
 
 - Sensor: a node file-integrity or runtime agent, plus an audit-pipeline heartbeat.
 
+**Strategy 4 — namespace-delete hunting (covers F).**
+Match an accepted `delete` of `namespaces` (`responseStatus.code` 200 or 202; a
+refused delete destroys nothing). Filter the garbage collector, which deletes a
+namespace only when its owner was deleted (that owner's delete is the actor's own
+record), and a server-side dry run, which the API server authorizes, admits and
+answers with 200 but does not persist: `?dryRun=All` in `requestURI` (the whole
+parameter), or `dryRun: ["All"]` in the DeleteOptions body. `kubectl delete
+--dry-run=server` sends the body form, which only a `Request`-level record holds, so
+at `Metadata` that dry run still fires. The namespace controller does not make this
+request: it finalizes a namespace with an update of `namespaces/finalize`. A
+namespace delete is routine, so
+baseline the identities that delete namespaces by design (CI deployers, GitOps
+controllers, tenant operators), and correlate a hit with the same actor's other
+writes.
+
+- Sensor: API server audit log (Metadata is enough).
+- Rule: `detections/sigma/T1070/k8s_namespace_deleted.yml` (built, level low).
+
 **Demonstrated gap.**
 Clearing or truncating the audit log file on the node (Procedure E) destroys
 evidence with no API call, so the API server writes no audit event — the audit layer
@@ -246,14 +292,13 @@ is structurally blind to it. This is the inverse of the TRR9002 and TRR9006 Proc
 E gaps: same lesson, a different layer. The lab demonstrates it read-only, by showing
 the audit log path on the node and noting that a truncation there emits no API event.
 
-A second, smaller gap is at the API: deleting a whole namespace destroys its Events,
-but the Events are then deleted by the namespace controller, not by the actor, and
-the chokepoint filters that sweep. The actor's own record is a `delete` of
-`namespaces`, which no shipped rule matches in general (only the three policy-engine
-namespaces of TRR9008 are matched). A namespace delete is routine (CI preview
-environments, tenant teardown) and its record does not show why, so it is left to
-hunting and correlation by actor and namespace. Case `namespace-delete-known-miss` in
-the chokepoint's sidecar records this miss.
+Deleting a whole namespace (Procedure F) destroys its Events, but the Events are then
+deleted by the namespace controller, not by the actor, and the chokepoint filters that
+sweep. The actor's own record is the `delete` of `namespaces`, which the Strategy 4
+hunting rule matches (case `namespace-delete-payments` in its sidecar is the record
+that the chokepoint's case `namespace-delete-known-miss` once recorded as a miss). A
+namespace delete is routine and its record does not show why, so that rule is for
+hunting and correlation, not an alert.
 
 **Coverage summary.**
 
@@ -264,11 +309,13 @@ the chokepoint's sidecar records this miss.
 | C | Strategy 1 (chokepoint) | `delete events` (events.k8s.io) |
 | D | Strategy 2 (fallback) | `delete pods`/`jobs` |
 | E | Strategy 3 (node sensor); the gap | audit-log file cleared; no audit event |
+| F | Strategy 4 (hunting) | accepted `delete namespaces` |
 
 One chokepoint rule covers every API-level event deletion that the actor makes; an
-Events wipe through a namespace delete is not covered. A low-fidelity fallback
-covers workload-record deletion. A node sensor covers the audit-log clearing the API
-server never sees.
+Events wipe through a namespace delete is matched by the hunting rule on the actor's
+namespace delete. A low-fidelity fallback
+covers workload-record deletion. A hunting rule covers the actor's namespace delete
+(Procedure F). A node sensor covers the audit-log clearing the API server never sees.
 
 ## Available Emulation Tests
 
@@ -287,6 +334,7 @@ Red Team wrappers in [`atomics/T1070/T1070.yaml`](../../../atomics/T1070/T1070.y
 | TRR9010.K8S.C | `emulate.sh c` — create and delete an events.k8s.io Event. | **built** |
 | TRR9010.K8S.D | `emulate.sh d` — create and delete a busybox pod. | **built** |
 | TRR9010.K8S.E | `emulate.sh gap` — show the audit log path on the node (read-only). | **built** |
+| TRR9010.K8S.F | `emulate.sh f` — create namespace `trr9010-ns-f` with an Event, then delete the namespace. | **built** |
 
 ## Detections
 
@@ -295,12 +343,14 @@ Red Team wrappers in [`atomics/T1070/T1070.yaml`](../../../atomics/T1070/T1070.y
 | 1 (chokepoint) | A, B, C | [`detections/sigma/T1070/k8s_events_deleted.yml`](../../../detections/sigma/T1070/k8s_events_deleted.yml) | API server audit log |
 | 2 (fallback) | D | [`detections/sigma/T1070/k8s_workload_deleted_evidence.yml`](../../../detections/sigma/T1070/k8s_workload_deleted_evidence.yml) | API server audit log |
 | 3 (node sensor) | E; the gap | none at the audit-log layer, by design | node file-integrity sensor |
+| 4 (hunting) | F | [`detections/sigma/T1070/k8s_namespace_deleted.yml`](../../../detections/sigma/T1070/k8s_namespace_deleted.yml) | API server audit log |
 
 The validator
 [`detections/validate_apiserver_detections.py`](../../../detections/validate_apiserver_detections.py)
-reads the API server audit log the emulation produced and asserts Strategies 1 and 2
-match an event the emulation produced (a `trr9010-` named delete, or the bulk
-deletecollection in the `trr9010` namespace). The workflow
+reads the API server audit log the emulation produced and asserts Strategies 1, 2 and
+4 match an event the emulation produced (a `trr9010-` named delete, which includes the
+delete of namespace `trr9010-ns-f`, or the bulk deletecollection in the `trr9010`
+namespace). The workflow
 [`validate-apiserver-detections.yml`](../../../.github/workflows/validate-apiserver-detections.yml)
 runs the loop on a `kind` cluster, with a negative control on the pre-emulation log.
 

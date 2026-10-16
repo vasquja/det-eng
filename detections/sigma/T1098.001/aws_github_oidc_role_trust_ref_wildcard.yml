@@ -24,10 +24,11 @@ description: |
 
   It reads the URL-encoded trust policy in requestParameters.policyDocument
   (iam:UpdateAssumeRolePolicy) or requestParameters.assumeRolePolicyDocument
-  (iam:CreateRole), as the sibling rule does, with the same limits: the regex reads a
-  single-string sub value (not a JSON array of patterns), and a production pipeline
-  should URL-decode and JSON-parse the policy. A trust with two or more GitHub sub
-  conditions is left to the high-level rule whenever one has a wildcard.
+  (iam:CreateRole), as the sibling rule does, with the same limits: a production
+  pipeline should URL-decode and JSON-parse the policy. A trust with two or more GitHub
+  sub conditions, or a list of sub values, is graded per sub value: it is left to the
+  high-level rule when any one value has a wildcard that no repository pin precedes, and
+  graded here when every wildcard follows a pinned repository.
 references:
   - https://attack.mitre.org/techniques/T1098/001/
   - https://docs.github.com/actions/reference/security/oidc
@@ -55,17 +56,19 @@ detection:
   # only (no lookaround): each regex reads the text a token at a time ('[^%]' or '%' and
   # two characters), so '%22' (end of the sub value), '%2A' and '%3A' are never split.
   #
-  # A wildcard anywhere inside a sub value.
+  # A wildcard anywhere inside a sub value: a string value, or an element of a list value
+  # (IAM policy grammar: a condition value is a string or a list of strings).
   sub_wildcard_update:
-    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22([^%]|%([^2%]|2[^2%]))*%2A'
+    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A(%5B(%22([^%]|%([^2%]|2[^2%]))*%22%2C)*)?%22([^%]|%([^2%]|2[^2A%]))*%2A'
   sub_wildcard_create:
-    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22([^%]|%([^2%]|2[^2%]))*%2A'
+    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22%3A(%5B(%22([^%]|%([^2%]|2[^2%]))*%22%2C)*)?%22([^%]|%([^2%]|2[^2A%]))*%2A'
   # The high-level sibling rule takes a wildcard that no repository pin precedes
   # ('repo:<value>:' or 'repository_id:<value>:' with no '*', at a segment start), in
-  # the default or a customized subject-claim template, and any wildcard in a policy
-  # with two or more GitHub sub conditions. owner_repo_wildcard_* is the wildcard, and
-  # the block in the condition grades it owner/repo-wide unless a pin comes first, so one
-  # write fires one of the two rules.
+  # the default or a customized subject-claim template. With one string sub value that
+  # is owner_repo_wildcard_* with no pin first (the block in the condition); with two or
+  # more sub conditions or a list of sub values (sub_multi_*) it is any one value that
+  # sub_high_* grades high. So one write fires one of the two rules, and a trust whose
+  # every wildcard follows a pinned repository stays here (C16).
   owner_repo_wildcard_update:
     requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22([^%]|%([^2%]|2[^2%]))*%2A'
   owner_repo_wildcard_create:
@@ -75,17 +78,28 @@ detection:
     requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(([^%]|%([^2%]|2[^2A%]))*%3A)?repo(sitory_id)?%3A([^%]|%([^23%]|2[^2A%]|3[^A%]))+%3A'
   sub_pinned_create:
     requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(([^%]|%([^2%]|2[^2A%]))*%3A)?repo(sitory_id)?%3A([^%]|%([^23%]|2[^2A%]|3[^A%]))+%3A'
-  # Two or more GitHub sub conditions in one policy.
+  # Two or more GitHub sub conditions in one policy, or a list-valued sub condition.
   sub_multi_update:
-    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22.*githubusercontent\.com%3Asub%22'
+    requestParameters.policyDocument|re:
+      - 'githubusercontent\.com%3Asub%22.*githubusercontent\.com%3Asub%22'
+      - 'githubusercontent\.com%3Asub%22%3A%5B'
   sub_multi_create:
-    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22.*githubusercontent\.com%3Asub%22'
+    requestParameters.assumeRolePolicyDocument|re:
+      - 'githubusercontent\.com%3Asub%22.*githubusercontent\.com%3Asub%22'
+      - 'githubusercontent\.com%3Asub%22%3A%5B'
+  # Per sub value: a wildcard that no repository pin precedes (the same value as the
+  # high-level sibling rule's sub_high_*; see its comment).
+  sub_high_update:
+    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A(%5B(%22([^%]|%([^2%]|2[^2%]))*%22%2C)*)?%22((([^r%]|%([^23%]|2[^2A%]|3[^A%])|r([^e%]|e([^p%]|p([^o%]|o([^s%]|s([^i%]|i([^t%]|t([^o%]|o([^r%]|r([^y%]|y([^_%]|_([^i%]|i(d([^%]|%([^23%]|2[^2A%]|3[^A%]))|[^d%])))))))))))))([^%]|%([^23%]|2[^2A%]|3[^A%]))*|(r(e(p(os(i(t(o(r(y(_(i)?)?)?)?)?)?)?)?)?)?)?)%3A|repo(sitory_id)?%3A%3A)*(repo(sitory_id)?%3A)?([^%]|%([^23%]|2[^2A%]|3[^A%]))*%2A'
+  sub_high_create:
+    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22%3A(%5B(%22([^%]|%([^2%]|2[^2%]))*%22%2C)*)?%22((([^r%]|%([^23%]|2[^2A%]|3[^A%])|r([^e%]|e([^p%]|p([^o%]|o([^s%]|s([^i%]|i([^t%]|t([^o%]|o([^r%]|r([^y%]|y([^_%]|_([^i%]|i(d([^%]|%([^23%]|2[^2A%]|3[^A%]))|[^d%])))))))))))))([^%]|%([^23%]|2[^2A%]|3[^A%]))*|(r(e(p(os(i(t(o(r(y(_(i)?)?)?)?)?)?)?)?)?)?)?)%3A|repo(sitory_id)?%3A%3A)*(repo(sitory_id)?%3A)?([^%]|%([^23%]|2[^2A%]|3[^A%]))*%2A'
   condition: >
     selection_grant and (oidc_update or oidc_create) and
     (sub_wildcard_update or sub_wildcard_create) and
-    not ((owner_repo_wildcard_update or owner_repo_wildcard_create) and
-         (not (sub_pinned_update or sub_pinned_create)
-          or sub_multi_update or sub_multi_create))
+    not (((owner_repo_wildcard_update or owner_repo_wildcard_create) and
+          not (sub_pinned_update or sub_pinned_create) and
+          not (sub_multi_update or sub_multi_create))
+         or ((sub_multi_update or sub_multi_create) and (sub_high_update or sub_high_create)))
 falsepositives:
   - Release workflows that trust every tag of one repository (repo:org/app:ref:refs/tags/v*)
     and roles shared by every workflow of one repository (repo:org/app:*) are common and

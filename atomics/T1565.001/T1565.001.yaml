@@ -9,10 +9,12 @@ display_name: "Stored Data Manipulation (Kubernetes Cluster DNS Poisoning)"
 # TEST-NET IP), and RESTORES the original at once; Procedures B and C write ConfigMaps a
 # CoreDNS kind cluster does not read (kube-dns, coredns-custom), only when no ConfigMap of
 # that name exists, label them app.kubernetes.io/part-of=trr9027, and cleanup deletes only
-# that label. Every write is a PATCH by name (B and C use server-side apply), so the audit
-# policy logs each with its body. These need a reachable cluster (Kubernetes 1.22+) with
-# rights on kube-system ConfigMaps, audit logging at Request level for the three DNS
-# ConfigMaps (see detections/k8s/audit-policy-apiserver.yaml), and python3.
+# that label. A, B and C write by name (B and C use server-side apply), and D deletes
+# coredns and creates it again (a POST), saves the original first and restores it; the
+# audit policy logs each with its body. These need a reachable cluster (Kubernetes 1.22+)
+# with rights on kube-system ConfigMaps, audit logging at RequestResponse for the three DNS
+# ConfigMaps and at Request for kube-system ConfigMap creates (see
+# detections/k8s/audit-policy-apiserver.yaml), and python3.
 
 atomic_tests:
   - name: "TRR9027.K8S.A — repoint the coredns Corefile, then restore"
@@ -20,10 +22,12 @@ atomic_tests:
     description: |
       Patches the coredns ConfigMap Corefile with an inert sentinel server block (a rewrite
       plus a forward of trr9027poison.example.invalid to a TEST-NET IP), then restores the
-      original Corefile (armed on a signal before the poison, and verified after). Real
-      resolution is never changed. The audit requestObject carries the poisoned Corefile; the
-      grader keys on its rewrite (the grader's forward-to-IP clause grades only the root
-      block, which this test never changes).
+      original Corefile (armed on a signal before the poison, and verified after: the
+      stored Corefile must equal the saved one byte for byte, trailing line break
+      included, or the run exits 1 with a ::error:: line). Real resolution is never
+      changed. The audit requestObject carries the poisoned Corefile; the
+      grader keys on its rewrite and on the sentinel block's forward to a public (TEST-NET)
+      IP; the root block's forward is never changed.
       Chokepoint: objectRef.resource=configmaps, objectRef.namespace=kube-system,
       objectRef.name=coredns, verb=patch.
       Rule: detections/sigma/T1565.001/k8s_coredns_configmap_modified.yml
@@ -83,6 +87,37 @@ atomic_tests:
         bash #{source_dir}/emulate.sh c
       cleanup_command: |
         kubectl -n kube-system delete configmap -l app.kubernetes.io/part-of=trr9027 --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1565.001/src
+
+  - name: "TRR9027.K8S.D — recreate the coredns ConfigMap (delete, then create), then restore"
+    auto_generated_guid: 8b3e5d21-6f4a-4c9e-a7d2-1e0b9c8f7a63
+    description: |
+      Saves the coredns ConfigMap, deletes it, and creates it again at once (a POST to the
+      collection, verb create) with the original Corefile plus an inert sentinel stub zone
+      (trr9027stub.example.invalid forwarded to a TEST-NET IP), then restores the original
+      Corefile. Skips a coredns ConfigMap that has an owner, an addon-manager label or the
+      EKS add-on label (eks.amazonaws.com/component), and skips the run unless
+      `kubectl auth can-i` allows create, patch and delete of ConfigMaps in kube-system.
+      Puts the saved object back if the create fails, then checks that coredns exists
+      with the saved Corefile byte for byte (trailing line break included); if not, it
+      prints a ::error:: line with the saved object and exits 1. A create names no object when the
+      audit policy is evaluated, so the policy's kube-system ConfigMap create rule (Request)
+      is what logs its body; the grader keys on the stub zone's forward to a public IP.
+      Rule: detections/sigma/T1565.001/k8s_coredns_configmap_modified.yml
+      Grader: detections/sigma/T1565.001/k8s_coredns_corefile_poisoned.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh d
+      cleanup_command: |
+        true
     input_arguments:
       source_dir:
         description: Path to the atomic source directory.

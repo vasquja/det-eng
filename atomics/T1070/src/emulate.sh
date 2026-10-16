@@ -6,7 +6,8 @@
 # happens in a throwaway namespace trr9010 with uniquely named objects, so a
 # validator matches the emulation's own events. The deleted Events and the deleted
 # pod are ones the emulation itself created; the bulk deletecollection is on the
-# throwaway namespace only.
+# throwaway namespace only. Procedure F deletes a whole namespace, so it uses its own
+# throwaway namespace trr9010-ns-f, never trr9010 or any other.
 #
 # Note: a delete request is audited even when the object does not exist (the request
 # is recorded with its objectRef.name and a 404), so the chokepoint telemetry exists
@@ -17,6 +18,7 @@
 #   ./emulate.sh b      bulk-wipe Events with deletecollection
 #   ./emulate.sh c      delete an Event via the events.k8s.io group
 #   ./emulate.sh d      delete a Pod (destroy the running-workload record)
+#   ./emulate.sh f      delete a whole namespace (trr9010-ns-f) with an Event in it
 #   ./emulate.sh gap    node-local audit-log clearing demonstration (read-only)
 #   ./emulate.sh all    every item, in order, then clean up
 #
@@ -27,6 +29,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NS="${TRR9010_NAMESPACE:-trr9010}"
+NS_F="trr9010-ns-f"   # Procedure F's own throwaway namespace, deleted whole
 NODE="${TRR9010_NODE:-apiserver-control-plane}"
 PROXY_PORT="${TRR9010_PROXY_PORT:-8911}"
 
@@ -36,6 +39,7 @@ ensure_ns() { kubectl get namespace "$NS" >/dev/null 2>&1 || kubectl create name
 cleanup() {
   log "cleanup: deleting namespace $NS (cascades events and pods)"
   kubectl delete namespace "$NS" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete namespace "$NS_F" --ignore-not-found --wait=false >/dev/null 2>&1 || true
 }
 
 # Procedure A — delete a single core v1 Event.
@@ -77,6 +81,36 @@ procedure_d() {
   kubectl -n "$NS" delete pod trr9010-workload --force --grace-period=0 >/dev/null 2>&1 || true
 }
 
+# Procedure F — delete a whole namespace to destroy its Events. The emulation creates
+# its own throwaway namespace trr9010-ns-f and one Event in it, then deletes the
+# namespace. The actor's record is the namespace delete (verb delete, resource
+# namespaces, 200); the namespace controller then deletes the Events with a
+# deletecollection that the Events rule filters as teardown.
+procedure_f() {
+  log "F: create namespace $NS_F with an Event, then delete the whole namespace"
+  kubectl get namespace "$NS_F" >/dev/null 2>&1 || kubectl create namespace "$NS_F" >/dev/null 2>&1 || true
+  kubectl create -f - >/dev/null 2>&1 <<EOF || true
+apiVersion: v1
+kind: Event
+metadata:
+  name: trr9010-evt-f
+  namespace: ${NS_F}
+involvedObject:
+  apiVersion: v1
+  kind: Namespace
+  name: ${NS_F}
+reason: Trr9010Benign
+message: benign TRR9010 namespace-delete emulation
+type: Normal
+source:
+  component: trr9010-emulation
+firstTimestamp: "2026-10-16T00:00:00Z"
+lastTimestamp: "2026-10-16T00:00:00Z"
+count: 1
+EOF
+  kubectl delete namespace "$NS_F" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+}
+
 # Gap — the node-local bypass. Clearing or truncating the API server audit log file
 # on the node, or disabling the audit sink, destroys evidence with NO API call, so
 # the audit layer is blind. Read-only demonstration.
@@ -100,15 +134,16 @@ run_one() {
     b) procedure_b ;;
     c) procedure_c ;;
     d) procedure_d ;;
+    f) procedure_f ;;
     gap) procedure_gap ;;
-    *) log "unknown item: $1 (use a|b|c|d|gap|all)"; exit 2 ;;
+    *) log "unknown item: $1 (use a|b|c|d|f|gap|all)"; exit 2 ;;
   esac
 }
 
 main() {
   local which="${1:-all}"
   if [ "$which" = "all" ]; then
-    for p in a b c d gap; do run_one "$p"; done
+    for p in a b c d f gap; do run_one "$p"; done
     cleanup
   else
     run_one "$which"

@@ -3,73 +3,143 @@ id: 8aee81f7-1028-4c86-a2e9-ad2b24333a3b
 status: experimental
 description: |
   Detects a cluster DNS edit that injects a redirect into the CoreDNS Corefile, by
-  inspecting the request body (requestObject, which needs audit level Request or
-  higher). This is the TRR9027 severity layer on top of the chokepoint
-  (k8s_coredns_configmap_modified.yml): the chokepoint fires on every write to the
-  coredns/kube-dns/coredns-custom ConfigMap, this rule picks out the writes that
-  poison resolution. It fires when the submitted Corefile carries a redirecting plugin
-  -- rewrite, template, or hosts (none is in a default Corefile) -- or when the root
-  server block (the one that serves the zone '.', so every name) forwards to an
-  explicit IP address, IPv4 or IPv6 (a default Corefile forwards to
-  /etc/resolv.conf, not to a literal IP), i.e. all resolution redirected to an
-  attacker-controlled target.
+  inspecting the request body (requestObject, audit level Request or higher) and the
+  stored ConfigMap after the write (responseObject, RequestResponse). This is the
+  TRR9027 severity layer on top of the chokepoint (k8s_coredns_configmap_modified.yml):
+  the chokepoint fires on every write to the coredns/kube-dns/coredns-custom ConfigMap,
+  this rule picks out the writes that poison resolution. It fires when the Corefile:
 
-  The plugin match uses |re anchored to a directive position (the start of the
-  Corefile or a line break, then blanks: '^\s*(rewrite|template|hosts)\s' and
-  '[^\S ]\s*(rewrite|template|hosts)\s'), so it tolerates tab-separated directives
-  and does not fire on a line commented as '# rewrite ...' (a space after the '#').
-  A comment with a tab after the '#' ('#<TAB>rewrite ...') does fire: the portable
-  subset cannot say "line break only", and the class '[^\S ]' also matches a tab. The
-  forward-to-IP match reads the Corefile from its top with a simplified form of
-  CoreDNS's Caddyfile grammar (in the comment above sel_rogue_forward), written in
-  portable regex only (no lookaround, no possessive quantifiers). It skips the server
-  blocks before the root block, finds the block whose address list holds the root
-  zone ('.', '.:53', 'dns://.:53'), and then a 'forward' directive in that block whose
-  FROM is the root and one of whose targets is an IPv4 or IPv6 literal. These layouts
-  match: the brace on the key line or a later line, no braces at all (a single-block
-  Corefile), a comma-separated key list continued onto the next line, the forward on
-  the brace line, and a comment that holds a brace. An IP that appears only in a
-  comment does not match. The simplified grammar misses a root-block forward when a
-  brace sits inside a quoted token or inside a longer token before it (rewrite's
-  '{1}' and template's '{{ .Name }}' are such tokens, but those plugins fire the plugin
-  clause anyway), when a '#' inside a token or (full-object form only) a tab inside a
-  comment followed by a brace shifts the brace count, or when the root block's keys
-  are separated by tabs. A forward in any
-  other server block -- a stub zone such as a 'corp.example.com:53' block with
-  'forward . 10.10.0.53' -- or a forward of one domain inside the root block does
-  not fire this rule: a private stub zone to a corporate resolver is routine, and
-  its audit record does not differ from a targeted redirect of one domain to an
-  attacker resolver. The chokepoint still sees every
-  such write; triage it there. The grader also does not follow an 'import' (a
-  forward that comes from a snippet or a file), reads only three nested brace
-  levels; such a Corefile is seen by the chokepoint only. A full-object or strategic-merge patch carries the
-  Corefile at requestObject.data.Corefile (a string), matched directly; a JSON patch
-  (kubectl patch --type=json) submits an ops array, so requestObject is one JSON text
-  field in which a line break is the two characters backslash-n -- the rule matches
-  that raw form too, so the json-patch encoding does not evade the grader. This
-  grades Procedure A (poison the base coredns Corefile). Procedure B (kube-dns) stores
-  its redirect as JSON stubDomains/upstreamNameservers rather than a Corefile, and
-  Procedure C (coredns-custom) stores snippets under arbitrary data keys, so both are
-  covered at the chokepoint and triaged there; this grader is the high-confidence
-  Corefile case.
+    - carries a redirecting plugin: rewrite or template (neither is in the kubeadm,
+      k3s or minikube default Corefile), or a hosts block other than a distribution
+      default. Two defaults hold a hosts block and are excluded when it is the only
+      'hosts' text in the Corefile: k3s ('hosts /etc/coredns/NodeHosts { ttl 60 reload 15s fallthrough }',
+      which the k3s node controller rewrites on node changes) and minikube
+      ('hosts { <IP> host.minikube.internal fallthrough }'). A changed or added hosts
+      block fires;
+    - holds an environment placeholder ('{$NAME}' or '{%NAME%}'). CoreDNS replaces it
+      in keys, directive names and arguments when it parses the Corefile, so
+      're{$UNSET}write', 'for{$UNSET}ward' or 'forward . {$UNSET}192.0.2.53' is a
+      hidden directive or target. No default Corefile uses one;
+    - forwards the root server block (the one that serves the zone '.', so every
+      name) to an explicit IP address, IPv4 or IPv6, private or public (a default
+      Corefile forwards to /etc/resolv.conf, not to a literal IP);
+    - forwards any zone, in any server block, to a PUBLIC IP address (not in 0/8,
+      10/8, 100.64/10, 127/8, 169.254/16, 172.16/12 or 192.168/16; an IPv6 literal
+      in 2000::/3), i.e. a stub zone or a domain-scoped forward to a resolver outside
+      the cluster and outside private address space;
+    - forwards the cluster zone to any IP address: a server block whose key ends in
+      'cluster.local' ('cluster.local:53', 'kubernetes.default.svc.cluster.local:53')
+      with a forward to an IP, or a forward whose FROM ends in 'cluster.local'. The
+      kubernetes plugin answers that zone; a forward of it sends Service names to
+      another resolver.
 
-  Metadata level cannot feed this rule: the Corefile lives only in requestObject.
-  Without Request level a poisoning edit and a benign Corefile change are
-  indistinguishable. The shipped audit policy logs updates, patches and deletes of
-  the three DNS ConfigMaps at Request, by resourceNames; a create names no object
-  when the policy is evaluated, so it is logged at Metadata, with no body. The
-  create verb here therefore grades only under a policy that logs ConfigMap creates
-  at Request; under the shipped policy a delete-and-recreate of coredns is seen by
-  the chokepoint alone. A cluster whose legitimate Corefile already forwards the root
-  zone to an explicit upstream IP (a VPC resolver, a corporate DNS) will match the
-  forward-to-IP clause; baseline your own Corefile and treat this as a triage signal,
-  not a standalone alert.
+    The plugin match uses |re anchored to a directive position (the start of the
+    Corefile, a line break, or the '{' that opens a block, then blanks), accepts a
+    quoted directive ('"rewrite"', '"hosts" {'), and does not fire on a line
+    commented as '# rewrite ...' (a space after the '#'). A comment with a tab after
+    the '#' ('#<TAB>rewrite ...') does fire in the Corefile string: every portable
+    construct treats a tab and a line break alike (see Limits). In the JSON-patch text
+    a tab is backslash-t and a line break backslash-n, so there the plugin clause
+    reads a directive position exactly and a comment never fires it. The blanks
+    around a plugin directive include U+00A0 and U+0085 (CoreDNS splits tokens on
+    unicode.IsSpace; RE2's and Lucene's \s are ASCII only).
+
+    The root-block forward match reads the Corefile from its top with a form of
+    CoreDNS's Caddyfile grammar (in the comments above sel_rogue_forward), written in
+    portable regex only (no lookaround, no possessive quantifiers). It skips the server
+    blocks before the root block, finds the block whose address list holds the root
+    zone ('.', '.:53', 'dns://.:53'), and then a 'forward' directive in that block whose
+    FROM is the root and one of whose targets is an IP literal. These layouts match: the
+    brace on the key line or a later line, no braces at all (a single-block Corefile), a
+    key list separated by commas, blanks or tabs and continued onto the next line, the
+    forward on the brace line, and a comment that holds a brace. An IP that appears only
+    in a comment does not match. Values 3 and 4 read tokens as CoreDNS's lexer does: a
+    brace is structure only as a token of its own, so a brace inside a longer token
+    ('{remote}', '{1}', '{{ .Name }}', even unbalanced) or inside a quoted token, and a
+    '#' inside a quoted token, no longer shift the block count. They cover a root block
+    that is the first server block, and a braceless single block (whose quoted tokens
+    are not read whole).
+
+    A forward of a zone other than the cluster zone to a PRIVATE address in any block
+    other than the root block -- a stub zone such as a 'corp.example.com:53' block
+    with 'forward . 10.10.0.53', or a domain-scoped forward inside the root block --
+    does not fire this rule: a private stub zone to a corporate resolver is routine,
+    and its audit record differs from a redirect of one domain to an attacker resolver
+    at a private address (a pod or a Service in the cluster) only in the zone name and
+    the address, which the record cannot tell apart as owned or hostile. The
+    chokepoint still sees every such write.
+
+    A full-object or strategic-merge patch carries the Corefile at
+    requestObject.data.Corefile (a string), matched directly; a JSON patch (kubectl
+    patch --type=json) submits an ops array, so requestObject is one JSON text field in
+    which a line break is the two characters backslash-n -- the rule matches that raw
+    form too (plugin, environment placeholder, root block, public forward, cluster
+    zone). At RequestResponse level, which the shipped policy sets for the three DNS
+    ConfigMaps, responseObject.data.Corefile is the stored Corefile as a plain string
+    whatever the patch type, and the same Corefile-string clauses read it; a later
+    write to a ConfigMap whose stored Corefile is already poisoned fires again. This
+    grades Procedure A (poison the base coredns Corefile) and Procedure D (delete
+    coredns and create it again). Procedure B (kube-dns) stores its redirect as JSON
+    stubDomains/upstreamNameservers rather than a Corefile, and Procedure C
+    (coredns-custom) stores snippets under arbitrary data keys, so both are covered at
+    the chokepoint and triaged there; this grader is the high-confidence Corefile case.
+
+    Policy: the shipped audit policy logs updates, patches and deletes of the three DNS
+    ConfigMaps at RequestResponse, by resourceNames, and every ConfigMap create in
+    kube-system at Request (a create names no object when the policy is evaluated, so
+    resourceNames cannot select it). So a delete-and-recreate of coredns is graded too.
+    Metadata level cannot feed this rule: without the Corefile a poisoning edit and a
+    benign change are indistinguishable. See the policy file for what these levels
+    record besides the Corefile (Helm release payloads, Corefile credentials).
+
+    Limits (seen by the chokepoint only):
+      - The root-block grammar does not follow an 'import': a snippet's name would have
+        to be compared with its definition, which no regular expression can do, and an
+        imported file (coredns-custom, a mounted file) is not in this record. A public
+        forward inside a snippet definition still fires the public-forward clause.
+      - It reads at most three nested brace levels in the Corefile string (balanced
+        braces of any depth are not a regular language), and at most two (the server
+        block and one plugin block) in the JSON-patch text.
+      - A root block after another server block, and the JSON-patch text, are read with
+        the brace-counting grammar: an unbalanced brace inside a longer or quoted token
+        there shifts the count (a token-aware grammar for that layout exceeds Lucene's
+        default determinization budget); at RequestResponse the stored Corefile of a
+        JSON patch is read token-aware when the root block comes first. In the
+        JSON-patch text a '#' comment is plain text (a brace inside it counts), a
+        quoted 'import' path before the root block stops the root-block match, and the
+        key text of a server block before the root block must not hold a backslash
+        escape other than a tab; those layouts are graded from responseObject at
+        RequestResponse.
+      - Every portable regex construct (a class, \s, \S) treats a tab and a line
+        break the same way, and Lucene's '.' matches both, so in the Corefile string a
+        tab inside a comment ends the comment, a '#<TAB>rewrite' comment fires the
+        plugin clause, and a braceless block's keys must be separated by spaces or a
+        comma.
+      - CoreDNS's lexer drops every carriage return (U+000D) and splits tokens on any
+        unicode.IsSpace character. So a carriage return inside a token ('ho<CR>sts',
+        'for<CR>ward', '1<CR>92.0.2.53') is invisible to CoreDNS but breaks the token
+        for this rule, and no portable construct can name a carriage return alone. A
+        vertical tab (U+000B), form feed (U+000C), U+00A0 or U+0085 used as a blank
+        in the forward and cluster-zone grammars matches there only on a backend whose
+        \s includes it (Python re: all four; RE2: form feed only; Lucene: none). The
+        portable subset cannot spell a vertical tab or a form feed.
+      - The cluster zone is matched by its default name, cluster.local. A cluster with
+        another --cluster-domain is graded by the root-block and public-forward clauses
+        only.
+      - k3s also reads the NodeHosts data key of the coredns ConfigMap as a hosts file.
+        An entry added to NodeHosts (not to the Corefile) is not graded here.
+
+    A cluster whose legitimate Corefile already forwards the root zone to an explicit
+    upstream IP (a VPC resolver, a corporate DNS), or a zone to a public resolver, will
+    match; baseline your own Corefile and treat this as a triage signal, not a
+    standalone alert.
 references:
   - https://attack.mitre.org/techniques/T1565/001/
   - https://coredns.io/plugins/rewrite/
   - https://coredns.io/plugins/forward/
 author: det-eng
 date: 2026/10/14
+modified: 2026/10/16
 tags:
   - attack.impact
   - attack.t1565.001
@@ -89,13 +159,38 @@ detection:
       - 'patch'
       - 'create'
   # Strategic-merge / full-object write: the Corefile is a dotted string field.
-  # A plugin directive at the start of a line: at the start of the Corefile, or after
-  # a line break ('[^\S ]' is whitespace other than a space). A '#' comment that
-  # mentions the word does not match.
+  # A rewrite or template directive at a directive position: the start of the Corefile,
+  # after a line break ('[^\S ]' is whitespace other than a space), or after a '{' (the
+  # first directive of a block may share the brace line). The name may be quoted. The
+  # blanks are \s plus U+00A0 and U+0085 (written as YAML escapes): CoreDNS splits on
+  # unicode.IsSpace. A '#' comment that mentions the word does not match.
   sel_poison_plugin:
     requestObject.data.Corefile|re:
-      - '^\s*(rewrite|template|hosts)\s'
-      - '[^\S ]\s*(rewrite|template|hosts)\s'
+      - "^[\\s\u00A0\u0085]*\\\"?(rewrite|template)\\\"?[\\s\u00A0\u0085]"
+      - "([^\\S ]|\\{)[\\s\u00A0\u0085]*\\\"?(rewrite|template)\\\"?[\\s\u00A0\u0085]"
+  # A hosts directive at a directive position (the same anchors). Graded apart from
+  # rewrite/template because two distributions ship a hosts block (filter below).
+  sel_poison_hosts:
+    requestObject.data.Corefile|re:
+      - "^[\\s\u00A0\u0085]*\\\"?(hosts)\\\"?[\\s\u00A0\u0085]"
+      - "([^\\S ]|\\{)[\\s\u00A0\u0085]*\\\"?(hosts)\\\"?[\\s\u00A0\u0085]"
+  # The Corefile's only 'hosts' text is a distribution default hosts block: k3s
+  # ('hosts /etc/coredns/NodeHosts {' with ttl/reload/fallthrough options; the k3s node
+  # controller updates the ConfigMap on node changes) or minikube ('hosts {', one
+  # '<IPv4> host.minikube.internal' entry, fallthrough). The text before and after the
+  # block holds no 'hosts' (the two groups around it match any text without that
+  # substring), so a second hosts block anywhere, an extra entry or another file is not
+  # excluded. Whole-value match ('^' ... '$').
+  filter_default_hosts:
+    requestObject.data.Corefile|re: '^([^h]|h(h|o(st?)?h)*([^ho]|o([^hs]|s([^ht]|t[^hs]))))*(h(h|o(st?)?h)*(o(st?)?)?)?hosts( +/etc/coredns/NodeHosts *\{|\s*\{\s+[0-9]+(\.[0-9]+){3} +host\.minikube\.internal)(\s+(ttl +[0-9]+|reload +[0-9]+[a-z]+|fallthrough|no_reverse))*\s+\}([^h]|h(h|o(st?)?h)*([^ho]|o([^hs]|s([^ht]|t[^hs]))))*(h(h|o(st?)?h)*(o(st?)?)?)?$'
+  # An environment placeholder: CoreDNS (caddy parse.go replaceEnvVars) replaces
+  # '{$NAME}' and '{%NAME%}' in server keys, directive names and arguments, so an unset
+  # variable can split a directive or an address ('re{$X}write', 'forward . {$X}192.0.2.53')
+  # past every clause here. No default Corefile uses one.
+  sel_env_placeholder:
+    requestObject.data.Corefile|contains:
+      - '{$'
+      - '{%'
   # The forward-to-IP clause reads the Corefile with a simplified form of CoreDNS's
   # Caddyfile grammar (github.com/coredns/caddy, caddyfile/lexer.go and parse.go), so
   # that a forward in any other server block cannot pass for one in the root block.
@@ -119,36 +214,127 @@ detection:
   #            target that starts with an IPv4 or IPv6 literal (optionally
   #            'scheme://' or '['). A '#' ends the target list, so an IP in a comment
   #            does not count.
-  # Simpler than CoreDNS (see the description): a brace inside a quoted token or
-  # inside a longer token counts as a brace, a '#' inside a token starts a comment, a
-  # tab inside a comment ends the comment, and root keys must be separated by spaces
-  # or commas, not tabs.
+  # Values 1 and 2 are simpler than CoreDNS (see the description): a brace inside a
+  # quoted token or inside a longer token counts as a brace, a '#' inside a quoted
+  # token starts a comment, a tab inside a comment ends the comment, and root keys
+  # must be separated by spaces or commas. Values 3 and 4 below read tokens as the
+  # lexer does (see their comment); in every value a tab inside a comment ends it.
   sel_rogue_forward:
     requestObject.data.Corefile|re:
       - '^(\s|\#(\S| )*[^\S ]|import\s+[^\s{}#]+)*([^\s{}#][^{}#]*\{([^{}#]|\#(\S| )*[^\S ]|\{([^{}#]|\#(\S| )*[^\S ]|\{([^{}#]|\#(\S| )*[^\S ])*\})*\})*\}(\s|\#(\S| )*[^\S ]|import\s+[^\s{}#]+)*)*([^\s{}#,]+(,\s*| +))*\"?(dns://)?\.(:[0-9]+)?\"?((,\s*| +)[^\s{}#,]+)*\s*\{(([^{}#]|\#(\S| )*[^\S ]|\{([^{}#]|\#(\S| )*[^\S ]|\{([^{}#]|\#(\S| )*[^\S ])*\})*\})*([^\S ]|\#(\S| )*[^\S ]))?\s*\"?forward\"?\s+\"?([a-z0-9]+://)?\.(:[0-9]+)?\"?(\s+[^\s#{}/]*/[^\s#{}]*)*\s+\"?([a-z0-9]+://)?\[?([0-9]{1,3}(\.[0-9]{1,3}){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
       - '^(\s|\#(\S| )*[^\S ]|import\s+[^\s{}#]+)*([^\s{}#,]+(,\s*| +))*\"?(dns://)?\.(:[0-9]+)?\"?((,\s*| +)[^\s{}#,]+)* *(\#(\S| )*[^\S ]|[^\S ])(\s|\#(\S| )*[^\S ]|import\s+[^\s{}#]+)*([^{}#\s]([^{}#]|\#(\S| )*[^\S ]|\{([^{}#]|\#(\S| )*[^\S ]|\{([^{}#]|\#(\S| )*[^\S ])*\})*\})*([^\S ]|\#(\S| )*[^\S ]))?\s*\"?forward\"?\s+\"?([a-z0-9]+://)?\.(:[0-9]+)?\"?(\s+[^\s#{}/]*/[^\s#{}]*)*\s+\"?([a-z0-9]+://)?\[?([0-9]{1,3}(\.[0-9]{1,3}){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
+      # Token-aware forms (CoreDNS's lexer: a token is a run between blanks, a brace is
+      # structure only as a token of its own, a quoted token may hold blanks, '#' and
+      # braces): a brace inside a longer token ('{remote}', '{1}', '{{ .Name }}', even
+      # unbalanced) or a '#' inside a quoted token no longer shifts the block count.
+      # Value 3: the root block is the first server block; value 4: a braceless single
+      # block (without quoted-token handling). A root block after other server blocks
+      # stays with values 1 and 2: a token-aware grammar for that layout exceeds Lucene's
+      # determinization budget (see the description).
+      - '^(\s|\#(\S| )*[^\S ]|import\s+[^\s{}#]+)*([^\s{}#,]+[,\s]+)*\"?(dns://)?\.(:[0-9]+)?\"?([,\s]+[^\s{}#,]+)*\s*\{(((\s|\#(\S| )*[^\S ])+((([^\s#{}"]|[{}][^\s#])[^\s#]*|\"([^"\\]|\\.)*\"[^\s#]*)|\{((\s|\#(\S| )*[^\S ])+((([^\s#{}"]|[{}][^\s#])[^\s#]*|\"([^"\\]|\\.)*\"[^\s#]*)|\{((\s|\#(\S| )*[^\S ])+(([^\s#{}"]|[{}][^\s#])[^\s#]*|\"([^"\\]|\\.)*\"[^\s#]*))*(\s|\#(\S| )*[^\S ])+\}))*(\s|\#(\S| )*[^\S ])+\}))+(\s|\#(\S| )*[^\S ])*([^\S ]|\#(\S| )*[^\S ]) *|\s+)\"?forward\"?\s+\"?([a-z0-9]+://)?\.(:[0-9]+)?\"?(\s+[^\s#{}/]*/[^\s#{}]*)*\s+\"?([a-z0-9]+://)?\[?([0-9]+(\.[0-9]+){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
+      - '^(\s|\#(\S| )*[^\S ]|import\s+[^\s{}#]+)*([^\s{}#,]+(,\s*| +))*\"?(dns://)?\.(:[0-9]+)?\"?((,\s*| +)[^\s{}#,]+)* *(\#(\S| )*[^\S ]|[^\S ])(\s|\#(\S| )*[^\S ]|import\s+[^\s{}#]+)*(((([^\s#{}]|[{}][^\s#])[^\s#]*|\{((\s|\#(\S| )*[^\S ])+(([^\s#{}]|[{}][^\s#])[^\s#]*|\{((\s|\#(\S| )*[^\S ])+([^\s#{}]|[{}][^\s#])[^\s#]*)*(\s|\#(\S| )*[^\S ])+\}))*(\s|\#(\S| )*[^\S ])+\})(\s|\#(\S| )*[^\S ])+)*(([^\s#{}]|[{}][^\s#])[^\s#]*|\{((\s|\#(\S| )*[^\S ])+(([^\s#{}]|[{}][^\s#])[^\s#]*|\{((\s|\#(\S| )*[^\S ])+([^\s#{}]|[{}][^\s#])[^\s#]*)*(\s|\#(\S| )*[^\S ])+\}))*(\s|\#(\S| )*[^\S ])+\})(\s|\#(\S| )*[^\S ])*([^\S ]|\#(\S| )*[^\S ]) *)?\"?forward\"?\s+\"?([a-z0-9]+://)?\.(:[0-9]+)?\"?(\s+[^\s#{}/]*/[^\s#{}]*)*\s+\"?([a-z0-9]+://)?\[?([0-9]+(\.[0-9]+){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
+  # A forward directive in ANY server block (a stub zone, a snippet, a domain-scoped
+  # forward in the root block), one of whose targets is a public IP literal: not in
+  # 0/8, 10/8, 100.64/10, 127/8, 169.254/16, 172.16/12 or 192.168/16 (also written
+  # IPv4-mapped, '::ffff:8.8.8.8'), or an IPv6 global-unicast (2000::/3) literal. Targets before it are paths or URLs (a '/') or
+  # other IP literals; a '#' ends the target list. No brace counting is needed, so it
+  # reads any nesting depth.
+  sel_public_forward:
+    requestObject.data.Corefile|re:
+      - '^\s*\"?forward\"?\s+\"?([a-z0-9]+://)?[^\s#{}\"]+\"?(\s+(\"?[^\s#{}/\"]*/[^\s#{}]*|\"?([a-z0-9]+://)?\[?[0-9][^\s#{}]*))*\s+\"?([a-z0-9]+://)?\[?(::[fF]{4}:)?((([1-9]|1[1-9]|[2-9][0-9]|10[1-9]|11[0-9]|12[0-689]|1[3-5][0-9]|16[0-8]|17[013-9]|18[0-9]|19[013-9]|2[0-4][0-9]|25[0-5])\.[0-9]{1,3}|100\.([0-9]|[1-5][0-9]|6[0-3]|12[89]|1[3-9][0-9]|2[0-9][0-9])|169\.([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-35-9])|172\.([0-9]|1[0-5]|3[2-9]|[4-9][0-9]|[12][0-9][0-9])|192\.([0-9]|[1-9][0-9]|1[0-57-9][0-9]|16[0-79]|2[0-9][0-9]))(\.[0-9]{1,3}){2}|[23][0-9A-Fa-f]{0,3}:[0-9A-Fa-f]{0,4}:)'
+      - '([^\S ]|\{)\s*\"?forward\"?\s+\"?([a-z0-9]+://)?[^\s#{}\"]+\"?(\s+(\"?[^\s#{}/\"]*/[^\s#{}]*|\"?([a-z0-9]+://)?\[?[0-9][^\s#{}]*))*\s+\"?([a-z0-9]+://)?\[?(::[fF]{4}:)?((([1-9]|1[1-9]|[2-9][0-9]|10[1-9]|11[0-9]|12[0-689]|1[3-5][0-9]|16[0-8]|17[013-9]|18[0-9]|19[013-9]|2[0-4][0-9]|25[0-5])\.[0-9]{1,3}|100\.([0-9]|[1-5][0-9]|6[0-3]|12[89]|1[3-9][0-9]|2[0-9][0-9])|169\.([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-35-9])|172\.([0-9]|1[0-5]|3[2-9]|[4-9][0-9]|[12][0-9][0-9])|192\.([0-9]|[1-9][0-9]|1[0-57-9][0-9]|16[0-79]|2[0-9][0-9]))(\.[0-9]{1,3}){2}|[23][0-9A-Fa-f]{0,3}:[0-9A-Fa-f]{0,4}:)'
+  # The cluster zone forwarded to an IP address, private or public. Values 1 and 2: a
+  # server block whose key ends in 'cluster.local' (optionally a trailing '.', a port,
+  # 'dns://', more keys after it) and whose body (one nested brace level, '#' comments as
+  # text) holds a forward to an IP literal; value 2 needs the key to start a token (after
+  # a blank, ',', '"', '/' or '.'). Value 3: a forward whose FROM ends in 'cluster.local'
+  # with an IP target, in any block. A 'kubernetes cluster.local ... {' plugin line does
+  # not match: its block holds no forward.
+  sel_cluster_zone_forward:
+    requestObject.data.Corefile|re:
+      - '^\"?([a-z0-9]+://)?([^\s{}#,\"]*\.)?cluster\.local\.?(:[0-9]+)?\"?((,\s*| +)[^\s{}#,]+)*\s*\{(([^{}]|\{[^{}]*\})*[^\S ])?\s*\"?forward\"?\s+\"?([a-z0-9]+://)?[^\s#{}\"]+\"?(\s+\"?[^\s#{}/\"]*/[^\s#{}]*)*\s+\"?([a-z0-9]+://)?\[?([0-9]+(\.[0-9]+){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
+      - '[\s,\"/\.]cluster\.local\.?(:[0-9]+)?\"?((,\s*| +)[^\s{}#,]+)*\s*\{(([^{}]|\{[^{}]*\})*[^\S ])?\s*\"?forward\"?\s+\"?([a-z0-9]+://)?[^\s#{}\"]+\"?(\s+\"?[^\s#{}/\"]*/[^\s#{}]*)*\s+\"?([a-z0-9]+://)?\[?([0-9]+(\.[0-9]+){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
+      - '([^\S ]|\{)\s*\"?forward\"?\s+\"?([a-z0-9]+://)?([^\s#{}\"]*\.)?cluster\.local\.?(:[0-9]+)?\"?(\s+\"?[^\s#{}/\"]*/[^\s#{}]*)*\s+\"?([a-z0-9]+://)?\[?([0-9]+(\.[0-9]+){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
   # JSON patch (kubectl patch --type=json): requestObject is an ops array flattened to
   # one text field, so the Corefile is not at .data.Corefile -- match the raw form too.
+  # A blank here is a space, backslash r/t/f, a \u000b/\u00a0/\u0085 escape or the raw
+  # U+00A0/U+0085 character; a quote is backslash-quote.
   sel_poison_plugin_raw:
+    requestObject|re: "(:\\s*\\\"|\\\\n|\\{)( |\\\\[rtf]|\\\\u00(0b|a0|85)|\u00A0|\u0085)*(\\\\\\\")?(rewrite|template)(\\\\\\\")?( |\\\\[nrtf]|\\\\u00(0b|a0|85)|\u00A0|\u0085)"
+  sel_poison_hosts_raw:
+    requestObject|re: "(:\\s*\\\"|\\\\n|\\{)( |\\\\[rtf]|\\\\u00(0b|a0|85)|\u00A0|\u0085)*(\\\\\\\")?(hosts)(\\\\\\\")?( |\\\\[nrtf]|\\\\u00(0b|a0|85)|\u00A0|\u0085)"
+  # The same default hosts blocks in the JSON text (a line break is backslash-n).
+  filter_default_hosts_raw:
+    requestObject|re: '^([^h]|h(h|o(st?)?h)*([^ho]|o([^hs]|s([^ht]|t[^hs]))))*(h(h|o(st?)?h)*(o(st?)?)?)?hosts( +/etc/coredns/NodeHosts *\{|( |\\[nrt])*\{( |\\[nrt])+[0-9]+(\.[0-9]+){3} +host\.minikube\.internal)(( |\\[nrt])+(ttl +[0-9]+|reload +[0-9]+[a-z]+|fallthrough|no_reverse))*( |\\[nrt])+\}([^h]|h(h|o(st?)?h)*([^ho]|o([^hs]|s([^ht]|t[^hs]))))*(h(h|o(st?)?h)*(o(st?)?)?)?$'
+  sel_env_placeholder_raw:
     requestObject|contains:
-      - 'rewrite '
-      - 'template '
-      - 'hosts '
-  # The same grammar on the JSON text: the scan starts at a JSON string value
-  # (':' then '"'), a line break is backslash-n, a blank is a space or backslash
-  # r/t/f, a quote is backslash-quote, and an unescaped '"' ends the Corefile. Here a
-  # comment runs to the next backslash-n, so a tab inside it does not end it.
+      - '{$'
+      - '{%'
+  # The root-block grammar on the JSON text, reduced to stay within Lucene's default
+  # determinization budget (10000 states; the full grammar of sel_rogue_forward,
+  # re-spelled for JSON escapes, exceeds it). The scan starts at a JSON string value
+  # (':' then '"'), a line break is backslash-n, a blank is a space or backslash r/t/f,
+  # a quote is backslash-quote, and an unescaped '"' ends the Corefile. Value 1: the
+  # root block is the first server block; value 2: it follows one or more server
+  # blocks; value 3: a braceless single block. Before the root block: blank lines, '#'
+  # comments (to the next backslash-n) and unquoted 'import' lines. The body reads one
+  # nested brace level; a '#' comment in it is plain text (a brace inside it counts).
+  # Layouts outside this grammar are graded from responseObject at RequestResponse.
   sel_rogue_forward_raw:
     requestObject|re:
-      - ':\s*\"(( |\\[nrtf])|\#([^"\\]|\\[^n])*\\n|import( |\\[rtf])+(\\\"[^"\\]*\\\"|[^\s{}#"\\]+))*([^\s{}#"\\]([^{}#"\\]|\\.)*\{([^{}#"\\]|\\.|\#([^"\\]|\\[^n])*\\n|\{([^{}#"\\]|\\.|\#([^"\\]|\\[^n])*\\n|\{([^{}#"\\]|\\.|\#([^"\\]|\\[^n])*\\n)*\})*\})*\}(( |\\[nrtf])|\#([^"\\]|\\[^n])*\\n|import( |\\[rtf])+(\\\"[^"\\]*\\\"|[^\s{}#"\\]+))*)*([^\s{}#,"\\]+(,( |\\[nrtf])*| +))*(\\\")?(dns://)?\.(:[0-9]+)?(\\\")?((,( |\\[nrtf])*| +)[^\s{}#,"\\]+)*( |\\[nrtf])*\{(([^{}#"\\]|\\.|\#([^"\\]|\\[^n])*\\n|\{([^{}#"\\]|\\.|\#([^"\\]|\\[^n])*\\n|\{([^{}#"\\]|\\.|\#([^"\\]|\\[^n])*\\n)*\})*\})*(\\[nrtf]|\#([^"\\]|\\[^n])*\\n))?( |\\[nrtf])*(\\\")?forward(\\\")?( |\\[nrtf])+(\\\")?([a-z0-9]+://)?\.(:[0-9]+)?(\\\")?(( |\\[nrtf])+[^\s#{}/"\\]*/[^\s#{}"\\]*)*( |\\[nrtf])+(\\\")?([a-z0-9]+://)?\[?([0-9]{1,3}(\.[0-9]{1,3}){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
-      - ':\s*\"(( |\\[nrtf])|\#([^"\\]|\\[^n])*\\n|import( |\\[rtf])+(\\\"[^"\\]*\\\"|[^\s{}#"\\]+))*([^\s{}#,"\\]+(,( |\\[nrtf])*| +))*(\\\")?(dns://)?\.(:[0-9]+)?(\\\")?((,( |\\[nrtf])*| +)[^\s{}#,"\\]+)* *(\#([^"\\]|\\[^n])*\\n|\\[nrtf])(( |\\[nrtf])|\#([^"\\]|\\[^n])*\\n|import( |\\[rtf])+(\\\"[^"\\]*\\\"|[^\s{}#"\\]+))*([^{}#\s"\\]([^{}#"\\]|\\.|\#([^"\\]|\\[^n])*\\n|\{([^{}#"\\]|\\.|\#([^"\\]|\\[^n])*\\n|\{([^{}#"\\]|\\.|\#([^"\\]|\\[^n])*\\n)*\})*\})*(\\[nrtf]|\#([^"\\]|\\[^n])*\\n))?( |\\[nrtf])*(\\\")?forward(\\\")?( |\\[nrtf])+(\\\")?([a-z0-9]+://)?\.(:[0-9]+)?(\\\")?(( |\\[nrtf])+[^\s#{}/"\\]*/[^\s#{}"\\]*)*( |\\[nrtf])+(\\\")?([a-z0-9]+://)?\[?([0-9]{1,3}(\.[0-9]{1,3}){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
-  condition: select_dns_configmap_write and (sel_poison_plugin or sel_rogue_forward or sel_poison_plugin_raw or sel_rogue_forward_raw)
+      - ':\s*\"(( |\\[nrtf])|\#([^"\\]|\\[^n])*\\n|import( |\\[rtf])+[^\s{}#"\\]+( |\\[rtf])*\\n)*([^\s{}#,"\\]+(,( |\\[nrtf])*|( |\\t)+))*(\\\")?(dns://)?\.(:[0-9]+)?(\\\")?((,( |\\[nrtf])*|( |\\t)+)[^\s{}#,"\\]+)*( |\\[nrtf])*\{(([^{}"\\]|\\.|\{([^{}"\\]|\\.)*\})*\\[nrtf])?( |\\[nrtf])*(\\\")?forward(\\\")?( |\\[nrtf])+(\\\")?([a-z0-9]+://)?\.(:[0-9]+)?(\\\")?(( |\\[nrtf])+[^\s#{}/"\\]*/[^\s#{}"\\]*)*( |\\[nrtf])+(\\\")?([a-z0-9]+://)?\[?([0-9]{1,3}(\.[0-9]{1,3}){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
+      - ':\s*\"(( |\\[nrtf])|\#([^"\\]|\\[^n])*\\n|import( |\\[rtf])+[^\s{}#"\\]+( |\\[rtf])*\\n)*([^\s{}#"\\]([^{}#"\\]|\\t)*( |\\[nrtf])*\{([^{}"\\]|\\.|\{([^{}"\\]|\\.)*\})*\}(( |\\[nrtf])|\#([^"\\]|\\[^n])*\\n|import( |\\[rtf])+[^\s{}#"\\]+( |\\[rtf])*\\n)*)+([^\s{}#,"\\]+(,( |\\[nrtf])*|( |\\t)+))*(\\\")?(dns://)?\.(:[0-9]+)?(\\\")?((,( |\\[nrtf])*|( |\\t)+)[^\s{}#,"\\]+)*( |\\[nrtf])*\{(([^{}"\\]|\\.|\{([^{}"\\]|\\.)*\})*\\[nrtf])?( |\\[nrtf])*(\\\")?forward(\\\")?( |\\[nrtf])+(\\\")?([a-z0-9]+://)?\.(:[0-9]+)?(\\\")?(( |\\[nrtf])+[^\s#{}/"\\]*/[^\s#{}"\\]*)*( |\\[nrtf])+(\\\")?([a-z0-9]+://)?\[?([0-9]{1,3}(\.[0-9]{1,3}){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
+      - ':\s*\"(( |\\[nrtf])|\#([^"\\]|\\[^n])*\\n|import( |\\[rtf])+[^\s{}#"\\]+( |\\[rtf])*\\n)*([^\s{}#,"\\]+(,( |\\[nrtf])*|( |\\t)+))*(\\\")?(dns://)?\.(:[0-9]+)?(\\\")?((,( |\\[nrtf])*|( |\\t)+)[^\s{}#,"\\]+)* *(\#([^"\\]|\\[^n])*\\n|\\[nrtf])(([^{}"\\]|\\.|\{([^{}"\\]|\\.)*\})*\\[nrtf])?( |\\[nrtf])*(\\\")?forward(\\\")?( |\\[nrtf])+(\\\")?([a-z0-9]+://)?\.(:[0-9]+)?(\\\")?(( |\\[nrtf])+[^\s#{}/"\\]*/[^\s#{}"\\]*)*( |\\[nrtf])+(\\\")?([a-z0-9]+://)?\[?([0-9]{1,3}(\.[0-9]{1,3}){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
+  sel_public_forward_raw:
+    requestObject|re: '(:\s*\"|\\n|\{)( |\\[nrtf])*(\\\")?forward(\\\")?( |\\[rtf])+(\\\")?([a-z0-9]+://)?[^\s#{}"\\]+(\\\")?(( |\\[rtf])+((\\\")?[^\s#{}/"\\]*/[^\s#{}"\\]*|(\\\")?([a-z0-9]+://)?\[?[0-9][^\s#{}"\\]*))*( |\\[rtf])+(\\\")?([a-z0-9]+://)?\[?(::[fF]{4}:)?((([1-9]|1[1-9]|[2-9][0-9]|10[1-9]|11[0-9]|12[0-689]|1[3-5][0-9]|16[0-8]|17[013-9]|18[0-9]|19[013-9]|2[0-4][0-9]|25[0-5])\.[0-9]{1,3}|100\.([0-9]|[1-5][0-9]|6[0-3]|12[89]|1[3-9][0-9]|2[0-9][0-9])|169\.([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-35-9])|172\.([0-9]|1[0-5]|3[2-9]|[4-9][0-9]|[12][0-9][0-9])|192\.([0-9]|[1-9][0-9]|1[0-57-9][0-9]|16[0-79]|2[0-9][0-9]))(\.[0-9]{1,3}){2}|[23][0-9A-Fa-f]{0,3}:[0-9A-Fa-f]{0,4}:)'
+  sel_cluster_zone_forward_raw:
+    requestObject|re:
+      - '(:\s*\"|[ ,/\.]|\\[nrt\"])cluster\.local\.?(:[0-9]+)?(\\\")?((,( |\\[nrtf])*| +)[^\s{}#,"\\]+)*( |\\[nrtf])*\{(([^{}"\\]|\\.|\{([^{}"\\]|\\.)*\})*\\[nrtf])?( |\\[nrtf])*(\\\")?forward(\\\")?( |\\[nrtf])+(\\\")?([a-z0-9]+://)?[^\s#{}"\\]+(\\\")?(( |\\[nrtf])+(\\\")?[^\s#{}/"\\]*/[^\s#{}"\\]*)*( |\\[nrtf])+(\\\")?([a-z0-9]+://)?\[?([0-9]+(\.[0-9]+){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
+      - '(:\s*\"|\\[nrtf]|\{)( |\\[nrtf])*(\\\")?forward(\\\")?( |\\[nrtf])+(\\\")?([a-z0-9]+://)?([^\s#{}"\\]*\.)?cluster\.local\.?(:[0-9]+)?(\\\")?(( |\\[nrtf])+(\\\")?[^\s#{}/"\\]*/[^\s#{}"\\]*)*( |\\[nrtf])+(\\\")?([a-z0-9]+://)?\[?([0-9]+(\.[0-9]+){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
+  # The stored ConfigMap after the write (responseObject, RequestResponse level, which
+  # the shipped policy records for the three DNS ConfigMaps): the Corefile as a plain
+  # string whatever the patch type, so a JSON patch is graded by the same grammar.
+  sel_response_poison_plugin:
+    responseObject.data.Corefile|re:
+      - "^[\\s\u00A0\u0085]*\\\"?(rewrite|template)\\\"?[\\s\u00A0\u0085]"
+      - "([^\\S ]|\\{)[\\s\u00A0\u0085]*\\\"?(rewrite|template)\\\"?[\\s\u00A0\u0085]"
+  sel_response_poison_hosts:
+    responseObject.data.Corefile|re:
+      - "^[\\s\u00A0\u0085]*\\\"?(hosts)\\\"?[\\s\u00A0\u0085]"
+      - "([^\\S ]|\\{)[\\s\u00A0\u0085]*\\\"?(hosts)\\\"?[\\s\u00A0\u0085]"
+  filter_response_default_hosts:
+    responseObject.data.Corefile|re: '^([^h]|h(h|o(st?)?h)*([^ho]|o([^hs]|s([^ht]|t[^hs]))))*(h(h|o(st?)?h)*(o(st?)?)?)?hosts( +/etc/coredns/NodeHosts *\{|\s*\{\s+[0-9]+(\.[0-9]+){3} +host\.minikube\.internal)(\s+(ttl +[0-9]+|reload +[0-9]+[a-z]+|fallthrough|no_reverse))*\s+\}([^h]|h(h|o(st?)?h)*([^ho]|o([^hs]|s([^ht]|t[^hs]))))*(h(h|o(st?)?h)*(o(st?)?)?)?$'
+  sel_response_env_placeholder:
+    responseObject.data.Corefile|contains:
+      - '{$'
+      - '{%'
+  sel_response_rogue_forward:
+    responseObject.data.Corefile|re:
+      - '^(\s|\#(\S| )*[^\S ]|import\s+[^\s{}#]+)*([^\s{}#][^{}#]*\{([^{}#]|\#(\S| )*[^\S ]|\{([^{}#]|\#(\S| )*[^\S ]|\{([^{}#]|\#(\S| )*[^\S ])*\})*\})*\}(\s|\#(\S| )*[^\S ]|import\s+[^\s{}#]+)*)*([^\s{}#,]+(,\s*| +))*\"?(dns://)?\.(:[0-9]+)?\"?((,\s*| +)[^\s{}#,]+)*\s*\{(([^{}#]|\#(\S| )*[^\S ]|\{([^{}#]|\#(\S| )*[^\S ]|\{([^{}#]|\#(\S| )*[^\S ])*\})*\})*([^\S ]|\#(\S| )*[^\S ]))?\s*\"?forward\"?\s+\"?([a-z0-9]+://)?\.(:[0-9]+)?\"?(\s+[^\s#{}/]*/[^\s#{}]*)*\s+\"?([a-z0-9]+://)?\[?([0-9]{1,3}(\.[0-9]{1,3}){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
+      - '^(\s|\#(\S| )*[^\S ]|import\s+[^\s{}#]+)*([^\s{}#,]+(,\s*| +))*\"?(dns://)?\.(:[0-9]+)?\"?((,\s*| +)[^\s{}#,]+)* *(\#(\S| )*[^\S ]|[^\S ])(\s|\#(\S| )*[^\S ]|import\s+[^\s{}#]+)*([^{}#\s]([^{}#]|\#(\S| )*[^\S ]|\{([^{}#]|\#(\S| )*[^\S ]|\{([^{}#]|\#(\S| )*[^\S ])*\})*\})*([^\S ]|\#(\S| )*[^\S ]))?\s*\"?forward\"?\s+\"?([a-z0-9]+://)?\.(:[0-9]+)?\"?(\s+[^\s#{}/]*/[^\s#{}]*)*\s+\"?([a-z0-9]+://)?\[?([0-9]{1,3}(\.[0-9]{1,3}){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
+      - '^(\s|\#(\S| )*[^\S ]|import\s+[^\s{}#]+)*([^\s{}#,]+[,\s]+)*\"?(dns://)?\.(:[0-9]+)?\"?([,\s]+[^\s{}#,]+)*\s*\{(((\s|\#(\S| )*[^\S ])+((([^\s#{}"]|[{}][^\s#])[^\s#]*|\"([^"\\]|\\.)*\"[^\s#]*)|\{((\s|\#(\S| )*[^\S ])+((([^\s#{}"]|[{}][^\s#])[^\s#]*|\"([^"\\]|\\.)*\"[^\s#]*)|\{((\s|\#(\S| )*[^\S ])+(([^\s#{}"]|[{}][^\s#])[^\s#]*|\"([^"\\]|\\.)*\"[^\s#]*))*(\s|\#(\S| )*[^\S ])+\}))*(\s|\#(\S| )*[^\S ])+\}))+(\s|\#(\S| )*[^\S ])*([^\S ]|\#(\S| )*[^\S ]) *|\s+)\"?forward\"?\s+\"?([a-z0-9]+://)?\.(:[0-9]+)?\"?(\s+[^\s#{}/]*/[^\s#{}]*)*\s+\"?([a-z0-9]+://)?\[?([0-9]+(\.[0-9]+){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
+      - '^(\s|\#(\S| )*[^\S ]|import\s+[^\s{}#]+)*([^\s{}#,]+(,\s*| +))*\"?(dns://)?\.(:[0-9]+)?\"?((,\s*| +)[^\s{}#,]+)* *(\#(\S| )*[^\S ]|[^\S ])(\s|\#(\S| )*[^\S ]|import\s+[^\s{}#]+)*(((([^\s#{}]|[{}][^\s#])[^\s#]*|\{((\s|\#(\S| )*[^\S ])+(([^\s#{}]|[{}][^\s#])[^\s#]*|\{((\s|\#(\S| )*[^\S ])+([^\s#{}]|[{}][^\s#])[^\s#]*)*(\s|\#(\S| )*[^\S ])+\}))*(\s|\#(\S| )*[^\S ])+\})(\s|\#(\S| )*[^\S ])+)*(([^\s#{}]|[{}][^\s#])[^\s#]*|\{((\s|\#(\S| )*[^\S ])+(([^\s#{}]|[{}][^\s#])[^\s#]*|\{((\s|\#(\S| )*[^\S ])+([^\s#{}]|[{}][^\s#])[^\s#]*)*(\s|\#(\S| )*[^\S ])+\}))*(\s|\#(\S| )*[^\S ])+\})(\s|\#(\S| )*[^\S ])*([^\S ]|\#(\S| )*[^\S ]) *)?\"?forward\"?\s+\"?([a-z0-9]+://)?\.(:[0-9]+)?\"?(\s+[^\s#{}/]*/[^\s#{}]*)*\s+\"?([a-z0-9]+://)?\[?([0-9]+(\.[0-9]+){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
+      - '^\s*\"?forward\"?\s+\"?([a-z0-9]+://)?[^\s#{}\"]+\"?(\s+(\"?[^\s#{}/\"]*/[^\s#{}]*|\"?([a-z0-9]+://)?\[?[0-9][^\s#{}]*))*\s+\"?([a-z0-9]+://)?\[?(::[fF]{4}:)?((([1-9]|1[1-9]|[2-9][0-9]|10[1-9]|11[0-9]|12[0-689]|1[3-5][0-9]|16[0-8]|17[013-9]|18[0-9]|19[013-9]|2[0-4][0-9]|25[0-5])\.[0-9]{1,3}|100\.([0-9]|[1-5][0-9]|6[0-3]|12[89]|1[3-9][0-9]|2[0-9][0-9])|169\.([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-35-9])|172\.([0-9]|1[0-5]|3[2-9]|[4-9][0-9]|[12][0-9][0-9])|192\.([0-9]|[1-9][0-9]|1[0-57-9][0-9]|16[0-79]|2[0-9][0-9]))(\.[0-9]{1,3}){2}|[23][0-9A-Fa-f]{0,3}:[0-9A-Fa-f]{0,4}:)'
+      - '([^\S ]|\{)\s*\"?forward\"?\s+\"?([a-z0-9]+://)?[^\s#{}\"]+\"?(\s+(\"?[^\s#{}/\"]*/[^\s#{}]*|\"?([a-z0-9]+://)?\[?[0-9][^\s#{}]*))*\s+\"?([a-z0-9]+://)?\[?(::[fF]{4}:)?((([1-9]|1[1-9]|[2-9][0-9]|10[1-9]|11[0-9]|12[0-689]|1[3-5][0-9]|16[0-8]|17[013-9]|18[0-9]|19[013-9]|2[0-4][0-9]|25[0-5])\.[0-9]{1,3}|100\.([0-9]|[1-5][0-9]|6[0-3]|12[89]|1[3-9][0-9]|2[0-9][0-9])|169\.([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-35-9])|172\.([0-9]|1[0-5]|3[2-9]|[4-9][0-9]|[12][0-9][0-9])|192\.([0-9]|[1-9][0-9]|1[0-57-9][0-9]|16[0-79]|2[0-9][0-9]))(\.[0-9]{1,3}){2}|[23][0-9A-Fa-f]{0,3}:[0-9A-Fa-f]{0,4}:)'
+  sel_response_cluster_zone_forward:
+    responseObject.data.Corefile|re:
+      - '^\"?([a-z0-9]+://)?([^\s{}#,\"]*\.)?cluster\.local\.?(:[0-9]+)?\"?((,\s*| +)[^\s{}#,]+)*\s*\{(([^{}]|\{[^{}]*\})*[^\S ])?\s*\"?forward\"?\s+\"?([a-z0-9]+://)?[^\s#{}\"]+\"?(\s+\"?[^\s#{}/\"]*/[^\s#{}]*)*\s+\"?([a-z0-9]+://)?\[?([0-9]+(\.[0-9]+){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
+      - '[\s,\"/\.]cluster\.local\.?(:[0-9]+)?\"?((,\s*| +)[^\s{}#,]+)*\s*\{(([^{}]|\{[^{}]*\})*[^\S ])?\s*\"?forward\"?\s+\"?([a-z0-9]+://)?[^\s#{}\"]+\"?(\s+\"?[^\s#{}/\"]*/[^\s#{}]*)*\s+\"?([a-z0-9]+://)?\[?([0-9]+(\.[0-9]+){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
+      - '([^\S ]|\{)\s*\"?forward\"?\s+\"?([a-z0-9]+://)?([^\s#{}\"]*\.)?cluster\.local\.?(:[0-9]+)?\"?(\s+\"?[^\s#{}/\"]*/[^\s#{}]*)*\s+\"?([a-z0-9]+://)?\[?([0-9]+(\.[0-9]+){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
+  condition: select_dns_configmap_write and (sel_poison_plugin or (sel_poison_hosts and not filter_default_hosts) or sel_env_placeholder or sel_rogue_forward or sel_public_forward or sel_cluster_zone_forward or sel_poison_plugin_raw or (sel_poison_hosts_raw and not filter_default_hosts_raw) or sel_env_placeholder_raw or sel_rogue_forward_raw or sel_public_forward_raw or sel_cluster_zone_forward_raw or sel_response_poison_plugin or (sel_response_poison_hosts and not filter_response_default_hosts) or sel_response_env_placeholder or sel_response_rogue_forward or sel_response_cluster_zone_forward)
 falsepositives:
   - A commented-out rewrite, template or hosts line written as '#<TAB>directive'
-    fires the plugin clause (see the description).
+    in the Corefile string fires the plugin clause (see the description).
+  - A stub zone that forwards to a public resolver by design (a split-horizon zone
+    sent to a provider's public DNS) matches the public-forward clause.
+  - Any write to a DNS ConfigMap whose stored Corefile already holds one of these
+    (responseObject is graded, not the change).
   - A cluster whose legitimate Corefile forwards the root zone to an explicit
     upstream IP (a VPC resolver, a corporate DNS) matches the forward-to-IP clause.
     Baseline your own Corefile and the known DNS operators, and triage the diff.
   - A legitimate rewrite/template/hosts customization (for example a split-horizon or
-    alias). Triage against the actor and the injected target.
+    alias), and a hosts block of a distribution default other than the k3s and
+    minikube ones excluded here. Triage against the actor and the injected target.
+  - A deliberate forward of the cluster zone (or a zone under it) to an IP, for
+    example to a multi-cluster DNS service.
 level: high

@@ -25,14 +25,14 @@ description: |
   events.k8s.io Events. The rule filters that identity's deletecollection only, so
   the same identity deleting a single Event still fires. The namespace delete itself
   is a separate event, made by the actor (verb delete, objectRef.resource
-  namespaces), and this rule does not match it. No shipped rule matches a namespace
-  delete in general: k8s_security_tool_workload_removed.yml matches only the delete
-  of the gatekeeper-system, kyverno and falco namespaces. So deleting a whole
-  namespace to destroy its Events is not detected. A namespace delete is routine
+  namespaces), and this rule does not match it. The low-level hunting rule
+  k8s_namespace_deleted.yml matches that accepted namespace delete (TRR9010
+  Procedure F); k8s_security_tool_workload_removed.yml also matches the delete of
+  the gatekeeper-system, kyverno and falco namespaces. A namespace delete is routine
   (CI preview environments, tenant teardown), and its record does not show why the
-  namespace was deleted; hunt for it by actor and namespace, or correlate it with
-  this identity's other writes. Baseline the system identities and any known
-  event-exporter service accounts by user.username.
+  namespace was deleted, so that rule is for hunting by actor and namespace, and for
+  correlation with this identity's other writes. Baseline the system identities and
+  any known event-exporter service accounts by user.username.
 references:
   - https://attack.mitre.org/techniques/T1070/
   - https://attack.mitre.org/techniques/T1070/004/

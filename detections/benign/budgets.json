@@ -35,6 +35,11 @@
       "max_hits": 12,
       "why": "documented noise: JVM / Python profilers (documented profiler class). Note: auditd comm is the thread name, so a comm allowlist cannot cover JVM-hosted profilers; key on exe."
     },
+    "T1070/k8s_namespace_deleted.yml": {
+      "mode": "enforce",
+      "max_hits": 4,
+      "why": "documented noise: hunting rule by design: CI preview-environment and tenant teardown deletes namespaces (k8s-audit-gitops-ci deployer); baseline those identities."
+    },
     "T1070/k8s_workload_deleted_evidence.yml": {
       "mode": "enforce",
       "max_hits": 75,
@@ -104,11 +109,6 @@
       "mode": "enforce",
       "max_hits": 6,
       "why": "documented noise: a workforce provider for a tenant-specific corporate IdP (Entra ID) created without an attributeCondition; the condition is optional and the tenant issuer already scopes trust. Consider scoping the rule to issuers other than the org's approved IdPs."
-    },
-    "T1199/gcp_workforce_principalset_privileged_binding.yml": {
-      "mode": "enforce",
-      "max_hits": 6,
-      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C6: a grant of any admin role to a group- or attribute-scoped workforce principal set fires (terraform granting roles/container.admin to one IdP group); requiring a whole-pool member would drop TRR9020 Procedure C."
     },
     "T1528/entra_device_code_authentication.yml": {
       "mode": "enforce",

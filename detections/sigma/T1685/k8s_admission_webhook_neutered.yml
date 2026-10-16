@@ -3,9 +3,11 @@ id: 57dd77f3-483c-43df-83fd-e28c9c361eda
 status: experimental
 description: |
   Detects an admission webhook configuration edited in place so it no longer
-  protects the cluster, by inspecting the request body (requestObject, which needs
-  audit level Request or higher). This is the TRR9008 severity layer on top of the
-  chokepoint (k8s_admission_webhook_disabled.yml): the chokepoint flags every
+  protects the cluster, by inspecting the request body (requestObject, audit level
+  Request or higher) and the stored object after the write (responseObject, level
+  RequestResponse, which the shipped policy records for an admissionregistration
+  update or patch). This is the TRR9008 severity layer on top of the chokepoint
+  (k8s_admission_webhook_disabled.yml): the chokepoint flags every
   admissionregistration write, this rule picks out the ones that disarm the
   webhook. It matches an update or patch whose body:
 
@@ -14,55 +16,91 @@ description: |
     - sets an empty rules list, or deletes it (the webhook never fires). A patch
       body is logged raw and keeps "rules": [] or, for a strategic merge patch
       (the kubectl patch default), "rules": null. An update (PUT, kubectl
-      replace) is logged as the decoded, defaulted object re-encoded in Go field
-      order; rules is omitempty, so an emptied list leaves no rules key and
-      clientConfig is followed directly by the defaulted failurePolicy;
-    - adds a matchConditions CEL expression that is the literal false;
+      replace) is logged as the decoded, defaulted object re-encoded; rules is
+      omitempty, so an emptied list leaves no rules key (see Key order below);
+    - adds a matchConditions CEL expression built only from literals (true,
+      false, null, numbers, quoted strings), operators, brackets, 'in' and the
+      standard functions size, int, uint, double, string, bytes, bool, dyn, type,
+      matches, startsWith, endsWith and contains, with blanks between them (also
+      the JSON escapes \n, \t and \r, so a YAML block scalar 'false' + line break
+      matches). Such an expression names no variable (object, oldObject, request,
+      authorizer), so it has the same value for every request: false, 1 == 2,
+      !true and size([]) > 0 are such constants. A constant written in another
+      way (a macro with its own bound variable, such as [1].all(x, x > 1), or a
+      function outside the list) is not matched;
+    - sets a namespaceSelector that requires the kubernetes.io/metadata.name
+      label to be absent or empty (DoesNotExist, a matchLabels value "", or In
+      with only the empty string as values): the API server sets that label to
+      the name of every namespace, so the selector matches no namespace;
     - is a JSON patch (--type=json, logged as the raw operation list in
       requestObject) with one operation that sets /webhooks/N/failurePolicy to
       Ignore, or that removes or empties /webhooks/N/rules; or an operation on
       the whole webhooks list, a whole webhook or its matchConditions whose value
-      fails open or adds the literal false; or an operation on the whole list or
-      a whole webhook that leaves no non-empty rules list (a webhook without
+      fails open or adds a constant condition; or an operation on the whole list
+      or a whole webhook that leaves no non-empty rules list (a webhook without
       rules, or a remove of the webhook).
+
+  Or whose stored object (responseObject) has a webhook without rules, a constant
+  matchCondition or a namespaceSelector that matches no namespace, whatever the
+  request shape that made it so. This covers a JSON merge patch (--type=merge)
+  that replaces the webhooks list with a webhook that has no rules key (its body
+  looks like a strategic merge patch that leaves rules unchanged, and the patch
+  type is not logged), and a JSON patch that replaces the whole list, keeping
+  rules on one webhook and dropping them from another.
 
   The body matches use |contains or |re against the JSON-serialized arrays and
   accept both the spaced (request-body) and compact (Go) forms.
 
-  The rule grades the submitted state, not a transition: no old value is logged.
-  Policy engines that reconcile their own webhooks with a full-object update
-  rewrite a webhook that fails open by design (the Gatekeeper cert-controller
-  rotating its CA, Kyverno's validate.kyverno.svc-ignore). Those writes are
-  filtered only for the engine's own service account (gatekeeper-system:
-  gatekeeper-admin, kyverno:kyverno-admission-controller) on its own
-  configurations. An adversary who holds one of those tokens can neuter that
-  engine's webhook unseen by this rule; the chokepoint still records the write.
-  Install the engines in another namespace and the filter must follow.
+  Key order: a webhook without rules has no rules key, so the rule reads it from
+  the keys around the gap. The API server encodes in Go field order (name,
+  clientConfig, rules, failurePolicy, ...): there, name and clientConfig followed
+  directly by failurePolicy. A log pipeline that re-encodes with sorted keys
+  (..., name, namespaceSelector, objectSelector, reinvocationPolicy, rules,
+  sideEffects, ...): there, a validating webhook's name, namespaceSelector and
+  objectSelector followed directly by sideEffects, or a mutating webhook's
+  reinvocationPolicy followed directly by sideEffects. Each test needs the context
+  of its own order, so a webhook that keeps its rules matches neither in either
+  order. Every key named here is always set in a stored or re-encoded webhook
+  (defaulted). A pipeline that delivers the keys in some third order is not
+  covered.
 
-  Blind spots: a namespaceSelector or objectSelector that matches nothing, and a
-  matchConditions expression that is always false but not the literal false,
-  cannot be told from a legitimate narrowing without the cluster's labels. A JSON
-  merge patch (--type=merge) that replaces the webhooks list with a webhook that
-  has no rules key cannot be told from a strategic merge patch that leaves rules
-  unchanged (the patch type is not logged), and a JSON patch that replaces the
-  whole list keeps rules for one webhook while it drops them for another is
-  missed. Triage those from the chokepoint.
+  The rule grades a state, not a transition: no old value is logged, and the
+  earlier state of the object is only in the log of its previous write, at any
+  time before. So a write to a configuration that already holds a disarmed
+  webhook (for example a caBundle rotation) fires again; such a configuration is
+  a finding by itself. Policy engines that reconcile their own webhooks with a
+  full-object update rewrite a webhook that fails open by design (the Gatekeeper
+  cert-controller rotating its CA, Kyverno's validate.kyverno.svc-ignore). Those
+  writes are filtered only for the engine's own service account
+  (gatekeeper-system:gatekeeper-admin, kyverno:kyverno-admission-controller) on
+  its own configurations. An adversary who holds one of those tokens can neuter
+  that engine's webhook unseen by this rule; the chokepoint still records the
+  write. Install the engines in another namespace and the filter must follow.
 
-  Key order: the update branch (clientConfig followed directly by
-  failurePolicy) assumes the API server's Go field order reaches the SIEM
-  unchanged. A log pipeline that re-encodes the event with sorted keys puts
-  clientConfig next to failurePolicy in every webhook, so every full-object
-  update then fires. Disable that branch, or keep the original field order, on
-  such a pipeline.
+  Blind spots: a namespaceSelector or objectSelector on any other label that
+  matches nothing (for example kubernetes.io/metadata.name In a list of names that
+  no namespace has), and a matchConditions expression that reads a variable but
+  never matches in practice (request.name == 'no-such-object'), cannot be told from
+  a legitimate narrowing: whether they match depends on the labels and requests of
+  the cluster, which this record does not carry. A selector or condition that
+  contradicts itself (the same key with Exists and DoesNotExist, or In and NotIn of
+  the same value; request.name == 'a' && request.name == 'b') matches nothing on
+  any cluster, but the rule does not detect it either: comparing two keys or
+  values for equality needs a back-reference, which the portable regex subset
+  does not have.
+  At Request level only (no responseObject), the merge-patch and JSON-patch list
+  replacements above, and a JSON patch that sets such a selector, are seen by the
+  chokepoint only.
 
   Metadata level cannot feed this rule: the webhooks list lives only in
-  requestObject. Without Request level a neuter and a benign edit are
-  indistinguishable.
+  requestObject and responseObject. Without Request level a neuter and a benign
+  edit are indistinguishable.
 references:
   - https://attack.mitre.org/techniques/T1685/
   - https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/
 author: det-eng
 date: 2026/10/12
+modified: 2026/10/16
 tags:
   - attack.defense-impairment
   - attack.t1685
@@ -83,17 +121,62 @@ detection:
       - '"rules":[]'
       - '"rules": null'
       - '"rules":null'
-  # update (PUT) logs the decoded, defaulted object re-encoded. Webhook fields
-  # encode in Go field order (name, clientConfig, rules, failurePolicy), rules is
-  # omitempty and failurePolicy is always defaulted, so an emptied rules list
-  # shows as clientConfig followed directly by failurePolicy.
+  # update (PUT) logs the decoded, defaulted object re-encoded, and responseObject
+  # (RequestResponse) is the stored object after any update or patch. rules is
+  # omitempty, so a webhook without rules has no rules key; every other key below is
+  # always set (defaulted). One value per key order a log pipeline can deliver:
+  #   Go field order (the API server's encoding: name, clientConfig, rules,
+  #   failurePolicy, ...): name, then clientConfig followed directly by failurePolicy;
+  #   sorted keys (a pipeline that re-encodes with sorted keys: ..., name,
+  #   namespaceSelector, objectSelector, reinvocationPolicy, rules, sideEffects, ...):
+  #   a validating webhook's name, namespaceSelector and objectSelector followed
+  #   directly by sideEffects, or a mutating webhook's reinvocationPolicy followed
+  #   directly by sideEffects.
+  # Each value needs the context of its own order, so a webhook with rules matches
+  # none of them in either order (name is never directly before clientConfig in
+  # sorted order, nor before namespaceSelector in Go order).
   sel_update:
     verb: 'update'
   sel_rules_omitted:
-    requestObject.webhooks|re: '\"clientConfig\":\s*\{([^{}]|\{[^{}]*\})*\},\s*\"failurePolicy\"'
-  # A matchConditions CEL expression that is the literal false never matches.
+    requestObject.webhooks|re:
+      - '\"name\"\s*:\s*\"[^"]*\"\s*,\s*\"clientConfig\"\s*:\s*\{([^{}]|\{[^{}]*\})*\}\s*,\s*\"failurePolicy\"'
+      - '\"name\"\s*:\s*\"[^"]*\"\s*,\s*\"namespaceSelector\"\s*:\s*\{([^{}]|\{[^{}]*\})*\}\s*,\s*\"objectSelector\"\s*:\s*\{([^{}]|\{[^{}]*\})*\}\s*,\s*\"sideEffects\"'
+      - '\"reinvocationPolicy\"\s*:\s*\"[^"]*\"\s*,\s*\"sideEffects\"'
+  sel_response_rules_omitted:
+    responseObject.webhooks|re:
+      - '\"name\"\s*:\s*\"[^"]*\"\s*,\s*\"clientConfig\"\s*:\s*\{([^{}]|\{[^{}]*\})*\}\s*,\s*\"failurePolicy\"'
+      - '\"name\"\s*:\s*\"[^"]*\"\s*,\s*\"namespaceSelector\"\s*:\s*\{([^{}]|\{[^{}]*\})*\}\s*,\s*\"objectSelector\"\s*:\s*\{([^{}]|\{[^{}]*\})*\}\s*,\s*\"sideEffects\"'
+      - '\"reinvocationPolicy\"\s*:\s*\"[^"]*\"\s*,\s*\"sideEffects\"'
+  # A matchConditions CEL expression that names no variable (object, oldObject,
+  # request, authorizer) is a constant: its value is the same for every request. A
+  # constant false never matches, so the webhook skips every request; a constant
+  # true is a no-op that no one needs. Tokens: blanks (also the JSON escapes \n, \r
+  # and \t), digits, operators, brackets, true, false, null, in, a fixed list of
+  # standard functions (none of them is a variable), and quoted string literals. At
+  # least one token is a literal.
   sel_matchcondition_false:
-    requestObject.webhooks|re: '\"expression\":\s*\"\s*false\s*\"'
+    requestObject.webhooks|re: '\"expression\"\s*:\s*\"(\s|\\[nrt]|[0-9.+*/%<>=!&|(),?:\[\]\-]|true|false|null|in|size|int|uint|double|string|bytes|bool|dyn|type|matches|startsWith|endsWith|contains|''[^''\"\\]*''|\\\"[^\"\\]*\\\")*(true|false|null|[0-9]|''[^''\"\\]*''|\\\"[^\"\\]*\\\")(\s|\\[nrt]|[0-9.+*/%<>=!&|(),?:\[\]\-]|true|false|null|in|size|int|uint|double|string|bytes|bool|dyn|type|matches|startsWith|endsWith|contains|''[^''\"\\]*''|\\\"[^\"\\]*\\\")*\"'
+  # A namespaceSelector that requires the kubernetes.io/metadata.name label to be
+  # absent or empty matches no namespace: the API server sets that label to the
+  # namespace's name on every namespace. The webhook then skips every namespaced
+  # object. Value 1: DoesNotExist, or a matchLabels value "". Values 2 and 3: one
+  # matchExpressions entry with that key, the operator In and values that are only
+  # empty strings, its three keys in any order (split in two to stay well inside
+  # Lucene's determinization budget).
+  sel_selector_never_matches:
+    requestObject.webhooks|re:
+      - '\"namespaceSelector\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*(\"kubernetes\.io/metadata\.name\"[^{}]*\"DoesNotExist\"|\"DoesNotExist\"[^{}]*\"kubernetes\.io/metadata\.name\"|\"kubernetes\.io/metadata\.name\"\s*:\s*\"\")'
+      - '\"namespaceSelector\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*(\"kubernetes\.io/metadata\.name\"[^{}]*\"In\"[^{}]*\[\s*\"\"(\s*,\s*\"\")*\s*\]|\"kubernetes\.io/metadata\.name\"[^{}]*\[\s*\"\"(\s*,\s*\"\")*\s*\][^{}]*\"In\"|\"In\"[^{}]*\"kubernetes\.io/metadata\.name\"[^{}]*\[\s*\"\"(\s*,\s*\"\")*\s*\])'
+      - '\"namespaceSelector\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*(\"In\"[^{}]*\[\s*\"\"(\s*,\s*\"\")*\s*\][^{}]*\"kubernetes\.io/metadata\.name\"|\[\s*\"\"(\s*,\s*\"\")*\s*\][^{}]*\"kubernetes\.io/metadata\.name\"[^{}]*\"In\"|\[\s*\"\"(\s*,\s*\"\")*\s*\][^{}]*\"In\"[^{}]*\"kubernetes\.io/metadata\.name\")'
+  # The stored object after the write (responseObject, RequestResponse level): a
+  # constant matchCondition or a never-matching namespaceSelector, whatever the
+  # patch type that set it.
+  sel_response_never_matches:
+    responseObject.webhooks|re:
+      - '\"expression\"\s*:\s*\"(\s|\\[nrt]|[0-9.+*/%<>=!&|(),?:\[\]\-]|true|false|null|in|size|int|uint|double|string|bytes|bool|dyn|type|matches|startsWith|endsWith|contains|''[^''\"\\]*''|\\\"[^\"\\]*\\\")*(true|false|null|[0-9]|''[^''\"\\]*''|\\\"[^\"\\]*\\\")(\s|\\[nrt]|[0-9.+*/%<>=!&|(),?:\[\]\-]|true|false|null|in|size|int|uint|double|string|bytes|bool|dyn|type|matches|startsWith|endsWith|contains|''[^''\"\\]*''|\\\"[^\"\\]*\\\")*\"'
+      - '\"namespaceSelector\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*(\"kubernetes\.io/metadata\.name\"[^{}]*\"DoesNotExist\"|\"DoesNotExist\"[^{}]*\"kubernetes\.io/metadata\.name\"|\"kubernetes\.io/metadata\.name\"\s*:\s*\"\")'
+      - '\"namespaceSelector\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*(\"kubernetes\.io/metadata\.name\"[^{}]*\"In\"[^{}]*\[\s*\"\"(\s*,\s*\"\")*\s*\]|\"kubernetes\.io/metadata\.name\"[^{}]*\[\s*\"\"(\s*,\s*\"\")*\s*\][^{}]*\"In\"|\"In\"[^{}]*\"kubernetes\.io/metadata\.name\"[^{}]*\[\s*\"\"(\s*,\s*\"\")*\s*\])'
+      - '\"namespaceSelector\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*(\"In\"[^{}]*\[\s*\"\"(\s*,\s*\"\")*\s*\][^{}]*\"kubernetes\.io/metadata\.name\"|\[\s*\"\"(\s*,\s*\"\")*\s*\][^{}]*\"kubernetes\.io/metadata\.name\"[^{}]*\"In\"|\[\s*\"\"(\s*,\s*\"\")*\s*\][^{}]*\"In\"[^{}]*\"kubernetes\.io/metadata\.name\")'
   # A JSON patch (--type=json) logs requestObject as the raw operation list. One
   # operation that sets a webhook's failurePolicy to Ignore, or that removes or
   # empties a webhook's rules list.
@@ -111,7 +194,9 @@ detection:
   sel_jsonpatch_matchconditions:
     requestObject|re: '\"path\":\s*\"/webhooks/([0-9]+|-)/matchConditions(/([0-9]+|-))?\"'
   sel_jsonpatch_neuter_value:
-    requestObject|re: '\"failurePolicy\":\s*\"Ignore\"|\"expression\":\s*\"\s*false\s*\"'
+    requestObject|re:
+      - '\"failurePolicy\":\s*\"Ignore\"'
+      - '\"expression\"\s*:\s*\"(\s|\\[nrt]|[0-9.+*/%<>=!&|(),?:\[\]\-]|true|false|null|in|size|int|uint|double|string|bytes|bool|dyn|type|matches|startsWith|endsWith|contains|''[^''\"\\]*''|\\\"[^\"\\]*\\\")*(true|false|null|[0-9]|''[^''\"\\]*''|\\\"[^\"\\]*\\\")(\s|\\[nrt]|[0-9.+*/%<>=!&|(),?:\[\]\-]|true|false|null|in|size|int|uint|double|string|bytes|bool|dyn|type|matches|startsWith|endsWith|contains|''[^''\"\\]*''|\\\"[^\"\\]*\\\")*\"'
   sel_jsonpatch_rules_kept:
     requestObject|re: '\"rules\":\s*\[\s*\{'
   # Policy engines that reconcile their own fail-open webhooks with a full-object
@@ -126,7 +211,7 @@ detection:
         - 'gatekeeper-mutating-webhook-configuration'
     - user.username: 'system:serviceaccount:kyverno:kyverno-admission-controller'
       objectRef.name|startswith: 'kyverno-'
-  condition: select_adm_modify and (sel_neuter or (sel_update and sel_rules_omitted) or sel_matchcondition_false or sel_jsonpatch_fail_open or sel_jsonpatch_rules_cleared or ((sel_jsonpatch_whole_webhook or sel_jsonpatch_matchconditions) and sel_jsonpatch_neuter_value) or (sel_jsonpatch_whole_webhook and not sel_jsonpatch_rules_kept)) and not filter_policy_engine_reconcile
+  condition: select_adm_modify and (sel_neuter or (sel_update and sel_rules_omitted) or sel_response_rules_omitted or sel_matchcondition_false or sel_selector_never_matches or sel_response_never_matches or sel_jsonpatch_fail_open or sel_jsonpatch_rules_cleared or ((sel_jsonpatch_whole_webhook or sel_jsonpatch_matchconditions) and sel_jsonpatch_neuter_value) or (sel_jsonpatch_whole_webhook and not sel_jsonpatch_rules_kept)) and not filter_policy_engine_reconcile
 falsepositives:
   - An operator deliberately setting failurePolicy to Ignore during maintenance,
     or a webhook with legitimately empty rules. Triage every hit against the actor
@@ -134,7 +219,11 @@ falsepositives:
   - A full-object rewrite (kubectl replace, helm upgrade --force) of a webhook
     that already fails open by design, by an identity other than the policy
     engine's own reconciler.
-  - Every full-object update (for example cert-manager's cainjector rotating a
-    caBundle) when the log pipeline sorts JSON keys; see Key order above.
+  - A matchConditions expression that is a constant true (a no-op, such as
+    size([]) == 0) fires like a constant false, because the rule does not evaluate
+    the constant.
+  - Any update or patch of a configuration that already holds a webhook without
+    rules, a constant condition or a never-matching namespaceSelector (the stored
+    object is graded, not the change).
   - A JSON patch that removes an obsolete webhook from a configuration.
 level: high

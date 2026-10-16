@@ -72,7 +72,8 @@ depends on which flow the pool uses.
   (`eventCategory` `Data`, `managementEvent` `false`). They are **off by default** and
   billable. They appear only when an advanced event selector with `eventCategory=Data`
   and `resources.type=AWS::Cognito::IdentityPool` is configured on the trail. Without
-  that selector, the enhanced-flow issuance produces **no log at all**.
+  that selector, the enhanced-flow issuance has **no documented log** (Cognito's
+  background STS call is not documented in the customer trail; see Procedure A).
 - **AWS STS (`sts.amazonaws.com`)** — `AssumeRoleWithWebIdentity` (classic flow) and
   the downstream `AssumedRole` session actions are **management events**, present in
   the **default trail**. These survive when the Cognito data events are off.
@@ -128,10 +129,15 @@ as correlated precursors, not as issuance.
 
 ### Classic flow is the more observable flow
 
-In the **enhanced (simplified)** flow — the default — Cognito performs the internal
-`sts:AssumeRole` with an automatic scope-down session policy **as its own service
-principal**. That call is not in the customer trail. Only the two Cognito data events
-record the enhanced-flow issuance, and they are off by default.
+In the **enhanced (simplified)** flow — the default — Cognito makes an
+`AssumeRoleWithWebIdentity` request "in the background" (Cognito Developer Guide, "IAM
+roles"). For an unauthenticated identity that request carries a `policy` parameter (an
+inline scope-down session policy) and a `PolicyArns` parameter (the AWS managed policy
+`AmazonCognitoUnauthenticatedIdentities`). No AWS document that this report found says
+whether that background call is delivered to the customer's trail, and no capture in
+this repository shows it (**unverified**). This report therefore treats the two Cognito
+data events, which are off by default, as the only documented record of enhanced-flow
+issuance.
 
 In the **classic (basic)** flow — only available when `AllowClassicFlow=true` — the
 client calls `sts:AssumeRoleWithWebIdentity` **directly**. That is a management event
@@ -182,14 +188,15 @@ STS management event (B), or the downstream `AssumedRole` session (C).
 
 The client holds zero AWS credentials. It calls `GetId` (mints a guest `identityId`,
 no `logins`) then `GetCredentialsForIdentity` (the `identityId`, no `logins`). Cognito
-performs the internal `sts:AssumeRole` with an automatic scope-down policy and returns
-temporary credentials. This is the default flow.
+makes a background `AssumeRoleWithWebIdentity` request with an automatic scope-down
+session policy and returns temporary credentials. This is the default flow.
 
 - **Prerequisites:** a pool with `AllowUnauthenticatedIdentities=true`; the public pool
   ID.
-- **Mechanics:** the only CloudTrail evidence is the two Cognito Identity **data
-  events**, each with `userIdentity` `{"type":"Unknown"}`. The internal `sts:AssumeRole`
-  is a Cognito service-principal call and is not in the customer trail.
+- **Mechanics:** the documented CloudTrail evidence is the two Cognito Identity **data
+  events**, each with `userIdentity` `{"type":"Unknown"}`. Whether Cognito's background
+  `AssumeRoleWithWebIdentity` reaches the customer trail is not documented (unverified;
+  see the C12 note under Blind spots).
 - **Impact:** the attacker holds a guest session for the unauthenticated role.
 - **Tools on this path:** any unsigned HTTP client, the AWS CLI, boto3, Amplify.
 
@@ -203,7 +210,7 @@ Source: [`ddms/trr9016_aws_a.json`](ddms/trr9016_aws_a.json) (Arrows app format)
 (`eventSource` `cognito-identity.amazonaws.com`, `userIdentity.type` `Unknown`,
 `requestParameters.logins` **absent**, pool in `resources[].ARN`). This event is a
 CloudTrail **data event, off by default**. When the account does not enable Cognito
-data events, this procedure is a **detection gap** — issuance is invisible and
+data events, this procedure is a **detection gap** — issuance has no documented record and
 detection falls back to Procedure C or the issued `accessKeyId`. No committed rule keys
 on this surface; it is documented, because the guest-vs-authenticated discriminator
 (`logins` absent) needs a field-mapping pipeline to express.
@@ -357,7 +364,7 @@ and the enhanced-flow data event is documented as a gap.
 **Telemetry requirement.** A CloudTrail trail (or Event history) capturing management
 events covers Procedures B, C, and D. Procedure A additionally requires an advanced
 event selector with `eventCategory=Data` and `resources.type=AWS::Cognito::IdentityPool`;
-without it, enhanced-flow issuance is invisible.
+without it, enhanced-flow issuance has no documented record.
 
 **Strategy 1 — unauthenticated use (covers B and C).**
 Match CloudTrail events where either (a) `userIdentity.type` is `AssumedRole` and
@@ -393,7 +400,44 @@ marker and the Cognito provenance, not on the shape alone.
   absent — a map test that needs a field-mapping pipeline. Without data events,
   detection falls back to Strategy 1.
 - **Renamed unauth role** defeats the `Unauth` marker on both the downstream and
-  classic-flow branches; baseline and add the site-specific role name.
+  classic-flow branches; baseline and add the site-specific role name (RULE_DEFECTS.md
+  C12). What the documents confirm, and what they do not:
+  - *Confirmed (documents).* The guest-versus-signed-in fact is the `amr` claim of the
+    Cognito token. The classic-flow `AssumeRoleWithWebIdentity` record holds `roleArn` and
+    `roleSessionName` in the request and `provider`, `audience`,
+    `subjectFromWebIdentityToken` and the credentials in the response (IAM User Guide,
+    CloudTrail example for `AssumeRoleWithWebIdentity`); none of these is the `amr`
+    claim, and Cognito gives a guest and a signed-in identity of the same pool the same
+    issuer, audience (the pool) and subject form (an identity ID). `GetId` and
+    `GetCredentialsForIdentity` with no `logins` separate them, but they are Cognito data
+    events (off by default), and the signed-in form is a map whose keys are provider
+    names, which Sigma cannot test for "any key" without a field-mapping pipeline.
+  - *Not confirmed (argued from the documents' silence).* The downstream session's
+    `webIdFederationData.attributes` is documented only as "the application ID and user
+    ID as reported by the provider" (CloudTrail `userIdentity` reference). The fixtures
+    here use `attributes: {}`, which is synthetic: no recorded Cognito session shows what
+    the field holds for a guest or for a signed-in identity.
+  - *Not confirmed (a possible marker).* In the enhanced flow, Cognito's background
+    `AssumeRoleWithWebIdentity` for a guest carries a `policy` (the inline scope-down
+    session policy) and `PolicyArns` with the AWS managed policy
+    `AmazonCognitoUnauthenticatedIdentities` (Cognito Developer Guide, "IAM roles" > the
+    scope-down policy; awsdocs `amazon-cognito-developer-guide` archive, `iam-roles.md`).
+    The guide describes that policy for unauthenticated identities only. If the background call is delivered to
+    the customer trail with those request parameters, `policyArns` naming
+    `AmazonCognitoUnauthenticatedIdentities` is a guest marker that does not depend on the
+    role name. No AWS document found for this report says whether the call reaches the
+    customer trail, or which request parameters CloudTrail keeps for it.
+  - *Remaining confirmation.* A live capture of one guest issuance and one signed-in
+    issuance, in the enhanced flow and in the classic flow, with a management-event trail
+    (and, for comparison, the Cognito data events) on. It answers both open points: what
+    `attributes` holds, and whether the background STS call is in the trail. Until then,
+    the rule keeps the role-name marker and its waiver.
+  - *Enrichment route.* The guest role's ARN is in the configuration record that maps it
+    (`SetIdentityPoolRoles` with its `unauthenticated` role, or an IAM `CreateRole` /
+    `UpdateAssumeRolePolicy` whose trust policy carries `cognito-identity.amazonaws.com:amr`
+    `unauthenticated`, Cognito Developer Guide, "IAM roles"), which a pipeline can keep as
+    a lookup of guest roles; that state lives outside one event, often months before the
+    use.
 - **Legitimate guest access** matches Strategy 1 wherever a pool genuinely offers
   guests; pair with a first-seen overlay (new pool, new source IP/ASN, unexpected
   `userAgent`) before alerting.
