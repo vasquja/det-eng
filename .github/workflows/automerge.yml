@@ -177,17 +177,16 @@ name: automerge
 #
 # PLATFORM BACKSTOP: anyone with write access can still press merge, enable auto-merge
 # or call the merge API, and an agent acting with a human's token can approve as that
-# human. The `main` ruleset is what makes the sign-off hold for every merge path
-# (detections/benign/README.md, "Branch protection: what binds a manual merge"): a
-# .github/CODEOWNERS file naming humans for the non-content paths above, "Require
-# review from Code Owners", "Require approval of the most recent reviewable push", the
-# validator and detection-quality checks as required status checks, and no bypass
-# actors. Keep the required approval count at 0: 1 or more makes every PR wait for a
-# human, content included, so GitHub's auto-merge of a content-only PR would wait for
-# an approval and content-only auto-merge ends. With 0, the Code Owner review binds
-# only the code-owned (non-content) paths. Today only the validator checks and the
-# no-bypass setting are in place (see that README). This rail is the second layer, not
-# a substitute for that.
+# human. The `main` ruleset decides what binds every merge path (detections/benign/
+# README.md, "Branch protection: what binds a manual merge"). With one maintainer, who
+# authors the agent's PRs and so cannot approve them, this rail never enables
+# auto-merge for a non-content PR: the maintainer's own merge is the sign-off, and the
+# ruleset needs only the validator and detection-quality checks as required status
+# checks, no required approval and no bypass actors. With a second approver (the agent
+# opening PRs from its own account), add .github/CODEOWNERS for the non-content paths,
+# "Require review from Code Owners" and "Require approval of the most recent reviewable
+# push", and keep the required approval count at 0 (1 or more ends content-only
+# auto-merge). This rail is the second layer, not a substitute for the ruleset.
 #
 # COVERAGE -- the heavy validators (apiserver / cloud / k8s / staticpod) ALWAYS report
 # a status on a PR: each one triggers on every PR, a cheap `changes` job decides from
