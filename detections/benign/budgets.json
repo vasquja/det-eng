@@ -1,0 +1,253 @@
+{
+  "_doc": "Per-rule false-positive budgets for detections/score_benign.py. A rule not listed uses `default`: enforce at 0 hits, so a new rule must stay silent on the benign corpus or a human approves a budget for it. mode `enforce`: an overrun fails CI (score_benign.py --enforce). mode `shadow`: an overrun is only a CI warning (for a rule a human accepts while its corpus is not yet trusted; no entry uses it today). `max_hits` is the most benign hits the rule may raise over the whole committed corpus for its logsource: set it to the most hits over the committed seed and ten reseeds of every synthetic slice (`score_benign.py --reseeds 10`, the 'most' column), not one seed's count, so a routine version bump of a slice does not trip it. Optional `max_rate_per_10k` caps the rate. Every entry needs a `why` that starts 'documented noise:' (a deliberately generic or hunting rule, or a falsepositives class the rule names) or 'rule defect, tracked in detections/RULE_DEFECTS.md <ID>:' (an entry of that tracker); score_benign.py fails any other. Raising a budget, or moving a rule to shadow, is a human decision: this file is a protected path that needs a human approval before merge. `unscored` maps a rule that no benign slice reads (no slice with its product and service) to the reason; --check/--enforce fail for an unscored rule not listed there, and for a listed rule that is scored now.",
+  "default": {
+    "mode": "enforce",
+    "max_hits": 0
+  },
+  "rules": {
+    "T1014/bpf_prog_load.yml": {
+      "mode": "enforce",
+      "max_hits": 17,
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md L5: stock runc (cgroup-v2 device filter on every container create) and snap-confine (device-cgroup program on snap launches) are not in bpf_processes; the bcc (execsnoop-bpfcc, python3) hits are documented observability noise."
+    },
+    "T1040/afinet_raw_socket.yml": {
+      "mode": "enforce",
+      "max_hits": 13,
+      "why": "documented noise: mtr's raw ICMP / IPPROTO_RAW sockets, named in the rule's falsepositives (extend allowed_processes per site)."
+    },
+    "T1053.007/k8s_cri_job_pod.yml": {
+      "mode": "enforce",
+      "max_hits": 51,
+      "why": "documented noise: low hunting rule: every CronJob child, Helm hook and manual Job pod matches by design."
+    },
+    "T1053.007/k8s_job_create.yml": {
+      "mode": "enforce",
+      "max_hits": 37,
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md K7: filter_controllers misses kube-system ttl-after-finished-controller and generic-garbage-collector deletes; the rest is documented GitOps/CI Job deployment."
+    },
+    "T1068/dirtypipe_splice_readonly.yml": {
+      "mode": "enforce",
+      "max_hits": 18,
+      "why": "documented noise: Go TCP proxies (docker-proxy) take a fresh pipe2 and splice through it on a new connection, the zero-copy proxy class the rule's falsepositives name; baseline by exe."
+    },
+    "T1068/keyring_add_key_burst.yml": {
+      "mode": "enforce",
+      "max_hits": 5,
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md L7: described as a burst detector but fires on a single add_key; cryptsetup / systemd-cryptsetup hand LUKS2 volume keys to dm-crypt via add_key('logon')."
+    },
+    "T1068/perf_event_open_non_profiler.yml": {
+      "mode": "enforce",
+      "max_hits": 12,
+      "why": "documented noise: JVM / Python profilers (documented profiler class). Note: auditd comm is the thread name, so a comm allowlist cannot cover JVM-hosted profilers; key on exe."
+    },
+    "T1070/k8s_events_deleted.yml": {
+      "mode": "enforce",
+      "max_hits": 8,
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md K8: the kube-system namespace-controller deletecollections core/v1 and events.k8s.io Events in every namespace being deleted; the rule's falsepositives wrongly say kube-system controllers never delete Events. Filter or baseline that identity's deletecollection."
+    },
+    "T1070/k8s_workload_deleted_evidence.yml": {
+      "mode": "enforce",
+      "max_hits": 75,
+      "why": "documented noise: low correlation anchor: routine pod and Job teardown by controllers, kubelets and Helm."
+    },
+    "T1078.004/aws_cognito_identity_pool_unauth_enabled.yml": {
+      "mode": "enforce",
+      "max_hits": 5,
+      "why": "documented noise: an analytics identity pool created with guest access on purpose (Amplify Analytics default), named in the rule's falsepositives."
+    },
+    "T1078.004/aws_cognito_unauthenticated_identity_use.yml": {
+      "mode": "enforce",
+      "max_hits": 39,
+      "why": "documented noise: legitimate Cognito guest access (Amplify Analytics/Pinpoint endpoint registration and public-content reads by the pool's unauthenticated role), named in the rule's own falsepositives; allowlist intended guest pools."
+    },
+    "T1078.004/aws_leaked_access_key_recon.yml": {
+      "mode": "enforce",
+      "max_hits": 283,
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C2: the id_aida fallback (principalId AIDA) matches IAM-user TEMPORARY credentials too, so MFA (GetSessionToken) and console sessions fire; the remaining off-egress long-term-key use by developers, legacy CI and a SaaS key is the documented baseline-before-alerting noise."
+    },
+    "T1078.004/entra_service_principal_federated_credential_signin.yml": {
+      "mode": "enforce",
+      "max_hits": 55,
+      "why": "documented noise: funnel rule: approved GitHub Actions workload-identity-federation sign-ins; pair with a first-seen overlay as documented."
+    },
+    "T1098.001/aws_github_oidc_role_trust_abuse.yml": {
+      "mode": "enforce",
+      "max_hits": 13,
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C5: a wildcard inside the ref of a pinned owner/repo (refs/tags/v*) fires at high though no fork or other repo can match; the repo:<org>/<repo>:* trusts are GitHub's own documented example, a hygiene finding by design."
+    },
+    "T1098.001/azure_managed_identity_federated_credential_backdoor.yml": {
+      "mode": "enforce",
+      "max_hits": 36,
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C1: the operationName match is case-sensitive, so it misses the UPPERCASE form storage / Event Hub exports carry (it would miss the attack there too); the hits are AKS workload-identity onboarding in the ARM-cased form. Broad by design otherwise (any MI FIC write); every ARM write logs Start and Success, so each operation counts twice."
+    },
+    "T1098.001/gcp_workload_identity_federation_sa_binding.yml": {
+      "mode": "enforce",
+      "max_hits": 11,
+      "why": "documented noise: Google's documented GitHub WIF onboarding (per-repo attribute.repository principalSets); consider down-ranking subject-scoped members vs whole-pool members."
+    },
+    "T1098.003/gcp_public_iam_member_grant.yml": {
+      "mode": "enforce",
+      "max_hits": 9,
+      "why": "documented noise: an intentionally public Cloud Run marketing site (allUsers run.invoker), documented: allowlist by resourceName and role."
+    },
+    "T1098.006/k8s_rbac_privileged_grant.yml": {
+      "mode": "enforce",
+      "max_hits": 12,
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md K3: the kube-system clusterrole-aggregation-controller re-applying the built-in edit/admin ClusterRoles (which carry impersonate) fires; tenant admin/edit bindings by GitOps are documented."
+    },
+    "T1098.006/k8s_rbac_write.yml": {
+      "mode": "enforce",
+      "max_hits": 35,
+      "why": "documented noise: generic RBAC-write chokepoint: GitOps reconciles and the aggregation controller."
+    },
+    "T1134/k8s_impersonation.yml": {
+      "mode": "enforce",
+      "max_hits": 69,
+      "why": "documented noise: access gateway (Teleport) and admins verifying RBAC; baseline by the real actor."
+    },
+    "T1134/k8s_impersonation_privileged.yml": {
+      "mode": "enforce",
+      "max_hits": 7,
+      "why": "documented noise: break-glass gateway role mapped to system:masters, documented in falsepositives."
+    },
+    "T1199/gcp_workforce_pool_provider_no_attribute_condition.yml": {
+      "mode": "enforce",
+      "max_hits": 6,
+      "why": "documented noise: a workforce provider for a tenant-specific corporate IdP (Entra ID) created without an attributeCondition; the condition is optional and the tenant issuer already scopes trust. Consider scoping the rule to issuers other than the org's approved IdPs."
+    },
+    "T1199/gcp_workforce_principalset_privileged_binding.yml": {
+      "mode": "enforce",
+      "max_hits": 6,
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C6: described as privileged role + whole-pool breadth, but the regex never checks breadth, so group-scoped workforce RBAC on any *admin role fires."
+    },
+    "T1528/entra_device_code_authentication.yml": {
+      "mode": "enforce",
+      "max_hits": 8,
+      "why": "documented noise: az login --use-device-code on a headless VM and a Teams Rooms device, both named in falsepositives."
+    },
+    "T1528/entra_illicit_oauth_consent_grant.yml": {
+      "mode": "enforce",
+      "max_hits": 40,
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C4: the bare AllPrincipals token fires on tenant-wide consent to sign-in-only scopes (User.Read openid profile email), contradicting the title and falsepositives; where user consent is disabled every SSO onboarding is AllPrincipals."
+    },
+    "T1537/aws_efs_file_system_policy_made_public.yml": {
+      "mode": "enforce",
+      "max_hits": 10,
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C9: the EFS console policy wizard's Principal '*' conditioned on elasticfilesystem:AccessedViaMountTarget is not recognised by filter_scoped."
+    },
+    "T1537/aws_resource_policy_made_public.yml": {
+      "mode": "enforce",
+      "max_hits": 36,
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md C3: the whole policy is matched as text, so a named Allow plus the standard DenyInsecureTransport statement (Deny, Principal '*') reads as public; filter_scoped also lacks aws:SourceOwner (SNS default policy) and kms:CallerAccount / kms:ViaService. The Lambda function URL AddPermission grants (principal '*', auth type NONE) are intentionally public resources."
+    },
+    "T1537/aws_s3_block_public_access_disabled.yml": {
+      "mode": "enforce",
+      "max_hits": 6,
+      "why": "documented noise: an intentional public static-site bucket, documented."
+    },
+    "T1543.005/k8s_cri_static_pod_start.yml": {
+      "mode": "enforce",
+      "max_hits": 12,
+      "why": "documented noise: kubeadm control-plane static pods start with config.source file; the documented suppression is name + config.hash per node."
+    },
+    "T1543.005/k8s_static_pod_mirror_create.yml": {
+      "mode": "enforce",
+      "max_hits": 4,
+      "why": "documented noise: a control-plane kubelet re-registering its mirror pod after a restart, documented."
+    },
+    "T1546/k8s_admission_webhook_created.yml": {
+      "mode": "enforce",
+      "max_hits": 11,
+      "why": "documented noise: Service-backed webhooks from installs and self-registering controllers (the URL-webhook grader correctly does not fire)."
+    },
+    "T1552.005/aws_imds_creds_used_off_instance.yml": {
+      "mode": "enforce",
+      "max_hits": 14,
+      "why": "documented noise: a public-subnet bastion calling from its own auto-assigned public IPv4, named in falsepositives."
+    },
+    "T1552.007/k8s_secret_access.yml": {
+      "mode": "enforce",
+      "max_hits": 236,
+      "why": "documented noise: generic secret-read chokepoint: GitOps, CI and controllers."
+    },
+    "T1552.007/k8s_secret_token_request.yml": {
+      "mode": "enforce",
+      "max_hits": 23,
+      "why": "documented noise: external-secrets minting tokens for Vault auth service accounts, documented."
+    },
+    "T1565.001/k8s_coredns_configmap_modified.yml": {
+      "mode": "enforce",
+      "max_hits": 7,
+      "why": "documented noise: GitOps managing the CoreDNS ConfigMap, documented."
+    },
+    "T1565.001/k8s_coredns_corefile_poisoned.yml": {
+      "mode": "enforce",
+      "max_hits": 7,
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md K9: the forward-to-IP clause matches any server block, so a private stub zone forwarding a corporate domain to RFC1918 resolvers fires at high."
+    },
+    "T1572/k8s_pod_portforward.yml": {
+      "mode": "enforce",
+      "max_hits": 18,
+      "why": "documented noise: port-forward to databases and dashboards by operators (both transports)."
+    },
+    "T1609/k8s_pod_ephemeral_container.yml": {
+      "mode": "enforce",
+      "max_hits": 10,
+      "why": "documented noise: kubectl debug with an unprivileged ephemeral container. Its committed seed happens to draw few or no kubectl-debug events, so its hits there can sit well below the budget, which covers the reseeds."
+    },
+    "T1609/k8s_pod_exec_attach.yml": {
+      "mode": "enforce",
+      "max_hits": 28,
+      "why": "documented noise: interactive debugging by operators."
+    },
+    "T1611/k8s_podspec_controller_host_access.yml": {
+      "mode": "enforce",
+      "max_hits": 9,
+      "why": "documented noise: GitOps server-side apply of node-agent DaemonSets (documented host-access workloads)."
+    },
+    "T1611/k8s_podspec_host_access.yml": {
+      "mode": "enforce",
+      "max_hits": 14,
+      "why": "documented noise: CNI, kube-proxy, monitoring and log-agent pods (documented host-access workloads)."
+    },
+    "T1611/setns_namespace_join.yml": {
+      "mode": "enforce",
+      "max_hits": 54,
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md L1: runc's nsexec runs as comm 'runc:[1:CHILD]' (and exe /memfd:runc_cloned:/proc/self/exe (deleted)); it does one setns per namespace, about six per container exec, not 'runc', so every container exec fires; snap-confine joins the snap mount namespace on every snap launch; ip netns exec."
+    },
+    "T1620/memfd_create_execveat.yml": {
+      "mode": "enforce",
+      "max_hits": 11,
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md L2: runc < 1.2 re-executes itself from a memfd on every container start and exec (memfd_create, then execveat in the same pid ~40 ms later), so every Docker/containerd container start fires this high-severity rule; allowlist the runc memfd image by exe or require a non-runtime parent."
+    },
+    "T1622/ptrace_traceme.yml": {
+      "mode": "enforce",
+      "max_hits": 15,
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md L6: debuggers (gdb, dlv) fork an inferior that calls PTRACE_TRACEME with the debugger's comm/exe; not in falsepositives."
+    },
+    "T1685/io_uring_setup.yml": {
+      "mode": "enforce",
+      "max_hits": 18,
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md L4: described as flagging ring creation by a non-allowlisted process, but it has no allowlist and also matches the per-I/O io_uring_enter (an fio benchmark)."
+    },
+    "T1685/k8s_admission_webhook_disabled.yml": {
+      "mode": "enforce",
+      "max_hits": 11,
+      "why": "documented noise: policy engines and PKI/injector controllers reconciling their webhook configs, documented."
+    },
+    "T1685/k8s_admission_webhook_neutered.yml": {
+      "mode": "enforce",
+      "max_hits": 5,
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md K4: grades the submitted state, not a transition: a full-object rewrite of a webhook that already fails open (Gatekeeper CA rotation, Helm upgrade) is graded as a neuter."
+    },
+    "T1685/k8s_security_tool_workload_removed.yml": {
+      "mode": "enforce",
+      "max_hits": 15,
+      "why": "documented noise: GitOps prunes and a downscaler scaling workloads, documented anchor."
+    }
+  },
+  "unscored": {
+    "T1543.005/linux_static_pod_manifest_write.yml": "no benign slice for its logsource (linux / file_event: node file-integrity or EDR file events). The Linux slice is auditd SYSCALL records, which this rule does not read; score it once a recorded node file-event slice exists.",
+    "T1552.007/linux_k8s_sa_token_read.yml": "no benign slice for its logsource (linux / file_event: node file-integrity or EDR file events with container context). The Linux slice is auditd SYSCALL records, which this rule does not read; score it once a recorded node file-event slice exists."
+  }
+}

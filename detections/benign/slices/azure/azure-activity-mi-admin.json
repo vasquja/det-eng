@@ -1,0 +1,3181 @@
+{
+ "id": "azure-activity-mi-admin",
+ "version": 2,
+ "logsource": {
+  "product": "azure",
+  "service": "activitylogs"
+ },
+ "fidelity": "synthetic",
+ "represents": "Azure Activity Log (Administrative and Policy categories) for one subscription, as it reaches the SIEM through the subscription's diagnostic setting (Event Hub, archived to storage) and a connector that polls the Activity Log REST API: Terraform running as a GitHub-OIDC-federated service principal creating user-assigned managed identities, adding / updating / removing their federated identity credentials for AKS workload identity, granting the identities Key Vault roles, deploying, scaling AKS, reading state-backend keys and tagging; automation starting and deallocating build VMs; a platform engineer editing an MI FIC subject in the portal; Azure Policy audit records; and a refused role assignment. Template weights deliberately over-sample the activity adjacent to the rules in adjacent_to (and their documented false-positive classes), so a rule's hits and rate_per_10k on this slice are corpus figures, not a production rate.",
+ "provenance": "synthetic; shapes from the Azure Monitor Activity Log 'schema from storage account and event hubs' (time, resourceId, operationName, category, resultType Start/Success/Failure, resultSignature, identity.authorization.evidence, identity.claims, properties) and this repo's TRR9013 managed-identity fixtures. Casing: exported Activity Log records do not keep one casing (MS Learn, 'Activity log in Azure Monitor': values 'might have different case from otherwise equivalent values'), so every operation (T0-T19) is carried in three equally weighted record forms, with no published frequency to weight them otherwise: T20-T39, the export form with UPPERCASE operationName and resourceId (Elastic's captured Event Hub record of an Administrative action: 'MICROSOFT.EVENTHUB/NAMESPACES/AUTHORIZATIONRULES/LISTKEYS/ACTION' on '/SUBSCRIPTIONS/<guid>/RESOURCEGROUPS/...'); T40-T59, an UPPERCASE resourceId with the ARM-cased operationName (MS Learn's storage-account example; this repo's TRR9013 fixture); and T0-T19, the ARM REST / portal form (operationName.value and resourceId as ARM returns them) that a REST-polling connector emits. GUIDs keep their lowercase form inside an upper-cased resourceId, as in both documented export samples; identity.authorization and properties.entity / message keep ARM casing in every form, as in the captured record. A lower-cased operationName (MS Learn's Event Hub example, microsoft.support/...) is not shown for this slice's providers and is not modelled. Top-level category stays 'Administrative' / 'Policy' per the MS Learn property-mapping table ('Always \"Administrative\"'), although older samples (MS Learn's Event Hub example, Elastic's capture) carry the operation type ('Write' / 'Action') there. Tenant / subscription / object ids are random GUIDs; users are role handles at example.com; addresses RFC 5737.",
+ "adjacent_to": [
+  "T1098.001/azure_managed_identity_federated_credential_backdoor.yml"
+ ],
+ "count": 300,
+ "vars": {
+  "corr": {
+   "uuid": true
+  },
+  "sid": {
+   "uuid": true
+  },
+  "idsfx": {
+   "hex": 5
+  },
+  "uuid2": {
+   "uuid": true
+  },
+  "t": {
+   "time": {
+    "start": "2026-10-07T13:00:00Z",
+    "step_seconds": [
+     5,
+     120
+    ],
+    "format": "%Y-%m-%dT%H:%M:%S.%fZ"
+   }
+  },
+  "aip": {
+   "ipv4": "203.0.113.0/28"
+  },
+  "tfip": {
+   "ipv4": "203.0.113.0/28"
+  },
+  "uip": {
+   "ipv4": "203.0.113.32/27"
+  },
+  "dur": {
+   "int": [
+    60,
+    4200
+   ]
+  },
+  "raid": {
+   "hex": 32
+  },
+  "rdid": {
+   "hex": 32
+  },
+  "uuid3": {
+   "uuid": true
+  },
+  "n": {
+   "int": [
+    1,
+    4
+   ]
+  },
+  "sta": [
+   {
+    "v": "tfstateprod01",
+    "V": "TFSTATEPROD01"
+   },
+   {
+    "v": "payrptprod02",
+    "V": "PAYRPTPROD02"
+   },
+   {
+    "v": "invoiceartifacts01",
+    "V": "INVOICEARTIFACTS01"
+   }
+  ],
+  "depl": [
+   {
+    "v": "main-20261007",
+    "V": "MAIN-20261007"
+   },
+   {
+    "v": "payments-workload-identity",
+    "V": "PAYMENTS-WORKLOAD-IDENTITY"
+   },
+   {
+    "v": "kv-access-policies",
+    "V": "KV-ACCESS-POLICIES"
+   }
+  ],
+  "pool": [
+   {
+    "v": "system",
+    "V": "SYSTEM"
+   },
+   {
+    "v": "general",
+    "V": "GENERAL"
+   },
+   {
+    "v": "spot",
+    "V": "SPOT"
+   }
+  ],
+  "spc": [
+   {
+    "appid": "9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+    "oid": "3e2d1c0b-9a8f-4e7d-a6c5-b4a3928170f6",
+    "role": "Owner"
+   },
+   {
+    "appid": "5e6f7a8b-0004-4c9d-8e0f-2a3b4c5d6e04",
+    "oid": "4d5e6f7a-0004-4b8c-9d0e-1f2a3b4c5d04",
+    "role": "Contributor"
+   }
+  ],
+  "au": [
+   {
+    "upn": "platform.alder@example.com",
+    "dn": "Alder (Platform)",
+    "oid": "1a2b3c4d-0001-4e5f-8a9b-0c1d2e3f4a01"
+   },
+   {
+    "upn": "platform.birch@example.com",
+    "dn": "Birch (Platform)",
+    "oid": "1a2b3c4d-0002-4e5f-8a9b-0c1d2e3f4a02"
+   }
+  ],
+  "mi": [
+   {
+    "rg": "payments-prod",
+    "name": "id-payments-api",
+    "fic": "aks-prod-payments-api",
+    "pid": "4d5e6f7a-0301-4b8c-9d0e-1f2a3b4c5d31",
+    "RG": "PAYMENTS-PROD",
+    "NAME": "ID-PAYMENTS-API",
+    "FIC": "AKS-PROD-PAYMENTS-API"
+   },
+   {
+    "rg": "ledger-prod",
+    "name": "id-ledger-worker",
+    "fic": "aks-prod-ledger-worker",
+    "pid": "4d5e6f7a-0304-4b8c-9d0e-1f2a3b4c5d34",
+    "RG": "LEDGER-PROD",
+    "NAME": "ID-LEDGER-WORKER",
+    "FIC": "AKS-PROD-LEDGER-WORKER"
+   },
+   {
+    "rg": "platform-prod",
+    "name": "id-external-secrets",
+    "fic": "aks-prod-external-secrets",
+    "pid": "4d5e6f7a-0305-4b8c-9d0e-1f2a3b4c5d35",
+    "RG": "PLATFORM-PROD",
+    "NAME": "ID-EXTERNAL-SECRETS",
+    "FIC": "AKS-PROD-EXTERNAL-SECRETS"
+   },
+   {
+    "rg": "platform-prod",
+    "name": "id-github-deploy",
+    "fic": "github-platform-infra-prod-apply",
+    "pid": "4d5e6f7a-0306-4b8c-9d0e-1f2a3b4c5d36",
+    "RG": "PLATFORM-PROD",
+    "NAME": "ID-GITHUB-DEPLOY",
+    "FIC": "GITHUB-PLATFORM-INFRA-PROD-APPLY"
+   }
+  ]
+ },
+ "templates": [
+  {
+   "weight": 15,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+    "operationName": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+    "category": "Administrative",
+    "resultType": "Start",
+    "resultSignature": "Started.",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+      "action": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+     "message": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "Terraform (GitHub OIDC-federated SP) adds an AKS workload-identity FIC to a user-assigned MI: Start"
+  },
+  {
+   "weight": 15,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+    "operationName": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.Created",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+      "action": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "Created",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+     "message": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "...and its Success record"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+    "operationName": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{uip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+      "action": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+      "evidence": {
+       "role": "Owner",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{au.oid}}",
+       "principalType": "User"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "c44b4083-3bb0-49c1-b47d-974e53cbdf3c",
+      "appidacr": "0",
+      "idtyp": "user",
+      "http://schemas.microsoft.com/claims/authnmethodsreferences": "pwd,mfa",
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": "{{au.upn}}",
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": "{{au.upn}}",
+      "name": "{{au.dn}}",
+      "ipaddr": "{{uip}}",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{au.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+     "message": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "platform engineer updates an existing MI FIC subject in the portal (namespace rename)"
+  },
+  {
+   "weight": 3,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+    "operationName": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/delete",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+      "action": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/delete",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+     "message": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/delete",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "FIC removed when a workload is decommissioned"
+  },
+  {
+   "weight": 10,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}",
+    "operationName": "Microsoft.ManagedIdentity/userAssignedIdentities/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.Created",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}",
+      "action": "Microsoft.ManagedIdentity/userAssignedIdentities/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "Created",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}",
+     "message": "Microsoft.ManagedIdentity/userAssignedIdentities/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   }
+  },
+  {
+   "weight": 16,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}/providers/Microsoft.Authorization/roleAssignments/{{uuid3}}",
+    "operationName": "Microsoft.Authorization/roleAssignments/write",
+    "category": "Administrative",
+    "resultType": "Start",
+    "resultSignature": "Started.",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}",
+      "action": "Microsoft.Authorization/roleAssignments/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}/providers/Microsoft.Authorization/roleAssignments/{{uuid3}}",
+     "message": "Microsoft.Authorization/roleAssignments/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+     "requestbody": "{\"Id\":\"{{uuid3}}\",\"Properties\":{\"PrincipalId\":\"{{mi.pid}}\",\"PrincipalType\":\"ServicePrincipal\",\"RoleDefinitionId\":\"/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/providers/Microsoft.Authorization/roleDefinitions/4633458b-17de-408a-b874-0445c86b69e6\",\"Scope\":\"/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}\"}}"
+    }
+   },
+   "note": "Key Vault Secrets User granted to the workload MI"
+  },
+  {
+   "weight": 16,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}/providers/Microsoft.Authorization/roleAssignments/{{uuid3}}",
+    "operationName": "Microsoft.Authorization/roleAssignments/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.Created",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}",
+      "action": "Microsoft.Authorization/roleAssignments/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "Created",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}/providers/Microsoft.Authorization/roleAssignments/{{uuid3}}",
+     "message": "Microsoft.Authorization/roleAssignments/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   }
+  },
+  {
+   "weight": 25,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.Resources/deployments/{{depl.v}}",
+    "operationName": "Microsoft.Resources/deployments/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.Created",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}",
+      "action": "Microsoft.Resources/deployments/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "Created",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.Resources/deployments/{{depl.v}}",
+     "message": "Microsoft.Resources/deployments/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   }
+  },
+  {
+   "weight": 8,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-aks-prod/providers/Microsoft.ContainerService/managedClusters/aks-prod-eastus/agentPools/{{pool.v}}",
+    "operationName": "Microsoft.ContainerService/managedClusters/agentPools/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-aks-prod",
+      "action": "Microsoft.ContainerService/managedClusters/agentPools/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "eastus",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-aks-prod/providers/Microsoft.ContainerService/managedClusters/aks-prod-eastus/agentPools/{{pool.v}}",
+     "message": "Microsoft.ContainerService/managedClusters/agentPools/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "AKS node pool scale / upgrade"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-aks-prod/providers/Microsoft.ContainerService/managedClusters/aks-prod-eastus",
+    "operationName": "Microsoft.ContainerService/managedClusters/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-aks-prod",
+      "action": "Microsoft.ContainerService/managedClusters/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "eastus",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-aks-prod/providers/Microsoft.ContainerService/managedClusters/aks-prod-eastus",
+     "message": "Microsoft.ContainerService/managedClusters/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "AKS cluster update (OIDC issuer + workload identity already enabled)"
+  },
+  {
+   "weight": 20,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.Storage/storageAccounts/st{{sta.v}}",
+    "operationName": "Microsoft.Storage/storageAccounts/listKeys/action",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}",
+      "action": "Microsoft.Storage/storageAccounts/listKeys/action",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.Storage/storageAccounts/st{{sta.v}}",
+     "message": "Microsoft.Storage/storageAccounts/listKeys/action",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "terraform azurerm backend reading the state storage account keys"
+  },
+  {
+   "weight": 18,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-build/providers/Microsoft.Compute/virtualMachines/vm-build-agent-0{{n}}",
+    "operationName": "Microsoft.Compute/virtualMachines/start/action",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-build",
+      "action": "Microsoft.Compute/virtualMachines/start/action",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "eastus",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-build/providers/Microsoft.Compute/virtualMachines/vm-build-agent-0{{n}}",
+     "message": "Microsoft.Compute/virtualMachines/start/action",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "automation runbook starting build agents for the workday"
+  },
+  {
+   "weight": 18,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-build/providers/Microsoft.Compute/virtualMachines/vm-build-agent-0{{n}}",
+    "operationName": "Microsoft.Compute/virtualMachines/deallocate/action",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-build",
+      "action": "Microsoft.Compute/virtualMachines/deallocate/action",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "eastus",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-build/providers/Microsoft.Compute/virtualMachines/vm-build-agent-0{{n}}",
+     "message": "Microsoft.Compute/virtualMachines/deallocate/action",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   }
+  },
+  {
+   "weight": 10,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-web/providers/Microsoft.Web/sites/app-status-dashboard",
+    "operationName": "Microsoft.Web/sites/restart/action",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{uip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-web/providers/Microsoft.Web/sites/app-status-dashboard",
+      "action": "Microsoft.Web/sites/restart/action",
+      "evidence": {
+       "role": "Owner",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{au.oid}}",
+       "principalType": "User"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "c44b4083-3bb0-49c1-b47d-974e53cbdf3c",
+      "appidacr": "0",
+      "idtyp": "user",
+      "http://schemas.microsoft.com/claims/authnmethodsreferences": "pwd,mfa",
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": "{{au.upn}}",
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": "{{au.upn}}",
+      "name": "{{au.dn}}",
+      "ipaddr": "{{uip}}",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{au.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "eastus",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-web/providers/Microsoft.Web/sites/app-status-dashboard",
+     "message": "Microsoft.Web/sites/restart/action",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   }
+  },
+  {
+   "weight": 6,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}",
+    "operationName": "Microsoft.KeyVault/vaults/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}",
+      "action": "Microsoft.KeyVault/vaults/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "eastus",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}",
+     "message": "Microsoft.KeyVault/vaults/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   }
+  },
+  {
+   "weight": 8,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-aks-prod/providers/Microsoft.Network/networkSecurityGroups/nsg-aks-ingress/securityRules/allow-https-from-fd",
+    "operationName": "Microsoft.Network/networkSecurityGroups/securityRules/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-aks-prod",
+      "action": "Microsoft.Network/networkSecurityGroups/securityRules/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "eastus",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-aks-prod/providers/Microsoft.Network/networkSecurityGroups/nsg-aks-ingress/securityRules/allow-https-from-fd",
+     "message": "Microsoft.Network/networkSecurityGroups/securityRules/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   }
+  },
+  {
+   "weight": 10,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.Resources/tags/default",
+    "operationName": "Microsoft.Resources/tags/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}",
+      "action": "Microsoft.Resources/tags/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.Resources/tags/default",
+     "message": "Microsoft.Resources/tags/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   }
+  },
+  {
+   "weight": 4,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}/providers/Microsoft.Insights/diagnosticSettings/to-log-analytics",
+    "operationName": "Microsoft.Insights/diagnosticSettings/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}",
+      "action": "Microsoft.Insights/diagnosticSettings/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}/providers/Microsoft.Insights/diagnosticSettings/to-log-analytics",
+     "message": "Microsoft.Insights/diagnosticSettings/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   }
+  },
+  {
+   "weight": 40,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.Storage/storageAccounts/st{{sta.v}}",
+    "operationName": "Microsoft.Authorization/policies/audit/action",
+    "category": "Policy",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}",
+      "action": "Microsoft.Authorization/policies/audit/action",
+      "evidence": {
+       "role": "Azure Policy"
+      }
+     },
+     "claims": {
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{uuid2}}",
+      "aud": "https://management.core.windows.net/",
+      "appid": "1d78a85d-813d-46f0-b496-dd72f50a3ec0",
+      "idtyp": "app"
+     }
+    },
+    "level": "Warning",
+    "location": "global",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Policy",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.Storage/storageAccounts/st{{sta.v}}",
+     "message": "Microsoft.Authorization/policies/audit/action",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+     "isComplianceCheck": "False",
+     "resourceLocation": "eastus",
+     "ancestors": "mg-platform",
+     "policies": "[{\"policyDefinitionId\":\"/providers/Microsoft.Authorization/policyDefinitions/34c877ad-507e-4c82-993e-3452a6e0ad3c\",\"policyDefinitionName\":\"34c877ad-507e-4c82-993e-3452a6e0ad3c\",\"policyDefinitionEffect\":\"Audit\",\"policyAssignmentName\":\"storage-public-network-audit\"}]"
+    }
+   },
+   "note": "Azure Policy audit effect on a storage account (category Policy)"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-web/providers/Microsoft.Authorization/roleAssignments/{{uuid3}}",
+    "operationName": "Microsoft.Authorization/roleAssignments/write",
+    "category": "Administrative",
+    "resultType": "Failure",
+    "resultSignature": "Failed.Forbidden",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{uip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-web",
+      "action": "Microsoft.Authorization/roleAssignments/write",
+      "evidence": {
+       "role": "Contributor",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-web",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{au.oid}}",
+       "principalType": "User"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "c44b4083-3bb0-49c1-b47d-974e53cbdf3c",
+      "appidacr": "0",
+      "idtyp": "user",
+      "http://schemas.microsoft.com/claims/authnmethodsreferences": "pwd,mfa",
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": "{{au.upn}}",
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": "{{au.upn}}",
+      "name": "{{au.dn}}",
+      "ipaddr": "{{uip}}",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{au.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Error",
+    "location": "global",
+    "properties": {
+     "statusCode": "Forbidden",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-web/providers/Microsoft.Authorization/roleAssignments/{{uuid3}}",
+     "message": "Microsoft.Authorization/roleAssignments/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "Contributor (not Owner) tries to assign a role and is refused"
+  },
+  {
+   "weight": 15,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.MANAGEDIDENTITY/USERASSIGNEDIDENTITIES/{{mi.NAME}}/FEDERATEDIDENTITYCREDENTIALS/{{mi.FIC}}",
+    "operationName": "MICROSOFT.MANAGEDIDENTITY/USERASSIGNEDIDENTITIES/FEDERATEDIDENTITYCREDENTIALS/WRITE",
+    "category": "Administrative",
+    "resultType": "Start",
+    "resultSignature": "Started.",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+      "action": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+     "message": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T0 in the storage / Event Hub export form: UPPERCASE operationName and resourceId"
+  },
+  {
+   "weight": 15,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.MANAGEDIDENTITY/USERASSIGNEDIDENTITIES/{{mi.NAME}}/FEDERATEDIDENTITYCREDENTIALS/{{mi.FIC}}",
+    "operationName": "MICROSOFT.MANAGEDIDENTITY/USERASSIGNEDIDENTITIES/FEDERATEDIDENTITYCREDENTIALS/WRITE",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.Created",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+      "action": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "Created",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+     "message": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T1 in the storage / Event Hub export form: UPPERCASE operationName and resourceId"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.MANAGEDIDENTITY/USERASSIGNEDIDENTITIES/{{mi.NAME}}/FEDERATEDIDENTITYCREDENTIALS/{{mi.FIC}}",
+    "operationName": "MICROSOFT.MANAGEDIDENTITY/USERASSIGNEDIDENTITIES/FEDERATEDIDENTITYCREDENTIALS/WRITE",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{uip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+      "action": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+      "evidence": {
+       "role": "Owner",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{au.oid}}",
+       "principalType": "User"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "c44b4083-3bb0-49c1-b47d-974e53cbdf3c",
+      "appidacr": "0",
+      "idtyp": "user",
+      "http://schemas.microsoft.com/claims/authnmethodsreferences": "pwd,mfa",
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": "{{au.upn}}",
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": "{{au.upn}}",
+      "name": "{{au.dn}}",
+      "ipaddr": "{{uip}}",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{au.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+     "message": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T2 in the storage / Event Hub export form: UPPERCASE operationName and resourceId"
+  },
+  {
+   "weight": 3,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.MANAGEDIDENTITY/USERASSIGNEDIDENTITIES/{{mi.NAME}}/FEDERATEDIDENTITYCREDENTIALS/{{mi.FIC}}",
+    "operationName": "MICROSOFT.MANAGEDIDENTITY/USERASSIGNEDIDENTITIES/FEDERATEDIDENTITYCREDENTIALS/DELETE",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+      "action": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/delete",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+     "message": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/delete",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T3 in the storage / Event Hub export form: UPPERCASE operationName and resourceId"
+  },
+  {
+   "weight": 10,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.MANAGEDIDENTITY/USERASSIGNEDIDENTITIES/{{mi.NAME}}",
+    "operationName": "MICROSOFT.MANAGEDIDENTITY/USERASSIGNEDIDENTITIES/WRITE",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.Created",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}",
+      "action": "Microsoft.ManagedIdentity/userAssignedIdentities/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "Created",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}",
+     "message": "Microsoft.ManagedIdentity/userAssignedIdentities/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T4 in the storage / Event Hub export form: UPPERCASE operationName and resourceId"
+  },
+  {
+   "weight": 16,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.KEYVAULT/VAULTS/KV-{{mi.RG}}/PROVIDERS/MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/{{uuid3}}",
+    "operationName": "MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/WRITE",
+    "category": "Administrative",
+    "resultType": "Start",
+    "resultSignature": "Started.",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}",
+      "action": "Microsoft.Authorization/roleAssignments/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}/providers/Microsoft.Authorization/roleAssignments/{{uuid3}}",
+     "message": "Microsoft.Authorization/roleAssignments/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+     "requestbody": "{\"Id\":\"{{uuid3}}\",\"Properties\":{\"PrincipalId\":\"{{mi.pid}}\",\"PrincipalType\":\"ServicePrincipal\",\"RoleDefinitionId\":\"/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/providers/Microsoft.Authorization/roleDefinitions/4633458b-17de-408a-b874-0445c86b69e6\",\"Scope\":\"/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}\"}}"
+    }
+   },
+   "note": "T5 in the storage / Event Hub export form: UPPERCASE operationName and resourceId"
+  },
+  {
+   "weight": 16,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.KEYVAULT/VAULTS/KV-{{mi.RG}}/PROVIDERS/MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/{{uuid3}}",
+    "operationName": "MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/WRITE",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.Created",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}",
+      "action": "Microsoft.Authorization/roleAssignments/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "Created",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}/providers/Microsoft.Authorization/roleAssignments/{{uuid3}}",
+     "message": "Microsoft.Authorization/roleAssignments/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T6 in the storage / Event Hub export form: UPPERCASE operationName and resourceId"
+  },
+  {
+   "weight": 25,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.RESOURCES/DEPLOYMENTS/{{depl.V}}",
+    "operationName": "MICROSOFT.RESOURCES/DEPLOYMENTS/WRITE",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.Created",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}",
+      "action": "Microsoft.Resources/deployments/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "Created",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.Resources/deployments/{{depl.v}}",
+     "message": "Microsoft.Resources/deployments/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T7 in the storage / Event Hub export form: UPPERCASE operationName and resourceId"
+  },
+  {
+   "weight": 8,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-AKS-PROD/PROVIDERS/MICROSOFT.CONTAINERSERVICE/MANAGEDCLUSTERS/AKS-PROD-EASTUS/AGENTPOOLS/{{pool.V}}",
+    "operationName": "MICROSOFT.CONTAINERSERVICE/MANAGEDCLUSTERS/AGENTPOOLS/WRITE",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-aks-prod",
+      "action": "Microsoft.ContainerService/managedClusters/agentPools/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "eastus",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-aks-prod/providers/Microsoft.ContainerService/managedClusters/aks-prod-eastus/agentPools/{{pool.v}}",
+     "message": "Microsoft.ContainerService/managedClusters/agentPools/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T8 in the storage / Event Hub export form: UPPERCASE operationName and resourceId"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-AKS-PROD/PROVIDERS/MICROSOFT.CONTAINERSERVICE/MANAGEDCLUSTERS/AKS-PROD-EASTUS",
+    "operationName": "MICROSOFT.CONTAINERSERVICE/MANAGEDCLUSTERS/WRITE",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-aks-prod",
+      "action": "Microsoft.ContainerService/managedClusters/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "eastus",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-aks-prod/providers/Microsoft.ContainerService/managedClusters/aks-prod-eastus",
+     "message": "Microsoft.ContainerService/managedClusters/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T9 in the storage / Event Hub export form: UPPERCASE operationName and resourceId"
+  },
+  {
+   "weight": 20,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.STORAGE/STORAGEACCOUNTS/ST{{sta.V}}",
+    "operationName": "MICROSOFT.STORAGE/STORAGEACCOUNTS/LISTKEYS/ACTION",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}",
+      "action": "Microsoft.Storage/storageAccounts/listKeys/action",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.Storage/storageAccounts/st{{sta.v}}",
+     "message": "Microsoft.Storage/storageAccounts/listKeys/action",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T10 in the storage / Event Hub export form: UPPERCASE operationName and resourceId"
+  },
+  {
+   "weight": 18,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-BUILD/PROVIDERS/MICROSOFT.COMPUTE/VIRTUALMACHINES/VM-BUILD-AGENT-0{{n}}",
+    "operationName": "MICROSOFT.COMPUTE/VIRTUALMACHINES/START/ACTION",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-build",
+      "action": "Microsoft.Compute/virtualMachines/start/action",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "eastus",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-build/providers/Microsoft.Compute/virtualMachines/vm-build-agent-0{{n}}",
+     "message": "Microsoft.Compute/virtualMachines/start/action",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T11 in the storage / Event Hub export form: UPPERCASE operationName and resourceId"
+  },
+  {
+   "weight": 18,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-BUILD/PROVIDERS/MICROSOFT.COMPUTE/VIRTUALMACHINES/VM-BUILD-AGENT-0{{n}}",
+    "operationName": "MICROSOFT.COMPUTE/VIRTUALMACHINES/DEALLOCATE/ACTION",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-build",
+      "action": "Microsoft.Compute/virtualMachines/deallocate/action",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "eastus",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-build/providers/Microsoft.Compute/virtualMachines/vm-build-agent-0{{n}}",
+     "message": "Microsoft.Compute/virtualMachines/deallocate/action",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T12 in the storage / Event Hub export form: UPPERCASE operationName and resourceId"
+  },
+  {
+   "weight": 10,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-WEB/PROVIDERS/MICROSOFT.WEB/SITES/APP-STATUS-DASHBOARD",
+    "operationName": "MICROSOFT.WEB/SITES/RESTART/ACTION",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{uip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-web/providers/Microsoft.Web/sites/app-status-dashboard",
+      "action": "Microsoft.Web/sites/restart/action",
+      "evidence": {
+       "role": "Owner",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{au.oid}}",
+       "principalType": "User"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "c44b4083-3bb0-49c1-b47d-974e53cbdf3c",
+      "appidacr": "0",
+      "idtyp": "user",
+      "http://schemas.microsoft.com/claims/authnmethodsreferences": "pwd,mfa",
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": "{{au.upn}}",
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": "{{au.upn}}",
+      "name": "{{au.dn}}",
+      "ipaddr": "{{uip}}",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{au.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "eastus",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-web/providers/Microsoft.Web/sites/app-status-dashboard",
+     "message": "Microsoft.Web/sites/restart/action",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T13 in the storage / Event Hub export form: UPPERCASE operationName and resourceId"
+  },
+  {
+   "weight": 6,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.KEYVAULT/VAULTS/KV-{{mi.RG}}",
+    "operationName": "MICROSOFT.KEYVAULT/VAULTS/WRITE",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}",
+      "action": "Microsoft.KeyVault/vaults/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "eastus",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}",
+     "message": "Microsoft.KeyVault/vaults/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T14 in the storage / Event Hub export form: UPPERCASE operationName and resourceId"
+  },
+  {
+   "weight": 8,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-AKS-PROD/PROVIDERS/MICROSOFT.NETWORK/NETWORKSECURITYGROUPS/NSG-AKS-INGRESS/SECURITYRULES/ALLOW-HTTPS-FROM-FD",
+    "operationName": "MICROSOFT.NETWORK/NETWORKSECURITYGROUPS/SECURITYRULES/WRITE",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-aks-prod",
+      "action": "Microsoft.Network/networkSecurityGroups/securityRules/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "eastus",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-aks-prod/providers/Microsoft.Network/networkSecurityGroups/nsg-aks-ingress/securityRules/allow-https-from-fd",
+     "message": "Microsoft.Network/networkSecurityGroups/securityRules/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T15 in the storage / Event Hub export form: UPPERCASE operationName and resourceId"
+  },
+  {
+   "weight": 10,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.RESOURCES/TAGS/DEFAULT",
+    "operationName": "MICROSOFT.RESOURCES/TAGS/WRITE",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}",
+      "action": "Microsoft.Resources/tags/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.Resources/tags/default",
+     "message": "Microsoft.Resources/tags/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T16 in the storage / Event Hub export form: UPPERCASE operationName and resourceId"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.KEYVAULT/VAULTS/KV-{{mi.RG}}/PROVIDERS/MICROSOFT.INSIGHTS/DIAGNOSTICSETTINGS/TO-LOG-ANALYTICS",
+    "operationName": "MICROSOFT.INSIGHTS/DIAGNOSTICSETTINGS/WRITE",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}",
+      "action": "Microsoft.Insights/diagnosticSettings/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}/providers/Microsoft.Insights/diagnosticSettings/to-log-analytics",
+     "message": "Microsoft.Insights/diagnosticSettings/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T17 in the storage / Event Hub export form: UPPERCASE operationName and resourceId"
+  },
+  {
+   "weight": 40,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.STORAGE/STORAGEACCOUNTS/ST{{sta.V}}",
+    "operationName": "MICROSOFT.AUTHORIZATION/POLICIES/AUDIT/ACTION",
+    "category": "Policy",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}",
+      "action": "Microsoft.Authorization/policies/audit/action",
+      "evidence": {
+       "role": "Azure Policy"
+      }
+     },
+     "claims": {
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{uuid2}}",
+      "aud": "https://management.core.windows.net/",
+      "appid": "1d78a85d-813d-46f0-b496-dd72f50a3ec0",
+      "idtyp": "app"
+     }
+    },
+    "level": "Warning",
+    "location": "global",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Policy",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.Storage/storageAccounts/st{{sta.v}}",
+     "message": "Microsoft.Authorization/policies/audit/action",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+     "isComplianceCheck": "False",
+     "resourceLocation": "eastus",
+     "ancestors": "mg-platform",
+     "policies": "[{\"policyDefinitionId\":\"/providers/Microsoft.Authorization/policyDefinitions/34c877ad-507e-4c82-993e-3452a6e0ad3c\",\"policyDefinitionName\":\"34c877ad-507e-4c82-993e-3452a6e0ad3c\",\"policyDefinitionEffect\":\"Audit\",\"policyAssignmentName\":\"storage-public-network-audit\"}]"
+    }
+   },
+   "note": "T18 in the storage / Event Hub export form: UPPERCASE operationName and resourceId"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-WEB/PROVIDERS/MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/{{uuid3}}",
+    "operationName": "MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/WRITE",
+    "category": "Administrative",
+    "resultType": "Failure",
+    "resultSignature": "Failed.Forbidden",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{uip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-web",
+      "action": "Microsoft.Authorization/roleAssignments/write",
+      "evidence": {
+       "role": "Contributor",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-web",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{au.oid}}",
+       "principalType": "User"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "c44b4083-3bb0-49c1-b47d-974e53cbdf3c",
+      "appidacr": "0",
+      "idtyp": "user",
+      "http://schemas.microsoft.com/claims/authnmethodsreferences": "pwd,mfa",
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": "{{au.upn}}",
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": "{{au.upn}}",
+      "name": "{{au.dn}}",
+      "ipaddr": "{{uip}}",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{au.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Error",
+    "location": "global",
+    "properties": {
+     "statusCode": "Forbidden",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-web/providers/Microsoft.Authorization/roleAssignments/{{uuid3}}",
+     "message": "Microsoft.Authorization/roleAssignments/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T19 in the storage / Event Hub export form: UPPERCASE operationName and resourceId"
+  },
+  {
+   "weight": 15,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.MANAGEDIDENTITY/USERASSIGNEDIDENTITIES/{{mi.NAME}}/FEDERATEDIDENTITYCREDENTIALS/{{mi.FIC}}",
+    "operationName": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+    "category": "Administrative",
+    "resultType": "Start",
+    "resultSignature": "Started.",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+      "action": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+     "message": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T0 in the export form with an UPPERCASE resourceId and the ARM-cased operationName"
+  },
+  {
+   "weight": 15,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.MANAGEDIDENTITY/USERASSIGNEDIDENTITIES/{{mi.NAME}}/FEDERATEDIDENTITYCREDENTIALS/{{mi.FIC}}",
+    "operationName": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.Created",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+      "action": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "Created",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+     "message": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T1 in the export form with an UPPERCASE resourceId and the ARM-cased operationName"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.MANAGEDIDENTITY/USERASSIGNEDIDENTITIES/{{mi.NAME}}/FEDERATEDIDENTITYCREDENTIALS/{{mi.FIC}}",
+    "operationName": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{uip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+      "action": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+      "evidence": {
+       "role": "Owner",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{au.oid}}",
+       "principalType": "User"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "c44b4083-3bb0-49c1-b47d-974e53cbdf3c",
+      "appidacr": "0",
+      "idtyp": "user",
+      "http://schemas.microsoft.com/claims/authnmethodsreferences": "pwd,mfa",
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": "{{au.upn}}",
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": "{{au.upn}}",
+      "name": "{{au.dn}}",
+      "ipaddr": "{{uip}}",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{au.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+     "message": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T2 in the export form with an UPPERCASE resourceId and the ARM-cased operationName"
+  },
+  {
+   "weight": 3,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.MANAGEDIDENTITY/USERASSIGNEDIDENTITIES/{{mi.NAME}}/FEDERATEDIDENTITYCREDENTIALS/{{mi.FIC}}",
+    "operationName": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/delete",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+      "action": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/delete",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}/federatedIdentityCredentials/{{mi.fic}}",
+     "message": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/delete",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T3 in the export form with an UPPERCASE resourceId and the ARM-cased operationName"
+  },
+  {
+   "weight": 10,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.MANAGEDIDENTITY/USERASSIGNEDIDENTITIES/{{mi.NAME}}",
+    "operationName": "Microsoft.ManagedIdentity/userAssignedIdentities/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.Created",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}",
+      "action": "Microsoft.ManagedIdentity/userAssignedIdentities/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "Created",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{{mi.name}}",
+     "message": "Microsoft.ManagedIdentity/userAssignedIdentities/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T4 in the export form with an UPPERCASE resourceId and the ARM-cased operationName"
+  },
+  {
+   "weight": 16,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.KEYVAULT/VAULTS/KV-{{mi.RG}}/PROVIDERS/MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/{{uuid3}}",
+    "operationName": "Microsoft.Authorization/roleAssignments/write",
+    "category": "Administrative",
+    "resultType": "Start",
+    "resultSignature": "Started.",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}",
+      "action": "Microsoft.Authorization/roleAssignments/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}/providers/Microsoft.Authorization/roleAssignments/{{uuid3}}",
+     "message": "Microsoft.Authorization/roleAssignments/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+     "requestbody": "{\"Id\":\"{{uuid3}}\",\"Properties\":{\"PrincipalId\":\"{{mi.pid}}\",\"PrincipalType\":\"ServicePrincipal\",\"RoleDefinitionId\":\"/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/providers/Microsoft.Authorization/roleDefinitions/4633458b-17de-408a-b874-0445c86b69e6\",\"Scope\":\"/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}\"}}"
+    }
+   },
+   "note": "T5 in the export form with an UPPERCASE resourceId and the ARM-cased operationName"
+  },
+  {
+   "weight": 16,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.KEYVAULT/VAULTS/KV-{{mi.RG}}/PROVIDERS/MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/{{uuid3}}",
+    "operationName": "Microsoft.Authorization/roleAssignments/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.Created",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}",
+      "action": "Microsoft.Authorization/roleAssignments/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "Created",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}/providers/Microsoft.Authorization/roleAssignments/{{uuid3}}",
+     "message": "Microsoft.Authorization/roleAssignments/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T6 in the export form with an UPPERCASE resourceId and the ARM-cased operationName"
+  },
+  {
+   "weight": 25,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.RESOURCES/DEPLOYMENTS/{{depl.V}}",
+    "operationName": "Microsoft.Resources/deployments/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.Created",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}",
+      "action": "Microsoft.Resources/deployments/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "Created",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.Resources/deployments/{{depl.v}}",
+     "message": "Microsoft.Resources/deployments/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T7 in the export form with an UPPERCASE resourceId and the ARM-cased operationName"
+  },
+  {
+   "weight": 8,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-AKS-PROD/PROVIDERS/MICROSOFT.CONTAINERSERVICE/MANAGEDCLUSTERS/AKS-PROD-EASTUS/AGENTPOOLS/{{pool.V}}",
+    "operationName": "Microsoft.ContainerService/managedClusters/agentPools/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-aks-prod",
+      "action": "Microsoft.ContainerService/managedClusters/agentPools/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "eastus",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-aks-prod/providers/Microsoft.ContainerService/managedClusters/aks-prod-eastus/agentPools/{{pool.v}}",
+     "message": "Microsoft.ContainerService/managedClusters/agentPools/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T8 in the export form with an UPPERCASE resourceId and the ARM-cased operationName"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-AKS-PROD/PROVIDERS/MICROSOFT.CONTAINERSERVICE/MANAGEDCLUSTERS/AKS-PROD-EASTUS",
+    "operationName": "Microsoft.ContainerService/managedClusters/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-aks-prod",
+      "action": "Microsoft.ContainerService/managedClusters/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "eastus",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-aks-prod/providers/Microsoft.ContainerService/managedClusters/aks-prod-eastus",
+     "message": "Microsoft.ContainerService/managedClusters/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T9 in the export form with an UPPERCASE resourceId and the ARM-cased operationName"
+  },
+  {
+   "weight": 20,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.STORAGE/STORAGEACCOUNTS/ST{{sta.V}}",
+    "operationName": "Microsoft.Storage/storageAccounts/listKeys/action",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}",
+      "action": "Microsoft.Storage/storageAccounts/listKeys/action",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.Storage/storageAccounts/st{{sta.v}}",
+     "message": "Microsoft.Storage/storageAccounts/listKeys/action",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T10 in the export form with an UPPERCASE resourceId and the ARM-cased operationName"
+  },
+  {
+   "weight": 18,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-BUILD/PROVIDERS/MICROSOFT.COMPUTE/VIRTUALMACHINES/VM-BUILD-AGENT-0{{n}}",
+    "operationName": "Microsoft.Compute/virtualMachines/start/action",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-build",
+      "action": "Microsoft.Compute/virtualMachines/start/action",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "eastus",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-build/providers/Microsoft.Compute/virtualMachines/vm-build-agent-0{{n}}",
+     "message": "Microsoft.Compute/virtualMachines/start/action",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T11 in the export form with an UPPERCASE resourceId and the ARM-cased operationName"
+  },
+  {
+   "weight": 18,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-BUILD/PROVIDERS/MICROSOFT.COMPUTE/VIRTUALMACHINES/VM-BUILD-AGENT-0{{n}}",
+    "operationName": "Microsoft.Compute/virtualMachines/deallocate/action",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-build",
+      "action": "Microsoft.Compute/virtualMachines/deallocate/action",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "eastus",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-build/providers/Microsoft.Compute/virtualMachines/vm-build-agent-0{{n}}",
+     "message": "Microsoft.Compute/virtualMachines/deallocate/action",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T12 in the export form with an UPPERCASE resourceId and the ARM-cased operationName"
+  },
+  {
+   "weight": 10,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-WEB/PROVIDERS/MICROSOFT.WEB/SITES/APP-STATUS-DASHBOARD",
+    "operationName": "Microsoft.Web/sites/restart/action",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{uip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-web/providers/Microsoft.Web/sites/app-status-dashboard",
+      "action": "Microsoft.Web/sites/restart/action",
+      "evidence": {
+       "role": "Owner",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{au.oid}}",
+       "principalType": "User"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "c44b4083-3bb0-49c1-b47d-974e53cbdf3c",
+      "appidacr": "0",
+      "idtyp": "user",
+      "http://schemas.microsoft.com/claims/authnmethodsreferences": "pwd,mfa",
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": "{{au.upn}}",
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": "{{au.upn}}",
+      "name": "{{au.dn}}",
+      "ipaddr": "{{uip}}",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{au.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "eastus",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-web/providers/Microsoft.Web/sites/app-status-dashboard",
+     "message": "Microsoft.Web/sites/restart/action",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T13 in the export form with an UPPERCASE resourceId and the ARM-cased operationName"
+  },
+  {
+   "weight": 6,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.KEYVAULT/VAULTS/KV-{{mi.RG}}",
+    "operationName": "Microsoft.KeyVault/vaults/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}",
+      "action": "Microsoft.KeyVault/vaults/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "eastus",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}",
+     "message": "Microsoft.KeyVault/vaults/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T14 in the export form with an UPPERCASE resourceId and the ARM-cased operationName"
+  },
+  {
+   "weight": 8,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-AKS-PROD/PROVIDERS/MICROSOFT.NETWORK/NETWORKSECURITYGROUPS/NSG-AKS-INGRESS/SECURITYRULES/ALLOW-HTTPS-FROM-FD",
+    "operationName": "Microsoft.Network/networkSecurityGroups/securityRules/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-aks-prod",
+      "action": "Microsoft.Network/networkSecurityGroups/securityRules/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "eastus",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-aks-prod/providers/Microsoft.Network/networkSecurityGroups/nsg-aks-ingress/securityRules/allow-https-from-fd",
+     "message": "Microsoft.Network/networkSecurityGroups/securityRules/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T15 in the export form with an UPPERCASE resourceId and the ARM-cased operationName"
+  },
+  {
+   "weight": 10,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.RESOURCES/TAGS/DEFAULT",
+    "operationName": "Microsoft.Resources/tags/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}",
+      "action": "Microsoft.Resources/tags/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.Resources/tags/default",
+     "message": "Microsoft.Resources/tags/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T16 in the export form with an UPPERCASE resourceId and the ARM-cased operationName"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.KEYVAULT/VAULTS/KV-{{mi.RG}}/PROVIDERS/MICROSOFT.INSIGHTS/DIAGNOSTICSETTINGS/TO-LOG-ANALYTICS",
+    "operationName": "Microsoft.Insights/diagnosticSettings/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.OK",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{tfip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}",
+      "action": "Microsoft.Insights/diagnosticSettings/write",
+      "evidence": {
+       "role": "{{spc.role}}",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{spc.oid}}",
+       "principalType": "ServicePrincipal"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "{{spc.appid}}",
+      "appidacr": "2",
+      "idtyp": "app",
+      "http://schemas.microsoft.com/identity/claims/identityprovider": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{spc.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.KeyVault/vaults/kv-{{mi.rg}}/providers/Microsoft.Insights/diagnosticSettings/to-log-analytics",
+     "message": "Microsoft.Insights/diagnosticSettings/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T17 in the export form with an UPPERCASE resourceId and the ARM-cased operationName"
+  },
+  {
+   "weight": 40,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-{{mi.RG}}/PROVIDERS/MICROSOFT.STORAGE/STORAGEACCOUNTS/ST{{sta.V}}",
+    "operationName": "Microsoft.Authorization/policies/audit/action",
+    "category": "Policy",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}",
+      "action": "Microsoft.Authorization/policies/audit/action",
+      "evidence": {
+       "role": "Azure Policy"
+      }
+     },
+     "claims": {
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{uuid2}}",
+      "aud": "https://management.core.windows.net/",
+      "appid": "1d78a85d-813d-46f0-b496-dd72f50a3ec0",
+      "idtyp": "app"
+     }
+    },
+    "level": "Warning",
+    "location": "global",
+    "properties": {
+     "statusCode": "OK",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Policy",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-{{mi.rg}}/providers/Microsoft.Storage/storageAccounts/st{{sta.v}}",
+     "message": "Microsoft.Authorization/policies/audit/action",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b",
+     "isComplianceCheck": "False",
+     "resourceLocation": "eastus",
+     "ancestors": "mg-platform",
+     "policies": "[{\"policyDefinitionId\":\"/providers/Microsoft.Authorization/policyDefinitions/34c877ad-507e-4c82-993e-3452a6e0ad3c\",\"policyDefinitionName\":\"34c877ad-507e-4c82-993e-3452a6e0ad3c\",\"policyDefinitionEffect\":\"Audit\",\"policyAssignmentName\":\"storage-public-network-audit\"}]"
+    }
+   },
+   "note": "T18 in the export form with an UPPERCASE resourceId and the ARM-cased operationName"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "time": "{{t}}",
+    "resourceId": "/SUBSCRIPTIONS/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/RESOURCEGROUPS/RG-WEB/PROVIDERS/MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/{{uuid3}}",
+    "operationName": "Microsoft.Authorization/roleAssignments/write",
+    "category": "Administrative",
+    "resultType": "Failure",
+    "resultSignature": "Failed.Forbidden",
+    "durationMs": "{{dur}}",
+    "callerIpAddress": "{{uip}}",
+    "correlationId": "{{corr}}",
+    "identity": {
+     "authorization": {
+      "scope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-web",
+      "action": "Microsoft.Authorization/roleAssignments/write",
+      "evidence": {
+       "role": "Contributor",
+       "roleAssignmentScope": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-web",
+       "roleAssignmentId": "{{raid}}",
+       "roleDefinitionId": "{{rdid}}",
+       "principalId": "{{au.oid}}",
+       "principalType": "User"
+      }
+     },
+     "claims": {
+      "aud": "https://management.core.windows.net/",
+      "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+      "appid": "c44b4083-3bb0-49c1-b47d-974e53cbdf3c",
+      "appidacr": "0",
+      "idtyp": "user",
+      "http://schemas.microsoft.com/claims/authnmethodsreferences": "pwd,mfa",
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": "{{au.upn}}",
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": "{{au.upn}}",
+      "name": "{{au.dn}}",
+      "ipaddr": "{{uip}}",
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "{{au.oid}}",
+      "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+      "ver": "1.0"
+     }
+    },
+    "level": "Error",
+    "location": "global",
+    "properties": {
+     "statusCode": "Forbidden",
+     "serviceRequestId": "{{uuid2}}",
+     "eventCategory": "Administrative",
+     "entity": "/subscriptions/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b/resourceGroups/rg-web/providers/Microsoft.Authorization/roleAssignments/{{uuid3}}",
+     "message": "Microsoft.Authorization/roleAssignments/write",
+     "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b"
+    }
+   },
+   "note": "T19 in the export form with an UPPERCASE resourceId and the ARM-cased operationName"
+  }
+ ]
+}

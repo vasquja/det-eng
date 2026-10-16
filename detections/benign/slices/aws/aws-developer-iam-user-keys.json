@@ -1,0 +1,1904 @@
+{
+ "id": "aws-developer-iam-user-keys",
+ "version": 2,
+ "logsource": {
+  "product": "aws",
+  "service": "cloudtrail"
+ },
+ "fidelity": "synthetic",
+ "represents": "Human and legacy-automation access to one AWS account: developers and SREs using long-term IAM-user access keys (AKIA) from the corporate VPN / office NAT (203.0.113.32/27, 203.0.113.48/28, own IPv6) AND from home ISP connections off VPN (192.0.2.0/26) for sts get-caller-identity, MFA get-session-token and read-only Describe/List calls; the MFA-authenticated temporary sessions (ASIA) of those IAM users; IAM-user console sign-ins and console page loads; IAM Identity Center users (the majority) working from home; a legacy CI job with a stored IAM-user key on GitHub-hosted runners; an on-prem backup agent; and a third-party cost-optimisation SaaS polling with a read-only IAM-user key from its own egress (192.0.2.112/28). Template weights deliberately over-sample the activity adjacent to the rules in adjacent_to (and their documented false-positive classes), so a rule's hits and rate_per_10k on this slice are corpus figures, not a production rate.",
+ "provenance": "synthetic; shapes from the AWS CloudTrail record contents and userIdentity reference (IAMUser with long-term and session credentials, sessionCredentialFromConsole), the CloudTrail ConsoleLogin / AwsConsoleSignIn reference, STS GetSessionToken, the S3 data-event reference, and this repo's TRR9012 fixtures. Long-term keys are AKIAEXAMPLE<id> (20 chars), sessions ASIAEXAMPLE<digits>; user names are role handles, not people; account 123456789012; addresses RFC 5737 / 2001:db8::/32. Credential-issuing calls take eventTime and responseElements.credentials.expiration from a pair of fixed-cadence clocks that start durationSeconds apart and step together, so every expiration is exactly eventTime + durationSeconds (the generator has no offset-from-another-variable form; the cost is a fixed issuance cadence). Every S3 bucket and other named regional resource is logged in one region (awsRegion, Host and the TLS host header agree); only unnamed Describe/List calls use the 85/15 us-east-1/us-west-2 region mix.",
+ "adjacent_to": [
+  "T1078.004/aws_leaked_access_key_recon.yml",
+  "T1552.005/aws_imds_creds_used_off_instance.yml"
+ ],
+ "count": 1000,
+ "vars": {
+  "eid": {
+   "uuid": true
+  },
+  "rid": {
+   "uuid": true
+  },
+  "akn": {
+   "int": [
+    100000000,
+    999999999
+   ]
+  },
+  "xamzid": {
+   "hex": 56
+  },
+  "region": {
+   "weighted": [
+    [
+     85,
+     "us-east-1"
+    ],
+    [
+     15,
+     "us-west-2"
+    ]
+   ]
+  },
+  "t": {
+   "time": {
+    "start": "2026-10-09T07:30:00Z",
+    "step_seconds": [
+     2,
+     40
+    ]
+   }
+  },
+  "sesst": {
+   "time": {
+    "start": "2026-10-09T07:00:00Z",
+    "step_seconds": [
+     2,
+     40
+    ]
+   }
+  },
+  "exp12": {
+   "time": {
+    "start": "2026-10-09T19:40:00Z",
+    "step_seconds": [
+     495,
+     495
+    ],
+    "format": "%b %-d, %Y, %-I:%M:%S %p"
+   }
+  },
+  "vpnip": {
+   "ipv4": "203.0.113.32/27"
+  },
+  "officeip": {
+   "ipv4": "203.0.113.48/28"
+  },
+  "homeip": {
+   "ipv4": "192.0.2.0/26"
+  },
+  "ghip": {
+   "ipv4": "192.0.2.128/25"
+  },
+  "saasip": {
+   "ipv4": "192.0.2.112/28"
+  },
+  "v6": [
+   "2001:db8:51a0:10::8",
+   "2001:db8:51a0:10::2c",
+   "2001:db8:51a0:11::5"
+  ],
+  "os": {
+   "weighted": [
+    [
+     6,
+     "macos#23.6.0"
+    ],
+    [
+     3,
+     "linux#6.8.0-45-generic"
+    ],
+    [
+     1,
+     "windows#10"
+    ]
+   ]
+  },
+  "arch": {
+   "weighted": [
+    [
+     6,
+     "arm64"
+    ],
+    [
+     4,
+     "x86_64"
+    ]
+   ]
+  },
+  "browser": [
+   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:131.0) Gecko/20100101 Firefox/131.0",
+   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 Edg/129.0.0.0"
+  ],
+  "hex16": {
+   "hex": 16
+  },
+  "hex2": {
+   "hex": 2
+  },
+  "dig": {
+   "hex": 64
+  },
+  "sha7": {
+   "hex": 7
+  },
+  "d": {
+   "int": [
+    1,
+    8
+   ]
+  },
+  "uuid2": {
+   "uuid": true
+  },
+  "cluster": [
+   "prod-use1",
+   "staging-usw2"
+  ],
+  "u": [
+   {
+    "name": "dev-alder",
+    "pid": "AIDAEXAMPLEDEVALDER01",
+    "akid": "AKIAEXAMPLEDEVALDER1",
+    "team": "payments"
+   },
+   {
+    "name": "dev-birch",
+    "pid": "AIDAEXAMPLEDEVBIRCH01",
+    "akid": "AKIAEXAMPLEDEVBIRCH1",
+    "team": "web"
+   },
+   {
+    "name": "dev-cedar",
+    "pid": "AIDAEXAMPLEDEVCEDAR01",
+    "akid": "AKIAEXAMPLEDEVCEDAR1",
+    "team": "reporting"
+   },
+   {
+    "name": "sre-maple",
+    "pid": "AIDAEXAMPLESREMAPLE01",
+    "akid": "AKIAEXAMPLESREMAPLE1",
+    "team": "platform"
+   },
+   {
+    "name": "data-rowan",
+    "pid": "AIDAEXAMPLEDATAROWN01",
+    "akid": "AKIAEXAMPLEDATAROWN1",
+    "team": "data"
+   }
+  ],
+  "cu": [
+   {
+    "name": "sre-maple",
+    "pid": "AIDAEXAMPLESREMAPLE01"
+   },
+   {
+    "name": "dev-cedar",
+    "pid": "AIDAEXAMPLEDEVCEDAR01"
+   }
+  ],
+  "ssor": {
+   "weighted": [
+    [
+     6,
+     {
+      "role": "AWSReservedSSO_DeveloperReadOnly_0f1e2d3c4b5a6978",
+      "rid": "AROAEXAMPLESSODEVRO01"
+     }
+    ],
+    [
+     3,
+     {
+      "role": "AWSReservedSSO_PowerUser_9a8b7c6d5e4f3a2b",
+      "rid": "AROAEXAMPLESSOPOWER01"
+     }
+    ],
+    [
+     1,
+     {
+      "role": "AWSReservedSSO_DataAnalyst_1a2b3c4d5e6f7081",
+      "rid": "AROAEXAMPLESSODATA001"
+     }
+    ]
+   ]
+  },
+  "ssou": [
+   "dev.spruce",
+   "dev.willow",
+   "dev.hazel",
+   "sre.juniper",
+   "sre.larch",
+   "data.poplar",
+   "dev.linden",
+   "dev.aspen"
+  ],
+  "it12": {
+   "time": {
+    "start": "2026-10-09T07:40:00Z",
+    "step_seconds": [
+     495,
+     495
+    ]
+   }
+  }
+ },
+ "templates": [
+  {
+   "weight": 40,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "{{u.pid}}",
+     "arn": "arn:aws:iam::123456789012:user/{{u.name}}",
+     "accountId": "123456789012",
+     "accessKeyId": "{{u.akid}}",
+     "userName": "{{u.name}}"
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "sts.amazonaws.com",
+    "eventName": "GetCallerIdentity",
+    "awsRegion": "{{region}}",
+    "sourceIPAddress": "{{vpnip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#sts.get-caller-identity",
+    "requestParameters": null,
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "sts.{{region}}.amazonaws.com"
+    }
+   },
+   "note": "developer whoami over the corporate VPN"
+  },
+  {
+   "weight": 25,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "{{u.pid}}",
+     "arn": "arn:aws:iam::123456789012:user/{{u.name}}",
+     "accountId": "123456789012",
+     "accessKeyId": "{{u.akid}}",
+     "userName": "{{u.name}}"
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "sts.amazonaws.com",
+    "eventName": "GetCallerIdentity",
+    "awsRegion": "{{region}}",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#sts.get-caller-identity",
+    "requestParameters": null,
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "sts.{{region}}.amazonaws.com"
+    }
+   },
+   "note": "developer whoami from a home ISP connection, off VPN"
+  },
+  {
+   "weight": 18,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "{{u.pid}}",
+     "arn": "arn:aws:iam::123456789012:user/{{u.name}}",
+     "accountId": "123456789012",
+     "accessKeyId": "{{u.akid}}",
+     "userName": "{{u.name}}"
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "ec2.amazonaws.com",
+    "eventName": "DescribeInstances",
+    "awsRegion": "{{region}}",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#ec2.describe-instances",
+    "requestParameters": {
+     "instancesSet": {},
+     "filterSet": {
+      "items": [
+       {
+        "name": "tag:Team",
+        "valueSet": {
+         "items": [
+          {
+           "value": "{{u.team}}"
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "ec2.{{region}}.amazonaws.com"
+    }
+   },
+   "note": "developer listing their team's instances from home"
+  },
+  {
+   "weight": 10,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "{{u.pid}}",
+     "arn": "arn:aws:iam::123456789012:user/{{u.name}}",
+     "accountId": "123456789012",
+     "accessKeyId": "{{u.akid}}",
+     "userName": "{{u.name}}"
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "ListBuckets",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#s3.ls",
+    "requestParameters": {
+     "Host": "s3.us-east-1.amazonaws.com"
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "s3.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 3,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "{{u.pid}}",
+     "arn": "arn:aws:iam::123456789012:user/{{u.name}}",
+     "accountId": "123456789012",
+     "accessKeyId": "{{u.akid}}",
+     "userName": "{{u.name}}"
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "iam.amazonaws.com",
+    "eventName": "GetUser",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#iam.get-user",
+    "requestParameters": null,
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "iam.amazonaws.com"
+    }
+   },
+   "note": "aws iam get-user (checking own key age / MFA device)"
+  },
+  {
+   "weight": 25,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "{{u.pid}}",
+     "arn": "arn:aws:iam::123456789012:user/{{u.name}}",
+     "accountId": "123456789012",
+     "accessKeyId": "{{u.akid}}",
+     "userName": "{{u.name}}"
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "ec2.amazonaws.com",
+    "eventName": "DescribeInstances",
+    "awsRegion": "{{region}}",
+    "sourceIPAddress": "{{vpnip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#ec2.describe-instances",
+    "requestParameters": {
+     "instancesSet": {},
+     "filterSet": {}
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "ec2.{{region}}.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 10,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "{{u.pid}}",
+     "arn": "arn:aws:iam::123456789012:user/{{u.name}}",
+     "accountId": "123456789012",
+     "accessKeyId": "{{u.akid}}",
+     "userName": "{{u.name}}"
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "ec2.amazonaws.com",
+    "eventName": "DescribeInstances",
+    "awsRegion": "{{region}}",
+    "sourceIPAddress": "{{officeip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#ec2.describe-instances",
+    "requestParameters": {
+     "instancesSet": {
+      "items": [
+       {
+        "instanceId": "i-0{{hex16}}"
+       }
+      ]
+     },
+     "filterSet": {}
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "ec2.{{region}}.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 5,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "{{u.pid}}",
+     "arn": "arn:aws:iam::123456789012:user/{{u.name}}",
+     "accountId": "123456789012",
+     "accessKeyId": "{{u.akid}}",
+     "userName": "{{u.name}}"
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "ec2.amazonaws.com",
+    "eventName": "DescribeInstances",
+    "awsRegion": "{{region}}",
+    "sourceIPAddress": "{{v6}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#ec2.describe-instances",
+    "requestParameters": {
+     "instancesSet": {},
+     "filterSet": {}
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "ec2.{{region}}.amazonaws.com"
+    }
+   },
+   "note": "office dual-stack egress over own IPv6"
+  },
+  {
+   "weight": 10,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "{{u.pid}}",
+     "arn": "arn:aws:iam::123456789012:user/{{u.name}}",
+     "accountId": "123456789012",
+     "accessKeyId": "{{u.akid}}",
+     "userName": "{{u.name}}"
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "logs.amazonaws.com",
+    "eventName": "DescribeLogGroups",
+    "awsRegion": "{{region}}",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#logs.describe-log-groups",
+    "requestParameters": {
+     "logGroupNamePrefix": "/ecs/{{u.team}}"
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "logs.{{region}}.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 15,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "{{u.pid}}",
+     "arn": "arn:aws:iam::123456789012:user/{{u.name}}",
+     "accountId": "123456789012",
+     "accessKeyId": "{{u.akid}}",
+     "userName": "{{u.name}}"
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "GetObject",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{vpnip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#s3.cp",
+    "requestParameters": {
+     "bucketName": "example-ledger-exports-prod",
+     "Host": "example-ledger-exports-prod.s3.us-east-1.amazonaws.com",
+     "key": "daily/2026-10-0{{d}}/summary.csv"
+    },
+    "responseElements": null,
+    "additionalEventData": {
+     "SignatureVersion": "SigV4",
+     "CipherSuite": "TLS_AES_128_GCM_SHA256",
+     "bytesTransferredIn": 0,
+     "SSEApplied": "Default_SSE_S3",
+     "AuthenticationMethod": "AuthHeader",
+     "x-amz-id-2": "{{xamzid}}",
+     "bytesTransferredOut": 284311
+    },
+    "resources": [
+     {
+      "type": "AWS::S3::Object",
+      "ARN": "arn:aws:s3:::example-ledger-exports-prod/daily/2026-10-0{{d}}/summary.csv"
+     },
+     {
+      "accountId": "123456789012",
+      "type": "AWS::S3::Bucket",
+      "ARN": "arn:aws:s3:::example-ledger-exports-prod"
+     }
+    ],
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": false,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Data",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "example-ledger-exports-prod.s3.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 10,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "{{u.pid}}",
+     "arn": "arn:aws:iam::123456789012:user/{{u.name}}",
+     "accountId": "123456789012",
+     "accessKeyId": "{{u.akid}}",
+     "userName": "{{u.name}}"
+    },
+    "eventTime": "{{it12}}",
+    "eventSource": "sts.amazonaws.com",
+    "eventName": "GetSessionToken",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#sts.get-session-token",
+    "requestParameters": {
+     "durationSeconds": 43200,
+     "serialNumber": "arn:aws:iam::123456789012:mfa/{{u.name}}"
+    },
+    "responseElements": {
+     "credentials": {
+      "accessKeyId": "ASIAEXAMPLE{{akn}}",
+      "sessionToken": "EXAMPLE-REDACTED-SESSION-TOKEN",
+      "expiration": "{{exp12}}"
+     }
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "sts.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "MFA session bootstrap (aws sts get-session-token --serial-number) from home"
+  },
+  {
+   "weight": 8,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "{{u.pid}}",
+     "arn": "arn:aws:iam::123456789012:user/{{u.name}}",
+     "accountId": "123456789012",
+     "accessKeyId": "{{u.akid}}",
+     "userName": "{{u.name}}"
+    },
+    "eventTime": "{{it12}}",
+    "eventSource": "sts.amazonaws.com",
+    "eventName": "GetSessionToken",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{vpnip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#sts.get-session-token",
+    "requestParameters": {
+     "durationSeconds": 43200,
+     "serialNumber": "arn:aws:iam::123456789012:mfa/{{u.name}}"
+    },
+    "responseElements": {
+     "credentials": {
+      "accessKeyId": "ASIAEXAMPLE{{akn}}",
+      "sessionToken": "EXAMPLE-REDACTED-SESSION-TOKEN",
+      "expiration": "{{exp12}}"
+     }
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "sts.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 15,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "{{u.pid}}",
+     "arn": "arn:aws:iam::123456789012:user/{{u.name}}",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "userName": "{{u.name}}",
+     "sessionContext": {
+      "sessionIssuer": {},
+      "webIdFederationData": {},
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "true"
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "ec2.amazonaws.com",
+    "eventName": "DescribeInstances",
+    "awsRegion": "{{region}}",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#ec2.describe-instances",
+    "requestParameters": {
+     "instancesSet": {},
+     "filterSet": {
+      "items": [
+       {
+        "name": "instance-state-name",
+        "valueSet": {
+         "items": [
+          {
+           "value": "running"
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "ec2.{{region}}.amazonaws.com"
+    }
+   },
+   "note": "the MFA-authenticated TEMPORARY (ASIA) session of an IAM user, from home"
+  },
+  {
+   "weight": 8,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "{{u.pid}}",
+     "arn": "arn:aws:iam::123456789012:user/{{u.name}}",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "userName": "{{u.name}}",
+     "sessionContext": {
+      "sessionIssuer": {},
+      "webIdFederationData": {},
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "true"
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "lambda.amazonaws.com",
+    "eventName": "ListFunctions20150331",
+    "awsRegion": "{{region}}",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#lambda.list-functions",
+    "requestParameters": null,
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "lambda.{{region}}.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 6,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "{{u.pid}}",
+     "arn": "arn:aws:iam::123456789012:user/{{u.name}}",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "userName": "{{u.name}}",
+     "sessionContext": {
+      "sessionIssuer": {},
+      "webIdFederationData": {},
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "true"
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "eks.amazonaws.com",
+    "eventName": "DescribeCluster",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#eks.update-kubeconfig",
+    "requestParameters": {
+     "name": "prod-use1"
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "eks.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 8,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "{{cu.pid}}",
+     "arn": "arn:aws:iam::123456789012:user/{{cu.name}}",
+     "accountId": "123456789012",
+     "userName": "{{cu.name}}"
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "signin.amazonaws.com",
+    "eventName": "ConsoleLogin",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "{{browser}}",
+    "requestParameters": null,
+    "responseElements": {
+     "ConsoleLogin": "Success"
+    },
+    "additionalEventData": {
+     "LoginTo": "https://console.aws.amazon.com/console/home?hashArgs=%23&isauthcode=true&state=hashArgsFromTB_us-east-1_0a1b2c3d4e5f6a7b",
+     "MobileVersion": "No",
+     "MFAIdentifier": "arn:aws:iam::123456789012:mfa/{{cu.name}}",
+     "MFAUsed": "Yes"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsConsoleSignIn",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "signin.aws.amazon.com"
+    }
+   },
+   "note": "IAM-user console sign-in with MFA from home"
+  },
+  {
+   "weight": 12,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "{{cu.pid}}",
+     "arn": "arn:aws:iam::123456789012:user/{{cu.name}}",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "userName": "{{cu.name}}",
+     "sessionContext": {
+      "sessionIssuer": {},
+      "webIdFederationData": {},
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "true"
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "ec2.amazonaws.com",
+    "eventName": "DescribeInstances",
+    "awsRegion": "{{region}}",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "AWS Internal",
+    "requestParameters": {
+     "maxResults": 1000,
+     "instancesSet": {},
+     "filterSet": {}
+    },
+    "responseElements": null,
+    "sessionCredentialFromConsole": "true",
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "ec2.{{region}}.amazonaws.com"
+    }
+   },
+   "note": "EC2 console page load for an IAM user signed in from home"
+  },
+  {
+   "weight": 5,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "{{cu.pid}}",
+     "arn": "arn:aws:iam::123456789012:user/{{cu.name}}",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "userName": "{{cu.name}}",
+     "sessionContext": {
+      "sessionIssuer": {},
+      "webIdFederationData": {},
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "true"
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "ListBuckets",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "[S3Console/0.4, aws-internal/3 aws-sdk-java/1.12.770 Linux/5.10.226-215.879.amzn2int.x86_64 OpenJDK_64-Bit_Server_VM/25.422-b06 java/1.8.0_422 vendor/Oracle_Corporation cfg/retry-mode/standard]",
+    "requestParameters": {
+     "Host": "s3.us-east-1.amazonaws.com"
+    },
+    "responseElements": null,
+    "sessionCredentialFromConsole": "true",
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "s3.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 8,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "{{cu.pid}}",
+     "arn": "arn:aws:iam::123456789012:user/{{cu.name}}",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "userName": "{{cu.name}}",
+     "sessionContext": {
+      "sessionIssuer": {},
+      "webIdFederationData": {},
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "true"
+      }
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "monitoring.amazonaws.com",
+    "eventName": "DescribeAlarms",
+    "awsRegion": "{{region}}",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "AWS Internal",
+    "requestParameters": {
+     "maxRecords": 100,
+     "stateValue": "ALARM"
+    },
+    "responseElements": null,
+    "sessionCredentialFromConsole": "true",
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "monitoring.{{region}}.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 15,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "{{ssor.rid}}:{{ssou}}@example.com",
+     "arn": "arn:aws:sts::123456789012:assumed-role/{{ssor.role}}/{{ssou}}@example.com",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "{{ssor.rid}}",
+       "arn": "arn:aws:iam::123456789012:role/aws-reserved/sso.amazonaws.com/{{ssor.role}}",
+       "accountId": "123456789012",
+       "userName": "{{ssor.role}}"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {}
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "signin.amazonaws.com",
+    "eventName": "ConsoleLogin",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "{{browser}}",
+    "requestParameters": null,
+    "responseElements": {
+     "ConsoleLogin": "Success"
+    },
+    "additionalEventData": {
+     "MobileVersion": "No",
+     "MFAUsed": "No"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsConsoleSignIn",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "signin.aws.amazon.com"
+    }
+   },
+   "note": "IAM Identity Center user opening the console from the access portal"
+  },
+  {
+   "weight": 35,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "{{ssor.rid}}:{{ssou}}@example.com",
+     "arn": "arn:aws:sts::123456789012:assumed-role/{{ssor.role}}/{{ssou}}@example.com",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "{{ssor.rid}}",
+       "arn": "arn:aws:iam::123456789012:role/aws-reserved/sso.amazonaws.com/{{ssor.role}}",
+       "accountId": "123456789012",
+       "userName": "{{ssor.role}}"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {}
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "ec2.amazonaws.com",
+    "eventName": "DescribeInstances",
+    "awsRegion": "{{region}}",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#ec2.describe-instances",
+    "requestParameters": {
+     "instancesSet": {},
+     "filterSet": {}
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "ec2.{{region}}.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 25,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "{{ssor.rid}}:{{ssou}}@example.com",
+     "arn": "arn:aws:sts::123456789012:assumed-role/{{ssor.role}}/{{ssou}}@example.com",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "{{ssor.rid}}",
+       "arn": "arn:aws:iam::123456789012:role/aws-reserved/sso.amazonaws.com/{{ssor.role}}",
+       "accountId": "123456789012",
+       "userName": "{{ssor.role}}"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {}
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "sts.amazonaws.com",
+    "eventName": "GetCallerIdentity",
+    "awsRegion": "{{region}}",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#sts.get-caller-identity",
+    "requestParameters": null,
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "sts.{{region}}.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 12,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "{{ssor.rid}}:{{ssou}}@example.com",
+     "arn": "arn:aws:sts::123456789012:assumed-role/{{ssor.role}}/{{ssou}}@example.com",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "{{ssor.rid}}",
+       "arn": "arn:aws:iam::123456789012:role/aws-reserved/sso.amazonaws.com/{{ssor.role}}",
+       "accountId": "123456789012",
+       "userName": "{{ssor.role}}"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {}
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "ListBuckets",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#s3.ls",
+    "requestParameters": {
+     "Host": "s3.us-east-1.amazonaws.com"
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "s3.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 15,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "{{ssor.rid}}:{{ssou}}@example.com",
+     "arn": "arn:aws:sts::123456789012:assumed-role/{{ssor.role}}/{{ssou}}@example.com",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "{{ssor.rid}}",
+       "arn": "arn:aws:iam::123456789012:role/aws-reserved/sso.amazonaws.com/{{ssor.role}}",
+       "accountId": "123456789012",
+       "userName": "{{ssor.role}}"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {}
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "eks.amazonaws.com",
+    "eventName": "DescribeCluster",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#eks.update-kubeconfig",
+    "requestParameters": {
+     "name": "{{cluster}}"
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "eks.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 8,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "{{ssor.rid}}:{{ssou}}@example.com",
+     "arn": "arn:aws:sts::123456789012:assumed-role/{{ssor.role}}/{{ssou}}@example.com",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "{{ssor.rid}}",
+       "arn": "arn:aws:iam::123456789012:role/aws-reserved/sso.amazonaws.com/{{ssor.role}}",
+       "accountId": "123456789012",
+       "userName": "{{ssor.role}}"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {}
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "ssm.amazonaws.com",
+    "eventName": "StartSession",
+    "awsRegion": "{{region}}",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#ssm.start-session",
+    "requestParameters": {
+     "target": "i-0{{hex16}}"
+    },
+    "responseElements": {
+     "sessionId": "{{ssou}}@example.com-0{{hex16}}",
+     "tokenValue": "Value hidden due to security reasons.",
+     "streamUrl": "wss://ssmmessages.us-east-1.amazonaws.com/v1/data-channel/{{ssou}}@example.com-0{{hex16}}?role=publish_subscribe&cell-number=AAEAAQ"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "ssm.{{region}}.amazonaws.com"
+    }
+   },
+   "note": "Session Manager shell instead of SSH"
+  },
+  {
+   "weight": 10,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "{{ssor.rid}}:{{ssou}}@example.com",
+     "arn": "arn:aws:sts::123456789012:assumed-role/{{ssor.role}}/{{ssou}}@example.com",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "{{ssor.rid}}",
+       "arn": "arn:aws:iam::123456789012:role/aws-reserved/sso.amazonaws.com/{{ssor.role}}",
+       "accountId": "123456789012",
+       "userName": "{{ssor.role}}"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {}
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "rds.amazonaws.com",
+    "eventName": "DescribeDBInstances",
+    "awsRegion": "{{region}}",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#rds.describe-db-instances",
+    "requestParameters": {
+     "dBInstanceIdentifier": "ledger-prod"
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "rds.{{region}}.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 8,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "{{ssor.rid}}:{{ssou}}@example.com",
+     "arn": "arn:aws:sts::123456789012:assumed-role/{{ssor.role}}/{{ssou}}@example.com",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "{{ssor.rid}}",
+       "arn": "arn:aws:iam::123456789012:role/aws-reserved/sso.amazonaws.com/{{ssor.role}}",
+       "accountId": "123456789012",
+       "userName": "{{ssor.role}}"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {}
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "cloudformation.amazonaws.com",
+    "eventName": "DescribeStacks",
+    "awsRegion": "{{region}}",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#cloudformation.describe-stacks",
+    "requestParameters": null,
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "cloudformation.{{region}}.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 8,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "AssumedRole",
+     "principalId": "{{ssor.rid}}:{{ssou}}@example.com",
+     "arn": "arn:aws:sts::123456789012:assumed-role/{{ssor.role}}/{{ssou}}@example.com",
+     "accountId": "123456789012",
+     "accessKeyId": "ASIAEXAMPLE{{akn}}",
+     "sessionContext": {
+      "sessionIssuer": {
+       "type": "Role",
+       "principalId": "{{ssor.rid}}",
+       "arn": "arn:aws:iam::123456789012:role/aws-reserved/sso.amazonaws.com/{{ssor.role}}",
+       "accountId": "123456789012",
+       "userName": "{{ssor.role}}"
+      },
+      "attributes": {
+       "creationDate": "{{sesst}}",
+       "mfaAuthenticated": "false"
+      },
+      "webIdFederationData": {}
+     }
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "logs.amazonaws.com",
+    "eventName": "StartQuery",
+    "awsRegion": "{{region}}",
+    "sourceIPAddress": "{{homeip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#logs.start-query",
+    "requestParameters": {
+     "logGroupName": "/ecs/reporting-worker",
+     "startTime": 1791240000,
+     "endTime": 1791250000,
+     "queryString": "fields @timestamp, @message | filter level = 'ERROR' | limit 50"
+    },
+    "responseElements": {
+     "queryId": "{{uuid2}}"
+    },
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "logs.{{region}}.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 6,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "AIDAEXAMPLECILEGACY01",
+     "arn": "arn:aws:iam::123456789012:user/ci-legacy-deployer",
+     "accountId": "123456789012",
+     "accessKeyId": "AKIAEXAMPLECILEGACY1",
+     "userName": "ci-legacy-deployer"
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "sts.amazonaws.com",
+    "eventName": "GetCallerIdentity",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{ghip}}",
+    "userAgent": "aws-cli/2.17.62 md/awscrt#0.21.5 ua/2.0 os/linux#6.8.0-1015-azure md/arch#x86_64 lang/python#3.12.6 md/pyimpl#CPython exec-env/GitHubActions cfg/retry-mode#standard md/installer#exe md/distrib#ubuntu.24 md/prompt#off md/command#sts.get-caller-identity",
+    "requestParameters": null,
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "sts.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "legacy CI job still using a stored IAM-user key on a GitHub-hosted runner (rotating egress)"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "AIDAEXAMPLECILEGACY01",
+     "arn": "arn:aws:iam::123456789012:user/ci-legacy-deployer",
+     "accountId": "123456789012",
+     "accessKeyId": "AKIAEXAMPLECILEGACY1",
+     "userName": "ci-legacy-deployer"
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "ec2.amazonaws.com",
+    "eventName": "DescribeInstances",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{ghip}}",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.8 (+https://www.terraform.io) terraform-provider-aws/5.72.1 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.32.2 os/linux lang/go#1.23.2 md/GOOS#linux md/GOARCH#amd64 api/ec2#1.177.0",
+    "requestParameters": {
+     "instancesSet": {},
+     "filterSet": {
+      "items": [
+       {
+        "name": "tag:Service",
+        "valueSet": {
+         "items": [
+          {
+           "value": "legacy-billing"
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "ec2.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "legacy CI terraform plan data source lookup"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "AIDAEXAMPLECILEGACY01",
+     "arn": "arn:aws:iam::123456789012:user/ci-legacy-deployer",
+     "accountId": "123456789012",
+     "accessKeyId": "AKIAEXAMPLECILEGACY1",
+     "userName": "ci-legacy-deployer"
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutObject",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{ghip}}",
+    "userAgent": "aws-cli/2.17.62 md/awscrt#0.21.5 ua/2.0 os/linux#6.8.0-1015-azure md/arch#x86_64 lang/python#3.12.6 md/pyimpl#CPython exec-env/GitHubActions cfg/retry-mode#standard md/installer#exe md/distrib#ubuntu.24 md/prompt#off md/command#s3.cp",
+    "requestParameters": {
+     "bucketName": "example-ci-artifacts-us-east-1",
+     "Host": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com",
+     "key": "legacy-billing/{{sha7}}.zip"
+    },
+    "responseElements": {
+     "x-amz-server-side-encryption": "AES256"
+    },
+    "additionalEventData": {
+     "SignatureVersion": "SigV4",
+     "CipherSuite": "TLS_AES_128_GCM_SHA256",
+     "bytesTransferredIn": 9341210,
+     "SSEApplied": "Default_SSE_S3",
+     "AuthenticationMethod": "AuthHeader",
+     "x-amz-id-2": "{{xamzid}}",
+     "bytesTransferredOut": 0
+    },
+    "resources": [
+     {
+      "type": "AWS::S3::Object",
+      "ARN": "arn:aws:s3:::example-ci-artifacts-us-east-1/legacy-billing/{{sha7}}.zip"
+     },
+     {
+      "accountId": "123456789012",
+      "type": "AWS::S3::Bucket",
+      "ARN": "arn:aws:s3:::example-ci-artifacts-us-east-1"
+     }
+    ],
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": false,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Data",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "example-ci-artifacts-us-east-1.s3.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 15,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "AIDAEXAMPLEBACKUPAG01",
+     "arn": "arn:aws:iam::123456789012:user/onprem-backup-agent",
+     "accountId": "123456789012",
+     "accessKeyId": "AKIAEXAMPLEBACKUPAG1",
+     "userName": "onprem-backup-agent"
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "PutObject",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{officeip}}",
+    "userAgent": "aws-sdk-go/1.55.5 (go1.22.7; linux; amd64) S3Manager restic/0.17.1",
+    "requestParameters": {
+     "bucketName": "example-onprem-backups",
+     "Host": "example-onprem-backups.s3.us-east-1.amazonaws.com",
+     "key": "restic/data/{{hex2}}/{{dig}}"
+    },
+    "responseElements": {
+     "x-amz-server-side-encryption": "AES256"
+    },
+    "additionalEventData": {
+     "SignatureVersion": "SigV4",
+     "CipherSuite": "TLS_AES_128_GCM_SHA256",
+     "bytesTransferredIn": 4194304,
+     "SSEApplied": "Default_SSE_S3",
+     "AuthenticationMethod": "AuthHeader",
+     "x-amz-id-2": "{{xamzid}}",
+     "bytesTransferredOut": 0
+    },
+    "resources": [
+     {
+      "type": "AWS::S3::Object",
+      "ARN": "arn:aws:s3:::example-onprem-backups/restic/data/{{hex2}}/{{dig}}"
+     },
+     {
+      "accountId": "123456789012",
+      "type": "AWS::S3::Bucket",
+      "ARN": "arn:aws:s3:::example-onprem-backups"
+     }
+    ],
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": false,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Data",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "example-onprem-backups.s3.us-east-1.amazonaws.com"
+    }
+   },
+   "note": "on-prem backup agent (IAM-user key) writing through the office NAT"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "AIDAEXAMPLEBACKUPAG01",
+     "arn": "arn:aws:iam::123456789012:user/onprem-backup-agent",
+     "accountId": "123456789012",
+     "accessKeyId": "AKIAEXAMPLEBACKUPAG1",
+     "userName": "onprem-backup-agent"
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "s3.amazonaws.com",
+    "eventName": "ListBuckets",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{officeip}}",
+    "userAgent": "aws-sdk-go/1.55.5 (go1.22.7; linux; amd64) S3Manager restic/0.17.1",
+    "requestParameters": {
+     "Host": "s3.us-east-1.amazonaws.com"
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "s3.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "AIDAEXAMPLECOSTSAAS01",
+     "arn": "arn:aws:iam::123456789012:user/costtool-readonly",
+     "accountId": "123456789012",
+     "accessKeyId": "AKIAEXAMPLECOSTSAAS1",
+     "userName": "costtool-readonly"
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "ec2.amazonaws.com",
+    "eventName": "DescribeInstances",
+    "awsRegion": "{{region}}",
+    "sourceIPAddress": "{{saasip}}",
+    "userAgent": "Boto3/1.35.20 md/Botocore#1.35.20 ua/2.0 os/linux#5.10.225-213.878.amzn2.x86_64 md/arch#x86_64 lang/python#3.11.10 md/pyimpl#CPython cfg/retry-mode#legacy Botocore/1.35.20",
+    "requestParameters": {
+     "instancesSet": {},
+     "filterSet": {}
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "ec2.{{region}}.amazonaws.com"
+    }
+   },
+   "note": "third-party cost-optimisation SaaS polling with a read-only IAM-user key from its own egress"
+  },
+  {
+   "weight": 4,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "AIDAEXAMPLECOSTSAAS01",
+     "arn": "arn:aws:iam::123456789012:user/costtool-readonly",
+     "accountId": "123456789012",
+     "accessKeyId": "AKIAEXAMPLECOSTSAAS1",
+     "userName": "costtool-readonly"
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "ce.amazonaws.com",
+    "eventName": "GetCostAndUsage",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{saasip}}",
+    "userAgent": "Boto3/1.35.20 md/Botocore#1.35.20 ua/2.0 os/linux#5.10.225-213.878.amzn2.x86_64 md/arch#x86_64 lang/python#3.11.10 md/pyimpl#CPython cfg/retry-mode#legacy Botocore/1.35.20",
+    "requestParameters": {
+     "timePeriod": {
+      "start": "2026-10-01",
+      "end": "2026-10-08"
+     },
+     "granularity": "DAILY",
+     "metrics": [
+      "UnblendedCost"
+     ]
+    },
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "ce.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 3,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "AIDAEXAMPLECOSTSAAS01",
+     "arn": "arn:aws:iam::123456789012:user/costtool-readonly",
+     "accountId": "123456789012",
+     "accessKeyId": "AKIAEXAMPLECOSTSAAS1",
+     "userName": "costtool-readonly"
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "ec2.amazonaws.com",
+    "eventName": "DescribeRegions",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{saasip}}",
+    "userAgent": "Boto3/1.35.20 md/Botocore#1.35.20 ua/2.0 os/linux#5.10.225-213.878.amzn2.x86_64 md/arch#x86_64 lang/python#3.11.10 md/pyimpl#CPython cfg/retry-mode#legacy Botocore/1.35.20",
+    "requestParameters": null,
+    "responseElements": null,
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "ec2.us-east-1.amazonaws.com"
+    }
+   }
+  },
+  {
+   "weight": 3,
+   "event": {
+    "eventVersion": "1.09",
+    "userIdentity": {
+     "type": "IAMUser",
+     "principalId": "{{u.pid}}",
+     "arn": "arn:aws:iam::123456789012:user/{{u.name}}",
+     "accountId": "123456789012",
+     "accessKeyId": "{{u.akid}}",
+     "userName": "{{u.name}}"
+    },
+    "eventTime": "{{t}}",
+    "eventSource": "iam.amazonaws.com",
+    "eventName": "ListUsers",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "{{vpnip}}",
+    "userAgent": "aws-cli/2.18.4 md/awscrt#0.22.0 ua/2.0 os/{{os}} md/arch#{{arch}} lang/python#3.12.6 md/pyimpl#CPython cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#iam.list-users",
+    "requestParameters": null,
+    "responseElements": null,
+    "errorCode": "AccessDenied",
+    "errorMessage": "User: arn:aws:iam::123456789012:user/{{u.name}} is not authorized to perform: iam:ListUsers on resource: arn:aws:iam::123456789012:user/ because no identity-based policy allows the iam:ListUsers action",
+    "requestID": "{{rid}}",
+    "eventID": "{{eid}}",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+     "tlsVersion": "TLSv1.3",
+     "cipherSuite": "TLS_AES_128_GCM_SHA256",
+     "clientProvidedHostHeader": "iam.amazonaws.com"
+    }
+   },
+   "note": "denied IAM read by a least-privilege developer key (on VPN)"
+  }
+ ]
+}

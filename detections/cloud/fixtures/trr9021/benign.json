@@ -114,6 +114,34 @@
       "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
       "userName": "trr9021-operator"
     },
+    "eventTime": "2026-10-13T12:05:00Z",
+    "eventSource": "elasticfilesystem.amazonaws.com",
+    "eventName": "PutFileSystemPolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "10.0.4.9",
+    "userAgent": "aws-cli/2.15.30",
+    "requestParameters": {
+      "fileSystemId": "fs-trr9021example",
+      "policy": "{\"Version\":\"2012-10-17\",\"Id\":\"enforce-in-transit-encryption\",\"Statement\":[{\"Sid\":\"DenyUnencryptedTransport\",\"Effect\":\"Deny\",\"Principal\":{\"AWS\":\"*\"},\"Action\":\"*\",\"Resource\":\"arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-trr9021example\",\"Condition\":{\"Bool\":{\"aws:SecureTransport\":\"false\"}}}]}"
+    },
+    "responseElements": null,
+    "requestID": "req-PutFileSystemPolicy-tls",
+    "eventID": "evt-PutFileSystemPolicy-tls.9",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management"
+  },
+  {
+    "eventVersion": "1.09",
+    "userIdentity": {
+      "type": "IAMUser",
+      "arn": "arn:aws:iam::123456789012:user/trr9021-operator",
+      "accountId": "123456789012",
+      "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+      "userName": "trr9021-operator"
+    },
     "eventTime": "2026-10-13T12:00:00Z",
     "eventSource": "glue.amazonaws.com",
     "eventName": "PutResourcePolicy",

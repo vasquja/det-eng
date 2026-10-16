@@ -1,0 +1,1749 @@
+{
+ "id": "k8s-cri-pod-sandboxes",
+ "version": 2,
+ "logsource": {
+  "product": "kubernetes",
+  "service": "cri"
+ },
+ "fidelity": "synthetic",
+ "represents": "About 3 hours of pod-sandbox starts across the 9 nodes of the same staging cluster as the node runtime sensor reports them: Deployment and CoreDNS replicas from rollouts, restarts and reschedules, DaemonSet node agents, StatefulSet replicas, Actions Runner Controller ephemeral CI runner pods, Helm hook and manual Job pods, and Deployment sandboxes recreated after a node reboot (attempt 1). Every draw is a new pod with its own name and uid, so a (uid, attempt) pair occurs once. The schedule-bound pods (CronJob runs, the kubeadm static pods) are in k8s-cri-cronjob-static-pods, written once each. Template weights set which pod kinds appear and roughly how often relative to each other, not production rates; treat hits and rate_per_10k as presence indicators.",
+ "provenance": "synthetic; shapes from `crictl pods -o json` (CRI PodSandbox: id, metadata {name, uid, namespace, attempt}, state, createdAt as nanoseconds since the epoch, labels incl. io.kubernetes.pod.*, annotations incl. kubernetes.io/config.seen and config.source) as detections/k8s/cri-pod-sensor.sh records it; Job pod labels per the batch/v1 Job controller (batch.kubernetes.io/job-name, controller-uid, legacy job-name); ARC runner labels per gha-runner-scale-set 0.9. A sandbox's annotations are the pod's own plus the kubelet's kubernetes.io/config.* (the Job controller tracks pods with a finalizer, not a pod annotation); pod names are the owner's name plus 5 characters of k8s.io/apimachinery's rand alphabet, uids are random per draw, so no two draws are the same pod; a sandbox is re-created for an existing pod only as attempt N+1. Sandbox start times are drawn from the window, not ordered; names are fictional, addresses RFC1918.",
+ "adjacent_to": [
+  "T1053.007/k8s_cri_job_pod.yml (Helm hook and manual Job pods match; CI runner pods do not)",
+  "T1543.005/k8s_cri_static_pod_start.yml (no static pods here: see k8s-cri-cronjob-static-pods)"
+ ],
+ "count": 234,
+ "vars": {
+  "sid": {
+   "hex": 64
+  },
+  "cns": {
+   "int": [
+    500000000,
+    999999999
+   ]
+  },
+  "sns": {
+   "int": [
+    100000000,
+    499999999
+   ]
+  },
+  "ct": [
+   {
+    "s": "1791965051",
+    "iso": "2026-10-14T08:04:11"
+   },
+   {
+    "s": "1791965083",
+    "iso": "2026-10-14T08:04:43"
+   },
+   {
+    "s": "1791965396",
+    "iso": "2026-10-14T08:09:56"
+   },
+   {
+    "s": "1791965455",
+    "iso": "2026-10-14T08:10:55"
+   },
+   {
+    "s": "1791965489",
+    "iso": "2026-10-14T08:11:29"
+   },
+   {
+    "s": "1791965522",
+    "iso": "2026-10-14T08:12:02"
+   },
+   {
+    "s": "1791965525",
+    "iso": "2026-10-14T08:12:05"
+   },
+   {
+    "s": "1791965544",
+    "iso": "2026-10-14T08:12:24"
+   },
+   {
+    "s": "1791965567",
+    "iso": "2026-10-14T08:12:47"
+   },
+   {
+    "s": "1791965583",
+    "iso": "2026-10-14T08:13:03"
+   },
+   {
+    "s": "1791965596",
+    "iso": "2026-10-14T08:13:16"
+   },
+   {
+    "s": "1791965617",
+    "iso": "2026-10-14T08:13:37"
+   },
+   {
+    "s": "1791965636",
+    "iso": "2026-10-14T08:13:56"
+   },
+   {
+    "s": "1791965669",
+    "iso": "2026-10-14T08:14:29"
+   },
+   {
+    "s": "1791965675",
+    "iso": "2026-10-14T08:14:35"
+   },
+   {
+    "s": "1791965697",
+    "iso": "2026-10-14T08:14:57"
+   },
+   {
+    "s": "1791965717",
+    "iso": "2026-10-14T08:15:17"
+   },
+   {
+    "s": "1791965735",
+    "iso": "2026-10-14T08:15:35"
+   },
+   {
+    "s": "1791965783",
+    "iso": "2026-10-14T08:16:23"
+   },
+   {
+    "s": "1791965812",
+    "iso": "2026-10-14T08:16:52"
+   },
+   {
+    "s": "1791965818",
+    "iso": "2026-10-14T08:16:58"
+   },
+   {
+    "s": "1791965836",
+    "iso": "2026-10-14T08:17:16"
+   },
+   {
+    "s": "1791965897",
+    "iso": "2026-10-14T08:18:17"
+   },
+   {
+    "s": "1791965944",
+    "iso": "2026-10-14T08:19:04"
+   },
+   {
+    "s": "1791965997",
+    "iso": "2026-10-14T08:19:57"
+   },
+   {
+    "s": "1791966019",
+    "iso": "2026-10-14T08:20:19"
+   },
+   {
+    "s": "1791966051",
+    "iso": "2026-10-14T08:20:51"
+   },
+   {
+    "s": "1791966172",
+    "iso": "2026-10-14T08:22:52"
+   },
+   {
+    "s": "1791966280",
+    "iso": "2026-10-14T08:24:40"
+   },
+   {
+    "s": "1791966285",
+    "iso": "2026-10-14T08:24:45"
+   },
+   {
+    "s": "1791966365",
+    "iso": "2026-10-14T08:26:05"
+   },
+   {
+    "s": "1791966429",
+    "iso": "2026-10-14T08:27:09"
+   },
+   {
+    "s": "1791966445",
+    "iso": "2026-10-14T08:27:25"
+   },
+   {
+    "s": "1791966699",
+    "iso": "2026-10-14T08:31:39"
+   },
+   {
+    "s": "1791966706",
+    "iso": "2026-10-14T08:31:46"
+   },
+   {
+    "s": "1791966718",
+    "iso": "2026-10-14T08:31:58"
+   },
+   {
+    "s": "1791966721",
+    "iso": "2026-10-14T08:32:01"
+   },
+   {
+    "s": "1791966778",
+    "iso": "2026-10-14T08:32:58"
+   },
+   {
+    "s": "1791966795",
+    "iso": "2026-10-14T08:33:15"
+   },
+   {
+    "s": "1791966857",
+    "iso": "2026-10-14T08:34:17"
+   },
+   {
+    "s": "1791966860",
+    "iso": "2026-10-14T08:34:20"
+   },
+   {
+    "s": "1791966930",
+    "iso": "2026-10-14T08:35:30"
+   },
+   {
+    "s": "1791967006",
+    "iso": "2026-10-14T08:36:46"
+   },
+   {
+    "s": "1791967034",
+    "iso": "2026-10-14T08:37:14"
+   },
+   {
+    "s": "1791967087",
+    "iso": "2026-10-14T08:38:07"
+   },
+   {
+    "s": "1791967137",
+    "iso": "2026-10-14T08:38:57"
+   },
+   {
+    "s": "1791967155",
+    "iso": "2026-10-14T08:39:15"
+   },
+   {
+    "s": "1791967165",
+    "iso": "2026-10-14T08:39:25"
+   },
+   {
+    "s": "1791967174",
+    "iso": "2026-10-14T08:39:34"
+   },
+   {
+    "s": "1791967270",
+    "iso": "2026-10-14T08:41:10"
+   },
+   {
+    "s": "1791967306",
+    "iso": "2026-10-14T08:41:46"
+   },
+   {
+    "s": "1791967363",
+    "iso": "2026-10-14T08:42:43"
+   },
+   {
+    "s": "1791967485",
+    "iso": "2026-10-14T08:44:45"
+   },
+   {
+    "s": "1791967560",
+    "iso": "2026-10-14T08:46:00"
+   },
+   {
+    "s": "1791967722",
+    "iso": "2026-10-14T08:48:42"
+   },
+   {
+    "s": "1791967788",
+    "iso": "2026-10-14T08:49:48"
+   },
+   {
+    "s": "1791967792",
+    "iso": "2026-10-14T08:49:52"
+   },
+   {
+    "s": "1791967866",
+    "iso": "2026-10-14T08:51:06"
+   },
+   {
+    "s": "1791967871",
+    "iso": "2026-10-14T08:51:11"
+   },
+   {
+    "s": "1791968029",
+    "iso": "2026-10-14T08:53:49"
+   },
+   {
+    "s": "1791968070",
+    "iso": "2026-10-14T08:54:30"
+   },
+   {
+    "s": "1791968126",
+    "iso": "2026-10-14T08:55:26"
+   },
+   {
+    "s": "1791968134",
+    "iso": "2026-10-14T08:55:34"
+   },
+   {
+    "s": "1791968331",
+    "iso": "2026-10-14T08:58:51"
+   },
+   {
+    "s": "1791968334",
+    "iso": "2026-10-14T08:58:54"
+   },
+   {
+    "s": "1791968349",
+    "iso": "2026-10-14T08:59:09"
+   },
+   {
+    "s": "1791968357",
+    "iso": "2026-10-14T08:59:17"
+   },
+   {
+    "s": "1791968367",
+    "iso": "2026-10-14T08:59:27"
+   },
+   {
+    "s": "1791968395",
+    "iso": "2026-10-14T08:59:55"
+   },
+   {
+    "s": "1791968427",
+    "iso": "2026-10-14T09:00:27"
+   },
+   {
+    "s": "1791968457",
+    "iso": "2026-10-14T09:00:57"
+   },
+   {
+    "s": "1791968459",
+    "iso": "2026-10-14T09:00:59"
+   },
+   {
+    "s": "1791968478",
+    "iso": "2026-10-14T09:01:18"
+   },
+   {
+    "s": "1791968509",
+    "iso": "2026-10-14T09:01:49"
+   },
+   {
+    "s": "1791968542",
+    "iso": "2026-10-14T09:02:22"
+   },
+   {
+    "s": "1791968556",
+    "iso": "2026-10-14T09:02:36"
+   },
+   {
+    "s": "1791968586",
+    "iso": "2026-10-14T09:03:06"
+   },
+   {
+    "s": "1791968591",
+    "iso": "2026-10-14T09:03:11"
+   },
+   {
+    "s": "1791968721",
+    "iso": "2026-10-14T09:05:21"
+   },
+   {
+    "s": "1791968727",
+    "iso": "2026-10-14T09:05:27"
+   },
+   {
+    "s": "1791968748",
+    "iso": "2026-10-14T09:05:48"
+   },
+   {
+    "s": "1791968874",
+    "iso": "2026-10-14T09:07:54"
+   },
+   {
+    "s": "1791968942",
+    "iso": "2026-10-14T09:09:02"
+   },
+   {
+    "s": "1791968945",
+    "iso": "2026-10-14T09:09:05"
+   },
+   {
+    "s": "1791968946",
+    "iso": "2026-10-14T09:09:06"
+   },
+   {
+    "s": "1791968951",
+    "iso": "2026-10-14T09:09:11"
+   },
+   {
+    "s": "1791968954",
+    "iso": "2026-10-14T09:09:14"
+   },
+   {
+    "s": "1791969006",
+    "iso": "2026-10-14T09:10:06"
+   },
+   {
+    "s": "1791969013",
+    "iso": "2026-10-14T09:10:13"
+   },
+   {
+    "s": "1791969014",
+    "iso": "2026-10-14T09:10:14"
+   },
+   {
+    "s": "1791969097",
+    "iso": "2026-10-14T09:11:37"
+   },
+   {
+    "s": "1791969110",
+    "iso": "2026-10-14T09:11:50"
+   },
+   {
+    "s": "1791969217",
+    "iso": "2026-10-14T09:13:37"
+   },
+   {
+    "s": "1791969250",
+    "iso": "2026-10-14T09:14:10"
+   },
+   {
+    "s": "1791969252",
+    "iso": "2026-10-14T09:14:12"
+   },
+   {
+    "s": "1791969255",
+    "iso": "2026-10-14T09:14:15"
+   },
+   {
+    "s": "1791969282",
+    "iso": "2026-10-14T09:14:42"
+   },
+   {
+    "s": "1791969284",
+    "iso": "2026-10-14T09:14:44"
+   },
+   {
+    "s": "1791969290",
+    "iso": "2026-10-14T09:14:50"
+   },
+   {
+    "s": "1791969307",
+    "iso": "2026-10-14T09:15:07"
+   },
+   {
+    "s": "1791969308",
+    "iso": "2026-10-14T09:15:08"
+   },
+   {
+    "s": "1791969398",
+    "iso": "2026-10-14T09:16:38"
+   },
+   {
+    "s": "1791969424",
+    "iso": "2026-10-14T09:17:04"
+   },
+   {
+    "s": "1791969437",
+    "iso": "2026-10-14T09:17:17"
+   },
+   {
+    "s": "1791969465",
+    "iso": "2026-10-14T09:17:45"
+   },
+   {
+    "s": "1791969508",
+    "iso": "2026-10-14T09:18:28"
+   },
+   {
+    "s": "1791969583",
+    "iso": "2026-10-14T09:19:43"
+   },
+   {
+    "s": "1791969604",
+    "iso": "2026-10-14T09:20:04"
+   },
+   {
+    "s": "1791969665",
+    "iso": "2026-10-14T09:21:05"
+   },
+   {
+    "s": "1791969668",
+    "iso": "2026-10-14T09:21:08"
+   },
+   {
+    "s": "1791969688",
+    "iso": "2026-10-14T09:21:28"
+   },
+   {
+    "s": "1791969709",
+    "iso": "2026-10-14T09:21:49"
+   },
+   {
+    "s": "1791969746",
+    "iso": "2026-10-14T09:22:26"
+   },
+   {
+    "s": "1791969783",
+    "iso": "2026-10-14T09:23:03"
+   },
+   {
+    "s": "1791969786",
+    "iso": "2026-10-14T09:23:06"
+   },
+   {
+    "s": "1791969841",
+    "iso": "2026-10-14T09:24:01"
+   },
+   {
+    "s": "1791969847",
+    "iso": "2026-10-14T09:24:07"
+   },
+   {
+    "s": "1791969894",
+    "iso": "2026-10-14T09:24:54"
+   },
+   {
+    "s": "1791969915",
+    "iso": "2026-10-14T09:25:15"
+   },
+   {
+    "s": "1791970058",
+    "iso": "2026-10-14T09:27:38"
+   },
+   {
+    "s": "1791970083",
+    "iso": "2026-10-14T09:28:03"
+   },
+   {
+    "s": "1791970087",
+    "iso": "2026-10-14T09:28:07"
+   },
+   {
+    "s": "1791970107",
+    "iso": "2026-10-14T09:28:27"
+   },
+   {
+    "s": "1791970116",
+    "iso": "2026-10-14T09:28:36"
+   },
+   {
+    "s": "1791970121",
+    "iso": "2026-10-14T09:28:41"
+   },
+   {
+    "s": "1791970141",
+    "iso": "2026-10-14T09:29:01"
+   },
+   {
+    "s": "1791970148",
+    "iso": "2026-10-14T09:29:08"
+   },
+   {
+    "s": "1791970260",
+    "iso": "2026-10-14T09:31:00"
+   },
+   {
+    "s": "1791970385",
+    "iso": "2026-10-14T09:33:05"
+   },
+   {
+    "s": "1791970408",
+    "iso": "2026-10-14T09:33:28"
+   },
+   {
+    "s": "1791970448",
+    "iso": "2026-10-14T09:34:08"
+   },
+   {
+    "s": "1791970514",
+    "iso": "2026-10-14T09:35:14"
+   },
+   {
+    "s": "1791970545",
+    "iso": "2026-10-14T09:35:45"
+   },
+   {
+    "s": "1791970790",
+    "iso": "2026-10-14T09:39:50"
+   },
+   {
+    "s": "1791970842",
+    "iso": "2026-10-14T09:40:42"
+   },
+   {
+    "s": "1791970996",
+    "iso": "2026-10-14T09:43:16"
+   },
+   {
+    "s": "1791971015",
+    "iso": "2026-10-14T09:43:35"
+   },
+   {
+    "s": "1791971035",
+    "iso": "2026-10-14T09:43:55"
+   },
+   {
+    "s": "1791971081",
+    "iso": "2026-10-14T09:44:41"
+   },
+   {
+    "s": "1791971140",
+    "iso": "2026-10-14T09:45:40"
+   },
+   {
+    "s": "1791971212",
+    "iso": "2026-10-14T09:46:52"
+   },
+   {
+    "s": "1791971335",
+    "iso": "2026-10-14T09:48:55"
+   },
+   {
+    "s": "1791971349",
+    "iso": "2026-10-14T09:49:09"
+   },
+   {
+    "s": "1791971421",
+    "iso": "2026-10-14T09:50:21"
+   },
+   {
+    "s": "1791971572",
+    "iso": "2026-10-14T09:52:52"
+   },
+   {
+    "s": "1791971603",
+    "iso": "2026-10-14T09:53:23"
+   },
+   {
+    "s": "1791971642",
+    "iso": "2026-10-14T09:54:02"
+   },
+   {
+    "s": "1791971798",
+    "iso": "2026-10-14T09:56:38"
+   },
+   {
+    "s": "1791971997",
+    "iso": "2026-10-14T09:59:57"
+   },
+   {
+    "s": "1791972011",
+    "iso": "2026-10-14T10:00:11"
+   },
+   {
+    "s": "1791972069",
+    "iso": "2026-10-14T10:01:09"
+   },
+   {
+    "s": "1791972113",
+    "iso": "2026-10-14T10:01:53"
+   },
+   {
+    "s": "1791972166",
+    "iso": "2026-10-14T10:02:46"
+   },
+   {
+    "s": "1791972178",
+    "iso": "2026-10-14T10:02:58"
+   },
+   {
+    "s": "1791972277",
+    "iso": "2026-10-14T10:04:37"
+   },
+   {
+    "s": "1791972334",
+    "iso": "2026-10-14T10:05:34"
+   },
+   {
+    "s": "1791972439",
+    "iso": "2026-10-14T10:07:19"
+   },
+   {
+    "s": "1791972632",
+    "iso": "2026-10-14T10:10:32"
+   },
+   {
+    "s": "1791972698",
+    "iso": "2026-10-14T10:11:38"
+   },
+   {
+    "s": "1791972778",
+    "iso": "2026-10-14T10:12:58"
+   },
+   {
+    "s": "1791972823",
+    "iso": "2026-10-14T10:13:43"
+   },
+   {
+    "s": "1791972874",
+    "iso": "2026-10-14T10:14:34"
+   },
+   {
+    "s": "1791972884",
+    "iso": "2026-10-14T10:14:44"
+   },
+   {
+    "s": "1791972905",
+    "iso": "2026-10-14T10:15:05"
+   },
+   {
+    "s": "1791973051",
+    "iso": "2026-10-14T10:17:31"
+   },
+   {
+    "s": "1791973160",
+    "iso": "2026-10-14T10:19:20"
+   },
+   {
+    "s": "1791973321",
+    "iso": "2026-10-14T10:22:01"
+   },
+   {
+    "s": "1791973379",
+    "iso": "2026-10-14T10:22:59"
+   },
+   {
+    "s": "1791973391",
+    "iso": "2026-10-14T10:23:11"
+   },
+   {
+    "s": "1791973485",
+    "iso": "2026-10-14T10:24:45"
+   },
+   {
+    "s": "1791973489",
+    "iso": "2026-10-14T10:24:49"
+   },
+   {
+    "s": "1791973553",
+    "iso": "2026-10-14T10:25:53"
+   },
+   {
+    "s": "1791973702",
+    "iso": "2026-10-14T10:28:22"
+   },
+   {
+    "s": "1791973712",
+    "iso": "2026-10-14T10:28:32"
+   },
+   {
+    "s": "1791973780",
+    "iso": "2026-10-14T10:29:40"
+   },
+   {
+    "s": "1791973793",
+    "iso": "2026-10-14T10:29:53"
+   },
+   {
+    "s": "1791974069",
+    "iso": "2026-10-14T10:34:29"
+   },
+   {
+    "s": "1791974120",
+    "iso": "2026-10-14T10:35:20"
+   },
+   {
+    "s": "1791974121",
+    "iso": "2026-10-14T10:35:21"
+   },
+   {
+    "s": "1791974180",
+    "iso": "2026-10-14T10:36:20"
+   },
+   {
+    "s": "1791974180",
+    "iso": "2026-10-14T10:36:20"
+   },
+   {
+    "s": "1791974181",
+    "iso": "2026-10-14T10:36:21"
+   },
+   {
+    "s": "1791974187",
+    "iso": "2026-10-14T10:36:27"
+   },
+   {
+    "s": "1791974198",
+    "iso": "2026-10-14T10:36:38"
+   },
+   {
+    "s": "1791974252",
+    "iso": "2026-10-14T10:37:32"
+   },
+   {
+    "s": "1791974283",
+    "iso": "2026-10-14T10:38:03"
+   },
+   {
+    "s": "1791974301",
+    "iso": "2026-10-14T10:38:21"
+   },
+   {
+    "s": "1791974325",
+    "iso": "2026-10-14T10:38:45"
+   },
+   {
+    "s": "1791974351",
+    "iso": "2026-10-14T10:39:11"
+   },
+   {
+    "s": "1791974361",
+    "iso": "2026-10-14T10:39:21"
+   },
+   {
+    "s": "1791974524",
+    "iso": "2026-10-14T10:42:04"
+   },
+   {
+    "s": "1791974542",
+    "iso": "2026-10-14T10:42:22"
+   },
+   {
+    "s": "1791974580",
+    "iso": "2026-10-14T10:43:00"
+   },
+   {
+    "s": "1791974650",
+    "iso": "2026-10-14T10:44:10"
+   },
+   {
+    "s": "1791974692",
+    "iso": "2026-10-14T10:44:52"
+   },
+   {
+    "s": "1791974706",
+    "iso": "2026-10-14T10:45:06"
+   },
+   {
+    "s": "1791974789",
+    "iso": "2026-10-14T10:46:29"
+   },
+   {
+    "s": "1791974790",
+    "iso": "2026-10-14T10:46:30"
+   },
+   {
+    "s": "1791974798",
+    "iso": "2026-10-14T10:46:38"
+   },
+   {
+    "s": "1791974993",
+    "iso": "2026-10-14T10:49:53"
+   },
+   {
+    "s": "1791974994",
+    "iso": "2026-10-14T10:49:54"
+   },
+   {
+    "s": "1791975028",
+    "iso": "2026-10-14T10:50:28"
+   },
+   {
+    "s": "1791975055",
+    "iso": "2026-10-14T10:50:55"
+   },
+   {
+    "s": "1791975148",
+    "iso": "2026-10-14T10:52:28"
+   },
+   {
+    "s": "1791975192",
+    "iso": "2026-10-14T10:53:12"
+   },
+   {
+    "s": "1791975208",
+    "iso": "2026-10-14T10:53:28"
+   },
+   {
+    "s": "1791975226",
+    "iso": "2026-10-14T10:53:46"
+   },
+   {
+    "s": "1791975310",
+    "iso": "2026-10-14T10:55:10"
+   },
+   {
+    "s": "1791975332",
+    "iso": "2026-10-14T10:55:32"
+   },
+   {
+    "s": "1791975340",
+    "iso": "2026-10-14T10:55:40"
+   },
+   {
+    "s": "1791975340",
+    "iso": "2026-10-14T10:55:40"
+   },
+   {
+    "s": "1791975356",
+    "iso": "2026-10-14T10:55:56"
+   },
+   {
+    "s": "1791975364",
+    "iso": "2026-10-14T10:56:04"
+   },
+   {
+    "s": "1791975410",
+    "iso": "2026-10-14T10:56:50"
+   },
+   {
+    "s": "1791975423",
+    "iso": "2026-10-14T10:57:03"
+   },
+   {
+    "s": "1791975477",
+    "iso": "2026-10-14T10:57:57"
+   },
+   {
+    "s": "1791975479",
+    "iso": "2026-10-14T10:57:59"
+   },
+   {
+    "s": "1791975540",
+    "iso": "2026-10-14T10:59:00"
+   },
+   {
+    "s": "1791975565",
+    "iso": "2026-10-14T10:59:25"
+   },
+   {
+    "s": "1791975583",
+    "iso": "2026-10-14T10:59:43"
+   }
+  ],
+  "restarted": [
+   "2026-10-14T08:41:17Z",
+   "2026-10-14T09:02:55Z",
+   "2026-10-14T09:37:04Z",
+   "2026-10-14T10:11:42Z"
+  ],
+  "k1": [
+   "b",
+   "c",
+   "d",
+   "f",
+   "g",
+   "h",
+   "j",
+   "k",
+   "l",
+   "m",
+   "n",
+   "p",
+   "q",
+   "r",
+   "s",
+   "t",
+   "v",
+   "w",
+   "x",
+   "z",
+   "2",
+   "4",
+   "5",
+   "6",
+   "7",
+   "8",
+   "9"
+  ],
+  "k2": [
+   "b",
+   "c",
+   "d",
+   "f",
+   "g",
+   "h",
+   "j",
+   "k",
+   "l",
+   "m",
+   "n",
+   "p",
+   "q",
+   "r",
+   "s",
+   "t",
+   "v",
+   "w",
+   "x",
+   "z",
+   "2",
+   "4",
+   "5",
+   "6",
+   "7",
+   "8",
+   "9"
+  ],
+  "k3": [
+   "b",
+   "c",
+   "d",
+   "f",
+   "g",
+   "h",
+   "j",
+   "k",
+   "l",
+   "m",
+   "n",
+   "p",
+   "q",
+   "r",
+   "s",
+   "t",
+   "v",
+   "w",
+   "x",
+   "z",
+   "2",
+   "4",
+   "5",
+   "6",
+   "7",
+   "8",
+   "9"
+  ],
+  "k4": [
+   "b",
+   "c",
+   "d",
+   "f",
+   "g",
+   "h",
+   "j",
+   "k",
+   "l",
+   "m",
+   "n",
+   "p",
+   "q",
+   "r",
+   "s",
+   "t",
+   "v",
+   "w",
+   "x",
+   "z",
+   "2",
+   "4",
+   "5",
+   "6",
+   "7",
+   "8",
+   "9"
+  ],
+  "k5": [
+   "b",
+   "c",
+   "d",
+   "f",
+   "g",
+   "h",
+   "j",
+   "k",
+   "l",
+   "m",
+   "n",
+   "p",
+   "q",
+   "r",
+   "s",
+   "t",
+   "v",
+   "w",
+   "x",
+   "z",
+   "2",
+   "4",
+   "5",
+   "6",
+   "7",
+   "8",
+   "9"
+  ],
+  "m1": [
+   "b",
+   "c",
+   "d",
+   "f",
+   "g",
+   "h",
+   "j",
+   "k",
+   "l",
+   "m",
+   "n",
+   "p",
+   "q",
+   "r",
+   "s",
+   "t",
+   "v",
+   "w",
+   "x",
+   "z",
+   "2",
+   "4",
+   "5",
+   "6",
+   "7",
+   "8",
+   "9"
+  ],
+  "m2": [
+   "b",
+   "c",
+   "d",
+   "f",
+   "g",
+   "h",
+   "j",
+   "k",
+   "l",
+   "m",
+   "n",
+   "p",
+   "q",
+   "r",
+   "s",
+   "t",
+   "v",
+   "w",
+   "x",
+   "z",
+   "2",
+   "4",
+   "5",
+   "6",
+   "7",
+   "8",
+   "9"
+  ],
+  "m3": [
+   "b",
+   "c",
+   "d",
+   "f",
+   "g",
+   "h",
+   "j",
+   "k",
+   "l",
+   "m",
+   "n",
+   "p",
+   "q",
+   "r",
+   "s",
+   "t",
+   "v",
+   "w",
+   "x",
+   "z",
+   "2",
+   "4",
+   "5",
+   "6",
+   "7",
+   "8",
+   "9"
+  ],
+  "puid": {
+   "uuid": true
+  },
+  "juid": {
+   "uuid": true
+  },
+  "rs": [
+   {
+    "app": "payments-api",
+    "hash": "bgtqvq9jc",
+    "ns": "payments",
+    "port": "8080"
+   },
+   {
+    "app": "payments-api",
+    "hash": "wvvgqq5ql2",
+    "ns": "payments",
+    "port": "8080"
+   },
+   {
+    "app": "ledger-worker",
+    "hash": "sjcvp2hwvw",
+    "ns": "payments",
+    "port": "8081"
+   },
+   {
+    "app": "ledger-worker",
+    "hash": "lmhj2ht7zg",
+    "ns": "payments",
+    "port": "8081"
+   },
+   {
+    "app": "orders-api",
+    "hash": "6jwc2vvlp",
+    "ns": "orders",
+    "port": "8080"
+   },
+   {
+    "app": "orders-api",
+    "hash": "kv7zwlncg",
+    "ns": "orders",
+    "port": "8080"
+   },
+   {
+    "app": "orders-events",
+    "hash": "s6mnc97n2",
+    "ns": "orders",
+    "port": "8080"
+   },
+   {
+    "app": "orders-events",
+    "hash": "2pcsq6ttmc",
+    "ns": "orders",
+    "port": "8080"
+   },
+   {
+    "app": "catalog-api",
+    "hash": "dkrjst8l8",
+    "ns": "catalog",
+    "port": "8080"
+   },
+   {
+    "app": "catalog-api",
+    "hash": "95l4cs64g",
+    "ns": "catalog",
+    "port": "8080"
+   },
+   {
+    "app": "search-gateway",
+    "hash": "ztkw9flcgb",
+    "ns": "search",
+    "port": "9000"
+   },
+   {
+    "app": "search-gateway",
+    "hash": "qtrdsxwvp",
+    "ns": "search",
+    "port": "9000"
+   },
+   {
+    "app": "storefront",
+    "hash": "wcs4b5fwx",
+    "ns": "web",
+    "port": "3000"
+   },
+   {
+    "app": "storefront",
+    "hash": "jfr58kbz8",
+    "ns": "web",
+    "port": "3000"
+   },
+   {
+    "app": "auth-service",
+    "hash": "gcp89zbkt",
+    "ns": "identity",
+    "port": "8443"
+   },
+   {
+    "app": "auth-service",
+    "hash": "tfbhvljf7",
+    "ns": "identity",
+    "port": "8443"
+   },
+   {
+    "app": "mailer",
+    "hash": "9m49kwzcn",
+    "ns": "notifications",
+    "port": "8080"
+   },
+   {
+    "app": "mailer",
+    "hash": "hs7c9l8n8k",
+    "ns": "notifications",
+    "port": "8080"
+   },
+   {
+    "app": "grafana",
+    "hash": "5v4t7pgv4g",
+    "ns": "monitoring",
+    "port": "3000"
+   },
+   {
+    "app": "grafana",
+    "hash": "8c77t5zn8x",
+    "ns": "monitoring",
+    "port": "3000"
+   }
+  ],
+  "crs": [
+   "trj4tz9kmw",
+   "6dkckfftb"
+  ],
+  "sts": [
+   {
+    "name": "payments-db-0",
+    "ns": "payments",
+    "app": "payments-db",
+    "idx": "0",
+    "crh": "payments-db-7r2lbmqkh7"
+   },
+   {
+    "name": "payments-db-1",
+    "ns": "payments",
+    "app": "payments-db",
+    "idx": "1",
+    "crh": "payments-db-j2q75ds85p"
+   },
+   {
+    "name": "orders-cache-0",
+    "ns": "orders",
+    "app": "orders-cache",
+    "idx": "0",
+    "crh": "orders-cache-95qq5vnm44"
+   },
+   {
+    "name": "orders-cache-1",
+    "ns": "orders",
+    "app": "orders-cache",
+    "idx": "1",
+    "crh": "orders-cache-ncjh5m5n4g"
+   },
+   {
+    "name": "prometheus-k8s-0",
+    "ns": "monitoring",
+    "app": "prometheus-k8s",
+    "idx": "0",
+    "crh": "prometheus-k8s-6s9krg8472"
+   },
+   {
+    "name": "prometheus-k8s-1",
+    "ns": "monitoring",
+    "app": "prometheus-k8s",
+    "idx": "1",
+    "crh": "prometheus-k8s-hcfmb2v8cn"
+   },
+   {
+    "name": "argocd-application-controller-0",
+    "ns": "argocd",
+    "app": "argocd-application-controller",
+    "idx": "0",
+    "crh": "argocd-application-controller-swdkjx9m5w"
+   },
+   {
+    "name": "argocd-application-controller-1",
+    "ns": "argocd",
+    "app": "argocd-application-controller",
+    "idx": "1",
+    "crh": "argocd-application-controller-dkxs82gh46"
+   }
+  ],
+  "ers": [
+   {
+    "name": "arc-runner-set-22h4v",
+    "hash": "zp525c7wq"
+   },
+   {
+    "name": "arc-runner-set-q8dsf",
+    "hash": "g82fq6dpx"
+   }
+  ],
+  "hook": [
+   {
+    "job": "payments-api-db-migrate",
+    "ns": "payments",
+    "app": "payments-api"
+   },
+   {
+    "job": "orders-api-db-migrate",
+    "ns": "orders",
+    "app": "orders-api"
+   },
+   {
+    "job": "catalog-api-db-migrate",
+    "ns": "catalog",
+    "app": "catalog-api"
+   },
+   {
+    "job": "auth-service-db-migrate",
+    "ns": "identity",
+    "app": "auth-service"
+   }
+  ],
+  "mj": [
+   {
+    "job": "ledger-reconcile-manual-",
+    "ns": "payments",
+    "app": "ledger-reconcile"
+   },
+   {
+    "job": "index-compact-manual-",
+    "ns": "search",
+    "app": "index-compact"
+   }
+  ]
+ },
+ "templates": [
+  {
+   "weight": 36.36,
+   "name": "Deployment replica (rollout / scale-up / reschedule)",
+   "event": {
+    "id": "{{sid}}",
+    "metadata": {
+     "name": "{{rs.app}}-{{rs.hash}}-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "uid": "{{puid}}",
+     "namespace": "{{rs.ns}}",
+     "attempt": 0
+    },
+    "state": "SANDBOX_READY",
+    "createdAt": "{{ct.s}}{{cns}}",
+    "labels": {
+     "app.kubernetes.io/name": "{{rs.app}}",
+     "pod-template-hash": "{{rs.hash}}",
+     "io.kubernetes.pod.name": "{{rs.app}}-{{rs.hash}}-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "io.kubernetes.pod.namespace": "{{rs.ns}}",
+     "io.kubernetes.pod.uid": "{{puid}}"
+    },
+    "annotations": {
+     "kubernetes.io/config.seen": "{{ct.iso}}.{{sns}}Z",
+     "kubernetes.io/config.source": "api",
+     "prometheus.io/port": "{{rs.port}}",
+     "prometheus.io/scrape": "true"
+    },
+    "runtimeHandler": ""
+   }
+  },
+  {
+   "weight": 3.64,
+   "name": "CoreDNS replica (rollout / reschedule)",
+   "event": {
+    "id": "{{sid}}",
+    "metadata": {
+     "name": "coredns-{{crs}}-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "uid": "{{puid}}",
+     "namespace": "kube-system",
+     "attempt": 0
+    },
+    "state": "SANDBOX_READY",
+    "createdAt": "{{ct.s}}{{cns}}",
+    "labels": {
+     "k8s-app": "kube-dns",
+     "pod-template-hash": "{{crs}}",
+     "io.kubernetes.pod.name": "coredns-{{crs}}-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "io.kubernetes.pod.namespace": "kube-system",
+     "io.kubernetes.pod.uid": "{{puid}}"
+    },
+    "annotations": {
+     "kubernetes.io/config.seen": "{{ct.iso}}.{{sns}}Z",
+     "kubernetes.io/config.source": "api"
+    },
+    "runtimeHandler": ""
+   }
+  },
+  {
+   "weight": 8,
+   "name": "Deployment replica after kubectl rollout restart",
+   "event": {
+    "id": "{{sid}}",
+    "metadata": {
+     "name": "{{rs.app}}-{{rs.hash}}-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "uid": "{{puid}}",
+     "namespace": "{{rs.ns}}",
+     "attempt": 0
+    },
+    "state": "SANDBOX_READY",
+    "createdAt": "{{ct.s}}{{cns}}",
+    "labels": {
+     "app.kubernetes.io/name": "{{rs.app}}",
+     "pod-template-hash": "{{rs.hash}}",
+     "io.kubernetes.pod.name": "{{rs.app}}-{{rs.hash}}-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "io.kubernetes.pod.namespace": "{{rs.ns}}",
+     "io.kubernetes.pod.uid": "{{puid}}"
+    },
+    "annotations": {
+     "kubernetes.io/config.seen": "{{ct.iso}}.{{sns}}Z",
+     "kubernetes.io/config.source": "api",
+     "kubectl.kubernetes.io/restartedAt": "{{restarted}}",
+     "prometheus.io/port": "{{rs.port}}",
+     "prometheus.io/scrape": "true"
+    },
+    "runtimeHandler": ""
+   }
+  },
+  {
+   "weight": 1.75,
+   "name": "DaemonSet node agent (cilium)",
+   "event": {
+    "id": "{{sid}}",
+    "metadata": {
+     "name": "cilium-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "uid": "{{puid}}",
+     "namespace": "kube-system",
+     "attempt": 0
+    },
+    "state": "SANDBOX_READY",
+    "createdAt": "{{ct.s}}{{cns}}",
+    "labels": {
+     "k8s-app": "cilium",
+     "app.kubernetes.io/name": "cilium-agent",
+     "app.kubernetes.io/part-of": "cilium",
+     "controller-revision-hash": "nvklgmm9zl",
+     "pod-template-generation": "4",
+     "io.kubernetes.pod.name": "cilium-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "io.kubernetes.pod.namespace": "kube-system",
+     "io.kubernetes.pod.uid": "{{puid}}"
+    },
+    "annotations": {
+     "kubernetes.io/config.seen": "{{ct.iso}}.{{sns}}Z",
+     "kubernetes.io/config.source": "api"
+    },
+    "runtimeHandler": ""
+   }
+  },
+  {
+   "weight": 1.75,
+   "name": "DaemonSet node agent (kube-proxy)",
+   "event": {
+    "id": "{{sid}}",
+    "metadata": {
+     "name": "kube-proxy-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "uid": "{{puid}}",
+     "namespace": "kube-system",
+     "attempt": 0
+    },
+    "state": "SANDBOX_READY",
+    "createdAt": "{{ct.s}}{{cns}}",
+    "labels": {
+     "k8s-app": "kube-proxy",
+     "controller-revision-hash": "dn9j59qts6",
+     "pod-template-generation": "4",
+     "io.kubernetes.pod.name": "kube-proxy-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "io.kubernetes.pod.namespace": "kube-system",
+     "io.kubernetes.pod.uid": "{{puid}}"
+    },
+    "annotations": {
+     "kubernetes.io/config.seen": "{{ct.iso}}.{{sns}}Z",
+     "kubernetes.io/config.source": "api"
+    },
+    "runtimeHandler": ""
+   }
+  },
+  {
+   "weight": 1.75,
+   "name": "DaemonSet node agent (node-exporter)",
+   "event": {
+    "id": "{{sid}}",
+    "metadata": {
+     "name": "node-exporter-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "uid": "{{puid}}",
+     "namespace": "monitoring",
+     "attempt": 0
+    },
+    "state": "SANDBOX_READY",
+    "createdAt": "{{ct.s}}{{cns}}",
+    "labels": {
+     "app.kubernetes.io/name": "node-exporter",
+     "app.kubernetes.io/part-of": "kube-prometheus",
+     "controller-revision-hash": "vkqsnlxzpn",
+     "pod-template-generation": "4",
+     "io.kubernetes.pod.name": "node-exporter-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "io.kubernetes.pod.namespace": "monitoring",
+     "io.kubernetes.pod.uid": "{{puid}}"
+    },
+    "annotations": {
+     "kubernetes.io/config.seen": "{{ct.iso}}.{{sns}}Z",
+     "kubernetes.io/config.source": "api"
+    },
+    "runtimeHandler": ""
+   }
+  },
+  {
+   "weight": 1.75,
+   "name": "DaemonSet node agent (fluent-bit)",
+   "event": {
+    "id": "{{sid}}",
+    "metadata": {
+     "name": "fluent-bit-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "uid": "{{puid}}",
+     "namespace": "logging",
+     "attempt": 0
+    },
+    "state": "SANDBOX_READY",
+    "createdAt": "{{ct.s}}{{cns}}",
+    "labels": {
+     "app.kubernetes.io/name": "fluent-bit",
+     "app.kubernetes.io/instance": "fluent-bit",
+     "controller-revision-hash": "7jpr9fhm7q",
+     "pod-template-generation": "4",
+     "io.kubernetes.pod.name": "fluent-bit-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "io.kubernetes.pod.namespace": "logging",
+     "io.kubernetes.pod.uid": "{{puid}}"
+    },
+    "annotations": {
+     "kubernetes.io/config.seen": "{{ct.iso}}.{{sns}}Z",
+     "kubernetes.io/config.source": "api"
+    },
+    "runtimeHandler": ""
+   }
+  },
+  {
+   "weight": 4,
+   "name": "StatefulSet replica (recreated by the StatefulSet controller: same name, new uid)",
+   "event": {
+    "id": "{{sid}}",
+    "metadata": {
+     "name": "{{sts.name}}",
+     "uid": "{{puid}}",
+     "namespace": "{{sts.ns}}",
+     "attempt": 0
+    },
+    "state": "SANDBOX_READY",
+    "createdAt": "{{ct.s}}{{cns}}",
+    "labels": {
+     "app.kubernetes.io/name": "{{sts.app}}",
+     "apps.kubernetes.io/pod-index": "{{sts.idx}}",
+     "controller-revision-hash": "{{sts.crh}}",
+     "statefulset.kubernetes.io/pod-name": "{{sts.name}}",
+     "io.kubernetes.pod.name": "{{sts.name}}",
+     "io.kubernetes.pod.namespace": "{{sts.ns}}",
+     "io.kubernetes.pod.uid": "{{puid}}"
+    },
+    "annotations": {
+     "kubernetes.io/config.seen": "{{ct.iso}}.{{sns}}Z",
+     "kubernetes.io/config.source": "api"
+    },
+    "runtimeHandler": ""
+   }
+  },
+  {
+   "weight": 14,
+   "name": "Actions Runner Controller ephemeral runner pod (a plain pod, not a Job)",
+   "event": {
+    "id": "{{sid}}",
+    "metadata": {
+     "name": "{{ers.name}}-runner-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "uid": "{{puid}}",
+     "namespace": "ci-runners",
+     "attempt": 0
+    },
+    "state": "SANDBOX_READY",
+    "createdAt": "{{ct.s}}{{cns}}",
+    "labels": {
+     "actions-ephemeral-runner": "True",
+     "actions.github.com/organization": "example-org",
+     "actions.github.com/scale-set-name": "arc-runner-set",
+     "actions.github.com/scale-set-namespace": "ci-runners",
+     "app.kubernetes.io/component": "runner",
+     "app.kubernetes.io/instance": "arc-runner-set",
+     "app.kubernetes.io/managed-by": "gha-rs-controller",
+     "app.kubernetes.io/name": "arc-runner-set",
+     "app.kubernetes.io/part-of": "gha-runner-scale-set",
+     "app.kubernetes.io/version": "0.9.3",
+     "pod-template-hash": "{{ers.hash}}",
+     "io.kubernetes.pod.name": "{{ers.name}}-runner-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "io.kubernetes.pod.namespace": "ci-runners",
+     "io.kubernetes.pod.uid": "{{puid}}"
+    },
+    "annotations": {
+     "kubernetes.io/config.seen": "{{ct.iso}}.{{sns}}Z",
+     "kubernetes.io/config.source": "api",
+     "actions.github.com/patch-id": "0",
+     "actions.github.com/runner-group-name": "Default",
+     "actions.github.com/runner-scale-set-name": "arc-runner-set",
+     "actions.github.com/runner-spec-hash": "5d7c9b8f6"
+    },
+    "runtimeHandler": ""
+   }
+  },
+  {
+   "weight": 2.0,
+   "name": "Helm pre-upgrade hook Job pod (the hook Job is recreated with a new uid on each upgrade)",
+   "event": {
+    "id": "{{sid}}",
+    "metadata": {
+     "name": "{{hook.job}}-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "uid": "{{puid}}",
+     "namespace": "{{hook.ns}}",
+     "attempt": 0
+    },
+    "state": "SANDBOX_READY",
+    "createdAt": "{{ct.s}}{{cns}}",
+    "labels": {
+     "batch.kubernetes.io/controller-uid": "{{juid}}",
+     "batch.kubernetes.io/job-name": "{{hook.job}}",
+     "controller-uid": "{{juid}}",
+     "job-name": "{{hook.job}}",
+     "app.kubernetes.io/name": "{{hook.app}}",
+     "io.kubernetes.pod.name": "{{hook.job}}-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "io.kubernetes.pod.namespace": "{{hook.ns}}",
+     "io.kubernetes.pod.uid": "{{puid}}"
+    },
+    "annotations": {
+     "kubernetes.io/config.seen": "{{ct.iso}}.{{sns}}Z",
+     "kubernetes.io/config.source": "api"
+    },
+    "runtimeHandler": ""
+   }
+  },
+  {
+   "weight": 1.0,
+   "name": "manual Job pod (kubectl create job --from=cronjob/<name> <name>-manual-<suffix>)",
+   "event": {
+    "id": "{{sid}}",
+    "metadata": {
+     "name": "{{mj.job}}{{m1}}{{m2}}{{m3}}-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "uid": "{{puid}}",
+     "namespace": "{{mj.ns}}",
+     "attempt": 0
+    },
+    "state": "SANDBOX_READY",
+    "createdAt": "{{ct.s}}{{cns}}",
+    "labels": {
+     "batch.kubernetes.io/controller-uid": "{{juid}}",
+     "batch.kubernetes.io/job-name": "{{mj.job}}{{m1}}{{m2}}{{m3}}",
+     "controller-uid": "{{juid}}",
+     "job-name": "{{mj.job}}{{m1}}{{m2}}{{m3}}",
+     "app.kubernetes.io/name": "{{mj.app}}",
+     "io.kubernetes.pod.name": "{{mj.job}}{{m1}}{{m2}}{{m3}}-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "io.kubernetes.pod.namespace": "{{mj.ns}}",
+     "io.kubernetes.pod.uid": "{{puid}}"
+    },
+    "annotations": {
+     "kubernetes.io/config.seen": "{{ct.iso}}.{{sns}}Z",
+     "kubernetes.io/config.source": "api"
+    },
+    "runtimeHandler": ""
+   }
+  },
+  {
+   "weight": 2,
+   "name": "Deployment replica sandbox recreated after a node reboot (attempt 1: the kubelet finds the pod's NOTREADY attempt-0 sandbox and bumps the attempt; config.seen is the restarted kubelet's first sight of the pod)",
+   "event": {
+    "id": "{{sid}}",
+    "metadata": {
+     "name": "{{rs.app}}-{{rs.hash}}-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "uid": "{{puid}}",
+     "namespace": "{{rs.ns}}",
+     "attempt": 1
+    },
+    "state": "SANDBOX_READY",
+    "createdAt": "{{ct.s}}{{cns}}",
+    "labels": {
+     "app.kubernetes.io/name": "{{rs.app}}",
+     "pod-template-hash": "{{rs.hash}}",
+     "io.kubernetes.pod.name": "{{rs.app}}-{{rs.hash}}-{{k1}}{{k2}}{{k3}}{{k4}}{{k5}}",
+     "io.kubernetes.pod.namespace": "{{rs.ns}}",
+     "io.kubernetes.pod.uid": "{{puid}}"
+    },
+    "annotations": {
+     "kubernetes.io/config.seen": "{{ct.iso}}.{{sns}}Z",
+     "kubernetes.io/config.source": "api",
+     "prometheus.io/port": "{{rs.port}}",
+     "prometheus.io/scrape": "true"
+    },
+    "runtimeHandler": ""
+   }
+  }
+ ]
+}

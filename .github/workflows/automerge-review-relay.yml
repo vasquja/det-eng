@@ -1,0 +1,34 @@
+name: automerge-review-relay
+
+# Relays a pull-request review to the `automerge` workflow, and does nothing else.
+#
+# A `pull_request_review` workflow runs the workflow file from the pull request's
+# merge ref -- the PR's OWN copy of the file -- and, on a same-repo PR, with the
+# repository token. So `automerge.yml` must not listen to reviews itself: a PR that
+# edits automerge.yml would then run its own merge logic on every review, and the PR
+# author can submit a COMMENTED review on their own PR at will. Instead, reviews start
+# this relay, and automerge.yml listens for the relay's completion (`workflow_run`),
+# which always runs automerge.yml from the default branch (main). automerge re-reads
+# the whole pull request from the API and takes nothing from this run but the head
+# SHA and pull request number it was started for, so a PR that edits this file
+# changes only whether its own reviews trigger a re-evaluation; any PR could already
+# run pull_request workflows of its own, so this file grants it nothing new (and,
+# being under .github/, editing it needs a human approval under automerge's rail 8).
+#
+# Keep the `name:` above as it is: automerge.yml's `workflow_run` trigger names it.
+# This file holds no permissions, uses no secrets, checks nothing out and reads
+# nothing from the event.
+
+on:
+  pull_request_review:
+    types: [submitted, dismissed, edited]
+
+permissions: {}
+
+jobs:
+  relay:
+    name: relay
+    runs-on: ubuntu-latest
+    steps:
+      - name: Relay the review to automerge
+        run: echo "A review changed; automerge re-evaluates this pull request from main's copy (workflow_run)."

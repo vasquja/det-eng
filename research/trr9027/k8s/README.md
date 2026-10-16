@@ -96,9 +96,11 @@ But `Metadata` hides the injected content. The Corefile lives only in
 `requestObject.data.Corefile`, which `Metadata` does not record. At `Metadata` a
 benign Corefile edit and a poisoning edit are indistinguishable. So the content grader
 must run at `Request` level. The shared audit policy keeps configmap writes at
-`Metadata` through its catch-all; this report adds a `Request`-level rule for
-`kube-system` configmap writes, the way the policy already raises
-`admissionregistration` and pods to `Request`.
+`Metadata` through its catch-all; this report adds a `Request`-level rule for writes
+to the three DNS ConfigMaps in `kube-system` (`coredns`, `kube-dns`,
+`coredns-custom`, by `resourceNames`), the way the policy already raises
+`admissionregistration` and pods to `Request`. A `create` carries no name for
+`resourceNames` to match, so creates of those ConfigMaps stay at `Metadata`.
 
 ### What a poisoned Corefile looks like
 
@@ -203,10 +205,12 @@ so one chokepoint rule covers all three. Procedure A's Corefile is content-grada
 B's JSON and C's imported snippets are caught at the chokepoint and triaged.
 
 **Telemetry requirement.** The chokepoint fires at `Metadata`. The grader needs the
-Corefile, so the audit policy must record `kube-system` configmap writes at `Request`
-level. The shared policy keeps configmap writes at `Metadata` via its catch-all, so
-this report adds a `Request`-level rule for `kube-system` configmap writes, scoped to
-that namespace (its ConfigMaps are configuration, not credentials).
+Corefile, so the audit policy must record the DNS ConfigMap writes at `Request` level.
+The shared policy keeps configmap writes at `Metadata` via its catch-all, so this
+report adds a `Request`-level rule scoped by `resourceNames` to `coredns`, `kube-dns`
+and `coredns-custom` in `kube-system` (no other ConfigMap's body is copied into the
+log). Patches, updates and deletes of those three are logged at `Request`; a `create`
+has no name for `resourceNames` to match, so it stays at `Metadata`.
 
 **Strategy 1 — chokepoint (covers A, B, C).**
 Match an audit event where `objectRef.resource` is `configmaps`,
@@ -252,9 +256,13 @@ node bypass are stated gaps.
 
 The tests run in a lab cluster with the shared audit policy. The lab is a `kind`
 cluster; its config and audit policy are in
-[`detections/k8s/`](../../../detections/k8s/). The poisoning carries the sentinel token
-`trr9027` (a `forward` to a sentinel `.invalid` zone that no workload resolves), so a
-validator matches the emulation's own events, and **Procedure A captures and restores
+[`detections/k8s/`](../../../detections/k8s/). Every procedure's write carries the
+sentinel token `trr9027` (a `forward` to a sentinel `.invalid` zone that no workload
+resolves), but only Procedure A's `coredns` patch is logged with its body, so only A's
+sentinel reaches the log and the validator proves Procedure A only. The B and C creates
+are logged at `Metadata`: the policy's `Request` rule is scoped by `resourceNames`, and a
+`create` names no object when the policy is evaluated, so they carry no body and no
+sentinel, and only the chokepoint rule sees them. **Procedure A captures and restores
 the original Corefile** so cluster DNS is unchanged after the run. Procedures B and C
 operate on ConfigMaps that a CoreDNS `kind` cluster does not read (`kube-dns`,
 `coredns-custom`), so they are inert, and are deleted on cleanup. One script drives
@@ -278,9 +286,10 @@ Atomic Red Team wrappers in
 
 The validator
 [`detections/validate_apiserver_detections.py`](../../../detections/validate_apiserver_detections.py)
-reads the API server audit log the emulation produced and asserts the chokepoint
-matches the emulation's own DNS-ConfigMap writes (a non-system caller in `kube-system`)
-and the grader matches the Corefile carrying the `trr9027` sentinel. The workflow
+reads the API server audit log the emulation produced and asserts that the chokepoint
+and the grader both match Procedure A's `coredns` write, which it tells apart by the
+`trr9027` sentinel in the logged Corefile. B and C's creates reach the log at `Metadata`
+with no sentinel, so the validator does not prove them. The workflow
 [`validate-apiserver-detections.yml`](../../../.github/workflows/validate-apiserver-detections.yml)
 runs the loop on a `kind` cluster, with a negative control on the pre-emulation log.
 

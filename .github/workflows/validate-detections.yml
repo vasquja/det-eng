@@ -13,6 +13,10 @@ on:
     branches: [ main ]
   pull_request:
   workflow_dispatch:
+  # Weekly regression: re-run even when nothing changed (pySigma, the runner
+  # image and the kernel drift underneath the rules).
+  schedule:
+    - cron: '17 6 * * 1'
 
 permissions:
   contents: read

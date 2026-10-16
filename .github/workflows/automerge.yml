@@ -1,145 +1,693 @@
 name: automerge
 
-# Enable GitHub's NATIVE auto-merge on a labeled pull request, so it lands
-# automatically once branch protection is satisfied (all required checks green) --
-# det-eng's "the proof decides what is done" model, applied to the merge, so an AI
-# (or anyone) can drive a detection all the way to landed without a manual click.
+# Turn on GitHub's NATIVE auto-merge for a pull request once every rail below holds,
+# and turn it off again as soon as one stops holding -- det-eng's "the proof decides
+# what is done" model, applied to the merge itself. This lets an AI (or anyone) drive
+# a detection to a CI-proven state and have it land without a manual click, at scale,
+# while keeping an auditable, bounded blast radius.
 #
-# WHY NATIVE AUTO-MERGE (not a direct API merge): `main` is a protected branch, and a
-# workflow's built-in GITHUB_TOKEN cannot merge directly into a protected branch --
-# GitHub blocks GITHUB_TOKEN writes to protected refs unless the bot is a ruleset
-# bypass actor (a deliberate guard so workflows can't circumvent branch protection).
-# But ENABLING native auto-merge is allowed, and GitHub's own auto-merge then performs
-# the merge when the required checks pass, honoring branch protection -- no bypass, no
-# PAT, enforcement fully intact. The repo must have "Allow auto-merge" enabled (it is).
+# MECHANISM: native auto-merge, never a direct merge. `main` is protected, and a
+# workflow's built-in GITHUB_TOKEN cannot merge into it (GitHub blocks GITHUB_TOKEN
+# writes to a protected ref unless the bot is a ruleset bypass actor, and there are
+# none). It CAN enable auto-merge; GitHub itself then squash-merges the PR once the
+# `main` ruleset's REQUIRED status checks pass, honoring branch protection -- no
+# bypass, no PAT. So each run converges one bit per PR:
+#   every rail holds -> auto-merge ON  (enabled unless it is already on)
+#   a rail fails     -> auto-merge OFF (disabled if THIS workflow had enabled it)
+# Auto-merge is enabled with GraphQL's enablePullRequestAutoMerge mutation, called
+# directly: it can only arm auto-merge (GitHub refuses it when the PR is already
+# mergeable). `gh pr merge` in its auto mode is NOT used: gh re-reads the PR's merge
+# state itself and, if that says the PR is already mergeable, merges it at once
+# (mergePullRequest) instead. It is disabled with `gh pr merge --disable-auto`, which
+# does nothing else. Each run reads the PR's whole state from the API (never from the
+# event payload), so runs are idempotent and the run that starts last decides with
+# the newest facts.
 #
-# SAFETY RAILS (checked before enabling; every gate fails CLOSED):
-#   1. `automerge` label -- the per-PR opt-in (addable only by a collaborator with
-#      triage/write). Removing it DISABLES auto-merge (the veto).
-#   2. Same-repo only: fork PRs are never touched (head.repo != base.repo).
-#   3. Open, not a draft, base branch is `main`.
-#   4. No reviewer's latest review is CHANGES_REQUESTED. Because the ruleset requires
-#      0 approvals, GitHub would not otherwise honor that veto, so a CHANGES_REQUESTED
-#      review arriving later DISABLES auto-merge (the pull_request_review trigger).
-#   5. No merge conflict (`mergeable != false`).
-# GitHub enforces the required status checks itself before the auto-merge fires, so
-# this workflow does not re-scan them. Squash keeps `main`'s required linear history.
+# THE RAILS (re-checked on every event below; every gate fails CLOSED -- an API error,
+# an unreadable or unexpected answer or an incomplete list holds the PR, and disables
+# auto-merge if this workflow had enabled it):
+#   1. Per-PR opt-in: the PR carries the `automerge` label (re-read from the API, not
+#      taken from the event). A label can be added only by a collaborator with
+#      triage/write access, so the label IS the human (or trusted-automation) opt-in.
+#      Remove the label to veto: auto-merge is disabled.
+#   2. Same-repo only: fork PRs are never touched (a fork's head.repo.full_name carries
+#      the fork owner, so it can never equal the base; a missing name holds). This is
+#      the key defense against a malicious outside PR.
+#   3. Open, not a draft, and the base branch is `main` (a retarget is re-checked).
+#      A head branch whose name looks like a commit SHA (7-40 hex digits) holds: GitHub
+#      may not run pull_request_target for such a branch, so a label veto or a push on
+#      it would go unseen.
+#   4. No reviewer's latest decision (APPROVED / CHANGES_REQUESTED / DISMISSED, over
+#      every page of reviews) is CHANGES_REQUESTED: a human veto is honored. The
+#      ruleset requires 0 approvals, so GitHub would not honor that veto on its own.
+#   5. No merge conflict: `mergeable` is not confirmed false (an unknown is re-read for
+#      up to 30 s; still unknown proceeds, since GitHub never merges a conflict).
+#   6. Nothing has failed on the CURRENT head SHA: no check run concluded failure,
+#      cancelled, timed_out, action_required, startup_failure or stale (any conclusion
+#      but success / neutral / skipped holds, and so does a status GitHub does not
+#      document), and the combined legacy commit status is not failure / error. A
+#      check still pending is fine: GitHub waits for the required checks itself. This
+#      workflow's own check runs are ignored (a superseded run is cancelled, which is
+#      no failed proof). An error reading the check runs (on any page), a list shorter
+#      than its total_count, or an unreadable status holds.
+#   7. The head SHA is pinned: it is re-read after every other read (a moved head holds
+#      and the run for the new head re-checks it), and the enable mutation carries it
+#      as expectedHeadOid, so GitHub refuses it if the head moved in between.
+#   8. Human sign-off on everything that is not plain CONTENT. This is an ALLOWLIST.
+#      Auto-merge is enabled here without a human approval only when the PR changes at
+#      least one path and EVERY changed path (and the previous name of a renamed file)
+#      is content:
+#        detections/sigma/T<id>/<stem>.yml and <stem>.cases.jsonl   rules, their cases
+#        detections/cloud/fixtures/<trr>/*.json                      cloud log fixtures
+#        detections/benign/scores.json    derived; the benign-corpus check proves
+#                                         every rule score and the corpus digest
+#                                         match, and fails a rule over its budget;
+#                                         sufficiency-ratchet fails a rule with
+#                                         more hits than on the base branch
+#        research/** (but no *.py, nothing under research/tools/), docs/** (but not
+#        docs/CODEOWNERS), upstream/**, and *.md outside .github/ and any .claude
+#        directory, except agent instructions (CLAUDE.md, CLAUDE.local.md, AGENTS.md,
+#        in any directory)
+#      Everything else is the code and configuration the gates run on: any *.py
+#      (sigma_eval.py and the validators included), atomics/** other than *.md (the
+#      validator jobs run, compile or kubectl-apply atomics in the same job and
+#      workspace as the validator, so an atomic could rewrite its own gate),
+#      .github/**, docs/CODEOWNERS (GitHub reads CODEOWNERS from docs/ when neither
+#      .github/ nor the root has one), a `.claude` entry in ANY directory (the root
+#      one, a nested, directory-scoped one such as research/<trr>/.claude/skills/ or
+#      docs/.claude/settings.json, and a `.claude` symlink, which the files API lists
+#      as one path), the agent-instruction files (policy for the next agent session;
+#      these exclusions match in any letter case, as a case-insensitive checkout
+#      reads them), detections/requirements.txt, detections/benign/** other than
+#      scores.json (budgets.json, slices/, the live workloads), detections/k8s/**,
+#      detections/audit/**, detections/controls/**, research/tools/**, and any path
+#      this list does not recognise. A PR touching any of them gets auto-merge here
+#      only with an APPROVED review, as that reviewer's latest decision, ON THE EXACT
+#      HEAD COMMIT and submitted AFTER the PR's last base change, from a human (user
+#      type "User", not a bot) whose repository permission is write, maintain or
+#      admin, and who is neither the PR author nor the author or committer of any of
+#      the PR's commits. A review records the head commit but not the base, so an
+#      approval given while the PR targeted another branch (whose own commits the
+#      reviewer never saw in the diff) does not survive a retarget to main. A push
+#      after the approval moves the head, so the synchronize run disables auto-merge
+#      until a human approves the new head (but see RESIDUALS). A commit's author and
+#      committer are e-mail addresses written by whoever made it; GitHub links them to
+#      a login without checking, unless the commit carries a VERIFIED signature (which
+#      binds the committer to the signer's account). So a commit that is not verified,
+#      or whose author or committer is linked to no GitHub account, is unattributed (no
+#      login reliably excludes whoever made it), and such a PR is held for a human to
+#      merge. Otherwise the PR is left for a human to approve or merge.
+#      So a NEW-TECHNIQUE PR needs a human approval too: it edits a validator's
+#      MANIFEST (detections/validate_*.py), the validators' path filters
+#      (.github/workflows/) and its atomics. The CONTENT / NOT_CONTENT patterns at the
+#      top of the script below are the one place to loosen this rail; widen them only
+#      for files no gate imports, executes or reads as policy.
+#      The file list and the commit list are paginated and compared with the PR's
+#      changed_files and commits counts; an API error or an incomplete list holds.
 #
-# The label/review paths use `pull_request_target` / `pull_request_review`, which run
-# THIS file from base (main) with a write token and never check out or run PR code;
-# nothing from the event is interpolated into the shell (values come via env:).
+# EVENTS -- no run ever executes a copy of this file from the PR's own branch:
+#   pull_request_target (labeled, unlabeled, synchronize, reopened, ready_for_review,
+#     converted_to_draft, edited): the label, a push (rails 6 and 8 re-checked on the
+#     new head), the draft state, a reopen and a base change. pull_request_target, NOT
+#     pull_request: it runs this file from the PR's BASE branch (main's copy for every
+#     PR this workflow can enable, since rail 3 wants base `main`) with a write token,
+#     and never the PR branch's copy, so a PR cannot ship an altered automerge.yml that
+#     runs with write access. This is safe only because the jobs read API metadata and
+#     never check out or run PR-authored code.
+#   workflow_run (completed) of every CI workflow that reports a check on a PR (the
+#     validators, detection-quality, lint-trr, claude-code-review) and of
+#     automerge-review-relay: a failed check disables auto-merge, and a late approval
+#     enables it. workflow_run always runs the default branch's (main's) copy. The PR
+#     is resolved from workflow_run.pull_requests, else from the commits/<head_sha>/
+#     pulls API (open, same-repo PRs only); nothing else of the triggering run
+#     (artifacts, outputs, logs, conclusion) is read or trusted.
+#   Nothing from the event (title, branch, body, author) is interpolated into the
+#   shell; github-context values come through the env: block, and the evaluating job
+#   receives nothing from the event but the PR number.
 #
-# Requirements (one-time): "Allow auto-merge" on the repo; Actions workflow permissions
-# read/write; the `automerge` label exists; and (for a green-but-behind PR to land)
-# the `main` ruleset's "Require branches to be up to date before merging" off.
+# WHY REVIEWS GO THROUGH A RELAY: a pull_request_review workflow runs the workflow file
+# from the PR's merge ref -- the PR's OWN copy -- with the repository token on a
+# same-repo PR. Listening to pull_request_review here would let a PR that edits
+# automerge.yml run its own logic whenever a review lands, and the PR author can submit
+# a COMMENTED review on their own PR at will. So reviews (submitted, dismissed, edited)
+# start only automerge-review-relay.yml (permissions: {}, one echo step, no secrets),
+# and this file listens for the relay's completion, which always runs main's copy. A PR
+# that edits the relay changes only whether its own reviews trigger a re-evaluation
+# (and the relay is under .github/, so rail 8 wants a human approval for it).
+#
+# CONCURRENCY: one group per PR, keyed on the PR that is actually evaluated. Job
+# `automerge-resolve` (read-only, no concurrency) works out which PR(s) the event
+# concerns; job `automerge` then runs once per PR, as a matrix, in the concurrency
+# group automerge-pr-<number>. So every evaluation of one PR, whichever event started
+# it, is serialized: no two overlap, and the last one reads the newest state. A
+# workflow-level group could not do this: it is computed before the PR is known, and a
+# workflow_run's pull_requests is empty for a run on a superseded head and may list
+# another PR first. A running evaluation is never cancelled; GitHub keeps one pending
+# job per group and cancels older pending ones, which is safe because every job
+# re-reads the whole state.
+#
+# RESIDUALS (what this workflow does not guarantee):
+#   - Only REQUIRED checks hold GitHub's merge. A non-required check -- the
+#     detection-quality checks, sufficiency-ratchet included -- holds it only if it
+#     fails before the required checks finish: the next evaluation (the completion of
+#     any workflow above) then disables auto-merge. If the required checks finish
+#     first, GitHub merges at once. A CHANGES_REQUESTED review and a removed label
+#     likewise hold only if they land before GitHub merges. Making the
+#     detection-quality checks required in the `main` ruleset closes the check race.
+#   - A push keeps an armed auto-merge armed: GitHub disables it on a push only by
+#     someone WITHOUT write access, and a same-repo push comes from a writer. The
+#     synchronize run then disables it when the new head fails a rail (rail 8 wants a
+#     fresh approval), but GitHub merges as soon as the new head's required checks
+#     pass, so if those are already green (check runs are per SHA: a head already
+#     tested on another branch) the merge can win the race. "Require approval of the
+#     most recent reviewable push" and CODEOWNERS (PLATFORM BACKSTOP) close it.
+#   - pull_request_target runs the copy on the PR's base branch, so a PR into another
+#     branch runs THAT branch's automerge.yml, if it has one, with this workflow's
+#     write token (which can enable auto-merge on a PR into main, as a writer can).
+#     Delete stale branches that carry an older automerge.yml.
+#   - GitHub enables auto-merge only while it has something to wait for. When the
+#     rails first hold after the required checks have passed (a late label, a late
+#     approval), GitHub refuses ("clean status"); this workflow never merges directly,
+#     so it logs a warning and a human merges.
+#   - The rails bind only this bot. A human with write access can still enable
+#     auto-merge or merge by hand; this workflow disables only the auto-merge it
+#     enabled itself (enabled_by github-actions[bot]) and leaves a human's alone. No
+#     API names who PUSHED a commit, so a writer who pushes someone else's signed
+#     commits to a PR is not excluded from approving it.
+#
+# PLATFORM BACKSTOP: anyone with write access can still press merge, enable auto-merge
+# or call the merge API, and an agent acting with a human's token can approve as that
+# human. The `main` ruleset is what makes the sign-off hold for every merge path
+# (detections/benign/README.md, "Branch protection: what binds a manual merge"): a
+# .github/CODEOWNERS file naming humans for the non-content paths above, "Require
+# review from Code Owners", "Require approval of the most recent reviewable push", the
+# validator and detection-quality checks as required status checks, and no bypass
+# actors. Keep the required approval count at 0: 1 or more makes every PR wait for a
+# human, content included, so GitHub's auto-merge of a content-only PR would wait for
+# an approval and content-only auto-merge ends. With 0, the Code Owner review binds
+# only the code-owned (non-content) paths. Today only the validator checks and the
+# no-bypass setting are in place (see that README). This rail is the second layer, not
+# a substitute for that.
+#
+# COVERAGE -- the heavy validators (apiserver / cloud / k8s / staticpod) ALWAYS report
+# a status on a PR: each one triggers on every PR, a cheap `changes` job decides from
+# the diff whether the heavy job runs, and an unrelated PR skips it (a skipped required
+# check counts as success). They are branch-protection required checks, so GitHub's
+# merge sees a real, per-validator signal instead of "only the checks that happened to
+# run". The `detection-quality` checks (rule-cases, check-sufficiency,
+# sufficiency-ratchet (pull requests only), benign-corpus and the shadow
+# benign-linux-live capture) also run on every PR, with no path filter.
+#
+# Residual gap: a validator's `changes` detector keys on the SAME path list as the
+# validator's `push: paths:`, so a PR that adds a technique directory NOT YET in that
+# list is judged "not relevant" and its behavioral validation is skipped (the rule is
+# still Sigma-compiled by the always-on `sigma-lint`). Keep each validator's
+# `push: paths:` and its `changes`-job pattern list in sync when adding a technique,
+# as the TRR flow does (and, per rail 8, a human approves that PR).
+#
+# Requirements (one-time): "Allow auto-merge" on the repo; repository Actions
+# permission allowing read/write workflow tokens (Settings -> Actions -> General ->
+# Workflow permissions); the `automerge` label; automerge-review-relay.yml on main
+# under that name; and the `main` ruleset's "Require branches to be up to date before
+# merging" (strict) OFF: a workflow using the built-in GITHUB_TOKEN cannot update a PR
+# branch and have CI re-run (GitHub suppresses workflow runs for GITHUB_TOKEN pushes),
+# so with strict ON a green-but-behind PR would wait forever. With strict OFF a labeled
+# PR lands even if slightly behind main; the required checks ran on its head and git
+# still blocks a textual conflict. GitHub's merge queue would keep the
+# test-against-latest-main guarantee, but it needs an organization-owned repo. GitHub
+# may refuse to merge, under this workflow's token, a PR that changes
+# .github/workflows/ (the token has no `workflows` permission); a human then merges it.
 
 on:
   pull_request_target:
-    types: [labeled, unlabeled]
-  pull_request_review:
-    types: [submitted, dismissed, edited]
+    types: [labeled, unlabeled, synchronize, reopened, ready_for_review, converted_to_draft, edited]
+  workflow_run:
+    workflows:
+      - validate-detections
+      - validate-apiserver-detections
+      - validate-cloud-detections
+      - validate-k8s-detections
+      - validate-staticpod-detections
+      - detection-quality
+      - lint-trr
+      - claude-code-review
+      - automerge-review-relay
+    types: [completed]
 
-permissions:
-  contents: write
-  pull-requests: write
-
-concurrency:
-  # Keyed by PR and action so a disable (unlabel / review) run is never
-  # superseded-cancelled by an enable (label) run for the same PR.
-  group: automerge-${{ github.event.pull_request.number }}-${{ github.event.action }}
-  cancel-in-progress: false
+permissions: {}
 
 jobs:
-  automerge:
-    name: automerge
+  resolve:
+    name: automerge-resolve
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      prs: ${{ steps.resolve.outputs.prs }}
     steps:
-      - name: Enable or disable native auto-merge from the label
+      - name: Resolve the pull request(s) this event concerns
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          PR_FROM_EVENT: ${{ github.event.pull_request.number }}
+          RUN_WORKFLOW: ${{ github.event.workflow_run.name }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_PRS: ${{ toJSON(github.event.workflow_run.pull_requests) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          prs=""
+          case "$EVENT" in
+            pull_request_target)
+              echo "Event: pull_request_target ($ACTION) on #$PR_FROM_EVENT"
+              prs="$PR_FROM_EVENT" ;;
+            workflow_run)
+              echo "Event: workflow_run of '$RUN_WORKFLOW' on $RUN_HEAD_SHA"
+              # The run's pull_requests: the same-repo PRs whose head is the run's head
+              # (empty for a fork, and for a run on a superseded head); only PRs whose
+              # base is this repository count.
+              prs="$(jq -r --arg repo "$REPO" \
+                       '.[]? | select((.base.repo.url // "") | endswith("/repos/" + $repo)) | .number' \
+                       <<<"${RUN_PRS:-null}" 2>/dev/null || true)"
+              if [ -z "${prs//[[:space:]]/}" ]; then
+                if ! [[ "$RUN_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+                  echo "No head SHA on this run; nothing to do."
+                elif ! prs="$(gh api --paginate "repos/$REPO/commits/$RUN_HEAD_SHA/pulls" \
+                                --jq '.[] | select(.state == "open"
+                                                   and .head.repo.full_name == env.REPO
+                                                   and .base.repo.full_name == env.REPO) | .number' 2>/dev/null)"; then
+                  echo "::error title=automerge::Could not list the pull requests of $RUN_HEAD_SHA, so none was re-evaluated; a failed check or a review on one waits for its next event."
+                  exit 1
+                fi
+              fi ;;
+            *)
+              echo "Event '$EVENT' is not one this workflow handles; nothing to do." ;;
+          esac
+          prs="$(tr -s '[:space:]' '\n' <<<"$prs" | { grep -E '^[0-9]+$' || true; } | sort -un)"
+          [ -n "$prs" ] || echo "No candidate open PR for this event; nothing to do."
+          json="$(printf '%s' "$prs" | jq -Rsc 'split("\n") | map(select(length > 0) | tonumber)')"
+          echo "PR(s) to evaluate, each in its own job and concurrency group: $json"
+          echo "prs=$json" >> "$GITHUB_OUTPUT"
+
+  automerge:
+    name: automerge (#${{ matrix.pr }})
+    needs: resolve
+    if: needs.resolve.outputs.prs != '' && needs.resolve.outputs.prs != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: read
+      checks: read
+      statuses: read
+    strategy:
+      fail-fast: false
+      matrix:
+        pr: ${{ fromJSON(needs.resolve.outputs.prs) }}
+    concurrency:
+      group: automerge-pr-${{ matrix.pr }}
+      cancel-in-progress: false
+    steps:
+      - name: Converge native auto-merge with the rails
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           LABEL: automerge
-          EVENT: ${{ github.event_name }}
-          ACTION: ${{ github.event.action }}
-          LABEL_NAME: ${{ github.event.label.name }}
-          PR_NUM: ${{ github.event.pull_request.number }}
+          PR: ${{ matrix.pr }}
         shell: bash
         run: |
           set -euo pipefail
 
-          disable_am() { gh pr merge "$PR_NUM" --disable-auto -R "$REPO" >/dev/null 2>&1; }
+          # --- Rail 8 allowlist: the ONE place to loosen the human sign-off ---------
+          # A path is content when it matches CONTENT and not NOT_CONTENT. A PR whose
+          # every path (and previous name) is content gets auto-merge without an
+          # approval; anything else needs one. Widen only for files no gate imports,
+          # executes or reads as policy (atomics are run by the validator jobs).
+          # NOT_CONTENT is matched case-insensitively: on a case-insensitive checkout
+          # (macOS, Windows) claude.md IS CLAUDE.md and .Claude/ IS .claude/. Agent
+          # instruction files (CLAUDE.md, CLAUDE.local.md, AGENTS.md) and a .claude
+          # entry (a directory of skills, commands, settings, or a symlink to one),
+          # each in ANY directory, are policy for the next agent session, never
+          # content: an agent loads a nested, directory-scoped .claude/skills/ for work
+          # under that directory. docs/CODEOWNERS is review policy GitHub reads.
+          CONTENT='^(detections/sigma/T[0-9]{4}(\.[0-9]{3})?/[^/]+\.(yml|cases\.jsonl)|detections/cloud/fixtures/[^/]+/[^/]+\.json|detections/benign/scores\.json|research/.+|docs/.+|upstream/.+|.+\.md)$'
+          NOT_CONTENT='(\.py$|^research/tools(/|$)|^\.github(/|$)|(^|/)\.claude(/|$)|(^|/)(claude(\.local)?|agents)\.md$|^docs/codeowners$)'
 
-          # standing_changes_requested: true if the latest review per author is
-          # CHANGES_REQUESTED. Fails CLOSED (any API error -> "true").
-          standing_changes_requested() {
-            # NOTE: `gh api --slurp` is INCOMPATIBLE with `--jq` (gh errors), so --slurp
-            # must pipe to a standalone jq. Any error -> the blocking value "true".
-            gh api --paginate --slurp "repos/$REPO/pulls/$PR_NUM/reviews" 2>/dev/null \
-              | jq -r '
-                add
-                | [ .[] | select(.state=="CHANGES_REQUESTED" or .state=="APPROVED" or .state=="DISMISSED") ]
-                | group_by(.user.login)
-                | map(max_by(.submitted_at))
-                | any(.[]?; .state=="CHANGES_REQUESTED")' 2>/dev/null || echo "true"
+          # The identity GITHUB_TOKEN acts as: this workflow disables only the
+          # auto-merge that this identity enabled, never a human's.
+          BOT_LOGIN='github-actions[bot]'
+          exit_code=0
+
+          # grep that fails only on a real error (exit 2), not when nothing matched.
+          match() { grep "$@" || [ "$?" -eq 1 ]; }
+
+          # All pages of reviews (gh --paginate --slurp: one array per page) -> each
+          # reviewer's latest decision. Any other shape is a jq error, which holds.
+          DECISIONS='if type == "array" and all(.[]; type == "array") then add // [] else error("pages") end
+            | if all(.[]; type == "object") then . else error("reviews") end
+            | [ .[] | select(.state=="CHANGES_REQUESTED" or .state=="APPROVED" or .state=="DISMISSED") ]
+            | group_by(.user.login)
+            | map(max_by(.submitted_at))'
+
+          # evaluate PR: the rails, in order. Sets $head_sha; on the first rail that
+          # does not hold, sets $reason and returns 1. It runs as the left side of
+          # `||`, where bash suspends errexit, so every gate is a POSITIVE match: an
+          # empty or unreadable value never passes one.
+          evaluate() {
+            local pr="$1" data state draft base same_repo head_ref has_label reviews changes_requested
+            local files changed_files listed paths n_paths n_content not_content n_not_content shown
+            local pr_commits commits listed_commits unattributed excluded events since candidates approvers login perm
+            local runs bad status_json status_state total_statuses mergeable again
+            head_sha=""; reason=""
+
+            if ! data="$(gh api "repos/$REPO/pulls/$pr" 2>/dev/null)"; then
+              reason="PR unreadable"; return 1
+            fi
+            state="$(jq -r '.state' <<<"$data" 2>/dev/null || true)"
+            draft="$(jq -r '.draft' <<<"$data" 2>/dev/null || true)"
+            base="$(jq -r '.base.ref' <<<"$data" 2>/dev/null || true)"
+            same_repo="$(jq -r '(.head.repo.full_name | type) == "string"
+                                and .head.repo.full_name == .base.repo.full_name' <<<"$data" 2>/dev/null || true)"
+            head_sha="$(jq -r '.head.sha' <<<"$data" 2>/dev/null || true)"
+            head_ref="$(jq -r '.head.ref // ""' <<<"$data" 2>/dev/null || true)"
+            has_label="$(jq -r --arg l "$LABEL" 'any(.labels[]?; .name==$l)' <<<"$data" 2>/dev/null || true)"
+
+            # --- Rails 1-3 ----------------------------------------------------------
+            [ "$state" = "open" ]     || { reason="not open"; return 1; }
+            [ "$draft" = "false" ]    || { reason="draft"; return 1; }
+            [ "$same_repo" = "true" ] || { reason="fork PR"; return 1; }
+            [ "$base" = "main" ]      || { reason="base is ${base:-unreadable}"; return 1; }
+            [ "$has_label" = "true" ] || { reason="no '$LABEL' label"; return 1; }
+            [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] || { reason="head SHA unreadable"; return 1; }
+            [ -n "$head_ref" ] || { reason="head branch unreadable"; return 1; }
+            if [[ "$head_ref" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
+              reason="head branch '$head_ref' looks like a commit SHA, for which GitHub may not run pull_request_target (so a label veto or a push would go unseen); rename the branch"
+              return 1
+            fi
+
+            # --- Every review, all pages, read once (fail closed) -------------------
+            # --slurp wraps all pages in one outer array, so the latest review per
+            # author below is computed across page breaks. gh rejects --slurp together
+            # with --jq ("the --slurp option is not supported with --jq or
+            # --template"), so the pages are aggregated by the runner's standalone jq.
+            if ! reviews="$(gh api --paginate --slurp "repos/$REPO/pulls/$pr/reviews" 2>/dev/null)"; then
+              reason="reviews unreadable"; return 1
+            fi
+
+            # --- Rail 4: a reviewer's standing CHANGES_REQUESTED is a veto ----------
+            changes_requested="$(jq -r "$DECISIONS"' | any(.[]; .state=="CHANGES_REQUESTED")' \
+                                 <<<"$reviews" 2>/dev/null || echo "unparsable")"
+            case "$changes_requested" in
+              false) ;;
+              true) reason="changes requested"; return 1 ;;
+              *) reason="reviews unparsable"; return 1 ;;
+            esac
+
+            # --- Rail 8: anything but content needs a human sign-off on this head ---
+            # One TSV line per changed file: filename, previous_filename (renames).
+            # @tsv escapes a tab or newline inside a path, so one line is one file. An
+            # entry without a filename is a jq error, so the list is unreadable.
+            if ! files="$(gh api --paginate "repos/$REPO/pulls/$pr/files" \
+                            --jq '.[] | if (.filename | type) == "string" and .filename != ""
+                                        then [.filename, (.previous_filename // "")] | @tsv
+                                        else error("file entry without a filename") end' 2>/dev/null)"; then
+              reason="PR file list unreadable"; return 1
+            fi
+            changed_files="$(jq -r '.changed_files' <<<"$data" 2>/dev/null || true)"
+            case "$changed_files" in
+              ''|*[!0-9]*) reason="changed_files unknown ($changed_files)"; return 1 ;;
+            esac
+            listed="$(printf '%s' "$files" | grep -c . || true)"
+            if ! [ "$listed" -ge "$changed_files" ] 2>/dev/null; then
+              # The files API stops at 3000 entries; an incomplete list cannot clear rail 8.
+              reason="listed ${listed:-no} of $changed_files changed file(s)"; return 1
+            fi
+            if ! paths="$(printf '%s\n' "$files" | tr '\t' '\n' | match -v '^$' | sort -u)" \
+               || ! n_paths="$(printf '%s\n' "$paths" | match -c .)" \
+               || ! n_content="$(printf '%s\n' "$paths" | match -E "$CONTENT" | match -Eiv "$NOT_CONTENT" | match -c .)"; then
+              reason="changed paths could not be classified"; return 1
+            fi
+            case "$n_paths:$n_content" in
+              *[!0-9:]*|:*|*:) reason="changed paths could not be classified"; return 1 ;;
+            esac
+            # Content-only means EVERY path counted as content, and at least one path.
+            [ "$n_paths" -ge 1 ] || { reason="no changed path listed"; return 1; }
+            if [ "$n_content" != "$n_paths" ]; then
+              not_content="$( { printf '%s\n' "$paths" | match -Ev "$CONTENT"
+                                printf '%s\n' "$paths" | match -Ei "$NOT_CONTENT"
+                              } | match -v '^$' | sort -u || true)"
+              n_not_content="$(printf '%s\n' "$not_content" | grep -c . || true)"
+              shown="$(printf '%s\n' "$not_content" | awk 'NR<=10' | paste -sd, - || true)"
+              case "$n_not_content" in ''|*[!0-9]*) n_not_content=0 ;; esac
+              [ "$n_not_content" -le 10 ] || shown="$shown (+$((n_not_content - 10)) more)"
+
+              # Who may not sign off: the PR author and every commit author/committer.
+              pr_commits="$(jq -r '.commits' <<<"$data" 2>/dev/null || true)"
+              case "$pr_commits" in
+                ''|*[!0-9]*) reason="commit count unknown ($pr_commits)"; return 1 ;;
+              esac
+              if ! commits="$(gh api --paginate "repos/$REPO/pulls/$pr/commits" \
+                                --jq '.[] | [.sha, (.author.login // ""), (.committer.login // ""),
+                                             (if .commit.verification.verified == true then "verified" else "" end)] | @tsv' 2>/dev/null)"; then
+                reason="PR commit list unreadable"; return 1
+              fi
+              listed_commits="$(printf '%s' "$commits" | grep -c . || true)"
+              if ! [ "$listed_commits" -ge "$pr_commits" ] 2>/dev/null; then
+                # The commits API stops at 250 entries; an incomplete list cannot clear rail 8.
+                reason="listed ${listed_commits:-no} of $pr_commits commit(s)"; return 1
+              fi
+              # A commit's author and committer logins come from e-mail addresses its
+              # maker wrote; only a verified signature binds the committer. A commit
+              # that is unsigned, or whose author or committer is linked to no GitHub
+              # account, is unattributed: no login excludes whoever made it, so the
+              # collaborator who pushed it could approve it. Hold for a human.
+              if ! unattributed="$(printf '%s\n' "$commits" | awk -F'\t' \
+                    'NF>0 && ($2=="" || $3=="" || $4!="verified") {printf "%s%s", s, ($1=="" ? "?" : substr($1,1,12)); s=","}')"; then
+                reason="PR commit list unparsable"; return 1
+              fi
+              if [ -n "$unattributed" ]; then
+                reason="commit(s) $unattributed have no verified signature, or an author or committer linked to no GitHub account, so no approval can be shown independent of whoever made them; a human merges this PR by hand, or the commits are re-pushed signed under linked identities"
+                return 1
+              fi
+              # (Any error leaves this empty, so the --argjson below fails: no approvers.)
+              excluded="$( { jq -r '.user.login' <<<"$data"; printf '%s\n' "$commits" | cut -f2,3 | tr '\t' '\n'; } \
+                           | { grep -v '^$' || true; } | jq -R 'ascii_downcase' | jq -sc 'unique' || true)"
+
+              # A review records the head commit, not the base: retargeting the PR (say
+              # from a branch that already carries other commits, to main) changes the
+              # diff under an unchanged head. So an approval counts only if it was
+              # submitted after the PR's last base change (issue events; fail closed).
+              if ! events="$(gh api --paginate --slurp "repos/$REPO/issues/$pr/events" 2>/dev/null)"; then
+                reason="PR events unreadable (needed to date the last base change)"; return 1
+              fi
+              if ! since="$(jq -r '
+                    if type == "array" and all(.[]; type == "array") then add // [] else error("pages") end
+                    | [ .[] | select(.event == "base_ref_changed" or .event == "automatic_base_change_succeeded") | .created_at ]
+                    | if all(.[]; type == "string") then (max // "") else error("undated base change") end' \
+                    <<<"$events" 2>/dev/null)"; then
+                reason="PR events unparsable (needed to date the last base change)"; return 1
+              fi
+              [ -z "$since" ] || echo "The base branch last changed at $since; an approval submitted before that does not count."
+
+              # Candidates: latest decision APPROVED, on this head, after the last base
+              # change, by a human who neither opened the PR nor authored or committed
+              # any of its commits.
+              candidates="$(jq -r --arg sha "$head_sha" --arg since "$since" --argjson excluded "$excluded" "$DECISIONS"'
+                | .[]
+                | select(.state == "APPROVED"
+                         and .commit_id == $sha
+                         and (.submitted_at | type) == "string" and .submitted_at > $since
+                         and .user.type == "User"
+                         and ((.user.login | ascii_downcase) as $l | $excluded | index($l) | not)
+                         and (.author_association == "OWNER"
+                              or .author_association == "MEMBER"
+                              or .author_association == "COLLABORATOR"))
+                | .user.login' <<<"$reviews" 2>/dev/null || true)"
+
+              # ...whose repository permission is write, maintain or admin (fail closed).
+              approvers=""
+              while IFS= read -r login; do
+                [ -n "$login" ] || continue
+                perm="$(gh api "repos/$REPO/collaborators/$login/permission" --jq '.permission' 2>/dev/null || true)"
+                case "$perm" in
+                  admin|maintain|write) approvers="${approvers:+$approvers,}$login" ;;
+                  *) echo "approval by $login not counted: repository permission is '${perm:-unreadable}'" ;;
+                esac
+              done <<<"$candidates"
+
+              if [ -z "$approvers" ]; then
+                echo "hint: once a human with write access (not the PR author, nor an author or committer of its commits) approves the head commit, the review re-runs this check through automerge-review-relay. If the required checks have passed by then, GitHub will not enable auto-merge and a human merges."
+                reason="non-content path(s) need a human approval on $head_sha: $shown"
+                return 1
+              fi
+              echo "Non-content path(s) $shown approved on $head_sha by: $approvers"
+            fi
+
+            # --- Rail 6: nothing failed on the EXACT head SHA (fail closed) ---------
+            # One "total<TAB>total_count" line per page, then one line per check run.
+            # This workflow's own check runs (automerge-resolve, automerge (#N), and
+            # the single-job name it had before) are marked: a pending job superseded
+            # in its concurrency group ends cancelled, which is no failed proof. gh
+            # streams each page as it reads it, so an error on a later page must hold
+            # rather than leave a partial (all-green) list.
+            if ! runs="$(gh api --paginate "repos/$REPO/commits/$head_sha/check-runs" \
+                           --jq '"total\t\(.total_count)",
+                                 (.check_runs[]
+                                  | [.name, (.status // ""), (.conclusion // ""),
+                                     (if (.app.slug // "") == "github-actions"
+                                         and (.name | test("^automerge( \\(#[0-9]+\\)|-resolve)?$"))
+                                      then "own" else "" end)] | @tsv)' 2>/dev/null)"; then
+              reason="check runs unreadable"; return 1
+            fi
+            # Pending (a documented status) is fine; a completed check must have passed.
+            if ! bad="$(printf '%s\n' "$runs" | awk -F'\t' '
+                  NF == 2 && $1 == "total" { if ($2 !~ /^[0-9]+$/) odd = 1; else if ($2 + 0 > total) total = $2 + 0; next }
+                  NF == 4 { listed++
+                            if ($4 == "own") next
+                            if ($2 == "completed") {
+                              if ($3 != "success" && $3 != "neutral" && $3 != "skipped") { out = out s $1 "=" ($3 == "" ? "none" : $3); s = ", " }
+                            } else if ($2 !~ /^(queued|in_progress|waiting|requested|pending)$/) {
+                              out = out s $1 " status=" ($2 == "" ? "none" : $2); s = ", "
+                            }
+                            next }
+                  NF > 0 { odd = 1 }
+                  END { if (odd) print "!unparsable"
+                        else if (listed < total) print "!incomplete (listed " listed " of " total ")"
+                        else printf "%s", out }')"; then
+              reason="check runs unparsable"; return 1
+            fi
+            case "$bad" in
+              "") ;;
+              !*) reason="check runs ${bad#!}"; return 1 ;;
+              *) reason="check(s) failed on $head_sha: $bad"; return 1 ;;
+            esac
+
+            # --- Legacy commit statuses: none failed (pending is fine); fail closed --
+            if ! status_json="$(gh api "repos/$REPO/commits/$head_sha/status" 2>/dev/null)"; then
+              reason="commit status unreadable"; return 1
+            fi
+            status_state="$(jq -r '.state' <<<"$status_json" 2>/dev/null || true)"
+            total_statuses="$(jq -r '.total_count' <<<"$status_json" 2>/dev/null || true)"
+            case "$total_statuses" in
+              ''|*[!0-9]*) reason="commit status unreadable"; return 1 ;;
+            esac
+            case "$status_state" in
+              success|pending) ;;
+              *) reason="commit status is ${status_state:-unreadable}"; return 1 ;;
+            esac
+
+            # --- Rail 5: no merge conflict (unknown is re-read; only false holds) ---
+            # The whole PR is re-read and parsed by jq: gh's own --jq prints a JSON
+            # null as an empty line, which would read as a conflict.
+            mergeable="$(jq -r '.mergeable' <<<"$data" 2>/dev/null || true)"
+            for _ in $(seq 1 10); do
+              [ "$mergeable" = "null" ] || break
+              sleep 3
+              if ! again="$(gh api "repos/$REPO/pulls/$pr" 2>/dev/null)"; then
+                reason="mergeability unreadable"; return 1
+              fi
+              mergeable="$(jq -r '.mergeable' <<<"$again" 2>/dev/null || true)"
+            done
+            case "$mergeable" in
+              true|null) ;;
+              *) reason="merge conflict (mergeable=${mergeable:-unreadable})"; return 1 ;;
+            esac
+            return 0
           }
 
-          # --- Label removed -> disable auto-merge (the veto) ------------------
-          if [ "$EVENT" = "pull_request_target" ] && [ "$ACTION" = "unlabeled" ]; then
-            if [ "$LABEL_NAME" = "$LABEL" ]; then
-              if disable_am; then echo "Label removed; auto-merge disabled on #$PR_NUM."
-              else echo "Label removed; auto-merge was not enabled on #$PR_NUM (or already merged)."; fi
+          # converge PR OK: re-read the PR and set its auto-merge to match the rails.
+          converge() {
+            local pr="$1" ok="$2" now am label_now sha_now state_now node_id mstate out
+            am="ERR"; label_now=""; sha_now=""; state_now=""; node_id=""; mstate=""
+            if now="$(gh api "repos/$REPO/pulls/$pr" 2>/dev/null)"; then
+              # A re-read without the auto_merge key leaves auto-merge unknown (ERR).
+              am="$(jq -r 'if has("auto_merge") | not then error("no auto_merge")
+                           elif .auto_merge == null then ""
+                           else (.auto_merge.enabled_by.login // "?") end' <<<"$now" 2>/dev/null)" || am="ERR"
+              label_now="$(jq -r --arg l "$LABEL" 'any(.labels[]?; .name==$l)' <<<"$now" 2>/dev/null)" || label_now=""
+              sha_now="$(jq -r '.head.sha' <<<"$now" 2>/dev/null)" || sha_now=""
+              state_now="$(jq -r '.state // ""' <<<"$now" 2>/dev/null)" || state_now=""
+              node_id="$(jq -r '.node_id // ""' <<<"$now" 2>/dev/null)" || node_id=""
+              mstate="$(jq -r '.mergeable_state // ""' <<<"$now" 2>/dev/null)" || mstate=""
             fi
-            exit 0
-          fi
 
-          data="$(gh api "repos/$REPO/pulls/$PR_NUM")"
-          has_label="$(jq -r 'any(.labels[]?; .name==env.LABEL)' <<<"$data")"
+            # --- Rail 7 and a late veto: re-read after every other read -------------
+            if [ "$ok" = true ]; then
+              if [ "$am" = "ERR" ]; then
+                ok=false; reason="PR unreadable before enabling"
+              elif [ "$state_now" != "open" ]; then
+                ok=false; reason="closed while the PR was evaluated"
+              elif [ "$label_now" != "true" ]; then
+                ok=false; reason="label removed while the PR was evaluated"
+              elif [ "$sha_now" != "$head_sha" ]; then
+                ok=false; reason="head moved while the PR was evaluated; the run for the new head re-checks it"
+              elif [ -z "$node_id" ]; then
+                ok=false; reason="PR node id unreadable"
+              fi
+            fi
 
-          # --- A review arrived -> honor a standing CHANGES_REQUESTED veto -----
-          if [ "$EVENT" = "pull_request_review" ]; then
-            [ "$has_label" = "true" ] || { echo "Review on #$PR_NUM but no '$LABEL' label; nothing to do."; exit 0; }
-            if [ "$(standing_changes_requested)" = "true" ]; then
-              if disable_am; then echo "Standing CHANGES_REQUESTED on #$PR_NUM; auto-merge disabled."
-              else echo "CHANGES_REQUESTED on #$PR_NUM; auto-merge was not enabled."; fi
+            # --- Every rail holds: auto-merge ON ------------------------------------
+            if [ "$ok" = true ]; then
+              if [ -n "$am" ]; then
+                echo "ok: every rail holds on $head_sha and auto-merge is already enabled on #$pr (by $am); nothing to do"
+                return 0
+              fi
+              # The mutation only ever arms auto-merge, pinned to $head_sha; GitHub
+              # refuses it when the PR is already mergeable (nothing to wait for), and
+              # this workflow never merges directly: a human merges then.
+              # shellcheck disable=SC2016  # $id and $oid are GraphQL variables
+              if out="$(gh api graphql \
+                          -f query='mutation($id: ID!, $oid: GitObjectID!) { enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: SQUASH, expectedHeadOid: $oid}) { clientMutationId } }' \
+                          -f id="$node_id" -f oid="$head_sha" 2>&1)"; then
+                echo "enable: every rail holds on $head_sha; auto-merge (squash) enabled on #$pr, and GitHub merges it once the required checks pass"
+              else
+                out="${out//$'\n'/ }"
+                case "$out" in
+                  *"clean status"*|*"unstable status"*|*"has_hooks status"*)
+                    echo "::warning title=automerge::#$pr passes every rail but is already mergeable, so GitHub will not enable auto-merge, and this workflow never merges directly (its token cannot merge the protected branch): a human must merge it. ($out)" ;;
+                  *)
+                    echo "::warning title=automerge::Could not enable auto-merge on #$pr (mergeable_state=${mstate:-unknown}; when it is clean, unstable or has_hooks the PR is already mergeable and a human must merge it): $out" ;;
+                esac
+              fi
+              return 0
+            fi
+
+            # --- A rail fails: auto-merge OFF, if this workflow turned it on --------
+            # A closed or merged PR cannot merge, and GitHub keeps auto_merge on a PR it
+            # merged: nothing to turn off (a reopen re-runs this workflow).
+            if [ "$state_now" = "closed" ]; then
+              echo "skip: $reason (#$pr is closed or merged; auto-merge is left as it is)"; return 0
+            fi
+            case "$am" in
+              "")
+                echo "skip: $reason (#$pr; auto-merge is not enabled)"; return 0 ;;
+              "$BOT_LOGIN"|"?"|ERR) ;;
+              *)
+                echo "skip: $reason (#$pr; auto-merge was enabled by $am, not by this workflow, and is left as they set it)"; return 0 ;;
+            esac
+            if out="$(gh pr merge "$pr" --disable-auto -R "$REPO" 2>&1)"; then
+              if [ "$am" = "ERR" ]; then
+                echo "disable: $reason (#$pr; its auto-merge state was unreadable, so auto-merge was disabled to fail closed)"
+              else
+                echo "disable: $reason (#$pr; auto-merge disabled)"
+              fi
             else
-              echo "No standing CHANGES_REQUESTED on #$PR_NUM; leaving auto-merge as-is."
+              echo "::error title=automerge::Could not disable auto-merge on #$pr ($reason): ${out//$'\n'/ }"
+              exit_code=1
             fi
-            exit 0
+          }
+
+          # This job evaluates exactly one PR: the matrix value automerge-resolve chose.
+          if ! [[ "$PR" =~ ^[0-9]+$ ]]; then
+            echo "::error title=automerge::not a pull request number: '$PR'"; exit 1
           fi
-
-          # --- A labeled event for some other label is not ours ---------------
-          if [ "$ACTION" = "labeled" ] && [ "$LABEL_NAME" != "$LABEL" ]; then
-            echo "Label '$LABEL_NAME' is not '$LABEL'; nothing to do."; exit 0
-          fi
-
-          # --- Rails before enabling auto-merge (all fail closed) -------------
-          state="$(jq -r '.state' <<<"$data")"
-          draft="$(jq -r '.draft' <<<"$data")"
-          base="$(jq -r '.base.ref' <<<"$data")"
-          same_repo="$(jq -r '.head.repo.full_name == .base.repo.full_name' <<<"$data")"
-          [ "$state" = "open" ]     || { echo "skip: not open";          exit 0; }
-          [ "$draft" = "false" ]    || { echo "skip: draft";             exit 0; }
-          [ "$same_repo" = "true" ] || { echo "skip: fork PR";           exit 0; }
-          [ "$base" = "main" ]      || { echo "skip: base is $base";     exit 0; }
-          [ "$has_label" = "true" ] || { echo "skip: no '$LABEL' label"; exit 0; }
-          [ "$(standing_changes_requested)" = "false" ] || { echo "skip: changes requested"; exit 0; }
-
-          # No merge conflict (unknown -> retry; only a confirmed conflict blocks).
-          mergeable="$(jq -r '.mergeable' <<<"$data")"
-          for _ in $(seq 1 10); do
-            [ "$mergeable" = "null" ] || break
-            sleep 3
-            mergeable="$(gh api "repos/$REPO/pulls/$PR_NUM" --jq '.mergeable' 2>/dev/null || echo "null")"
-          done
-          [ "$mergeable" != "false" ] || { echo "skip: merge conflict"; exit 0; }
-
-          # --- Enable native auto-merge; GitHub merges when the checks pass ----
-          echo "Rails clear; enabling native auto-merge (squash) on #$PR_NUM."
-          if out="$(gh pr merge "$PR_NUM" --auto --squash -R "$REPO" 2>&1)"; then
-            echo "Auto-merge enabled on #$PR_NUM; GitHub will squash-merge it once the required checks pass."
-          else
-            # Most common benign case: the PR is already fully mergeable, so GitHub
-            # rejects "enable auto-merge" (nothing to wait for). We cannot direct-merge
-            # a protected branch with GITHUB_TOKEN, so surface it rather than hide it.
-            echo "::warning title=automerge::Could not enable auto-merge on #$PR_NUM (already mergeable, or auto-merge not allowed): $out"
-          fi
+          echo "::group::Evaluate PR #$PR"
+          ok=true
+          evaluate "$PR" || ok=false
+          echo "::endgroup::"
+          converge "$PR" "$ok"
+          exit "$exit_code"

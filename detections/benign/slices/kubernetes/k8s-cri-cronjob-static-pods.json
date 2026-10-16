@@ -1,0 +1,1351 @@
+{
+ "id": "k8s-cri-cronjob-static-pods",
+ "version": 1,
+ "logsource": {
+  "product": "kubernetes",
+  "service": "cri"
+ },
+ "fidelity": "synthetic",
+ "represents": "The schedule-bound pod-sandbox starts of the same 3-hour window and staging cluster as k8s-cri-pod-sandboxes: one sandbox for each of the window's 36 CronJob runs (ledger-reconcile, db-backup and cert-expiry-report hourly, report-export every 30 min, index-compact every 20 min, session-gc every 15 min; restartPolicy OnFailure restarts a failed container inside the same pod, so a Job has one pod), started ~1-3 s after its scheduled minute; and a kubeadm control-plane upgrade (apply on k8s-cp-01, then node on k8s-cp-02 and k8s-cp-03) that starts each node's etcd, kube-apiserver, kube-controller-manager and kube-scheduler static pod once with its new manifest (config.source file). Hits here are exact counts of those pods.",
+ "provenance": "synthetic, written out once each (count 1, one sequence of literal sandboxes) because a finite schedule cannot be drawn independently without repeating a pod: shapes as in k8s-cri-pod-sandboxes (`crictl pods -o json` via detections/k8s/cri-pod-sensor.sh); the CronJob Job names (<cronjob>-<scheduled minute since the epoch>), Job uids and pod names/uids are the ones the k8s-audit-control-plane slice's cronjob-controller, job-controller and kubelet events use; Job pod labels per the batch/v1 Job controller; static pods per kubeadm (component/tier labels, config.hash = pod uid, advertise-address annotations), the order and pacing of `kubeadm upgrade` (etcd, kube-apiserver, kube-controller-manager, kube-scheduler, each after the previous is healthy). Sandbox ids and sub-second timings are random; names are fictional, addresses RFC1918.",
+ "adjacent_to": [
+  "T1053.007/k8s_cri_job_pod.yml (every CronJob run's pod matches)",
+  "T1543.005/k8s_cri_static_pod_start.yml (expected to fire on the 12 kubeadm static pods of the upgrade)"
+ ],
+ "count": 1,
+ "vars": {},
+ "templates": [
+  {
+   "weight": 1,
+   "name": "the window's CronJob run pods and kubeadm-upgrade static pods, in start order",
+   "events": [
+    {
+     "event": {
+      "id": "bd7d83deb9b4fc09dd005033c54f2e76d09c2681320a6c0c96d5caabc4c37323",
+      "metadata": {
+       "name": "cert-expiry-report-29866080-sznlv",
+       "uid": "237b9836-c858-47c3-a13e-f76cf69ed839",
+       "namespace": "monitoring",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791964800878271806",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "5741a671-8670-4a52-ae56-07d541745b08",
+       "batch.kubernetes.io/job-name": "cert-expiry-report-29866080",
+       "controller-uid": "5741a671-8670-4a52-ae56-07d541745b08",
+       "job-name": "cert-expiry-report-29866080",
+       "app.kubernetes.io/name": "cert-expiry-report",
+       "io.kubernetes.pod.name": "cert-expiry-report-29866080-sznlv",
+       "io.kubernetes.pod.namespace": "monitoring",
+       "io.kubernetes.pod.uid": "237b9836-c858-47c3-a13e-f76cf69ed839"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T08:00:00.651661841Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "a5277c69c44f555121c3d0d65c34d99d8ff24d0158fb2b3597c305bbc83ab989",
+      "metadata": {
+       "name": "index-compact-29866080-4dnrd",
+       "uid": "d9882676-f51e-409f-9308-a915dbb15cdd",
+       "namespace": "search",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791964801459415072",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "2d444586-382a-4566-ba1e-ea94e92dbbe8",
+       "batch.kubernetes.io/job-name": "index-compact-29866080",
+       "controller-uid": "2d444586-382a-4566-ba1e-ea94e92dbbe8",
+       "job-name": "index-compact-29866080",
+       "app.kubernetes.io/name": "index-compact",
+       "io.kubernetes.pod.name": "index-compact-29866080-4dnrd",
+       "io.kubernetes.pod.namespace": "search",
+       "io.kubernetes.pod.uid": "d9882676-f51e-409f-9308-a915dbb15cdd"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T08:00:01.118238820Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "fd2f69940f1a58f5091321ac8d34935fa03bcea704dc9073c5216c464071a8e9",
+      "metadata": {
+       "name": "db-backup-29866080-24hfr",
+       "uid": "b7e39424-9bfe-4f0b-a397-6d8d453749a2",
+       "namespace": "payments",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791964801729490354",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "6ca90825-34a4-446c-8f81-3a83c21849f1",
+       "batch.kubernetes.io/job-name": "db-backup-29866080",
+       "controller-uid": "6ca90825-34a4-446c-8f81-3a83c21849f1",
+       "job-name": "db-backup-29866080",
+       "app.kubernetes.io/name": "db-backup",
+       "io.kubernetes.pod.name": "db-backup-29866080-24hfr",
+       "io.kubernetes.pod.namespace": "payments",
+       "io.kubernetes.pod.uid": "b7e39424-9bfe-4f0b-a397-6d8d453749a2"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T08:00:01.501336660Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "470f0d51b065c6f7feddf68e9aea9f118177095d441bfdb6ffb5fae5a516da84",
+      "metadata": {
+       "name": "ledger-reconcile-29866080-dbjw4",
+       "uid": "33a9e083-29cb-425d-833e-475f648b4fe1",
+       "namespace": "payments",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791964801760200027",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "14314b16-7591-4f2d-ad25-ff6a337948d8",
+       "batch.kubernetes.io/job-name": "ledger-reconcile-29866080",
+       "controller-uid": "14314b16-7591-4f2d-ad25-ff6a337948d8",
+       "job-name": "ledger-reconcile-29866080",
+       "app.kubernetes.io/name": "ledger-reconcile",
+       "io.kubernetes.pod.name": "ledger-reconcile-29866080-dbjw4",
+       "io.kubernetes.pod.namespace": "payments",
+       "io.kubernetes.pod.uid": "33a9e083-29cb-425d-833e-475f648b4fe1"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T08:00:01.463302605Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "6b86134264325384bfc0296557a0df78bba4ce52df4ac30576b9b4240dc64ad6",
+      "metadata": {
+       "name": "report-export-29866080-9ngp4",
+       "uid": "5205e906-138e-4177-b6cc-3f65ccd70239",
+       "namespace": "orders",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791964801795108889",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "ecae5fc1-bbe6-484a-a82b-2a5242dc7f5c",
+       "batch.kubernetes.io/job-name": "report-export-29866080",
+       "controller-uid": "ecae5fc1-bbe6-484a-a82b-2a5242dc7f5c",
+       "job-name": "report-export-29866080",
+       "app.kubernetes.io/name": "report-export",
+       "io.kubernetes.pod.name": "report-export-29866080-9ngp4",
+       "io.kubernetes.pod.namespace": "orders",
+       "io.kubernetes.pod.uid": "5205e906-138e-4177-b6cc-3f65ccd70239"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T08:00:01.684259463Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "06d9eb3085f6b6154a81a2872e78ae882d8c87178c3a6f5c97b53e77fe2db805",
+      "metadata": {
+       "name": "session-gc-29866080-5m292",
+       "uid": "ed25b14c-1307-40c8-9a8b-0fc3b33564ed",
+       "namespace": "identity",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791964802370566285",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "a62b2381-9c6e-4ae8-ae1b-c2f8374d869e",
+       "batch.kubernetes.io/job-name": "session-gc-29866080",
+       "controller-uid": "a62b2381-9c6e-4ae8-ae1b-c2f8374d869e",
+       "job-name": "session-gc-29866080",
+       "app.kubernetes.io/name": "session-gc",
+       "io.kubernetes.pod.name": "session-gc-29866080-5m292",
+       "io.kubernetes.pod.namespace": "identity",
+       "io.kubernetes.pod.uid": "ed25b14c-1307-40c8-9a8b-0fc3b33564ed"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T08:00:02.048314327Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "bbea0fbfff0c91fd9fb558f58f5319a3c27707b2012a4674713cf793cc7c8335",
+      "metadata": {
+       "name": "session-gc-29866095-7l6fc",
+       "uid": "3f4a6b40-f8d5-4bde-9557-e2478277982d",
+       "namespace": "identity",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791965701405425781",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "391f5bb1-8c86-45ee-99d6-fda081d67b2a",
+       "batch.kubernetes.io/job-name": "session-gc-29866095",
+       "controller-uid": "391f5bb1-8c86-45ee-99d6-fda081d67b2a",
+       "job-name": "session-gc-29866095",
+       "app.kubernetes.io/name": "session-gc",
+       "io.kubernetes.pod.name": "session-gc-29866095-7l6fc",
+       "io.kubernetes.pod.namespace": "identity",
+       "io.kubernetes.pod.uid": "3f4a6b40-f8d5-4bde-9557-e2478277982d"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T08:15:01.178988785Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "8a8081c6e18dd0eddae9cc724f2769d36f5ed9ecceae3f481929ac98e6b95626",
+      "metadata": {
+       "name": "index-compact-29866100-b6gk4",
+       "uid": "70b1e75d-788e-4a60-ab82-6ea96b15e72e",
+       "namespace": "search",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791966002111000870",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "5f5f341c-6228-4678-b932-e9cd75321e6b",
+       "batch.kubernetes.io/job-name": "index-compact-29866100",
+       "controller-uid": "5f5f341c-6228-4678-b932-e9cd75321e6b",
+       "job-name": "index-compact-29866100",
+       "app.kubernetes.io/name": "index-compact",
+       "io.kubernetes.pod.name": "index-compact-29866100-b6gk4",
+       "io.kubernetes.pod.namespace": "search",
+       "io.kubernetes.pod.uid": "70b1e75d-788e-4a60-ab82-6ea96b15e72e"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T08:20:01.944428290Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "96ea61b80a0f9c2d3686de5586aa210cf228d631835d9cf0d9b36566504ff300",
+      "metadata": {
+       "name": "session-gc-29866110-pfrjk",
+       "uid": "a21d693e-4c3e-4374-b4d2-c03ce21c0d56",
+       "namespace": "identity",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791966601687840110",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "1a3cbf37-be26-4a8b-98e7-868bade7d6b5",
+       "batch.kubernetes.io/job-name": "session-gc-29866110",
+       "controller-uid": "1a3cbf37-be26-4a8b-98e7-868bade7d6b5",
+       "job-name": "session-gc-29866110",
+       "app.kubernetes.io/name": "session-gc",
+       "io.kubernetes.pod.name": "session-gc-29866110-pfrjk",
+       "io.kubernetes.pod.namespace": "identity",
+       "io.kubernetes.pod.uid": "a21d693e-4c3e-4374-b4d2-c03ce21c0d56"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T08:30:01.543086104Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "0bed5cf5deab32d7c28c7de59e0a8adb15aa467a77dd34bde8c4f721873db7de",
+      "metadata": {
+       "name": "report-export-29866110-c5nzh",
+       "uid": "7971c02a-cb7b-4a45-91b3-8c43bd559bc4",
+       "namespace": "orders",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791966602445242947",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "c4ccf44f-1546-488e-824e-9dd005066f4c",
+       "batch.kubernetes.io/job-name": "report-export-29866110",
+       "controller-uid": "c4ccf44f-1546-488e-824e-9dd005066f4c",
+       "job-name": "report-export-29866110",
+       "app.kubernetes.io/name": "report-export",
+       "io.kubernetes.pod.name": "report-export-29866110-c5nzh",
+       "io.kubernetes.pod.namespace": "orders",
+       "io.kubernetes.pod.uid": "7971c02a-cb7b-4a45-91b3-8c43bd559bc4"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T08:30:02.248548685Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "57cf0d9c816df8defbdf94257eb710e17e66fca6c54ed64a19d50947f866a07b",
+      "metadata": {
+       "name": "index-compact-29866120-8vr7h",
+       "uid": "3b32aabc-b3d6-4938-91ff-a7ac09d689dc",
+       "namespace": "search",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791967201456286283",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "948ed124-e558-49b1-acdb-e41c47ac7af5",
+       "batch.kubernetes.io/job-name": "index-compact-29866120",
+       "controller-uid": "948ed124-e558-49b1-acdb-e41c47ac7af5",
+       "job-name": "index-compact-29866120",
+       "app.kubernetes.io/name": "index-compact",
+       "io.kubernetes.pod.name": "index-compact-29866120-8vr7h",
+       "io.kubernetes.pod.namespace": "search",
+       "io.kubernetes.pod.uid": "3b32aabc-b3d6-4938-91ff-a7ac09d689dc"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T08:40:01.154461565Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "d2837d7fd2572884a80a893605e581f26ba996688e7d205d63ea0249a0b7ee4c",
+      "metadata": {
+       "name": "session-gc-29866125-r7r8h",
+       "uid": "5ff2b566-c5c7-4e0f-8bf1-090e7f1f005d",
+       "namespace": "identity",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791967501461903996",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "703e66d4-0f97-49d4-8fee-7e560f5659ca",
+       "batch.kubernetes.io/job-name": "session-gc-29866125",
+       "controller-uid": "703e66d4-0f97-49d4-8fee-7e560f5659ca",
+       "job-name": "session-gc-29866125",
+       "app.kubernetes.io/name": "session-gc",
+       "io.kubernetes.pod.name": "session-gc-29866125-r7r8h",
+       "io.kubernetes.pod.namespace": "identity",
+       "io.kubernetes.pod.uid": "5ff2b566-c5c7-4e0f-8bf1-090e7f1f005d"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T08:45:01.295061846Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "e846c70951d11f39b2fccc6014b65a88a0d6bf3d982e549af4746b526cc83fc3",
+      "metadata": {
+       "name": "index-compact-29866140-lx8j2",
+       "uid": "9f178e0e-e978-4a6a-8571-6aef7502bb9c",
+       "namespace": "search",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791968400707650922",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "609ec8f6-8525-4086-a0ed-b5abb5383d67",
+       "batch.kubernetes.io/job-name": "index-compact-29866140",
+       "controller-uid": "609ec8f6-8525-4086-a0ed-b5abb5383d67",
+       "job-name": "index-compact-29866140",
+       "app.kubernetes.io/name": "index-compact",
+       "io.kubernetes.pod.name": "index-compact-29866140-lx8j2",
+       "io.kubernetes.pod.namespace": "search",
+       "io.kubernetes.pod.uid": "9f178e0e-e978-4a6a-8571-6aef7502bb9c"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T09:00:00.548029331Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "adc28ed00ad1f901dde7a2210248012bf25ae115f19f38a139bd7901d686452d",
+      "metadata": {
+       "name": "report-export-29866140-ngztf",
+       "uid": "21f94c26-faa3-4fd3-9a76-ed703f63d79b",
+       "namespace": "orders",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791968401062179115",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "407a3021-fceb-4932-b2eb-fc0fab77afd1",
+       "batch.kubernetes.io/job-name": "report-export-29866140",
+       "controller-uid": "407a3021-fceb-4932-b2eb-fc0fab77afd1",
+       "job-name": "report-export-29866140",
+       "app.kubernetes.io/name": "report-export",
+       "io.kubernetes.pod.name": "report-export-29866140-ngztf",
+       "io.kubernetes.pod.namespace": "orders",
+       "io.kubernetes.pod.uid": "21f94c26-faa3-4fd3-9a76-ed703f63d79b"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T09:00:00.902196809Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "203d0eea83a91fb789bac5bdcafdd4fa093313d058f98462306fb8333bd82f6a",
+      "metadata": {
+       "name": "db-backup-29866140-7psfp",
+       "uid": "5ce527f8-e27c-431d-9fbb-d93073cd2f8e",
+       "namespace": "payments",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791968401148619973",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "cf139eb2-ada9-4ca4-8307-8e8f015430ee",
+       "batch.kubernetes.io/job-name": "db-backup-29866140",
+       "controller-uid": "cf139eb2-ada9-4ca4-8307-8e8f015430ee",
+       "job-name": "db-backup-29866140",
+       "app.kubernetes.io/name": "db-backup",
+       "io.kubernetes.pod.name": "db-backup-29866140-7psfp",
+       "io.kubernetes.pod.namespace": "payments",
+       "io.kubernetes.pod.uid": "5ce527f8-e27c-431d-9fbb-d93073cd2f8e"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T09:00:00.847089457Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "db083e12313d5f532948ea7bdfc8e441d61242c9d814a0a4763b7443ad00ba72",
+      "metadata": {
+       "name": "session-gc-29866140-kj952",
+       "uid": "8ca760a5-d0dc-4047-9c42-bbdc46475ea0",
+       "namespace": "identity",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791968401272001206",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "3d5d5eed-0448-4eb0-94c9-5888a2d42848",
+       "batch.kubernetes.io/job-name": "session-gc-29866140",
+       "controller-uid": "3d5d5eed-0448-4eb0-94c9-5888a2d42848",
+       "job-name": "session-gc-29866140",
+       "app.kubernetes.io/name": "session-gc",
+       "io.kubernetes.pod.name": "session-gc-29866140-kj952",
+       "io.kubernetes.pod.namespace": "identity",
+       "io.kubernetes.pod.uid": "8ca760a5-d0dc-4047-9c42-bbdc46475ea0"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T09:00:01.034116116Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "7e4a8fee0e61849f53bf8dcd208e989ae0dd505f8759a70cd4ff63515a884a32",
+      "metadata": {
+       "name": "cert-expiry-report-29866140-wmjk4",
+       "uid": "53e77886-61d8-4bff-b206-8ed3881bc5ab",
+       "namespace": "monitoring",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791968401627243579",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "87cc16f4-cd51-41db-b4b2-2e5d8889eb57",
+       "batch.kubernetes.io/job-name": "cert-expiry-report-29866140",
+       "controller-uid": "87cc16f4-cd51-41db-b4b2-2e5d8889eb57",
+       "job-name": "cert-expiry-report-29866140",
+       "app.kubernetes.io/name": "cert-expiry-report",
+       "io.kubernetes.pod.name": "cert-expiry-report-29866140-wmjk4",
+       "io.kubernetes.pod.namespace": "monitoring",
+       "io.kubernetes.pod.uid": "53e77886-61d8-4bff-b206-8ed3881bc5ab"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T09:00:01.336057998Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "01b9ee9dc5da94fc4ff04374f499a685300f2649f7a87faaef596df6e5a187e4",
+      "metadata": {
+       "name": "ledger-reconcile-29866140-ps6wn",
+       "uid": "0cfb5571-8c7b-48b8-9db5-b45a0f3fd45d",
+       "namespace": "payments",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791968401831763083",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "86067335-3d06-4449-8b2c-56c36e4bda65",
+       "batch.kubernetes.io/job-name": "ledger-reconcile-29866140",
+       "controller-uid": "86067335-3d06-4449-8b2c-56c36e4bda65",
+       "job-name": "ledger-reconcile-29866140",
+       "app.kubernetes.io/name": "ledger-reconcile",
+       "io.kubernetes.pod.name": "ledger-reconcile-29866140-ps6wn",
+       "io.kubernetes.pod.namespace": "payments",
+       "io.kubernetes.pod.uid": "0cfb5571-8c7b-48b8-9db5-b45a0f3fd45d"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T09:00:01.736468786Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "343c8fb88b93cf26c3efc46176a42fcd9e57d75a4c805d15b74d53dfc48cbde1",
+      "metadata": {
+       "name": "session-gc-29866155-xnm9p",
+       "uid": "b3bcca98-f225-49d6-9234-2e5781dc6e3a",
+       "namespace": "identity",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791969302788097330",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "5cfda138-72da-4470-9a4a-9eeaeada1302",
+       "batch.kubernetes.io/job-name": "session-gc-29866155",
+       "controller-uid": "5cfda138-72da-4470-9a4a-9eeaeada1302",
+       "job-name": "session-gc-29866155",
+       "app.kubernetes.io/name": "session-gc",
+       "io.kubernetes.pod.name": "session-gc-29866155-xnm9p",
+       "io.kubernetes.pod.namespace": "identity",
+       "io.kubernetes.pod.uid": "b3bcca98-f225-49d6-9234-2e5781dc6e3a"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T09:15:02.698847574Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "140fa34c347a0e78685f0f808c172515a7668d5ca572ea5b09eaf2ac400b4100",
+      "metadata": {
+       "name": "index-compact-29866160-kvr9d",
+       "uid": "955481d0-26bc-4808-897c-d1a1ab9befbf",
+       "namespace": "search",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791969602095529797",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "66685f9e-ea75-420e-a460-b6e5cb04ca5e",
+       "batch.kubernetes.io/job-name": "index-compact-29866160",
+       "controller-uid": "66685f9e-ea75-420e-a460-b6e5cb04ca5e",
+       "job-name": "index-compact-29866160",
+       "app.kubernetes.io/name": "index-compact",
+       "io.kubernetes.pod.name": "index-compact-29866160-kvr9d",
+       "io.kubernetes.pod.namespace": "search",
+       "io.kubernetes.pod.uid": "955481d0-26bc-4808-897c-d1a1ab9befbf"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T09:20:01.793433755Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "459845b85977097e6ae5b4e24f22be4031c9101b9585b24c73dab7e258069fc2",
+      "metadata": {
+       "name": "session-gc-29866170-zgflb",
+       "uid": "f373815b-fcdd-43d2-9453-ce1c5724e91a",
+       "namespace": "identity",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791970200999006874",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "21b13582-a562-44f1-9f35-66d21cb375d7",
+       "batch.kubernetes.io/job-name": "session-gc-29866170",
+       "controller-uid": "21b13582-a562-44f1-9f35-66d21cb375d7",
+       "job-name": "session-gc-29866170",
+       "app.kubernetes.io/name": "session-gc",
+       "io.kubernetes.pod.name": "session-gc-29866170-zgflb",
+       "io.kubernetes.pod.namespace": "identity",
+       "io.kubernetes.pod.uid": "f373815b-fcdd-43d2-9453-ce1c5724e91a"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T09:30:00.668477937Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "f45affa971e62d19d3e7c41379756cbcbe49104dfcf237e2969e4775983d8f1d",
+      "metadata": {
+       "name": "report-export-29866170-ml4lx",
+       "uid": "6f596eaa-ac38-40d2-809f-a43112cdbfbe",
+       "namespace": "orders",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791970202544672651",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "29e6baa1-90a4-4da6-9592-749684bf424a",
+       "batch.kubernetes.io/job-name": "report-export-29866170",
+       "controller-uid": "29e6baa1-90a4-4da6-9592-749684bf424a",
+       "job-name": "report-export-29866170",
+       "app.kubernetes.io/name": "report-export",
+       "io.kubernetes.pod.name": "report-export-29866170-ml4lx",
+       "io.kubernetes.pod.namespace": "orders",
+       "io.kubernetes.pod.uid": "6f596eaa-ac38-40d2-809f-a43112cdbfbe"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T09:30:02.328139607Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "f84207559a42e207f92b658092efb41192653a9ba90bf740053062aaf8288cc4",
+      "metadata": {
+       "name": "index-compact-29866180-b4j7k",
+       "uid": "02e09445-4775-4d85-92a9-4cad8311ce61",
+       "namespace": "search",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791970802086254494",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "8d01a356-5354-4782-8b00-abf497a1bc3f",
+       "batch.kubernetes.io/job-name": "index-compact-29866180",
+       "controller-uid": "8d01a356-5354-4782-8b00-abf497a1bc3f",
+       "job-name": "index-compact-29866180",
+       "app.kubernetes.io/name": "index-compact",
+       "io.kubernetes.pod.name": "index-compact-29866180-b4j7k",
+       "io.kubernetes.pod.namespace": "search",
+       "io.kubernetes.pod.uid": "02e09445-4775-4d85-92a9-4cad8311ce61"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T09:40:01.932845639Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "0409bf79f47ace156521a94e72758be9a9c38359ba1f02fdce74dc91cff917c6",
+      "metadata": {
+       "name": "etcd-k8s-cp-01",
+       "uid": "d289ad6ee605010f22b478885ffefda1",
+       "namespace": "kube-system",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791970874687414043",
+      "labels": {
+       "component": "etcd",
+       "tier": "control-plane",
+       "io.kubernetes.pod.name": "etcd-k8s-cp-01",
+       "io.kubernetes.pod.namespace": "kube-system",
+       "io.kubernetes.pod.uid": "d289ad6ee605010f22b478885ffefda1"
+      },
+      "annotations": {
+       "kubeadm.kubernetes.io/etcd.advertise-client-urls": "https://10.20.0.11:2379",
+       "kubernetes.io/config.hash": "d289ad6ee605010f22b478885ffefda1",
+       "kubernetes.io/config.seen": "2026-10-14T09:41:14.635546123Z",
+       "kubernetes.io/config.source": "file"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "bc0f3272d5eb634cbb39b933a9c1470210cbdf91d6505b6b50292388a97f1b2c",
+      "metadata": {
+       "name": "kube-apiserver-k8s-cp-01",
+       "uid": "fdb650bf4604d153f5329cc4a50d9be9",
+       "namespace": "kube-system",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791970930304644339",
+      "labels": {
+       "component": "kube-apiserver",
+       "tier": "control-plane",
+       "io.kubernetes.pod.name": "kube-apiserver-k8s-cp-01",
+       "io.kubernetes.pod.namespace": "kube-system",
+       "io.kubernetes.pod.uid": "fdb650bf4604d153f5329cc4a50d9be9"
+      },
+      "annotations": {
+       "kubeadm.kubernetes.io/kube-apiserver.advertise-address.endpoint": "10.20.0.11:6443",
+       "kubernetes.io/config.hash": "fdb650bf4604d153f5329cc4a50d9be9",
+       "kubernetes.io/config.seen": "2026-10-14T09:42:10.281884967Z",
+       "kubernetes.io/config.source": "file"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "074dee0434607378774cd7b779a92879290843908d04278d1fe41b40f2b41be2",
+      "metadata": {
+       "name": "kube-controller-manager-k8s-cp-01",
+       "uid": "3edd6727bab78602fe9183d6f6542760",
+       "namespace": "kube-system",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791971005843897552",
+      "labels": {
+       "component": "kube-controller-manager",
+       "tier": "control-plane",
+       "io.kubernetes.pod.name": "kube-controller-manager-k8s-cp-01",
+       "io.kubernetes.pod.namespace": "kube-system",
+       "io.kubernetes.pod.uid": "3edd6727bab78602fe9183d6f6542760"
+      },
+      "annotations": {
+       "kubernetes.io/config.hash": "3edd6727bab78602fe9183d6f6542760",
+       "kubernetes.io/config.seen": "2026-10-14T09:43:25.722106317Z",
+       "kubernetes.io/config.source": "file"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "812a3c25c21687b73e9c869ae83632f08285042968af1c9b38b3d9727ffaf1a1",
+      "metadata": {
+       "name": "kube-scheduler-k8s-cp-01",
+       "uid": "b310ba7b6cf896eb8e69090604c982fd",
+       "namespace": "kube-system",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791971037655622137",
+      "labels": {
+       "component": "kube-scheduler",
+       "tier": "control-plane",
+       "io.kubernetes.pod.name": "kube-scheduler-k8s-cp-01",
+       "io.kubernetes.pod.namespace": "kube-system",
+       "io.kubernetes.pod.uid": "b310ba7b6cf896eb8e69090604c982fd"
+      },
+      "annotations": {
+       "kubernetes.io/config.hash": "b310ba7b6cf896eb8e69090604c982fd",
+       "kubernetes.io/config.seen": "2026-10-14T09:43:57.606855663Z",
+       "kubernetes.io/config.source": "file"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "b89d0aaa935ffa74c57bb7babefd90ea9e1983c8ab232e35272b6e1d909111f8",
+      "metadata": {
+       "name": "session-gc-29866185-g6gvb",
+       "uid": "21c2ca7c-c1f2-4eb4-9acb-a46c2fe85963",
+       "namespace": "identity",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791971101587161527",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "ed2cf587-7381-4735-8f12-f8a5caa62544",
+       "batch.kubernetes.io/job-name": "session-gc-29866185",
+       "controller-uid": "ed2cf587-7381-4735-8f12-f8a5caa62544",
+       "job-name": "session-gc-29866185",
+       "app.kubernetes.io/name": "session-gc",
+       "io.kubernetes.pod.name": "session-gc-29866185-g6gvb",
+       "io.kubernetes.pod.namespace": "identity",
+       "io.kubernetes.pod.uid": "21c2ca7c-c1f2-4eb4-9acb-a46c2fe85963"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T09:45:01.407140850Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "e33f6613ab5363894f95f752b724cdeb146ebb5c7a7d015cc705ec0821cf0d0b",
+      "metadata": {
+       "name": "etcd-k8s-cp-02",
+       "uid": "4e1f81c2967599529b6cfd9b99693fd7",
+       "namespace": "kube-system",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791971567306294907",
+      "labels": {
+       "component": "etcd",
+       "tier": "control-plane",
+       "io.kubernetes.pod.name": "etcd-k8s-cp-02",
+       "io.kubernetes.pod.namespace": "kube-system",
+       "io.kubernetes.pod.uid": "4e1f81c2967599529b6cfd9b99693fd7"
+      },
+      "annotations": {
+       "kubeadm.kubernetes.io/etcd.advertise-client-urls": "https://10.20.0.12:2379",
+       "kubernetes.io/config.hash": "4e1f81c2967599529b6cfd9b99693fd7",
+       "kubernetes.io/config.seen": "2026-10-14T09:52:47.225306972Z",
+       "kubernetes.io/config.source": "file"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "b153441ba54331e2e4c4e81570acdf4c581f4035b4e48fe609b0fd6798e66c3b",
+      "metadata": {
+       "name": "kube-apiserver-k8s-cp-02",
+       "uid": "94b6ffb0f8154cb46fd04ec7d0a64132",
+       "namespace": "kube-system",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791971624376941646",
+      "labels": {
+       "component": "kube-apiserver",
+       "tier": "control-plane",
+       "io.kubernetes.pod.name": "kube-apiserver-k8s-cp-02",
+       "io.kubernetes.pod.namespace": "kube-system",
+       "io.kubernetes.pod.uid": "94b6ffb0f8154cb46fd04ec7d0a64132"
+      },
+      "annotations": {
+       "kubeadm.kubernetes.io/kube-apiserver.advertise-address.endpoint": "10.20.0.12:6443",
+       "kubernetes.io/config.hash": "94b6ffb0f8154cb46fd04ec7d0a64132",
+       "kubernetes.io/config.seen": "2026-10-14T09:53:44.233270812Z",
+       "kubernetes.io/config.source": "file"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "f90b3fb443d1dbd5d25d0a9fb0b5d2cfadcd8d3d8a3b5aad25942804cc0fb1f6",
+      "metadata": {
+       "name": "kube-controller-manager-k8s-cp-02",
+       "uid": "76a0c126e5014a5c7dfd9a95d9d9e7b3",
+       "namespace": "kube-system",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791971697219176407",
+      "labels": {
+       "component": "kube-controller-manager",
+       "tier": "control-plane",
+       "io.kubernetes.pod.name": "kube-controller-manager-k8s-cp-02",
+       "io.kubernetes.pod.namespace": "kube-system",
+       "io.kubernetes.pod.uid": "76a0c126e5014a5c7dfd9a95d9d9e7b3"
+      },
+      "annotations": {
+       "kubernetes.io/config.hash": "76a0c126e5014a5c7dfd9a95d9d9e7b3",
+       "kubernetes.io/config.seen": "2026-10-14T09:54:57.091180083Z",
+       "kubernetes.io/config.source": "file"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "c1ec5dea57cc532ceaa7bdf823eda6dc4f2e380ee4637e0f11f6d25be3904e63",
+      "metadata": {
+       "name": "kube-scheduler-k8s-cp-02",
+       "uid": "989702f412d69976db3c697e2e2929f9",
+       "namespace": "kube-system",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791971723938431817",
+      "labels": {
+       "component": "kube-scheduler",
+       "tier": "control-plane",
+       "io.kubernetes.pod.name": "kube-scheduler-k8s-cp-02",
+       "io.kubernetes.pod.namespace": "kube-system",
+       "io.kubernetes.pod.uid": "989702f412d69976db3c697e2e2929f9"
+      },
+      "annotations": {
+       "kubernetes.io/config.hash": "989702f412d69976db3c697e2e2929f9",
+       "kubernetes.io/config.seen": "2026-10-14T09:55:23.835352724Z",
+       "kubernetes.io/config.source": "file"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "687d0b1cc0a67c6d00e69af997f4b055e8e59182787e7ed2dcfb9a903fd8ee2b",
+      "metadata": {
+       "name": "session-gc-29866200-zg7wg",
+       "uid": "af2d860b-2aa9-4a93-9b5a-e502a9ae09c7",
+       "namespace": "identity",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791972001175164794",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "ff5a7bfc-5244-49ad-9693-06b5d70c4ebc",
+       "batch.kubernetes.io/job-name": "session-gc-29866200",
+       "controller-uid": "ff5a7bfc-5244-49ad-9693-06b5d70c4ebc",
+       "job-name": "session-gc-29866200",
+       "app.kubernetes.io/name": "session-gc",
+       "io.kubernetes.pod.name": "session-gc-29866200-zg7wg",
+       "io.kubernetes.pod.namespace": "identity",
+       "io.kubernetes.pod.uid": "af2d860b-2aa9-4a93-9b5a-e502a9ae09c7"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T10:00:00.989317592Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "a759b54cf6ac13da35f26c4a09616e646889113aeba6db3725f296ccf898f269",
+      "metadata": {
+       "name": "index-compact-29866200-89ntv",
+       "uid": "56568451-79f4-473c-a773-eaeadbcb3377",
+       "namespace": "search",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791972001482297907",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "9fb64ac2-4544-4d9c-84cf-caecb3aa244c",
+       "batch.kubernetes.io/job-name": "index-compact-29866200",
+       "controller-uid": "9fb64ac2-4544-4d9c-84cf-caecb3aa244c",
+       "job-name": "index-compact-29866200",
+       "app.kubernetes.io/name": "index-compact",
+       "io.kubernetes.pod.name": "index-compact-29866200-89ntv",
+       "io.kubernetes.pod.namespace": "search",
+       "io.kubernetes.pod.uid": "56568451-79f4-473c-a773-eaeadbcb3377"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T10:00:01.183767569Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "e69519836dab3bb44bcdad630bbb058dfd4a13c6b7f334d34abac7db9c561e6c",
+      "metadata": {
+       "name": "db-backup-29866200-zmrjh",
+       "uid": "7023e779-cdfc-4a0e-8361-770a189c3d7f",
+       "namespace": "payments",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791972001693689226",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "16db065c-afe3-430a-bac1-0f3d3e6cfca0",
+       "batch.kubernetes.io/job-name": "db-backup-29866200",
+       "controller-uid": "16db065c-afe3-430a-bac1-0f3d3e6cfca0",
+       "job-name": "db-backup-29866200",
+       "app.kubernetes.io/name": "db-backup",
+       "io.kubernetes.pod.name": "db-backup-29866200-zmrjh",
+       "io.kubernetes.pod.namespace": "payments",
+       "io.kubernetes.pod.uid": "7023e779-cdfc-4a0e-8361-770a189c3d7f"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T10:00:01.414637849Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "3456f2708380bc371e9dfd3fa0c594116cbf3df226f3c5d22c421ac24d5064ac",
+      "metadata": {
+       "name": "ledger-reconcile-29866200-mp4tt",
+       "uid": "d94c1884-8804-4f05-8a37-ab60904411df",
+       "namespace": "payments",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791972001813425994",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "935a4103-4998-4b45-89f7-f78d1c686c7f",
+       "batch.kubernetes.io/job-name": "ledger-reconcile-29866200",
+       "controller-uid": "935a4103-4998-4b45-89f7-f78d1c686c7f",
+       "job-name": "ledger-reconcile-29866200",
+       "app.kubernetes.io/name": "ledger-reconcile",
+       "io.kubernetes.pod.name": "ledger-reconcile-29866200-mp4tt",
+       "io.kubernetes.pod.namespace": "payments",
+       "io.kubernetes.pod.uid": "d94c1884-8804-4f05-8a37-ab60904411df"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T10:00:01.630650466Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "91275c3f57a49007ec771e0f387f1c7d2c61664c7f6396e58ec30ca5db92492b",
+      "metadata": {
+       "name": "cert-expiry-report-29866200-f6b6s",
+       "uid": "c69e97ef-59de-4b3a-9f4c-818d20916140",
+       "namespace": "monitoring",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791972001992714803",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "0e0da59e-35be-40fe-af5b-7b1457aa9090",
+       "batch.kubernetes.io/job-name": "cert-expiry-report-29866200",
+       "controller-uid": "0e0da59e-35be-40fe-af5b-7b1457aa9090",
+       "job-name": "cert-expiry-report-29866200",
+       "app.kubernetes.io/name": "cert-expiry-report",
+       "io.kubernetes.pod.name": "cert-expiry-report-29866200-f6b6s",
+       "io.kubernetes.pod.namespace": "monitoring",
+       "io.kubernetes.pod.uid": "c69e97ef-59de-4b3a-9f4c-818d20916140"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T10:00:01.699506026Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "c3b1f67d1a14032223d46c03aa7324692dc16787ec1d4a54fa0788f29dc47baf",
+      "metadata": {
+       "name": "report-export-29866200-flz59",
+       "uid": "cca5ac05-61b1-4166-9d53-5a62fc5fb5c6",
+       "namespace": "orders",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791972002461996571",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "c8c31c97-1c35-4ee4-b3a7-9fe6d29bf724",
+       "batch.kubernetes.io/job-name": "report-export-29866200",
+       "controller-uid": "c8c31c97-1c35-4ee4-b3a7-9fe6d29bf724",
+       "job-name": "report-export-29866200",
+       "app.kubernetes.io/name": "report-export",
+       "io.kubernetes.pod.name": "report-export-29866200-flz59",
+       "io.kubernetes.pod.namespace": "orders",
+       "io.kubernetes.pod.uid": "cca5ac05-61b1-4166-9d53-5a62fc5fb5c6"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T10:00:02.202373951Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "6a1d725c92950e40b994ae07fa7641fa67cc2465dc9757a45f54453ca34ef1c6",
+      "metadata": {
+       "name": "etcd-k8s-cp-03",
+       "uid": "bff2524f00bfa8f7ce782827f7da4d48",
+       "namespace": "kube-system",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791972084305537486",
+      "labels": {
+       "component": "etcd",
+       "tier": "control-plane",
+       "io.kubernetes.pod.name": "etcd-k8s-cp-03",
+       "io.kubernetes.pod.namespace": "kube-system",
+       "io.kubernetes.pod.uid": "bff2524f00bfa8f7ce782827f7da4d48"
+      },
+      "annotations": {
+       "kubeadm.kubernetes.io/etcd.advertise-client-urls": "https://10.20.0.13:2379",
+       "kubernetes.io/config.hash": "bff2524f00bfa8f7ce782827f7da4d48",
+       "kubernetes.io/config.seen": "2026-10-14T10:01:24.190253229Z",
+       "kubernetes.io/config.source": "file"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "f5c7ac6b24478476305e64b3b0d6058c7ff17b68a30fec6259be7040880b4075",
+      "metadata": {
+       "name": "kube-apiserver-k8s-cp-03",
+       "uid": "8b1bf6d6028abb4ea25b02f486a5afb3",
+       "namespace": "kube-system",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791972136617523434",
+      "labels": {
+       "component": "kube-apiserver",
+       "tier": "control-plane",
+       "io.kubernetes.pod.name": "kube-apiserver-k8s-cp-03",
+       "io.kubernetes.pod.namespace": "kube-system",
+       "io.kubernetes.pod.uid": "8b1bf6d6028abb4ea25b02f486a5afb3"
+      },
+      "annotations": {
+       "kubeadm.kubernetes.io/kube-apiserver.advertise-address.endpoint": "10.20.0.13:6443",
+       "kubernetes.io/config.hash": "8b1bf6d6028abb4ea25b02f486a5afb3",
+       "kubernetes.io/config.seen": "2026-10-14T10:02:16.436713311Z",
+       "kubernetes.io/config.source": "file"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "7ffafea3d8c5d6a36a41745fa38e0f917f52f53b36359b980bad6cc3691e5d34",
+      "metadata": {
+       "name": "kube-controller-manager-k8s-cp-03",
+       "uid": "89c64ee4286cad8888d7d08aebc1756f",
+       "namespace": "kube-system",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791972214157465471",
+      "labels": {
+       "component": "kube-controller-manager",
+       "tier": "control-plane",
+       "io.kubernetes.pod.name": "kube-controller-manager-k8s-cp-03",
+       "io.kubernetes.pod.namespace": "kube-system",
+       "io.kubernetes.pod.uid": "89c64ee4286cad8888d7d08aebc1756f"
+      },
+      "annotations": {
+       "kubernetes.io/config.hash": "89c64ee4286cad8888d7d08aebc1756f",
+       "kubernetes.io/config.seen": "2026-10-14T10:03:34.074567983Z",
+       "kubernetes.io/config.source": "file"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "d45816d6a1880c9ed4c5304ad6f48ba15e388e06b3e48522fed5f3adf1a7c3f8",
+      "metadata": {
+       "name": "kube-scheduler-k8s-cp-03",
+       "uid": "fcaa1fa3002ed052c0290e11d8fe3766",
+       "namespace": "kube-system",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791972241419806639",
+      "labels": {
+       "component": "kube-scheduler",
+       "tier": "control-plane",
+       "io.kubernetes.pod.name": "kube-scheduler-k8s-cp-03",
+       "io.kubernetes.pod.namespace": "kube-system",
+       "io.kubernetes.pod.uid": "fcaa1fa3002ed052c0290e11d8fe3766"
+      },
+      "annotations": {
+       "kubernetes.io/config.hash": "fcaa1fa3002ed052c0290e11d8fe3766",
+       "kubernetes.io/config.seen": "2026-10-14T10:04:01.315696485Z",
+       "kubernetes.io/config.source": "file"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "4b99b481e12b47af18b0826d1042ab706d0cec3a06969a4432c40ac28951c40c",
+      "metadata": {
+       "name": "session-gc-29866215-9gckl",
+       "uid": "98bc5cba-7b2b-452a-bd46-58f9d42791d3",
+       "namespace": "identity",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791972901318127902",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "3f9cebcd-5c86-49fa-9b18-3165ea899d7a",
+       "batch.kubernetes.io/job-name": "session-gc-29866215",
+       "controller-uid": "3f9cebcd-5c86-49fa-9b18-3165ea899d7a",
+       "job-name": "session-gc-29866215",
+       "app.kubernetes.io/name": "session-gc",
+       "io.kubernetes.pod.name": "session-gc-29866215-9gckl",
+       "io.kubernetes.pod.namespace": "identity",
+       "io.kubernetes.pod.uid": "98bc5cba-7b2b-452a-bd46-58f9d42791d3"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T10:15:01.160924515Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "2e009bae5a1568fb922c98d0bb1ede7af2761e7b4b65441e0277e0f5b019c675",
+      "metadata": {
+       "name": "index-compact-29866220-d6jvn",
+       "uid": "21493de1-f9c2-48c5-8774-b32625a5e0bc",
+       "namespace": "search",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791973201141004891",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "21d89da7-8b1f-4adc-84db-4a068beb2291",
+       "batch.kubernetes.io/job-name": "index-compact-29866220",
+       "controller-uid": "21d89da7-8b1f-4adc-84db-4a068beb2291",
+       "job-name": "index-compact-29866220",
+       "app.kubernetes.io/name": "index-compact",
+       "io.kubernetes.pod.name": "index-compact-29866220-d6jvn",
+       "io.kubernetes.pod.namespace": "search",
+       "io.kubernetes.pod.uid": "21493de1-f9c2-48c5-8774-b32625a5e0bc"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T10:20:00.792512020Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "d91147f4c08c20945d8229187b45403f5e03cace2d375230ac85fc979e01f0f4",
+      "metadata": {
+       "name": "session-gc-29866230-kcvgq",
+       "uid": "89ea4c5c-4c01-4eb9-99ab-dbc7a6d5de04",
+       "namespace": "identity",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791973802288150635",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "1221c4f7-9b1a-49d7-b8f8-298d1d196688",
+       "batch.kubernetes.io/job-name": "session-gc-29866230",
+       "controller-uid": "1221c4f7-9b1a-49d7-b8f8-298d1d196688",
+       "job-name": "session-gc-29866230",
+       "app.kubernetes.io/name": "session-gc",
+       "io.kubernetes.pod.name": "session-gc-29866230-kcvgq",
+       "io.kubernetes.pod.namespace": "identity",
+       "io.kubernetes.pod.uid": "89ea4c5c-4c01-4eb9-99ab-dbc7a6d5de04"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T10:30:01.960627290Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "6b6b2d7d37039e4a29160f00435e3bff967020b53b0a5f63400574226f724498",
+      "metadata": {
+       "name": "report-export-29866230-j2d8n",
+       "uid": "0989d051-618c-4f28-bd5a-ea016919b5ed",
+       "namespace": "orders",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791973802437343736",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "4db755db-7f72-4090-b3a9-f456a3ca3999",
+       "batch.kubernetes.io/job-name": "report-export-29866230",
+       "controller-uid": "4db755db-7f72-4090-b3a9-f456a3ca3999",
+       "job-name": "report-export-29866230",
+       "app.kubernetes.io/name": "report-export",
+       "io.kubernetes.pod.name": "report-export-29866230-j2d8n",
+       "io.kubernetes.pod.namespace": "orders",
+       "io.kubernetes.pod.uid": "0989d051-618c-4f28-bd5a-ea016919b5ed"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T10:30:02.288014687Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "4ede5d6e9f2540f2909de5d1818b9c25fb7d2022dc15e0fa417a225766aa37bc",
+      "metadata": {
+       "name": "index-compact-29866240-55vlj",
+       "uid": "9591d57a-9e77-45dc-ac3e-28e44fe52ce6",
+       "namespace": "search",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791974400752964883",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "bf0edb09-b9fc-44d8-ab06-1a450d2b5c57",
+       "batch.kubernetes.io/job-name": "index-compact-29866240",
+       "controller-uid": "bf0edb09-b9fc-44d8-ab06-1a450d2b5c57",
+       "job-name": "index-compact-29866240",
+       "app.kubernetes.io/name": "index-compact",
+       "io.kubernetes.pod.name": "index-compact-29866240-55vlj",
+       "io.kubernetes.pod.namespace": "search",
+       "io.kubernetes.pod.uid": "9591d57a-9e77-45dc-ac3e-28e44fe52ce6"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T10:40:00.552489721Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    },
+    {
+     "event": {
+      "id": "9d55d35c1e75cf20088e6804df137e98a7303471169571b1f8c781a07a53f112",
+      "metadata": {
+       "name": "session-gc-29866245-whzmh",
+       "uid": "a5f690e4-3499-4abc-9748-d313f07475e1",
+       "namespace": "identity",
+       "attempt": 0
+      },
+      "state": "SANDBOX_READY",
+      "createdAt": "1791974700791286017",
+      "labels": {
+       "batch.kubernetes.io/controller-uid": "47b6fb52-5bdc-4613-8c0c-9e80a1a47138",
+       "batch.kubernetes.io/job-name": "session-gc-29866245",
+       "controller-uid": "47b6fb52-5bdc-4613-8c0c-9e80a1a47138",
+       "job-name": "session-gc-29866245",
+       "app.kubernetes.io/name": "session-gc",
+       "io.kubernetes.pod.name": "session-gc-29866245-whzmh",
+       "io.kubernetes.pod.namespace": "identity",
+       "io.kubernetes.pod.uid": "a5f690e4-3499-4abc-9748-d313f07475e1"
+      },
+      "annotations": {
+       "kubernetes.io/config.seen": "2026-10-14T10:45:00.589275140Z",
+       "kubernetes.io/config.source": "api"
+      },
+      "runtimeHandler": ""
+     }
+    }
+   ]
+  }
+ ]
+}

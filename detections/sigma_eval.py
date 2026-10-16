@@ -13,10 +13,86 @@ always gets back the concrete events behind every hit and can check where they
 came from.
 """
 
+import importlib.machinery
 import json
+import os
 import re
 import sqlite3
 import sys
+
+# The gates run as `python3 detections/<script>.py`, so detections/ is sys.path[0]
+# and the rule directory detections/sigma/ joins pySigma's `sigma` namespace package
+# AHEAD of site-packages: a collection.py (or a package, .pyc, .so, ...) dropped
+# there would replace pySigma's own module inside every gate and validator. So
+# before pySigma is imported, the rule directory must hold only rule material:
+# T<id>/ directories of *.yml, *.cases.jsonl and *.md files, nothing else.
+# A module named `sigma` NEXT TO the rule directory is worse: in one sys.path entry
+# a module (sigma.py, a sourceless sigma.pyc, sigma.so, ...) wins over a namespace
+# portion, so it replaces pySigma whole. So detections/ may hold nothing else named
+# sigma.* (nor __pycache__/sigma.*), in any letter case.
+# The same holds for every other module a gate imports from site-packages or the
+# stdlib: a sourceless yaml.pyc (or a yaml.so) in detections/ replaces PyYAML for
+# every gate, unreviewable in a diff and hidden locally by .gitignore's *.pyc. So no
+# file directly in detections/ may carry a bytecode or extension-module suffix
+# (importlib.machinery.BYTECODE_SUFFIXES + EXTENSION_SUFFIXES), in any letter case.
+# This runs when sigma_eval is first imported, so it cannot stop a module that a
+# script imports before sigma_eval, nor a plain-source detections/<name>.py.
+_DETECTIONS = os.path.dirname(os.path.abspath(__file__))
+_RULE_DIR = os.path.join(_DETECTIONS, "sigma")
+_TECHNIQUE_DIR = re.compile(r"T\d{4}(\.\d{3})?")
+_RULE_MATERIAL = re.compile(r".+\.(yml|cases\.jsonl|md)")
+_COMPILED_SUFFIXES = tuple(s.lower() for s in importlib.machinery.BYTECODE_SUFFIXES
+                           + importlib.machinery.EXTENSION_SUFFIXES)
+
+
+def _rule_dir_intruders():
+    """Entries under detections/sigma/ that are not rule material."""
+    bad = []
+    try:
+        entries = sorted(os.scandir(_RULE_DIR), key=lambda e: e.name)
+    except FileNotFoundError:
+        return bad
+    for entry in entries:
+        if entry.is_file(follow_symlinks=False) and entry.name.endswith(".md"):
+            continue  # a top-level README cannot shadow a module
+        if not (entry.is_dir(follow_symlinks=False) and _TECHNIQUE_DIR.fullmatch(entry.name)):
+            bad.append(entry.name)
+            continue
+        for item in sorted(os.scandir(entry.path), key=lambda e: e.name):
+            if not (item.is_file(follow_symlinks=False) and _RULE_MATERIAL.fullmatch(item.name)):
+                bad.append(f"{entry.name}/{item.name}")
+    return bad
+
+
+def _sibling_intruders():
+    """Entries of detections/ (and detections/__pycache__/) named sigma.*, and entries
+    of detections/ named as compiled bytecode or an extension module (*.pyc, *.so, ...)."""
+    bad = []
+    for sub in ("", "__pycache__"):
+        try:
+            names = sorted(os.listdir(os.path.join(_DETECTIONS, sub)))
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        bad += [f"{sub}/{n}" if sub else n for n in names
+                if n.lower().startswith("sigma.")
+                or (not sub and n.lower().endswith(_COMPILED_SUFFIXES))]
+    return bad
+
+
+_intruders = ([f"sigma/{p}" for p in _rule_dir_intruders()]
+              + _sibling_intruders())
+if _intruders:
+    sys.exit("refusing to import pySigma: detections/sigma/ may hold only *.md files "
+             "and T<id>/ directories of *.yml, *.cases.jsonl and *.md files, and nothing "
+             "else in detections/ may be named sigma.* (sigma.py, sigma.pyc, sigma.so, "
+             "sigma.pth, __pycache__/sigma.*, ...), because the rule directory shares the "
+             "`sigma` package namespace with pySigma: anything importable there would "
+             "shadow pySigma's own modules, and a `sigma` module beside it would replace "
+             "pySigma whole. Nor may any file in detections/ be compiled bytecode or an "
+             "extension module (" + ", ".join("*" + s for s in _COMPILED_SUFFIXES) + "): "
+             "a sourceless module there (yaml.pyc, ...) would replace the module of that "
+             "name in every gate. Move or delete:\n  "
+             + "\n  ".join(f"detections/{p}" for p in _intruders))
 
 try:
     from sigma.backends.sqlite import sqliteBackend
@@ -62,6 +138,71 @@ def _quote(col):
     return '"' + col.replace('"', '""') + '"'
 
 
+class EventTable:
+    """Flat event dicts loaded once into an in-memory `logs` table.
+
+    Load a large event set (a benign corpus slice, a long audit log) once and run
+    many compiled rules over it, instead of rebuilding the table per rule.
+    """
+
+    def __init__(self, events):
+        self.events = events
+        self.db = sqlite3.connect(":memory:")
+        # pySigma's SQLite backend compiles a `|re` match to the SQL `REGEXP`
+        # operator, which SQLite leaves unimplemented by default. Register it with
+        # Python's `re` (full syntax, including look-around) so `|re` rules
+        # evaluate. `X REGEXP Y` calls regexp(Y, X), i.e. regexp(pattern, value).
+        self.db.create_function(
+            "regexp", 2,
+            lambda pattern, value: 1 if value is not None and re.search(pattern, str(value)) else 0)
+        columns = sorted({k for e in events for k in e} - {_ROWID})
+        # SQLite column names are case-insensitive: 'level' and 'Level' would be one
+        # column (a cryptic "duplicate column name" error), and a rule field would
+        # match an event key that differs only by case, which a case-sensitive SIEM
+        # would not. Refuse the collision plainly instead.
+        folded = {}
+        for col in columns:
+            folded.setdefault(col.lower(), []).append(col)
+        clashes = [names for names in folded.values() if len(names) > 1]
+        if clashes:
+            raise ValueError("event keys that differ only by case cannot share one table: "
+                             + "; ".join(" / ".join(n) for n in clashes)
+                             + " (score or evaluate these log shapes separately)")
+        self.db.execute(f"CREATE TABLE logs ({_ROWID} INTEGER PRIMARY KEY"
+                        + "".join(f", {_quote(c)}" for c in columns) + ")")
+        for rowid, event in enumerate(events):
+            cols = [c for c in columns if c in event]
+            self.db.execute(
+                f"INSERT INTO logs ({_ROWID}{''.join(', ' + _quote(c) for c in cols)}) "
+                f"VALUES (?{', ?' * len(cols)})",
+                [rowid] + [event[c] for c in cols])
+
+    def _execute(self, sql):
+        while True:
+            try:
+                return self.db.execute(sql)
+            except sqlite3.OperationalError as e:
+                missing = re.match(r"no such column: (.+)$", str(e))
+                if not missing:
+                    raise
+                self.db.execute(f"ALTER TABLE logs ADD COLUMN {_quote(missing.group(1))}")
+
+    def hit_indices(self, sql):
+        """One list of event indices per hit (see evaluate())."""
+        cur = self._execute(sql)
+        names = [d[0] for d in cur.description]
+        rows = cur.fetchall()
+        if "event_ids" in names:  # correlation alert rows
+            idx = names.index("event_ids")
+            return [[int(eid.rsplit(":", 1)[1]) for eid in json.loads(row[idx])]
+                    for row in rows]
+        idx = names.index(_ROWID)
+        return [[row[idx]] for row in rows]
+
+    def hits(self, sql):
+        return [[self.events[i] for i in hit] for hit in self.hit_indices(sql)]
+
+
 def evaluate(sql, events):
     """Run a compiled rule over flat event dicts.
 
@@ -70,39 +211,4 @@ def evaluate(sql, events):
     contributed to it. A field no event carries reads as NULL (matches nothing),
     exactly as it would in a log store that never saw the field.
     """
-    db = sqlite3.connect(":memory:")
-    # pySigma's SQLite backend compiles a `|re` match to the SQL `REGEXP` operator,
-    # which SQLite leaves unimplemented by default. Register it with Python's `re`
-    # (full syntax, including look-around) so `|re` rules evaluate. `X REGEXP Y`
-    # calls regexp(Y, X), i.e. regexp(pattern, value).
-    db.create_function(
-        "regexp", 2,
-        lambda pattern, value: 1 if value is not None and re.search(pattern, str(value)) else 0)
-    columns = sorted({k for e in events for k in e} - {_ROWID})
-    db.execute(f"CREATE TABLE logs ({_ROWID} INTEGER PRIMARY KEY"
-               + "".join(f", {_quote(c)}" for c in columns) + ")")
-    for rowid, event in enumerate(events):
-        cols = [c for c in columns if c in event]
-        db.execute(
-            f"INSERT INTO logs ({_ROWID}{''.join(', ' + _quote(c) for c in cols)}) "
-            f"VALUES (?{', ?' * len(cols)})",
-            [rowid] + [event[c] for c in cols])
-
-    while True:
-        try:
-            cur = db.execute(sql)
-            break
-        except sqlite3.OperationalError as e:
-            missing = re.match(r"no such column: (.+)$", str(e))
-            if not missing:
-                raise
-            db.execute(f"ALTER TABLE logs ADD COLUMN {_quote(missing.group(1))}")
-
-    names = [d[0] for d in cur.description]
-    rows = cur.fetchall()
-    if "event_ids" in names:  # correlation alert rows
-        idx = names.index("event_ids")
-        return [[events[int(eid.rsplit(":", 1)[1])] for eid in json.loads(row[idx])]
-                for row in rows]
-    idx = names.index(_ROWID)
-    return [[events[row[idx]]] for row in rows]
+    return EventTable(events).hits(sql)

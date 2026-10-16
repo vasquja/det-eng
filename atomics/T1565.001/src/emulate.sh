@@ -3,9 +3,12 @@
 # cluster DNS poisoning via the CoreDNS ConfigMap.
 #
 # Each procedure writes a cluster DNS ConfigMap in kube-system, so the API server writes
-# the configmaps audit event the paired Sigma rules key on. The poison carries the
+# the configmaps audit event the paired Sigma rules key on. Every write carries the
 # sentinel token 'trr9027' (a forward to a sentinel .invalid zone that no workload
-# resolves) so a validator matches the emulation's own events.
+# resolves), but only procedure A's coredns patch is logged with its body (Request), so
+# only A's sentinel reaches the log and the validator proves procedure A only. The B and
+# C creates are logged at Metadata, with no body and no sentinel: only the chokepoint
+# rule sees them.
 #
 # SAFETY:
 #   * Procedure A captures the real coredns Corefile, appends an INERT sentinel server
@@ -22,8 +25,11 @@
 #   ./emulate.sh all    every item, in order, then clean up
 #
 # Prerequisites: a reachable cluster (kubectl works) with rights on kube-system
-# ConfigMaps, audit logging at Request level for kube-system ConfigMaps (see
-# detections/k8s/audit-policy-apiserver.yaml), and python3 (to build the merge patch).
+# ConfigMaps, the audit policy in detections/k8s/audit-policy-apiserver.yaml (it logs
+# writes to the coredns, kube-dns and coredns-custom ConfigMaps at Request by
+# resourceNames, which a create never matches: a create names no object when the policy
+# is evaluated, so B and C fall to the Metadata catch-all), and python3 (to build the
+# merge patch).
 set -euo pipefail
 
 NS="kube-system"

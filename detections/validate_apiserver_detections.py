@@ -37,10 +37,11 @@ kindnet privileged pods). The gate is:
     too; a 'list' has no objectRef.name, so the namespace + non-system-caller pair
     is the only gate that spans A/B/C/D).
   * TRR9025 / TRR9026 : objectRef.name begins with 'trr9025-' / 'trr9026-'.
-  * TRR9027        : objectRef.name is a cluster-DNS ConfigMap (coredns / kube-dns /
-    coredns-custom) in kube-system AND the write carries the 'trr9027' sentinel in its
-    requestObject (the coredns ConfigMap exists at bootstrap, so the name alone is not
-    enough; the sentinel identifies the emulation's own write and excludes the restore).
+  * TRR9027 (procedure A only): objectRef.name is a cluster-DNS ConfigMap (coredns /
+    kube-dns / coredns-custom) in kube-system AND the write carries the 'trr9027'
+    sentinel in its requestObject (the coredns ConfigMap exists at bootstrap, so the
+    name alone is not enough; the sentinel identifies the emulation's own write and
+    excludes the restore). B and C's creates are logged at Metadata, with no body.
 
 Rules in each technique folder that are NOT match-gated here (the Linux file-event
 token-read rule, for example) are still COMPILED, so a broken rule fails the run.
@@ -51,6 +52,16 @@ Modes:
     --cri-log PATH      node runtime sensor log (crictl pods snapshots), optional.
     --expect-miss       Negative control: fail if any gated rule passes.
     --report            Report misses instead of failing on them.
+    --json PATH         Also write a machine-readable report (status, detail and the
+                        explanation lines of every rule) to PATH.
+
+A MISS is explained beneath its line (sigma_explain.py): what the gate requires,
+how many events carry the emulation's marker, and the marked event that came
+closest to the rule, item by item. When no event carries the marker it says so
+plainly, and lists events that mention the technique's tag but fail the gate. It
+also names rule fields that no event in the log carries (an audit policy level
+too low for requestObject, or a renamed field). A failed --expect-miss shows the
+marked event(s) the rule matched in the pre-emulation log, and why it matched.
 """
 
 import argparse
@@ -61,6 +72,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sigma_eval  # noqa: E402
+try:  # explanations are optional: a broken sigma_explain must never break a verdict
+    import sigma_explain  # noqa: E402
+except Exception as _e:  # noqa: BLE001
+    sigma_explain = None
+    print(f"[diag] no explanations: sigma_explain failed to import "
+          f"({type(_e).__name__}: {_e})")
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SIGMA = os.path.join(REPO, "detections", "sigma")
@@ -70,11 +87,17 @@ SECRET_NS = os.environ.get("TRR9006_NAMESPACE", "trr9006")
 
 
 def name_prefix(prefix):
-    return lambda e: (e.get("objectRef.name") or "").startswith(prefix)
+    def gate(e):
+        return (e.get("objectRef.name") or "").startswith(prefix)
+    gate.describe = f"objectRef.name begins with {prefix!r}"  # for the MISS explanation
+    return gate
 
 
 def job_label_prefix(prefix):
-    return lambda e: (e.get("labels.batch.kubernetes.io/job-name") or "").startswith(prefix)
+    def gate(e):
+        return (e.get("labels.batch.kubernetes.io/job-name") or "").startswith(prefix)
+    gate.describe = f"labels.batch.kubernetes.io/job-name begins with {prefix!r}"
+    return gate
 
 
 def secret_gate(e):
@@ -116,17 +139,32 @@ def coredns_gate(e):
     """TRR9027: the emulation's own cluster-DNS write, told apart by the trr9027 sentinel.
 
     The coredns ConfigMap exists at bootstrap and kube-dns/coredns-custom may be created by
-    other tooling, so name + namespace alone is not enough. The emulation injects its unique
-    'trr9027' sentinel into every write's requestObject (the poisoned Corefile, the kube-dns
-    stubDomains redirect, the coredns-custom snippet), recorded because the audit policy keeps
-    kube-system ConfigMap writes at Request. The restore write carries the original Corefile
-    and no sentinel, so it is correctly excluded.
+    other tooling, so name + namespace alone is not enough. The emulation puts its unique
+    'trr9027' sentinel into every write's body, but only procedure A's coredns patch is
+    logged with its body: the audit policy's Request rule for these ConfigMaps is scoped by
+    resourceNames, and a create names no object when the policy is evaluated, so procedures
+    B and C (the kube-dns and coredns-custom creates) are logged at Metadata, with no
+    requestObject and so no sentinel. This gate therefore marks procedure A only (label
+    '9027 A'); the chokepoint rule still sees B and C, but this validator does not prove
+    them. The restore write carries the original Corefile and no sentinel, so it is
+    correctly excluded.
     """
     if e.get("objectRef.namespace") != "kube-system":
         return False
     if (e.get("objectRef.name") or "") not in ("coredns", "kube-dns", "coredns-custom"):
         return False
     return any("trr9027" in str(v) for v in e.values())
+
+
+# What each named gate requires, for the MISS explanation (the factories above set theirs).
+secret_gate.describe = (f"objectRef.namespace == {SECRET_NS!r} and user.username not "
+                        "'system:*'")
+impersonation_gate.describe = ("impersonatedUser.username contains 'trr9009' or "
+                               "impersonatedUser.groups contains 'trr9009-group'")
+trr9010_gate.describe = ("objectRef.name begins with 'trr9010-', or verb == deletecollection "
+                         "in objectRef.namespace 'trr9010'")
+coredns_gate.describe = ("objectRef.namespace == 'kube-system', objectRef.name in coredns / "
+                         "kube-dns / coredns-custom, and some field contains 'trr9027'")
 
 
 # (technique folder, rule file, source, label, note, gate). Order is report order.
@@ -167,7 +205,7 @@ MANIFEST = [
      "malicious webhook grader: off-cluster url / wildcard+secrets (Request)", name_prefix("trr9025-")),
     ("T1572", "k8s_pod_portforward.yml", "audit", "9026 A-B",
      "pod port-forward chokepoint (verb-agnostic subresource)", name_prefix("trr9026-")),
-    ("T1565.001", "k8s_coredns_configmap_modified.yml", "audit", "9027 A-C",
+    ("T1565.001", "k8s_coredns_configmap_modified.yml", "audit", "9027 A",
      "cluster DNS ConfigMap write chokepoint", coredns_gate),
     ("T1565.001", "k8s_coredns_corefile_poisoned.yml", "audit", "9027 sev",
      "CoreDNS Corefile poison grader (Request)", coredns_gate),
@@ -228,6 +266,135 @@ def dedup_by_audit_id(matches):
     return out
 
 
+# ---- failure explanations (sigma_explain) --------------------------------
+
+
+def summary(e):
+    """One line naming an audit event (verb, resource, name, namespace, user) or a sandbox."""
+    if "verb" not in e and "metadata.name" in e:
+        return (f"pod={e.get('metadata.name')} ns={e.get('metadata.namespace')} "
+                f"config.source={e.get('annotations.kubernetes.io/config.source')} "
+                f"job={e.get('labels.batch.kubernetes.io/job-name')}")
+    resource = str(e.get("objectRef.resource"))
+    if e.get("objectRef.subresource"):
+        resource += f"/{e['objectRef.subresource']}"
+    return (f"verb={e.get('verb')} resource={resource} name={e.get('objectRef.name')} "
+            f"ns={e.get('objectRef.namespace')} user={e.get('user.username')}"
+            + (f" code={e['responseStatus.code']}" if e.get("responseStatus.code") else "")
+            + (f" stage={e['stage']}" if e.get("stage") else ""))
+
+
+def labeller(events):
+    index = {id(e): i for i, e in enumerate(events)}
+    return lambda e: f"event #{index.get(id(e), '?')} [{summary(e)}]"
+
+
+def describe_gate(gate):
+    doc = (gate.__doc__ or "").strip().splitlines()
+    return getattr(gate, "describe", None) or (doc[0] if doc else "see its MANIFEST entry")
+
+
+def absent_fields(rule, events):
+    """Fields the rule's selections read that no event in the log carries."""
+    fields = dict.fromkeys(f for a in rule.positive_atoms() for f in rule.fields(a))
+    return [f for f in fields if all(e.get(f) is None for e in events)]
+
+
+def absent_hint(fields, scope, where):
+    """Name the absent fields; say whether the audit level explains them (over `scope`)."""
+    hint = f"rule field(s) no event in the log carries: {', '.join(fields)}"
+    for body, levels in (("requestObject", "Request or RequestResponse"),
+                         ("responseObject", "RequestResponse")):
+        if not any(f.startswith(body) for f in fields):
+            continue
+        if not any(k.startswith(body) for e in scope for k in e):
+            return hint + (f"; {where} carry no {body} at all: "
+                           f"the audit policy records this resource below level {levels}, "
+                           "which the rule needs")
+        return hint + (f"; {body} is recorded but never sets these (a field read by one OR "
+                       "alternative only may be absent legitimately)")
+    return hint + ("; no event of that shape reached the log, the audit policy or sensor "
+                   "does not record it, or the field is named differently (casing, flattening)")
+
+
+def explain_gated_miss(rule_path, events, gate, tag, matched):
+    """Why no event the emulation made matched: the gate, then the closest marked event."""
+    rule = sigma_explain.load(rule_path)
+    label = labeller(events)
+    marked = [i for i, e in enumerate(events) if gate(e)]
+    lines = [f"gate: {describe_gate(gate)}"]
+    if marked:
+        candidates, where = marked, "the marked event(s)"
+        lines.append(f"{len(marked)} event(s) carry the emulation's marker and the rule "
+                     "matches none of them")
+    else:
+        lines.append("NO event carries the emulation's marker: the emulation may not have run, "
+                     "or it named its objects differently (object name / namespace) from "
+                     "what the gate expects")
+        candidates = [i for i, e in enumerate(events)
+                      if any(tag in str(v) for v in e.values())]
+        where = f"the event(s) mentioning {tag!r}"
+        hit = {id(e) for e in matched}
+        fired = [i for i in candidates if id(events[i]) in hit]
+        if candidates:
+            lines.append(f"{len(candidates)} event(s) mention {tag!r} but fail the gate, e.g.:")
+            lines.extend(f"  {label(events[i])}" for i in candidates[:3])
+        if fired:
+            lines.append(f"the rule DOES match {len(fired)} of them: the rule works, the gate "
+                         "does not recognise the object as the emulation's (did its naming "
+                         "change?)")
+        elif not candidates:
+            where = "the events of the whole log"
+            if matched:
+                lines.append(f"no event mentions {tag!r} at all, while the rule matches "
+                             f"{len(matched)} other event(s): the rule and the log work, the "
+                             "emulation's own records are missing (check the emulate step's "
+                             "output)")
+            else:
+                lines.append(f"no event mentions {tag!r} at all")
+                candidates = None  # nothing to narrow to: grade the whole log
+    absent = absent_fields(rule, events)
+    if absent:
+        scope = [events[i] for i in candidates] if candidates else events
+        lines.append(absent_hint(absent, scope, where))
+    if candidates or candidates is None:
+        lines.append(f"per block over {where}, then the closest event, item by item:")
+        lines += sigma_explain.explain_miss(rule, events, k=1, candidates=candidates,
+                                            label=label)
+    return lines
+
+
+def explain_unexpected(rule_path, events, ours, tag):
+    """--expect-miss failed: the marked event(s) the rule matched, and why it fired."""
+    rule = sigma_explain.load(rule_path)
+    label = labeller(events)
+    lines = [f"the pre-emulation log already holds {len(ours)} marked match(es); a log "
+             f"captured before the emulation should hold no {tag!r} object (captured late, "
+             "or left over from an earlier run?):"]
+    for e in ours[:3]:
+        lines.append(f"  {label(e)}"
+                     + (f" at {e['requestReceivedTimestamp']}"
+                        if e.get("requestReceivedTimestamp") else ""))
+        lines.extend("  " + ln for ln in sigma_explain.explain_hit(rule, e))
+    if len(ours) > 3:
+        lines.append(f"  ... and {len(ours) - 3} more")
+    return lines
+
+
+def explained(fn, *args):
+    """Run an explanation helper; an explanation must never break the gate."""
+    try:
+        return fn(*args)
+    except Exception as e:  # noqa: BLE001
+        return [f"(no explanation: {type(e).__name__}: {e})"]
+
+
+def write_json(path, report):
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2)
+        fh.write("\n")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Validate TRR9004-9010, 9025-9027 K8s detections.")
     ap.add_argument("--audit-log", default="/tmp/kube-apiserver-audit.log",
@@ -240,8 +407,22 @@ def main():
                     help="Negative control: fail if any gated rule passes.")
     ap.add_argument("--report", action="store_true",
                     help="Report misses instead of failing on them.")
+    ap.add_argument("--json", metavar="PATH",
+                    help="Also write a machine-readable report (results + explanations).")
     args = ap.parse_args()
+    report = {"validator": "apiserver",
+              "mode": "dry-run" if args.dry_run else
+              "expect-miss" if args.expect_miss else "validate", "results": []}
+    code = validate(args, report)
+    if args.json:
+        report["exit"] = code
+        write_json(args.json, report)
+    return code
 
+
+def validate(args, report):
+    """The validation run behind main(); fills `report` for --json."""
+    results = report["results"]
     # Compile the match-gated rules.
     queries = {}
     parse_errors = 0
@@ -255,6 +436,8 @@ def main():
         except Exception as e:  # noqa: BLE001
             parse_errors += 1
             print(f"ERROR compile {folder}/{fname}: {e}")
+            results.append({"rule": f"{folder}/{fname}", "label": label, "status": "ERROR",
+                            "detail": f"compile: {e}", "explanation": []})
     # Compile every other rule in the four folders (not match-gated here).
     for folder in FOLDERS:
         for path in sorted(glob.glob(os.path.join(SIGMA, folder, "*.yml"))):
@@ -268,8 +451,13 @@ def main():
             except Exception as e:  # noqa: BLE001
                 parse_errors += 1
                 print(f"ERROR compile {folder}/{os.path.basename(path)}: {e}")
+                results.append({"rule": f"{folder}/{os.path.basename(path)}",
+                                "status": "ERROR", "detail": f"compile: {e}",
+                                "explanation": []})
 
     if args.dry_run:
+        results.extend({"rule": f"{folder}/{fname}", "status": "OK", "detail": "compiles",
+                        "explanation": []} for folder, fname in queries)
         print()
         if parse_errors:
             print(f"Dry run FAILED: {parse_errors} compile error(s).")
@@ -302,17 +490,24 @@ def main():
         if source not in logs:
             skipped += 1
             print(f"SKIP  [{label}] {fname}: no {source} log given")
+            results.append({"rule": f"{folder}/{fname}", "label": label, "source": source,
+                            "status": "SKIP", "detail": f"no {source} log given",
+                            "explanation": []})
             continue
         matched = [hit[0] for hit in sigma_eval.evaluate(queries[key], logs[source])]
         if source == "audit":
             matched = dedup_by_audit_id(matched)
         ours = [e for e in matched if gate(e)]
         other = len(matched) - len(ours)
+        rule_path = os.path.join(SIGMA, folder, fname)
+        tag = "trr" + label.split()[0]  # e.g. '9004 A-E' -> 'trr9004'
+        explanation = []
         if ours:
             passes += 1
             sample = ours[0]
-            print(f"PASS  [{label}] {fname}: {len(ours)} emulation record(s) match"
-                  + (f" (+{other} baseline/other)" if other else ""))
+            detail = (f"{len(ours)} emulation record(s) match"
+                      + (f" (+{other} baseline/other)" if other else ""))
+            print(f"PASS  [{label}] {fname}: {detail}")
             if source == "audit":
                 print(f"        e.g. verb={sample.get('verb')} "
                       f"apiGroup={sample.get('objectRef.apiGroup')} "
@@ -325,10 +520,22 @@ def main():
             else:
                 print(f"        e.g. pod={sample.get('metadata.name')} "
                       f"job={sample.get('labels.batch.kubernetes.io/job-name')}")
+            if args.expect_miss:
+                explanation = explained(explain_unexpected, rule_path, logs[source], ours, tag)
         else:
             misses += 1
-            print(f"MISS  [{label}] {fname}: no emulation record matched"
-                  + (f" ({other} baseline/unrelated match(es) ignored)" if other else ""))
+            detail = ("no emulation record matched"
+                      + (f" ({other} baseline/unrelated match(es) ignored)" if other else ""))
+            print(f"MISS  [{label}] {fname}: {detail}")
+            if not args.expect_miss:
+                explanation = explained(explain_gated_miss, rule_path, logs[source], gate,
+                                        tag, matched)
+        for line in explanation:
+            print("        " + line)
+        results.append({"rule": f"{folder}/{fname}", "label": label, "source": source,
+                        "status": "PASS" if ours else "MISS", "detail": detail,
+                        "emulation_matches": len(ours), "other_matches": other,
+                        "explanation": explanation})
 
     print()
     if parse_errors:

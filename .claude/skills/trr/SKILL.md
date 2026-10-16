@@ -37,7 +37,11 @@ with a real, provable chokepoint that isn't already covered. So this skill is
    DDMs, and the atomic. → `references/build-and-prove.md`
 4. **Prove.** The rule fires on the recorded attack (carrying the emulation marker) and
    matches NOTHING in a benign baseline that differs only on the discriminating field.
-   Run the repo's validators + linters green. → `references/build-and-prove.md`
+   It ships a `<rule>.cases.jsonl` beside it with a positive and **verified near-miss**
+   or filtered negatives (one required item broken each), which `check-sufficiency`
+   grades; a cloud rule may take its near-misses from the records of its hard benign
+   fixture instead. Its false-positive count on the benign corpus is scored and
+   committed. Run the repo's validators + linters green. → `references/build-and-prove.md`
 5. **Review.** An adversarial pass (per-rule / per-fixture / per-README skeptics, each
    finding reproduced against the real pySigma backend) before the PR is "done".
 6. **Document + wire CI**, then open the PR and drive it to green.
@@ -85,6 +89,19 @@ subagent: marker / existing-coverage / novelty / chokepoint) and converge on a G
   little; a rule that fires on the attack AND stays silent on a baseline differing only
   on the chokepoint field proves it keys on the technique, not the fixture's shape. Make
   the baseline hard, and add provenance confounders (a look-alike that must NOT fire).
+- **Write checks that would fail for a wrong rule.** A negative that any reasonable
+  rule rejects (a no-op, an unrelated event) proves nothing. Each negative should keep
+  the chokepoint and break one required item, and each `not <filter>` should have a
+  look-alike that only the filter suppresses. Optimize for the intent, not for the
+  checks you already have: never relabel or weaken a case, edit the corpus, or raise
+  a budget to turn a run green. A budget or corpus change is a human's call. On a
+  pull request, `sufficiency-ratchet` also fails any edit to or deletion of an
+  existing case, a deleted or renamed rule, and any rise in a rule's benign-corpus
+  hits, so that a human decides. It is not a required check, so it stops the
+  `automerge` bot only if it fails before the required checks finish: say in the PR
+  when a change needs that human decision, rather than relying on the bot. When a
+  correct case or a benign hit shows the rule is wrong, record it in
+  `detections/RULE_DEFECTS.md` with its evidence and the proposed fix.
 - **Review adversarially, and reproduce every finding.** Claims about a rule's behavior
   are cheap; a crafted event run through `detections/sigma_eval.py` is proof. The review
   has repeatedly caught defects in already-"done" rules.
