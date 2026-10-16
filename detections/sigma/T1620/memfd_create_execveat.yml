@@ -7,7 +7,8 @@ description: |
   — the fileless-execution pattern used by many Linux droppers. No file is
   written to disk; the process runs directly from the in-memory fd. On
   endpoints with /proc visibility, a running process whose exe path resolves
-  to `memfd:` / `(deleted)` is the same signal.
+  to `memfd:` / `(deleted)` is the same signal (this repository has no rule
+  for that exe-path check).
 
   Each syscall is a separate audit event, so this is a Sigma correlation
   rule: the two base rules below each match one event, and the correlation
@@ -18,13 +19,33 @@ description: |
 
   Coverage gap: a dropper that calls memfd_create in a parent and fexecve in
   a forked child splits the two syscalls across pids, so this correlation
-  does not see it. The `/memfd:` exe-path signal above still does.
+  does not see it. Only the `/memfd:` exe-path check above would.
+
+  runc before 1.2 copies itself into a memfd and re-executes it on every
+  container start and exec (CVE-2019-5736 mitigation): `runc init`, started as
+  /proc/self/exe (comm `exe`) from the runc binary, calls memfd_create and then
+  fexecve (execveat with AT_EMPTY_PATH) in the same pid. The memfd_create base
+  filters that one caller: comm `exe` together with a runc install path.
+
+  Filter limit: the filter trusts the binary and the name, not the code that
+  runs in the process, and both values are cheap to obtain. /usr/bin/runc is
+  an ordinary world-executable, dynamically linked binary, so any local user
+  can run it through a symlink named `exe` (which sets comm `exe`) with
+  LD_PRELOAD, and the injected code's memfd_create and execveat of its own
+  payload are suppressed. A process in a container controls its root, so it can
+  put any binary at /usr/bin/runc and re-exec it through /proc/self/exe (comm
+  `exe`). The filter cannot be moved to the execveat base: the memfd name
+  (`runc_cloned:`) in the new image's exe is chosen by the caller, so that is
+  weaker still. The event schema has no uid, so the filter cannot require the
+  root that runc init runs as.
 references:
   - https://man7.org/linux/man-pages/man2/memfd_create.2.html
   - https://man7.org/linux/man-pages/man2/execveat.2.html
+  - https://github.com/opencontainers/runc/blob/v1.1.12/libcontainer/nsenter/cloned_binary.c
+  - https://github.com/opencontainers/runc/blob/v1.1.12/libcontainer/factory_linux.go
 author: det-eng
 date: 2026/10/05
-modified: 2026/10/09
+modified: 2026/10/16
 tags:
   - attack.stealth
   - attack.t1620
@@ -40,6 +61,10 @@ correlation:
 falsepositives:
   - Language runtimes and packagers that legitimately exec from memfd
     (some JITs, container image tools) — rare; baseline before alerting
+  - runc < 1.2 installed at a path that `runc_init` does not list (for example
+    a k3s data directory) — extend `runc_init.exe`
+  - Hosts without runc < 1.2 do not need `runc_init`; remove it there to close
+    the filter limit described above
 level: high
 ---
 title: memfd_create Syscall (Fileless Execution Base Event)
@@ -56,7 +81,16 @@ detection:
   memfd_create_syscall:
     type: SYSCALL
     syscall: memfd_create
-  condition: memfd_create_syscall
+  runc_init:
+    # runc < 1.2: `runc init` (exec'd as /proc/self/exe, so comm "exe") clones
+    # the runc binary into a memfd named runc_cloned:/proc/self/exe.
+    comm: exe
+    exe:
+      - /usr/bin/runc
+      - /usr/sbin/runc
+      - /usr/local/bin/runc
+      - /usr/local/sbin/runc
+  condition: memfd_create_syscall and not runc_init
 level: informational
 ---
 title: execveat Syscall (Fileless Execution Base Event)

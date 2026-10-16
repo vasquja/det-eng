@@ -210,13 +210,24 @@ documents the other two as gaps.
 Key on the `bpf()` syscall where command `a0 = 0x5` (`BPF_PROG_LOAD`) from a
 process outside the set that normally loads eBPF. An eBPF rootkit cannot run in
 the kernel without this call, whatever tool loads it, so it is the invariant for
-Procedure A. The rule **allowlists the known eBPF loaders by `comm`** (`systemd`,
-`bpftool`, `bpftrace`, `cilium-agent`, `falco`, `tetragon`, `node_exporter`) and
-fires on any non-allowlisted process that loads a program. Tune the allowlist
-for your fleet — observability and networking stacks load eBPF legitimately.
+Procedure A. The rule has two filters. `bpf_processes` allowlists the known eBPF
+loaders by `comm` (`systemd`, `bpftool`, `bpftrace`, `cilium-agent`, `falco`,
+`tetragon`, `node_exporter`). `runtime_images` filters stock runtime behaviour by
+`exe`: runc, which loads a cgroup-v2 device-filter program for every container it
+creates (the runc install paths, paired with comm `runc`), and snap-confine, which
+loads a device-cgroup program on snap launches (by its snapd install path). The
+rule fires on any other process that loads a program. Tune both filters for your
+fleet — observability and networking stacks load eBPF legitimately. A filter
+trusts the name and the binary, not the code that runs in it: a process can set
+its own `comm` with `prctl`, a process in a container controls the path that the
+kernel logs as `exe` (it is relative to the process's root), and code injected
+into an allowlisted binary keeps both values. Except for socket filters where
+`kernel.unprivileged_bpf_disabled` is 0, loading a program needs `CAP_BPF` or
+`CAP_SYS_ADMIN`, so this is usually an evasion for an attacker who already has
+that privilege.
 - Sensor: `auditd` `bpf` rule (already in `atomic.rules`).
 - Rule: [`detections/sigma/T1014/bpf_prog_load.yml`](../../../detections/sigma/T1014/bpf_prog_load.yml)
-  (`bpf a0=5 and not bpf_processes`).
+  (`bpf a0=5 and not bpf_processes and not runtime_images`).
 
 **Strategy 2 — kernel-module anchor (covers B). Gap, not built.**
 Key on `finit_module` and `init_module` from a non-allowlisted process. These

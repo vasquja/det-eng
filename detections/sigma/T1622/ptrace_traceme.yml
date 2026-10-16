@@ -7,10 +7,31 @@ description: |
   since only one tracer is allowed; this is a common anti-analysis technique
   and appears in some SUID privilege-escalation tricks. Distinct from
   PTRACE_ATTACH (a0 hex 10) used for process injection.
+
+  A debugger that starts its program forks an inferior, which calls
+  PTRACE_TRACEME before it calls exec, still with the debugger's comm and exe.
+  `debugger_images` filters that inferior for gdb, gdbserver and lldb-server at
+  their distribution paths, paired with the debugger's comm. Delve (dlv) is not
+  filtered: it is usually installed in a user-writable $GOPATH/bin, so a path
+  there is no stronger than a name.
+
+  Filter limits. The filter trusts the binary and the name, not the code that
+  runs in the process. Pairing exe with comm stops a process that only renames
+  itself (prctl) or only sits at a debugger's path. It does not stop code
+  injected into the real debugger: gdb, gdbserver and lldb-server are not
+  setuid, so any user can run them with LD_PRELOAD, and the injected
+  PTRACE_TRACEME keeps the debugger's comm and exe (recorded:
+  `LD_PRELOAD=inj.so /usr/bin/gdb -batch` as uid 65534 called
+  ptrace(PTRACE_TRACEME) with comm gdb and exe /usr/bin/gdb).
+  A process in a container controls both values, because the kernel logs
+  `exe` relative to the process's own root.
 references:
   - https://man7.org/linux/man-pages/man2/ptrace.2.html
+  - https://sourceware.org/git/?p=binutils-gdb.git;a=blob;f=gdb/inf-ptrace.c
+  - https://github.com/llvm/llvm-project/blob/main/lldb/source/Host/posix/ProcessLauncherPosixFork.cpp
 author: det-eng
 date: 2026/10/05
+modified: 2026/10/16
 tags:
   - attack.stealth
   - attack.t1622
@@ -23,8 +44,20 @@ detection:
     type: SYSCALL
     syscall: ptrace
     a0: '0'  # PTRACE_TRACEME = 0
-  condition: ptrace_traceme
+  debugger_images:
+    # The forked inferior of `gdb ./prog`, `gdbserver :port ./prog` and
+    # `lldb-server gdbserver` calls PTRACE_TRACEME before exec.
+    - comm: gdb
+      exe: /usr/bin/gdb
+    - comm: gdbserver
+      exe: /usr/bin/gdbserver
+    - comm|startswith: 'lldb-server'
+      exe|re: '^/usr/(bin/lldb-server(-[0-9]+)?|lib/llvm-[0-9]+/bin/lldb-server)$'
+  condition: ptrace_traceme and not debugger_images
 falsepositives:
   - Crash handlers and sandboxes that self-trace (some browsers, Electron
     apps, test harnesses) — baseline `comm` / `exe` before alerting
+  - Debuggers that `debugger_images` does not list, such as Delve (`dlv debug`)
+    and debuggers built into IDEs; their inferior calls PTRACE_TRACEME with the
+    debugger's comm and exe before exec
 level: medium

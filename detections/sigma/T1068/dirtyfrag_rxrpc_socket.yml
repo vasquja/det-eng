@@ -1,18 +1,29 @@
-title: AF_RXRPC Socket Created By Non-AFS Process (DirtyFrag RxRPC CVE-2026-43500)
+title: AF_RXRPC Socket Created (DirtyFrag RxRPC CVE-2026-43500)
 id: cccaa4ae-e053-4d94-9679-73a32bd77c65
 status: experimental
 description: |
-  Detects creation of an AF_RXRPC (family 33) socket by any process that is
-  not part of an AFS client stack. AF_RXRPC is used almost exclusively by
-  AFS implementations (kafs, OpenAFS); any other consumer is a strong
-  indicator of attempted exploitation of the DirtyFrag RxRPC page-cache
-  write primitive (CVE-2026-43500). The rxrpc kernel module is loaded by
-  default on Ubuntu, so this is reachable from any local user there
-  without prerequisites.
+  Detects creation of an AF_RXRPC (family 33) socket. Almost no userspace
+  program opens one: the in-kernel AFS client (kafs) uses rxrpc from inside
+  the kernel and makes no socket() syscall, and OpenAFS runs its own Rx
+  protocol over UDP (AF_INET datagram sockets), not over AF_RXRPC. Userspace
+  callers of the AF_RXRPC socket API are rare (AFS administration tools built
+  on it, rxrpc test programs). So an AF_RXRPC socket from any process is a
+  strong indicator of
+  attempted exploitation of the DirtyFrag RxRPC page-cache write primitive
+  (CVE-2026-43500). The rxrpc kernel module is loaded by default on Ubuntu, so
+  this is reachable from any local user there without prerequisites.
+
+  The rule has no process allowlist. An earlier version allowlisted OpenAFS
+  daemon names (afsd, fileserver, ...), which open no AF_RXRPC socket, so that
+  filter suppressed nothing real and let any binary with one of those names
+  evade the rule.
 references:
   - https://github.com/V4bel/dirtyfrag
+  - https://docs.kernel.org/networking/rxrpc.html
+  - https://github.com/openafs/openafs/blob/master/src/rx/rx_user.c
 author: det-eng
 date: 2026/05/15
+modified: 2026/10/16
 tags:
   - attack.privilege-escalation
   - attack.t1068
@@ -25,18 +36,10 @@ detection:
     type: SYSCALL
     syscall: socket
     a0: '21'  # AF_RXRPC = 33 = 0x21
-  afs_processes:
-    comm:
-      - afsd
-      - dafsserver
-      - fileserver
-      - kafs-preload
-      - openafs
-      - vlserver
-      - bosserver
-  condition: rxrpc_socket and not afs_processes
+  condition: rxrpc_socket
 falsepositives:
-  - AFS client daemons not covered by the allowlist above — extend
-    `afs_processes` for site-specific binaries
+  - AFS administration tools built on the AF_RXRPC socket API, and rxrpc test
+    programs, on an AFS site. Baseline them by `exe` and add a `not` filter for
+    the ones you trust
   - Kernel self-tests or rxrpc module diagnostics
 level: high

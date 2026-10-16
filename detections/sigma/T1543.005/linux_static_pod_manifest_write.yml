@@ -25,6 +25,7 @@ references:
   - https://www.elastic.co/guide/en/security/current/kubernetes-static-pod-manifest-file-access.html
 author: det-eng
 date: 2026/10/08
+modified: 2026/10/16
 tags:
   - attack.persistence
   - attack.t1543.005
@@ -35,20 +36,26 @@ detection:
   selection_dir:
     TargetFilename|contains: '/etc/kubernetes/manifests/'
   filter_install:
-    Image|endswith:
-      - '/kubeadm'
-      - '/kubelet'
-      - '/dpkg'
-      - '/apt'
-      - '/apt-get'
-      - '/yum'
-      - '/dnf'
-      - '/rpm'
+    # Pinned to the install paths of the distribution packages: a match on the
+    # last path element alone let a dropper named /tmp/kubeadm write unseen.
+    Image:
+      - /usr/bin/kubeadm
+      - /usr/local/bin/kubeadm
+      - /usr/bin/kubelet
+      - /usr/local/bin/kubelet
+      - /usr/bin/dpkg
+      - /usr/bin/apt
+      - /usr/bin/apt-get
+      - /usr/bin/yum
+      - /usr/bin/dnf
+      - /usr/bin/rpm
   condition: selection_dir and not filter_install
 falsepositives:
   - Cluster install and upgrade. kubeadm and the package manager write the
     control-plane manifests here during bootstrap and upgrades; these are
-    filtered by process image.
+    filtered by their full process image path. A kubeadm or package manager
+    installed at another path (for example /opt/bin/kubeadm, or a dnf that runs
+    as a Python interpreter) is not filtered; add its full path.
   - Configuration management (Ansible, Puppet, Chef) that manages control-plane
     static pods. Baseline the managing process per cluster and add it to the
     filter.

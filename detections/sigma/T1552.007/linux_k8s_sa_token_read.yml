@@ -26,12 +26,35 @@ description: |
 
   The workload's own runtime reads this file at start, so baseline the expected
   reader; a read by a shell, an interpreter, or a network tool is the signal.
+
+  Path spellings. Inside the container the rule matches any path under a
+  `/secrets/kubernetes.io/serviceaccount/` directory that ends in `/token`:
+  /var/run/secrets/... and /run/secrets/... (/var/run is a symlink to /run in
+  most images), and the resolved `..<timestamp>/token` path (the projected
+  `token` is a symlink into the AtomicWriter timestamp directory), so it does
+  not matter which spelling the sensor reports. On the node it matches a
+  `token` file under a `kubernetes.io~projected/` volume directory; a read of
+  any other projected file (a configMap or downwardAPI projection) does not
+  fire. A projected serviceAccountToken source mounted at a custom path or
+  file name is not covered.
+
+  Event type. The rule needs file OPEN or READ events (auditd open/openat with
+  PATH records, Falco, Tetragon, or an EDR file-access event) mapped to
+  `TargetFilename` and `Image`. It declares Sigma's `file_event` category, which
+  is modelled on file creation (Sysmon for Linux event 11): a creation-only
+  producer never emits a read, and then only the kubelet's own writes reach
+  this rule.
+
+  `filter_expected` suppresses the kubelet by its full path; it writes the
+  projected token. The mount helpers are not filtered: they only mount the
+  volume and never open the token.
 references:
   - https://attack.mitre.org/techniques/T1552/007/
   - https://kubernetes.io/docs/concepts/storage/projected-volumes/
   - https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
 author: det-eng
 date: 2026/10/12
+modified: 2026/10/16
 tags:
   - attack.credential-access
   - attack.t1552.007
@@ -39,19 +62,21 @@ logsource:
   product: linux
   category: file_event
 detection:
-  selection:
-    TargetFilename|contains:
-      - '/var/run/secrets/kubernetes.io/serviceaccount/token'
-      - 'kubernetes.io~projected/'
+  selection_container:
+    TargetFilename|contains: '/secrets/kubernetes.io/serviceaccount/'
+    TargetFilename|endswith: '/token'
+  selection_node:
+    TargetFilename|contains: '/kubernetes.io~projected/'
+    TargetFilename|endswith: '/token'
   filter_expected:
-    Image|endswith:
-      - '/kubelet'
-      - '/mount'
-      - '/umount'
-  condition: selection and not filter_expected
+    Image:
+      - /usr/bin/kubelet
+      - /usr/local/bin/kubelet
+  condition: (selection_container or selection_node) and not filter_expected
 falsepositives:
   - The workload's own runtime and client libraries read the token at start.
     Baseline the expected reader process per image.
-  - The kubelet and mount helpers write and manage the projected token. These are
-    filtered by process image.
+  - The kubelet writes the projected token. It is filtered by its full path;
+    a kubelet installed elsewhere (for example under /opt/bin or
+    /home/kubernetes/bin) must be added to `filter_expected`.
 level: high
