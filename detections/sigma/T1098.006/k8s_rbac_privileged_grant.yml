@@ -101,13 +101,13 @@ detection:
   # operations, so requestObject.rules and .subjects do not exist; the whole
   # operation list is one JSON text in requestObject.
   sel_jsonpatch_rules_path:
-    requestObject|re: '"path":\s*"/rules'
+    requestObject|re: '\"path\":\s*\"/rules'
   sel_jsonpatch_rules_grant:
-    requestObject|re: '"(?:\*|escalate|bind|impersonate)"'
+    requestObject|re: '\"(\*|escalate|bind|impersonate)\"'
   sel_jsonpatch_subjects_path:
-    requestObject|re: '"path":\s*"/subjects'
+    requestObject|re: '\"path\":\s*\"/subjects'
   sel_jsonpatch_group_subject:
-    requestObject|re: '"name":\s*"system:(?:authenticated|unauthenticated|anonymous|serviceaccounts(?::[^"]+)?)"'
+    requestObject|re: '\"name\":\s*\"system:(authenticated|unauthenticated|anonymous|serviceaccounts(:[^"]+)?)\"'
   # The built-in bindings whose roleRef is cluster-admin. roleRef is immutable,
   # so a patch or update of one of these names (which carries no roleRef when it
   # is a patch) changes who holds cluster-admin.
@@ -131,7 +131,7 @@ detection:
   # impersonate on users, groups, uids or userextras. The controller writes the
   # rule in Go field order (verbs, apiGroups, resources).
   sel_agg_beyond_builtin:
-    requestObject.rules|re: '"(?:\*|escalate|bind)"|"impersonate"[^\]]*\],\s*"apiGroups":\s*\[[^\]]*\],\s*"resources":\s*\[[^\]]*"(?:users|groups|uids|userextras)'
+    requestObject.rules|re: '\"(\*|escalate|bind)\"|\"impersonate\"[^\]]*\],\s*\"apiGroups\":\s*\[[^\]]*\],\s*\"resources\":\s*\[[^\]]*\"(users|groups|uids|userextras)'
   condition: select_rbac_write and (sel_powerful_roleref or sel_group_subject or sel_dangerous_rules or sel_builtin_admin_binding or (sel_jsonpatch_rules_path and sel_jsonpatch_rules_grant) or (sel_jsonpatch_subjects_path and sel_jsonpatch_group_subject)) and not (filter_aggregation_controller and not sel_agg_beyond_builtin)
 falsepositives:
   - Legitimate administration that genuinely needs power, for example an operator

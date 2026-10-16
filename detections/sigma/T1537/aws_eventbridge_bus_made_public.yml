@@ -35,7 +35,7 @@ detection:
     eventName: 'PutPermission'
   selection_public_principal:
     - requestParameters.principal|re: '^\*$'
-    - requestParameters.policy|re: '"(?:Principal|AWS)"\s*:\s*\[?\s*"\*"'
+    - requestParameters.policy|re: '\"(Principal|AWS)\"\s*:\s*\[?\s*\"\*\"'
   filter_scoped:
     - requestParameters.condition.key: '*'
     - requestParameters.policy|contains:

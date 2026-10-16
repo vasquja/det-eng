@@ -387,10 +387,13 @@ org-scoped share.
 - **Procedure E (object ACL / data-plane)** is an S3 data event, off by default; even with data
   events on, the read stays invisible.
 - **Per-statement scoping:** a policy can mix one org-scoped statement with a second unconditioned
-  `Principal "*"` statement. The resource-policy rule walks each statement with a bounded regex, so
-  it fires on that mix, but it only checks that a scoping key is present in the public statement. A
-  key with a wildcard value (a decoy condition), or a key name in the statement's `Sid`, still
-  suppresses it, and a `Deny` that carries the key does not. A production pipeline should
+  `Principal "*"` statement. The resource-policy rule tests each statement with a bounded,
+  portable regex (no lookahead), so it fires on that mix, but it only checks that a scoping key is
+  present in the public statement's `Condition`. A key with a wildcard value (a decoy condition)
+  still suppresses it, a key name only in the statement's `Sid` does not, and a `Deny` that carries
+  the key does not. A portable regex cannot test that *every* public statement is scoped, so a
+  policy with two or more public `Allow` statements fires even when each one is scoped (a
+  documented false positive, for example an SQS queue subscribed to two SNS topics). A production pipeline should
   JSON-decode the policy and evaluate each condition, and require a non-wildcard value.
 - **BPA-neutralized policy writes:** a public policy while BPA is still on does not actually expose
   data. A mature pipeline correlates the Strategy 1 policy write with current BPA state — which is

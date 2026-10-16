@@ -199,7 +199,10 @@ Match Entra audit events with `properties.category` `ApplicationManagement`,
 allowlist is present**. The rule expresses this as a regex for an `Issuer:
 "https://<host>` whose host is not approved, **not** as "suppress when an approved
 issuer appears anywhere" — the latter fails open on any app that already holds a
-legitimate FIC (its approved issuer sits in `oldValue`). This covers Procedure B
+legitimate FIC (its approved issuer sits in `oldValue`). The regex is portable (no
+lookahead): it spells out the complement of the approved host one character at a time,
+so the approved host followed by a longer name (`token.actions.githubusercontent.com.attacker.example.com`)
+is unapproved too. This covers Procedure B
 (a repoint **to** an unapproved issuer makes that issuer appear in `newValue`). Match
 the modified property over any element (not index 0), and do not hard-require
 `targetResources.type` `Application` (a service-principal-object FIC is

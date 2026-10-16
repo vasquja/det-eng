@@ -72,13 +72,13 @@ detection:
       - '"privileged": true'
       - '"privileged":true'
   sel_caps:
-    requestObject.spec.containers|re|i: '"add":\s*\[[^\]]*"(?:(?:CAP_)?(?:SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)"'
+    requestObject.spec.containers|re|i: '\"add\":\s*\[[^\]]*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
   sel_caps_init:
-    requestObject.spec.initContainers|re|i: '"add":\s*\[[^\]]*"(?:(?:CAP_)?(?:SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)"'
+    requestObject.spec.initContainers|re|i: '\"add\":\s*\[[^\]]*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
   sel_caps_ephem:
-    requestObject.spec.ephemeralContainers|re|i: '"add":\s*\[[^\]]*"(?:(?:CAP_)?(?:SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)"'
+    requestObject.spec.ephemeralContainers|re|i: '\"add\":\s*\[[^\]]*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
   sel_hostpath:
-    requestObject.spec.volumes|re: '"hostPath":\s*\{'
+    requestObject.spec.volumes|re: '\"hostPath\":\s*\{'
   sel_hostpid:
     requestObject.spec.hostPID: true
   sel_hostnet:

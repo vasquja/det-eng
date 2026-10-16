@@ -26,7 +26,8 @@ description: |
   (iam:UpdateAssumeRolePolicy) or requestParameters.assumeRolePolicyDocument
   (iam:CreateRole), as the sibling rule does, with the same limits: the regex reads a
   single-string sub value (not a JSON array of patterns), and a production pipeline
-  should URL-decode and JSON-parse the policy.
+  should URL-decode and JSON-parse the policy. A trust with two or more GitHub sub
+  conditions is left to the high-level rule whenever one has a wildcard.
 references:
   - https://attack.mitre.org/techniques/T1098/001/
   - https://docs.github.com/actions/reference/security/oidc
@@ -50,22 +51,41 @@ detection:
     requestParameters.policyDocument|contains: 'token.actions.githubusercontent.com'
   oidc_create:
     requestParameters.assumeRolePolicyDocument|contains: 'token.actions.githubusercontent.com'
-  # A wildcard anywhere inside the sub value.
+  # The trust policy is URL-encoded (':' is %3A, '"' is %22, '*' is %2A). Portable regex
+  # only (no lookaround): each regex reads the text a token at a time ('[^%]' or '%' and
+  # two characters), so '%22' (end of the sub value), '%2A' and '%3A' are never split.
+  #
+  # A wildcard anywhere inside a sub value.
   sub_wildcard_update:
-    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(?:(?!%22).)*?%2A'
+    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22([^%]|%([^2%]|2[^2%]))*%2A'
   sub_wildcard_create:
-    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(?:(?!%22).)*?%2A'
-  # A wildcard before any segment that pins one repository ('repo:<value>:' or
-  # 'repository_id:<value>:' with no '*'), in the default or a customized subject-claim
-  # template, belongs to the high-level sibling rule (same regex there).
+    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22([^%]|%([^2%]|2[^2%]))*%2A'
+  # The high-level sibling rule takes a wildcard that no repository pin precedes
+  # ('repo:<value>:' or 'repository_id:<value>:' with no '*', at a segment start), in
+  # the default or a customized subject-claim template, and any wildcard in a policy
+  # with two or more GitHub sub conditions. owner_repo_wildcard_* is the wildcard, and
+  # the block in the condition grades it owner/repo-wide unless a pin comes first, so one
+  # write fires one of the two rules.
   owner_repo_wildcard_update:
-    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(?:(?!%22|%2A|(?:(?<=%22)|(?<=%3A))(?:repo|repository_id)%3A(?:(?!%22|%3A|%2A).)+%3A).)*%2A'
+    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22([^%]|%([^2%]|2[^2%]))*%2A'
   owner_repo_wildcard_create:
-    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(?:(?!%22|%2A|(?:(?<=%22)|(?<=%3A))(?:repo|repository_id)%3A(?:(?!%22|%3A|%2A).)+%3A).)*%2A'
+    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22([^%]|%([^2%]|2[^2%]))*%2A'
+  # A repository pin before the first wildcard of a sub value.
+  sub_pinned_update:
+    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(([^%]|%([^2%]|2[^2A%]))*%3A)?repo(sitory_id)?%3A([^%]|%([^23%]|2[^2A%]|3[^A%]))+%3A'
+  sub_pinned_create:
+    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22%3A%22(([^%]|%([^2%]|2[^2A%]))*%3A)?repo(sitory_id)?%3A([^%]|%([^23%]|2[^2A%]|3[^A%]))+%3A'
+  # Two or more GitHub sub conditions in one policy.
+  sub_multi_update:
+    requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22.*githubusercontent\.com%3Asub%22'
+  sub_multi_create:
+    requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22.*githubusercontent\.com%3Asub%22'
   condition: >
     selection_grant and (oidc_update or oidc_create) and
     (sub_wildcard_update or sub_wildcard_create) and
-    not (owner_repo_wildcard_update or owner_repo_wildcard_create)
+    not ((owner_repo_wildcard_update or owner_repo_wildcard_create) and
+         (not (sub_pinned_update or sub_pinned_create)
+          or sub_multi_update or sub_multi_create))
 falsepositives:
   - Release workflows that trust every tag of one repository (repo:org/app:ref:refs/tags/v*)
     and roles shared by every workflow of one repository (repo:org/app:*) are common and

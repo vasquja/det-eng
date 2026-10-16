@@ -36,11 +36,11 @@ detection:
   selection_allow:
     # Require an Allow statement, so a protective Deny / data-perimeter policy with Principal "*"
     # does not fire.
-    requestParameters.policyInJson|re: '"Effect"\s*:\s*"Allow"'
+    requestParameters.policyInJson|re: '\"Effect\"\s*:\s*\"Allow\"'
   selection_public_principal:
     # Literal asterisk principal, string OR single-element array ["*"], matched with a regex so
     # the '*' is NOT a Sigma wildcard.
-    requestParameters.policyInJson|re: '"(?:Principal|AWS)"\s*:\s*\[?\s*"\*"'
+    requestParameters.policyInJson|re: '\"(Principal|AWS)\"\s*:\s*\[?\s*\"\*\"'
   filter_scoped:
     requestParameters.policyInJson|contains:
       - 'aws:PrincipalOrgID'

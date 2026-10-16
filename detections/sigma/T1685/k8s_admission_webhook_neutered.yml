@@ -90,30 +90,30 @@ detection:
   sel_update:
     verb: 'update'
   sel_rules_omitted:
-    requestObject.webhooks|re: '"clientConfig":\s*\{(?:[^{}]|\{[^{}]*\})*\},\s*"failurePolicy"'
+    requestObject.webhooks|re: '\"clientConfig\":\s*\{([^{}]|\{[^{}]*\})*\},\s*\"failurePolicy\"'
   # A matchConditions CEL expression that is the literal false never matches.
   sel_matchcondition_false:
-    requestObject.webhooks|re: '"expression":\s*"\s*false\s*"'
+    requestObject.webhooks|re: '\"expression\":\s*\"\s*false\s*\"'
   # A JSON patch (--type=json) logs requestObject as the raw operation list. One
   # operation that sets a webhook's failurePolicy to Ignore, or that removes or
   # empties a webhook's rules list.
   sel_jsonpatch_fail_open:
-    requestObject|re: '\{[^{}]*(?:"/webhooks/\d+/failurePolicy"[^{}]*"Ignore"|"Ignore"[^{}]*"/webhooks/\d+/failurePolicy")[^{}]*\}'
+    requestObject|re: '\{[^{}]*(\"/webhooks/[0-9]+/failurePolicy\"[^{}]*\"Ignore\"|\"Ignore\"[^{}]*\"/webhooks/[0-9]+/failurePolicy\")[^{}]*\}'
   sel_jsonpatch_rules_cleared:
-    requestObject|re: '\{[^{}]*(?:"/webhooks/\d+/rules"[^{}]*(?:"remove"|\[\s*\])|(?:"remove"|\[\s*\])[^{}]*"/webhooks/\d+/rules")[^{}]*\}'
+    requestObject|re: '\{[^{}]*(\"/webhooks/[0-9]+/rules\"[^{}]*(\"remove\"|\[\s*\])|(\"remove\"|\[\s*\])[^{}]*\"/webhooks/[0-9]+/rules\")[^{}]*\}'
   # A JSON patch operation on the whole webhooks list, on one whole webhook, or on
   # a webhook's matchConditions, whose value fails open or adds the literal-false
   # condition. An operation on the whole list or one whole webhook that leaves
   # no non-empty rules list (a webhook value with no rules, or a remove) disarms
   # it too. A deeper path (/webhooks/N/clientConfig/caBundle) does not match.
   sel_jsonpatch_whole_webhook:
-    requestObject|re: '"path":\s*"/webhooks(?:/(?:\d+|-))?"'
+    requestObject|re: '\"path\":\s*\"/webhooks(/([0-9]+|-))?\"'
   sel_jsonpatch_matchconditions:
-    requestObject|re: '"path":\s*"/webhooks/(?:\d+|-)/matchConditions(?:/(?:\d+|-))?"'
+    requestObject|re: '\"path\":\s*\"/webhooks/([0-9]+|-)/matchConditions(/([0-9]+|-))?\"'
   sel_jsonpatch_neuter_value:
-    requestObject|re: '"failurePolicy":\s*"Ignore"|"expression":\s*"\s*false\s*"'
+    requestObject|re: '\"failurePolicy\":\s*\"Ignore\"|\"expression\":\s*\"\s*false\s*\"'
   sel_jsonpatch_rules_kept:
-    requestObject|re: '"rules":\s*\[\s*\{'
+    requestObject|re: '\"rules\":\s*\[\s*\{'
   # Policy engines that reconcile their own fail-open webhooks with a full-object
   # update (no old value is logged, so their writes look like a neuter): the
   # Gatekeeper cert-controller rotating its CA, and Kyverno's admission

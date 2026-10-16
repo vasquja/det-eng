@@ -52,9 +52,14 @@ detection:
       - 'setiampolicy'
       - 'setiampermissions'
   public_added_in_delta:
-    # A public member inside an action==ADD delta object (order-independent lookaheads,
-    # bounded to one {...} object), so a REMOVE of a public member does not fire.
-    protoPayload.serviceData.policyDelta.bindingDeltas|re: '\{(?=[^}]*"action":\s*"ADD")(?=[^}]*"(?:allUsers|allAuthenticatedUsers)")'
+    # A public member inside an action==ADD delta object (bounded to one {...} object),
+    # so a REMOVE of a public member does not fire. Portable regex (no lookahead): one
+    # value per order of the two parts, and two for the parts sharing a quote.
+    protoPayload.serviceData.policyDelta.bindingDeltas|re:
+      - '\{[^}]*\"action\":\s*\"ADD\"[^}]*\"(allUsers|allAuthenticatedUsers)\"'
+      - '\{[^}]*\"(allUsers|allAuthenticatedUsers)\"[^}]*\"action\":\s*\"ADD\"'
+      - '\{[^}]*\"action\":\s*\"ADD\"(allUsers|allAuthenticatedUsers)\"'
+      - '\{[^}]*\"(allUsers|allAuthenticatedUsers)\"action\":\s*\"ADD\"'
   public_in_request:
     # The request path carries the full replaced policy (no action), so this is
     # presence of a public member; it can over-fire on an unrelated policy rewrite.

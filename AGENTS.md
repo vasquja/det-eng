@@ -29,7 +29,8 @@ A detection change is done only when CI shows all of these:
 4. **Stays within its benign budget.** `score_benign.py --check --enforce` passes:
    the rule's hits on the benign corpus (`detections/benign/`) are within its
    budget (0 for a new rule), and `scores.json` is current.
-5. **Lints clean.** `trr_lint.py`, `check_md_links.py`, and `sigma check` pass.
+5. **Lints clean.** `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py` (every
+   `|re` value stays in the portable regex subset) and `sigma check` pass.
 
 Never skip, disable, or loosen a control, a test, a case, or a benign baseline to
 get green, and never edit the corpus to silence a rule. Fix the rule, or record the
@@ -103,6 +104,7 @@ python3 detections/score_benign.py --check --enforce
 # Lint
 python3 .github/scripts/trr_lint.py
 python3 .github/scripts/check_md_links.py
+python3 .github/scripts/check_sigma_regex.py   # portable |re subset; --require-re2 with google-re2
 sigma check -x attacktag -x d3_fendtag -x cartag detections/sigma/
 ```
 
