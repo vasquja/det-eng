@@ -26,7 +26,7 @@ This TRR does not cover these related actions:
 
 - Command execution in a container (`pods/exec`, `pods/attach`, ephemeral
   containers). ATT&CK T1609 (TRR9002) covers that. TRR9002 **explicitly scoped
-  port-forward out** ("it opens a network tunnel; it does not run a command"); this
+  port-forward out** ("It opens a network tunnel. It does not run a command."); this
   report owns that tunnel. Port-forward and exec are siblings on the same
   chokepoint family (a pod subresource), different subresources.
 - Port-forward that goes **directly to the kubelet** (`:10250`) or through

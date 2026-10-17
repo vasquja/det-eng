@@ -27,8 +27,8 @@ This is the **use-side** companion to TRR9013. TRR9013 detects the FIC **write**
 Entra **audit** log (the modified property `FederatedIdentityCredentials`, keyed on an
 issuer that is not allowlisted). TRR9023 detects the planted credential being **used**
 in the **sign-in** log. It realises TRR9013's documented-but-unbuilt Procedure D
-("use the backdoor — token exchange → service-principal sign-in logs"), which TRR9013
-shipped as a backlog gap.
+(use the backdoor: the token exchange, seen in the service-principal sign-in logs),
+which TRR9013 shipped as a backlog gap.
 
 The emulation and detection idea are **cite-and-extend**, not greenfield, and this TRR
 says so plainly:

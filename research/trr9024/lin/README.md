@@ -326,7 +326,7 @@ The Sigma rule also tags `attack.t1068` / `attack.privilege-escalation`: a
 `bpf(BPF_PROG_LOAD)` from an unexpected process is both a rootkit-install signal
 (T1014) and a classic eBPF privilege-escalation surface. This same node is the
 eBPF half of the TRR9001 (T1040) network-sniffing fallback, so one rule serves
-three reports.
+two reports: this TRR and TRR9001.
 
 ## References
 

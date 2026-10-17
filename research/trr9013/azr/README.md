@@ -267,7 +267,7 @@ structural chokepoint and differs only on the issuer.
 | TRR9013.AZR.A | `emulate_entra.sh a` — add a FIC to a throwaway app with an unapproved issuer. | **built** |
 | TRR9013.AZR.B | documented — repoint an existing FIC's issuer/subject. | backlog |
 | TRR9013.AZR.C | `emulate_entra.sh c` — add a FIC to a throwaway user-assigned managed identity. | **built** |
-| TRR9013.AZR.D | documented gap — token exchange; SP sign-in logs. | backlog |
+| TRR9013.AZR.D | documented gap here — token exchange; SP sign-in logs. [TRR9023](../../trr9023/azr/README.md) covers it. | built in TRR9023 |
 
 ## Detections
 

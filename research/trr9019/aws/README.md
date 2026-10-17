@@ -277,8 +277,8 @@ policies and ACLs take effect.
 The adversary makes a bucket world-readable through its ACL rather than through a policy:
 `PutBucketAcl` with a grantee URI of `http://acs.amazonaws.com/groups/global/AllUsers` (or
 `AuthenticatedUsers`), or an `x-amz-acl` header of `public-read` / `public-read-write`. This is a
-**default-logged management event** under `s3.amazonaws.com`, so it is observable — but it is **not
-covered by a committed rule yet**, so it is a backlog item here, not a gap.
+**default-logged management event** under `s3.amazonaws.com`, so it is observable. This TRR does not
+build a rule for it; [TRR9021](../../trr9021/aws/README.md) does, as its Procedure A.
 
 - **Prerequisites:** `s3:PutBucketAcl`, and an ownership / BPA state that still honors ACLs.
 - **Mechanics:** reaches the same world-readable effect as Procedure A by a different field shape.
@@ -291,8 +291,8 @@ covered by a committed rule yet**, so it is a backlog item here, not a gap.
 Source: [`ddms/trr9019_aws_d.json`](ddms/trr9019_aws_d.json) (Arrows app format).
 
 **DDM summary.** The shaded node is the CloudTrail management event (`eventName` `PutBucketAcl`,
-grantee `.../groups/global/AllUsers`). The telemetry exists and is default-logged, but no committed
-rule keys on it yet, so the node is marked **backlog** — honest coverage, not a claim.
+grantee `.../groups/global/AllUsers`). The telemetry exists and is default-logged, but no rule in
+this TRR keys on it, so the node is marked **backlog** here; TRR9021 builds the rule.
 
 ### Procedure E: Object-level ACL / data-plane exposure  (`TRR9019.AWS.E`)
 
@@ -338,7 +338,7 @@ account is the AWS documentation account `123456789012`.
 | TRR9019.AWS.A | `emulate_aws_public_exposure.sh a` — public resource-based policy (fixture: S3 `PutBucketPolicy` `Principal "*"` + Lambda `AddPermission20150331v2` `principal "*"`). | **built** |
 | TRR9019.AWS.B | `emulate_aws_public_exposure.sh b` — public disk-image / snapshot share (fixture: `ModifyImageAttribute` `group "all"`). | **built** |
 | TRR9019.AWS.C | `emulate_aws_public_exposure.sh c` — disable S3 Block Public Access (fixture: `PutBucketPublicAccessBlock` all flags `false`). | **built** |
-| TRR9019.AWS.D | documented — public bucket ACL (`PutBucketAcl` AllUsers); default-logged, no committed rule yet. | backlog |
+| TRR9019.AWS.D | documented here — public bucket ACL (`PutBucketAcl` AllUsers); [TRR9021](../../trr9021/aws/README.md) builds its rule as TRR9021 Procedure A (`detections/sigma/T1537/aws_s3_bucket_acl_made_public.yml`). | built in TRR9021 |
 | TRR9019.AWS.E | documented gap — object-level ACL / `PutObject` `public-read` is an S3 data event (off by default); the public read is never logged. | gap |
 
 ## Detection Strategy
@@ -383,7 +383,8 @@ org-scoped share.
 
 - **The exfiltration itself** — the public or cross-account read of the exposed data — emits **no
   CloudTrail event** in the victim account. This TRR detects the exposure act, never the read.
-- **Procedure D (bucket ACL)** is default-logged but has no committed rule yet — backlog.
+- **Procedure D (bucket ACL)** is default-logged; this TRR has no rule for it, and
+  [TRR9021](../../trr9021/aws/README.md) Procedure A covers it.
 - **Procedure E (object ACL / data-plane)** is an S3 data event, off by default; even with data
   events on, the read stays invisible.
 - **Per-statement scoping:** a policy can mix one org-scoped statement with a second unconditioned

@@ -29,8 +29,9 @@ runs, and lists the exact submission steps.
 
 ## Readiness table
 
-Regenerate with `python3 research/tools/upstream_report.py` (reads
-`research/index.json`, so it always reflects the current set):
+A snapshot of the output of `python3 research/tools/upstream_report.py`. The script
+reads `research/index.json` and the rule and atomic folders, so run it again for the
+current set:
 
 ```
 TRR      Platform    ATT&CK           Sigma rule files                         atomics
@@ -44,17 +45,17 @@ TRR9006  Kubernetes  T1552.007        k8s_secret_access.yml (+2)               T
 TRR9007  Kubernetes  T1611            k8s_podspec_controller_host_access.yml (+2) T1611
 TRR9008  Kubernetes  T1685            io_uring_setup.yml (+3)                  T1685
 TRR9009  Kubernetes  T1134            k8s_impersonation.yml (+1)               T1134
-TRR9010  Kubernetes  T1070,T1070.004  k8s_events_deleted.yml (+1)              T1070
+TRR9010  Kubernetes  T1070,T1070.004  k8s_events_deleted.yml (+2)              T1070
 TRR9011  AWS         T1552.005        aws_imds_creds_used_off_instance.yml     T1552.005
 TRR9012  AWS         T1078.004        aws_cognito_identity_pool_unauth_enabled.yml (+3) T1078.004
-TRR9013  Azure       T1098.001        aws_github_oidc_role_trust_abuse.yml (+4) T1098.001
+TRR9013  Azure       T1098.001        aws_github_oidc_role_trust_abuse.yml (+5) T1098.001
 TRR9014  GCP         T1098.003        gcp_public_iam_member_grant.yml          T1098.003
-TRR9015  AWS         T1098.001        aws_github_oidc_role_trust_abuse.yml (+4) T1098.001
+TRR9015  AWS         T1098.001        aws_github_oidc_role_trust_abuse.yml (+5) T1098.001
 TRR9016  AWS         T1078.004        aws_cognito_identity_pool_unauth_enabled.yml (+3) T1078.004
 TRR9017  Azure       T1528,T1566.002  entra_device_code_authentication.yml (+1) T1528
-TRR9018  GCP         T1098.001,T1199  aws_github_oidc_role_trust_abuse.yml (+6) T1098.001,T1199
+TRR9018  GCP         T1098.001,T1199  aws_github_oidc_role_trust_abuse.yml (+7) T1098.001,T1199
 TRR9019  AWS         T1537            aws_efs_file_system_policy_made_public.yml (+7) T1537
-TRR9020  GCP         T1199,T1098.001  aws_github_oidc_role_trust_abuse.yml (+6) T1098.001,T1199
+TRR9020  GCP         T1199,T1098.001  aws_github_oidc_role_trust_abuse.yml (+7) T1098.001,T1199
 TRR9021  AWS         T1537            aws_efs_file_system_policy_made_public.yml (+7) T1537
 TRR9023  Azure       T1078.004,T1550.001 aws_cognito_identity_pool_unauth_enabled.yml (+5) T1078.004,T1550.001
 TRR9022  AWS         T1550.001,T1078.004 aws_cognito_identity_pool_unauth_enabled.yml (+5) T1078.004,T1550.001
@@ -63,19 +64,20 @@ TRR9025  Kubernetes  T1546            k8s_admission_webhook_created.yml (+1)   T
 TRR9026  Kubernetes  T1572            k8s_pod_portforward.yml                  T1572
 TRR9027  Kubernetes  T1565.001        k8s_coredns_configmap_modified.yml (+1)  T1565.001
 -----------------------------------------------------------------------------------------------
-27 TRRs | 67 Sigma rule files | 25 atomic technique dirs
+27 TRRs | 69 Sigma rule files | 25 atomic technique dirs
 ```
 
-The "first rule" column is just the alphabetically-first file in each folder; a TRR
-owns the rules named in its own `## Detections` table. T1098.001 is shared by TRR9013
-(Entra/Azure), TRR9015 (AWS), and TRR9018 (GCP); T1078.004 by TRR9012, TRR9016 (AWS) and
-TRR9023 (Entra SP sign-in); T1537 by TRR9019 (policies/snapshots/BPA) and TRR9021 (ACL +
-long-tail); T1199 by TRR9020 (GCP workforce); T1685 by the Linux io_uring rule and TRR9008;
-T1550.001 by TRR9022 (EKS IRSA off-cluster) and TRR9023 (Entra SP sign-in).
+The "Sigma rule files" column shows the alphabetically-first file across the TRR's ATT&CK
+folders, plus a count of the rest; a TRR owns the rules named in its own `## Detections`
+table. Several TRRs share an ATT&CK ID (their `external_ids` in `research/index.json`), so
+their rows repeat the same files: for example T1098.001 (TRR9013, TRR9015, TRR9018,
+TRR9020) and T1078.004 (TRR9012, TRR9016, TRR9022, TRR9023). TRR9008's row also counts the
+Linux io_uring rule in `detections/sigma/T1685/`, which no TRR owns.
 
-> Note: `detections/sigma/T1098.001/` holds five rules (TRR9013's two Entra/Azure
-> rules, TRR9015's AWS rule, and TRR9018's two GCP rules); `detections/sigma/T1078.004/`
-> holds TRR9012's leaked-key rule and TRR9016's two Cognito rules;
+> Note: some rule folders hold rules of more than one TRR and log source:
+> `detections/sigma/T1098.001/` holds TRR9013's Entra/Azure, TRR9015's AWS and TRR9018's
+> GCP rules; `detections/sigma/T1078.004/` holds TRR9012's leaked-key rule, TRR9016's
+> Cognito rules and TRR9023's Entra sign-in rule;
 > `detections/sigma/T1685/` holds the Linux
 > io_uring rule alongside TRR9008's Kubernetes rules. Submit each rule to the
 > SigmaHQ path for *its own* log source, not the folder's.
@@ -86,19 +88,19 @@ T1550.001 by TRR9022 (EKS IRSA off-cluster) and TRR9023 (Entra SP sign-in).
 
 ```
 pip install sigma-cli
-# This environment's egress proxy blocks the ATT&CK/D3FEND tag-list download the
-# online tag validators need, so exclude them; they re-run server-side on the PR:
-sigma check -x attacktag -x d3_fendtag -x detection_tag detections/sigma/
+# This environment's egress proxy blocks the ATT&CK and D3FEND tag-list downloads, so
+# exclude those validators (and cartag, to match the CI gate); they re-run server-side on the PR:
+sigma check -x attacktag -x d3_fendtag -x cartag detections/sigma/
 ```
 
-Current result: **0 errors, 0 condition errors.** The only findings are 13
-LOW-severity style notes, each defensible:
+Current result: **0 errors, 0 condition errors.** The only findings are
+LOW-severity style notes of two kinds, each defensible:
 
-- **NumberAsStringIssue (×12)** — auditd syscall-argument fields (`a0`..`a3`, `exit`,
+- **NumberAsStringIssue** — auditd syscall-argument fields (`a0`..`a3`, `exit`,
   arg counts) are hex/decimal **strings** in the auditd event, so matching them as
   quoted strings is correct for `product: linux`. Leave as-is, or convert to bare
   numbers only if a target backend coerces types.
-- **EscapedWildcardIssue (×1)** — `k8s_rbac_privileged_grant.yml` matches a **literal** `*`
+- **EscapedWildcardIssue** — `k8s_rbac_privileged_grant.yml` matches a **literal** `*`
   (an RBAC wildcard grant `verbs: ["*"]`) with `\*`; intentional. (The cloud rules now match a
   literal `*` with `|re` instead, so they carry no escaped-wildcard note.)
 

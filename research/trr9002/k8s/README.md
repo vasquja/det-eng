@@ -30,7 +30,8 @@ This TRR does not cover these related actions:
 - An escape from a container to its node. ATT&CK T1611 (Escape to Host)
   covers this.
 - A port forward to a container (`pods/portforward`). It opens a network
-  tunnel. It does not run a command.
+  tunnel. It does not run a command. [TRR9026](../../trr9026/k8s/README.md)
+  (T1572) covers it.
 
 An ephemeral debug container is in scope. It does not create a new workload.
 It runs inside an existing pod, and Kubernetes provides it as a feature to

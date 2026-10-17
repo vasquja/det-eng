@@ -25,9 +25,9 @@ This TRR does not cover these related actions:
 
 - Creating a *malicious* admission webhook (a mutating webhook that injects a
   sidecar, or a webhook that exfiltrates every admitted object). That is
-  persistence (Event Triggered Execution), a different technique, and a
-  candidate for a separate report. This report covers only the disabling verbs
-  on existing admission objects.
+  persistence (Event Triggered Execution, T1546), a different technique.
+  [TRR9025](../../trr9025/k8s/README.md) covers it. This report covers only the
+  disabling verbs on existing admission objects.
 - The RBAC grant that lets an adversary write admission objects. TRR9004
   (T1098.006) detects the grant; this report detects the use. An attacker
   usually needs the grant first, so the two are correlated but distinct.
@@ -35,8 +35,9 @@ This TRR does not cover these related actions:
 > ATT&CK has no Kubernetes-specific defense-impairment sub-technique, and T1685
 > (Disable or Modify Tools) lists Containers among its platforms, so it is the
 > correct and defensible mapping for neutering the policy engine. This report
-> co-exists with the repository's Linux T1685 report (io_uring
-> telemetry-evasion); a TRR is platform-scoped.
+> covers Kubernetes only. The repository's Linux io_uring rule
+> ([`detections/sigma/T1685/io_uring_setup.yml`](../../../detections/sigma/T1685/io_uring_setup.yml))
+> also carries T1685 and has no TRR.
 
 ## Technique Overview
 
