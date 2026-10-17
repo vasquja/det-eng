@@ -497,6 +497,6 @@ Red Team nor Atomic Red Team ships.
 - Stratus Red Team, AWS attack techniques (no coverage of these; account-to-account neighbors only):
   <https://stratus-red-team.cloud/attack-techniques/AWS/>
 - TRR9019 (local, the resource-policy / snapshot / BPA report this complements):
-  research/trr9019/aws/README.md
+  [`research/trr9019/aws/README.md`](../../trr9019/aws/README.md)
 - TRR method:
   <https://github.com/tired-labs/techniques/blob/main/docs/TECHNIQUE-RESEARCH-REPORT.md>

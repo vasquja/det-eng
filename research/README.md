@@ -1,7 +1,7 @@
 # Research — Technique Research Reports (TRRs)
 
 This folder holds the research layer of the repository. Research comes first.
-A Technique Research Report (TRR) is the start of each detection. The TRR
+A Technique Research Report (TRR) is the start of each new detection. The TRR
 drives the emulation test and the detection rule. It does not come after them.
 
 > Text in this folder uses Simplified Technical English (ASD-STE100) where
@@ -34,7 +34,7 @@ VanVleet and the [tired-labs/techniques][tl] project.
                                  per procedure only where no chokepoint exists)
 2. EMULATE (../atomics):  one behavioral test per procedure.
 3. DETECT  (../detections/sigma):  one Sigma rule per detection strategy.
-4. PROVE   (../detections/validate_detections.py): atomic -> telemetry -> rule.
+4. PROVE   (../detections/validate_*.py, offline gates): atomic -> telemetry -> rule.
 5. CONTRIBUTE upstream:
      - TRR   -> tired-labs/techniques
      - tests -> redcanaryco/atomic-red-team
@@ -43,7 +43,8 @@ VanVleet and the [tired-labs/techniques][tl] project.
 
 ## The procedure ID is the spine
 
-Every artifact names the procedure it serves. The procedure ID ties the
+Each TRR names its procedures by ID. Its emulation-test and detection tables
+show which tests and rules serve each procedure. The procedure ID ties the
 research, the test, and the rule together.
 
 Procedure ID format (VanVleet): `TRRID.PLATFORM.LETTER` — for example
@@ -79,6 +80,7 @@ research/
     ddm-template.json        <- Arrows app JSON skeleton for a DDM
   tools/
     render_ddm.py            <- renders a DDM JSON to the PNG the TRR shows
+    upstream_report.py       <- prints the upstream readiness table in UPSTREAM.md
   trrNNNN/
     <platform>/              <- platform code from tired-labs platforms.json
       README.md              <- the TRR (always README.md)

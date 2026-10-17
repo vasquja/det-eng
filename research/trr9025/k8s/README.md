@@ -114,8 +114,9 @@ which `Metadata` does not record. At `Metadata` a cert-manager webhook and an
 off-cluster exfiltration webhook are byte-for-byte identical. So the severity grader
 must run at `Request` level. The shared audit policy
 (`detections/k8s/audit-policy-apiserver.yaml`) already records
-`admissionregistration.k8s.io` creates at `Request` — its comment reserves this for
-"a future malicious-webhook persistence report" — so no policy change is needed.
+`admissionregistration.k8s.io` creates at `Request`. Its comment names this TRR:
+create at `Request` "carries the webhook clientConfig the TRR9025 malicious-webhook
+grader reads". No policy change is necessary.
 
 ### Why the technique works
 

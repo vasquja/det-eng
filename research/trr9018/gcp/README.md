@@ -286,7 +286,8 @@ account and no `workloadIdentityUser` step.
   `google.iam.admin.v1.SetIAMPolicy` these rules key on) and a `workforcePools` member.
 - **Impact:** external human identities get a resource role directly.
 - **Covered by:** neither of the two `workloadIdentityPools` rules — documented as a
-  sibling TRR; a separate `cloudresourcemanager` / `workforcePools` rule is needed.
+  sibling TRR; a separate `cloudresourcemanager` / `workforcePools` rule is needed, and
+  [TRR9020](../../trr9020/gcp/README.md) builds it.
 
 #### Detection Data Model — `TRR9018.GCP.D`
 
@@ -350,7 +351,7 @@ and the external `principalSet` uses the documentation project number `123456789
 | TRR9018.GCP.A | `emulate_gcp_wif.sh a` — full backdoor; fixture carries both the `SetIAMPolicy` `principalSet` binding and the `CreateWorkloadIdentityPoolProvider` with empty `attributeCondition`. | **built** |
 | TRR9018.GCP.B | `emulate_gcp_wif.sh b` — loosen an existing provider (`UpdateWorkloadIdentityPoolProvider` + `updateMask`). The provider rule covers `Create` **or** `Update`, but no committed fixture carries an `Update`; coverage is proven through the recorded `Create` provider fixture (empty `attributeCondition`). | documented |
 | TRR9018.GCP.C | `emulate_gcp_wif.sh c` — bind a `principalSet` to an already-trusted pool's SA (the same `SetIAMPolicy` binding fixture). | **built** |
-| TRR9018.GCP.D | `emulate_gcp_wif.sh d` — documented workforce-pool sibling; `cloudresourcemanager` `SetIamPolicy`, not covered by these two rules. | backlog |
+| TRR9018.GCP.D | `emulate_gcp_wif.sh d` — documented workforce-pool sibling; `cloudresourcemanager` `SetIamPolicy`, not covered by these two rules. [TRR9020](../../trr9020/gcp/README.md) covers it. | built in TRR9020 |
 | TRR9018.GCP.E | `emulate_gcp_wif.sh e` — documented gap; STS `ExchangeToken` + `GenerateAccessToken` are Data Access / `ADMIN_READ`, off by default. | gap |
 
 ## Detection Strategy
@@ -406,7 +407,8 @@ the external-federation discriminator, not on the method or role alone.
   unless Data Access logging is enabled.
 - **Workforce pools (D)** surface under `cloudresourcemanager.googleapis.com`
   `SetIamPolicy` with a `workforcePools` member and are not covered by these two
-  `workloadIdentityPools` rules — a separate rule is needed.
+  `workloadIdentityPools` rules — a separate rule is needed;
+  [TRR9020](../../trr9020/gcp/README.md) builds it.
 - **Pre-existing over-broad federation.** A pool/provider and binding that already exist
   (set up before monitoring, or legitimately) emit no new install event; the adversary
   who merely **uses** such a path trips nothing here.

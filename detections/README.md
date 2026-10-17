@@ -18,17 +18,22 @@ So every rule must pass four kinds of check:
 
 1. **It fires on the attack.** The validators run the technique's emulation
    (on a real auditd VM, a live `kind` cluster, or recorded cloud audit logs)
-   and check that the rule matches the telemetry it produced.
-2. **Its tests are hard to fake.** Next to each rule is a test file
+   and check that the rule matches the telemetry it produced. A rule whose
+   telemetry CI cannot collect is compiled and proven on its offline positive
+   case instead, under a human-approved waiver.
+2. **Its tests are hard to fake.** Next to most rules is a test file
    (`<rule>.cases.jsonl`) with **near-miss** examples: events that look almost
-   exactly like the attack but are wrong in one key detail. A checker proves
+   exactly like the attack but are wrong in one key detail. A cloud rule without
+   one takes its negatives from its hard benign fixture. A checker proves
    each near-miss really is one detail away from firing the rule, and fails a
    rule whose tests are trivial, or that only works because it matches the
    emulation's own file or process names. See
    [Rule test cases and the sufficiency gate](#rule-test-cases-and-the-sufficiency-gate).
-3. **It stays quiet on ordinary activity.** Every rule is run over a library of
-   realistic normal activity (admin work, CI jobs, Kubernetes controllers,
-   cloud console use) and gets a hit **budget**. Going over the budget fails CI,
+3. **It stays quiet on ordinary activity.** Every rule that a benign slice can
+   read is run over a library of realistic normal activity (admin work, CI jobs,
+   Kubernetes controllers, cloud console use) and gets a hit **budget**; a rule
+   that no slice reads is listed, with its reason, under `unscored` in
+   `benign/budgets.json`. Going over the budget fails CI,
    and the scores are saved, so any change in a rule's noise shows up in review.
    See [The benign corpus](#the-benign-corpus-false-positive-scores).
 4. **Its failures explain themselves.** When a check fails, it names the
@@ -489,9 +494,9 @@ captures the audit log before the emulation and runs the validator on it with
 `--expect-miss`, so a pass that does not depend on the emulation fails the job.
 `validate_staticpod_detections.py` and
 `.github/workflows/validate-staticpod-detections.yml` do the same for TRR9003
-(T1543.005), where the gate matters most: both of its rules also match the
-control-plane static pods every node starts, so only the emulation's own pods
-count.
+(T1543.005), where the gate matters most: both rules the validator match-gates
+(the CRI rule and the mirror-pod rule) also match the control-plane static pods
+every node starts, so only the emulation's own pods count.
 
 ### Node runtime sensor (TRR9003 Strategy 1)
 
@@ -565,13 +570,14 @@ These rules are intentionally generic, and a fresh `kind` cluster is full of
 baseline matches: bootstrap RBAC writes, controller-created Jobs and Pods,
 controller Secret reads, the kube-proxy and kindnet privileged pods, and the
 bootstrap coredns ConfigMap. So the validator gates each rule on the emulation's
-own marker — a `trr9004-`/`trr9005-`/`trr9007-`/`trr9025-`/`trr9026-` object name,
-the `trr9006` namespace with a non-system caller, a `trr9005-` Job label on the node
+own marker (each `MANIFEST` entry in `validate_apiserver_detections.py` names its gate):
+for example a `trr90NN-` object name, the `trr9009` impersonated user or group, the
+`trr9006` namespace with a non-system caller, a `trr9005-` Job label on the node
 sensor, or the `trr9027` sentinel in each procedure's DNS-ConfigMap write (procedure A patches
 `coredns`; B and C create `kube-dns` and `coredns-custom` by server-side apply, a
 patch by name that the policy logs with its body; D deletes `coredns` and recreates it
 with the sentinel, then restores the saved object and fails the step unless the restored
-Corefile matches byte for byte; each is proven separately) — and the negative control
+Corefile matches byte for byte; each is proven separately). The negative control
 proves a pass depends on the emulation, not the baseline.
 
 ```
@@ -586,11 +592,14 @@ rules (`sigma/T1552.007/linux_k8s_sa_token_read.yml`, and TRR9003's CRI rule for
 the static pod) are compiled but not match-gated here; the emulations document the
 gaps the way TRR9002 Procedure E does.
 
-## External cloud detections (TRR9011–9015)
+## External cloud detections (AWS, Azure, GCP)
 
-Five techniques key on a cloud provider's audit log instead of Linux syscalls or the
-Kubernetes API server, so they have their own validator
-(`validate_cloud_detections.py`) and workflow (`validate-cloud-detections.yml`):
+The cloud techniques (the AWS, Azure and GCP rows of the
+[research index](../research/README.md#index)) key on a cloud provider's audit log instead
+of Linux syscalls or the Kubernetes API server, so they have their own validator
+(`validate_cloud_detections.py`) and workflow (`validate-cloud-detections.yml`). The
+validator's `MANIFEST` lists every cloud rule it proves, and each TRR's `## Detections`
+table names its own rules. The first five, as examples:
 
 | TRR | Technique | Log | Chokepoint rule |
 |-----|-----------|-----|-----------------|
@@ -601,12 +610,13 @@ Kubernetes API server, so they have their own validator
 | TRR9015 | GitHub-OIDC role-trust abuse (T1098.001, AWS) | CloudTrail | `sigma/T1098.001/aws_github_oidc_role_trust_abuse.yml` |
 
 Cloud has no free live target to run the attacks against, so the loop is proven on
-**recorded logs** rather than a live run. Each technique ships two committed,
-schema-faithful fixtures under `cloud/fixtures/<trr>/` — an **attack** set and a hard
-**benign** baseline. Every field path is a real field of the provider's audit log,
-grounded on the provider's schema docs and real samples (see each TRR's References);
-only safe markers are used (RFC 5737 TEST-NET IPs, RFC 2606 `example.com`, the AWS doc
-account `123456789012`, and `trr90NN-` resource names). The validator runs each rule
+**recorded logs** rather than a live run. Each technique ships committed,
+schema-faithful fixtures under `cloud/fixtures/<trr>/`: an **attack** set and a hard
+**benign** baseline for each log it reads. Every field path is a real field of the
+provider's audit log, grounded on the provider's schema docs and real samples (see
+each TRR's References); only safe markers are used, for example RFC 5737 TEST-NET and
+RFC 1918 private IPs, RFC 2606 `example.com`, the AWS doc account `123456789012`,
+placeholder IDs, and `trr90NN-` resource names. The validator runs each rule
 through the **same pySigma SQLite backend** the Kubernetes validators use (`sigma_eval.py`),
 and a technique passes only if the rule fires on its attack fixture (carrying the
 emulation's marker) **and** matches nothing in the benign baseline.

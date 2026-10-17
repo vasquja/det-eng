@@ -20,18 +20,23 @@ agent's word. Before a detection merges, CI must show that:
 - **It fires on the attack.** Each rule is paired with an emulation of the
   technique. CI runs it (on a real auditd VM, a live `kind` cluster, or recorded
   cloud audit logs), compiles the rule with a real Sigma backend, and checks
-  that the rule matches the telemetry that emulation produced.
+  that the rule matches the telemetry that emulation produced. Where CI cannot
+  collect a rule's telemetry, a human-approved waiver lets CI compile the rule
+  and prove it on its offline positive case instead.
 - **It stays quiet on everything else.** The same rule must not fire on no-op
   runs, broken "mutant" attacks, allowlisted tools, or a benign baseline that
   differs from the attack only in the one field the rule keys on.
-- **Its checks are hard to game.** Every rule ships near-miss cases that share
-  the attack's chokepoint but break one required field, and a gate fails a rule
-  whose negatives are trivial or that keys on the emulation's own names. A
-  versioned benign corpus scores how often each rule fires on ordinary activity,
-  against a budget a human approves.
-- **Its reasoning can be checked.** Every rule traces back to a written
-  Technique Research Report (TRR) that maps each way to perform the technique
-  and picks the chokepoint they all pass through.
+- **Its checks are hard to game.** Each rule needs verified near-miss or
+  filtered negatives that share the attack's chokepoint: sidecar cases or, for
+  a cloud rule, records of its hard benign fixture. A gate fails a rule that
+  has none (unless a human approves a waiver), whose negatives are trivial, or
+  that keys on the emulation's own names. A versioned benign corpus scores how
+  often each rule fires on ordinary activity, against a budget a human approves;
+  a rule that no benign slice can read is listed as unscored, with its reason.
+- **Its reasoning can be checked.** A written Technique Research Report (TRR)
+  maps each way to perform the technique and picks the chokepoint they all
+  pass through. Each rule traces back to a TRR, except 11 early Linux syscall
+  rules that are older than the TRR method.
 
 A rule that cannot pass this loop does not land, however plausible it reads.
 
