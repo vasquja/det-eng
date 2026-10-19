@@ -57,6 +57,7 @@ For any TRR or new detection, load the `trr` skill first:
 | TRR | `research/trrNNNN/<platform>/README.md`, copied from `research/templates/TRR-TEMPLATE.md` |
 | DDMs | `research/trrNNNN/<platform>/ddms/*.json`, rendered to PNG with `python3 research/tools/render_ddm.py <json...>` |
 | Index | Entry in `research/index.json` and a row in the table in `research/README.md` |
+| Coverage report | Regenerate with `python3 research/tools/coverage_report.py` (updates `research/COVERAGE.md` and the README chart) |
 | Emulation | `atomics/<ATT&CK-ID>/` |
 | Sigma rule | `detections/sigma/<ATT&CK-ID>/*.yml`, `status: experimental` |
 | Rule cases | `detections/sigma/<ATT&CK-ID>/<stem>.cases.jsonl`: positive, near-miss, filtered, confounder and benign cases |
@@ -100,6 +101,9 @@ python3 detections/validate_apiserver_detections.py --dry-run
 python3 detections/rule_cases.py
 python3 detections/check_sufficiency.py
 python3 detections/score_benign.py --check --enforce
+
+# Procedure coverage report (README chart + research/COVERAGE.md); --check in CI
+python3 research/tools/coverage_report.py
 
 # Lint
 python3 .github/scripts/trr_lint.py

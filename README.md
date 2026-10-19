@@ -45,6 +45,21 @@ A rule that cannot pass this loop does not land, however plausible it reads.
 
 <sub>Drawn with <a href="https://github.com/cathrynlavery/diagram-design">diagram-design</a>; source in <a href="docs/diagrams/"><code>docs/diagrams/</code></a>.</sub>
 
+## Coverage, counted by procedure
+
+A technique on an ATT&CK heatmap turns green when one rule maps to it, even if
+that rule sees only one of the ways to perform the technique. So this repository
+counts coverage by **procedure**: each distinct execution path that a TRR
+researched. A procedure counts as covered only when its own emulation runs in CI
+and a validated rule fires on it.
+
+![Coverage chart: ATT&CK techniques with a rule compared with procedures proven in CI, then procedures per platform split into proven, proven with an open defect, claimed, sensor only, and gap.](docs/coverage/coverage-light.svg#gh-light-mode-only)
+![Coverage chart: ATT&CK techniques with a rule compared with procedures proven in CI, then procedures per platform split into proven, proven with an open defect, claimed, sensor only, and gap.](docs/coverage/coverage-dark.svg#gh-dark-mode-only)
+
+Every procedure, its status and the gaps are in
+[`research/COVERAGE.md`](research/COVERAGE.md). CI regenerates the report and
+fails when the committed copy is stale, so the chart always matches the rules.
+
 ## What's inside
 
 | Folder | Contents |
