@@ -37,6 +37,8 @@ name: detection-quality
 #                      base is new, and its budget alone governs it. Skipped (success,
 #                      with a notice) when the base has no scores.json.
 #                      Any other error, or an unreadable base scores.json, fails it.
+#   coverage-report    research/COVERAGE.md and the README coverage chart must match
+#                      what research/tools/coverage_report.py generates now. Hard gate.
 #   benign-corpus      every rule scored against the committed benign corpus
 #                      (detections/score_benign.py): the snapshot scores.json must be
 #                      current, and a rule in `enforce` mode (every per-rule entry
@@ -143,6 +145,26 @@ jobs:
             echo '```'
             echo '</details>'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  coverage-report:
+    # research/COVERAGE.md and the README chart (docs/coverage/) are generated from
+    # the TRRs, the rules, their cases and RULE_DEFECTS.md. Fail when the committed
+    # copy is stale, so the README never shows coverage the repository lost.
+    name: coverage-report
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install requirements
+        run: pip install --quiet -r detections/requirements.txt
+
+      - name: Check that the coverage report is current
+        run: python3 research/tools/coverage_report.py --check
 
   sufficiency-ratchet:
     # PR only: compare the head with the base branch. The sufficiency report of each
