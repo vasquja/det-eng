@@ -117,12 +117,15 @@ detection:
   select_accepted:
     responseStatus.code: 200
   # Server-side dry run (kubectl diff, --dry-run=server): the API server reads the
-  # option from the query only and persists nothing (the TRR9008 chokepoint's filter).
+  # option from the query only and persists nothing. The TRR9008 chokepoint's filter
+  # and its sel_query_parsed (T1685/k8s_admission_webhook_disabled.yml explains them):
+  # dryRun=All must be a whole parameter of the query, and the query must have at
+  # most 100 "&".
   filter_dry_run:
-    requestURI|re:
-      - '[?&]dryRun=All$'
-      - '[?&]dryRun=All\&'
-  condition: select_webhook_modify and select_accepted and (sel_body_url or sel_jsonpatch_url) and not filter_dry_run
+    requestURI|re: '^[^?]*\?(.*\&)?dryRun=All(\&.*)?$'
+  sel_query_parsed:
+    requestURI|re: '^[^&]*(\&[^&]*){0,100}$'
+  condition: select_webhook_modify and select_accepted and (sel_body_url or sel_jsonpatch_url) and not (filter_dry_run and sel_query_parsed)
 falsepositives:
   - A legitimate webhook that calls an external URL (rare; most call an in-cluster
     Service), on every full-object write of its configuration. Baseline the webhook

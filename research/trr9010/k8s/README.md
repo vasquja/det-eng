@@ -280,7 +280,10 @@ record), and a server-side dry run, which the API server authorizes, admits and
 answers with 200 but does not persist: `dryRun: ["All"]` in the DeleteOptions body,
 or `?dryRun=All` in `requestURI` (the whole parameter) only when the record holds no
 request body (with a body the API server reads DeleteOptions from it and ignores the
-query; RULE_DEFECTS K14). `kubectl delete
+query; RULE_DEFECTS K14). The first `?` starts the query and Go `net/url` splits it at
+`&`, so `dryRun=All` in the value of another parameter (`?note=?dryRun=All`) is not a dry
+run, and the query form counts only when the URI holds at most 100 `&` (Go `net/url`
+reads no parameter of a query that has more than 10,000). `kubectl delete
 --dry-run=server` sends the body form, which only a `Request`-level record holds, so
 at `Metadata` that dry run still fires. The namespace controller does not make this
 request: it finalizes a namespace with an update of `namespaces/finalize`. A

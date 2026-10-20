@@ -8,8 +8,8 @@ execution paths (procedures) of each TRR instead, and gives each one status:
 
   Proven               the procedure's own emulation is built, and a rule that the
                        TRR's Detections table says covers it runs in a validator,
-                       passes check_sufficiency.py with a verified negative, and has
-                       no open entry in detections/RULE_DEFECTS.md
+                       passes check_sufficiency.py with a verified negative, and no
+                       open entry in detections/RULE_DEFECTS.md names it
   Proven, open defect  as Proven, but every proving rule has an open defect
   Claimed              a rule maps to the procedure, but the procedure is not
                        emulated, or the rule is in no validator
@@ -202,8 +202,9 @@ def markdown(trrs, unmapped, nrules):
         "", "## How the statuses are set", "",
         "- **Proven**: the procedure's own emulation is built, and a rule that the TRR's Detections table "
         "says covers it runs in a validator, passes `check_sufficiency.py` with a verified near-miss or "
-        "filtered negative, and has no open entry in "
-        "[`RULE_DEFECTS.md`](../detections/RULE_DEFECTS.md).",
+        "filtered negative, and no open entry in "
+        "[`RULE_DEFECTS.md`](../detections/RULE_DEFECTS.md) names it (in the entry's Summary row or its "
+        "Rules bullet).",
         "- **Proven, open defect**: as Proven, but every proving rule has an open defect.",
         "- **Claimed**: a rule maps to the procedure, but the procedure's emulation is in the backlog or "
         "documented only, or the rule is in no validator. The rule can be proven on a sibling procedure.",
@@ -213,6 +214,10 @@ def markdown(trrs, unmapped, nrules):
         "Limits of this report:",
         "",
         "- Severity and grader rules do not count as coverage. They rank hits that a chokepoint rule already raised.",
+        "- An open audit-policy gap that blinds every rule on a resource names no rule, so it does not mark "
+        "procedures: [`RULE_DEFECTS.md` K23](../detections/RULE_DEFECTS.md#k23-apply-patches-with-a-yaml-body-no-audit-record-at-request-level-or-higher) "
+        "(an apply patch with a YAML body is not logged at Request level or higher, so no rule sees that write, "
+        "the chokepoints included) is such a gap, and a procedure that sends such a patch can still show Proven.",
         "- The procedure-to-rule map comes from each TRR's Detections table, as written. The validators "
         "prove a rule against its TRR's emulation, not against each procedure separately.",
         f"- {len(unmapped)} of {nrules} rules map to no TRR procedure and are not counted: "

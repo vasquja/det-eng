@@ -196,11 +196,22 @@ detection:
   # empties a webhook's rules list. The webhook index is any JSON-pointer token
   # ([^/"]+, as in the TRR9025 repoint grader): the API server's JSON patch library
   # (gopkg.in/evanphx/json-patch.v4 v4.13.0) reads an index with Go strconv.Atoi and
-  # accepts a negative index, so +0, -0 and -1 are indexes too.
+  # accepts a negative index, so +0, -0 and -1 are indexes too. Between the opening
+  # brace of the op and its two keys, the match skips whole JSON strings and nested
+  # objects two levels deep (the T1685 grammar), so an ignored extra key ("q": {} or
+  # "q": {"a": 1}) does not split the op, and the match stays inside one op, so it
+  # does not pair a path of one op with a value of the next. A key nested three levels
+  # deep, or a brace inside a string of a nested object, still splits it (K33). One
+  # value per key order keeps each one inside Lucene's default determinization budget
+  # (10,000; the largest here is about 4,100 states).
   sel_jsonpatch_fail_open:
-    requestObject|re: '\{[^{}]*(\"/webhooks/[^/"]+/failurePolicy\"[^{}]*\"Ignore\"|\"Ignore\"[^{}]*\"/webhooks/[^/"]+/failurePolicy\")[^{}]*\}'
+    requestObject|re:
+      - '\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"/webhooks/[^/"]+/failurePolicy\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"Ignore\"'
+      - '\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"Ignore\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"/webhooks/[^/"]+/failurePolicy\"'
   sel_jsonpatch_rules_cleared:
-    requestObject|re: '\{[^{}]*(\"/webhooks/[^/"]+/rules\"[^{}]*(\"remove\"|\[\s*\])|(\"remove\"|\[\s*\])[^{}]*\"/webhooks/[^/"]+/rules\")[^{}]*\}'
+    requestObject|re:
+      - '\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"/webhooks/[^/"]+/rules\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*(\"remove\"|\[\s*\])'
+      - '\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*(\"remove\"|\[\s*\])([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"/webhooks/[^/"]+/rules\"'
   # A JSON patch operation on the whole webhooks list, on one whole webhook, or on
   # a webhook's matchConditions, whose value fails open or adds the literal-false
   # condition. An operation on the whole list or one whole webhook that leaves
@@ -230,21 +241,23 @@ detection:
       objectRef.name|startswith: 'kyverno-'
   # Server-side dry run of an update or patch (kubectl diff, --dry-run=server, a GitOps
   # server-side diff): the API server reads the option from the query only and
-  # persists nothing. The TRR9008 chokepoint's filter, copied as it is.
+  # persists nothing. The TRR9008 chokepoint's filter and its sel_query_parsed, copied
+  # as they are (the chokepoint explains them): dryRun=All must be a whole parameter
+  # of the query, and the query must have at most 100 "&".
   filter_dry_run_write:
     verb:
       - 'update'
       - 'patch'
-    requestURI|re:
-      - '[?&]dryRun=All$'
-      - '[?&]dryRun=All\&'
+    requestURI|re: '^[^?]*\?(.*\&)?dryRun=All(\&.*)?$'
+  sel_query_parsed:
+    requestURI|re: '^[^&]*(\&[^&]*){0,100}$'
   # A server-side-apply install of a missing object is a patch answered 201 (K21). It
   # creates the object, so it cannot neuter an installed webhook; the TRR9025 create
   # rules grade it.
   filter_ssa_install:
     verb: 'patch'
     responseStatus.code: 201
-  condition: select_adm_modify and (sel_neuter or (sel_update and sel_rules_omitted) or sel_response_rules_omitted or sel_matchcondition_false or sel_selector_never_matches or sel_response_never_matches or sel_jsonpatch_fail_open or sel_jsonpatch_rules_cleared or ((sel_jsonpatch_whole_webhook or sel_jsonpatch_matchconditions) and sel_jsonpatch_neuter_value) or (sel_jsonpatch_whole_webhook and not sel_jsonpatch_rules_kept)) and not filter_policy_engine_reconcile and not filter_dry_run_write and not filter_ssa_install
+  condition: select_adm_modify and (sel_neuter or (sel_update and sel_rules_omitted) or sel_response_rules_omitted or sel_matchcondition_false or sel_selector_never_matches or sel_response_never_matches or sel_jsonpatch_fail_open or sel_jsonpatch_rules_cleared or ((sel_jsonpatch_whole_webhook or sel_jsonpatch_matchconditions) and sel_jsonpatch_neuter_value) or (sel_jsonpatch_whole_webhook and not sel_jsonpatch_rules_kept)) and not filter_policy_engine_reconcile and not (filter_dry_run_write and sel_query_parsed) and not filter_ssa_install
 falsepositives:
   - An operator deliberately setting failurePolicy to Ignore during maintenance,
     or a webhook with legitimately empty rules. Triage every hit against the actor

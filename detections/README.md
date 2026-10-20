@@ -404,16 +404,18 @@ pySigma 1.5.1 (`pySigma-backend-elasticsearch` 2.1.1) and Lucene 10.1 found thes
   `and not <filter>` drops every record that lacks the filter's field, and CI cannot
   see it. A deployment there must make each negation null-safe:
   `(<field> is null or not <filter>)`, or a Sigma `field: null` selection ORed with the
-  `not`. A probe that removed the `COALESCE` wrappers found 17 rules that lose positives
-  (13 of them on `main` too, such as the T1537 public-policy rules and
-  `T1685/k8s_admission_webhook_disabled.yml`). The new rules most exposed:
-  `T1611/k8s_podspec_confinement_disabled.yml` (46 of 51 positives lost, Procedure E's
-  own case included), `T1611/k8s_podspec_controller_host_access.yml` (41 of 41) and
-  `T1611/k8s_podspec_host_access.yml` (13 of 35), through the `objectRef.subresource`
-  status filter; `T1685/k8s_enforcer_workload_removed.yml` (16 of 23) and the anchor
-  `T1685/k8s_security_tool_workload_removed.yml` (21 of 28; 5 of 12 on `main`).
-  Wave 4 of the Kubernetes coverage plan (item 4.2, the backend mapping proof harness)
-  measures and fixes this.
+  `not`. The three T1611 pod-spec rules and both T1685 workload rules
+  (`k8s_enforcer_workload_removed.yml` and the anchor
+  `k8s_security_tool_workload_removed.yml`) use the second form for each filter on a
+  field that a record can lack (`objectRef.subresource`, `requestObject.dryRun`,
+  `requestObject.spec.replicas`), and lose no positive. A probe that removed the
+  `COALESCE` wrappers found 12 rules that still lose positives, all of them on `main`
+  too: the three T1070 delete rules, the seven T1537 public-policy rules,
+  `T1550.001/aws_eks_irsa_web_identity_assumed_off_cluster.yml` and
+  `T1685/k8s_admission_webhook_disabled.yml` (5 of 8: its delete-body dry-run filter
+  drops every delete without a body, Procedures A and B included). Wave 4 of the
+  Kubernetes coverage plan (item 4.2, the backend mapping proof harness) measures and
+  fixes these.
 - **`.` and a line break.** In Python, RE2 and PCRE `.` does not match a line break
   unless `|re|s` is set; in Lucene it always does.
 - **`\s`.** `\s` is `[\t\n\r ]` in Lucene (no vertical tab or form feed), ASCII
@@ -425,13 +427,14 @@ pySigma 1.5.1 (`pySigma-backend-elasticsearch` 2.1.1) and Lucene 10.1 found thes
   tab or form feed alone.
 - **Determinization budget.** A long pattern can exceed Lucene's default determinization
   budget (`max_determinized_states`, 10,000). A check with Lucene 10.1's `RegExp`
-  found that every `|re` value (319 at this writing) parses and fits the budget. With
+  found that every `|re` value (321 at this writing) parses and fits the budget. With
   case folding (`ASCII_CASE_INSENSITIVE`, as the `case_insensitive` flag uses), the
   largest is the JSON-patch capability grammar of
   `T1611/k8s_podspec_controller_host_access.yml` (8,094 states); without it, the
   JSON-patch root grammar of `T1565.001/k8s_coredns_corefile_poisoned.yml` (7,986
-  states). Each value, wrapped in `.*`, gives the same verdict as Python and RE2 on
-  every case, fixture and benign-corpus value of its field.
+  states). Each value, wrapped in `.*` (no `.*` before a leading `^` or after a
+  trailing `$`), gives the same verdict as Python and RE2 on every case, fixture and
+  benign-corpus value of its field.
 
 ## The benign corpus (false-positive scores)
 

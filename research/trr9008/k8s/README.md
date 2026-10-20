@@ -288,6 +288,10 @@ The rules do not see every way to stop the enforcer:
   count after it sets it, so the Scale goes to 0. A null value is not a field in the
   record, so the record looks like a scale up, and neither rule matches it
   ([`RULE_DEFECTS.md` K32](../../../detections/RULE_DEFECTS.md#k32-t1685-enforcer-removal-rules-a-null-strategic-merge-directive-next-to-a-count)).
+- A raw client can add an extra key to a JSON-patch operation, which the API server
+  ignores. The rules read past a key whose value nests objects two levels deep, but
+  not three levels deep or a nested object that holds a string with a brace
+  ([`RULE_DEFECTS.md` K33](../../../detections/RULE_DEFECTS.md#k33-json-text-skip-grammars-a-key-nested-three-levels-deep-splits-an-operation)).
 - The webhook can stop without an apps write. Gatekeeper's webhooks call the Service
   `gatekeeper-webhook-service` in `gatekeeper-system`, and its validating webhook has
   failurePolicy Ignore, so a delete of that Service (or of its EndpointSlices) turns
@@ -337,7 +341,11 @@ create rules fire on the same record, so such an install alerts twice, which is
 expected. A refused server-side-apply install (a `patch` answered 4xx) fires this rule
 only. A server-side dry run is filtered: the `?dryRun=All` query of an
 update or patch, or the DeleteOptions body of a delete (which the shipped policy logs at
-Request level). Baseline the policy engine's own controller, GitOps/Helm,
+Request level). The query counts only when `dryRun=All` is a whole parameter of it
+(the first `?` starts the query, and Go `net/url` splits it at `&`), so a value of
+another parameter, such as `?fieldManager=?dryRun=All`, is not a dry run. It also
+counts only when the URI holds at most 100 `&`: Go `net/url` reads no parameter of a
+query that has more than 10,000, and the API server then stores the write. Baseline the policy engine's own controller, GitOps/Helm,
 and cluster-upgrade tooling by `user.username`.
 
 - Sensor: API server audit log.
@@ -354,7 +362,10 @@ library (`json-patch.v4` v4.13.0) reads `+0`, `-0` and `-1` as indexes. The grad
 filters what cannot neuter an installed webhook: a server-side dry run of an update or
 patch (the `?dryRun=All` query, for example `kubectl diff` or an Argo CD server-side
 diff), and a server-side-apply install (a `patch` answered 201, which the TRR9025 create
-rules own).
+rules own). Between the keys of one JSON-patch operation, the fail-open and
+rules-cleared matches skip whole strings and nested objects two levels deep, so an
+ignored extra key (`"q": {}`) does not hide the operation; a key nested three levels
+deep, or a brace string in a nested object, does ([K33](../../../detections/RULE_DEFECTS.md#k33-json-text-skip-grammars-a-key-nested-three-levels-deep-splits-an-operation)).
 
 - Sensor: API server audit log at Request and RequestResponse level.
 - Rule: `detections/sigma/T1685/k8s_admission_webhook_neutered.yml` (built).
@@ -369,13 +380,17 @@ that does not set a count above 0 (a null, a JSON-patch remove, a replace of
 directive that drops or sets the count (`"$patch": "delete"` in spec, a
 `$deleteFromPrimitiveList/replicas` or `$deleteFromPrimitiveList/spec` key), or a
 JSON patch that sets /spec/replicas to 0 (or -0), copies or moves a value into it,
-or replaces `/spec` with a value that holds replicas 0. A write of the
+or replaces `/spec` with a value that holds replicas 0. Between the keys of one
+JSON-patch operation, the match skips whole strings and nested objects two levels
+deep, so an ignored extra key does not hide the operation; a key nested three levels
+deep, or a brace string in a nested object, does ([RULE_DEFECTS K33](../../../detections/RULE_DEFECTS.md#k33-json-text-skip-grammars-a-key-nested-three-levels-deep-splits-an-operation)). A write of the
 status subresource is filtered. The namespace controller's teardown deletecollection
 is filtered; the rules match the delete of the engine's default namespace
 (gatekeeper-system, kyverno, falco) instead. Only accepted writes (200, 201, 202)
 match, and server-side dry runs are filtered as in Strategy 1. Neither rule matches a
 DaemonSet whose pod template is changed so that no node runs it (K29), a Scale
-patch with a null directive next to a count above 0 (K32), or a
+patch with a null directive next to a count above 0 (K32), a JSON-patch operation
+with an ignored key nested three levels deep (K33), or a
 webhook stopped by a write outside the apps group (see Procedure D).
 
 Two rules share this logic. The alert rule (level high) matches the workload writes
@@ -423,7 +438,7 @@ policy logs at Request or higher. Tracked as
 | A | Strategy 1 (chokepoint) | delete `validatingwebhookconfigurations` |
 | B | Strategy 1 (chokepoint) | delete `mutatingwebhookconfigurations` |
 | C | Strategy 1; graded by Strategy 2 | `update`/`patch` webhook config; failurePolicy Ignore / rules [] |
-| D | Strategy 3 (alert and anchor) | delete the enforcer Deployment/DaemonSet, scale the Deployment to zero, or delete its namespace (not a DaemonSet that no node runs: K29; not a null-directive Scale patch: K32) |
+| D | Strategy 3 (alert and anchor) | delete the enforcer Deployment/DaemonSet, scale the Deployment to zero, or delete its namespace (not a DaemonSet that no node runs: K29; not a null-directive Scale patch: K32; not an op with an ignored key nested three levels deep: K33) |
 
 One chokepoint rule covers the three admission-config paths. A severity rule grades
 the neuter. An alert rule covers the enforcer-workload removal in the engines'

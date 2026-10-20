@@ -346,7 +346,10 @@ operation, because the library ignores an unknown key in an operation and the AP
 server drops an unknown field at the default `fieldValidation=Warn`. A `patch` answered
 `201` is a create, not a repoint, so the create grader owns it. A refused write (403, 409, 422)
 changes nothing and does not fire; a server-side dry run (`?dryRun=All`, for example
-`kubectl diff`) persists nothing and is filtered, as the TRR9008 chokepoint filters it.
+`kubectl diff`) persists nothing and is filtered, as the TRR9008 chokepoint filters it:
+`dryRun=All` must be a whole parameter of the query (not a value such as
+`?fieldManager=?dryRun=All`), and the URI must hold at most 100 `&` (Go `net/url` reads no
+parameter of a query that has more than 10,000).
 The rule reads only `requestObject`, so Request level is enough; the shipped policy logs
 `admissionregistration.k8s.io` update and patch at RequestResponse. No policy change is
 needed.

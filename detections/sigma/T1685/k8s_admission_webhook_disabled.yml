@@ -54,14 +54,22 @@ detection:
       - 'update'
       - 'patch'
   # Server-side dry run of an update or patch: the options are read from the query
-  # only, so ?dryRun=All (the whole parameter) is what the server used.
+  # only, so ?dryRun=All (the whole parameter) is what the server used. The first
+  # "?" starts the query (the logged path is escaped, so it has no raw "?"), and Go
+  # net/url splits the query at "&". So dryRun=All must come directly after that "?"
+  # or after an "&", and end at an "&" or at the end. A value of another parameter
+  # ("?fieldManager=?dryRun=All", "x%26dryRun=All") is not a dry run.
   filter_dry_run_write:
     verb:
       - 'update'
       - 'patch'
-    requestURI|re:
-      - '[?&]dryRun=All$'
-      - '[?&]dryRun=All\&'
+    requestURI|re: '^[^?]*\?(.*\&)?dryRun=All(\&.*)?$'
+  # Part of the dry-run filter: Go net/url (Go 1.24 and later) drops every query
+  # parameter, dryRun too, when a query has more than 10,000 of them, and the API
+  # server then stores the write. A dry run counts only when the URI holds at most
+  # 100 "&" (no client sends more).
+  sel_query_parsed:
+    requestURI|re: '^[^&]*(\&[^&]*){0,100}$'
   # Server-side dry run of a delete: in the DeleteOptions body (Request level, as
   # the shipped policy logs admissionregistration deletes). The query form is not
   # filtered for a delete: with a body present the API server ignores the query.
@@ -70,7 +78,7 @@ detection:
       - 'delete'
       - 'deletecollection'
     requestObject.dryRun|contains: 'All'
-  condition: select_adm_write and not filter_dry_run_write and not filter_dry_run_delete_body
+  condition: select_adm_write and not (filter_dry_run_write and sel_query_parsed) and not filter_dry_run_delete_body
 falsepositives:
   - The policy engine's own controller reconciling its webhook configuration
     (Gatekeeper, Kyverno), and GitOps or Helm upgrades that replace a webhook

@@ -153,7 +153,13 @@ detection:
   # A status write cannot change the spec (the status strategy resets it).
   filter_status:
     objectRef.subresource: 'status'
-  condition: selection_pod and (sel_privileged or sel_privileged_init or sel_privileged_ephem or sel_caps or sel_caps_init or sel_caps_ephem or sel_hostpath or sel_hostpid or sel_hostnet or sel_hostipc or sel_jp_leaf_bool or sel_jp_leaf_caps or sel_jp_leaf_copy or (sel_jp_eph_path and (sel_jp_priv_value or sel_jp_caps_value))) and not filter_status
+  # A write of the main resource has no objectRef.subresource. The status filter is
+  # written as (sel_main_resource or not filter_status), so that a backend with
+  # three-valued logic (ES|QL and other SQL backends, where NOT of a test on a
+  # missing field is NULL) does not drop every main-resource write.
+  sel_main_resource:
+    objectRef.subresource: null
+  condition: selection_pod and (sel_privileged or sel_privileged_init or sel_privileged_ephem or sel_caps or sel_caps_init or sel_caps_ephem or sel_hostpath or sel_hostpid or sel_hostnet or sel_hostipc or sel_jp_leaf_bool or sel_jp_leaf_caps or sel_jp_leaf_copy or (sel_jp_eph_path and (sel_jp_priv_value or sel_jp_caps_value))) and (sel_main_resource or not filter_status)
 falsepositives:
   - Infrastructure that legitimately needs host access. kube-proxy runs privileged
     and hostNetwork; the CNI DaemonSet (kindnet, Calico, Cilium) runs privileged

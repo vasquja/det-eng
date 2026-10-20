@@ -60,7 +60,7 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [K28](#k28-k8s_eks_aws_auth_configmap_modified-a-denied-create-names-no-object) | `T1098.006/k8s_eks_aws_auth_configmap_modified` | a denied create logs no objectRef.name (a YAML-bodied server-side apply: see K23) | false negative | low |
 | [K29](#k29-t1685-enforcer-removal-rules-a-daemonset-unscheduled-by-its-pod-template) | `T1685/k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed` | a DaemonSet (Falco) whose pod template gets a nodeSelector, affinity or nodeName that no node matches loses every pod, and neither rule fires | false negative | medium |
 | [K32](#k32-t1685-enforcer-removal-rules-a-null-strategic-merge-directive-next-to-a-count) | `T1685/k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed` | a strategic merge patch of deployments/scale with a count above 0 and a null `$deleteFromPrimitiveList/replicas` (or `/spec`) scales to 0, and neither rule fires | false negative | low |
-| [K33](#k33-json-text-skip-grammars-a-key-nested-three-levels-deep-splits-an-operation) | `T1685/k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed`, `T1611/k8s_podspec_controller_host_access`, `k8s_podspec_host_access`, `k8s_podspec_confinement_disabled` | an ignored key nested three levels deep, or a brace string inside a nested object, splits a JSON-patch operation or a profile object, so it is not graded (Lucene's budget) | false negative | low |
+| [K33](#k33-json-text-skip-grammars-a-key-nested-three-levels-deep-splits-an-operation) | `T1685/k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed`, `k8s_admission_webhook_neutered`, `T1611/k8s_podspec_controller_host_access`, `k8s_podspec_host_access`, `k8s_podspec_confinement_disabled` | an ignored key nested three levels deep, or a brace string inside a nested object, splits a JSON-patch operation or a profile object, so it is not graded (Lucene's budget) | false negative | low |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
@@ -315,7 +315,9 @@ whether `arping` belongs in the allowlist.
 
   This entry names no rule file in the Summary row or in a Rules bullet, because
   `research/tools/coverage_report.py` maps a listed rule to its procedures, and a gap of
-  the audit pipeline is not a defect of one rule.
+  the audit pipeline is not a defect of one rule. So it marks no procedure in
+  [`research/COVERAGE.md`](../research/COVERAGE.md), which states this exception
+  under "Limits of this report".
 - **Kind**: policy gap. **Severity**: medium (the client chooses the body format, and
   the record is lost for every rule on the resource, the chokepoints included; kubectl
   and client-go send JSON, so only a raw client can use it).
@@ -593,6 +595,7 @@ whether `arping` belongs in the allowlist.
 
 - **Rules**: [`sigma/T1685/k8s_enforcer_workload_removed.yml`](sigma/T1685/k8s_enforcer_workload_removed.yml) (level high),
   [`sigma/T1685/k8s_security_tool_workload_removed.yml`](sigma/T1685/k8s_security_tool_workload_removed.yml) (level low),
+  [`sigma/T1685/k8s_admission_webhook_neutered.yml`](sigma/T1685/k8s_admission_webhook_neutered.yml) (level high; its fail-open and rules-cleared JSON-patch branches),
   [`sigma/T1611/k8s_podspec_controller_host_access.yml`](sigma/T1611/k8s_podspec_controller_host_access.yml) (level high),
   [`sigma/T1611/k8s_podspec_host_access.yml`](sigma/T1611/k8s_podspec_host_access.yml) (level high),
   [`sigma/T1611/k8s_podspec_confinement_disabled.yml`](sigma/T1611/k8s_podspec_confinement_disabled.yml) (level medium).
@@ -610,7 +613,10 @@ whether `arping` belongs in the allowlist.
      nested object the grammar skips any text but a brace).
   The grammar stops at two levels to keep each value inside Lucene's default
   determinization budget (10,000 states): reading strings inside nested objects took
-  the T1685 value from about 3,800 to about 15,000 states.
+  the T1685 value from about 3,800 to about 15,000 states. The neuter grader used a
+  weaker grammar until this entry was extended: its op match skipped no nested object,
+  so an extra key with any object value, even `{}`, split the op. It now uses the same
+  grammar, one value per key order (the largest is about 4,100 states).
 - **Evidence**: *case* — KNOWN MISS confounders
   `jsonpatch-scale-zero-gatekeeper-deep-nested-key-known-miss` and
   `jsonpatch-scale-zero-gatekeeper-brace-string-in-nested-key-known-miss` (enforcer
@@ -619,14 +625,19 @@ whether `arping` belongs in the allowlist.
   `patch-deployment-hostpid-leaf-deep-nested-key-not-graded` (controller host-access
   rule), `ephemeral-privileged-leaf-deep-nested-key-known-miss` (pod host-access rule),
   `deployment-container-seccomp-deep-nested-key-before-type-not-graded` (confinement
-  rule). The two-level form fires (positives `jsonpatch-scale-zero-extra-object-key`,
+  rule), `jsonpatch-fail-open-deep-nested-key-known-miss` and
+  `jsonpatch-fail-open-brace-string-in-nested-key-known-miss` (neuter grader). The
+  two-level form fires (positives `jsonpatch-scale-zero-extra-object-key`,
   `patch-deployment-hostpid-leaf-extra-object-key-jsonpatch`,
   `ephemeral-privileged-leaf-extra-key-jsonpatch`,
-  `deployment-container-seccomp-extra-object-key-before-type-smp`). *source* —
+  `deployment-container-seccomp-extra-object-key-before-type-smp`,
+  `jsonpatch-fail-open-extra-object-key` and
+  `jsonpatch-remove-rules-extra-empty-object-key`). The neuter grader's extra-key
+  positives miss on the grader at commit `23693e5` (*probe*). *source* —
   `github.com/evanphx/json-patch` v4.13.0 (an `Operation` is a map of raw values; keys
   other than `op`, `path`, `from` and `value` are not read). The anchor rule's
   description gives the limit, and the enforcer rule points to it; the T1611 rules'
-  comments give it too.
+  and the neuter grader's comments give it too.
 - **Fix**: none planned in Sigma: a deeper skip leaves Lucene's budget. A log pipeline
   that decodes the operation list (or the profile object) into fields would remove the
   gap, with a rule on those fields.
@@ -725,7 +736,7 @@ points here.
 | C13 | `entra_app_federated_credential_backdoor` reads only `newValue`, in any key order | near-misses `fic-with-unapproved-issuer-removed`, `fic-repointed-away-new-value-first` and the other reordered cases |
 | C14 | `aws_resource_policy_made_public` reads a `Statement` that is one object | positives `s3-single-statement-object-public-read`, `sqs-single-statement-object-public-send`, `efs-single-statement-object-public-mount` |
 | C16 | `aws_github_oidc_role_trust_abuse` grades each `sub` value | near-miss `two-subs-pinned-ref-wildcards-grade-high`; positive `two-subs-pinned-ref-wildcards-go-to-high-rule` of the low rule |
-| S1 | every `\|re` value fits Lucene's default `max_determinized_states` (10000) | a Lucene 10.1 `RegExp` build over all 236 values wrapped in `.*`: largest 7,986 states (the CoreDNS JSON-patch root grammar). Recount on 2026-10-20 (Kubernetes coverage wave 2): 319 values, all fit; with case folding (`ASCII_CASE_INSENSITIVE`) the largest is 8,094 states (the JSON-patch capability grammar of `T1611/k8s_podspec_controller_host_access`), and without it 7,986 (the CoreDNS root grammar) |
+| S1 | every `\|re` value fits Lucene's default `max_determinized_states` (10000) | a Lucene 10.1 `RegExp` build over all 236 values wrapped in `.*`: largest 7,986 states (the CoreDNS JSON-patch root grammar). Recount on 2026-10-20 (Kubernetes coverage wave 2): 321 values, all fit; with case folding (`ASCII_CASE_INSENSITIVE`) the largest is 8,094 states (the JSON-patch capability grammar of `T1611/k8s_podspec_controller_host_access`), and without it 7,986 (the CoreDNS root grammar) |
 
 ## Closing an entry
 

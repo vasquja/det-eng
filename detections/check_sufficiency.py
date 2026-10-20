@@ -454,7 +454,7 @@ CHOKEPOINT = {
         "b50573eddab59ad45de592ca2f1fe47f1cdcb700f3440aaf8da792129da08357"),
     "T1685/k8s_admission_webhook_disabled.yml": Waiver(
         "TRR9008 chokepoint: any delete/update/patch of an admission control object",
-        "34a75208472f9d548854b8b1dea375818e889a0cfed910907da006c3cd53b37d"),
+        "e9fdca67f2beaec55e04446b628c07e78f95f16e5ac638d2087ca1f67bb136bd"),
 }
 
 

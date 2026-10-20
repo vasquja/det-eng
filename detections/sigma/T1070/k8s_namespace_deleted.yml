@@ -73,13 +73,21 @@ detection:
   # DELETE has a body, the API server reads DeleteOptions from the body and ignores
   # the query. A Metadata-level record never holds the body, so there the query
   # form is still trusted (see the description).
+  # The first "?" starts the query (the logged path is escaped, so it has no raw
+  # "?"), and Go net/url splits the query at "&": dryRun=All must come directly after
+  # that "?" or after an "&", and end at an "&" or at the end. So a value of another
+  # parameter ("?note=?dryRun=All", "x%26dryRun=All") is not a dry run.
   filter_dry_run:
-    - requestURI|re:
-        - '[?&]dryRun=All$'
-        - '[?&]dryRun=All\&'
+    - requestURI|re: '^[^?]*\?(.*\&)?dryRun=All(\&.*)?$'
       requestObject.kind: null
     - requestObject.dryRun|contains: 'All'
-  condition: select_namespace_delete and sel_accepted and not filter_lifecycle_garbage_collector and not filter_dry_run
+  # The API server read the dry run: the query holds at most 100 "&" (Go net/url,
+  # Go 1.24 and later, drops every query parameter when a query has more than
+  # 10,000, and the API server then deletes), or the dry run is in the body.
+  filter_dry_run_read:
+    - requestURI|re: '^[^&]*(\&[^&]*){0,100}$'
+    - requestObject.dryRun|contains: 'All'
+  condition: select_namespace_delete and sel_accepted and not filter_lifecycle_garbage_collector and not (filter_dry_run and filter_dry_run_read)
 falsepositives:
   - CI and preview-environment teardown, tenant offboarding and GitOps pruning delete
     namespaces by design. Baseline those identities (and their namespace name

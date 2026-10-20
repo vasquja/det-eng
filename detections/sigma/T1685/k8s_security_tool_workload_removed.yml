@@ -237,14 +237,18 @@ detection:
       - 202
   # Server-side dry run of an update or patch: the API server reads UpdateOptions
   # and PatchOptions from the query only, so ?dryRun=All (the whole parameter) is
-  # what the server used.
+  # what the server used. The TRR9008 chokepoint's filter and its sel_query_parsed
+  # (k8s_admission_webhook_disabled.yml explains them): dryRun=All must be a whole
+  # parameter of the query (not a value such as "?fieldManager=?dryRun=All"), and the
+  # query must have at most 100 "&" (Go net/url drops every parameter of a query
+  # that has more than 10,000).
   filter_dry_run_write:
     verb:
       - 'update'
       - 'patch'
-    requestURI|re:
-      - '[?&]dryRun=All$'
-      - '[?&]dryRun=All\&'
+    requestURI|re: '^[^?]*\?(.*\&)?dryRun=All(\&.*)?$'
+  sel_query_parsed:
+    requestURI|re: '^[^&]*(\&[^&]*){0,100}$'
   # Server-side dry run of a delete: kubectl delete --dry-run=server sends it in the
   # DeleteOptions body, which the record holds at Request level or higher. The query
   # form is NOT filtered for a delete: when a request has a body, the API server
@@ -254,15 +258,28 @@ detection:
       - 'delete'
       - 'deletecollection'
     requestObject.dryRun|contains: 'All'
+  # Null-safe negations: a backend with three-valued logic (ES|QL and other SQL
+  # backends) reads NOT of a test on a missing field as NULL and drops the record. So
+  # each filter on a field that a record can lack is ORed with a test that the field
+  # is absent: a main-resource write has no objectRef.subresource, a delete without a
+  # DeleteOptions body has no requestObject.dryRun, and a patch body without a count
+  # has no requestObject.spec.replicas.
+  sel_main_resource:
+    objectRef.subresource: null
+  sel_no_dry_run_body:
+    requestObject.dryRun: null
+  sel_no_spec_replicas:
+    requestObject.spec.replicas: null
   condition: >-
     ((select_apps
     and (sel_delete or sel_scale_zero or sel_scale_zero_jsonpatch or sel_scale_update_omitted_zero
     or sel_replicas_out_of_range or sel_smp_directive
-    or (sel_scale_patch_body and not filter_scale_patch_positive
+    or (sel_scale_patch_body and (sel_no_spec_replicas or not filter_scale_patch_positive)
     and not filter_scale_jsonpatch_positive))
-    and not filter_namespace_teardown and not filter_status_subresource)
+    and not filter_namespace_teardown and (sel_main_resource or not filter_status_subresource))
     or sel_enforcer_namespace_delete)
-    and sel_accepted and not filter_dry_run_write and not filter_dry_run_delete_body
+    and sel_accepted and not (filter_dry_run_write and sel_query_parsed)
+    and (sel_no_dry_run_body or not filter_dry_run_delete_body)
 falsepositives:
   - Routine scaling and teardown of deployments and daemonsets. This rule is a
     correlation anchor; k8s_enforcer_workload_removed.yml alerts on the default

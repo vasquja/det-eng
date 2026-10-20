@@ -194,7 +194,13 @@ detection:
   # A status write cannot change the spec (the status strategies reset it).
   filter_status:
     objectRef.subresource: 'status'
-  condition: selection_ctrl and (sel_priv_tmpl or sel_priv_init_tmpl or sel_caps_tmpl or sel_caps_init_tmpl or sel_hostpath_tmpl or sel_hostpid_tmpl or sel_hostnet_tmpl or sel_hostipc_tmpl or sel_priv_cj or sel_priv_init_cj or sel_caps_cj or sel_caps_init_cj or sel_hostpath_cj or sel_hostpid_cj or sel_hostnet_cj or sel_hostipc_cj or sel_jp_leaf_bool or sel_jp_leaf_hostpath or sel_jp_leaf_caps or sel_jp_leaf_copy or (sel_jp_tmpl_path and (sel_jp_priv_value or sel_jp_hostns_value or sel_jp_hostpath_value or sel_jp_caps_value))) and not filter_status
+  # A write of the main resource has no objectRef.subresource. The status filter is
+  # written as (sel_main_resource or not filter_status), so that a backend with
+  # three-valued logic (ES|QL and other SQL backends, where NOT of a test on a
+  # missing field is NULL) does not drop every main-resource write.
+  sel_main_resource:
+    objectRef.subresource: null
+  condition: selection_ctrl and (sel_priv_tmpl or sel_priv_init_tmpl or sel_caps_tmpl or sel_caps_init_tmpl or sel_hostpath_tmpl or sel_hostpid_tmpl or sel_hostnet_tmpl or sel_hostipc_tmpl or sel_priv_cj or sel_priv_init_cj or sel_caps_cj or sel_caps_init_cj or sel_hostpath_cj or sel_hostpid_cj or sel_hostnet_cj or sel_hostipc_cj or sel_jp_leaf_bool or sel_jp_leaf_hostpath or sel_jp_leaf_caps or sel_jp_leaf_copy or (sel_jp_tmpl_path and (sel_jp_priv_value or sel_jp_hostns_value or sel_jp_hostpath_value or sel_jp_caps_value))) and (sel_main_resource or not filter_status)
 falsepositives:
   - Infrastructure controllers that legitimately need host access (the CNI
     DaemonSet, kube-proxy, node-exporter, CSI drivers). Baseline these by exact

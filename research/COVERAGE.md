@@ -115,7 +115,7 @@ Each procedure letter is followed by its status: **P** proven, **D** proven with
 
 ## How the statuses are set
 
-- **Proven**: the procedure's own emulation is built, and a rule that the TRR's Detections table says covers it runs in a validator, passes `check_sufficiency.py` with a verified near-miss or filtered negative, and has no open entry in [`RULE_DEFECTS.md`](../detections/RULE_DEFECTS.md).
+- **Proven**: the procedure's own emulation is built, and a rule that the TRR's Detections table says covers it runs in a validator, passes `check_sufficiency.py` with a verified near-miss or filtered negative, and no open entry in [`RULE_DEFECTS.md`](../detections/RULE_DEFECTS.md) names it (in the entry's Summary row or its Rules bullet).
 - **Proven, open defect**: as Proven, but every proving rule has an open defect.
 - **Claimed**: a rule maps to the procedure, but the procedure's emulation is in the backlog or documented only, or the rule is in no validator. The rule can be proven on a sibling procedure.
 - **Sensor only**: only a sensor strategy (node runtime, file integrity) with no Sigma rule covers it.
@@ -124,6 +124,7 @@ Each procedure letter is followed by its status: **P** proven, **D** proven with
 Limits of this report:
 
 - Severity and grader rules do not count as coverage. They rank hits that a chokepoint rule already raised.
+- An open audit-policy gap that blinds every rule on a resource names no rule, so it does not mark procedures: [`RULE_DEFECTS.md` K23](../detections/RULE_DEFECTS.md#k23-apply-patches-with-a-yaml-body-no-audit-record-at-request-level-or-higher) (an apply patch with a YAML body is not logged at Request level or higher, so no rule sees that write, the chokepoints included) is such a gap, and a procedure that sends such a patch can still show Proven.
 - The procedure-to-rule map comes from each TRR's Detections table, as written. The validators prove a rule against its TRR's emulation, not against each procedure separately.
 - 11 of 76 rules map to no TRR procedure and are not counted: `T1068/copyfail_af_alg_authencesn.yml`, `T1068/dirtyfrag_rxrpc_socket.yml`, `T1068/dirtyfrag_xfrm_unshare_netlink.yml`, `T1068/dirtypipe_splice_readonly.yml`, `T1068/keyring_add_key_burst.yml`, `T1068/perf_event_open_non_profiler.yml`, `T1068/userfaultfd_syscall.yml`, `T1611/setns_namespace_join.yml`, `T1620/memfd_create_execveat.yml`, `T1622/ptrace_traceme.yml`, `T1685/io_uring_setup.yml`.
 
