@@ -361,6 +361,18 @@
         "gcp-platform-ops": 0
       }
     },
+    "T1098.006/k8s_eks_aws_auth_configmap_modified.yml": {
+      "actors": {},
+      "distinct_actors": 0,
+      "events": 2666,
+      "hits": 0,
+      "rate_per_10k": 0.0,
+      "slices": {
+        "k8s-audit-control-plane": 0,
+        "k8s-audit-gitops-ci": 0,
+        "k8s-audit-human-operators": 0
+      }
+    },
     "T1098.006/k8s_rbac_privileged_grant.yml": {
       "actors": {
         "system:serviceaccount:argocd:argocd-application-controller": 5
@@ -372,6 +384,18 @@
       "slices": {
         "k8s-audit-control-plane": 0,
         "k8s-audit-gitops-ci": 5,
+        "k8s-audit-human-operators": 0
+      }
+    },
+    "T1098.006/k8s_rbac_sensitive_permission_grant.yml": {
+      "actors": {},
+      "distinct_actors": 0,
+      "events": 2666,
+      "hits": 0,
+      "rate_per_10k": 0.0,
+      "slices": {
+        "k8s-audit-control-plane": 0,
+        "k8s-audit-gitops-ci": 0,
         "k8s-audit-human-operators": 0
       }
     },

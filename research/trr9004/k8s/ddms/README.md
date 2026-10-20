@@ -14,13 +14,17 @@ it back), then render again. The TRR linter fails when a PNG is missing or older
 than its JSON.
 
 Colours: green = the client, blue = the API server, black = the abstract effect.
-Shaded = a primary detection node. In every procedure the shaded node is the
-same one: the API server's audit of the RBAC write — the invariant chokepoint.
+Shaded = a primary detection node. In the RBAC procedures (A–E, G) the shaded node
+is the same one: the API server's audit of the RBAC write — the invariant
+chokepoint. Procedure F is the exception: its shaded node is the API server's audit
+of the `kube-system/aws-auth` ConfigMap write.
 
 | File | Procedure | Primary detection node |
 |------|-----------|------------------------|
-| `trr9004_k8s_a` | TRR9004.K8S.A — ClusterRoleBinding to a powerful ClusterRole | RBAC-write audit event (chokepoint, shared A–E) |
-| `trr9004_k8s_b` | TRR9004.K8S.B — namespaced RoleBinding to a ClusterRole | RBAC-write audit event (chokepoint, shared A–E) |
+| `trr9004_k8s_a` | TRR9004.K8S.A — ClusterRoleBinding to a powerful ClusterRole | RBAC-write audit event (chokepoint, shared A–E, G) |
+| `trr9004_k8s_b` | TRR9004.K8S.B — namespaced RoleBinding to a ClusterRole | RBAC-write audit event (chokepoint, shared A–E, G) |
 | `trr9004_k8s_c` | TRR9004.K8S.C — write a wildcard or escalate/bind role | RBAC-write audit event; `rules` at Request level |
 | `trr9004_k8s_d` | TRR9004.K8S.D — bind a built-in group (mass grant) | RBAC-write audit event; Group subject at Request level |
 | `trr9004_k8s_e` | TRR9004.K8S.E — patch an existing binding or role | RBAC-write audit event (`verb: patch`) |
+| `trr9004_k8s_f` | TRR9004.K8S.F — map an IAM principal through the EKS aws-auth ConfigMap | `configmaps` write to `kube-system/aws-auth` (chokepoint F) |
+| `trr9004_k8s_g` | TRR9004.K8S.G — write a sensitive non-wildcard role | RBAC-write audit event; `rules` graded at Request level |

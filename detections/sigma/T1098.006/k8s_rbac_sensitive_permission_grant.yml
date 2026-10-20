@@ -1,0 +1,111 @@
+title: Kubernetes Role Grants Exec, Token Minting or Cluster-Wide Secret Reads
+id: 9da8d4e0-f606-420b-bb7d-dead7d5d428f
+status: experimental
+description: |
+  Detects an RBAC role write (create, update or patch of a Role or ClusterRole)
+  whose rules grant one of three permissions that are not wildcards but act close
+  to cluster-admin once bound:
+
+    - command execution in pods: pods/exec or pods/attach with the verb create or
+      get (a WebSocket exec or attach is a GET, so get alone opened it before v1.35;
+      from v1.35 the API server also requires create by default, feature gate
+      AuthorizePodWebsocketUpgradeCreatePermission, beta, so a get-only grant no
+      longer opens exec or attach on a default cluster; get is still graded so older
+      clusters and clusters with the gate off stay covered);
+    - minting service-account tokens: serviceaccounts/token with the verb create;
+    - reading every Secret in the cluster: secrets with get, list or watch, in a
+      ClusterRole (a namespaced Role that reads its own namespace's Secrets is the
+      common application pattern and does not match).
+
+  The */exec, */attach and */token resource forms (RBAC matches "*/<subresource>"
+  on every resource) count as the named subresource.
+
+  It is the medium companion of k8s_rbac_privileged_grant.yml (high). That rule
+  grades the wildcard "*", escalate, bind, impersonate, nodes/proxy, */proxy, a
+  powerful roleRef and a group subject. This rule does not read the verb "*" or the
+  resource "*", so one wildcard grant raises the high alert only. A rule object
+  with apiGroups ["*"] and an explicit grant above fires both.
+
+  Each rule object in requestObject.rules is matched on its own: the verb and the
+  resource must be in the same rule object ([^{}] keeps the match inside one
+  object). A create or update body lists verbs before resources (Go field order);
+  a merge, strategic merge or server-side-apply patch keeps the client's key
+  order (kubectl's server-side apply sorts keys, so resources come first). Both
+  orders are matched.
+
+  The kube-system clusterrole-aggregation-controller re-applies the built-in
+  aggregated ClusterRoles admin and edit, which carry pods/exec, Secret reads and
+  serviceaccounts/token create by design. That identity on those two ClusterRoles
+  is filtered. view is not filtered: the built-in view carries none of these, so a
+  label that aggregates a sensitive role into view makes the controller's next
+  write of view fire.
+
+  Limits (detections/RULE_DEFECTS.md KTBD-E1, KTBD-E2): the bootstrap roles that
+  the API server writes at start-up and at an upgrade fire (system:aggregate-to-edit,
+  system:node, system:kube-controller-manager); a JSON patch (kubectl patch
+  --type=json) logs requestObject as an operation list, which this rule does not
+  read; pods/ephemeralcontainers (the kubectl debug path, another way to run code
+  in a pod) is not graded by this rule or by the high rule; resourceNames and
+  apiGroups are not graded; a binding to an existing sensitive role is not graded
+  here. Request level is needed (requestObject).
+references:
+  - https://attack.mitre.org/techniques/T1098/006/
+  - https://kubernetes.io/docs/concepts/security/rbac-good-practices/
+  - https://kubernetes.io/docs/reference/access-authn-authz/rbac/
+author: det-eng
+date: 2026/10/20
+tags:
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1098.006
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_role_write:
+    objectRef.apiGroup: 'rbac.authorization.k8s.io'
+    objectRef.resource:
+      - 'roles'
+      - 'clusterroles'
+    verb:
+      - 'create'
+      - 'update'
+      - 'patch'
+  sel_exec_grant:
+    requestObject.rules|re:
+      - '\{[^{}]*\"verbs\":\s*\[[^\]]*\"(create|get)\"[^\]]*\][^{}]*\"resources\":\s*\[[^\]]*\"(pods|\*)/(exec|attach)\"'
+      - '\{[^{}]*\"resources\":\s*\[[^\]]*\"(pods|\*)/(exec|attach)\"[^\]]*\][^{}]*\"verbs\":\s*\[[^\]]*\"(create|get)\"'
+  sel_token_grant:
+    requestObject.rules|re:
+      - '\{[^{}]*\"verbs\":\s*\[[^\]]*\"create\"[^\]]*\][^{}]*\"resources\":\s*\[[^\]]*\"(serviceaccounts|\*)/token\"'
+      - '\{[^{}]*\"resources\":\s*\[[^\]]*\"(serviceaccounts|\*)/token\"[^\]]*\][^{}]*\"verbs\":\s*\[[^\]]*\"create\"'
+  sel_secret_read:
+    requestObject.rules|re:
+      - '\{[^{}]*\"verbs\":\s*\[[^\]]*\"(get|list|watch)\"[^\]]*\][^{}]*\"resources\":\s*\[[^\]]*\"secrets\"'
+      - '\{[^{}]*\"resources\":\s*\[[^\]]*\"secrets\"[^\]]*\][^{}]*\"verbs\":\s*\[[^\]]*\"(get|list|watch)\"'
+  sel_cluster_scope:
+    objectRef.resource: 'clusterroles'
+  # The aggregation controller re-applies the built-in admin and edit, which carry
+  # pods/exec, Secret reads and serviceaccounts/token create by design. view is not
+  # excluded: the built-in view carries none of them.
+  filter_aggregation_controller:
+    user.username: 'system:serviceaccount:kube-system:clusterrole-aggregation-controller'
+    objectRef.resource: 'clusterroles'
+    objectRef.name:
+      - 'admin'
+      - 'edit'
+  condition: select_role_write and (sel_exec_grant or sel_token_grant or (sel_secret_read and sel_cluster_scope)) and not filter_aggregation_controller
+falsepositives:
+  - Operators and controllers that read Secrets cluster-wide by design (cert-manager,
+    external-secrets, ingress controllers, Argo CD) at install or upgrade. Baseline
+    the install identity and the role name.
+  - Developer roles that allow kubectl exec in a team namespace.
+  - On v1.35+ with the AuthorizePodWebsocketUpgradeCreatePermission gate on (beta,
+    default), a get-only pods/exec or pods/attach grant does not open exec or attach
+    (the API server also requires create), so grade such a grant as lower risk.
+  - The bootstrap roles the API server writes as system:apiserver when a cluster
+    starts for the first time or after an upgrade (system:aggregate-to-edit,
+    system:node, system:kube-controller-manager; KTBD-E1).
+  - A rule limited by resourceNames to named objects is narrower than the match
+    suggests; check resourceNames before escalating.
+level: medium

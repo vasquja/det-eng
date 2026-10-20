@@ -155,10 +155,12 @@
         "B": "Namespaced RoleBinding to a ClusterRole",
         "C": "Write a wildcard or escalate/bind role",
         "D": "Bind a built-in group (mass grant)",
-        "E": "Patch an existing binding or role"
+        "E": "Patch an existing binding or role",
+        "F": "Map an IAM principal through the EKS aws-auth ConfigMap",
+        "G": "Write a sensitive (non-wildcard) role: exec, token, cluster-wide secret reads"
       },
       "pub_date": "2026-10-12",
-      "last_update": "2026-10-12",
+      "last_update": "2026-10-20",
       "path": "trr9004/k8s/README.md",
       "tests": {
         "A": {
@@ -179,6 +181,14 @@
         },
         "E": {
           "text": "det-eng role patch behavioral emulation",
+          "url": "../atomics/T1098.006/src/emulate.sh"
+        },
+        "F": {
+          "text": "det-eng EKS aws-auth ConfigMap write behavioral emulation (sentinel; touches only an aws-auth it wrote, with resourceVersion preconditions)",
+          "url": "../atomics/T1098.006/src/emulate.sh"
+        },
+        "G": {
+          "text": "det-eng sensitive-role write behavioral emulation (exec, token, cluster-wide secrets; never bound)",
           "url": "../atomics/T1098.006/src/emulate.sh"
         }
       }

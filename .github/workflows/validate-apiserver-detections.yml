@@ -17,8 +17,9 @@ name: validate-apiserver-detections
 # A kind cluster runs on the ubuntu-latest runner with API server audit logging on
 # (pod creates, updates and patches; controller and RBAC writes and deletes, except
 # deletecollection; admission-config creates and deletes at Request level;
-# admission-config updates and patches and the three cluster DNS ConfigMaps at
-# RequestResponse; kube-system ConfigMap creates at Request; pod and Event deletes,
+# admission-config updates and patches, the three cluster DNS ConfigMaps, and the
+# kube-system/aws-auth ConfigMap update/patch/delete at RequestResponse; kube-system
+# ConfigMap creates at Request; pod and Event deletes,
 # Secrets and tokens at Metadata; see detections/k8s/audit-policy-apiserver.yaml), and a small CRI poller on the node stands in for a runtime security
 # agent (detections/k8s/cri-pod-sensor.sh). The job captures a BEFORE snapshot
 # (negative control), runs the benign emulations, collects both logs, and asserts each

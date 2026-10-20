@@ -99,3 +99,50 @@ atomic_tests:
         bash #{source_dir}/emulate.sh e
       cleanup_command: |
         kubectl delete clusterrole trr9004-cr-benign trr9004-cr-wild --ignore-not-found
+
+  - name: "TRR9004.K8S.F — write the EKS aws-auth ConfigMap"
+    auto_generated_guid: f2afce1e-c761-4a1c-b09e-37f9074f1ba8
+    description: |
+      Creates the EKS aws-auth ConfigMap in kube-system with a trr9004 sentinel
+      mapRoles entry, patches it to append a backdoor role mapped to a throwaway
+      group (trr9004-unbound-group, NOT system:masters), then deletes it. On an EKS
+      cluster the IAM authenticator would map that role to the cluster; on kind
+      nothing reads it. It touches only an aws-auth it wrote: it skips when it
+      cannot read the object or the object exists without being exactly its own,
+      and it removes only a leftover that is exactly what it writes. The patch
+      carries the create's resourceVersion and the delete a resourceVersion
+      precondition, so the API server refuses either (409 Conflict) if another
+      writer changed the object in between; a real EKS mapping is never
+      overwritten or deleted. The audit event (write of kube-system/aws-auth) is
+      the telemetry.
+      Chokepoint: detections/sigma/T1098.006/k8s_eks_aws_auth_configmap_modified.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh f
+      cleanup_command: |
+        bash #{source_dir}/emulate.sh cleanup-f
+
+  - name: "TRR9004.K8S.G — write sensitive-but-not-wildcard roles"
+    auto_generated_guid: 4ff421e4-5952-48b7-bb76-11932eda0e87
+    description: |
+      Creates roles that grant permissions that are not wildcards but act close to
+      cluster-admin once bound: a ClusterRole that reads every Secret
+      (trr9004-cr-secrets: secrets get,list), a Role that can exec into pods
+      (trr9004-role-exec: create pods/exec), and a Role that can mint service-account
+      tokens (trr9004-role-token: create serviceaccounts/token). NONE is bound to any
+      subject, so nothing gains power; they emit the medium severity telemetry.
+      Severity rule: detections/sigma/T1098.006/k8s_rbac_sensitive_permission_grant.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh g
+      cleanup_command: |
+        kubectl delete clusterrole trr9004-cr-secrets --ignore-not-found
+        kubectl -n default delete role trr9004-role-exec trr9004-role-token --ignore-not-found

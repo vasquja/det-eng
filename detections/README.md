@@ -554,7 +554,7 @@ validator (`validate_apiserver_detections.py`), and one workflow
 
 | TRR | Technique | Chokepoint rule(s) | Audit level |
 |-----|-----------|--------------------|-------------|
-| TRR9004 | RBAC (T1098.006) | `sigma/T1098.006/k8s_rbac_write.yml` + a Request-level severity rule | Request |
+| TRR9004 | RBAC (T1098.006) | `sigma/T1098.006/k8s_rbac_write.yml` + two Request-level severity rules (`k8s_rbac_privileged_grant.yml` high; `k8s_rbac_sensitive_permission_grant.yml` medium) + `k8s_eks_aws_auth_configmap_modified.yml` (EKS aws-auth, Procedure F) | Request (RBAC); RequestResponse for `kube-system/aws-auth` update/patch/delete, Request for the kube-system ConfigMap create |
 | TRR9005 | Jobs/CronJobs (T1053.007) | `sigma/T1053.007/k8s_job_create.yml` + a node-runtime job-pod rule | Request |
 | TRR9006 | Secrets (T1552.007) | `sigma/T1552.007/k8s_secret_access.yml` + a TokenRequest rule | Metadata |
 | TRR9007 | Dangerous pod spec (T1611) | `sigma/T1611/k8s_podspec_host_access.yml` + a controller rule + a confinement (Unconfined) rule | Request |
@@ -574,7 +574,13 @@ of the three `kube-system` DNS ConfigMaps (`coredns`, `kube-dns`, `coredns-custo
 at `RequestResponse`, so the stored Corefile is graded whatever the patch type; every
 ConfigMap create in `kube-system` is at `Request` (a create names no object when the
 policy is evaluated, so the rule cannot name the three), so a delete-and-recreate
-(TRR9027 Procedure D) is graded. Two costs come with these levels:
+(TRR9027 Procedure D) is graded. An update, patch or delete of the EKS
+`kube-system/aws-auth` ConfigMap (TRR9004 Procedure F) is likewise at `RequestResponse`,
+as EKS logs it, so the stored `mapRoles` after an update or patch are kept for triage
+(its create falls to the kube-system ConfigMap create rule at `Request`); the
+validator's `trr9004` sentinel gate needs only `Request` (the create body and the patch
+body). aws-auth holds IAM role ARNs, Kubernetes usernames and group names, and no
+credentials. Two costs come with these levels:
 - A Corefile can hold plugin credentials (route53 `aws_access_key`, azure `secret`,
   tsig `secret`); every write to it then copies them into the log.
 - Helm 2 (Tiller), and Helm 3 with `HELM_DRIVER=configmap`, store each release in
@@ -591,7 +597,8 @@ bootstrap coredns ConfigMap. So the validator gates each rule on the emulation's
 own marker (each `MANIFEST` entry in `validate_apiserver_detections.py` names its gate):
 for example a `trr90NN-` object name, the `trr9009` impersonated user or group, the
 `trr9006` namespace with a non-system caller, a `trr9005-` Job label on the node
-sensor, or the `trr9027` sentinel in each procedure's DNS-ConfigMap write (procedure A patches
+sensor, the `trr9004` sentinel in the fixed-name `kube-system/aws-auth` write (whose
+object name cannot be prefixed), or the `trr9027` sentinel in each procedure's DNS-ConfigMap write (procedure A patches
 `coredns`; B and C create `kube-dns` and `coredns-custom` by server-side apply, a
 patch by name that the policy logs with its body; D deletes `coredns` and recreates it
 with the sentinel, then restores the saved object and fails the step unless the restored

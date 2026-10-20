@@ -53,6 +53,9 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [KTBD-C2](#ktbd-c2-admission-object-apply-patches-with-a-yaml-body-no-audit-record) | `T1546/k8s_admission_webhook_repointed_to_url`, `k8s_admission_webhook_created`, `k8s_malicious_admission_webhook_created`, `T1685/k8s_admission_webhook_disabled` | an apply patch with a YAML body is dropped from the audit log at Request level or higher | policy gap | medium |
 | [KTBD-D1](#ktbd-d1-k8s_podspec_confinement_disabled-per-container-annotations-keyed-by-container-name) | `T1611/k8s_podspec_confinement_disabled` | a per-container seccomp/AppArmor annotation in a pod or controller body written outside `kubectl apply` is keyed by container name and not graded (a JSON patch is graded) | false negative | low |
 | [KTBD-D2](#ktbd-d2-k8s_podspec_confinement_disabled-selinux-type-outside-the-baseline-list) | `T1611/k8s_podspec_confinement_disabled` | SELinux `seLinuxOptions.type` set to `spc_t` (or another type off the Baseline list) also removes confinement and is not graded | false negative | low |
+| [KTBD-E1](#ktbd-e1-k8s_rbac_sensitive_permission_grant-the-bootstrap-roles-fire) | `T1098.006/k8s_rbac_sensitive_permission_grant` | the built-in roles the API server writes at bootstrap (system:aggregate-to-edit, system:node, system:kube-controller-manager) fire | false positive | low |
+| [KTBD-E2](#ktbd-e2-k8s_rbac_sensitive_permission_grant-residual-blind-spots) | `T1098.006/k8s_rbac_sensitive_permission_grant` | a JSON-patch operation list is not read; pods/ephemeralcontainers and resourceNames are not graded; a bind to an existing sensitive role is not graded here | false negative | low |
+| [KTBD-E3](#ktbd-e3-k8s_eks_aws_auth_configmap_modified-chokepoint-residuals) | `T1098.006/k8s_eks_aws_auth_configmap_modified` | a denied create logs no objectRef.name; a server-side apply with a YAML body is dropped by the JSON audit backend | false negative | low |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
@@ -364,6 +367,123 @@ whether `arping` belongs in the allowlist.
   an upstream step for a human.
 - **Then**: a recorded YAML-bodied apply patch of a webhook configuration fires the
   repoint grader (patch answered 200) or both create rules (patch answered 201).
+
+### KTBD-E1. k8s_rbac_sensitive_permission_grant: the bootstrap roles fire
+
+- **Rule**: [`sigma/T1098.006/k8s_rbac_sensitive_permission_grant.yml`](sigma/T1098.006/k8s_rbac_sensitive_permission_grant.yml) (level medium).
+- **Kind**: false positive. **Severity**: low.
+- **Problem**: the sensitive-grant clauses match the built-in ClusterRoles the API
+  server writes as `system:apiserver` at start-up and at an upgrade. `editRules`
+  is written into `system:aggregate-to-edit` (which carries `pods/exec`,
+  `pods/attach`, `secrets` reads and `serviceaccounts/token create`); `edit`
+  itself is written with only an `aggregationRule` and no `rules`, so the bootstrap
+  write of `edit` does not fire, and `edit` gets those rules from the aggregation
+  controller, which the filter excludes. `system:node` carries
+  `secrets get/list/watch` and `serviceaccounts/token create`;
+  `system:kube-controller-manager` carries `secrets` reads and
+  `serviceaccounts/token create`. All of `system:aggregate-to-edit`, `system:node`
+  and `system:kube-controller-manager` fire. The filter excludes only the
+  `clusterrole-aggregation-controller` on `admin`/`edit`, not the API server's
+  bootstrap writes.
+- **Precedent and choice**: K17 records the same false positive for the high
+  privileged-grant rule and is still open. K17's planned fix filters
+  `user.username: system:apiserver`, which is safe: only the API server's loopback
+  client presents that username, and impersonation does not change `user.username`
+  (an impersonated identity goes to `impersonatedUser`, not `user`), so the filter
+  does not hide an adversary who impersonates the loopback client. This rule keeps
+  K17's current state — documented in `falsepositives`, not filtered — so the two
+  rules move together. When K17's filter lands, add the same filter here with a
+  filtered case (`system:aggregate-to-edit` written by `system:apiserver`). Elastic's
+  sensitive-role rule instead excludes the bootstrap writer by loopback source IP
+  (`not kubernetes.audit.sourceIPs in ("::1", "127.0.0.1")`); either is available.
+  The negative control is unaffected either way: it gates on `trr9004-` names, so a
+  Sigma filter on this rule changes nothing there (the point about not dropping the
+  baseline writes belongs to the audit policy, not the rule).
+- **Evidence**: *probe* — `sigma_eval.py` on the current rule:
+  `system:aggregate-to-edit`, `system:node` and `system:kube-controller-manager`
+  written by `system:apiserver` all fire; `edit` (an `aggregationRule` and no
+  `rules`) and `system:aggregate-to-view` (read-only) do not. *source* — kubernetes
+  v1.36.4 `plugin/pkg/auth/authorizer/rbac/bootstrappolicy/policy.go` (`editRules`
+  at `system:aggregate-to-edit`, `edit` with `AggregationRule` only, `NodeRules`,
+  `system:kube-controller-manager`); `staging/src/k8s.io/apiserver/pkg/audit/context.go`
+  `LogImpersonatedUser` (sets only `ImpersonatedUser`).
+- **Fix**: none applied in Sigma while K17 is open (baseline the actor, as K17 does).
+  When K17's `user.username: system:apiserver` filter lands, add it here too, with a
+  filtered case; Elastic's loopback source-IP exclusion is the alternative.
+
+### KTBD-E2. k8s_rbac_sensitive_permission_grant: residual blind spots
+
+- **Rule**: [`sigma/T1098.006/k8s_rbac_sensitive_permission_grant.yml`](sigma/T1098.006/k8s_rbac_sensitive_permission_grant.yml) (level medium).
+- **Kind**: false negative. **Severity**: low.
+- **Problem**: four residuals.
+  1. A JSON patch (`kubectl patch --type=json`) logs `requestObject` as the list of
+     operations, so `requestObject.rules` does not exist and the rule does not read
+     the operation list. A JSON patch that appends an exec, token or secret-read
+     rule is seen by the chokepoint (`k8s_rbac_write`) only. (The high
+     privileged-grant rule reads the operation list; this medium rule does not, to
+     keep it simple.) This also means the rule does not grade Procedure E's emulated
+     form, which is a JSON patch; it grades a create, update, or merge/strategic/apply
+     patch.
+  2. `pods/ephemeralcontainers` (update/patch — the `kubectl debug` path, another
+     way to run code in a pod) is not graded by this rule or by the high
+     `k8s_rbac_privileged_grant`. A grant of it is seen by the chokepoint only. It
+     could be added to the exec clause with a positive and a near-miss if the
+     coverage is judged worth the extra surface at this severity.
+  3. `resourceNames` is not graded: a rule that grants `pods/exec` or
+     `serviceaccounts/token` but is limited by `resourceNames` to named objects is
+     narrower than the match suggests, and still fires (documented in
+     `falsepositives`).
+  4. A RoleBinding or ClusterRoleBinding to an *existing* sensitive role is not
+     graded here. The binding rules do not grade it either, except for the three
+     built-in names: `k8s_rbac_privileged_grant`'s roleRef clause grades only
+     `cluster-admin`, `admin` and `edit`. A bind to a custom secrets reader,
+     `system:node` or `system:kube-controller-manager` is seen only by the
+     `k8s_rbac_write` chokepoint. This rule grades the role *write*, not the bind.
+- **Evidence**: *probe* — `sigma_eval.py`: a JSON patch
+  `[{"op":"add","path":"/rules/-","value":{...pods/exec...}}]` does not fire; a Role
+  that grants `pods/ephemeralcontainers` update/patch does not fire on either rule; a
+  ClusterRole with `pods/exec` and a `resourceNames` list does fire; a
+  ClusterRoleBinding (no `requestObject.rules`) does not fire.
+- **Fix**: for (1) and (2), add `requestObject|re` branches (a JSON-patch branch
+  modelled on `k8s_rbac_privileged_grant`; an `ephemeralcontainers` branch) with
+  positives and near-misses, if the coverage proves worth the complexity at this
+  severity. (3) and (4) are by design.
+
+### KTBD-E3. k8s_eks_aws_auth_configmap_modified: chokepoint residuals
+
+- **Rule**: [`sigma/T1098.006/k8s_eks_aws_auth_configmap_modified.yml`](sigma/T1098.006/k8s_eks_aws_auth_configmap_modified.yml) (level medium).
+- **Kind**: false negative. **Severity**: low.
+- **Problem**: two residuals.
+  1. A create (a POST to the collection) that authorization *denies* (403) never
+     reaches the create handler, so `audit.LogRequestObject` never runs and the
+     record has no `objectRef.name`. The rule keys on `objectRef.name: aws-auth`, so
+     a denied create cannot be tied to aws-auth and does not fire. A denied *update*,
+     *patch* or *delete* carries the name from the URL, so those fire on any outcome.
+  2. A server-side apply sent with a YAML body (`Content-Type:
+     application/apply-patch+yaml`) is stored by `audit.LogRequestPatch` as the raw
+     bytes labelled `ContentType: application/json`; at `Request`/`RequestResponse`
+     level the JSON log backend then fails to encode the event (the raw YAML is not
+     valid JSON) and drops the whole audit line, so that write leaves no record. This
+     is an upstream audit-pipeline limitation, not specific to this rule or to
+     aws-auth (it affects every `Request`+ level policy rule, and EKS's own policy
+     logs aws-auth the same way). `kubectl apply --server-side` sends a JSON body and
+     is not affected; only a client that sends raw YAML is. Do not lower the audit
+     level to avoid it: the validator's sentinel gate needs the body.
+- **Evidence**: *probe* — `sigma_eval.py`: a create record with
+  `objectRef {resource: configmaps, namespace: kube-system}`, no name, code 403 gives
+  0 hits; the same record with `objectRef.name: aws-auth` and code 201 gives 1 hit.
+  *source* — kubernetes v1.36.4
+  `staging/src/k8s.io/apiserver/pkg/endpoints/handlers/create.go` (`LogRequestObject`
+  inside the handler, after the authorization filter) and `.../handlers/patch.go`
+  (`LogRequestPatch` before the apply-YAML branch),
+  `.../pkg/audit/context.go` (`RequestObject = Unknown{Raw, ContentType: json}`),
+  `.../plugin/pkg/audit/log/backend.go` (`runtime.Encode` error ->
+  `HandlePluginError`, no line written). A Go reproduction of the encode path shows a
+  YAML body labelled JSON fails `json.Marshal` ("invalid character ... looking for
+  beginning of value").
+- **Fix**: pair the rule with an API server audit-error metric or log monitor as the
+  backstop for the dropped-event case; the denied-create case is by design (the
+  record simply lacks the identity to key on). Both are documented, not fixed in Sigma.
 
 ## Cloud (AWS, Azure, GCP)
 

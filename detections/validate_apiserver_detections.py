@@ -31,7 +31,9 @@ are intentionally generic and a fresh kind cluster is full of baseline matches
 kindnet privileged pods). The gate is:
 
   * TRR9004 / TRR9005 (audit) / TRR9007 : objectRef.name begins with 'trr9004-' /
-    'trr9005-' / 'trr9007-'.
+    'trr9005-' / 'trr9007-'. (The sensitive-grant severity rule shares the 'trr9004-'
+    gate; its roles trr9004-cr-secrets / trr9004-role-exec / trr9004-role-token are
+    never bound.)
   * TRR9007 E (confinement removed): the exact object and resource, with no subresource:
     pod trr9007-unconfined (pod-level seccomp), pod trr9007-unconfined-aa (container
     AppArmor) and Deployment trr9007-unconfined-depl, so each row proves its own record
@@ -39,6 +41,10 @@ kindnet privileged pods). The gate is:
   * TRR9007 K18 and E jp (JSON patch): objectRef.name begins with trr9007-jp-depl /
     trr9007-jp-pod, resource deployments or pods/ephemeralcontainers, verb patch, and
     requestObject is the JSON-patch operation list.
+  * TRR9004 F (aws-auth): objectRef.name is 'aws-auth' in kube-system AND some field
+    carries the 'trr9004' sentinel (the object name is fixed, so a name prefix cannot
+    gate it; the emulation writes the sentinel in the body, and there is no aws-auth on
+    kind before the emulation runs, so the pre-emulation log cannot pass).
   * TRR9005 (cri)  : the pod sandbox's batch.kubernetes.io/job-name begins with
     'trr9005-'.
   * TRR9006        : objectRef.namespace is the fixed emulation namespace AND the
@@ -256,6 +262,23 @@ def coredns_gate(e):
     return any("trr9027" in str(v) for v in e.values())
 
 
+def aws_auth_gate(e):
+    """TRR9004 F: the emulation's own aws-auth write, told apart by the trr9004 sentinel.
+
+    aws-auth is a fixed object name (the IAM authenticator reads only kube-system/aws-auth),
+    so a name_prefix gate cannot work. Name + namespace alone is not enough either: a real
+    aws-auth exists on an EKS cluster. The emulation puts its unique 'trr9004' sentinel into
+    the body (a create at Request and a patch at RequestResponse both carry it). Modeled on
+    coredns_gate. On kind there is no aws-auth before the emulation runs, so the
+    pre-emulation log cannot pass this gate.
+    """
+    if e.get("objectRef.namespace") != "kube-system":
+        return False
+    if (e.get("objectRef.name") or "") != "aws-auth":
+        return False
+    return any("trr9004" in str(v) for v in e.values())
+
+
 def coredns_gate_named(name):
     """TRR9027, one procedure: the sentinel-marked write to the DNS ConfigMap `name`."""
     def gate(e):
@@ -296,14 +319,21 @@ trr9010_gate.describe = ("objectRef.name begins with 'trr9010-', or verb == dele
                          "in objectRef.namespace 'trr9010'")
 coredns_gate.describe = ("objectRef.namespace == 'kube-system', objectRef.name in coredns / "
                          "kube-dns / coredns-custom, and some field contains 'trr9027'")
+aws_auth_gate.describe = ("objectRef.namespace == 'kube-system', objectRef.name == 'aws-auth', "
+                          "and some field contains 'trr9004'")
 
 
 # (technique folder, rule file, source, label, note, gate). Order is report order.
 MANIFEST = [
-    ("T1098.006", "k8s_rbac_write.yml", "audit", "9004 A-E",
+    ("T1098.006", "k8s_rbac_write.yml", "audit", "9004 A-E,G",
      "RBAC write chokepoint", name_prefix("trr9004-")),
     ("T1098.006", "k8s_rbac_privileged_grant.yml", "audit", "9004 sev",
      "RBAC dangerous-grant severity (Request)", name_prefix("trr9004-")),
+    ("T1098.006", "k8s_rbac_sensitive_permission_grant.yml", "audit", "9004 sens",
+     "RBAC sensitive-grant severity: exec / token / cluster-wide secrets (Request)",
+     name_prefix("trr9004-")),
+    ("T1098.006", "k8s_eks_aws_auth_configmap_modified.yml", "audit", "9004 F",
+     "EKS aws-auth ConfigMap write chokepoint", aws_auth_gate),
     ("T1053.007", "k8s_job_create.yml", "audit", "9005 A-D",
      "batch write chokepoint", name_prefix("trr9005-")),
     ("T1053.007", "k8s_cri_job_pod.yml", "cri", "9005 pod",

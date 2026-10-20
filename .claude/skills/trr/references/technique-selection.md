@@ -265,7 +265,9 @@ reasoning survives. Append an entry per vet; keep it short.
   same chokepoint (update/patch/delete, decision allow, minus eks:kms-storage-migrator). SigmaHQ, Splunk, Falco,
   Panther and ART have none, and Stratus ships the emulation. This is the Sigma counterpart, plus `create`.
   Needs an aws-auth RequestResponse policy rule (as EKS logs it) so the validator's sentinel gate can see the
-  body. aws-auth is deprecated (EKS user guide). Deferred to build as TRR9004.K8S.F.
+  body. aws-auth is deprecated (EKS user guide). **Built as TRR9004.K8S.F** (rule
+  `k8s_eks_aws_auth_configmap_modified.yml`, a bare chokepoint; the aws-auth RequestResponse policy rule and the
+  sentinel gate were added; no response-code or `eks:kms-storage-migrator` filter, both baselined by actor).
 
 - **EKS access-entry backdoor in CloudTrail, CreateAccessEntry / AssociateAccessPolicy (T1098.006, secondary
   T1098.003) — LEAN-GO (questions 2 and 4: backstop and differentiated).** A cloud TRR proven by
