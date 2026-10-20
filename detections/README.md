@@ -408,10 +408,15 @@ pySigma 1.5.1 (`pySigma-backend-elasticsearch` 2.1.1) and Lucene 10.1 found thes
   (`k8s_enforcer_workload_removed.yml` and the anchor
   `k8s_security_tool_workload_removed.yml`) use the second form for each filter on a
   field that a record can lack (`objectRef.subresource`, `requestObject.dryRun`,
-  `requestObject.spec.replicas`), and lose no positive. A probe that removed the
-  `COALESCE` wrappers found 12 rules that still lose positives, all of them on `main`
-  too: the three T1070 delete rules, the seven T1537 public-policy rules,
-  `T1550.001/aws_eks_irsa_web_identity_assumed_off_cluster.yml` and
+  `requestObject.spec.replicas`, and the `requestObject` text of a JSON patch), and
+  lose no positive. A probe that removed the `COALESCE` wrappers, and made a regular
+  expression on a missing field NULL, found 16 rules that still lose positives, all of
+  them on `main` too: the three T1070 delete rules, the seven T1537 public-policy rules,
+  `T1550.001/aws_eks_irsa_web_identity_assumed_off_cluster.yml`,
+  `T1098.001/aws_github_oidc_role_trust_abuse.yml` (4 of 8),
+  `T1098.001/aws_github_oidc_role_trust_ref_wildcard.yml` (5 of 5),
+  `T1098.001/gcp_workload_identity_pool_provider_created.yml` (4 of 5),
+  `T1199/gcp_workforce_pool_provider_no_attribute_condition.yml` (1 of 3) and
   `T1685/k8s_admission_webhook_disabled.yml` (5 of 8: its delete-body dry-run filter
   drops every delete without a body, Procedures A and B included). Wave 4 of the
   Kubernetes coverage plan (item 4.2, the backend mapping proof harness) measures and

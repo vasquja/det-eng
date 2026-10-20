@@ -64,9 +64,10 @@ detection:
       - 'update'
       - 'patch'
     requestURI|re: '^[^?]*\?(.*\&)?dryRun=All(\&.*)?$'
-  # Part of the dry-run filter: Go net/url (Go 1.24 and later) drops every query
-  # parameter, dryRun too, when a query has more than 10,000 of them, and the API
-  # server then stores the write. A dry run counts only when the URI holds at most
+  # Part of the dry-run filter: Go net/url (go1.24.12, go1.25.6, go1.26 and later,
+  # in a binary whose go.mod sets go 1.24 or later; Kubernetes v1.36.4 builds with
+  # Go 1.26.5) reads no parameter, dryRun too, of a query with 10,000 or more "&",
+  # and the API server then stores the write. A dry run counts only when the URI holds at most
   # 100 "&" (no client sends more).
   sel_query_parsed:
     requestURI|re: '^[^&]*(\&[^&]*){0,100}$'

@@ -32,7 +32,8 @@ description: |
 
   A server-side dry run deletes nothing and is filtered: dryRun ["All"] in the
   DeleteOptions body (requestObject), or '?dryRun=All' in requestURI when the record
-  holds no request body. When a DELETE has a body, the API server reads DeleteOptions
+  holds no request body (a record the audit truncate backend cut, annotation
+  audit.k8s.io/truncated, lost its body and is not trusted). When a DELETE has a body, the API server reads DeleteOptions
   from the body and ignores the query, so a query dry run next to a recorded body is
   not trusted. kubectl delete --dry-run=server sends the dry run in the body, which a
   Metadata-level record does not hold, so at Metadata level that dry run still fires;
@@ -80,10 +81,13 @@ detection:
   filter_dry_run:
     - requestURI|re: '^[^?]*\?(.*\&)?dryRun=All(\&.*)?$'
       requestObject.kind: null
+      annotations.audit.k8s.io/truncated: null
     - requestObject.dryRun|contains: 'All'
   # The API server read the dry run: the query holds at most 100 "&" (Go net/url,
-  # Go 1.24 and later, drops every query parameter when a query has more than
-  # 10,000, and the API server then deletes), or the dry run is in the body.
+  # go1.24.12, go1.25.6, go1.26 and later in a binary whose go.mod sets go 1.24 or
+  # later, reads no parameter of a query with 10,000 or more "&"; Kubernetes
+  # v1.36.4 builds with Go 1.26.5, and the API server then deletes), or the dry run
+  # is in the body.
   filter_dry_run_read:
     - requestURI|re: '^[^&]*(\&[^&]*){0,100}$'
     - requestObject.dryRun|contains: 'All'

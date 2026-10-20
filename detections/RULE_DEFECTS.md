@@ -186,7 +186,9 @@ whether `arping` belongs in the allowlist.
 - **Problem**: when a DELETE has a body, the API server reads DeleteOptions from the
   body and ignores the query, so `?dryRun=All` in `requestURI` does not prove a dry run.
   The rule now trusts the query form only when the record holds no request body, which
-  fixes a Request-level record. A Metadata-level record never holds the body, so there
+  fixes a Request-level record. A record that the audit truncate backend cut (annotation
+  `audit.k8s.io/truncated`) has lost its body too, so the rule does not trust the query
+  form there (positive `namespace-delete-query-dry-run-truncated-record`). A Metadata-level record never holds the body, so there
   a real namespace delete that also carries `?dryRun=All` is still filtered. The shipped
   lab policy logs namespace deletes at Metadata.
 - **Evidence**: *source* — apiserver `endpoints/handlers/delete.go` (DeleteOptions from

@@ -245,20 +245,23 @@ detection:
   # backends) reads NOT of a test on a missing field as NULL and drops the record. So
   # each filter on a field that a record can lack is ORed with a test that the field
   # is absent: a main-resource write has no objectRef.subresource, a delete without a
-  # DeleteOptions body has no requestObject.dryRun, and a patch body without a count
-  # has no requestObject.spec.replicas.
+  # DeleteOptions body has no requestObject.dryRun, a patch body without a count
+  # has no requestObject.spec.replicas, and a merge or strategic patch has no
+  # requestObject text (only a JSON patch, a list, is kept as one text field).
   sel_main_resource:
     objectRef.subresource: null
   sel_no_dry_run_body:
     requestObject.dryRun: null
   sel_no_spec_replicas:
     requestObject.spec.replicas: null
+  sel_no_jsonpatch_body:
+    requestObject: null
   condition: >-
     ((select_apps and sel_enforcer_namespace
     and (sel_delete or sel_scale_zero or sel_scale_zero_jsonpatch or sel_scale_update_omitted_zero
     or sel_replicas_out_of_range or sel_smp_directive
     or (sel_scale_patch_body and (sel_no_spec_replicas or not filter_scale_patch_positive)
-    and not filter_scale_jsonpatch_positive))
+    and (sel_no_jsonpatch_body or not filter_scale_jsonpatch_positive)))
     and not filter_namespace_teardown and (sel_main_resource or not filter_status_subresource))
     or sel_enforcer_namespace_delete)
     and sel_accepted and not (filter_dry_run_write and sel_query_parsed)
