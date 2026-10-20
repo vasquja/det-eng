@@ -2,10 +2,13 @@
 # TRR9002 — behavioral emulation for T1609 (Command Execution in a Running
 # Container), Kubernetes.
 #
-# Each procedure runs a HARMLESS command (`id`) through a different Kubernetes
+# Procedures A to D run a HARMLESS command (`id`) through a different Kubernetes
 # control path, so the API server writes the audit events that the paired Sigma
-# rules key on. No exploit, no persistence, no data access. The cluster is a
-# throwaway kind cluster and is deleted after the run.
+# rules key on. Procedure E makes one read-only kubelet call. Procedure F runs no
+# command: it creates a temporary service account that holds only `get` on
+# nodes/proxy, reads two kubelet pod lists through the node proxy (the output is
+# discarded), and deletes the RBAC objects. No exploit, no persistence; no data
+# is kept. The cluster is a throwaway kind cluster and is deleted after the run.
 #
 # Run ONE procedure:
 #   ./emulate.sh a    exec through the API server (WebSocket, then SPDY)
@@ -13,18 +16,20 @@
 #   ./emulate.sh c    ephemeral debug container
 #   ./emulate.sh d    exec through the API server node proxy
 #   ./emulate.sh e    direct kubelet access (detection-gap demonstration)
+#   ./emulate.sh f    kubelet pod read through the API server node proxy
 #   ./emulate.sh all  every procedure, in order
 #
 # Prerequisites: a reachable cluster (kubectl works) with the TRR9002 target
 # pod applied (atomics/T1609/src/target-pod.yaml), and cluster-admin rights —
-# the same rights an operator uses, so the point is the behavior, not a
-# privilege the test grants itself.
+# the same rights an operator uses, so the point is the behavior. Only
+# Procedure F grants a privilege (nodes/proxy get, to its own temporary service
+# account), and it deletes that grant before it returns.
 set -euo pipefail
 
 NS="${TRR9002_NAMESPACE:-default}"
 POD="${TRR9002_POD:-trr9002-target}"
 CONTAINER="${TRR9002_CONTAINER:-app}"
-CMD=(id)   # the one benign command every procedure runs
+CMD=(id)   # the one benign command procedures A to D run
 
 log() { printf '[trr9002] %s\n' "$*" >&2; }
 
@@ -111,6 +116,59 @@ procedure_e() {
   log "E: done — expect NO API server audit event for this call"
 }
 
+# Procedure F — kubelet pod read or checkpoint through the API server node proxy.
+# A service account that holds only `get` on nodes/proxy reads the kubelet
+# /runningpods/ and /pods endpoints through the API server node proxy. This is
+# the main step of Stratus Red Team k8s.privilege-escalation.nodes-proxy. The
+# audit record shows objectRef resource=nodes, subresource=proxy, verb=get, with
+# the kubelet endpoint in requestURI — not pods/exec, and not pods list/get.
+#
+# The reads use a token minted for the service account (kubectl create token),
+# sent with no client certificate, so user.username in the audit record is the
+# service account. A client certificate would authenticate first and hide the SA.
+#
+# /checkpoint (a POST, audit verb create) is NOT called: it writes a container
+# memory and file-system dump to disk on the node. It is covered by the sidecar
+# cases for k8s_node_proxy_kubelet_api.yml instead. See TRR9002 Procedure F.
+procedure_f() {
+  local node sa="trr9002-node-reader" token server ca_file p
+  local tls_args
+  node="$(kubectl -n "$NS" get pod "$POD" -o jsonpath='{.spec.nodeName}')"
+  log "F: create ServiceAccount, ClusterRole (nodes/proxy get) and binding for $sa"
+  kubectl -n "$NS" create serviceaccount "$sa" >/dev/null 2>&1 || true
+  kubectl create clusterrole "$sa" \
+    --verb=get --resource=nodes/proxy >/dev/null 2>&1 || true
+  kubectl create clusterrolebinding "$sa" \
+    --clusterrole="$sa" --serviceaccount="${NS}:${sa}" >/dev/null 2>&1 || true
+
+  token="$(kubectl -n "$NS" create token "$sa" 2>/dev/null || true)"
+  server="$(kubectl config view --minify --raw \
+    -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null || true)"
+  ca_file="$(mktemp)"
+  kubectl config view --minify --raw \
+    -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' 2>/dev/null \
+    | base64 -d > "$ca_file" 2>/dev/null || true
+  if [ -s "$ca_file" ]; then
+    tls_args="--certificate-authority=$ca_file"
+  else
+    tls_args="--insecure-skip-tls-verify=true"
+  fi
+
+  for p in "/api/v1/nodes/${node}/proxy/runningpods/" \
+           "/api/v1/nodes/${node}/proxy/pods"; do
+    log "F: read kubelet ${p##*/proxy/} via nodes/proxy as $sa"
+    kubectl --kubeconfig=/dev/null --server="$server" "$tls_args" \
+      --token="$token" --request-timeout=30s get --raw "$p" >/dev/null 2>&1 || true
+  done
+
+  log "F: delete the RBAC objects"
+  kubectl delete clusterrolebinding "$sa" >/dev/null 2>&1 || true
+  kubectl delete clusterrole "$sa" >/dev/null 2>&1 || true
+  kubectl -n "$NS" delete serviceaccount "$sa" >/dev/null 2>&1 || true
+  rm -f "$ca_file"
+  log "F: (node=$node) — checkpoint not called live; see TRR9002 Procedure F"
+}
+
 run_one() {
   case "$1" in
     a) procedure_a ;;
@@ -118,7 +176,8 @@ run_one() {
     c) procedure_c ;;
     d) procedure_d ;;
     e) procedure_e ;;
-    *) log "unknown procedure: $1 (use a|b|c|d|e|all)"; exit 2 ;;
+    f) procedure_f ;;
+    *) log "unknown procedure: $1 (use a|b|c|d|e|f|all)"; exit 2 ;;
   esac
 }
 
@@ -126,7 +185,7 @@ main() {
   local which="${1:-all}"
   ensure_target
   if [ "$which" = "all" ]; then
-    for p in a b c d e; do run_one "$p"; done
+    for p in a b c d e f; do run_one "$p"; done
   else
     run_one "$which"
   fi

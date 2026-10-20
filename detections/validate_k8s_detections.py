@@ -12,7 +12,8 @@ It parses the API server audit log (JSON lines), flattens each event to the
 dotted field names the rules use (objectRef.resource, user.username, ...), and
 runs each rule's pySigma-compiled query over them (see sigma_eval.py). A rule
 PASSES only if it matches an event from the emulation itself (one naming the
-target pod), not merely some event in the log.
+target pod, or for Procedure F the trr9002-node-reader service account), not
+merely some event in the log.
 
 Modes:
     python3 detections/validate_k8s_detections.py --dry-run
@@ -95,6 +96,9 @@ MANIFEST = [
     ("k8s_node_proxy_exec.yml", "D",
      "exec through the API server node proxy",
      field_contains("requestURI", f"/{TARGET_POD}/")),
+    ("k8s_node_proxy_kubelet_api.yml", "F",
+     "kubelet pod read through the API server node proxy",
+     field_contains("user.username", "trr9002-node-reader")),
 ]
 
 # Anything the emulation touches mentions this; used when no event passes a gate.
@@ -190,7 +194,8 @@ def explain_gated_miss(rule_path, events, gate, matched):
                      "matches none of them")
     else:
         lines.append(f"NO event carries the emulation's marker: the emulation may not have run, "
-                     f"or the target pod is not named {TARGET_POD!r} (TRR9002_POD)")
+                     f"or its events do not pass the gate above (TRR9002_POD sets the target "
+                     f"pod, now {TARGET_POD!r})")
         candidates = [i for i, e in enumerate(events) if any(TAG in str(v) for v in e.values())]
         where = f"the event(s) mentioning {TAG!r}"
         hit = {id(e) for e in matched}
@@ -219,13 +224,14 @@ def explain_gated_miss(rule_path, events, gate, matched):
     return lines
 
 
-def explain_unexpected(rule_path, events, ours):
+def explain_unexpected(rule_path, events, ours, gate=None):
     """--expect-miss failed: the event(s) the rule matched, and why it fired."""
     rule = sigma_explain.load(rule_path)
     label = labeller(events)
-    lines = [f"the pre-emulation log already holds {len(ours)} match(es) on {TARGET_POD!r}; "
-             "a log captured before the emulation should hold none (captured late, or a "
-             "pod left over from an earlier run?):"]
+    marker = getattr(gate, "describe", f"the target pod {TARGET_POD!r}")
+    lines = [f"the pre-emulation log already holds {len(ours)} match(es) that pass the gate "
+             f"({marker}); a log captured before the emulation should hold none (captured "
+             "late, or a pod or service account left over from an earlier run?):"]
     for e in ours[:3]:
         lines.append(f"  {label(e)}"
                      + (f" at {e['requestReceivedTimestamp']}"
@@ -338,7 +344,8 @@ def validate(args, report):
                   f"subresource={sample.get('objectRef.subresource')} "
                   f"user={sample.get('user.username')}")
             if args.expect_miss:
-                explanation = explained(explain_unexpected, rule_path, events, ours)
+                explanation = explained(explain_unexpected, rule_path, events, ours,
+                                        from_emulation)
         else:
             misses += 1
             detail = "no emulation event matched" + (f" ({other} unrelated match(es) ignored)"

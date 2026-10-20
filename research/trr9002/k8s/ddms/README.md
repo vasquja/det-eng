@@ -23,3 +23,4 @@ and container runtime). Shaded = a primary detection node.
 | `trr9002_k8s_c` | TRR9002.K8S.C — ephemeral debug container | `pods/ephemeralcontainers` audit event |
 | `trr9002_k8s_d` | TRR9002.K8S.D — exec through `nodes/proxy` | `nodes/proxy` audit event with an exec path |
 | `trr9002_k8s_e` | TRR9002.K8S.E — exec through the kubelet API | network flow to TCP 10250 and the new container process |
+| `trr9002_k8s_f` | TRR9002.K8S.F — kubelet pod read or checkpoint through `nodes/proxy` | `nodes/proxy` audit event whose first segment after `/proxy/` is `pods`, `runningpods` or `checkpoint` |

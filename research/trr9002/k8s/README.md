@@ -9,7 +9,7 @@
 |--------------|-------|
 | ID           | TRR9002 |
 | External IDs | T1609 |
-| Tactics      | Execution |
+| Tactics      | Execution, Discovery, Credential Access |
 | Platforms    | Kubernetes |
 | Contributors | det-eng |
 | Status       | draft |
@@ -17,7 +17,10 @@
 ### Scope Statement
 
 This TRR covers command execution inside a running container through the
-Kubernetes control interfaces: the API server and the kubelet.
+Kubernetes control interfaces: the API server and the kubelet. It also covers
+the kubelet pod reads and the container checkpoint that go through the same
+`nodes/proxy` surface (Procedure F). They share the `nodes/proxy` audit anchor
+of Procedure D, and only the kubelet endpoint is different.
 
 This TRR does not cover these related actions:
 
@@ -199,6 +202,7 @@ container, and with which command.
 | TRR9002.K8S.C | Ephemeral debug container | Execution | `pods/ephemeralcontainers` (verb `patch` or `update`) |
 | TRR9002.K8S.D | Exec through the API server node proxy | Execution | `nodes/proxy` to kubelet `/exec`, `/run`, or `/attach` |
 | TRR9002.K8S.E | Exec directly through the kubelet API | Execution | kubelet API on TCP 10250: `/exec`, `/run`, or `/attach` |
+| TRR9002.K8S.F | Kubelet pod read or checkpoint through the node proxy | Discovery / Credential Access | `nodes/proxy` to kubelet `/pods`, `/runningpods`, or `/checkpoint` |
 
 > A tool is not a procedure. `kubectl exec`, `client-go`, the Python client,
 > k9s, Lens, and web terminals all send a `pods/exec` request. They are all
@@ -370,19 +374,87 @@ expected sources. The
 result is not in its cache. The `Metadata` audit level does not show what the
 review asked for. Use it as enrichment only.
 
+### Procedure F: Kubelet pod read or checkpoint through the node proxy  (`TRR9002.K8S.F`)
+
+The client sends a request to the `nodes/proxy` subresource of the API server.
+The path points to a kubelet read or checkpoint endpoint, not to `/exec`,
+`/run`, or `/attach`:
+
+- `/pods` returns the full spec of every pod on the node, literal environment
+  values included. `/runningpods/` returns the pod list from the container
+  runtime: the name, namespace, and UID of each pod, and the name and image of
+  each container. Neither read needs a `pods` list or get on the API. This is
+  container and resource discovery.
+- `/checkpoint/<ns>/<pod>/<container>` is a `POST`. The kubelet writes the
+  container's memory and file system to an archive on the node. An adversary
+  who then reads that archive gets the container's secrets. This is credential
+  access through the Container API.
+
+This procedure shares the `nodes/proxy` surface with Procedure D. Procedure D
+runs a command; Procedure F reads or dumps. The two use different kubelet
+endpoints, so a separate rule covers F.
+
+- **Prerequisites:** permission on `nodes/proxy`. For a read (a `GET`), `get` is
+  enough. Many monitoring service accounts have this permission. A checkpoint
+  (a `POST`) needs `create` on `nodes/proxy`.
+- **Mechanics:** the API server writes the audit event, joins the proxied path
+  with `path.Join` (which drops empty and single-dot segments and resolves `..`),
+  and forwards the request to the kubelet on the node. The kubelet answers the
+  read, or (for `/checkpoint`) tells the runtime to checkpoint the container.
+- **Impact:** the adversary reads every pod spec on a node, or dumps a running
+  container, without a `pods` get or a container exec. The Stratus Red Team
+  technique `k8s.privilege-escalation.nodes-proxy` reads `/runningpods/` this
+  way.
+- **Tools on this path:** any HTTP client with API server credentials (for
+  example `curl`), `kubectl get --raw` (a `GET`, for `/pods` and
+  `/runningpods/`), `kubectl create --raw ... -f <file>` (a `POST`, for
+  `/checkpoint`), and the Stratus `nodes-proxy` module.
+
+**ATT&CK mapping.** This procedure is container and resource discovery (T1613,
+the `/pods` and `/runningpods` reads) and credential access through the
+Container API (T1552.007, the `/checkpoint` dump). ATT&CK v20 places the pod
+enumeration under T1613 (Containers analytic AN1352, which names
+`kubectl get pods`) and the credential dump under T1552.007 (analytic AN0571,
+"direct API calls to Kubernetes API server endpoints" exposing credentials).
+The rule carries `attack.t1613`/`attack.discovery` and
+`attack.t1552.007`/`attack.credential-access` for the behavior, and
+`attack.t1609`/`attack.execution` because it lives in this folder and shares the
+`nodes/proxy` surface of Procedure D; the folder ID is the surface, not the
+behavior. The rule does not move to a new TRR: a T1613 or T1552.007 report would
+need its own directory, a validator change, and a GO/NO-GO vet.
+
+#### Detection Data Model — `TRR9002.K8S.F`
+
+![DDM - Kubelet pod read or checkpoint through the node proxy](ddms/trr9002_k8s_f.png)
+
+Source: [`ddms/trr9002_k8s_f.json`](ddms/trr9002_k8s_f.json) (Arrows app format).
+
+**DDM summary.** Two branches meet at one audit event. A read (`GET`, audit
+verb `get`) of `/pods` or `/runningpods/` returns the pod list. A checkpoint
+(`POST`, audit verb `create`) of `/checkpoint/<ns>/<pod>/<container>` makes the
+kubelet write a checkpoint archive on the node. The audit event shows
+`nodes/proxy`, not `pods` or `pods/exec`. The anchor is the `nodes/proxy`
+subresource together with a kubelet read or checkpoint endpoint as the first
+segment after `/proxy/` in `requestURI` (`pods`, `runningpods`, `checkpoint`).
+The subresource alone is not enough: monitoring tools read `/metrics` and
+`/stats` through `nodes/proxy` all the time, so the endpoint word separates the
+read from that traffic. The emulation reads `/runningpods/` and `/pods` live; it
+does not call `/checkpoint`, which writes a dump to the node, so the sidecar
+cases cover that endpoint.
+
 ## Detection Strategy
 
-Compare the five DDMs. Procedures A to D all go through the API server, so
+Compare the six DDMs. Procedures A to D and F all go through the API server, so
 each one leaves an audit event. Procedures A and B share one anchor: an audit
-event for a streaming subresource of a pod. Procedures C and D each have a
+event for a streaming subresource of a pod. Procedures C, D, and F each have a
 different audit anchor. Procedure E does not go through the API server. Its
 anchors are on the node and on the network.
 
-So the plan has four parts. One chokepoint rule on the audit log covers A and
-B. Two more audit log rules cover C and D. One node rule covers E, the path
-that avoids the API server.
+So the plan has five parts. One chokepoint rule on the audit log covers A and
+B. Three more audit log rules cover C, D, and F. One node rule covers E, the
+path that avoids the API server.
 
-**Telemetry requirement.** Strategies 1 to 3 need the API server audit log.
+**Telemetry requirement.** Strategies 1, 2, 3, and 5 need the API server audit log.
 The audit policy must record `pods/exec`, `pods/attach`,
 `pods/ephemeralcontainers`, and `nodes/proxy` at the `Metadata` level or
 higher. Do not let a rule for a noisy group, for example `nodes`, set these
@@ -420,7 +492,7 @@ kubelet endpoint (the first segment after `/proxy/` is `containerLogs`,
 `portForward`, `checkpoint`, `logs` or `debug`) whose later segments name a
 namespace, pod or container `exec`, `run` or `attach`. A `nodes/proxy` request whose
 `requestURI` path (anything before `?`, the `/api/v1/nodes/<n>/proxy/` prefix included)
-holds a percent-encoded byte or a dot segment fires whatever endpoint it seems to name:
+holds a percent-encoded byte or a `..` segment fires whatever endpoint it seems to name:
 the API server and the kubelet use the decoded path, which can differ from the raw
 `requestURI`.
 
@@ -458,6 +530,40 @@ control plane and approved monitoring tools. This needs network flow logs
 from inside the cluster, for example from the CNI. The signal is not specific
 to exec. It also shows reconnaissance against the kubelet.
 
+**Strategy 5 — fallback (covers F).**
+Match audit events where `objectRef.resource` is `nodes`,
+`objectRef.subresource` is `proxy`, and `requestURI` names a kubelet read or
+checkpoint endpoint: `/pods`, `/runningpods`, or `/checkpoint`. The match is
+anchored on the endpoint word, the first path segment after the
+`/api/v1/<resource>/<name>/proxy/` prefix. So a later segment named `pods`,
+`runningpods`, or `checkpoint` (a namespace, pod, or container name, or a query
+value) does not match. Keep `/pods`: dropping it to lower the benign-corpus hits
+would let an adversary read `/pods` instead of `/runningpods`. This rule and the
+Strategy 3 exec rule use different kubelet endpoints, so a plain `/checkpoint`
+request fires this rule only, and a plain `/exec` request fires the exec rule
+only.
+
+The API server joins the proxied path with `path.Join` before it sends the
+request to the kubelet, and it uses the decoded path. Empty and single-dot
+segments directly after `/proxy/` (for example `/proxy//pods` or
+`/proxy/./runningpods/`) do not change the endpoint the kubelet gets, and this
+rule matches them. A percent-encoded byte or a `..` segment is left to the
+Strategy 3 rule, whose path-normalization branch fires on any `nodes/proxy`
+path that holds one. A path that names a literal endpoint here and also holds
+one of those (for example `/proxy/pods/../runningpods/`) fires both rules; that
+double alert is intended, because such a request is itself anomalous.
+
+- Sensor: API server audit log.
+- Rule: `detections/sigma/T1609/k8s_node_proxy_kubelet_api.yml` (built).
+- Nearest existing rules: Elastic "Kubernetes API Server Proxying Request to
+  Kubelet" (`privilege_escalation_api_proxy_to_node.toml`) matches any
+  non-system `nodes/proxy` request except its `metrics`, `healthz`,
+  `stats/summary`, `elastic-agent`, and `configz` paths, so it is an allowlist
+  rule and also sees `/exec` and `/portForward`; this rule names the read and
+  checkpoint endpoints instead. The nearest emulation is Stratus Red Team
+  `k8s.privilege-escalation.nodes-proxy`, whose main step reads `/runningpods/`
+  through `nodes/proxy`; this rule fires on it.
+
 **Enrichment (raises fidelity; not a primary anchor).**
 
 - **Identity.** An exec from a service account
@@ -486,8 +592,9 @@ to exec. It also shows reconnaissance against the kubelet.
 | C | Strategy 2 (fallback); Strategy 1 if it attaches | `pods/ephemeralcontainers` audit event |
 | D | Strategy 3 (fallback); Strategy 4 confirms | `nodes/proxy` audit event with an exec path |
 | E | Strategy 4 (fallback); network fallback | node runtime event with no audit event |
+| F | Strategy 5 (fallback) | `nodes/proxy` audit event with a `/pods`, `/runningpods`, or `/checkpoint` path |
 
-One audit log rule covers the two most common procedures. Two more audit log
+One audit log rule covers the two most common procedures. Three more audit log
 rules cover the less common API server paths. A node sensor covers the path
 that avoids the API server.
 
@@ -495,8 +602,11 @@ that avoids the API server.
 
 The tests run in a lab cluster with an audit policy that records the
 subresources above. The lab is a `kind` cluster; its config and audit policy
-are in [`detections/k8s/`](../../../detections/k8s/). Each test runs the benign
-command `id` through one control path. One script drives them all:
+are in [`detections/k8s/`](../../../detections/k8s/). Tests A to D run the
+benign command `id` through one control path. Test E reads the kubelet `/pods`
+endpoint directly. Test F creates a temporary service account that holds only
+`get` on `nodes/proxy`, reads two kubelet endpoints through `nodes/proxy`,
+discards the output, and deletes the RBAC objects. One script drives them all:
 [`atomics/T1609/src/emulate.sh`](../../../atomics/T1609/src/emulate.sh), with an
 Atomic Red Team wrapper in
 [`atomics/T1609/T1609.yaml`](../../../atomics/T1609/T1609.yaml).
@@ -508,6 +618,7 @@ Atomic Red Team wrapper in
 | TRR9002.K8S.C | `emulate.sh c` — add an ephemeral container with `kubectl debug`. | **built** |
 | TRR9002.K8S.D | `emulate.sh d` — run `id` through `nodes/proxy` to the kubelet `/run` endpoint. | **built** |
 | TRR9002.K8S.E | `emulate.sh e` — call the kubelet directly (read-only), from inside the control-plane node. Shows the API server records no event. | **built** |
+| TRR9002.K8S.F | `emulate.sh f` — read the kubelet `/runningpods/` and `/pods` endpoints through `nodes/proxy` as a service account (`trr9002-node-reader`) that holds only `get` on `nodes/proxy`. Does not call `/checkpoint` live. | **built** |
 
 ## Detections
 
@@ -517,13 +628,14 @@ Atomic Red Team wrapper in
 | 2 (fallback) | C | [`detections/sigma/T1609/k8s_pod_ephemeral_container.yml`](../../../detections/sigma/T1609/k8s_pod_ephemeral_container.yml) | API server audit log |
 | 3 (fallback) | D | [`detections/sigma/T1609/k8s_node_proxy_exec.yml`](../../../detections/sigma/T1609/k8s_node_proxy_exec.yml) | API server audit log |
 | 4 (fallback) | E; confirms A, D | none; depends on the sensor | node runtime sensor |
+| 5 (fallback) | F | [`detections/sigma/T1609/k8s_node_proxy_kubelet_api.yml`](../../../detections/sigma/T1609/k8s_node_proxy_kubelet_api.yml) | API server audit log |
 
 The auditd validator (`detections/validate_detections.py`) replays syscall
 atomics and cannot test these rules. The Kubernetes loop has its own validator,
 [`detections/validate_k8s_detections.py`](../../../detections/validate_k8s_detections.py):
 it reads the API server audit log the emulation produced and asserts each Sigma
 rule above matches an event from the emulation itself (one naming the target
-pod). The workflow
+pod, or for F the `trr9002-node-reader` service account). The workflow
 [`validate-k8s-detections.yml`](../../../.github/workflows/validate-k8s-detections.yml)
 runs the whole loop on a `kind` cluster for every change to these files, and
 runs the validator as a negative control on the audit log captured before the
@@ -538,7 +650,14 @@ the same chokepoints as Strategies 1 and 2; Elastic "Kubernetes User Exec into P
 matches exec only (`get` and `create`). Prior emulation: Atomic Red Team T1609 test 1
 ("ExecIntoContainer", `kubectl exec`) is Procedure A. ATT&CK v20 also gives
 T1059.013 (Container CLI/API, analytic AN0233 names `kubectl exec`), so the exec and
-node-proxy rules carry `attack.t1059.013` as a secondary tag.
+node-proxy exec rules carry `attack.t1059.013` as a secondary tag. The Procedure F
+rule (`k8s_node_proxy_kubelet_api.yml`) maps to T1613 (Container and Resource
+Discovery, analytic AN1352) for the `/pods` and `/runningpods` reads and T1552.007
+(Container API, analytic AN0571) for `/checkpoint`, and keeps `attack.t1609` as the
+folder/surface tag. The nearest prior art is Stratus Red Team
+`k8s.privilege-escalation.nodes-proxy` (emulation) and Elastic
+`privilege_escalation_api_proxy_to_node.toml` (an allowlist-shaped rule on the same
+subresource).
 
 Upstream: propose a change to the SigmaHQ rule
 `kubernetes_audit_exec_into_container.yml` so that it matches `verb: get` as
@@ -569,6 +688,34 @@ well as `verb: create`.
   <https://github.com/kubernetes/kubernetes/blob/master/pkg/registry/core/pod/rest/subresources.go>
 - Kubernetes source, kubelet request attributes (endpoint to `nodes/proxy`):
   <https://github.com/kubernetes/kubernetes/blob/master/pkg/kubelet/server/auth.go>
+- Kubernetes source (v1.36.4), kubelet HTTP routes (`/pods`, `/runningpods/`,
+  `/checkpoint/`):
+  <https://github.com/kubernetes/kubernetes/blob/v1.36.4/pkg/kubelet/server/server.go>
+- Kubernetes source (v1.36.4), kubelet method-to-verb map (`POST`->`create`)
+  and endpoint-to-subresource map (`/checkpoint` to `checkpoint`; `/pods` and
+  `/runningPods` to `pods` and `proxy`):
+  <https://github.com/kubernetes/kubernetes/blob/v1.36.4/pkg/kubelet/server/auth.go>
+- Kubernetes source (v1.36.4), the audit-record verb (`GET`->`get`,
+  `POST`->`create`) and the path split that sets `objectRef`:
+  <https://github.com/kubernetes/kubernetes/blob/v1.36.4/staging/src/k8s.io/apiserver/pkg/endpoints/request/requestinfo.go>
+- Kubernetes source (v1.36.4), the node proxy path join
+  (`net.JoinPreservingTrailingSlash`, which calls `path.Join`):
+  <https://github.com/kubernetes/kubernetes/blob/v1.36.4/pkg/registry/core/node/rest/proxy.go>
+  and <https://github.com/kubernetes/kubernetes/blob/v1.36.4/staging/src/k8s.io/apimachinery/pkg/util/net/http.go>
+- Kubernetes source (v1.36.4), `GetRunningPods` and `ToAPIPod`, the fields
+  `/runningpods/` returns (pod UID, name, namespace; container name and image):
+  <https://github.com/kubernetes/kubernetes/blob/v1.36.4/pkg/kubelet/kubelet_getters.go>
+  and <https://github.com/kubernetes/kubernetes/blob/v1.36.4/pkg/kubelet/container/runtime.go>
+- Kubernetes documentation, Forensic Container Checkpointing (the
+  `ContainerCheckpoint` feature, beta and on by default; the kubelet
+  `/checkpoint` endpoint is a `POST`):
+  <https://kubernetes.io/docs/reference/node/kubelet-checkpoint-api/>
+- Stratus Red Team, `k8s.privilege-escalation.nodes-proxy` (reads
+  `/runningpods/` through `nodes/proxy`):
+  <https://stratus-red-team.cloud/attack-techniques/kubernetes/k8s.privilege-escalation.nodes-proxy/>
+- Elastic rule, Kubernetes API Server Proxying Request to Kubelet
+  (`privilege_escalation_api_proxy_to_node.toml`):
+  <https://github.com/elastic/detection-rules/blob/main/rules/integrations/kubernetes/privilege_escalation_api_proxy_to_node.toml>
 - Kubernetes source, `kubectl debug` (`PATCH` to `ephemeralcontainers`):
   <https://github.com/kubernetes/kubernetes/blob/master/staging/src/k8s.io/kubectl/pkg/cmd/debug/debug.go>
 - Graham Helton, `nodes/proxy` GET to command execution through the kubelet:

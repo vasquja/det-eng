@@ -467,8 +467,9 @@ The Kubernetes rules (`sigma/T1609/`) key on the API server **audit log**, not
 on syscalls, so they have their own layer stack and validator:
 
 1. **Emulation** (`atomics/T1609/`) — `emulate.sh` runs the benign command `id`
-   through each control path (exec, attach, ephemeral container, node proxy,
-   direct kubelet).
+   through each control path (exec, attach, ephemeral container, node proxy),
+   makes one read-only direct kubelet call, and reads the kubelet pod lists
+   through the node proxy as a temporary service account (Procedure F).
 2. **Audit policy** (`k8s/audit-policy.yaml`) — makes the telemetry exist. A
    default cluster writes no audit log, so a rule has nothing to match. The
    `k8s/kind-audit-cluster.yaml` config mounts it into a `kind` cluster.
@@ -492,7 +493,8 @@ python3 detections/validate_k8s_detections.py \
 The audit log is flattened to the dotted field names the rules use
 (`objectRef.resource`, `user.username`, ...) and each rule runs through the
 same pySigma backend as the auditd rules. A rule passes only on an event from
-the emulation itself (one naming the target pod), not on any event in the log.
+the emulation itself (one naming the target pod, or for Procedure F the
+`trr9002-node-reader` service account), not on any event in the log.
 
 `.github/workflows/validate-k8s-detections.yml` runs the whole loop on a `kind`
 cluster for every change to the TRR9002 files, strict: a rule that does not
