@@ -11,7 +11,7 @@ name: validate-apiserver-detections
 #   - TRR9009 (impersonation, T1134):   impersonatedUser presence    -> audit -> Sigma
 #   - TRR9010 (indicator removal, T1070): events, pod/job and namespace deletes -> audit -> Sigma
 #   - TRR9025 (malicious admission webhook, T1546): admissionregistration create + body grade
-#   - TRR9026 (pod port-forward, T1572): pods/portforward subresource -> audit -> Sigma
+#   - TRR9026 (pod port-forward, T1572): pods/portforward subresource and nodes/proxy /portForward/ -> audit -> Sigma
 #   - TRR9027 (cluster DNS poisoning, T1565.001): kube-system DNS ConfigMap write + Corefile grade
 #
 # A kind cluster runs on the ubuntu-latest runner with API server audit logging on

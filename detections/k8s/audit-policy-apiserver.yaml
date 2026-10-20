@@ -52,11 +52,15 @@ rules:
   # --- TRR9026: pod port-forward tunnel at Metadata (resource/subresource/verb) ---
   # The pods subresource is not covered by the pods rule above (audit resource matching
   # is exact), and a port-forward is get (WebSocket) or create (SPDY); Metadata carries
-  # the objectRef.subresource the rule keys on. No request body is needed.
+  # the objectRef.subresource the rule keys on. No request body is needed. nodes/proxy
+  # is pinned here too so Procedure C (port-forward through the node proxy) keeps its
+  # requestURI even if a later None rule drops nodes/proxy reads; without this entry a
+  # request from any caller but the three control-plane accounts in the None rule
+  # below would reach the final Metadata catch-all anyway.
   - level: Metadata
     resources:
       - group: ""
-        resources: ["pods/portforward"]
+        resources: ["pods/portforward", "nodes/proxy"]
 
   # --- TRR9005 + TRR9007: workload controllers at Request (embedded templates) ---
   # TRR9005 keys on batch writes; TRR9007 grades the embedded pod template. Keep

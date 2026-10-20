@@ -14,6 +14,7 @@ key on the same API server audit log (plus one node runtime sensor rule):
   * TRR9010 (T1070, indicator removal)   - events delete/deletecollection + namespace delete
   * TRR9025 (T1546, malicious admission webhook) - admissionregistration create + grade
   * TRR9026 (T1572, pod port-forward)    - pods/portforward subresource (verb-agnostic)
+                                           + nodes/proxy /portForward/ path
   * TRR9027 (T1565.001, cluster DNS poison) - kube-system DNS ConfigMap write + Corefile grade
 
 The loop this proves, for each match-gated rule:
@@ -37,6 +38,7 @@ kindnet privileged pods). The gate is:
     too; a 'list' has no objectRef.name, so the namespace + non-system-caller pair
     is the only gate that spans A/B/C/D).
   * TRR9025 / TRR9026 : objectRef.name begins with 'trr9025-' / 'trr9026-'.
+  * TRR9026 C (nodes/proxy): requestURI contains '/trr9026-' (objectRef.name is the node).
   * TRR9008 D (scale): objectRef.name begins with 'trr9008-' AND objectRef.subresource
     is 'scale' (the kubectl scale write, which the audit policy must log at Request).
   * TRR9027: objectRef.name is a cluster-DNS ConfigMap (coredns / kube-dns /
@@ -115,6 +117,16 @@ def job_label_prefix(prefix):
     def gate(e):
         return (e.get("labels.batch.kubernetes.io/job-name") or "").startswith(prefix)
     gate.describe = f"labels.batch.kubernetes.io/job-name begins with {prefix!r}"
+    return gate
+
+
+def uri_contains(sub):
+    """A record whose requestURI contains `sub`. For a nodes/proxy request objectRef.name
+    is the NODE name, not the emulation's target, so the emulation's marker rides in the
+    requestURI (the kubelet path), which is the only field that names the target pod."""
+    def gate(e):
+        return sub in (e.get("requestURI") or "")
+    gate.describe = f"requestURI contains {sub!r}"
     return gate
 
 
@@ -272,6 +284,9 @@ MANIFEST = [
      "malicious webhook grader: clientConfig.url (Request)", name_prefix("trr9025-")),
     ("T1572", "k8s_pod_portforward.yml", "audit", "9026 A-B",
      "pod port-forward chokepoint (verb-agnostic subresource)", name_prefix("trr9026-")),
+    ("T1572", "k8s_node_proxy_portforward.yml", "audit", "9026 C proxy",
+     "port-forward through nodes/proxy (requestURI /proxy/portForward/; objectRef.name is "
+     "the node, so gate on the marker in requestURI)", uri_contains("/trr9026-")),
     ("T1565.001", "k8s_coredns_configmap_modified.yml", "audit", "9027 A",
      "cluster DNS ConfigMap write chokepoint: coredns patch", coredns_gate_modified("coredns")),
     ("T1565.001", "k8s_coredns_configmap_modified.yml", "audit", "9027 B",

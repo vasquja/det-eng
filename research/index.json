@@ -974,10 +974,11 @@
       "procedures": {
         "A": "Port-forward over SPDY",
         "B": "Port-forward over WebSocket",
-        "C": "Direct-kubelet / nodes-proxy tunnel"
+        "C": "Port-forward through the node proxy",
+        "D": "Direct-kubelet tunnel"
       },
       "pub_date": "2026-10-14",
-      "last_update": "2026-10-14",
+      "last_update": "2026-10-20",
       "path": "trr9026/k8s/README.md",
       "tests": {
         "A": {
@@ -989,6 +990,10 @@
           "url": "../atomics/T1572/src/emulate.sh"
         },
         "C": {
+          "text": "det-eng nodes/proxy port-forward behavioral emulation (requestURI /proxy/portForward/)",
+          "url": "../atomics/T1572/src/emulate.sh"
+        },
+        "D": {
           "text": "det-eng direct-kubelet port-forward gap statement (read-only; makes no kubelet call)",
           "url": "../atomics/T1572/src/emulate.sh"
         }
