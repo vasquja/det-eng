@@ -37,13 +37,13 @@ current set:
 TRR      Platform    ATT&CK           Sigma rule files                         atomics
 -----------------------------------------------------------------------------------------------
 TRR9001  Linux       T1040            afinet_raw_socket.yml (+2)               T1040
-TRR9002  Kubernetes  T1609            k8s_node_proxy_exec.yml (+2)             T1609
+TRR9002  Kubernetes  T1609            k8s_node_proxy_exec.yml (+3)             T1609
 TRR9003  Kubernetes  T1543.005        k8s_cri_static_pod_start.yml (+2)        T1543.005
-TRR9004  Kubernetes  T1098.006        k8s_rbac_privileged_grant.yml (+1)       T1098.006
+TRR9004  Kubernetes  T1098.006        k8s_eks_aws_auth_configmap_modified.yml (+3) T1098.006
 TRR9005  Kubernetes  T1053.007        k8s_cri_job_pod.yml (+1)                 T1053.007
 TRR9006  Kubernetes  T1552.007        k8s_secret_access.yml (+2)               T1552.007
 TRR9007  Kubernetes  T1611            k8s_podspec_confinement_disabled.yml (+3) T1611
-TRR9008  Kubernetes  T1685            io_uring_setup.yml (+3)                  T1685
+TRR9008  Kubernetes  T1685            io_uring_setup.yml (+4)                  T1685
 TRR9009  Kubernetes  T1134            k8s_impersonation.yml (+1)               T1134
 TRR9010  Kubernetes  T1070,T1070.004  k8s_events_deleted.yml (+2)              T1070
 TRR9011  AWS         T1552.005        aws_imds_creds_used_off_instance.yml     T1552.005
@@ -60,11 +60,11 @@ TRR9021  AWS         T1537            aws_efs_file_system_policy_made_public.yml
 TRR9023  Azure       T1078.004,T1550.001 aws_cognito_identity_pool_unauth_enabled.yml (+5) T1078.004,T1550.001
 TRR9022  AWS         T1550.001,T1078.004 aws_cognito_identity_pool_unauth_enabled.yml (+5) T1078.004,T1550.001
 TRR9024  Linux       T1014            bpf_prog_load.yml                        T1014
-TRR9025  Kubernetes  T1546            k8s_admission_webhook_created.yml (+1)   T1546
-TRR9026  Kubernetes  T1572            k8s_pod_portforward.yml                  T1572
+TRR9025  Kubernetes  T1546            k8s_admission_webhook_created.yml (+2)   T1546
+TRR9026  Kubernetes  T1572            k8s_node_proxy_portforward.yml (+1)      T1572
 TRR9027  Kubernetes  T1565.001        k8s_coredns_configmap_modified.yml (+1)  T1565.001
 -----------------------------------------------------------------------------------------------
-27 TRRs | 69 Sigma rule files | 25 atomic technique dirs
+27 TRRs | 76 Sigma rule files | 25 atomic technique dirs
 ```
 
 The "Sigma rule files" column shows the alphabetically-first file across the TRR's ATT&CK

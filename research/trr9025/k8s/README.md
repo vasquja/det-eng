@@ -358,7 +358,7 @@ shape (also on the shapes that Strategy 3 cannot grade, listed in the gaps below
   attacker-run in-cluster Service) carries no URL, and a JSON-patch `copy` or `move`
   that takes the URL from another webhook carries no URL in the request either; both
   fire only the TRR9008 chokepoint. Tracked as
-  [RULE_DEFECTS KTBD-C1](../../../detections/RULE_DEFECTS.md#ktbd-c1-k8s_admission_webhook_repointed_to_url-a-service-to-service-repoint-or-a-json-patch-copymove).
+  [RULE_DEFECTS K22](../../../detections/RULE_DEFECTS.md#k22-k8s_admission_webhook_repointed_to_url-a-service-to-service-repoint-or-a-json-patch-copymove).
 - **Service-side takeover.** A change to the webhook's backing Service (its selector,
   or a change to type `ExternalName`) moves the webhook's traffic without any
   `admissionregistration.k8s.io` write. The API server's default webhook resolver sends
@@ -373,7 +373,7 @@ shape (also on the shapes that Strategy 3 cannot grade, listed in the gaps below
   because the audit backend cannot encode the raw body as JSON. No rule sees that
   install or repoint; the fallback is the kube-apiserver error line and the
   `apiserver_audit_error_total` metric. Tracked as
-  [RULE_DEFECTS KTBD-C2](../../../detections/RULE_DEFECTS.md#ktbd-c2-admission-object-apply-patches-with-a-yaml-body-no-audit-record).
+  [RULE_DEFECTS K23](../../../detections/RULE_DEFECTS.md#k23-admission-object-apply-patches-with-a-yaml-body-no-audit-record).
 - **Control-plane bypass.** An adversary with control-plane node or etcd access can
   write a webhook configuration straight into etcd, with no API `create` and no audit
   event. The lab demonstrates this read-only (it shows that a node-local etcd write

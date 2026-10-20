@@ -15,7 +15,7 @@ description: |
   (an update or patch answered 200) is not a create, so this grader does not fire on
   it; k8s_admission_webhook_repointed_to_url.yml grades that. An apply patch whose body
   is YAML, not JSON (kubectl and client-go send JSON), is not in the audit log at
-  Request level or higher, so no rule sees that install (KTBD-C2).
+  Request level or higher, so no rule sees that install (K23).
 
   URL mode is the single non-spoofable, low-false-positive discriminator:
   a legitimate webhook (cert-manager, Gatekeeper, Kyverno, a sidecar injector) almost

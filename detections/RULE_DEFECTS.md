@@ -49,15 +49,15 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [K14](#k14-k8s_namespace_deleted-a-query-dry-run-at-metadata-level) | `T1070/k8s_namespace_deleted` | at Metadata level a real delete that carries `?dryRun=All` next to a body is filtered | evasion | medium |
 | [K16](#k16-k8s_impersonation-an-impersonation-request-without-a-user-header) | `T1134/k8s_impersonation` | on v1.34 and earlier, `Impersonate-Group`/`-Uid`/`-Extra` without `Impersonate-User` is a 500 with no trace (unverified live) | false negative | low |
 | [K17](#k17-k8s_rbac_privileged_grant-the-wildcard-clause-fires-on-bootstrap-and-read-only-roles) | `T1098.006/k8s_rbac_privileged_grant` | the `"*"` clause fires on the bootstrap controller roles and on read-only wildcard roles | false positive | low |
-| [KTBD-C1](#ktbd-c1-k8s_admission_webhook_repointed_to_url-a-service-to-service-repoint-or-a-json-patch-copymove) | `T1546/k8s_admission_webhook_repointed_to_url` | a repoint to another in-cluster Service, or a JSON-patch copy/move, carries no URL | false negative | low |
-| [KTBD-C2](#ktbd-c2-admission-object-apply-patches-with-a-yaml-body-no-audit-record) | `T1546/k8s_admission_webhook_repointed_to_url`, `k8s_admission_webhook_created`, `k8s_malicious_admission_webhook_created`, `T1685/k8s_admission_webhook_disabled` | an apply patch with a YAML body is dropped from the audit log at Request level or higher | policy gap | medium |
-| [KTBD-D1](#ktbd-d1-k8s_podspec_confinement_disabled-per-container-annotations-keyed-by-container-name) | `T1611/k8s_podspec_confinement_disabled` | a per-container seccomp/AppArmor annotation in a pod or controller body written outside `kubectl apply` is keyed by container name and not graded (a JSON patch is graded) | false negative | low |
-| [KTBD-D2](#ktbd-d2-k8s_podspec_confinement_disabled-selinux-type-outside-the-baseline-list) | `T1611/k8s_podspec_confinement_disabled` | SELinux `seLinuxOptions.type` set to `spc_t` (or another type off the Baseline list) also removes confinement and is not graded | false negative | low |
-| [KTBD-E1](#ktbd-e1-k8s_rbac_sensitive_permission_grant-the-bootstrap-roles-fire) | `T1098.006/k8s_rbac_sensitive_permission_grant` | the built-in roles the API server writes at bootstrap (system:aggregate-to-edit, system:node, system:kube-controller-manager) fire | false positive | low |
-| [KTBD-E2](#ktbd-e2-k8s_rbac_sensitive_permission_grant-residual-blind-spots) | `T1098.006/k8s_rbac_sensitive_permission_grant` | a JSON-patch operation list is not read; pods/ephemeralcontainers and resourceNames are not graded; a bind to an existing sensitive role is not graded here | false negative | low |
-| [KTBD-E3](#ktbd-e3-k8s_eks_aws_auth_configmap_modified-chokepoint-residuals) | `T1098.006/k8s_eks_aws_auth_configmap_modified` | a denied create logs no objectRef.name; a server-side apply with a YAML body is dropped by the JSON audit backend | false negative | low |
-| [KTBD-F1](#ktbd-f1-t1685-enforcer-removal-rules-a-daemonset-unscheduled-by-its-pod-template) | `T1685/k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed` | a DaemonSet (Falco) whose pod template gets a nodeSelector, affinity or nodeName that no node matches loses every pod, and neither rule fires | false negative | medium |
-| [KTBD-F4](#ktbd-f4-t1685-enforcer-removal-rules-a-null-strategic-merge-directive-next-to-a-count) | `T1685/k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed` | a strategic merge patch of deployments/scale with a count above 0 and a null `$deleteFromPrimitiveList/replicas` (or `/spec`) scales to 0, and neither rule fires | false negative | low |
+| [K22](#k22-k8s_admission_webhook_repointed_to_url-a-service-to-service-repoint-or-a-json-patch-copymove) | `T1546/k8s_admission_webhook_repointed_to_url` | a repoint to another in-cluster Service, or a JSON-patch copy/move, carries no URL | false negative | low |
+| [K23](#k23-admission-object-apply-patches-with-a-yaml-body-no-audit-record) | `T1546/k8s_admission_webhook_repointed_to_url`, `k8s_admission_webhook_created`, `k8s_malicious_admission_webhook_created`, `T1685/k8s_admission_webhook_disabled` | an apply patch with a YAML body is dropped from the audit log at Request level or higher | policy gap | medium |
+| [K24](#k24-k8s_podspec_confinement_disabled-per-container-annotations-keyed-by-container-name) | `T1611/k8s_podspec_confinement_disabled` | a per-container seccomp/AppArmor annotation in a pod or controller body written outside `kubectl apply` is keyed by container name and not graded (a JSON patch is graded) | false negative | low |
+| [K25](#k25-k8s_podspec_confinement_disabled-selinux-type-outside-the-baseline-list) | `T1611/k8s_podspec_confinement_disabled` | SELinux `seLinuxOptions.type` set to `spc_t` (or another type off the Baseline list) also removes confinement and is not graded | false negative | low |
+| [K26](#k26-k8s_rbac_sensitive_permission_grant-the-bootstrap-roles-fire) | `T1098.006/k8s_rbac_sensitive_permission_grant` | the built-in roles the API server writes at bootstrap (system:aggregate-to-edit, system:node, system:kube-controller-manager) fire | false positive | low |
+| [K27](#k27-k8s_rbac_sensitive_permission_grant-residual-blind-spots) | `T1098.006/k8s_rbac_sensitive_permission_grant` | a JSON-patch operation list is not read; pods/ephemeralcontainers and resourceNames are not graded; a bind to an existing sensitive role is not graded here | false negative | low |
+| [K28](#k28-k8s_eks_aws_auth_configmap_modified-chokepoint-residuals) | `T1098.006/k8s_eks_aws_auth_configmap_modified` | a denied create logs no objectRef.name; a server-side apply with a YAML body is dropped by the JSON audit backend | false negative | low |
+| [K29](#k29-t1685-enforcer-removal-rules-a-daemonset-unscheduled-by-its-pod-template) | `T1685/k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed` | a DaemonSet (Falco) whose pod template gets a nodeSelector, affinity or nodeName that no node matches loses every pod, and neither rule fires | false negative | medium |
+| [K32](#k32-t1685-enforcer-removal-rules-a-null-strategic-merge-directive-next-to-a-count) | `T1685/k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed` | a strategic merge patch of deployments/scale with a count above 0 and a null `$deleteFromPrimitiveList/replicas` (or `/spec`) scales to 0, and neither rule fires | false negative | low |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
@@ -252,62 +252,7 @@ whether `arping` belongs in the allowlist.
 - **Then**: the near-miss and filtered cases hold; the live shadow count drops by the
   read-only roles with the first part, and to the non-bootstrap writes with both.
 
-### KTBD-D1. k8s_podspec_confinement_disabled: per-container annotations keyed by container name
-
-- **Rule**: [`sigma/T1611/k8s_podspec_confinement_disabled.yml`](sigma/T1611/k8s_podspec_confinement_disabled.yml) (level medium).
-- **Kind**: false negative. **Severity**: low.
-- **Problem**: the deprecated per-container AppArmor annotation
-  `container.apparmor.security.beta.kubernetes.io/<container>: unconfined` is still
-  honoured: the API server copies it to the container's `appArmorProfile` field in
-  `PrepareForCreate` (`applyAppArmorVersionSkew`, `pkg/registry/core/pod/strategy.go`),
-  which runs AFTER `audit.LogRequestObject` writes the request body
-  (`staging/src/k8s.io/apiserver/pkg/endpoints/handlers/create.go`), so the body holds
-  only the annotation. The annotation key carries the container name, and a Sigma field
-  name cannot be a pattern, so in a pod or controller body (a create, an update, or a
-  strategic-merge or merge patch) the rule reads these annotations only through kubectl's
-  fixed-key `last-applied-configuration` (`sel_last_applied`). A pod or template written
-  another way with that annotation is not seen: a raw client, server-side apply, and the
-  pod create that a ReplicaSet, DaemonSet or Job controller makes from such a template.
-  A JSON patch is graded, because its operation list is one text field
-  (`sel_jp_conf_annotation`). The non-functional per-container seccomp annotation
-  (`container.seccomp.security.alpha.kubernetes.io/<container>`) has the same shape.
-- **Evidence**: *source* — `applyAppArmorVersionSkew` in `pkg/registry/core/pod/strategy.go`
-  at tag v1.36.4; *case* — KNOWN MISS confounder
-  `replicaset-pod-create-apparmor-annotation-only` (a controller pod create that carries
-  only the annotation); positives `apparmor-container-annotation-via-kubectl-apply` and
-  `deployment-apparmor-annotation-via-kubectl-apply` (the `kubectl apply` path), and
-  `deployment-apparmor-annotation-map-jsonpatch` and
-  `deployment-apparmor-annotation-leaf-jsonpatch` (the JSON-patch path).
-- **Fix**: none in Sigma for a non-JSON-patch body with the current log shape: it needs a
-  pipeline that keeps `metadata.annotations` as one JSON text (so a `|re` can read the
-  per-container key), or `RequestResponse` for pods so the copied `appArmorProfile` field
-  appears in `responseObject` (a human decision: log volume).
-- **Then**: the confounder `replicaset-pod-create-apparmor-annotation-only` fires;
-  relabelling it as a positive is a human decision under the sufficiency ratchet.
-
-### KTBD-D2. k8s_podspec_confinement_disabled: SELinux type outside the Baseline list
-
-- **Rule**: [`sigma/T1611/k8s_podspec_confinement_disabled.yml`](sigma/T1611/k8s_podspec_confinement_disabled.yml) (level medium).
-- **Kind**: false negative. **Severity**: low.
-- **Problem**: setting `securityContext.seLinuxOptions.type` to `spc_t` (the SELinux
-  "super-privileged container" type) or another type outside the Pod Security Baseline
-  allow-list also removes a confinement layer, and the rule grades only seccomp and
-  AppArmor. The Baseline allows only an empty type, `container_t`, `container_init_t`,
-  `container_kvm_t` and, since policy version v1.31, `container_engine_t`; an off-list
-  type is a Baseline violation like Unconfined.
-- **Evidence**: *source* — kubernetes v1.36.4
-  `staging/src/k8s.io/pod-security-admission/policy/check_seLinuxOptions.go`
-  (`selinuxAllowedTypes1_0` and `selinuxAllowedTypes1_31`); *case* — KNOWN MISS
-  confounder `selinux-spc-t-not-graded` (a pod with `seLinuxOptions.type: spc_t` that the
-  rule does not fire on).
-- **Fix**: a possible branch on `requestObject.spec*.securityContext.seLinuxOptions.type`
-  (and the container lists) against the types outside the Baseline allow-list, with its
-  own positives and near-misses. Deferred: SELinux is enforced only on SELinux nodes, so
-  the value differs from the seccomp/AppArmor layer this rule anchors on.
-- **Then**: the confounder `selinux-spc-t-not-graded` fires; relabelling it as a positive
-  is a human decision under the sufficiency ratchet.
-
-### KTBD-C1. k8s_admission_webhook_repointed_to_url: a service-to-service repoint, or a JSON-patch copy/move
+### K22. k8s_admission_webhook_repointed_to_url: a service-to-service repoint, or a JSON-patch copy/move
 
 - **Rule**: [`sigma/T1546/k8s_admission_webhook_repointed_to_url.yml`](sigma/T1546/k8s_admission_webhook_repointed_to_url.yml) (level high).
 - **Kind**: false negative. **Severity**: low.
@@ -337,7 +282,7 @@ whether `arping` belongs in the allowlist.
   RequestResponse). Not built yet: it reads the stored object, not the request, so it
   needs RequestResponse level and a case that proves it.
 
-### KTBD-C2. Admission-object apply patches with a YAML body: no audit record
+### K23. Admission-object apply patches with a YAML body: no audit record
 
 - **Rules**: [`sigma/T1546/k8s_admission_webhook_repointed_to_url.yml`](sigma/T1546/k8s_admission_webhook_repointed_to_url.yml) (level high),
   [`sigma/T1546/k8s_admission_webhook_created.yml`](sigma/T1546/k8s_admission_webhook_created.yml) (medium),
@@ -370,7 +315,62 @@ whether `arping` belongs in the allowlist.
 - **Then**: a recorded YAML-bodied apply patch of a webhook configuration fires the
   repoint grader (patch answered 200) or both create rules (patch answered 201).
 
-### KTBD-E1. k8s_rbac_sensitive_permission_grant: the bootstrap roles fire
+### K24. k8s_podspec_confinement_disabled: per-container annotations keyed by container name
+
+- **Rule**: [`sigma/T1611/k8s_podspec_confinement_disabled.yml`](sigma/T1611/k8s_podspec_confinement_disabled.yml) (level medium).
+- **Kind**: false negative. **Severity**: low.
+- **Problem**: the deprecated per-container AppArmor annotation
+  `container.apparmor.security.beta.kubernetes.io/<container>: unconfined` is still
+  honoured: the API server copies it to the container's `appArmorProfile` field in
+  `PrepareForCreate` (`applyAppArmorVersionSkew`, `pkg/registry/core/pod/strategy.go`),
+  which runs AFTER `audit.LogRequestObject` writes the request body
+  (`staging/src/k8s.io/apiserver/pkg/endpoints/handlers/create.go`), so the body holds
+  only the annotation. The annotation key carries the container name, and a Sigma field
+  name cannot be a pattern, so in a pod or controller body (a create, an update, or a
+  strategic-merge or merge patch) the rule reads these annotations only through kubectl's
+  fixed-key `last-applied-configuration` (`sel_last_applied`). A pod or template written
+  another way with that annotation is not seen: a raw client, server-side apply, and the
+  pod create that a ReplicaSet, DaemonSet or Job controller makes from such a template.
+  A JSON patch is graded, because its operation list is one text field
+  (`sel_jp_conf_annotation`). The non-functional per-container seccomp annotation
+  (`container.seccomp.security.alpha.kubernetes.io/<container>`) has the same shape.
+- **Evidence**: *source* — `applyAppArmorVersionSkew` in `pkg/registry/core/pod/strategy.go`
+  at tag v1.36.4; *case* — KNOWN MISS confounder
+  `replicaset-pod-create-apparmor-annotation-only` (a controller pod create that carries
+  only the annotation); positives `apparmor-container-annotation-via-kubectl-apply` and
+  `deployment-apparmor-annotation-via-kubectl-apply` (the `kubectl apply` path), and
+  `deployment-apparmor-annotation-map-jsonpatch` and
+  `deployment-apparmor-annotation-leaf-jsonpatch` (the JSON-patch path).
+- **Fix**: none in Sigma for a non-JSON-patch body with the current log shape: it needs a
+  pipeline that keeps `metadata.annotations` as one JSON text (so a `|re` can read the
+  per-container key), or `RequestResponse` for pods so the copied `appArmorProfile` field
+  appears in `responseObject` (a human decision: log volume).
+- **Then**: the confounder `replicaset-pod-create-apparmor-annotation-only` fires;
+  relabelling it as a positive is a human decision under the sufficiency ratchet.
+
+### K25. k8s_podspec_confinement_disabled: SELinux type outside the Baseline list
+
+- **Rule**: [`sigma/T1611/k8s_podspec_confinement_disabled.yml`](sigma/T1611/k8s_podspec_confinement_disabled.yml) (level medium).
+- **Kind**: false negative. **Severity**: low.
+- **Problem**: setting `securityContext.seLinuxOptions.type` to `spc_t` (the SELinux
+  "super-privileged container" type) or another type outside the Pod Security Baseline
+  allow-list also removes a confinement layer, and the rule grades only seccomp and
+  AppArmor. The Baseline allows only an empty type, `container_t`, `container_init_t`,
+  `container_kvm_t` and, since policy version v1.31, `container_engine_t`; an off-list
+  type is a Baseline violation like Unconfined.
+- **Evidence**: *source* — kubernetes v1.36.4
+  `staging/src/k8s.io/pod-security-admission/policy/check_seLinuxOptions.go`
+  (`selinuxAllowedTypes1_0` and `selinuxAllowedTypes1_31`); *case* — KNOWN MISS
+  confounder `selinux-spc-t-not-graded` (a pod with `seLinuxOptions.type: spc_t` that the
+  rule does not fire on).
+- **Fix**: a possible branch on `requestObject.spec*.securityContext.seLinuxOptions.type`
+  (and the container lists) against the types outside the Baseline allow-list, with its
+  own positives and near-misses. Deferred: SELinux is enforced only on SELinux nodes, so
+  the value differs from the seccomp/AppArmor layer this rule anchors on.
+- **Then**: the confounder `selinux-spc-t-not-graded` fires; relabelling it as a positive
+  is a human decision under the sufficiency ratchet.
+
+### K26. k8s_rbac_sensitive_permission_grant: the bootstrap roles fire
 
 - **Rule**: [`sigma/T1098.006/k8s_rbac_sensitive_permission_grant.yml`](sigma/T1098.006/k8s_rbac_sensitive_permission_grant.yml) (level medium).
 - **Kind**: false positive. **Severity**: low.
@@ -413,7 +413,7 @@ whether `arping` belongs in the allowlist.
   When K17's `user.username: system:apiserver` filter lands, add it here too, with a
   filtered case; Elastic's loopback source-IP exclusion is the alternative.
 
-### KTBD-E2. k8s_rbac_sensitive_permission_grant: residual blind spots
+### K27. k8s_rbac_sensitive_permission_grant: residual blind spots
 
 - **Rule**: [`sigma/T1098.006/k8s_rbac_sensitive_permission_grant.yml`](sigma/T1098.006/k8s_rbac_sensitive_permission_grant.yml) (level medium).
 - **Kind**: false negative. **Severity**: low.
@@ -451,7 +451,7 @@ whether `arping` belongs in the allowlist.
   positives and near-misses, if the coverage proves worth the complexity at this
   severity. (3) and (4) are by design.
 
-### KTBD-E3. k8s_eks_aws_auth_configmap_modified: chokepoint residuals
+### K28. k8s_eks_aws_auth_configmap_modified: chokepoint residuals
 
 - **Rule**: [`sigma/T1098.006/k8s_eks_aws_auth_configmap_modified.yml`](sigma/T1098.006/k8s_eks_aws_auth_configmap_modified.yml) (level medium).
 - **Kind**: false negative. **Severity**: low.
@@ -487,7 +487,7 @@ whether `arping` belongs in the allowlist.
   backstop for the dropped-event case; the denied-create case is by design (the
   record simply lacks the identity to key on). Both are documented, not fixed in Sigma.
 
-### KTBD-F1. T1685 enforcer-removal rules: a DaemonSet unscheduled by its pod template
+### K29. T1685 enforcer-removal rules: a DaemonSet unscheduled by its pod template
 
 - **Rules**: [`sigma/T1685/k8s_enforcer_workload_removed.yml`](sigma/T1685/k8s_enforcer_workload_removed.yml) (level high),
   [`sigma/T1685/k8s_security_tool_workload_removed.yml`](sigma/T1685/k8s_security_tool_workload_removed.yml) (level low).
@@ -517,7 +517,7 @@ whether `arping` belongs in the allowlist.
 - **Then**: the two KNOWN MISS confounders become positives (a relabel, which
   `sufficiency-ratchet` sends to a human), with near-misses in another namespace.
 
-### KTBD-F4. T1685 enforcer-removal rules: a null strategic merge directive next to a count
+### K32. T1685 enforcer-removal rules: a null strategic merge directive next to a count
 
 - **Rules**: [`sigma/T1685/k8s_enforcer_workload_removed.yml`](sigma/T1685/k8s_enforcer_workload_removed.yml) (level high),
   [`sigma/T1685/k8s_security_tool_workload_removed.yml`](sigma/T1685/k8s_security_tool_workload_removed.yml) (level low).
@@ -643,8 +643,8 @@ points here.
 | K19 | `T1685/k8s_security_tool_workload_removed` retitled as a generic Deployment or DaemonSet anchor (its title claimed security tools only); matches only accepted (200/201/202) writes and filters the dry runs the record shows (the `?dryRun=All` query of an update or patch; the DeleteOptions body of a delete at Request level) | near-misses `delete-deployment-forbidden`, `delete-deployment-not-found`; filtered `delete-deployment-dry-run-body`, `scale-to-zero-patch-dry-run-query`, `kubectl-scale-zero-dry-run` |
 | K20 | `T1134/k8s_impersonation` matches the v1.36 constrained-impersonation refusals (`cannot impersonate:<mode>`, `cannot impersonate-on:<mode>:<verb>`), not only the legacy `cannot impersonate resource` | positives `denied-serviceaccount-impersonation-probe-constrained`, `denied-user-impersonation-probe-constrained`, `constrained-impersonation-username-check-denied` |
 | K21 | both TRR9025 create rules (`k8s_admission_webhook_created`, `k8s_malicious_admission_webhook_created`) match `verb: create` OR (`verb: patch` AND `responseStatus.code: 201`), so a server-side-apply install (a patch answered 201) fires both; the chokepoint's CHOKEPOINT waiver digest was re-approved | positives `ssa-create-webhook-patch-201` (chokepoint) and `ssa-create-offcluster-url-patch-201` (grader); near-misses `ssa-create-patch-answered-200-not-create` and `repoint-offcluster-url-patch-answered-200` (a patch answered 200 is a modify, not a create) |
-| KTBD-F2 | `T1685/k8s_security_tool_workload_removed` (and the new `T1685/k8s_enforcer_workload_removed`) match the scale-to-zero shapes that the anchor missed: an update (PUT) of deployments/scale whose re-encoded autoscaling/v1 Scale omits `spec.replicas` 0 (`kubectl scale --current-replicas`/`--resource-version`); a patch of the scale subresource that sets no count above 0 (a merge or strategic `null`, a JSON-patch `remove`, a replace of `/spec`); a JSON-patch value `-0`; a JSON patch that replaces `/spec` with a spec that holds replicas 0; a strategic merge patch whose count is outside the int32 range (the merge truncates 2^32 to 0); a strategic merge directive that drops or sets the count (`"$patch": "delete"` in spec, a non-null `$deleteFromPrimitiveList/replicas` in spec or `$deleteFromPrimitiveList/spec` at the root; the null form is KTBD-F4) | positives `deployment-smp-replicas-two-to-the-32`, `scale-smp-replicas-two-to-the-32`, `deployment-smp-replicas-minus-two-to-the-32`, `scale-smp-spec-patch-delete-with-count`, `deployment-smp-delete-from-primitive-list-replicas`, `deployment-smp-delete-from-primitive-list-spec`, `deployment-smp-nested-delete-from-primitive-list-alias`, `scale-smp-delete-from-primitive-list-replicas-with-count`, `scale-smp-root-alias-patch-delete-with-count`, `scale-smp-root-alias-retain-keys-with-count` (high rule) and their `anchor-` twins; near-misses `deployment-smp-replicas-three`, `deployment-smp-replicas-two-to-the-32-forbidden`, `deployment-smp-replicas-two-to-the-32-monitoring`, `scale-smp-spec-patch-replace-with-count`, `deployment-smp-delete-from-primitive-list-finalizers`; filtered `deployment-smp-delete-from-primitive-list-replicas-dry-run`; positives `kubectl-scale-zero-update-omitted-replicas`, `anchor-scale-merge-patch-replicas-null`, `anchor-scale-jsonpatch-remove-replicas`, `anchor-scale-jsonpatch-set-count-then-remove`, `anchor-deployment-jsonpatch-replace-spec-replicas-zero`, `anchor-deployment-jsonpatch-value-minus-zero-raw-text`; near-misses `hpa-scale-update-to-three`, `scale-update-metadata-level-no-body`, `anchor-scale-patch-metadata-level-no-body`, `anchor-deployment-merge-patch-replicas-null-defaults-to-one`, `anchor-deployment-jsonpatch-replace-spec-replicas-two`; filtered `kubectl-scale-zero-update-dry-run`, `anchor-kubectl-scale-to-two`, `anchor-scale-jsonpatch-replace-to-three` |
-| KTBD-F3 | `T1685/k8s_security_tool_workload_removed` (and `T1685/k8s_enforcer_workload_removed`) filter a write of a status subresource: the deployment controller's update of deployments/status carries the whole Deployment, with `spec.replicas` 0 after a scale to zero, and fired the rule under a policy that logs every apps subresource at Request | filtered `anchor-deployment-controller-status-update-zero-replicas` (anchor), `deployment-controller-status-update-zero-replicas` (high rule) |
+| K30 | `T1685/k8s_security_tool_workload_removed` (and the new `T1685/k8s_enforcer_workload_removed`) match the scale-to-zero shapes that the anchor missed: an update (PUT) of deployments/scale whose re-encoded autoscaling/v1 Scale omits `spec.replicas` 0 (`kubectl scale --current-replicas`/`--resource-version`); a patch of the scale subresource that sets no count above 0 (a merge or strategic `null`, a JSON-patch `remove`, a replace of `/spec`); a JSON-patch value `-0`; a JSON patch that replaces `/spec` with a spec that holds replicas 0; a strategic merge patch whose count is outside the int32 range (the merge truncates 2^32 to 0); a strategic merge directive that drops or sets the count (`"$patch": "delete"` in spec, a non-null `$deleteFromPrimitiveList/replicas` in spec or `$deleteFromPrimitiveList/spec` at the root; the null form is K32) | positives `deployment-smp-replicas-two-to-the-32`, `scale-smp-replicas-two-to-the-32`, `deployment-smp-replicas-minus-two-to-the-32`, `scale-smp-spec-patch-delete-with-count`, `deployment-smp-delete-from-primitive-list-replicas`, `deployment-smp-delete-from-primitive-list-spec`, `deployment-smp-nested-delete-from-primitive-list-alias`, `scale-smp-delete-from-primitive-list-replicas-with-count`, `scale-smp-root-alias-patch-delete-with-count`, `scale-smp-root-alias-retain-keys-with-count` (high rule) and their `anchor-` twins; near-misses `deployment-smp-replicas-three`, `deployment-smp-replicas-two-to-the-32-forbidden`, `deployment-smp-replicas-two-to-the-32-monitoring`, `scale-smp-spec-patch-replace-with-count`, `deployment-smp-delete-from-primitive-list-finalizers`; filtered `deployment-smp-delete-from-primitive-list-replicas-dry-run`; positives `kubectl-scale-zero-update-omitted-replicas`, `anchor-scale-merge-patch-replicas-null`, `anchor-scale-jsonpatch-remove-replicas`, `anchor-scale-jsonpatch-set-count-then-remove`, `anchor-deployment-jsonpatch-replace-spec-replicas-zero`, `anchor-deployment-jsonpatch-value-minus-zero-raw-text`; near-misses `hpa-scale-update-to-three`, `scale-update-metadata-level-no-body`, `anchor-scale-patch-metadata-level-no-body`, `anchor-deployment-merge-patch-replicas-null-defaults-to-one`, `anchor-deployment-jsonpatch-replace-spec-replicas-two`; filtered `kubectl-scale-zero-update-dry-run`, `anchor-kubectl-scale-to-two`, `anchor-scale-jsonpatch-replace-to-three` |
+| K31 | `T1685/k8s_security_tool_workload_removed` (and `T1685/k8s_enforcer_workload_removed`) filter a write of a status subresource: the deployment controller's update of deployments/status carries the whole Deployment, with `spec.replicas` 0 after a scale to zero, and fired the rule under a policy that logs every apps subresource at Request | filtered `anchor-deployment-controller-status-update-zero-replicas` (anchor), `deployment-controller-status-update-zero-replicas` (high rule) |
 | C13 | `entra_app_federated_credential_backdoor` reads only `newValue`, in any key order | near-misses `fic-with-unapproved-issuer-removed`, `fic-repointed-away-new-value-first` and the other reordered cases |
 | C14 | `aws_resource_policy_made_public` reads a `Statement` that is one object | positives `s3-single-statement-object-public-read`, `sqs-single-statement-object-public-send`, `efs-single-statement-object-public-mount` |
 | C16 | `aws_github_oidc_role_trust_abuse` grades each `sub` value | near-miss `two-subs-pinned-ref-wildcards-grade-high`; positive `two-subs-pinned-ref-wildcards-go-to-high-rule` of the low rule |

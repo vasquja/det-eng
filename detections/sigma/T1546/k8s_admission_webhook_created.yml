@@ -27,7 +27,7 @@ description: |
   in-place repoint of an installed webhook to a url (an update or patch answered 200)
   is not a create; k8s_admission_webhook_repointed_to_url.yml grades that. An apply
   patch whose body is YAML, not JSON (kubectl and client-go send JSON), is not in the
-  audit log at Request level or higher, so no rule sees that install (KTBD-C2).
+  audit log at Request level or higher, so no rule sees that install (K23).
 
   The chokepoint fires at Metadata (verb, apiGroup, and objectRef.name are enough to
   see a create). It cannot tell a benign operator-installed webhook from a malicious

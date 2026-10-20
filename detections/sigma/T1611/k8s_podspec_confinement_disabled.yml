@@ -42,7 +42,7 @@ description: |
   name in the key. A Sigma field name cannot be a pattern, so in a pod or controller body
   the rule reads them only from kubectl's last-applied-configuration annotation, which
   kubectl apply writes with a fixed key. A pod or template created another way with that
-  annotation is not seen (RULE_DEFECTS KTBD-D1). A JSON patch that sets one is graded
+  annotation is not seen (RULE_DEFECTS K24). A JSON patch that sets one is graded
   (below).
 
   A JSON patch (kubectl patch --type=json) logs requestObject as the operation list, so

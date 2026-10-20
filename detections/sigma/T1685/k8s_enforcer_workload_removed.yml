@@ -60,7 +60,7 @@ description: |
     path, value, as kubectl sends them). A directive with a null value cannot be
     seen in the record, so a Scale patch that holds a count above 0 and also a null
     "$deleteFromPrimitiveList/replicas" (or "$deleteFromPrimitiveList/spec") does
-    not fire (detections/RULE_DEFECTS.md KTBD-F4).
+    not fire (detections/RULE_DEFECTS.md K32).
   Every scale shape needs the request body, so the record needs Request level: the
   shipped detections/k8s/audit-policy-apiserver.yaml lists deployments/scale at
   Request. A write of the status subresource cannot change spec.replicas, so it is
@@ -72,7 +72,7 @@ description: |
   (of the DaemonSet or of its namespace) fires. A patch that gives the pod template a
   nodeSelector, a node affinity or a nodeName that no node matches makes the
   DaemonSet controller delete every Falco pod, and this rule does not match it
-  (detections/RULE_DEFECTS.md KTBD-F1). The rule sees only the workload and
+  (detections/RULE_DEFECTS.md K29). The rule sees only the workload and
   namespace writes. Other writes that stop a webhook are not matched: a delete of
   the webhook Service (Gatekeeper's gatekeeper-webhook-service; its validating
   webhook has failurePolicy Ignore) or of its EndpointSlices, a NetworkPolicy that
@@ -160,7 +160,7 @@ detection:
   # refused). A key "$deleteFromPrimitiveList/<name>" is for a list of primitives;
   # when the current object holds a number or a map at <name>, the merge uses the
   # key as <name>. No client sends it for spec or replicas, so any value fires. A
-  # null value is not in the record as a field (KTBD-F4).
+  # null value is not in the record as a field (K32).
   sel_smp_directive:
     - verb: 'patch'
       requestObject.spec.$patch: 'delete'

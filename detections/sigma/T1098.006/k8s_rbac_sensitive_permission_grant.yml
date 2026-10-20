@@ -40,7 +40,7 @@ description: |
   label that aggregates a sensitive role into view makes the controller's next
   write of view fire.
 
-  Limits (detections/RULE_DEFECTS.md KTBD-E1, KTBD-E2): the bootstrap roles that
+  Limits (detections/RULE_DEFECTS.md K26, K27): the bootstrap roles that
   the API server writes at start-up and at an upgrade fire (system:aggregate-to-edit,
   system:node, system:kube-controller-manager); a JSON patch (kubectl patch
   --type=json) logs requestObject as an operation list, which this rule does not
@@ -105,7 +105,7 @@ falsepositives:
     (the API server also requires create), so grade such a grant as lower risk.
   - The bootstrap roles the API server writes as system:apiserver when a cluster
     starts for the first time or after an upgrade (system:aggregate-to-edit,
-    system:node, system:kube-controller-manager; KTBD-E1).
+    system:node, system:kube-controller-manager; K26).
   - A rule limited by resourceNames to named objects is narrower than the match
     suggests; check resourceNames before escalating.
 level: medium

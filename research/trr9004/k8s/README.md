@@ -474,13 +474,13 @@ Procedure G (whose emulated shape is a create of such a role) and a Procedure E
 write that adds a sensitive grant through a create, update, or merge/strategic/apply
 patch; it does **not** grade Procedure E's emulated JSON patch (`kubectl patch
 --type=json`), whose `requestObject` is an operation list this rule does not read
-(KTBD-E2). It also does **not** grade Procedure C: C is a wildcard or an
+(K27). It also does **not** grade Procedure C: C is a wildcard or an
 `escalate`/`bind`/`impersonate` role, and this rule deliberately does not read the
 wildcard `*` verb or resource, so a C write raises the high-severity Strategy 2
 alert only; a rule that is both wildcard and explicit raises both. The `clusterrole-aggregation-controller` writing the built-in `admin`
 and `edit` (which carry these by design) is filtered; `view` is not, so a role
 aggregated into `view` fires on the controller's next write. Limits
-([`RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) KTBD-E1, KTBD-E2): the
+([`RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) K26, K27): the
 bootstrap roles the API server writes fire (`system:aggregate-to-edit`,
 `system:node`, `system:kube-controller-manager`; `edit` itself does not, it is
 written with only an aggregation rule), a JSON-patch operation list is not read,
@@ -500,7 +500,7 @@ non-spoofable. Metadata level is enough. Fire on any outcome of an `update`,
 authorized `create`. A `create` that authorization denies logs no
 `objectRef.name`, and a server-side apply sent as raw YAML is dropped by the JSON
 audit backend, so neither can fire
-([`RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) KTBD-E3). Baseline the
+([`RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) K28). Baseline the
 real writers by actor
 (`eks:kms-storage-migrator`, `eksctl`, the Terraform provider, Defender's
 agentless-discovery role). A content grade cannot stand on one record, so this

@@ -26,9 +26,9 @@ description: |
   any outcome of an update, patch or delete (a denied write is an attempt worth a look,
   as k8s_coredns_configmap_modified treats it) and on an authorized create; a create
   that authorization denies (403) never reaches the handler, so its record has no
-  objectRef.name and cannot be tied to aws-auth (detections/RULE_DEFECTS.md KTBD-E3).
+  objectRef.name and cannot be tied to aws-auth (detections/RULE_DEFECTS.md K28).
   A server-side apply sent with a raw YAML body is dropped by the JSON audit backend at
-  Request level and above, so that write leaves no record (KTBD-E3).
+  Request level and above, so that write leaves no record (K28).
   Metadata level is enough for the update, patch and delete.
 
   Create is included: a delete followed by a create (kubectl create, a POST) replaces

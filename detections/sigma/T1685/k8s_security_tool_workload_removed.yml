@@ -76,7 +76,7 @@ description: |
   fields, so the rule matches it with any value. A directive with a null value is
   not in the record as a field, so a Scale patch that holds a count above 0 and also
   a null "$deleteFromPrimitiveList/replicas" (or "$deleteFromPrimitiveList/spec")
-  does not fire (detections/RULE_DEFECTS.md KTBD-F4).
+  does not fire (detections/RULE_DEFECTS.md K32).
 
   A write of the
   status subresource cannot change spec.replicas, so it is filtered: the deployment
@@ -87,7 +87,7 @@ description: |
   A DaemonSet has no replica count, so for a DaemonSet only a delete fires. A patch
   that gives its pod template a nodeSelector, a node affinity or a nodeName that no
   node matches removes every pod of the DaemonSet, and neither this rule nor
-  k8s_enforcer_workload_removed.yml matches it (detections/RULE_DEFECTS.md KTBD-F1).
+  k8s_enforcer_workload_removed.yml matches it (detections/RULE_DEFECTS.md K29).
 
   A DELETE on the collection URL (client-go DeleteCollection, or a raw DELETE with
   a label selector) is recorded as verb deletecollection and removes every matching
@@ -175,7 +175,7 @@ detection:
   # refused). A key "$deleteFromPrimitiveList/<name>" is for a list of primitives;
   # when the current object holds a number or a map at <name>, the merge uses the
   # key as <name>. No client sends it for spec or replicas, so any value fires. A
-  # null value is not in the record as a field (KTBD-F4).
+  # null value is not in the record as a field (K32).
   sel_smp_directive:
     - verb: 'patch'
       requestObject.spec.$patch: 'delete'

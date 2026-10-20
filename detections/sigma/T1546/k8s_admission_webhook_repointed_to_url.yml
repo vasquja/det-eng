@@ -56,8 +56,8 @@ description: |
   write (PUT or server-side apply) of a configuration that already calls a URL fires
   again, and such a configuration is a finding by itself (the create grader fired when
   it was installed). An apply patch whose body is YAML, not JSON, is not in the audit
-  log at Request level or higher, so no rule sees it (KTBD-C2). Blind spots, tracked in
-  detections/RULE_DEFECTS.md KTBD-C1: a JSON patch copy or move operation that takes
+  log at Request level or higher, so no rule sees it (K23). Blind spots, tracked in
+  detections/RULE_DEFECTS.md K22: a JSON patch copy or move operation that takes
   the url from another webhook (no URL in the request), and a repoint from one Service
   to another (an attacker-controlled Service in the cluster), which the chokepoint sees
   only. A CustomResourceDefinition conversion webhook is a different object and is not

@@ -282,12 +282,12 @@ The rules do not see every way to stop the enforcer:
 - A DaemonSet (Falco) has no replica count. A patch that gives its pod template a
   nodeSelector, a node affinity or a nodeName that no node matches makes the
   DaemonSet controller delete every Falco pod. Neither rule matches that write
-  ([`RULE_DEFECTS.md` KTBD-F1](../../../detections/RULE_DEFECTS.md#ktbd-f1-t1685-enforcer-removal-rules-a-daemonset-unscheduled-by-its-pod-template)).
+  ([`RULE_DEFECTS.md` K29](../../../detections/RULE_DEFECTS.md#k29-t1685-enforcer-removal-rules-a-daemonset-unscheduled-by-its-pod-template)).
 - A strategic merge patch of the scale subresource can hold a count above 0 and
   also a null `$deleteFromPrimitiveList/replicas`. In most runs the merge deletes the
   count after it sets it, so the Scale goes to 0. A null value is not a field in the
   record, so the record looks like a scale up, and neither rule matches it
-  ([`RULE_DEFECTS.md` KTBD-F4](../../../detections/RULE_DEFECTS.md#ktbd-f4-t1685-enforcer-removal-rules-a-null-strategic-merge-directive-next-to-a-count)).
+  ([`RULE_DEFECTS.md` K32](../../../detections/RULE_DEFECTS.md#k32-t1685-enforcer-removal-rules-a-null-strategic-merge-directive-next-to-a-count)).
 - The webhook can stop without an apps write. Gatekeeper's webhooks call the Service
   `gatekeeper-webhook-service` in `gatekeeper-system`, and its validating webhook has
   failurePolicy Ignore, so a delete of that Service (or of its EndpointSlices) turns
@@ -364,8 +364,8 @@ status subresource is filtered. The namespace controller's teardown deletecollec
 is filtered; the rules match the delete of the engine's default namespace
 (gatekeeper-system, kyverno, falco) instead. Only accepted writes (200, 201, 202)
 match, and server-side dry runs are filtered as in Strategy 1. Neither rule matches a
-DaemonSet whose pod template is changed so that no node runs it (KTBD-F1), a Scale
-patch with a null directive next to a count above 0 (KTBD-F4), or a
+DaemonSet whose pod template is changed so that no node runs it (K29), a Scale
+patch with a null directive next to a count above 0 (K32), or a
 webhook stopped by a write outside the apps group (see Procedure D).
 
 Two rules share this logic. The alert rule (level high) matches the workload writes
@@ -402,7 +402,7 @@ the node and noting no admissionregistration audit event follows an edit there.
 | A | Strategy 1 (chokepoint) | delete `validatingwebhookconfigurations` |
 | B | Strategy 1 (chokepoint) | delete `mutatingwebhookconfigurations` |
 | C | Strategy 1; graded by Strategy 2 | `update`/`patch` webhook config; failurePolicy Ignore / rules [] |
-| D | Strategy 3 (alert and anchor) | delete the enforcer Deployment/DaemonSet, scale the Deployment to zero, or delete its namespace (not a DaemonSet that no node runs: KTBD-F1) |
+| D | Strategy 3 (alert and anchor) | delete the enforcer Deployment/DaemonSet, scale the Deployment to zero, or delete its namespace (not a DaemonSet that no node runs: K29) |
 
 One chokepoint rule covers the three admission-config paths. A severity rule grades
 the neuter. An alert rule covers the enforcer-workload removal in the engines'
