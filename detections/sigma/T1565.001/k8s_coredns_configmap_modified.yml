@@ -7,7 +7,8 @@ description: |
   objectRef.name is coredns, kube-dns, or coredns-custom, and whose verb is update,
   patch, delete, or create. This is the TRR9027 Strategy 1 chokepoint, covering
   Procedure A (repoint the base coredns Corefile), B (edit the legacy kube-dns
-  ConfigMap), and C (inject through the coredns-custom import path). Cluster DNS is
+  ConfigMap), C (inject through the coredns-custom import path), and D (delete the
+  coredns ConfigMap and create it again). Cluster DNS is
   resolved by CoreDNS from these ConfigMaps; an adversary who can write them redirects
   name resolution for every pod to an attacker-controlled resolver -- an in-cluster
   adversary-in-the-middle that enables credential capture and traffic redirection.

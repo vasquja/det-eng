@@ -415,10 +415,26 @@ Match audit events where `objectRef.resource` is `nodes`,
 `objectRef.subresource` is `proxy`, and `requestURI` contains `/exec/`,
 `/run/`, or `/attach/`. Do not match on the subresource alone. Monitoring
 tools read `/metrics` and `/stats` through `nodes/proxy` all the time. An
-exec path through the node proxy is very rare, so set a high level.
+exec path through the node proxy is very rare, so set a high level. Filter another
+kubelet endpoint (the first segment after `/proxy/` is `containerLogs`,
+`portForward`, `checkpoint`, `logs` or `debug`) whose later segments name a
+namespace, pod or container `exec`, `run` or `attach`. A `nodes/proxy` request whose
+`requestURI` path (anything before `?`, the `/api/v1/nodes/<n>/proxy/` prefix included)
+holds a percent-encoded byte or a dot segment fires whatever endpoint it seems to name:
+the API server and the kubelet use the decoded path, which can differ from the raw
+`requestURI`.
 
 - Sensor: API server audit log.
 - Rule: `detections/sigma/T1609/k8s_node_proxy_exec.yml` (built).
+- Nearest existing rules: Elastic "Kubernetes API Server Proxying Request to Kubelet"
+  (`privilege_escalation_api_proxy_to_node.toml`) matches any non-system `nodes/proxy`
+  request except its `metrics`, `healthz`, `stats/summary` and `configz` paths, so it
+  also sees non-exec kubelet reads; the
+  AKS rule "Azure AKS Kubelet Proxy to Command Execution Endpoint" matches
+  `/proxy/run/`, `/proxy/exec`, `/proxy/attach`, `/proxy/portForward` and `/proxy/cri/`
+  on AKS logs. The nearest emulation is Stratus Red Team
+  `k8s.privilege-escalation.nodes-proxy`, which reads `/runningpods/` through
+  `nodes/proxy` (not an exec path, so this rule does not fire on it).
 
 **Strategy 4 — fallback (covers E; confirms A and D).**
 All exec paths end at the container runtime. The runtime starts a new process
@@ -516,6 +532,13 @@ emulation (it must not pass there).
 Strategy 4 (Procedure E) has no audit-log rule by design: a direct kubelet
 request never reaches the API server, so the `emulate.sh e` test documents the
 gap rather than feeding a rule. A node runtime sensor covers it.
+
+Prior art: Falco's k8saudit "Attach/Exec Pod" and "EphemeralContainers Created" are
+the same chokepoints as Strategies 1 and 2; Elastic "Kubernetes User Exec into Pod"
+matches exec only (`get` and `create`). Prior emulation: Atomic Red Team T1609 test 1
+("ExecIntoContainer", `kubectl exec`) is Procedure A. ATT&CK v20 also gives
+T1059.013 (Container CLI/API, analytic AN0233 names `kubectl exec`), so the exec and
+node-proxy rules carry `attack.t1059.013` as a secondary tag.
 
 Upstream: propose a change to the SigmaHQ rule
 `kubernetes_audit_exec_into_container.yml` so that it matches `verb: get` as

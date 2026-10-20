@@ -90,7 +90,7 @@
       "properties": {
         "verb": "create",
         "objectRef.resource": "mutatingwebhookconfigurations",
-        "requestObject.webhooks[].clientConfig.url": "off-cluster",
+        "requestObject.webhooks[].clientConfig.url": "set (URL-mode)",
         "Chokepoint": "A-C; Grader: url"
       },
       "style": {

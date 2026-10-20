@@ -30,10 +30,14 @@ description: |
   same window. Metadata level is enough: verb, resource, name, identity and
   responseStatus.code are all in the record.
 
-  A server-side dry run deletes nothing and is filtered: '?dryRun=All' in
-  requestURI, or dryRun ["All"] in the DeleteOptions body (requestObject). kubectl
-  delete --dry-run=server sends the dry run in the body, which a Metadata-level
-  record does not hold, so at Metadata level that dry run still fires.
+  A server-side dry run deletes nothing and is filtered: dryRun ["All"] in the
+  DeleteOptions body (requestObject), or '?dryRun=All' in requestURI when the record
+  holds no request body. When a DELETE has a body, the API server reads DeleteOptions
+  from the body and ignores the query, so a query dry run next to a recorded body is
+  not trusted. kubectl delete --dry-run=server sends the dry run in the body, which a
+  Metadata-level record does not hold, so at Metadata level that dry run still fires;
+  a Metadata-level record also cannot show a body, so there the query form is still
+  trusted.
 references:
   - https://attack.mitre.org/techniques/T1070/
   - https://kubernetes.io/docs/tasks/administer-cluster/namespaces/#deleting-a-namespace
@@ -65,10 +69,15 @@ detection:
   # whole parameter, so a value of another parameter that mentions it does not
   # count) or in the DeleteOptions body (kubectl delete --dry-run=server), which
   # the record holds only at Request level or higher.
+  # The query form counts only when the record holds no request body: when a
+  # DELETE has a body, the API server reads DeleteOptions from the body and ignores
+  # the query. A Metadata-level record never holds the body, so there the query
+  # form is still trusted (see the description).
   filter_dry_run:
     - requestURI|re:
         - '[?&]dryRun=All$'
         - '[?&]dryRun=All\&'
+      requestObject.kind: null
     - requestObject.dryRun|contains: 'All'
   condition: select_namespace_delete and sel_accepted and not filter_lifecycle_garbage_collector and not filter_dry_run
 falsepositives:

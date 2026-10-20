@@ -15,7 +15,9 @@ description: |
       system:serviceaccounts, or system:serviceaccounts:<namespace>) -- a mass
       grant;
     - the written role carries a wildcard rule ("*") or one of the escalation
-      verbs escalate, bind, or impersonate.
+      verbs escalate, bind, or impersonate;
+    - the written role grants nodes/proxy or */proxy, with any verb (a get is
+      enough to run a command in every pod on the node through the kubelet).
 
   The group-subject and rule matches use |contains against the JSON-serialized
   subjects and rules arrays and list both the spaced (CI) and compact (Go) forms,
@@ -26,7 +28,8 @@ description: |
   A JSON patch (kubectl patch --type=json) logs requestObject as the list of
   operations, not as an object, so requestObject.rules and .subjects do not
   exist. For that form the rule reads the whole operation list: an operation on
-  /rules whose text carries "*", escalate, bind or impersonate, or an operation
+  /rules whose text carries "*", escalate, bind, impersonate, nodes/proxy or
+  */proxy, or an operation
   on /subjects that names one of the groups above. A merge or strategic merge
   patch carries the rules or subjects list itself and is graded like a create.
 
@@ -40,8 +43,8 @@ description: |
   The kube-system clusterrole-aggregation-controller re-applies the built-in
   aggregated ClusterRoles admin and edit, and both carry impersonate on
   serviceaccounts. That identity on those two names is filtered, but only while
-  the written rules carry no wildcard, no escalate or bind, and no impersonate
-  on users, groups, uids or userextras. view is never filtered. So when an
+  the written rules carry no wildcard, no escalate or bind, no nodes/proxy, and
+  no impersonate on users, groups, uids or userextras. view is never filtered. So when an
   adversary labels an existing powerful role for aggregation (kubectl label
   clusterrole cluster-admin rbac.authorization.k8s.io/aggregate-to-view=true),
   the label patch carries no rules and does not fire, but the controller's
@@ -97,6 +100,13 @@ detection:
       - '"escalate"'
       - '"bind"'
       - '"impersonate"'
+  # nodes/proxy reaches every kubelet endpoint on the node (exec, run, attach,
+  # portForward, pods, checkpoint); a grant of it, with any verb, is a grant of
+  # command execution in every pod on the node. '*/proxy' grants it too.
+  sel_node_proxy_rule:
+    requestObject.rules|contains:
+      - '"nodes/proxy"'
+      - '"\*/proxy"'
   # A JSON patch (kubectl patch --type=json) logs requestObject as the list of
   # operations, so requestObject.rules and .subjects do not exist; the whole
   # operation list is one JSON text in requestObject.
@@ -104,6 +114,8 @@ detection:
     requestObject|re: '\"path\":\s*\"/rules'
   sel_jsonpatch_rules_grant:
     requestObject|re: '\"(\*|escalate|bind|impersonate)\"'
+  sel_jsonpatch_node_proxy:
+    requestObject|re: '\"(nodes|\*)/proxy\"'
   sel_jsonpatch_subjects_path:
     requestObject|re: '\"path\":\s*\"/subjects'
   sel_jsonpatch_group_subject:
@@ -131,8 +143,8 @@ detection:
   # impersonate on users, groups, uids or userextras. The controller writes the
   # rule in Go field order (verbs, apiGroups, resources).
   sel_agg_beyond_builtin:
-    requestObject.rules|re: '\"(\*|escalate|bind)\"|\"impersonate\"[^\]]*\],\s*\"apiGroups\":\s*\[[^\]]*\],\s*\"resources\":\s*\[[^\]]*\"(users|groups|uids|userextras)'
-  condition: select_rbac_write and (sel_powerful_roleref or sel_group_subject or sel_dangerous_rules or sel_builtin_admin_binding or (sel_jsonpatch_rules_path and sel_jsonpatch_rules_grant) or (sel_jsonpatch_subjects_path and sel_jsonpatch_group_subject)) and not (filter_aggregation_controller and not sel_agg_beyond_builtin)
+    requestObject.rules|re: '\"(\*|escalate|bind)\"|\"(nodes|\*)/proxy\"|\"impersonate\"[^\]]*\],\s*\"apiGroups\":\s*\[[^\]]*\],\s*\"resources\":\s*\[[^\]]*\"(users|groups|uids|userextras)'
+  condition: select_rbac_write and (sel_powerful_roleref or sel_group_subject or sel_dangerous_rules or sel_node_proxy_rule or sel_builtin_admin_binding or (sel_jsonpatch_rules_path and sel_jsonpatch_rules_grant) or (sel_jsonpatch_rules_path and sel_jsonpatch_node_proxy) or (sel_jsonpatch_subjects_path and sel_jsonpatch_group_subject)) and not (filter_aggregation_controller and not sel_agg_beyond_builtin)
 falsepositives:
   - Legitimate administration that genuinely needs power, for example an operator
     install that creates a ClusterRole with a wildcard rule, or a platform team

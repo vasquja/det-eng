@@ -42,9 +42,19 @@ detection:
   filter_namespace_teardown:
     user.username: 'system:serviceaccount:kube-system:namespace-controller'
     verb: 'deletecollection'
-  condition: select_workload_delete and not filter_namespace_teardown
+  # Server-side dry run: kubectl delete --dry-run=server sends dryRun ["All"] in the
+  # DeleteOptions body, which only a Request-level (or higher) record holds. The
+  # query form (?dryRun=All) is not filtered: with a body present the API server
+  # ignores the query.
+  filter_dry_run_delete_body:
+    requestObject.dryRun|contains: 'All'
+  condition: select_workload_delete and not filter_namespace_teardown and not filter_dry_run_delete_body
 falsepositives:
   - Routine teardown of pods and jobs by operators, controllers, and GitOps. This
     rule is a correlation anchor only; do not alert standalone. Baseline the
     controller and automation identities.
+  - A server-side dry run (kubectl delete --dry-run=server). It is filtered only when
+    the record holds the DeleteOptions body (Request level or higher). The shipped lab
+    policy logs Job deletes at Request (filtered), but pod deletes and every
+    deletecollection at Metadata, so there a dry run still fires.
 level: low

@@ -194,6 +194,16 @@ def coredns_gate_created(name):
     return gate
 
 
+def coredns_gate_modified(name):
+    """TRR9027 A: the sentinel-marked in-place write (patch or update, not D's create) of
+    DNS ConfigMap `name`, so Procedure A is proven apart from Procedure D's re-create."""
+    def gate(e):
+        return e.get("verb") in ("patch", "update") and coredns_gate_named(name)(e)
+    gate.describe = (f"verb in ('patch', 'update'), objectRef.namespace == 'kube-system', "
+                     f"objectRef.name == {name!r}, and some field contains 'trr9027'")
+    return gate
+
+
 # What each named gate requires, for the MISS explanation (the factories above set theirs).
 secret_gate.describe = (f"objectRef.namespace == {SECRET_NS!r} and user.username not "
                         "'system:*'")
@@ -226,7 +236,7 @@ MANIFEST = [
     ("T1685", "k8s_admission_webhook_disabled.yml", "audit", "9008 A-C",
      "admission-control disable chokepoint", name_prefix("trr9008-")),
     ("T1685", "k8s_admission_webhook_neutered.yml", "audit", "9008 sev",
-     "webhook neuter severity (Request)", name_prefix("trr9008-")),
+     "webhook neuter severity (Request; RequestResponse for update/patch)", name_prefix("trr9008-")),
     # Procedure C's other request shapes, each on its own object. merge and json leave no
     # neuter marker in the request body: only the stored object (responseObject, which
     # the policy records at RequestResponse for an update or patch) shows the lost rules.
@@ -259,11 +269,11 @@ MANIFEST = [
     ("T1546", "k8s_admission_webhook_created.yml", "audit", "9025 A-C",
      "malicious admission-webhook create chokepoint", name_prefix("trr9025-")),
     ("T1546", "k8s_malicious_admission_webhook_created.yml", "audit", "9025 sev",
-     "malicious webhook grader: off-cluster url / wildcard+secrets (Request)", name_prefix("trr9025-")),
+     "malicious webhook grader: clientConfig.url (Request)", name_prefix("trr9025-")),
     ("T1572", "k8s_pod_portforward.yml", "audit", "9026 A-B",
      "pod port-forward chokepoint (verb-agnostic subresource)", name_prefix("trr9026-")),
     ("T1565.001", "k8s_coredns_configmap_modified.yml", "audit", "9027 A",
-     "cluster DNS ConfigMap write chokepoint: coredns patch", coredns_gate_named("coredns")),
+     "cluster DNS ConfigMap write chokepoint: coredns patch", coredns_gate_modified("coredns")),
     ("T1565.001", "k8s_coredns_configmap_modified.yml", "audit", "9027 B",
      "cluster DNS ConfigMap write chokepoint: kube-dns server-side apply",
      coredns_gate_named("kube-dns")),
@@ -271,7 +281,8 @@ MANIFEST = [
      "cluster DNS ConfigMap write chokepoint: coredns-custom server-side apply",
      coredns_gate_named("coredns-custom")),
     ("T1565.001", "k8s_coredns_corefile_poisoned.yml", "audit", "9027 sev",
-     "CoreDNS Corefile poison grader (Request)", coredns_gate),
+     "CoreDNS Corefile poison grader on Procedure A's patch (Request)",
+     coredns_gate_modified("coredns")),
     ("T1565.001", "k8s_coredns_configmap_modified.yml", "audit", "9027 D",
      "cluster DNS ConfigMap write chokepoint: coredns deleted and created again (POST)",
      coredns_gate_created("coredns")),

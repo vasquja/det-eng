@@ -20,7 +20,7 @@ atomic_tests:
       points off-cluster and whose rules reach every object (operations CREATE, apiGroups
       ["*"], resources ["*"]). An objectSelector on a label no object carries, plus
       failurePolicy Ignore, make it inert; the audit requestObject still carries the URL
-      and wildcard rules the grader keys on.
+      the grader keys on (the wildcard rules are recorded but not graded).
       Chokepoint: objectRef.apiGroup=admissionregistration.k8s.io, verb=create.
       Rule: detections/sigma/T1546/k8s_admission_webhook_created.yml
       Grader: detections/sigma/T1546/k8s_malicious_admission_webhook_created.yml

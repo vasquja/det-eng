@@ -73,7 +73,9 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          # google-re2 ships wheels up to cp314; '3.x' now resolves to 3.15,
+          # where pip falls back to a Bazel source build that fails.
+          python-version: '3.14'
 
       - name: Install sigma-cli
         run: |

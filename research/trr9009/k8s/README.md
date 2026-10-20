@@ -198,8 +198,13 @@ impersonated identities and only when the request was allowed: that misses an
 arbitrary borrowed user, an unlisted-but-powerful service account, and a denied
 probe. A probe that the impersonation check itself denies (the caller lacks the
 `impersonate` verb) carries no `impersonatedUser`: the filter refuses it before it
-swaps the identity. The rule also matches that refusal, a 403 whose message says
-`cannot impersonate resource`. Baseline benign impersonators by the REAL actor
+swaps the identity. The rule also matches that refusal: a 403 whose message says
+`cannot impersonate resource` (legacy impersonation) or `cannot impersonate:<mode>` /
+`cannot impersonate-on:<mode>:<verb>` (constrained impersonation, on by default from
+v1.36, the CI pin). It also matches the 400 that v1.35 and later return for
+Impersonate-Group, -Uid or -Extra sent without Impersonate-User ("without impersonating
+a user"); on v1.34 and earlier that request is a plain-text 500 that no field names
+(RULE_DEFECTS K16). Baseline benign impersonators by the REAL actor
 (`user.username`, `user.groups`): the Dashboard and other UIs, kubectl-sudo, GitOps/CI, and gateways.
 
 - Sensor: API server audit log.

@@ -28,6 +28,7 @@ date: 2026/10/08
 modified: 2026/10/16
 tags:
   - attack.persistence
+  - attack.privilege-escalation
   - attack.t1543.005
 logsource:
   product: linux

@@ -71,8 +71,9 @@ created or updated, and a `clientConfig.url` pointing off-cluster ships each one
 the attacker. The webhook lives in the cluster's own configuration, so it survives a
 credential rotation and a pod restart, and it looks like the admission tooling every
 cluster already runs. The defensive goal is to see the webhook being created, and to
-tell an operator's in-cluster webhook apart from one wired to an off-cluster endpoint
-or reaching across the whole cluster for Secrets.
+tell an operator's in-cluster webhook apart from one wired to a raw URL (normally an
+off-cluster endpoint). The scope of the rules (cluster-wide, or over Secrets) does not
+separate the two, because the policy engines every cluster runs are cluster-wide too.
 
 ## Technical Background
 
@@ -164,7 +165,8 @@ Source: [`ddms/trr9025_k8s_a.json`](ddms/trr9025_k8s_a.json) (Arrows app format)
 **DDM summary.** The shaded node is the API server's authorize-and-audit of the
 create (`objectRef.apiGroup: admissionregistration.k8s.io`, verb `create`), the
 chokepoint for A, B, and C. The `requestObject.webhooks[].clientConfig.url` is the
-off-cluster tell the grader keys on (Request level).
+tell the grader keys on (Request level): it matches any URL-mode webhook, which the API
+documents as normally off-cluster.
 
 ### Procedure B: Validating webhook Secret exfiltration  (`TRR9025.K8S.B`)
 
@@ -185,8 +187,9 @@ attacker's endpoint, and the webhook may still "allow" so nothing breaks.
 
 Source: [`ddms/trr9025_k8s_b.json`](ddms/trr9025_k8s_b.json) (Arrows app format).
 
-**DDM summary.** Same chokepoint create. The grader fires on the off-cluster
-`clientConfig.url`; the `resources: ["secrets"]` scope raises severity further.
+**DDM summary.** Same chokepoint create. The grader fires on the
+`clientConfig.url`. The `resources: ["secrets"]` scope does not change the grade: the
+grader does not read `rules`, because Kyverno and Gatekeeper also validate Secrets.
 
 ### Procedure C: CEL admission policy  (`TRR9025.K8S.C`)
 
@@ -237,7 +240,8 @@ grader builds on.
 **Strategy 2 — grader (grades A, B; needs Request level).**
 On top of the chokepoint, match a created MutatingWebhookConfiguration or
 ValidatingWebhookConfiguration whose `requestObject.webhooks` carries a
-`clientConfig.url` pointing off-cluster (an http(s) URL). This is the novel layer:
+`clientConfig.url` (any http(s) URL; the API requires `https://` and documents that a
+`url` should not name an in-cluster Service, so in practice it points off-cluster). This is the novel layer:
 neither SigmaHQ's nor Elastic's rule reads the webhook body, and the off-cluster URL
 is the one non-spoofable, low-false-positive discriminator — a benign webhook calls
 an in-cluster `clientConfig.service`, not a raw URL. The grader deliberately does
@@ -250,11 +254,24 @@ positive on the admission tooling every cluster runs.
 
 **Demonstrated gaps.**
 - **In-cluster malicious endpoint.** A webhook wired to an in-cluster
-  `clientConfig.service` backed by an attacker pod has no off-cluster URL, so the
+  `clientConfig.service` backed by an attacker pod has no `clientConfig.url`, so the
   grader does not fire — it is caught at the chokepoint only. This is a deliberate
   trade: a cluster-wide-rules-plus-Secrets heuristic would fire on Kyverno and
   Gatekeeper, so it is not used. Correlate the webhook create with the creation of
   its backing Service and pod instead.
+- **Repoint of an existing webhook.** Both rules key on `verb: create`. An `update` or
+  `patch` that changes an installed webhook's `clientConfig` from a `service` to an
+  off-cluster `url` (strategic-merge, JSON patch, `kubectl replace`, client-side or
+  server-side apply) fires neither TRR9025 rule. It fires only TRR9008's medium
+  chokepoint `k8s_admission_webhook_disabled`, and TRR9008's
+  `k8s_admission_webhook_neutered` only if the same write also sets
+  `failurePolicy: Ignore` (neutered grades the fail-open field, not the URL).
+- **Server-side-apply install.** `kubectl apply --server-side` (and server-side-apply
+  GitOps or Helm) creates a missing object with a PATCH: verb `patch`,
+  `responseStatus.code` 201. Both TRR9025 rules key on `verb: create`, so neither
+  fires. Only TRR9008's medium chokepoint `k8s_admission_webhook_disabled` does, and
+  `k8s_admission_webhook_neutered` too if the body sets `failurePolicy: Ignore`.
+  Tracked as [RULE_DEFECTS K21](../../../detections/RULE_DEFECTS.md#k21-trr9025-rules-a-server-side-apply-install-is-a-patch).
 - **Control-plane bypass.** An adversary with control-plane node or etcd access can
   write a webhook configuration straight into etcd, with no API `create` and no audit
   event. The lab demonstrates this read-only (it shows that a node-local etcd write
@@ -264,13 +281,14 @@ positive on the admission tooling every cluster runs.
 
 | Procedure | Covered by | How |
 |-----------|-----------|-----|
-| A | Strategy 1; graded by Strategy 2 | off-cluster `clientConfig.url` |
-| B | Strategy 1; graded by Strategy 2 | off-cluster `clientConfig.url` |
+| A | Strategy 1; graded by Strategy 2 | URL-mode `clientConfig.url` |
+| B | Strategy 1; graded by Strategy 2 | URL-mode `clientConfig.url` |
 | C | Strategy 1 | `create` on a CEL policy (not graded; lower risk) |
 
-One chokepoint rule covers every admission-object install. One grader separates the
-malicious webhook from the hundreds of benign ones. The in-cluster-endpoint and
-control-plane-bypass variants are stated gaps.
+One chokepoint rule covers every admission-object install made by a create (POST).
+One grader separates the malicious webhook from the hundreds of benign ones. The
+in-cluster-endpoint, repoint, server-side-apply-install and control-plane-bypass
+variants are stated gaps.
 
 ## Available Emulation Tests
 

@@ -98,13 +98,15 @@ def _starts(field, prefix):
 # the emulation events it must match (all of them). The Strategy 3 file-event
 # rule in the same folder needs node file telemetry; it is compiled, not gated.
 MANIFEST = [
-    ("k8s_cri_static_pod_start.yml", "cri", "A/B",
-     "kubelet starts a pod from a non-API source (Strategy 1 chokepoint)",
+    ("k8s_cri_static_pod_start.yml", "cri", "A",
+     "kubelet starts a pod from a non-API source (Strategy 1 chokepoint; B is a "
+     "read-only demo with no telemetry)",
      [("injected static pod", _starts("metadata.name", INJECTED_PREFIX)),
       ("invalid-namespace static pod (the audit-log gap)",
        _starts("metadata.name", GHOST_NAME))]),
-    ("k8s_static_pod_mirror_create.yml", "audit", "A/B",
-     "mirror pod create by a node identity (Strategy 2 fallback)",
+    ("k8s_static_pod_mirror_create.yml", "audit", "A",
+     "mirror pod create by a node identity (Strategy 2 fallback; B is a read-only "
+     "demo with no telemetry)",
      [("injected static pod", _starts("objectRef.name", INJECTED_PREFIX))]),
 ]
 

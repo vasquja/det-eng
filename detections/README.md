@@ -439,6 +439,13 @@ request, on push to `main`, and weekly: `rule-cases`, `check-sufficiency`,
 `sufficiency-ratchet` (pull requests only), `benign-corpus`
 (`score_benign.py --check --enforce`) and the shadow `benign-linux-live` capture.
 
+The three Kubernetes workflows (`validate-k8s-detections.yml`,
+`validate-staticpod-detections.yml` and `validate-apiserver-detections.yml`) run their
+loops on a kind cluster. They pin kind, the kindest/node image (by digest) and kubectl,
+check the sha256 of both binaries, and fail when the cluster's server version differs
+from the pin. The pin moves every quarter, and before the pinned minor reaches end of
+life; the `env` block of each workflow says how.
+
 ## Manual run
 
 ```
@@ -527,6 +534,15 @@ python3 detections/validate_staticpod_detections.py \
   --audit-log /tmp/kube-apiserver-audit.log --cri-log /tmp/cri-pods.jsonl
 ```
 
+### Container runtime layer (out of scope)
+
+Shells in containers, container drift, miners, metadata-service calls from pods and
+escape primitives beyond `setns` run below the API server, so the audit log never sees
+them. auditd records carry no container identity, and CI collects no container-runtime
+telemetry, so this repository records the layer as out of scope (vetted NO-GO,
+2026-10-20, in the technique-selection ledger). Falco's stable, incubating and sandbox
+rules are the reference there.
+
 ## Kubernetes API server detections (TRR9004–9010, 9025–9027)
 
 Several more Kubernetes techniques key on the same API server **audit log**, so one
@@ -586,11 +602,14 @@ python3 detections/validate_apiserver_detections.py \
   --audit-log /tmp/kube-apiserver-audit.log --cri-log /tmp/cri-pods.jsonl
 ```
 
-TRR9006 Procedure E (reading an already-mounted token off disk) and the TRR9007
-static-pod delivery bypass the API server, so they leave no audit event. Their
-rules (`sigma/T1552.007/linux_k8s_sa_token_read.yml`, and TRR9003's CRI rule for
-the static pod) are compiled but not match-gated here; the emulations document the
-gaps the way TRR9002 Procedure E does.
+TRR9006 Procedure E (reading an already-mounted token off disk) bypasses the API
+server, so it leaves no audit event. Its rule
+(`sigma/T1552.007/linux_k8s_sa_token_read.yml`) is compiled but not match-gated here;
+the emulation documents the gap the way TRR9002 Procedure E does. The TRR9007
+static-pod delivery also skips the API server's admission, but the kubelet's mirror
+create is audited as `system:node:<node>`. TRR9003's CRI rule for the static pod is
+not compiled by this validator; `validate_staticpod_detections.py` compiles and
+match-gates it on the TRR9003 emulation.
 
 ## External cloud detections (AWS, Azure, GCP)
 

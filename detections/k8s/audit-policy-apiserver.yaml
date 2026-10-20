@@ -1,7 +1,8 @@
 # API server audit policy for the TRR9004-9010, 9025-9027 lab (RBAC, Jobs/CronJobs, Secrets,
-# dangerous pod specs).
+# dangerous pod specs, admission control, impersonation, indicator removal, admission
+# webhooks, pod port-forward, cluster DNS).
 #
-# Purpose: make the telemetry the four techniques' Sigma rules key on exist, while
+# Purpose: make the telemetry these techniques' Sigma rules key on exist, while
 # keeping the log small enough to read in CI. On a default cluster the API server
 # writes NO audit log at all, so a detection has nothing to match. Load this first.
 #
@@ -13,7 +14,9 @@
 # Audit-LEVEL choices, per technique:
 #   * Pods and workload controllers (TRR9007 escape, TRR9005 jobs): Request level,
 #     so requestObject.spec.* (privileged / hostPath / host namespaces / caps /
-#     the schedule) is present. Metadata would make those rules blind.
+#     the schedule) is present. Metadata would make those rules blind. Request level
+#     also copies literal env[].value strings of every pod and template into the log;
+#     a credential set as a literal env value lands there too.
 #   * RBAC (TRR9004): Request level, so requestObject (roleRef / subjects / rules)
 #     is present to grade a dangerous grant.
 #   * Admission-control objects (TRR9008, TRR9025): update and patch at

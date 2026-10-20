@@ -30,8 +30,10 @@ This TRR does not cover these related actions:
 
 > ATT&CK maps this to T1070 (Indicator Removal, Stealth); Containers is a
 > platform of the parent with no container sub-technique. Clearing the audit log
-> file on the node maps to T1070.004 (File Deletion), as Elastic's own "Kubernetes
-> Events Deleted" rule tags it.
+> file on the node (Procedure E) maps to T1070.004 (File Deletion), whose v20
+> platforms are ESXi, Linux, macOS and Windows; no rule here covers Procedure E. The
+> Events rule does not carry T1070.004: an Event is an API object, not a file
+> (Elastic's "Kubernetes Events Deleted" rule tags T1070.004 anyway).
 
 ## Technique Overview
 
@@ -245,15 +247,18 @@ Match audit events where `objectRef.resource` is `events` and `verb` is `delete`
 match `delete` only (so the bulk `deletecollection` wipe is covered). Filter one
 request: the namespace controller's `deletecollection` of the Events of a namespace
 being deleted (`system:serviceaccount:kube-system:namespace-controller`), which every
-namespace teardown makes. Baseline the other system identities and any event-exporter
-service accounts by `user.username`.
+namespace teardown makes. Filter a server-side dry run when the record holds the
+DeleteOptions body (`dryRun: ["All"]`, Request level); the query form is not trusted for
+a delete, because with a body the API server ignores the query. Baseline the other
+system identities and any event-exporter service accounts by `user.username`.
 
 - Sensor: API server audit log.
 - Rule: `detections/sigma/T1070/k8s_events_deleted.yml` (built).
 
 **Strategy 2 — workload-record fallback (covers D).**
 Match a delete or deletecollection of Pods or Jobs (the namespace controller's
-teardown sweep is filtered). This is low fidelity; use it for correlation only
+teardown sweep is filtered, and so is a server-side dry run whose DeleteOptions body
+the record holds). This is low fidelity; use it for correlation only
 — the same identity that also deleted Events, a deletion in a sensitive namespace,
 or a Job whose creation the identity made.
 
@@ -272,8 +277,10 @@ Match an accepted `delete` of `namespaces` (`responseStatus.code` 200 or 202; a
 refused delete destroys nothing). Filter the garbage collector, which deletes a
 namespace only when its owner was deleted (that owner's delete is the actor's own
 record), and a server-side dry run, which the API server authorizes, admits and
-answers with 200 but does not persist: `?dryRun=All` in `requestURI` (the whole
-parameter), or `dryRun: ["All"]` in the DeleteOptions body. `kubectl delete
+answers with 200 but does not persist: `dryRun: ["All"]` in the DeleteOptions body,
+or `?dryRun=All` in `requestURI` (the whole parameter) only when the record holds no
+request body (with a body the API server reads DeleteOptions from it and ignores the
+query; RULE_DEFECTS K14). `kubectl delete
 --dry-run=server` sends the body form, which only a `Request`-level record holds, so
 at `Metadata` that dry run still fires. The namespace controller does not make this
 request: it finalizes a namespace with an update of `namespaces/finalize`. A
@@ -355,8 +362,10 @@ namespace). The workflow
 runs the loop on a `kind` cluster, with a negative control on the pre-emulation log.
 
 Upstream: the SigmaHQ rule `kubernetes_audit_events_deleted.yml` matches `delete`
-only and misses the bulk `deletecollection` wipe. Propose widening the verb list to
-`delete` and `deletecollection`.
+only and misses the bulk `deletecollection` wipe; so does Elastic's native "Kubernetes
+Events Deleted", while its AKS variant (`defense_evasion_azure_aks_events_deleted.toml`)
+already matches `deletecollection`. Propose widening the verb list to `delete` and
+`deletecollection`.
 
 ## References
 

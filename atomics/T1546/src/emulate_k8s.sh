@@ -39,8 +39,8 @@ cleanup() {
 
 # Procedure A — mutating webhook backdoor. Wildcard rules + off-cluster URL. An
 # objectSelector on a label no object carries means it never fires; failurePolicy
-# Ignore means even that is harmless. The audit requestObject carries the rules and
-# the URL the grader keys on.
+# Ignore means even that is harmless. The audit requestObject carries the rules (not
+# graded) and the URL the grader keys on.
 procedure_a() {
   log "A: create mutatingwebhookconfiguration trr9025-mwc (off-cluster URL, rules */*; no-op)"
   kubectl apply -f - >/dev/null 2>&1 <<EOF || true

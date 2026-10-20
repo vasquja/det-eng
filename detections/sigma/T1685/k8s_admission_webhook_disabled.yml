@@ -44,11 +44,32 @@ detection:
       - 'deletecollection'
       - 'update'
       - 'patch'
-  condition: select_adm_write
+  # Server-side dry run of an update or patch: the options are read from the query
+  # only, so ?dryRun=All (the whole parameter) is what the server used.
+  filter_dry_run_write:
+    verb:
+      - 'update'
+      - 'patch'
+    requestURI|re:
+      - '[?&]dryRun=All$'
+      - '[?&]dryRun=All\&'
+  # Server-side dry run of a delete: in the DeleteOptions body (Request level, as
+  # the shipped policy logs admissionregistration deletes). The query form is not
+  # filtered for a delete: with a body present the API server ignores the query.
+  filter_dry_run_delete_body:
+    verb:
+      - 'delete'
+      - 'deletecollection'
+    requestObject.dryRun|contains: 'All'
+  condition: select_adm_write and not filter_dry_run_write and not filter_dry_run_delete_body
 falsepositives:
   - The policy engine's own controller reconciling its webhook configuration
     (Gatekeeper, Kyverno), and GitOps or Helm upgrades that replace a webhook
     config. Baseline these identities by user.username and user.groups.
   - Cluster upgrades that update the built-in admission configurations. Baseline
     the upgrade tooling.
+  - A server-side dry run under an audit policy that logs these deletes at Metadata
+    only. The update and patch form is filtered at any level (the option is in the
+    query); the delete form needs the DeleteOptions body, which the shipped lab policy
+    records (Request level).
 level: medium

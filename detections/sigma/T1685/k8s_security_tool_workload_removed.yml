@@ -1,11 +1,18 @@
-title: Kubernetes Security Tool Workload Removed or Scaled To Zero
+title: Kubernetes Deployment or DaemonSet Removed or Scaled To Zero
 id: 735935d9-dca5-42b4-a9be-70c942592a62
 status: experimental
 description: |
-  Detects the removal of a workload that enforces security: a delete of a
-  Deployment or DaemonSet (one object, or a deletecollection), a scale-to-zero (an
-  update or patch that sets spec.replicas to 0), or the delete of a policy engine's
-  default namespace. This is the TRR9008 Strategy 2 fallback, covering Procedure D.
+  Correlation anchor: an accepted delete of ANY Deployment or DaemonSet (one object,
+  or a deletecollection) or an accepted scale-to-zero of one (an update or patch that
+  sets spec.replicas to 0), in any namespace, and an accepted delete of a policy
+  engine's default namespace (gatekeeper-system, kyverno, falco). It does not check
+  that the workload is a security tool: only the namespace branch is limited to
+  security tools, and the workload branch is a correlation anchor for removing an
+  enforcer. A refused request (403, 404, 409) does not fire. A server-side dry run
+  does not fire when the record shows it: the ?dryRun=All query of an update or patch
+  (any audit level), or the DeleteOptions body of a delete (Request level). A
+  deletecollection or namespace-delete dry run logged at Metadata still fires (see
+  falsepositives). This is the TRR9008 Strategy 3 fallback, covering Procedure D.
   An adversary who does not want to touch the admission webhook configuration can
   instead remove the enforcer itself -- delete or scale down the Gatekeeper,
   Kyverno, or Falco Deployment/DaemonSet, or delete its whole namespace -- so the
@@ -101,9 +108,37 @@ detection:
       - 'gatekeeper-system'
       - 'kyverno'
       - 'falco'
+  # The API server accepted the write (a refused 403/404/409 request removes
+  # nothing). 201 is listed only so that a create, which no branch matches, is not
+  # rejected here as well; 202 is a delete answered before it completes.
+  sel_accepted:
+    responseStatus.code:
+      - 200
+      - 201
+      - 202
+  # Server-side dry run of an update or patch: the API server reads UpdateOptions
+  # and PatchOptions from the query only, so ?dryRun=All (the whole parameter) is
+  # what the server used.
+  filter_dry_run_write:
+    verb:
+      - 'update'
+      - 'patch'
+    requestURI|re:
+      - '[?&]dryRun=All$'
+      - '[?&]dryRun=All\&'
+  # Server-side dry run of a delete: kubectl delete --dry-run=server sends it in the
+  # DeleteOptions body, which the record holds at Request level or higher. The query
+  # form is NOT filtered for a delete: when a request has a body, the API server
+  # ignores the query, so ?dryRun=All in requestURI does not prove a dry run.
+  filter_dry_run_delete_body:
+    verb:
+      - 'delete'
+      - 'deletecollection'
+    requestObject.dryRun|contains: 'All'
   condition: >-
-    (select_apps and (sel_delete or sel_scale_zero or sel_scale_zero_jsonpatch)
-    and not filter_namespace_teardown) or sel_enforcer_namespace_delete
+    ((select_apps and (sel_delete or sel_scale_zero or sel_scale_zero_jsonpatch)
+    and not filter_namespace_teardown) or sel_enforcer_namespace_delete)
+    and sel_accepted and not filter_dry_run_write and not filter_dry_run_delete_body
 falsepositives:
   - Routine scaling and teardown of deployments and daemonsets. This rule is a
     correlation anchor; alert only when the target is a known security workload
@@ -113,4 +148,8 @@ falsepositives:
     scale workloads to 0 by design. Baseline those identities.
   - Planned removal of Gatekeeper, Kyverno or Falco (its namespace deleted on
     uninstall).
+  - A server-side dry run of a deletecollection or of the namespace delete. The
+    shipped lab policy logs those at Metadata, which holds no DeleteOptions body, so
+    the dry run still fires; a single apps delete (Request level) and every update
+    or patch dry run are filtered.
 level: medium

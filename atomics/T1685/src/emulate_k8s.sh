@@ -23,7 +23,10 @@
 #
 # Prerequisites: a reachable cluster (kubectl works) with rights to write
 # admissionregistration objects and apps workloads, and audit logging at Request
-# level (see detections/k8s/kind-apiserver-cluster.yaml). The gap test needs node
+# level for admission-object creates and deletes and the apps group, and at
+# RequestResponse for admission-object updates and patches (the C merge and json
+# variants are graded only from responseObject); see
+# detections/k8s/audit-policy-apiserver.yaml. The gap test needs node
 # access (docker exec on kind); set TRR9008_NODE for a non-kind lab.
 set -euo pipefail
 

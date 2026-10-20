@@ -32,9 +32,20 @@ This TRR does not cover these related actions:
 - Harvesting credentials through the Docker daemon API (the Docker half of
   T1552.007). This report covers Kubernetes only.
 - Decrypting Secrets at rest in etcd.
+- Credentials read from ConfigMaps or pod env values through the API. No audit
+  level that is safe to run records the content, and a read by the owning workload
+  looks the same as an attacker's except in identity (vetted NO-GO, 2026-10-20, in
+  the technique-selection ledger).
 
 Microsoft's Threat Matrix for Kubernetes aligns this report with its Credential
 Access techniques "List K8S secrets" and "Access container service account."
+
+> **ATT&CK mapping caveat (Procedure E).** Reading a mounted token file is a file read,
+> not a Container API call. ATT&CK v20 places it under T1528 (Steal Application Access
+> Token, Containers analytic AN1423) and T1552.001 (Credentials In Files, Containers
+> analytic AN0859), and the Microsoft matrix maps "Container service account" to T1528.
+> The node rule keeps T1552.007 (this report's ID) and adds `attack.t1528` and
+> `attack.t1552.001` as secondary tags.
 
 ## Technique Overview
 
@@ -359,6 +370,20 @@ gap instead. The workflow
 runs the loop on a `kind` cluster, and runs the validator as a negative control on
 the audit log captured *before* the emulation (no `trr9006` namespace yet, so no
 rule may pass).
+
+Prior art: Elastic ships Secret-read rules that tune the same chokepoint by actor,
+user agent, burst or namespace ("Kubernetes Secret Get or List from Node or Pod Service
+Account", "Kubernetes Secrets List Across Cluster or Sensitive Namespaces", the
+multiple-secret retrieval burst and scripting-client rules), a TokenRequest rule
+("Kubernetes Service Account Token Created via TokenRequest API", the nearest to
+Strategy 2), and node or Defend-for-Containers token-file rules for Procedure E
+(`credential_access_kubernetes_service_account_secret_access.toml`,
+`credential_access_service_account_token_or_cert_read.toml`). Falco's k8saudit has
+"K8s Secret Get Successfully". None matches `watch`. Prior emulation: Stratus Red Team
+`k8s.credential-access.dump-secrets` (A), `k8s.persistence.create-token` (D) and
+`k8s.credential-access.steal-serviceaccount-token` (E, through exec); Atomic Red Team
+T1552.007 tests 1-2 ("List All Secrets", "ListSecrets", A) and test 3 (read the token
+file through `kubectl exec`, E).
 
 Upstream: the SigmaHQ rule `kubernetes_audit_secrets_enumeration.yml` matches
 `verb: list` only; propose broadening it to `get`/`list`/`watch`, plus the

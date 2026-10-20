@@ -23,9 +23,10 @@ Accounts) credentials: an adversary lifts a pod's projected service-account OIDC
 not own — their own machine, another account, or anywhere off the worker nodes.
 
 The novel, detectable contribution is the **off-cluster use**, not the theft. Reading a
-projected service-account token off a pod's volume is already the subject of
-`T1552.007` (Unsecured Credentials: Container API); that is the upstream enabler and is
-out of scope here. No emulation in Stratus Red Team or Atomic Red Team steals an IRSA
+projected service-account token off a pod's volume is the upstream enabler and is out
+of scope here. ATT&CK v20 places that read under T1528 (Steal Application Access Token)
+and T1552.001 (Credentials In Files); this repository documents it as TRR9006 Procedure
+E (filed under T1552.007). No emulation in Stratus Red Team or Atomic Red Team steals an IRSA
 web-identity token and uses it off-cluster (Stratus ships the GCP equivalent,
 `use-compute-sa-outside-gcp`, but no EKS IRSA one). The only prior production detections
 are Elastic's: two prebuilt rules — "AssumeRoleWithWebIdentity from a Kubernetes service

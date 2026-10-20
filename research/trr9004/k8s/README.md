@@ -99,7 +99,8 @@ the event annotations (`authorization.k8s.io/decision` and
 
 There is also no `replace` audit verb. An HTTP `PUT` — `kubectl replace`, or an
 apply sent as `PUT` — is recorded as `verb: update`. So the write-verb set is
-`create`, `update`, `patch`, and `delete`; nothing else is needed.
+`create`, `update`, `patch`, `delete`, and `deletecollection` (a bulk delete of the
+roles or bindings in a namespace).
 
 ### The audit log, and what Metadata level hides
 
@@ -308,7 +309,9 @@ the negative control needs to see the baseline writes and exclude them by name.
 
 **Strategy 1 — chokepoint (covers A–E).**
 Match audit events where `objectRef.apiGroup` is `rbac.authorization.k8s.io` and
-`verb` is `create`, `update`, `patch`, or `delete`. This is noisy on its own: a
+`verb` is `create`, `update`, `patch`, `delete`, or `deletecollection`. Filter one
+request: the namespace controller's `deletecollection` when it empties a namespace
+that is being deleted (the namespace delete names the actor). This is noisy on its own: a
 kubeadm cluster writes dozens of RBAC objects at bootstrap and reconciles the
 default roles continuously. Baseline the **actor**, not the object: suppress
 `system:kube-controller-manager`, `system:apiserver`, the kubeadm and
@@ -323,11 +326,13 @@ On top of the chokepoint, match the writes that grant dangerous power: a
 `roleRef.name` of `cluster-admin`, `admin`, or `edit`; a subject that is a
 built-in group (`system:authenticated`, `system:unauthenticated`,
 `system:anonymous`, `system:serviceaccounts`, or
-`system:serviceaccounts:<namespace>`); or a `rules` list with a wildcard or an
-`escalate`/`bind`/`impersonate` verb. A JSON patch (`kubectl patch --type=json`,
+`system:serviceaccounts:<namespace>`); a `rules` list with a wildcard or an
+`escalate`/`bind`/`impersonate` verb; or a `rules` list that grants `nodes/proxy`
+or `*/proxy` with any verb (a `get` is enough to run a command in every pod on the
+node through the kubelet). A JSON patch (`kubectl patch --type=json`,
 Procedure E's form) logs `requestObject` as the operation list, so the rule also
-reads that list: an operation on `/rules` that carries a wildcard or one of the
-verbs, or an operation on `/subjects` that names one of the groups. A patch or
+reads that list: an operation on `/rules` that carries a wildcard, one of the
+verbs, `nodes/proxy` or `*/proxy`, or an operation on `/subjects` that names one of the groups. A patch or
 update of a built-in binding whose `roleRef` is `cluster-admin` (`cluster-admin`,
 `kubeadm:cluster-admins`) matches by name, because a patch carries no `roleRef`;
 this grades Procedure E's headline form, a subject appended to that binding. A
@@ -337,8 +342,8 @@ the groups above; otherwise only Strategy 1 sees it.
 The kube-system `clusterrole-aggregation-controller` re-applying the built-in
 `admin` and `edit` roles (both carry `impersonate` on `serviceaccounts`) is
 filtered, but only while the written rules carry nothing more: no wildcard, no
-`escalate` or `bind`, and no `impersonate` on `users`, `groups`, `uids` or
-`userextras`. `view` is never filtered. This keeps Procedure C's stealth variant
+`escalate` or `bind`, no `nodes/proxy`, and no `impersonate` on `users`, `groups`,
+`uids` or `userextras`. `view` is never filtered. This keeps Procedure C's stealth variant
 visible: a label patch that aggregates an existing powerful role
 (`kubectl label clusterrole cluster-admin rbac.authorization.k8s.io/aggregate-to-view=true`)
 carries no rules and does not fire, but the controller's next write of `view`,
@@ -437,9 +442,16 @@ emulation (where the many bootstrap RBAC writes must not make any rule pass).
 
 Upstream: the SigmaHQ rule `kubernetes_audit_rolebinding_modification.yml`
 matches bindings only (not role writes, procedure C), does not inspect
-`requestObject`, and has no group-subject or escalate/bind detection. Propose the
-chokepoint rule (whole RBAC group, all write verbs) plus the `requestObject`
-severity rule as an improvement.
+`requestObject`, and has no group-subject or escalate/bind detection. Elastic already
+grades role bodies: "Kubernetes Creation or Modification of Sensitive Role" reads
+`requestObject`/`responseObject` rules for a wildcard, `escalate`, `bind` or
+`impersonate` (RequestResponse level only), and "Kubernetes RBAC Wildcard Elevation on
+Existing Role" reads the stored role after a patch. Falco's k8saudit ruleset has
+"ClusterRole With Wildcard Created" and "Attach to cluster-admin Role". None grades a
+built-in group subject (Procedure D) or reads a JSON-patch operation list. Stratus Red
+Team `k8s.persistence.create-admin-clusterrole` emulates Procedures A and C together.
+Propose the chokepoint rule (whole RBAC group, all write verbs) plus the
+`requestObject` severity rule as an improvement.
 
 ## References
 

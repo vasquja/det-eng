@@ -10,7 +10,11 @@
 # Create it (from the repo root, so the relative extraMounts path resolves):
 #
 #   kind create cluster --name apiserver \
+#     --image kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed \
 #     --config detections/k8s/kind-apiserver-cluster.yaml
+#
+# (--image is the node image CI pins: KIND_NODE_IMAGE in the validate-*-detections
+# workflows. Update it here when that pin moves.)
 #
 # The control-plane node container is then `apiserver-control-plane`, which is the
 # default node name the TRR9006 and TRR9007 node-access tests look for. Read the
