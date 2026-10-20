@@ -408,10 +408,10 @@ CHOKEPOINT = {
         "ada55f947b8af992be5f43d7b7961bfd55b1432904c9918840a2b94fa2368c98"),
     "T1070/k8s_events_deleted.yml": Waiver(
         "TRR9010 chokepoint: deleting Events is the evidence removal",
-        "ace07f555c4a711ec3133d4c127ff2d512b5723832757ed48ebb1a5619956f56"),
+        "f472d372d2bf4cc1f5cf43718465623e703b3ff44b079436160bab8a4c3324cd"),
     "T1070/k8s_workload_deleted_evidence.yml": Waiver(
         "TRR9010 low-fidelity fallback by design: any pod/job delete",
-        "afda1ea36151eeb0db79c1c0b6be0705b1796bcee0dccd85b0edeb4597385c6e"),
+        "b790033809e1d6a19c1ac867c0ce4e2dbef8f873c8b479ae011635ef670f4af7"),
     "T1098.001/azure_managed_identity_federated_credential_backdoor.yml": Waiver(
         "the Activity Log carries no issuer/subject, so the FIC write operation is the "
         "whole signal (TRR9013 procedure C)",
@@ -453,7 +453,7 @@ CHOKEPOINT = {
         "b50573eddab59ad45de592ca2f1fe47f1cdcb700f3440aaf8da792129da08357"),
     "T1685/k8s_admission_webhook_disabled.yml": Waiver(
         "TRR9008 chokepoint: any delete/update/patch of an admission control object",
-        "bdbd86cc9b08db8665df9b0a33549391048be94b1ccf8e0d98b58c3eb0fd921e"),
+        "34a75208472f9d548854b8b1dea375818e889a0cfed910907da006c3cd53b37d"),
 }
 
 
