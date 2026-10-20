@@ -295,10 +295,11 @@
         "A": "Privileged container",
         "B": "hostPath mount of a sensitive node directory",
         "C": "Host namespace (hostPID/hostNetwork/hostIPC)",
-        "D": "Added dangerous capabilities"
+        "D": "Added dangerous capabilities",
+        "E": "Seccomp or AppArmor confinement removed"
       },
       "pub_date": "2026-10-12",
-      "last_update": "2026-10-12",
+      "last_update": "2026-10-20",
       "path": "trr9007/k8s/README.md",
       "tests": {
         "A": {
@@ -315,6 +316,10 @@
         },
         "D": {
           "text": "det-eng added-capabilities pod-spec behavioral emulation (sleep-only)",
+          "url": "../atomics/T1611/src/emulate_k8s.sh"
+        },
+        "E": {
+          "text": "det-eng seccomp/AppArmor Unconfined pods and Deployment behavioral emulation (sleep-only)",
           "url": "../atomics/T1611/src/emulate_k8s.sh"
         }
       }

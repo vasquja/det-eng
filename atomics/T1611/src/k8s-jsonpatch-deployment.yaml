@@ -1,0 +1,23 @@
+# TRR9007 K18 (JSON-patch grading) base object. A plain, non-privileged Deployment that
+# the emulation then backdoors with a kubectl patch --type=json (adding a privileged
+# container securityContext to the pod template). The JSON patch is the adversary's own
+# write; it proves the controller rule's requestObject|re JSON-patch branches live. The
+# container only sleeps.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trr9007-jp-depl
+  namespace: default
+  labels: {app: trr9007}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: trr9007-jp-depl}
+  template:
+    metadata:
+      labels: {app: trr9007-jp-depl}
+    spec:
+      containers:
+        - name: c
+          image: busybox:1.36
+          command: ["sleep", "3600"]

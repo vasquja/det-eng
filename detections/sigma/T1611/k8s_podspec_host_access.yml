@@ -33,6 +33,23 @@ description: |
   the runtimes normalise them: containerd upper-cases each added name and tests
   ALL with EqualFold, and CRI-O also keeps a CAP_ prefix in any case. So
   "sys_admin", "all" and "Cap_Sys_Admin" grant the capability and fire.
+  The add list is read element by element (whole JSON strings, or null, which the API
+  server decodes as an empty name), so a "]" inside an earlier element does not end
+  the list early.
+
+  A JSON patch (kubectl patch --type=json) of the pods/ephemeralcontainers subresource
+  logs requestObject as the operation list, so the requestObject.spec.ephemeralContainers
+  selection above cannot see it. (kubectl debug sends a strategic-merge patch, which the
+  selection above reads; a JSON patch comes from kubectl patch --subresource=
+  ephemeralcontainers --type=json or another client.) The sel_jp_* items grade a JSON
+  patch too (they read the ops text and so apply only to a JSON patch): an operation that
+  adds a privileged ephemeral container, or one that adds an escape capability to its add
+  list, whether the dangerous field is the op path's last segment (in either key order,
+  with ignored extra keys between them) or set in the op value, a replace of the whole
+  object (path ""), and a copy or move into the leaf path. This closes the pod half of
+  the gap once tracked as RULE_DEFECTS K18. A pod's regular containers are
+  immutable after create, and host namespaces and volumes are pod-level, so the
+  ephemeral-container subresource is the only write-time JSON-patch surface here.
 
   This is noisy without baselining: kube-proxy, the CNI DaemonSet (kindnet,
   Calico, Cilium), and other infrastructure legitimately request host access.
@@ -72,11 +89,11 @@ detection:
       - '"privileged": true'
       - '"privileged":true'
   sel_caps:
-    requestObject.spec.containers|re|i: '\"add\":\s*\[[^\]]*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
+    requestObject.spec.containers|re|i: '\"add\":\s*\[\s*((\"([^"\\]|\\.)*\"|null)\s*,\s*)*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
   sel_caps_init:
-    requestObject.spec.initContainers|re|i: '\"add\":\s*\[[^\]]*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
+    requestObject.spec.initContainers|re|i: '\"add\":\s*\[\s*((\"([^"\\]|\\.)*\"|null)\s*,\s*)*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
   sel_caps_ephem:
-    requestObject.spec.ephemeralContainers|re|i: '\"add\":\s*\[[^\]]*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
+    requestObject.spec.ephemeralContainers|re|i: '\"add\":\s*\[\s*((\"([^"\\]|\\.)*\"|null)\s*,\s*)*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
   sel_hostpath:
     requestObject.spec.volumes|re: '\"hostPath\":\s*\{'
   sel_hostpid:
@@ -85,7 +102,43 @@ detection:
     requestObject.spec.hostNetwork: true
   sel_hostipc:
     requestObject.spec.hostIPC: true
-  condition: selection_pod and (sel_privileged or sel_privileged_init or sel_privileged_ephem or sel_caps or sel_caps_init or sel_caps_ephem or sel_hostpath or sel_hostpid or sel_hostnet or sel_hostipc)
+  # JSON patch (kubectl patch --type=json): requestObject is the operation list, so the
+  # requestObject.spec.* selections above cannot see it (closed RULE_DEFECTS K18). On a
+  # pod the only write-time JSON-patch surface for a dangerous field is the
+  # ephemeralContainers subresource (regular containers are immutable after create;
+  # hostPID/hostNetwork/hostIPC and volumes are pod-level and not set through this
+  # subresource), so these branches grade a privileged or capability-adding ephemeral
+  # container added by a JSON patch. They apply ONLY to a JSON patch, because a
+  # strategic-merge body flattens to requestObject.spec.ephemeralContainers and never to
+  # a bare requestObject field. Modelled on the TRR9008 JSON-patch selectors: an op at
+  # the document root (""), /spec, /spec/ephemeralContainers or below with a dangerous
+  # value; a leaf op whose path's last segment is the field, in either key order; or a
+  # copy or move into that path. Between two keys of one op, the match skips whole JSON
+  # strings and nested objects two levels deep (the T1685 grammar), so an ignored extra
+  # key does not split the op, and it never crosses into the next op. Each value stays
+  # inside Lucene's default determinization budget (10,000; the largest here is about
+  # 7,400 states).
+  sel_jp_eph_path:
+    requestObject|re: '\"path\"\s*:\s*\"(/spec(/ephemeralContainers(/[^"]*)?)?)?\"'
+  sel_jp_priv_value:
+    requestObject|re: '\"privileged\"\s*:\s*true'
+  sel_jp_caps_value:
+    requestObject|re|i: '\"add\"\s*:\s*\[\s*((\"([^"\\]|\\.)*\"|null)\s*,\s*)*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
+  sel_jp_leaf_bool:
+    requestObject|re:
+      - '\"path\"\s*:\s*\"/spec/ephemeralContainers[^"]*/securityContext/privileged\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"value\"\s*:\s*true'
+      - '\"value\"\s*:\s*true([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec/ephemeralContainers[^"]*/securityContext/privileged\"'
+  sel_jp_leaf_caps:
+    requestObject|re|i:
+      - '\"path\"\s*:\s*\"/spec/ephemeralContainers[^"]*/capabilities/add\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"value\"\s*:\s*\[\s*((\"([^"\\]|\\.)*\"|null)\s*,\s*)*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
+      - '\"path\"\s*:\s*\"/spec/ephemeralContainers[^"]*/capabilities/add/([0-9]+|-)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"value\"\s*:\s*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
+      - '\"value\"\s*:\s*\[\s*((\"([^"\\]|\\.)*\"|null)\s*,\s*)*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec/ephemeralContainers[^"]*/capabilities/add\"'
+      - '\"value\"\s*:\s*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec/ephemeralContainers[^"]*/capabilities/add/([0-9]+|-)\"'
+  sel_jp_leaf_copy:
+    requestObject|re:
+      - '\"op\"\s*:\s*\"(copy|move)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec/ephemeralContainers[^"]*(/securityContext/privileged|/capabilities/add(/([0-9]+|-))?)\"'
+      - '\"path\"\s*:\s*\"/spec/ephemeralContainers[^"]*(/securityContext/privileged|/capabilities/add(/([0-9]+|-))?)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"op\"\s*:\s*\"(copy|move)\"'
+  condition: selection_pod and (sel_privileged or sel_privileged_init or sel_privileged_ephem or sel_caps or sel_caps_init or sel_caps_ephem or sel_hostpath or sel_hostpid or sel_hostnet or sel_hostipc or sel_jp_leaf_bool or sel_jp_leaf_caps or sel_jp_leaf_copy or (sel_jp_eph_path and (sel_jp_priv_value or sel_jp_caps_value)))
 falsepositives:
   - Infrastructure that legitimately needs host access. kube-proxy runs privileged
     and hostNetwork; the CNI DaemonSet (kindnet, Calico, Cilium) runs privileged

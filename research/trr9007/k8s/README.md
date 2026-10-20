@@ -20,7 +20,9 @@
 This TRR covers escape to the host through a **dangerous pod specification**: the
 host-access fields a pod creator requests at admission time — a privileged
 container, a `hostPath` volume, a host namespace (`hostPID`/`hostNetwork`/
-`hostIPC`), or an added Linux capability.
+`hostIPC`), or an added Linux capability — and, one level lower, a pod spec that
+removes the runtime's default confinement: a seccomp or AppArmor profile of type
+`Unconfined` (Procedure E).
 
 This TRR does not cover these related actions:
 
@@ -39,7 +41,11 @@ This TRR does not cover these related actions:
 
 `hostPort`, `runAsUser: 0`, and `allowPrivilegeEscalation` are weaker Pod
 Security violations that enrich a finding but are not themselves host escape, so
-they are enrichment, not chokepoint fields.
+they are enrichment, not chokepoint fields. `Unconfined` is not a host escape by itself
+either, but it is a procedure (E), not enrichment: it removes a whole kernel-level layer
+(the syscall filter or the AppArmor profile) that the escape paths of T1611 must pass, it
+is its own Pod Security Baseline check, and it has its own medium rule (Strategy 4), so it
+is graded apart from the high host-access rules.
 
 ## Technique Overview
 
@@ -102,7 +108,9 @@ split into two kinds, matched two ways:
   and compact (Go) forms so the rule is portable. Matching `"privileged": true`,
   not the bare key, is deliberate: it does not match a benign
   `"privileged": false`. A capability is matched with `|re` only inside a
-  capabilities `"add"` list (`"add":\s*\[[^\]]*"SYS_ADMIN"`), and a hostPath only
+  capabilities `"add"` list, read element by element (whole JSON strings, or `null`,
+  which the API server decodes as an empty name), so a `]` inside an earlier element
+  does not end the list early; a hostPath matches only
   as a volume source key (`"hostPath":\s*\{`). A bare substring would also match a
   container named `syslog`, an env value, a `drop` list or a volume named
   `hostpath`. `ALL` grants every capability and is on the list. The API server
@@ -130,18 +138,22 @@ before the workload runs. The gap is the one delivery that skips the API server.
 | B | TRR9007.K8S.B | hostPath mount of a sensitive node directory | `volumes[].hostPath` |
 | C | TRR9007.K8S.C | Host namespace | `hostPID`/`hostNetwork`/`hostIPC: true` |
 | D | TRR9007.K8S.D | Added dangerous capabilities | `securityContext.capabilities.add` |
+| E | TRR9007.K8S.E | Seccomp or AppArmor confinement removed | `securityContext.seccompProfile` / `appArmorProfile` `type: Unconfined` |
 
 > A delivery mechanism is not a procedure. The same dangerous field can arrive as
-> a direct pod, through a workload controller, or as a static pod. These are
-> delivery variants, covered by the chokepoint plus the two fallbacks, not new
-> procedures — consistent with this repository's "a tool is not a procedure" rule.
+> a direct pod, through a workload controller, as a static pod, or by a JSON patch
+> (`kubectl patch --type=json`) of any of those. These are delivery variants,
+> covered by the chokepoint plus the fallbacks, not new procedures — consistent
+> with this repository's "a tool is not a procedure" rule. The JSON-patch delivery
+> is graded by the same rules (`requestObject` is the operation list, not the
+> merged object; closed RULE_DEFECTS K18).
 
 **Reading the DDMs.** Green borders are operations the client performs. Blue
 borders are operations the API server performs. Purple borders are operations on
 the node (the container runtime). Black borders are the abstract effect. The pill
 on a node names the telemetry that records it. A shaded node is the primary
 detection opportunity; here it is the API server's admission audit of the pod
-spec, shared by all four procedures.
+spec, shared by all five procedures.
 
 ### Procedure A: Privileged container  (`TRR9007.K8S.A`)
 
@@ -162,9 +174,9 @@ Source: [`ddms/trr9007_k8s_a.json`](ddms/trr9007_k8s_a.json) (Arrows app format)
 
 **DDM summary.** The shaded node is the API server's admit-and-audit of the pod
 spec, at `Request` level, where `requestObject.spec.containers` carries
-`"privileged": true`. This is the chokepoint for all four procedures. The node
-runtime (purple) is the fallback sensor for the delivery that skips the API
-server.
+`"privileged": true`. This is the chokepoint for Procedures A to D; Procedure E has
+its own medium rule on the same event. The node runtime (purple) is the fallback
+sensor for the delivery that skips the API server.
 
 ### Procedure B: hostPath mount of a sensitive node directory  (`TRR9007.K8S.B`)
 
@@ -229,15 +241,50 @@ Source: [`ddms/trr9007_k8s_d.json`](ddms/trr9007_k8s_d.json) (Arrows app format)
 **DDM summary.** Same chokepoint; the tell is a capability name inside
 `requestObject.spec.containers`, for example `"SYS_ADMIN"`.
 
+### Procedure E: Seccomp or AppArmor confinement removed  (`TRR9007.K8S.E`)
+
+The adversary sets the pod's or a container's `seccompProfile` or `appArmorProfile`
+to `type: Unconfined`, so the container runtime does not apply its default syscall
+filter or AppArmor profile. Calls that the default profiles block (`unshare`,
+`keyctl`, `mount`, `ptrace` and others) then reach the kernel. This does not give the
+pod the host by itself; with a capability or a kernel bug it opens the escape paths
+that ATT&CK T1611 names. It is a weaker boundary, not a direct escape, so a separate
+rule grades it at level **medium**, below the host-access rules.
+
+- **Prerequisites:** `create` (or an update/patch) on `pods` or a workload controller,
+  in a namespace that Pod Security Admission does not hold at Baseline (Baseline forbids
+  both settings).
+- **Mechanics:** the pod-spec fields `seccompProfile.type` (since v1.19) and
+  `appArmorProfile.type` (GA in v1.30), at the pod level or in a container, init
+  container or ephemeral container. The older annotations also appear:
+  `seccomp.security.alpha.kubernetes.io/pod` (no effect since v1.27; up to v1.26 the
+  API server copied it to the `seccompProfile` field when it admitted the pod) and
+  `container.apparmor.security.beta.kubernetes.io/<container>` (still copied to the
+  field when the pod is admitted, after the audit record of the request is written).
+- **Impact:** a weaker kernel boundary for every container the setting covers.
+- **Tools on this path:** `kubectl apply`, `kubectl patch --type=json`, `kubectl debug`
+  with a custom profile, any client.
+
+#### Detection Data Model — `TRR9007.K8S.E`
+
+![DDM - Seccomp or AppArmor confinement removed](ddms/trr9007_k8s_e.png)
+
+Source: [`ddms/trr9007_k8s_e.json`](ddms/trr9007_k8s_e.json) (Arrows app format).
+
+**DDM summary.** Same request body; the tell is a profile object of type
+`Unconfined` in `requestObject` (a pod, a container, or a controller template). A
+separate rule grades it at level medium, below the host-access rules.
+
 ## Detection Strategy
 
-Compare the four DDMs. Every procedure puts its dangerous field in the pod spec,
+Compare the five DDMs. Every procedure puts its dangerous field in the pod spec,
 and the pod spec is the request body the API server records at `Request` level.
 So the chokepoint is one admission-time rule that fires on a pod write whose
-`requestObject.spec` carries any dangerous field. Two fallbacks cover the two
-deliveries that the pod-level chokepoint does not catch cleanly: a workload
-controller (where the real create is the controller object), and a static pod
-(where there is no API event at all).
+`requestObject.spec` carries any host-access field (Procedures A to D). Procedure E
+reads the same event, but `Unconfined` is a weaker boundary, so a separate medium rule
+grades it (Strategy 4). Two fallbacks cover the two deliveries that the pod-level
+chokepoint does not catch cleanly: a workload controller (where the real create is the
+controller object), and a static pod (where there is no API event at all).
 
 **Telemetry requirement.** The audit policy must log `pods` (and
 `pods/ephemeralcontainers`) and the workload controller resources for the write
@@ -278,6 +325,58 @@ sees the privileged, host-namespace, or host-mount container.
 - Sensor: a node runtime sensor (CRI pod sandboxes; a runtime agent for the
   security context).
 
+**Strategy 4 — confinement removed (severity layer, medium).**
+A separate medium rule fires on a pod or workload-controller write whose spec sets a
+seccomp or AppArmor profile of type `Unconfined` (Procedure E) — at the pod level or in
+any container, init container or ephemeral container, in a controller template or a
+CronJob job template, and through the legacy annotations. It is kept apart from the
+host-access rules on purpose: `Unconfined` weakens the kernel boundary but does not hand
+over the host by itself, and it has benign users (CI runners, Docker-in-Docker builders,
+some node agents), so folding it into the high rules would make them noisier and change
+their benign scores. Level medium. One common benign user is named in the rule: Cilium's
+default Helm values (seen in v1.16.0, v1.17.6 and v1.18.2, rendered for Kubernetes
+v1.30 and later) set the pod-level `appArmorProfile` (and, in v1.18, `seccompProfile`)
+to `Unconfined` on the `cilium`, `cilium-envoy` and `cilium-node-init` DaemonSets in
+`kube-system`, so each helm install or upgrade and each agent pod create by
+`system:serviceaccount:kube-system:daemon-set-controller` fires. Baseline them by exact
+DaemonSet name, image and identity, as the host-access rules do for the CNI. The benign
+corpus has no Cilium pod or DaemonSet write yet, so its score of 0 does not measure
+this. A status write (`*/status`) is filtered: a controller's status update carries the
+whole object, but the status strategy keeps the stored spec, so it cannot remove
+confinement. A patch body is the client's raw bytes, so a profile object can hold a key
+that the API server drops with a warning; inside the profile object the rule skips whole
+strings and nested objects two levels deep (the TRR9008 grammar), so such a key before
+`type` does not hide `Unconfined`.
+
+- Sensor: API server audit log (`Request` level).
+- Rule: `detections/sigma/T1611/k8s_podspec_confinement_disabled.yml` (built).
+
+**The JSON-patch delivery is graded.**
+A `kubectl patch --type=json` logs `requestObject` as the operation list, not the merged
+object, so the plain `requestObject.spec.*` matches miss it. All three rules add
+`requestObject|re` branches that read the operation list: an operation that targets the
+pod template, the ephemeral containers or the document root (`"path": ""`, which replaces
+the whole object) with a dangerous field set in its value; an operation whose path's last
+segment is the dangerous field, with the value in the same operation in either key order
+(kubectl sorts the keys; a raw client may not); and a copy or move into such a path (its
+value comes from another field). Between two keys of one operation the match skips whole
+JSON strings and nested objects two levels deep (the grammar of the TRR9008 JSON-patch
+rules), so an extra key that the API server ignores (a warning only, in the default
+`Warn` field validation) does not hide the operation; a key nested three levels deep
+does, as in TRR9008. A whole profile object written at a profile path is read as two
+halves: an operation path that ends in `seccompProfile` or `appArmorProfile`, and an
+operation value whose own `type` is `Unconfined`. So an ignored operation key at any depth
+does not split it; the price is a rare false positive when one patch joins a profile path
+with an unrelated `{"type": "Unconfined"}` map in another operation. The branches do
+not read the operation name, so a remediation patch whose `test` operation asserts the
+old dangerous value also fires (a documented false positive). This closed RULE_DEFECTS
+K18. kubectl debug sends a strategic-merge patch, which the `ephemeralContainers`
+selections already read; a JSON patch of
+`pods/ephemeralcontainers` comes from `kubectl patch --subresource=ephemeralcontainers
+--type=json` or another client. The `jp` emulation sends both JSON patches, and its
+ephemeral container also sets seccomp `Unconfined`, so the validator gates the JSON-patch
+branches of all three rules live (rows `9007 K18 ctrl`, `9007 K18 eph`, `9007 E jp`).
+
 **The static-pod delivery is covered, with a caveat.**
 A static pod runs on the node directly, but the kubelet then registers a mirror
 pod so the API shows it, and that mirror create is audited — attributed to the
@@ -317,13 +416,17 @@ on the node sensor for this technique.
 |----------------------|-----------|-----|
 | A, B, C, D (direct pod) | Strategy 1 (chokepoint) | pod write with a dangerous `requestObject.spec` field |
 | Any, through a controller | Strategy 2 (fallback) | controller write with a dangerous template |
+| E (pod or controller) | Strategy 4 (medium) | a seccomp or AppArmor profile of type `Unconfined` in `requestObject` |
+| Any, by a JSON patch | Strategies 1, 2, 4 (JSON-patch branches) | an operation sets a dangerous field at a template, ephemeral-container or root path, or copies or moves a value into one |
 | Any, as a static pod | Strategy 1 (via the mirror create) + Strategy 3 | `system:node` pods-create with the spec; node sensor confirms the running pod |
 | Any, under a `Metadata`-only policy | gap (no repository rule) | `requestObject` absent; only a runtime agent's privileged-container rule sees the running container. `k8s_cri_static_pod_start` sees only a pod with `config.source` `file`/`http` |
 
-One chokepoint rule covers the four dangerous-field paths for a direct pod and the
+One chokepoint rule covers the four host-access paths for a direct pod and the
 static-pod delivery (through the kubelet's mirror create). One fallback covers the
-controller delivery. Under a `Metadata`-only policy no rule in this repository sees an
-API-created dangerous pod; a runtime agent is the only view.
+controller delivery. One medium rule (Strategy 4) covers Procedure E on a pod, a
+controller template and a CronJob job template. All three rules grade the JSON-patch
+delivery. Under a `Metadata`-only policy no rule in this repository sees an API-created
+dangerous pod; a runtime agent is the only view.
 
 ## Available Emulation Tests
 
@@ -346,7 +449,9 @@ Linux setns test for the same technique).
 | TRR9007.K8S.B | `emulate_k8s.sh b` — a `hostPath` mount of the node root. | **built** |
 | TRR9007.K8S.C | `emulate_k8s.sh c` — host namespaces (`hostPID` + `hostIPC`). | **built** |
 | TRR9007.K8S.D | `emulate_k8s.sh d` — added `SYS_ADMIN` and `SYS_PTRACE`. | **built** |
+| TRR9007.K8S.E | `emulate_k8s.sh e` — a pod with a pod-level seccomp `Unconfined`, a pod with a container AppArmor `Unconfined`, and a Deployment whose template sets seccomp `Unconfined` (one object per setting; all only sleep). | **built** |
 | controller delivery | `emulate_k8s.sh ctrl` — a Deployment with a privileged template. | **built** |
+| JSON-patch delivery | `emulate_k8s.sh jp` — a Deployment made privileged by a `kubectl patch --type=json`, and a privileged ephemeral container that also sets seccomp `Unconfined`, added to a pod by a JSON patch (gates the JSON-patch branches of all three rules live; K18). | **built** |
 | static-pod delivery | `emulate_k8s.sh gap` — a dangerous static pod on the node; the node sensor sees the running pod. The script does not assert the `system:node` mirror create. | **built** |
 
 ## Detections
@@ -355,12 +460,16 @@ Linux setns test for the same technique).
 |----------|--------|------------|--------|
 | 1 (chokepoint) | A, B, C, D (direct pod) | [`detections/sigma/T1611/k8s_podspec_host_access.yml`](../../../detections/sigma/T1611/k8s_podspec_host_access.yml) | API server audit log (Request) |
 | 2 (fallback) | controller delivery | [`detections/sigma/T1611/k8s_podspec_controller_host_access.yml`](../../../detections/sigma/T1611/k8s_podspec_controller_host_access.yml) | API server audit log (Request) |
+| 4 (confinement, medium) | E (pod and controller) | [`detections/sigma/T1611/k8s_podspec_confinement_disabled.yml`](../../../detections/sigma/T1611/k8s_podspec_confinement_disabled.yml) | API server audit log (Request) |
 | 3 (node sensor) | static-pod delivery only (`config.source` `file`/`http`); not an API-created pod under a `Metadata`-only policy | [`detections/sigma/T1543.005/k8s_cri_static_pod_start.yml`](../../../detections/sigma/T1543.005/k8s_cri_static_pod_start.yml) (TRR9003) | node runtime sensor |
 
 The Kubernetes API server loop has its own validator,
 [`detections/validate_apiserver_detections.py`](../../../detections/validate_apiserver_detections.py):
-it reads the API server audit log the emulation produced and asserts Strategies 1
-and 2 match an event from the emulation itself (one naming a `trr9007-` object).
+it reads the API server audit log the emulation produced and asserts Strategies 1,
+2 and 4 match an event from the emulation itself (one naming a `trr9007-` object). The
+Procedure E rows gate on the exact object (each pod and the Deployment proves its own
+record), and the JSON-patch rows gate on the patch record whose `requestObject` is the
+operation list.
 A `system:node` mirror create that carries the spec matches Strategy 1 (sidecar case
 `mirror-create-privileged-static-pod`); the validator gate does not isolate it.
 Strategy 3 is the TRR9003 CRI rule, validated by its own loop. The workflow
@@ -380,6 +489,19 @@ controller-template fallback in one Sigma pair. Prior emulation: Stratus Red Tea
 container escape", a `hostPID` privileged pod: A and C).
 Propose the chokepoint plus the controller rule as an improvement.
 
+For Procedure E (confinement removed), a search of SigmaHQ, Elastic, Splunk ESCU, the
+Falco `k8saudit` ruleset, Stratus Red Team and Atomic Red Team found no Kubernetes-audit
+rule that flags `seccompProfile`/`appArmorProfile` of type `Unconfined` in a pod spec:
+Falco's `k8saudit` ships privileged / hostNetwork / hostPID / hostIPC pod rules but none
+for confinement, and Elastic's AppArmor rules
+(`defense_evasion_apparmor_profile_compilation.toml` and siblings) key on Linux host
+telemetry (endpoint/auditd), not the API-server audit log. The nearest existing control
+is preventive, not a detection: the Pod Security Standards **Baseline** profile forbids
+both settings (`pod-security-admission` `check_appArmorProfile.go` and
+`check_seccompProfile_baseline.go` allow only `RuntimeDefault`, `Localhost` or
+undefined). The medium confinement rule is a detection backstop for clusters that do not
+enforce Baseline.
+
 ## References
 
 - MITRE ATT&CK, T1611 Escape to Host:
@@ -392,6 +514,10 @@ Propose the chokepoint plus the controller rule as an improvement.
   <https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/>
 - Kubernetes documentation, Security Context for a Pod or Container:
   <https://kubernetes.io/docs/tasks/configure-pod-container/security-context/>
+- Kubernetes documentation, Restrict a Container's Syscalls with seccomp:
+  <https://kubernetes.io/docs/tutorials/security/seccomp/>
+- Kubernetes documentation, Restrict a Container's Access to Resources with AppArmor:
+  <https://kubernetes.io/docs/tutorials/security/apparmor/>
 - Elastic rule, Kubernetes Pod Created With HostNetwork:
   <https://www.elastic.co/guide/en/security/current/kubernetes-pod-created-with-hostnetwork.html>
 - Microsoft Threat Matrix for Kubernetes, Privileged container:

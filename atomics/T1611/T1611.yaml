@@ -145,6 +145,32 @@ atomic_tests:
         type: string
         default: PathToAtomicsFolder/T1611/src
 
+  - name: "TRR9007.K8S.E — seccomp and AppArmor Unconfined (Kubernetes)"
+    auto_generated_guid: 2b7c9e41-5d3a-4f68-a0c2-9e8d7f6b5a43
+    description: |
+      Creates a pod whose pod-level seccompProfile is type Unconfined, a second pod
+      whose container appArmorProfile is type Unconfined, and a Deployment whose
+      template sets seccomp Unconfined (one object per setting, so each validator row
+      proves its own record). The containers only sleep; the runtime's default
+      confinement is removed but never used. Admitted on a namespace with no
+      restrictive Pod Security Admission.
+      Rule: detections/sigma/T1611/k8s_podspec_confinement_disabled.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_k8s.sh e
+      cleanup_command: |
+        kubectl -n default delete pod trr9007-unconfined trr9007-unconfined-aa --force --grace-period=0 --ignore-not-found
+        kubectl -n default delete deployment trr9007-unconfined-depl --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1611/src
+
   - name: "TRR9007.K8S — host access through a workload controller (Kubernetes)"
     auto_generated_guid: f022e75f-dde0-416d-9ce1-8a3f91229e84
     description: |
@@ -162,6 +188,35 @@ atomic_tests:
         bash #{source_dir}/emulate_k8s.sh ctrl
       cleanup_command: |
         kubectl -n default delete deployment trr9007-depl --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1611/src
+
+  - name: "TRR9007.K8S — host access delivered by a JSON patch (Kubernetes)"
+    auto_generated_guid: 58c75746-804f-40f9-b4ac-a1077541f254
+    description: |
+      Creates a plain Deployment and a plain pod, then backdoors each with a JSON patch
+      (kubectl patch --type=json): the Deployment template is made privileged, and a
+      privileged ephemeral container that also sets seccompProfile Unconfined is added
+      to the pod through the pods/ephemeralcontainers subresource. A JSON patch logs
+      requestObject as the operation list, which the pod-spec rules' strategic-merge
+      selections cannot read; this proves their JSON-patch branches fire live (closed
+      RULE_DEFECTS K18). The containers only sleep.
+      Rules: detections/sigma/T1611/k8s_podspec_controller_host_access.yml,
+      detections/sigma/T1611/k8s_podspec_host_access.yml,
+      detections/sigma/T1611/k8s_podspec_confinement_disabled.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_k8s.sh jp
+      cleanup_command: |
+        kubectl -n default delete pod trr9007-jp-pod --force --grace-period=0 --ignore-not-found
+        kubectl -n default delete deployment trr9007-jp-depl --ignore-not-found
     input_arguments:
       source_dir:
         description: Path to the atomic source directory.

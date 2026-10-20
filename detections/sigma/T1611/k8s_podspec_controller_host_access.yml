@@ -24,7 +24,20 @@ description: |
   capability matches only inside a capabilities "add" list (the escape list plus
   "ALL", which grants every capability), and a hostPath only as a volume source key
   ("hostPath": {), with |re patterns that accept either form, so a container name,
-  an env value, a "drop" list or a volume name that spells one does not fire. The
+  an env value, a "drop" list or a volume name that spells one does not fire.
+  The add list is read element by element (whole JSON strings, or null, which the API
+  server decodes as an empty name), so a "]" inside an earlier element does not end
+  the list early.
+
+  A JSON patch (kubectl patch --type=json) logs requestObject as the operation list,
+  not the merged object, so the requestObject.spec.template.spec.* selections above
+  cannot see it. The sel_jp_* items grade a JSON patch too (they read the ops text and
+  so apply only to a JSON patch): an operation that targets the pod template, or
+  replaces the whole object (path ""), with a dangerous field set in a value; an
+  operation whose path's last segment is a dangerous field, with the value in the same
+  op in either key order and with ignored extra keys between them; and a copy or move
+  into such a path. This closes the controller half of the gap once tracked as
+  RULE_DEFECTS K18. The
   capability match is case-insensitive (|re|i) and accepts an optional CAP_
   prefix: the API server does not validate the names, containerd upper-cases them
   and tests ALL with EqualFold, and CRI-O also keeps a CAP_ prefix in any case. A
@@ -70,9 +83,9 @@ detection:
       - '"privileged": true'
       - '"privileged":true'
   sel_caps_tmpl:
-    requestObject.spec.template.spec.containers|re|i: '\"add\":\s*\[[^\]]*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
+    requestObject.spec.template.spec.containers|re|i: '\"add\":\s*\[\s*((\"([^"\\]|\\.)*\"|null)\s*,\s*)*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
   sel_caps_init_tmpl:
-    requestObject.spec.template.spec.initContainers|re|i: '\"add\":\s*\[[^\]]*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
+    requestObject.spec.template.spec.initContainers|re|i: '\"add\":\s*\[\s*((\"([^"\\]|\\.)*\"|null)\s*,\s*)*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
   sel_hostpath_tmpl:
     requestObject.spec.template.spec.volumes|re: '\"hostPath\":\s*\{'
   sel_hostpid_tmpl:
@@ -90,9 +103,9 @@ detection:
       - '"privileged": true'
       - '"privileged":true'
   sel_caps_cj:
-    requestObject.spec.jobTemplate.spec.template.spec.containers|re|i: '\"add\":\s*\[[^\]]*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
+    requestObject.spec.jobTemplate.spec.template.spec.containers|re|i: '\"add\":\s*\[\s*((\"([^"\\]|\\.)*\"|null)\s*,\s*)*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
   sel_caps_init_cj:
-    requestObject.spec.jobTemplate.spec.template.spec.initContainers|re|i: '\"add\":\s*\[[^\]]*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
+    requestObject.spec.jobTemplate.spec.template.spec.initContainers|re|i: '\"add\":\s*\[\s*((\"([^"\\]|\\.)*\"|null)\s*,\s*)*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
   sel_hostpath_cj:
     requestObject.spec.jobTemplate.spec.template.spec.volumes|re: '\"hostPath\":\s*\{'
   sel_hostpid_cj:
@@ -101,11 +114,87 @@ detection:
     requestObject.spec.jobTemplate.spec.template.spec.hostNetwork: true
   sel_hostipc_cj:
     requestObject.spec.jobTemplate.spec.template.spec.hostIPC: true
-  condition: selection_ctrl and (sel_priv_tmpl or sel_priv_init_tmpl or sel_caps_tmpl or sel_caps_init_tmpl or sel_hostpath_tmpl or sel_hostpid_tmpl or sel_hostnet_tmpl or sel_hostipc_tmpl or sel_priv_cj or sel_priv_init_cj or sel_caps_cj or sel_caps_init_cj or sel_hostpath_cj or sel_hostpid_cj or sel_hostnet_cj or sel_hostipc_cj)
+  # JSON patch (kubectl patch --type=json): requestObject is logged as the operation
+  # list, so requestObject.spec.template.spec.* does not exist and the strategic-merge
+  # selections above cannot see it (closed RULE_DEFECTS K18). These sel_jp_* items read
+  # the ops text instead; they apply ONLY to a JSON patch, because a strategic-merge or
+  # update body flattens to requestObject.spec.* and never to a bare requestObject field.
+  #
+  # Two shapes, modelled on the TRR9008 JSON-patch selectors
+  # (T1685/k8s_security_tool_workload_removed.yml, k8s_admission_webhook_neutered.yml):
+  #   - an operation that targets the pod template (sel_jp_tmpl_path: the document root
+  #     "", /spec, /spec/template, /spec/template/spec, the /spec/jobTemplate
+  #     equivalents, or any path below) together with a dangerous field set in a value
+  #     anywhere in the ops text (a privileged container, a host namespace, a hostPath
+  #     source, or a dangerous capability "add" list -- each self-evidently the escape
+  #     surface). A replace of the root ("path": "") swaps the whole object, so it is
+  #     graded too;
+  #   - a single operation whose path's last segment is the dangerous field, with the
+  #     value in the same op, in either key order (kubectl sorts the keys: op, path,
+  #     value; a raw client may not), or a copy or move into that path (its value comes
+  #     from another field and is not in the request).
+  # Between two keys of one op, the match skips whole JSON strings and nested objects
+  # two levels deep (the T1685 grammar), so an extra key that the API server ignores
+  # (in the default Warn field validation, unknown op keys add only a warning) does not
+  # split the op; it never crosses the op's own closing brace, so it cannot pair a path
+  # from one op with a value from the next. An extra key nested three levels deep splits
+  # the op and is not matched, as in the T1685 rule. A "test" op that asserts the
+  # dangerous value matches too (see falsepositives).
+  # Every value stays in the portable regex subset and inside Lucene's default
+  # determinization budget (10,000; the largest here is about 8,100 states).
+  sel_jp_tmpl_path:
+    requestObject|re: '\"path\"\s*:\s*\"(/spec(/template(/spec(/[^"]*)?)?|/jobTemplate(/spec(/template(/spec(/[^"]*)?)?)?)?)?)?\"'
+  sel_jp_priv_value:
+    requestObject|re: '\"privileged\"\s*:\s*true'
+  sel_jp_hostns_value:
+    requestObject|re:
+      - '\"hostPID\"\s*:\s*true'
+      - '\"hostNetwork\"\s*:\s*true'
+      - '\"hostIPC\"\s*:\s*true'
+  sel_jp_hostpath_value:
+    requestObject|re: '\"hostPath\"\s*:\s*\{'
+  sel_jp_caps_value:
+    requestObject|re|i: '\"add\"\s*:\s*\[\s*((\"([^"\\]|\\.)*\"|null)\s*,\s*)*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
+  # Leaf-path ops: the dangerous field is the op path's last segment, so the value
+  # tokens above do not see it (the field name is in the path; the value is the bare
+  # true / hostPath object / capability). A capabilities/add path takes a list value;
+  # an add/N or add/- path takes one name. The value-first hostPath form skips the value
+  # and the other op keys with a string-aware grammar (whole strings at every level,
+  # nested objects two levels deep), so an ignored key that holds a brace inside the
+  # hostPath object does not hide the op; it does not check that the value is an object,
+  # so a raw client's value-first replace of a hostPath with null fires too.
+  sel_jp_leaf_bool:
+    requestObject|re:
+      - '\"path\"\s*:\s*\"/spec(/template/spec|/jobTemplate/spec/template/spec)([^"]*/securityContext/privileged|/hostPID|/hostNetwork|/hostIPC)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"value\"\s*:\s*true'
+      - '\"value\"\s*:\s*true([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec(/template/spec|/jobTemplate/spec/template/spec)([^"]*/securityContext/privileged|/hostPID|/hostNetwork|/hostIPC)\"'
+  sel_jp_leaf_hostpath:
+    requestObject|re:
+      - '\"path\"\s*:\s*\"/spec(/template/spec|/jobTemplate/spec/template/spec)[^"]*/hostPath\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"value\"\s*:\s*\{'
+      - '\"value\"\s*:\s*([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}"]|\"([^"\\]|\\.)*\")*\})*\})*\"path\"\s*:\s*\"/spec(/template/spec|/jobTemplate/spec/template/spec)[^"]*/hostPath\"'
+  sel_jp_leaf_caps:
+    requestObject|re|i:
+      - '\"path\"\s*:\s*\"/spec(/template/spec|/jobTemplate/spec/template/spec)[^"]*/capabilities/add\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"value\"\s*:\s*\[\s*((\"([^"\\]|\\.)*\"|null)\s*,\s*)*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
+      - '\"path\"\s*:\s*\"/spec(/template/spec|/jobTemplate/spec/template/spec)[^"]*/capabilities/add/([0-9]+|-)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"value\"\s*:\s*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
+      - '\"value\"\s*:\s*\[\s*((\"([^"\\]|\\.)*\"|null)\s*,\s*)*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec(/template/spec|/jobTemplate/spec/template/spec)[^"]*/capabilities/add\"'
+      - '\"value\"\s*:\s*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec(/template/spec|/jobTemplate/spec/template/spec)[^"]*/capabilities/add/([0-9]+|-)\"'
+  sel_jp_leaf_copy:
+    requestObject|re:
+      - '\"op\"\s*:\s*\"(copy|move)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec(/template/spec|/jobTemplate/spec/template/spec)([^"]*/securityContext/privileged|/hostPID|/hostNetwork|/hostIPC|[^"]*/hostPath|[^"]*/capabilities/add(/([0-9]+|-))?)\"'
+      - '\"path\"\s*:\s*\"/spec(/template/spec|/jobTemplate/spec/template/spec)([^"]*/securityContext/privileged|/hostPID|/hostNetwork|/hostIPC|[^"]*/hostPath|[^"]*/capabilities/add(/([0-9]+|-))?)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"op\"\s*:\s*\"(copy|move)\"'
+  condition: selection_ctrl and (sel_priv_tmpl or sel_priv_init_tmpl or sel_caps_tmpl or sel_caps_init_tmpl or sel_hostpath_tmpl or sel_hostpid_tmpl or sel_hostnet_tmpl or sel_hostipc_tmpl or sel_priv_cj or sel_priv_init_cj or sel_caps_cj or sel_caps_init_cj or sel_hostpath_cj or sel_hostpid_cj or sel_hostnet_cj or sel_hostipc_cj or sel_jp_leaf_bool or sel_jp_leaf_hostpath or sel_jp_leaf_caps or sel_jp_leaf_copy or (sel_jp_tmpl_path and (sel_jp_priv_value or sel_jp_hostns_value or sel_jp_hostpath_value or sel_jp_caps_value)))
 falsepositives:
   - Infrastructure controllers that legitimately need host access (the CNI
     DaemonSet, kube-proxy, node-exporter, CSI drivers). Baseline these by exact
     controller name, image, and identity.
   - Operators deploying a privileged agent deliberately. Baseline the known
     automation identities.
+  - A remediation JSON patch whose "test" op asserts the old dangerous value before it
+    removes it (for example test hostNetwork true, then replace it with false). The
+    rule does not read the op name; a filter on "test" would let an adversary hide a
+    change behind one no-op test op.
+  - Under an audit policy that logs whole API groups at Request (the shipped lab policy
+    lists exact resources and logs status at Metadata), a controller's status write
+    (daemon-set-controller updating daemonsets/status) carries the full object, so a
+    workload that already requests host access fires again. A status write cannot
+    change the spec. Baseline those controller identities on the status subresource.
 level: high

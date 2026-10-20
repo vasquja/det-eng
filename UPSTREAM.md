@@ -42,7 +42,7 @@ TRR9003  Kubernetes  T1543.005        k8s_cri_static_pod_start.yml (+2)        T
 TRR9004  Kubernetes  T1098.006        k8s_rbac_privileged_grant.yml (+1)       T1098.006
 TRR9005  Kubernetes  T1053.007        k8s_cri_job_pod.yml (+1)                 T1053.007
 TRR9006  Kubernetes  T1552.007        k8s_secret_access.yml (+2)               T1552.007
-TRR9007  Kubernetes  T1611            k8s_podspec_controller_host_access.yml (+2) T1611
+TRR9007  Kubernetes  T1611            k8s_podspec_confinement_disabled.yml (+3) T1611
 TRR9008  Kubernetes  T1685            io_uring_setup.yml (+3)                  T1685
 TRR9009  Kubernetes  T1134            k8s_impersonation.yml (+1)               T1134
 TRR9010  Kubernetes  T1070,T1070.004  k8s_events_deleted.yml (+2)              T1070

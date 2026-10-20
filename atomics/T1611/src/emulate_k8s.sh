@@ -15,7 +15,11 @@
 #   ./emulate_k8s.sh b      hostPath mount of the node root
 #   ./emulate_k8s.sh c      host namespaces (hostPID + hostIPC)
 #   ./emulate_k8s.sh d      added dangerous capabilities
+#   ./emulate_k8s.sh e      seccomp and AppArmor Unconfined, on two pods and a Deployment
 #   ./emulate_k8s.sh ctrl   the same host access through a Deployment (controller)
+#   ./emulate_k8s.sh jp     JSON-patch delivery (kubectl patch --type=json) of host access
+#                           to a Deployment template and a pod's ephemeral container (K18;
+#                           the ephemeral container also sets seccomp Unconfined)
 #   ./emulate_k8s.sh gap    a dangerous STATIC POD on the node (node sensor + mirror create)
 #   ./emulate_k8s.sh all    every item, in order, then clean up
 #
@@ -41,14 +45,51 @@ apply_pod() {
 cleanup() {
   log "cleanup: removing every trr9007- object"
   kubectl -n "$NS" delete pod trr9007-priv trr9007-hostpath trr9007-hostns trr9007-caps \
+    trr9007-unconfined trr9007-unconfined-aa trr9007-jp-pod \
     --force --grace-period=0 --ignore-not-found >/dev/null 2>&1 || true
-  kubectl -n "$NS" delete deployment trr9007-depl --ignore-not-found >/dev/null 2>&1 || true
+  kubectl -n "$NS" delete deployment trr9007-depl trr9007-unconfined-depl trr9007-jp-depl \
+    --ignore-not-found >/dev/null 2>&1 || true
 }
 
 procedure_a() { apply_pod k8s-priv-pod.yaml trr9007-priv ; }
 procedure_b() { apply_pod k8s-hostpath-pod.yaml trr9007-hostpath ; }
 procedure_c() { apply_pod k8s-hostns-pod.yaml trr9007-hostns ; }
 procedure_d() { apply_pod k8s-caps-pod.yaml trr9007-caps ; }
+
+# Procedure E: confinement removed (seccomp and AppArmor Unconfined), no host access.
+# One object per setting, so each validator row proves its own record: a pod with a
+# pod-level seccomp Unconfined, a pod with a container AppArmor Unconfined, and a
+# Deployment whose template sets seccomp Unconfined. Every container only sleeps.
+procedure_e() {
+  log "e: apply pod trr9007-unconfined (pod-level seccomp Unconfined; no host access; container only sleeps)"
+  kubectl apply -f "$SCRIPT_DIR/k8s-unconfined-pod.yaml" >/dev/null 2>&1 || true
+  log "e: apply pod trr9007-unconfined-aa (container AppArmor Unconfined; no host access; container only sleeps)"
+  kubectl apply -f "$SCRIPT_DIR/k8s-unconfined-apparmor-pod.yaml" >/dev/null 2>&1 || true
+  log "e: apply deployment trr9007-unconfined-depl (seccomp Unconfined template)"
+  kubectl apply -f "$SCRIPT_DIR/k8s-unconfined-deployment.yaml" >/dev/null 2>&1 || true
+}
+
+# K18 (JSON-patch grading): kubectl patch --type=json logs requestObject as the operation
+# list, which the strategic-merge selections cannot read. Create two plain trr9007- objects,
+# then backdoor them with a JSON patch so the pod rules' requestObject|re branches fire
+# live: a Deployment template made privileged, and a privileged ephemeral container added
+# to a pod (the pods/ephemeralcontainers subresource). The ephemeral container also sets
+# seccompProfile Unconfined, so the same record proves the confinement rule's JSON-patch
+# branch (Procedure E by a JSON patch). The containers only sleep.
+procedure_jp() {
+  log "jp: apply plain trr9007-jp-depl and trr9007-jp-pod (non-privileged, sleep only)"
+  kubectl apply -f "$SCRIPT_DIR/k8s-jsonpatch-deployment.yaml" >/dev/null 2>&1 || true
+  kubectl apply -f "$SCRIPT_DIR/k8s-jsonpatch-pod.yaml" >/dev/null 2>&1 || true
+  kubectl -n "$NS" wait --for=condition=Ready pod/trr9007-jp-pod --timeout=90s >/dev/null 2>&1 || true
+  log "jp: JSON patch the Deployment template to privileged (--type=json)"
+  kubectl -n "$NS" patch deployment trr9007-jp-depl --type=json \
+    -p '[{"op":"add","path":"/spec/template/spec/containers/0/securityContext","value":{"privileged":true}}]' \
+    >/dev/null 2>&1 || true
+  log "jp: JSON patch a privileged, seccomp-Unconfined ephemeral container onto trr9007-jp-pod (--subresource=ephemeralcontainers --type=json)"
+  kubectl -n "$NS" patch pod trr9007-jp-pod --subresource=ephemeralcontainers --type=json \
+    -p '[{"op":"add","path":"/spec/ephemeralContainers","value":[{"name":"trr9007-dbg","image":"busybox:1.36","command":["sleep","3600"],"securityContext":{"privileged":true,"seccompProfile":{"type":"Unconfined"}},"terminationMessagePolicy":"File","imagePullPolicy":"IfNotPresent"}]}]' \
+    >/dev/null 2>&1 || true
+}
 
 # Controller delivery — the dangerous spec on a Deployment's template. The
 # Deployment create is the adversary's real admission-moment event (explicit name,
@@ -95,16 +136,18 @@ run_one() {
     b) procedure_b ;;
     c) procedure_c ;;
     d) procedure_d ;;
+    e) procedure_e ;;
     ctrl) procedure_ctrl ;;
+    jp) procedure_jp ;;
     gap) procedure_gap ;;
-    *) log "unknown item: $1 (use a|b|c|d|ctrl|gap|all)"; exit 2 ;;
+    *) log "unknown item: $1 (use a|b|c|d|e|ctrl|jp|gap|all)"; exit 2 ;;
   esac
 }
 
 main() {
   local which="${1:-all}"
   if [ "$which" = "all" ]; then
-    for p in a b c d ctrl gap; do run_one "$p"; done
+    for p in a b c d e ctrl jp gap; do run_one "$p"; done
     cleanup
   else
     run_one "$which"

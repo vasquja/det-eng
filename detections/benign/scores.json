@@ -829,6 +829,18 @@
         "k8s-audit-human-operators": 18
       }
     },
+    "T1611/k8s_podspec_confinement_disabled.yml": {
+      "actors": {},
+      "distinct_actors": 0,
+      "events": 2666,
+      "hits": 0,
+      "rate_per_10k": 0.0,
+      "slices": {
+        "k8s-audit-control-plane": 0,
+        "k8s-audit-gitops-ci": 0,
+        "k8s-audit-human-operators": 0
+      }
+    },
     "T1611/k8s_podspec_controller_host_access.yml": {
       "actors": {
         "system:serviceaccount:flux-system:kustomize-controller": 2

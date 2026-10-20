@@ -32,6 +32,13 @@ kindnet privileged pods). The gate is:
 
   * TRR9004 / TRR9005 (audit) / TRR9007 : objectRef.name begins with 'trr9004-' /
     'trr9005-' / 'trr9007-'.
+  * TRR9007 E (confinement removed): the exact object and resource, with no subresource:
+    pod trr9007-unconfined (pod-level seccomp), pod trr9007-unconfined-aa (container
+    AppArmor) and Deployment trr9007-unconfined-depl, so each row proves its own record
+    (a name prefix would let the Deployment's records pass the pod rows).
+  * TRR9007 K18 and E jp (JSON patch): objectRef.name begins with trr9007-jp-depl /
+    trr9007-jp-pod, resource deployments or pods/ephemeralcontainers, verb patch, and
+    requestObject is the JSON-patch operation list.
   * TRR9005 (cri)  : the pod sandbox's batch.kubernetes.io/job-name begins with
     'trr9005-'.
   * TRR9006        : objectRef.namespace is the fixed emulation namespace AND the
@@ -143,6 +150,37 @@ def accepted_modify(prefix, verbs=("update", "patch")):
                 and e.get("responseStatus.code") == 200)
     gate.describe = (f"objectRef.name begins with {prefix!r}, verb in {list(verbs)} and "
                      "responseStatus.code == 200")
+    return gate
+
+
+def name_resource(name, resource):
+    """TRR9007 E: the write of exactly the object `name` of `resource` (no subresource), so
+    the pod rows and the Deployment row of Procedure E each prove a record of their own."""
+    def gate(e):
+        return (e.get("objectRef.name") == name and e.get("objectRef.resource") == resource
+                and not e.get("objectRef.subresource"))
+    gate.describe = (f"objectRef.name == {name!r}, objectRef.resource == {resource!r}, and no "
+                     "objectRef.subresource")
+    return gate
+
+
+def jsonpatch_gate(prefix, resource, subresource=None):
+    """TRR9007 K18: a kubectl patch --type=json of `resource` named `prefix`* whose audit
+    requestObject is the operation list (a JSON text that flattens to one `requestObject`
+    field beginning with '['). This gates the JSON-patch delivery specifically: a
+    strategic-merge or full-object write flattens to requestObject.spec.* instead and
+    never meets it, so a pass proves the rule's requestObject|re JSON-patch branches
+    fired on a real JSON patch, not a merge look-alike."""
+    def gate(e):
+        ro = e.get("requestObject")
+        return ((e.get("objectRef.name") or "").startswith(prefix)
+                and e.get("objectRef.resource") == resource
+                and (subresource is None or e.get("objectRef.subresource") == subresource)
+                and e.get("verb") == "patch"
+                and isinstance(ro, str) and ro.lstrip().startswith("["))
+    sub = f"/{subresource}" if subresource else ""
+    gate.describe = (f"objectRef.name begins with {prefix!r}, resource {resource}{sub}, verb "
+                     "patch, and requestObject is a JSON-patch operation list (starts with '[')")
     return gate
 
 
@@ -278,6 +316,25 @@ MANIFEST = [
      "pod-spec host-access chokepoint (Request)", name_prefix("trr9007-")),
     ("T1611", "k8s_podspec_controller_host_access.yml", "audit", "9007 ctrl",
      "controller-template host-access (Request)", name_prefix("trr9007-")),
+    ("T1611", "k8s_podspec_confinement_disabled.yml", "audit", "9007 E",
+     "pod-level seccomp Unconfined on a pod (Request)", name_resource("trr9007-unconfined", "pods")),
+    ("T1611", "k8s_podspec_confinement_disabled.yml", "audit", "9007 E aa",
+     "container AppArmor Unconfined on a pod (Request)", name_resource("trr9007-unconfined-aa", "pods")),
+    ("T1611", "k8s_podspec_confinement_disabled.yml", "audit", "9007 E ctrl",
+     "seccomp Unconfined on a Deployment template (Request)",
+     name_resource("trr9007-unconfined-depl", "deployments")),
+    ("T1611", "k8s_podspec_confinement_disabled.yml", "audit", "9007 E jp",
+     "seccomp Unconfined on an ephemeral container via a JSON patch (Request)",
+     jsonpatch_gate("trr9007-jp-pod", "pods", "ephemeralcontainers")),
+    # K18: the JSON-patch delivery, proven live. A kubectl patch --type=json makes a
+    # Deployment template privileged, and adds a privileged ephemeral container to a pod
+    # (pods/ephemeralcontainers). The gate requires the JSON-patch operation list, so a
+    # pass proves the rules' requestObject|re branches fired on a real JSON patch.
+    ("T1611", "k8s_podspec_controller_host_access.yml", "audit", "9007 K18 ctrl",
+     "controller host-access via a JSON patch (Request)", jsonpatch_gate("trr9007-jp-depl", "deployments")),
+    ("T1611", "k8s_podspec_host_access.yml", "audit", "9007 K18 eph",
+     "privileged ephemeral container via a JSON patch (Request)",
+     jsonpatch_gate("trr9007-jp-pod", "pods", "ephemeralcontainers")),
     ("T1685", "k8s_admission_webhook_disabled.yml", "audit", "9008 A-C",
      "admission-control disable chokepoint", name_prefix("trr9008-")),
     ("T1685", "k8s_admission_webhook_neutered.yml", "audit", "9008 sev",
