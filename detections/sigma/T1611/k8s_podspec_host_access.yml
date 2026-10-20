@@ -126,9 +126,10 @@ detection:
   # accepts a negative index, so +0, -0 and -1 are indexes too (the TRR9025 repoint
   # grader's grammar). Between two keys of one op, the match skips whole JSON
   # strings and nested objects two levels deep (the T1685 grammar), so an ignored extra
-  # key does not split the op, and it never crosses into the next op. Each value stays
-  # inside Lucene's default determinization budget (10,000; the largest here is about
-  # 7,400 states).
+  # key does not split the op, and it never crosses into the next op. An extra key nested
+  # three levels deep splits the op and is not matched (RULE_DEFECTS.md K33). Each value
+  # stays inside Lucene's default determinization budget (10,000; the largest here is
+  # about 7,400 states).
   sel_jp_eph_path:
     requestObject|re: '\"path\"\s*:\s*\"(/spec(/ephemeralContainers(/[^"]*)?)?)?\"'
   sel_jp_priv_value:

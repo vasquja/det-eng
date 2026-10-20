@@ -5,11 +5,13 @@ emulations produced. Sibling of validate_k8s_detections.py (TRR9002) and
 validate_staticpod_detections.py (TRR9003), extended to the techniques that all
 key on the same API server audit log (plus one node runtime sensor rule):
 
-  * TRR9004 (T1098.006, RBAC)            - rbac writes
+  * TRR9004 (T1098.006, RBAC)            - rbac writes + kube-system/aws-auth ConfigMap
+                                           write
   * TRR9005 (T1053.007, Jobs/CronJobs)   - batch writes + a node CRI job-pod rule
   * TRR9006 (T1552.007, Secrets)         - secret reads + TokenRequest
   * TRR9007 (T1611, dangerous pod spec)  - pod + controller requestObject
-  * TRR9008 (T1685, disable or modify tools) - admissionregistration disable + grade
+  * TRR9008 (T1685, disable or modify tools) - admissionregistration disable + grade,
+                                           and apps-group enforcer workload removal
   * TRR9009 (T1134, impersonation)       - impersonatedUser presence
   * TRR9010 (T1070, indicator removal)   - events delete/deletecollection + namespace delete
   * TRR9025 (T1546, malicious admission webhook) - admissionregistration create/SSA install
@@ -66,8 +68,14 @@ kindnet privileged pods). The gate is:
     PUT; its Scale body has no replicas key for 0), D2 patch adds verb patch of
     'scale' (the plain kubectl scale), and D2 delete adds verb delete of the
     deployments resource itself. D put proves the anchor rule on the same gate as D2
-    put. The atomic's delete of the kyverno namespace is not gated: that record names
-    the real namespace, which carries no emulation marker.
+    put.
+  * TRR9008 D2 ns / D ns (the atomic's delete of the kyverno namespace): that record
+    names the real namespace and carries no emulation marker, so the gate is the exact
+    write: objectRef.resource 'namespaces', objectRef.name 'kyverno', verb delete, and a
+    user.username that is not 'system:*'. D2 ns proves the alert rule and D ns the anchor
+    rule. The gate rests on kind having no kyverno namespace before d2 runs (d2 creates
+    it only when it is absent and deletes it only when it created it), so the
+    pre-emulation log holds no such record.
   * TRR9027: objectRef.name is a cluster-DNS ConfigMap (coredns / kube-dns /
     coredns-custom) in kube-system AND the write carries the 'trr9027' sentinel in its
     requestObject (the coredns ConfigMap exists at bootstrap, so the name alone is not

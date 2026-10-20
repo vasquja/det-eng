@@ -330,8 +330,12 @@ not the object.
 
 **Strategy 1 — chokepoint (covers A, B, C).**
 Match audit events where `objectRef.apiGroup` is `admissionregistration.k8s.io` and
-`verb` is `delete`, `deletecollection`, `update`, or `patch`. create is excluded
-(that is persistence). A server-side dry run is filtered: the `?dryRun=All` query of an
+`verb` is `delete`, `deletecollection`, `update`, or `patch`. The `create` verb is
+excluded (that is persistence, TRR9025). But a server-side-apply install of a missing
+object is a `patch` answered 201, not a create, so it fires this rule (K21). The TRR9025
+create rules fire on the same record, so such an install alerts twice, which is
+expected. A refused server-side-apply install (a `patch` answered 4xx) fires this rule
+only. A server-side dry run is filtered: the `?dryRun=All` query of an
 update or patch, or the DeleteOptions body of a delete (which the shipped policy logs at
 Request level). Baseline the policy engine's own controller, GitOps/Helm,
 and cluster-upgrade tooling by `user.username`.
@@ -344,7 +348,13 @@ stored object).**
 On top of the chokepoint, match a webhook write whose `requestObject.webhooks` sets
 failurePolicy to Ignore, an empty rules list, a constant matchCondition or a
 never-matching namespaceSelector, or whose stored object (`responseObject.webhooks`)
-has a webhook without rules, a constant condition or such a selector.
+has a webhook without rules, a constant condition or such a selector. In a JSON patch
+the webhook index is any JSON-pointer token, because the API server's JSON patch
+library (`json-patch.v4` v4.13.0) reads `+0`, `-0` and `-1` as indexes. The grader
+filters what cannot neuter an installed webhook: a server-side dry run of an update or
+patch (the `?dryRun=All` query, for example `kubectl diff` or an Argo CD server-side
+diff), and a server-side-apply install (a `patch` answered 201, which the TRR9025 create
+rules own).
 
 - Sensor: API server audit log at Request and RequestResponse level.
 - Rule: `detections/sigma/T1685/k8s_admission_webhook_neutered.yml` (built).
@@ -370,8 +380,8 @@ webhook stopped by a write outside the apps group (see Procedure D).
 
 Two rules share this logic. The alert rule (level high) matches the workload writes
 only in the three default namespaces, plus the namespace delete. The anchor rule
-(level low) matches the workload writes in every namespace: it does not check that
-the target is a security tool. Use it to correlate an enforcer that is installed in
+(level low) matches the workload writes in every namespace, plus the same namespace
+delete: it does not check that the target is a security tool. Use it to correlate an enforcer that is installed in
 another namespace, or an identity that also changed an admission configuration.
 
 - Sensor: API server audit log.
@@ -395,6 +405,17 @@ install path. No rule covers the webhook cert paths.
 The lab demonstrates the gap read-only, by showing the apiserver manifest path on
 the node and noting no admissionregistration audit event follows an edit there.
 
+**Audit-pipeline gap — a YAML apply body.**
+A server-side apply patch whose body is YAML (not the JSON that kubectl and client-go
+send) leaves no audit record at Request level or higher: the API server logs the raw
+patch body as JSON, the JSON log backend cannot encode it, and it drops the whole
+event. So a neuter in place (C) or a scale patch (D) sent that way fires no rule, the
+chokepoint included. The deletes (A and B) send no patch and are not affected. The
+operator signal is the kube-apiserver line `Error in audit plugin` and the metric
+`apiserver_audit_error_total`. The gap holds for every resource that the shipped
+policy logs at Request or higher. Tracked as
+[RULE_DEFECTS K23](../../../detections/RULE_DEFECTS.md#k23-apply-patches-with-a-yaml-body-no-audit-record-at-request-level-or-higher).
+
 **Coverage summary.**
 
 | Procedure | Covered by | How |
@@ -402,7 +423,7 @@ the node and noting no admissionregistration audit event follows an edit there.
 | A | Strategy 1 (chokepoint) | delete `validatingwebhookconfigurations` |
 | B | Strategy 1 (chokepoint) | delete `mutatingwebhookconfigurations` |
 | C | Strategy 1; graded by Strategy 2 | `update`/`patch` webhook config; failurePolicy Ignore / rules [] |
-| D | Strategy 3 (alert and anchor) | delete the enforcer Deployment/DaemonSet, scale the Deployment to zero, or delete its namespace (not a DaemonSet that no node runs: K29) |
+| D | Strategy 3 (alert and anchor) | delete the enforcer Deployment/DaemonSet, scale the Deployment to zero, or delete its namespace (not a DaemonSet that no node runs: K29; not a null-directive Scale patch: K32) |
 
 One chokepoint rule covers the three admission-config paths. A severity rule grades
 the neuter. An alert rule covers the enforcer-workload removal in the engines'
@@ -415,8 +436,9 @@ admission group at Request level, and its updates and patches at RequestResponse
 policy are in [`detections/k8s/`](../../../detections/k8s/). Every object the tests
 create is named `trr9008-*` (the namespace of test d is `trr9008`), except the
 `kyverno` namespace: test d2 creates it only when it is absent, labels it
-`trr9008-created=true`, and deletes it again. Its records carry no marker, so the
-validator does not gate them. Every webhook is a no-op (failurePolicy Ignore, rules
+`trr9008-created=true`, and deletes it only when the test created it. Its records carry
+no marker, so the validator gates the namespace delete by the exact write (see
+[Detections](#detections)). Every webhook is a no-op (failurePolicy Ignore, rules
 scoped to a bogus apiGroup) that cannot affect a real admission request. One script drives them:
 [`atomics/T1685/src/emulate_k8s.sh`](../../../atomics/T1685/src/emulate_k8s.sh),
 with Atomic Red Team wrappers in
@@ -429,7 +451,7 @@ with Atomic Red Team wrappers in
 | TRR9008.K8S.B | `emulate_k8s.sh b` — apply then delete a no-op MutatingWebhookConfiguration. | **built** |
 | TRR9008.K8S.C | `emulate_k8s.sh c` — neuter a webhook config (failurePolicy Ignore, rules []), then four more shapes on their own configs: a merge patch and a JSON patch that replace the webhooks list and drop rules, a constant-false matchCondition, and a namespaceSelector that matches no namespace. | **built** |
 | TRR9008.K8S.D | `emulate_k8s.sh d` — create a pause Deployment, scale it to zero with `kubectl scale` and with a patch, delete it. | **built** |
-| TRR9008.K8S.D | `emulate_k8s.sh d2` — the same in the `kyverno` namespace (created, labelled `trr9008-created=true`, and deleted only when it is absent): a pause Deployment `trr9008-enforcer-standin`, scaled to zero with `kubectl scale --current-replicas=1` (an update of the scale subresource) and with a plain `kubectl scale`, then deleted. | **built** |
+| TRR9008.K8S.D | `emulate_k8s.sh d2` — the same in the `kyverno` namespace (created only when absent, labelled `trr9008-created=true`, and deleted only when the test created it): a pause Deployment `trr9008-enforcer-standin`, scaled to zero with `kubectl scale --current-replicas=1` (an update of the scale subresource) and with a plain `kubectl scale`, then deleted. | **built** |
 
 ## Detections
 
@@ -447,9 +469,12 @@ an event naming a `trr9008-` object; for the alert rule, a `trr9008-` object in 
 `kyverno` namespace (`9008 D2`), and each write of it on its own: the update of its
 scale subresource (`9008 D2 put`), the patch of it (`9008 D2 patch`) and the
 Deployment delete (`9008 D2 delete`). The anchor rule is also proven on that update
-(`9008 D put`). The atomic's delete of the `kyverno` namespace is not gated: its
-record names the real namespace, which carries no emulation marker, so the sidecar
-cases prove that branch. The workflow
+(`9008 D put`). The atomic's delete of the `kyverno` namespace names the real
+namespace, which carries no emulation marker, so it is gated by the exact write
+(resource `namespaces`, name `kyverno`, verb `delete`, a caller that is not
+`system:*`): `9008 D2 ns` proves the alert rule and `9008 D ns` the anchor rule. That
+gate rests on the kind cluster having no `kyverno` namespace before d2 runs, so the
+pre-emulation negative control holds no such record. The workflow
 [`validate-apiserver-detections.yml`](../../../.github/workflows/validate-apiserver-detections.yml)
 runs the loop on a `kind` cluster, with a negative control on the pre-emulation log.
 

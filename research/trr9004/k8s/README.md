@@ -419,7 +419,14 @@ kubeadm cluster writes dozens of RBAC objects at bootstrap and reconciles the
 default roles continuously. Baseline the **actor**, not the object: suppress
 `system:kube-controller-manager`, `system:apiserver`, the kubeadm and
 `system:bootstrappers` identities, and known GitOps or CI service accounts by
-`user.username` and `user.groups`.
+`user.username` and `user.groups`. Every RBAC-object grant passes through an RBAC
+write, so this rule covers A–E and G. Procedure F (aws-auth) changes no RBAC object;
+Strategy 4 covers it. Two companion rules grade the same writes:
+`k8s_rbac_privileged_grant` (Strategy 2, high) and
+`k8s_rbac_sensitive_permission_grant` (Strategy 3, medium). One write leaves no record
+at all: a server-side apply patch with a YAML body, which the JSON audit backend drops
+at Request level or higher
+([`RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) K23).
 
 - Sensor: API server audit log.
 - Rule: `detections/sigma/T1098.006/k8s_rbac_write.yml` (built).
@@ -498,9 +505,9 @@ authenticator reads only that one ConfigMap — so the marker is load-bearing an
 non-spoofable. Metadata level is enough. Fire on any outcome of an `update`,
 `patch` or `delete` (a denied write is an attempt worth a look), and on an
 authorized `create`. A `create` that authorization denies logs no
-`objectRef.name`, and a server-side apply sent as raw YAML is dropped by the JSON
-audit backend, so neither can fire
-([`RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) K28). Baseline the
+`objectRef.name` ([`RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) K28),
+and a server-side apply sent as raw YAML is dropped by the JSON audit backend (K23),
+so neither can fire. Baseline the
 real writers by actor
 (`eks:kms-storage-migrator`, `eksctl`, the Terraform provider, Defender's
 agentless-discovery role). A content grade cannot stand on one record, so this

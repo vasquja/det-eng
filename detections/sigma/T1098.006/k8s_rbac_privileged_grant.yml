@@ -20,8 +20,10 @@ description: |
       enough to run a command in every pod on the node through the kubelet).
 
   The group-subject and rule matches use |contains against the JSON-serialized
-  subjects and rules arrays and list both the spaced (CI) and compact (Go) forms,
-  because the audit backend stores an array field as JSON text. roleRef is an
+  subjects and rules arrays and list both the spaced (CI) and compact (Go) forms.
+  The audit log holds each array as JSON; the validators flatten an array to its JSON
+  text (sigma_eval.flatten), so a SIEM must index every list field as that text
+  (detections/README.md, the list-as-JSON-text contract). roleRef is an
   object, not an array, so it flattens to dotted scalar fields matched by
   equality.
 

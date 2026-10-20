@@ -30,9 +30,11 @@ This TRR does not cover these related actions:
 
 - **Disabling** admission control — deleting a webhook configuration, neutering one
   in place, or removing the policy engine's workload. ATT&CK T1685 covers that, and
-  it is TRR9008 in this repository. TRR9008 keys on delete/update/patch and
-  **explicitly excludes `create`**, naming the creation of a malicious webhook as a
-  separate report; this is that report. Detecting the disable plus the install gives
+  it is TRR9008 in this repository. TRR9008 keys on the delete, update and patch
+  verbs and excludes the `create` verb, naming the creation of a malicious webhook as
+  a separate report; this is that report. A server-side-apply install is a `patch`
+  answered 201, so the TRR9008 chokepoint fires on it too, and the TRR9008 neuter
+  grader filters it (K21). Detecting the disable plus the install gives
   both halves of the admission-control attack surface. A **repoint** (Procedure D) is
   an update or patch too, so TRR9008's chokepoint (`k8s_admission_webhook_disabled`)
   fires on it at medium; this report's Procedure D grader reads the URL and grades it
@@ -283,8 +285,11 @@ updates and patches at `RequestResponse`); no change is needed.
 
 **Strategy 1 — chokepoint (covers A, B, C).**
 Match an audit event where `objectRef.apiGroup` is `admissionregistration.k8s.io` and
-`verb` is `create`. This is the inverse of the TRR9008 chokepoint, which keys on the
-disabling verbs and excludes create. It is noisy — cert-manager, Gatekeeper, Kyverno,
+`verb` is `create`, or `verb` is `patch` with `responseStatus.code` 201 (a
+server-side-apply install; K21). This is the inverse of the TRR9008 chokepoint, which
+keys on the disabling verbs and excludes the `create` verb. A server-side-apply install
+is a `patch`, so the TRR9008 chokepoint also fires on it (an expected double alert),
+and the TRR9008 neuter grader filters it. It is noisy — cert-manager, Gatekeeper, Kyverno,
 and Helm legitimately create webhooks — so baseline the installer identity by
 `user.username`/`user.groups`. SigmaHQ's `kubernetes_audit_change_admission_controller`
 and Elastic's "Kubernetes Admission Webhook Created or Modified" cover this same
@@ -316,12 +321,24 @@ performs as a `patch` answered `201` (K21): the chokepoint and the grader match
 missed. An apply patch with a YAML (not JSON) body is the exception: it leaves no
 record at all (see the gaps below).
 
+Refused installs:
+
+- A POST create that admission or validation refuses (403 from an admission webhook
+  or policy, 409, 422) is logged with its body, so both create rules fire on it.
+- A create that authorization refuses (403 before the body is read) has no
+  `requestObject`, so only the chokepoint fires.
+- A refused server-side-apply install (a `patch` answered 4xx) cannot be told from a
+  refused modify of an installed object, so neither create rule fires on it (their
+  `patch` branch needs 201). The TRR9008 chokepoint records it as a patch.
+
 **Strategy 3 — repoint grader (grades D; needs Request level or higher).**
 Match an accepted (`200`) `update` or `patch` of an installed MutatingWebhookConfiguration
 or ValidatingWebhookConfiguration whose request body sets a webhook's `clientConfig.url`.
 The rule reads the object-shaped body (PUT, strategic merge, JSON merge, client-side
 and server-side apply) with `|contains` against the serialized `webhooks` array, and
-the JSON-patch operation list with a small `|re|i` set. In that set the webhook index is
+the JSON-patch operation list with a small `|re` set. The set folds the case of the URL
+scheme with character classes (`[hH][tT][tT][pP]`), not with `|re|i`, because pySigma
+renders `|re|i` as `(?i)`, which Lucene reads as literal text. In that set the webhook index is
 any path token, because the API server's JSON patch library (`json-patch.v4` v4.13.0)
 reads an index with Go `strconv.Atoi` and accepts a negative index (`+0`, `-0` and `-1`
 all select a webhook). The set also matches across the operation list, not inside one
@@ -372,8 +389,10 @@ shape (also on the shapes that Strategy 3 cannot grade, listed in the gaps below
   kubectl and client-go send) is dropped from the audit log at Request level or higher,
   because the audit backend cannot encode the raw body as JSON. No rule sees that
   install or repoint; the fallback is the kube-apiserver error line and the
-  `apiserver_audit_error_total` metric. Tracked as
-  [RULE_DEFECTS K23](../../../detections/RULE_DEFECTS.md#k23-admission-object-apply-patches-with-a-yaml-body-no-audit-record).
+  `apiserver_audit_error_total` metric. The gap is not specific to admission objects:
+  it holds for every resource that the shipped policy logs at Request or higher.
+  Tracked as
+  [RULE_DEFECTS K23](../../../detections/RULE_DEFECTS.md#k23-apply-patches-with-a-yaml-body-no-audit-record-at-request-level-or-higher).
 - **Control-plane bypass.** An adversary with control-plane node or etcd access can
   write a webhook configuration straight into etcd, with no API `create` and no audit
   event. The lab demonstrates this read-only (it shows that a node-local etcd write

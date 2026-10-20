@@ -490,7 +490,9 @@ tools read `/metrics` and `/stats` through `nodes/proxy` all the time. An
 exec path through the node proxy is very rare, so set a high level. Filter another
 kubelet endpoint (the first segment after `/proxy/` is `containerLogs`,
 `portForward`, `checkpoint`, `logs` or `debug`) whose later segments name a
-namespace, pod or container `exec`, `run` or `attach`. A `nodes/proxy` request whose
+namespace, pod or container `exec`, `run` or `attach`. Empty (`//`) and single-dot
+(`/./`) segments before that endpoint do not change it, because the API server drops
+them with `path.Join` before it proxies the path, so the filter allows them. A `nodes/proxy` request whose
 `requestURI` path (anything before `?`, the `/api/v1/nodes/<n>/proxy/` prefix included)
 holds a percent-encoded byte or a `..` segment fires whatever endpoint it seems to name:
 the API server and the kubelet use the decoded path, which can differ from the raw
@@ -500,8 +502,8 @@ the API server and the kubelet use the decoded path, which can differ from the r
 - Rule: `detections/sigma/T1609/k8s_node_proxy_exec.yml` (built).
 - Nearest existing rules: Elastic "Kubernetes API Server Proxying Request to Kubelet"
   (`privilege_escalation_api_proxy_to_node.toml`) matches any non-system `nodes/proxy`
-  request except its `metrics`, `healthz`, `stats/summary` and `configz` paths, so it
-  also sees non-exec kubelet reads; the
+  request except its `metrics`, `healthz`, `stats/summary`, `elastic-agent` and
+  `configz` paths, so it also sees non-exec kubelet reads; the
   AKS rule "Azure AKS Kubelet Proxy to Command Execution Endpoint" matches
   `/proxy/run/`, `/proxy/exec`, `/proxy/attach`, `/proxy/portForward` and `/proxy/cri/`
   on AKS logs. The nearest emulation is Stratus Red Team

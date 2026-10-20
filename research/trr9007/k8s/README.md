@@ -42,10 +42,10 @@ This TRR does not cover these related actions:
 `hostPort`, `runAsUser: 0`, and `allowPrivilegeEscalation` are weaker Pod
 Security violations that enrich a finding but are not themselves host escape, so
 they are enrichment, not chokepoint fields. `Unconfined` is not a host escape by itself
-either, but it is a procedure (E), not enrichment: it removes a whole kernel-level layer
-(the syscall filter or the AppArmor profile) that the escape paths of T1611 must pass, it
-is its own Pod Security Baseline check, and it has its own medium rule (Strategy 4), so it
-is graded apart from the high host-access rules.
+either, but it is a procedure (E), not enrichment. It removes a whole kernel-level layer
+(the syscall filter or the AppArmor profile) that the escape paths of T1611 must pass, and
+it is its own Pod Security Baseline check. It has its own medium rule (Strategy 4), apart
+from the high host-access rules.
 
 ## Technique Overview
 
@@ -296,7 +296,8 @@ makes every rule here blind. Put the `Request` rules first, and never let a broa
 Match a pod write (`objectRef.resource: pods`, verb `create`/`update`/`patch`)
 whose `requestObject.spec` has a privileged container, a `hostPath` volume, a host
 namespace, or a dangerous capability. This also catches a privileged ephemeral
-container and a rejected (403) attempt.
+container and a rejected (403) attempt. A status write (`pods/status`) is filtered: its
+status strategy keeps the stored spec, so it cannot add host access.
 
 - Sensor: API server audit log (`Request` level).
 - Rule: `detections/sigma/T1611/k8s_podspec_host_access.yml` (built).
@@ -308,7 +309,8 @@ access. A pod created through a controller has the fields one (or, for a CronJob
 two) levels deeper, and the eventual pod create is by the controller service
 account after admission. This rule catches the adversary's own create, with the
 real identity and name. A privileged Job or CronJob also matches the TRR9005
-chokepoint — the same write, two lenses; dedup by `auditID`.
+chokepoint — the same write, two lenses; dedup by `auditID`. A status write (for example
+the DaemonSet controller's update of `daemonsets/status`) is filtered, as in Strategy 1.
 
 - Sensor: API server audit log (`Request` level).
 - Rule: `detections/sigma/T1611/k8s_podspec_controller_host_access.yml` (built).
@@ -325,8 +327,9 @@ sees the privileged, host-namespace, or host-mount container.
 - Sensor: a node runtime sensor (CRI pod sandboxes; a runtime agent for the
   security context).
 
-**Strategy 4 — confinement removed (severity layer, medium).**
-A separate medium rule fires on a pod or workload-controller write whose spec sets a
+**Strategy 4 — confinement removed (the Procedure E rule, level medium).**
+This is the rule that raises Procedure E, a level below the host-access rules, which do
+not fire on `Unconfined`. It fires on a pod or workload-controller write whose spec sets a
 seccomp or AppArmor profile of type `Unconfined` (Procedure E) — at the pod level or in
 any container, init container or ephemeral container, in a controller template or a
 CronJob job template, and through the legacy annotations. It is kept apart from the
@@ -344,9 +347,9 @@ corpus has no Cilium pod or DaemonSet write yet, so its score of 0 does not meas
 this. A status write (`*/status`) is filtered: a controller's status update carries the
 whole object, but the status strategy keeps the stored spec, so it cannot remove
 confinement. A patch body is the client's raw bytes, so a profile object can hold a key
-that the API server drops with a warning; inside the profile object the rule skips whole
-strings and nested objects two levels deep (the TRR9008 grammar), so such a key before
-`type` does not hide `Unconfined`.
+that the API server drops with a warning. Inside the profile object the rule skips whole
+strings and nested objects two levels deep (the TRR9008 grammar). So such a key before
+`type` does not hide `Unconfined`; a key nested three levels deep does (K33).
 
 - Sensor: API server audit log (`Request` level).
 - Rule: `detections/sigma/T1611/k8s_podspec_confinement_disabled.yml` (built).
@@ -354,16 +357,25 @@ strings and nested objects two levels deep (the TRR9008 grammar), so such a key 
 **The JSON-patch delivery is graded.**
 A `kubectl patch --type=json` logs `requestObject` as the operation list, not the merged
 object, so the plain `requestObject.spec.*` matches miss it. All three rules add
-`requestObject|re` branches that read the operation list: an operation that targets the
-pod template, the ephemeral containers or the document root (`"path": ""`, which replaces
-the whole object) with a dangerous field set in its value; an operation whose path's last
-segment is the dangerous field, with the value in the same operation in either key order
-(kubectl sorts the keys; a raw client may not); and a copy or move into such a path (its
-value comes from another field). Between two keys of one operation the match skips whole
-JSON strings and nested objects two levels deep (the grammar of the TRR9008 JSON-patch
-rules), so an extra key that the API server ignores (a warning only, in the default
-`Warn` field validation) does not hide the operation; a key nested three levels deep
-does, as in TRR9008. A whole profile object written at a profile path is read as two
+`requestObject|re` branches that read the operation list. There are three kinds of branch:
+
+- a value branch: an operation that targets the pod template, the ephemeral containers
+  or the document root (`"path": ""`, which replaces the whole object), with a dangerous
+  field set in its value;
+- a leaf branch: an operation whose path's last segment is the dangerous field, with the
+  value in the same operation in either key order (kubectl sorts the keys; a raw client
+  may not);
+- a copy or move branch: a copy or move into such a path (its value comes from another
+  field).
+
+A list index in a path (for example `capabilities/add/<index>`) is any JSON-pointer
+token, because the API server's JSON patch library reads `+0`, `-0` and `-1` as indexes.
+Between two keys of one operation, the match skips whole JSON strings and nested objects
+two levels deep (the grammar of the TRR9008 JSON-patch rules). So an extra key that the
+API server ignores (a warning only, in the default `Warn` field validation) does not hide
+the operation. A key nested three levels deep does hide it, as in TRR9008
+([RULE_DEFECTS K33](../../../detections/RULE_DEFECTS.md#k33-json-text-skip-grammars-a-key-nested-three-levels-deep-splits-an-operation)).
+A whole profile object written at a profile path is read as two
 halves: an operation path that ends in `seccompProfile` or `appArmorProfile`, and an
 operation value whose own `type` is `Unconfined`. So an ignored operation key at any depth
 does not split it; the price is a rare false positive when one patch joins a profile path
@@ -460,8 +472,8 @@ Linux setns test for the same technique).
 |----------|--------|------------|--------|
 | 1 (chokepoint) | A, B, C, D (direct pod) | [`detections/sigma/T1611/k8s_podspec_host_access.yml`](../../../detections/sigma/T1611/k8s_podspec_host_access.yml) | API server audit log (Request) |
 | 2 (fallback) | controller delivery | [`detections/sigma/T1611/k8s_podspec_controller_host_access.yml`](../../../detections/sigma/T1611/k8s_podspec_controller_host_access.yml) | API server audit log (Request) |
-| 4 (confinement, medium) | E (pod and controller) | [`detections/sigma/T1611/k8s_podspec_confinement_disabled.yml`](../../../detections/sigma/T1611/k8s_podspec_confinement_disabled.yml) | API server audit log (Request) |
 | 3 (node sensor) | static-pod delivery only (`config.source` `file`/`http`); not an API-created pod under a `Metadata`-only policy | [`detections/sigma/T1543.005/k8s_cri_static_pod_start.yml`](../../../detections/sigma/T1543.005/k8s_cri_static_pod_start.yml) (TRR9003) | node runtime sensor |
+| 4 (confinement, medium) | E (pod and controller) | [`detections/sigma/T1611/k8s_podspec_confinement_disabled.yml`](../../../detections/sigma/T1611/k8s_podspec_confinement_disabled.yml) | API server audit log (Request) |
 
 The Kubernetes API server loop has its own validator,
 [`detections/validate_apiserver_detections.py`](../../../detections/validate_apiserver_detections.py):
@@ -481,8 +493,9 @@ privileged pods but no `trr9007-` object, so no rule may pass).
 Upstream: Elastic ships one pods-only rule per field (privileged pod, `hostPID`,
 `hostIPC`, `hostNetwork`, sensitive `hostPath`, excessive capabilities), Falco's
 k8saudit ruleset has pod-only rules for privileged, sensitive mounts and the three host
-namespaces, Splunk has privileged pod and host network, and SigmaHQ has privileged and
-`hostPath` rules. None combines all four dangerous-field paths with the
+namespaces, Splunk has privileged pod and host network, SigmaHQ has privileged and
+`hostPath` rules, and Panther's `panther-analysis` has pod-create rules for privileged,
+`hostPath`, the three host namespaces and dangerous capabilities. None combines all four dangerous-field paths with the
 controller-template fallback in one Sigma pair. Prior emulation: Stratus Red Team
 `k8s.privilege-escalation.privileged-pod` and `k8s.privilege-escalation.hostpath-volume`
 (Procedures A and B), and Atomic Red Team T1611 test 1 ("Deploy container using nsenter
@@ -490,10 +503,13 @@ container escape", a `hostPID` privileged pod: A and C).
 Propose the chokepoint plus the controller rule as an improvement.
 
 For Procedure E (confinement removed), a search of SigmaHQ, Elastic, Splunk ESCU, the
-Falco `k8saudit` ruleset, Stratus Red Team and Atomic Red Team found no Kubernetes-audit
-rule that flags `seccompProfile`/`appArmorProfile` of type `Unconfined` in a pod spec:
-Falco's `k8saudit` ships privileged / hostNetwork / hostPID / hostIPC pod rules but none
-for confinement, and Elastic's AppArmor rules
+Falco `k8saudit` ruleset, Panther's `panther-analysis` (commit `4d78f77`, 2026-10-09),
+Stratus Red Team and Atomic Red Team found no Kubernetes-audit rule that flags
+`seccompProfile`/`appArmorProfile` of type `Unconfined` in a pod spec. Falco's `k8saudit`
+ships privileged / hostNetwork / hostPID / hostIPC pod rules but none for confinement.
+No file in `panther-analysis` names seccomp, AppArmor or `Unconfined`; its nearest rule
+is `Kubernetes.Pod.Privileged.Created` (`k8s_privileged_pod_created.py`), which reads
+only `securityContext.privileged` on a pod create. Elastic's AppArmor rules
 (`defense_evasion_apparmor_profile_compilation.toml` and siblings) key on Linux host
 telemetry (endpoint/auditd), not the API-server audit log. The nearest existing control
 is preventive, not a detection: the Pod Security Standards **Baseline** profile forbids

@@ -9,8 +9,10 @@
 # paired Sigma rules key on. Every object the tests create is named trr9008-* (the
 # namespace of procedure d is trr9008) so a validator matches the emulation's own
 # events. The one exception is the kyverno namespace: d2 creates it only when it is
-# absent, labels it trr9008-created=true, and deletes it again. Its records carry no
-# trr9008 marker, so the validator does not gate them. The webhooks are no-ops
+# absent, labels it trr9008-created=true, and deletes it only when it created it. Its
+# records carry no trr9008 marker, so the validator gates the namespace delete by the
+# exact write (rows 9008 D2 ns and 9008 D ns), which rests on the kind cluster having
+# no kyverno namespace before d2 runs. The webhooks are no-ops
 # (failurePolicy Ignore, rules scoped to a bogus apiGroup) that cannot affect any
 # real admission request.
 #

@@ -16,7 +16,9 @@ than its JSON.
 Colours: green = the client, blue = the API server, purple = the node (container
 runtime), black = the abstract effect. Shaded = a primary detection node. In
 every procedure the shaded node is the same one: the API server's admission audit
-of the pod spec at Request level — the invariant chokepoint.
+of the pod spec at Request level. Procedures A–D share the host-access chokepoint on
+that event. Procedure E is read from the same audit event by its own medium rule
+(the host-access rules do not fire on a profile of type `Unconfined`).
 
 | File | Procedure | Primary detection node |
 |------|-----------|------------------------|
@@ -24,3 +26,4 @@ of the pod spec at Request level — the invariant chokepoint.
 | `trr9007_k8s_b` | TRR9007.K8S.B — hostPath mount | pod-spec admission audit event; `volumes` has `hostPath` |
 | `trr9007_k8s_c` | TRR9007.K8S.C — host namespace | pod-spec admission audit event; `hostPID`/etc boolean |
 | `trr9007_k8s_d` | TRR9007.K8S.D — dangerous capabilities | pod-spec admission audit event; capability in `containers` |
+| `trr9007_k8s_e` | TRR9007.K8S.E — seccomp or AppArmor `Unconfined` | pod-spec admission audit event; a profile of type `Unconfined` (graded by the medium confinement rule) |

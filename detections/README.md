@@ -366,24 +366,72 @@ differently:
 | `[` and `&&` `--` `~~` `\|\|` inside a class | an escaped `\[`; KQL reads the pairs as set operators |
 | a value over 1000 characters | Elasticsearch's `index.max_regex_length` default; split it |
 
-**Differences no lint removes.** A backend must still translate the edges: Lucene has
-no anchors and matches the whole value, so a search-style `|re` needs `.*` around it
-(drop it where the pattern starts with `^` or ends with `$`); pySigma's Lucene backend
-does not add it today, and it renders `|re|i` as `(?i)`, which Lucene does not parse.
-In Python, RE2 and PCRE `.` does not match a line break unless `|re|s` is set; in
-Lucene it always does. `\s` is `[\t\n\r ]` in Lucene (no vertical tab or form
-feed), ASCII whitespace without the vertical tab in RE2, and Unicode whitespace in
-Python and KQL. A rule that must split on the blanks of a Unicode-aware parser (the
-CoreDNS Corefile lexer) lists U+00A0 and U+0085 as literal characters in its class;
-write such a value as a YAML double-quoted string with `\u00A0`/`\u0085` escapes,
-because PyYAML folds a raw U+0085 into a line break. No portable construct names a
-carriage return, vertical tab or form feed alone. A long pattern can also exceed
-Lucene's default determinization budget (`max_determinized_states`, 10,000): a check
-with Lucene 10.1's `RegExp` found that every `|re` value parses and fits the budget
-(the largest, a JSON-patch root grammar of
-`T1565.001/k8s_coredns_corefile_poisoned.yml`, needs 7,986 states), and that each
-value, wrapped in `.*`, gives the same verdict as Python and RE2 on every case, fixture
-and benign-corpus value of its field.
+**Differences no lint removes.** A backend must still translate the edges. A check with
+pySigma 1.5.1 (`pySigma-backend-elasticsearch` 2.1.1) and Lucene 10.1 found these:
+
+- **Anchors.** Lucene has no anchors and matches the whole value, so a search-style
+  `|re` needs `.*` around it (drop it where the pattern starts with `^` or ends with
+  `$`). pySigma's Lucene backend does not add it today.
+- **Case folding.** pySigma renders `|re|i` as an inline `(?i)` for Lucene, ES|QL
+  `RLIKE` and EQL `regex~`. Lucene reads `(?i)` as the literal characters `?i`, with no
+  error, so a converted `|re|i` value never matches. Use the regexp query's
+  `case_insensitive` flag, or fold the case with classes (`[hH][tT][tT][pP]`), as
+  `T1546/k8s_admission_webhook_repointed_to_url.yml` does for its URL scheme. These
+  rules still use `|re|i`: `T1611/k8s_podspec_host_access.yml` and
+  `T1611/k8s_podspec_controller_host_access.yml` (the capability names),
+  `T1098.001/azure_managed_identity_federated_credential_backdoor.yml` and
+  `T1537/aws_efs_file_system_policy_made_public.yml`.
+- **A `/` in a field name.** pySigma's Lucene backend does not escape `/` in a field
+  name, and `query_string` reads it as the start of a `/regex/` term, so the query does
+  not parse. Escape it as `\/`. The keys are annotation and label keys
+  (`kubectl.kubernetes.io/last-applied-configuration`,
+  `seccomp.security.alpha.kubernetes.io/pod`, `batch.kubernetes.io/job-name`,
+  `kubernetes.io/config.source`) and strategic-merge directive keys
+  (`$deleteFromPrimitiveList/<name>`). The rules: `T1611/k8s_podspec_confinement_disabled.yml`,
+  `T1685/k8s_enforcer_workload_removed.yml`, `T1685/k8s_security_tool_workload_removed.yml`,
+  `T1053.007/k8s_cri_job_pod.yml` and `T1543.005/k8s_cri_static_pod_start.yml`. KQL
+  needs bracket access (`requestObject.spec['$deleteFromPrimitiveList/replicas']`) for a
+  key with `.`, `/` or `$`.
+- **`|exists` on EQL.** pySigma's EQL backend cannot convert `|exists` ("Field exists
+  expressions are not supported"). Write `<field> != null` there. It affects
+  `sel_smp_directive` in both T1685 workload rules, and `T1053.007/k8s_cri_job_pod.yml`.
+  Lucene (`_exists_:`), ES|QL (`is not null`) and Splunk (`=*`) convert it.
+- **`not` and a missing field.** Sigma's `not` is null-safe: a record without the
+  filter's field does not match the filter, so the rule still fires. The SQLite backend
+  that the validators use wraps each negation as `NOT COALESCE(<test>, 0)`, which keeps
+  that meaning. ES|QL and other SQL-semantics backends use three-valued logic: a test on
+  a missing field is NULL, `NOT NULL` is NULL, and `WHERE` keeps only true. So
+  `and not <filter>` drops every record that lacks the filter's field, and CI cannot
+  see it. A deployment there must make each negation null-safe:
+  `(<field> is null or not <filter>)`, or a Sigma `field: null` selection ORed with the
+  `not`. A probe that removed the `COALESCE` wrappers found 17 rules that lose positives
+  (13 of them on `main` too, such as the T1537 public-policy rules and
+  `T1685/k8s_admission_webhook_disabled.yml`). The new rules most exposed:
+  `T1611/k8s_podspec_confinement_disabled.yml` (46 of 51 positives lost, Procedure E's
+  own case included), `T1611/k8s_podspec_controller_host_access.yml` (41 of 41) and
+  `T1611/k8s_podspec_host_access.yml` (13 of 35), through the `objectRef.subresource`
+  status filter; `T1685/k8s_enforcer_workload_removed.yml` (16 of 23) and the anchor
+  `T1685/k8s_security_tool_workload_removed.yml` (21 of 28; 5 of 12 on `main`).
+  Wave 4 of the Kubernetes coverage plan (item 4.2, the backend mapping proof harness)
+  measures and fixes this.
+- **`.` and a line break.** In Python, RE2 and PCRE `.` does not match a line break
+  unless `|re|s` is set; in Lucene it always does.
+- **`\s`.** `\s` is `[\t\n\r ]` in Lucene (no vertical tab or form feed), ASCII
+  whitespace without the vertical tab in RE2, and Unicode whitespace in Python and KQL.
+  A rule that must split on the blanks of a Unicode-aware parser (the CoreDNS Corefile
+  lexer) lists U+00A0 and U+0085 as literal characters in its class; write such a value
+  as a YAML double-quoted string with `\u00A0`/`\u0085` escapes, because PyYAML folds a
+  raw U+0085 into a line break. No portable construct names a carriage return, vertical
+  tab or form feed alone.
+- **Determinization budget.** A long pattern can exceed Lucene's default determinization
+  budget (`max_determinized_states`, 10,000). A check with Lucene 10.1's `RegExp`
+  found that every `|re` value (319 at this writing) parses and fits the budget. With
+  case folding (`ASCII_CASE_INSENSITIVE`, as the `case_insensitive` flag uses), the
+  largest is the JSON-patch capability grammar of
+  `T1611/k8s_podspec_controller_host_access.yml` (8,094 states); without it, the
+  JSON-patch root grammar of `T1565.001/k8s_coredns_corefile_poisoned.yml` (7,986
+  states). Each value, wrapped in `.*`, gives the same verdict as Python and RE2 on
+  every case, fixture and benign-corpus value of its field.
 
 ## The benign corpus (false-positive scores)
 
@@ -495,6 +543,23 @@ The audit log is flattened to the dotted field names the rules use
 same pySigma backend as the auditd rules. A rule passes only on an event from
 the emulation itself (one naming the target pod, or for Procedure F the
 `trr9002-node-reader` service account), not on any event in the log.
+
+**The list-as-JSON-text contract.** The API server audit log holds lists as JSON
+arrays (`requestObject.rules`, `requestObject.webhooks`, `requestObject.spec.containers`),
+and it holds the `requestObject` of a JSON patch as the raw operation array. The
+validators flatten every list to its JSON text (`sigma_eval.flatten`), and many
+Kubernetes rules match that text with `|contains` or `|re`: for example
+`requestObject.spec.*containers|re` (T1611), `requestObject.rules|re` (T1098.006),
+`requestObject.webhooks|contains` (T1546) and `requestObject|re` in the JSON-patch
+branches of the T1546, T1611 and T1685 rules. A SIEM pipeline must index each such
+field, and the `requestObject` of a JSON patch, as that JSON text, as the cloud rules
+require for their nested lists (see [External cloud detections](#external-cloud-detections-aws-azure-gcp)).
+Elastic's Kubernetes audit integration does not meet this contract: it maps
+`requestObject.rules` as `nested`, and its ingest pipeline removes
+`requestObject.metadata`, so the T1611 confinement rule's pod-annotation branches
+(`sel_pod_annotation`, and `sel_last_applied` on kubectl's
+`last-applied-configuration`) cannot match there (elastic/integrations `packages/kubernetes/data_stream/audit_logs`,
+`fields/fields.yml` and `elasticsearch/ingest_pipeline/default.yml`).
 
 `.github/workflows/validate-k8s-detections.yml` runs the whole loop on a `kind`
 cluster for every change to the TRR9002 files, strict: a rule that does not

@@ -38,10 +38,12 @@
 #     the kube-system ConfigMap create rule (Request) logs it. aws-auth holds IAM role
 #     ARNs, Kubernetes usernames and group names, and NO credentials (the EKS IAM
 #     authenticator maps IAM principals to RBAC identities; it stores no key). This
-#     matches how EKS itself audits aws-auth at RequestResponse. Caveat
-#     (RULE_DEFECTS.md K28): at Request/RequestResponse a server-side apply sent with
-#     a raw YAML body is dropped by the JSON audit backend, so such a write leaves no
-#     line; `kubectl apply --server-side` sends JSON and is not affected.
+#     matches how EKS itself audits aws-auth at RequestResponse.
+#   * Caveat for every rule above at Request or RequestResponse (RULE_DEFECTS.md
+#     K23): a server-side apply patch sent with a raw YAML body is dropped by the
+#     JSON audit backend, so such a write leaves no line, whatever the resource;
+#     `kubectl apply --server-side` sends JSON and is not affected. Watch
+#     apiserver_audit_error_total and the "Error in audit plugin" log line.
 #   * Secrets and serviceaccounts/token (TRR9006): Metadata level, NEVER Request or
 #     RequestResponse -- those copy the Secret's base64 data and the signed token
 #     into the log, turning the log itself into a credential store.
@@ -140,7 +142,7 @@ rules:
   # falls to the kube-system ConfigMap create rule (Request) below -- as the TRR9027
   # coredns create does. This matches how EKS audits aws-auth. Above the catch-all so it
   # wins. (A raw-YAML server-side apply is dropped by the JSON audit backend; see
-  # RULE_DEFECTS.md K28.)
+  # RULE_DEFECTS.md K23.)
   - level: RequestResponse
     namespaces: ["kube-system"]
     verbs: ["update", "patch", "delete"]

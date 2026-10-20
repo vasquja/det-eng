@@ -5,7 +5,8 @@ description: |
   Detects a pod write, or a workload controller write (Deployment, DaemonSet,
   StatefulSet, ReplicaSet, ReplicationController, Job, CronJob), whose pod spec sets a
   seccomp or AppArmor profile of type Unconfined. This is the TRR9007 Procedure E
-  severity layer below the host-access rules: Unconfined removes the syscall filter
+  rule, a level below the host-access rules (they do not fire on Unconfined):
+  Unconfined removes the syscall filter
   (seccomp) or the mandatory access control profile (AppArmor) that the container
   runtime applies by default (RuntimeDefault), so calls that the default profiles block
   (unshare, keyctl, mount, ptrace and others) reach the kernel. It does not give the pod

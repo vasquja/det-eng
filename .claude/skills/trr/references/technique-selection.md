@@ -192,7 +192,8 @@ reasoning survives. Append an entry per vet; keep it short.
   negative-control gap. At the node/process/network layer where it IS observable there is no trusted,
   non-spoofable in-record marker (Q1), and the open detections (Elastic's process-arg / kubeletctl host rules)
   have no honest differentiation beyond logsource (Q4). Left as the TRR9002 gap; the TRR9026 port-forward report
-  restates it as its own Procedure C gap.
+  restates it as its own Procedure D gap (Procedure C, the port-forward through the node proxy, is detected by
+  `k8s_node_proxy_portforward`).
 
 - **Pod-bound SA token used from an unexpected source (T1528/T1550.001/T1078) — LEAN-GO (strongest Q1; Q3
   fidelity caveat on managed clusters).** Server-set, signed-claim, non-spoofable markers in user.extra:

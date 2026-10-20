@@ -28,7 +28,8 @@ description: |
   that authorization denies (403) never reaches the handler, so its record has no
   objectRef.name and cannot be tied to aws-auth (detections/RULE_DEFECTS.md K28).
   A server-side apply sent with a raw YAML body is dropped by the JSON audit backend at
-  Request level and above, so that write leaves no record (K28).
+  Request level and above, so that write leaves no record (K23, an audit-pipeline gap
+  for every resource logged at Request or higher).
   Metadata level is enough for the update, patch and delete.
 
   Create is included: a delete followed by a create (kubectl create, a POST) replaces
