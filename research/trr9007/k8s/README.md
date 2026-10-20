@@ -282,13 +282,15 @@ sees the privileged, host-namespace, or host-mount container.
 A static pod runs on the node directly, but the kubelet then registers a mirror
 pod so the API shows it, and that mirror create is audited — attributed to the
 node identity (`system:node:<node>`) and, at `Request` level, carrying the full
-spec. So the chokepoint rule **does** catch a static pod, through the mirror
-create. That is a weaker signal than a direct user create: it looks like a kubelet
-action, so triage on the node identity together with the dangerous spec, and
-confirm with the node sensor that the privileged container is really running. The
-`emulate_k8s.sh gap` test shows both halves: the node runtime sees the running pod
-(`crictl`), and the mirror create appears in the audit log as a `system:node`
-pods-create that the chokepoint matches.
+spec. The chokepoint has no identity filter, so it matches that mirror create: the
+sidecar case `mirror-create-privileged-static-pod` proves it on a `system:node`
+pods-create that carries the spec. That is a weaker signal than a direct user create:
+it looks like a kubelet action, so triage on the node identity together with the
+dangerous spec, and confirm with the node sensor that the privileged container is
+really running. The `emulate_k8s.sh gap` test writes the static pod and shows that the
+node runtime sees it (`crictl`). It does not assert the mirror create (it can log
+`static: no mirror pod object yet`), and no validator gate isolates a `system:node`
+create.
 
 **Demonstrated gap — the Request-level dependency.**
 The real blind spot is the audit level, not the delivery. Under a `Metadata`-only
@@ -316,12 +318,12 @@ on the node sensor for this technique.
 | A, B, C, D (direct pod) | Strategy 1 (chokepoint) | pod write with a dangerous `requestObject.spec` field |
 | Any, through a controller | Strategy 2 (fallback) | controller write with a dangerous template |
 | Any, as a static pod | Strategy 1 (via the mirror create) + Strategy 3 | `system:node` pods-create with the spec; node sensor confirms the running pod |
-| Any, under a `Metadata`-only policy | Strategy 3 (node sensor) | `requestObject` absent; only the running container is visible |
+| Any, under a `Metadata`-only policy | gap (no repository rule) | `requestObject` absent; only a runtime agent's privileged-container rule sees the running container. `k8s_cri_static_pod_start` sees only a pod with `config.source` `file`/`http` |
 
 One chokepoint rule covers the four dangerous-field paths for a direct pod and the
 static-pod delivery (through the kubelet's mirror create). One fallback covers the
-controller delivery. A node sensor confirms the running container and is the only
-view when the audit policy is capped at `Metadata`.
+controller delivery. Under a `Metadata`-only policy no rule in this repository sees an
+API-created dangerous pod; a runtime agent is the only view.
 
 ## Available Emulation Tests
 
@@ -345,7 +347,7 @@ Linux setns test for the same technique).
 | TRR9007.K8S.C | `emulate_k8s.sh c` — host namespaces (`hostPID` + `hostIPC`). | **built** |
 | TRR9007.K8S.D | `emulate_k8s.sh d` — added `SYS_ADMIN` and `SYS_PTRACE`. | **built** |
 | controller delivery | `emulate_k8s.sh ctrl` — a Deployment with a privileged template. | **built** |
-| static-pod delivery | `emulate_k8s.sh gap` — a dangerous static pod on the node; the node sensor sees the running pod, the mirror create is audited as `system:node`. | **built** |
+| static-pod delivery | `emulate_k8s.sh gap` — a dangerous static pod on the node; the node sensor sees the running pod. The script does not assert the `system:node` mirror create. | **built** |
 
 ## Detections
 
@@ -353,23 +355,29 @@ Linux setns test for the same technique).
 |----------|--------|------------|--------|
 | 1 (chokepoint) | A, B, C, D (direct pod) | [`detections/sigma/T1611/k8s_podspec_host_access.yml`](../../../detections/sigma/T1611/k8s_podspec_host_access.yml) | API server audit log (Request) |
 | 2 (fallback) | controller delivery | [`detections/sigma/T1611/k8s_podspec_controller_host_access.yml`](../../../detections/sigma/T1611/k8s_podspec_controller_host_access.yml) | API server audit log (Request) |
-| 3 (node sensor) | running container; `Metadata`-only policy | [`detections/sigma/T1543.005/k8s_cri_static_pod_start.yml`](../../../detections/sigma/T1543.005/k8s_cri_static_pod_start.yml) (TRR9003) | node runtime sensor |
+| 3 (node sensor) | static-pod delivery only (`config.source` `file`/`http`); not an API-created pod under a `Metadata`-only policy | [`detections/sigma/T1543.005/k8s_cri_static_pod_start.yml`](../../../detections/sigma/T1543.005/k8s_cri_static_pod_start.yml) (TRR9003) | node runtime sensor |
 
 The Kubernetes API server loop has its own validator,
 [`detections/validate_apiserver_detections.py`](../../../detections/validate_apiserver_detections.py):
 it reads the API server audit log the emulation produced and asserts Strategies 1
 and 2 match an event from the emulation itself (one naming a `trr9007-` object).
-The static-pod test's mirror create also matches Strategy 1 (as a `system:node`
-pods-create carrying the spec); Strategy 3 is the TRR9003 CRI rule, validated by
-its own loop. The workflow
+A `system:node` mirror create that carries the spec matches Strategy 1 (sidecar case
+`mirror-create-privileged-static-pod`); the validator gate does not isolate it.
+Strategy 3 is the TRR9003 CRI rule, validated by its own loop. The workflow
 [`validate-apiserver-detections.yml`](../../../.github/workflows/validate-apiserver-detections.yml)
 runs the loop on a `kind` cluster and runs the validator as a negative control on
 the audit log captured *before* the emulation (which contains the baseline
 privileged pods but no `trr9007-` object, so no rule may pass).
 
-Upstream: Elastic ships rules for `hostNetwork` and added capabilities, and
-SigmaHQ has a privileged-container rule, but none combines all four
-dangerous-field paths with the controller-template fallback in one Sigma pair.
+Upstream: Elastic ships one pods-only rule per field (privileged pod, `hostPID`,
+`hostIPC`, `hostNetwork`, sensitive `hostPath`, excessive capabilities), Falco's
+k8saudit ruleset has pod-only rules for privileged, sensitive mounts and the three host
+namespaces, Splunk has privileged pod and host network, and SigmaHQ has privileged and
+`hostPath` rules. None combines all four dangerous-field paths with the
+controller-template fallback in one Sigma pair. Prior emulation: Stratus Red Team
+`k8s.privilege-escalation.privileged-pod` and `k8s.privilege-escalation.hostpath-volume`
+(Procedures A and B), and Atomic Red Team T1611 test 1 ("Deploy container using nsenter
+container escape", a `hostPID` privileged pod: A and C).
 Propose the chokepoint plus the controller rule as an improvement.
 
 ## References

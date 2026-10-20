@@ -38,7 +38,8 @@ This TRR does not cover these related actions:
 > Manipulation)**, tactic Impact — the Corefile is stored configuration data being
 > manipulated, which is the mapping Elastic's nearest rule also uses. T1565.001's
 > listed platforms are Linux/Windows/macOS and do **not** include Containers, so this
-> is a cross-domain mapping of the mechanism — the same move TRR9008 makes for T1685.
+> is a cross-domain mapping of the mechanism, as TRR9025 does for T1546 (TRR9008's
+> T1685 is not comparable: it lists Containers).
 > The technique's *effect* is better described by T1557 (Adversary-in-the-Middle),
 > but T1557's sub-techniques are endpoint protocol-spoofing with no Containers
 > platform and no config-edit variant, so it is cited as the effect cross-map only.
@@ -286,7 +287,8 @@ Source: [`ddms/trr9027_k8s_c.json`](ddms/trr9027_k8s_c.json) (Arrows app format)
 
 **DDM summary.** Same chokepoint, `objectRef.name: coredns-custom`, verb often
 `create`. It is a sanctioned customization mechanism, so it is higher-FP: covered at
-the chokepoint and content-graded, never alerted on the name alone.
+the chokepoint and triaged there. The content grader does not read it (its snippets sit
+under arbitrary data keys, not `data.Corefile`).
 
 ### Procedure D: Recreate the coredns ConfigMap  (`TRR9027.K8S.D`)
 
@@ -329,7 +331,7 @@ for `resourceNames` to match, so a second rule logs every ConfigMap `create` in
 `kube-system` at `Request`. No other ConfigMap update or read is logged with a body,
 but every `kube-system` ConfigMap create is (see the Helm caveat above).
 
-**Strategy 1 — chokepoint (covers A, B, C).**
+**Strategy 1 — chokepoint (covers A, B, C, D).**
 Match an audit event where `objectRef.resource` is `configmaps`,
 `objectRef.namespace` is `kube-system`, `objectRef.name` is `coredns`, `kube-dns`, or
 `coredns-custom`, and the verb is `update`, `patch`, `delete`, or `create`. Baseline
@@ -341,7 +343,7 @@ counterpart, stated as a backstop.
 - Sensor: API server audit log.
 - Rule: `detections/sigma/T1565.001/k8s_coredns_configmap_modified.yml` (built).
 
-**Strategy 2 — content grader (grades A; needs Request level).**
+**Strategy 2 — content grader (grades A and D; needs Request level).**
 On top of the chokepoint, match a write whose Corefile (`requestObject.data.Corefile`,
 the JSON-patch text in `requestObject`, or the stored `responseObject.data.Corefile`)
 carries a `rewrite` or `template` plugin, a `hosts` block other than the k3s and
@@ -369,7 +371,7 @@ read-only.
 |-----------|-----------|-----|
 | A | Strategy 1; graded by Strategy 2 | poisoned `requestObject.data.Corefile` |
 | B | Strategy 1 | `kube-dns` JSON redirect (chokepoint; triaged) |
-| C | Strategy 1 | `coredns-custom` import (chokepoint; content-triaged) |
+| C | Strategy 1 | `coredns-custom` import (chokepoint; triaged, not graded) |
 | D | Strategy 1; graded by Strategy 2 | created `requestObject.data.Corefile` (Request: create rule) |
 
 One chokepoint rule covers every write to the cluster DNS ConfigMaps. One content

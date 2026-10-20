@@ -136,7 +136,8 @@ reasoning survives. Append an entry per vet; keep it short.
   marker/field or the prior-art it overlaps>. <built as TRRxxxx | dropped | deferred>.
 -->
 
-- **Port-forward tunneling into a pod (pods/portforward) — LEAN-GO (sibling of TRR9002; honesty caveats on Q2+Q3).**
+- **Port-forward tunneling into a pod (pods/portforward) — LEAN-GO (sibling of TRR9002; honesty caveats on
+  Q2+Q3).**
   Best ATT&CK map T1572 Protocol Tunneling / Command and Control (tunnel through the API server; Elastic's
   kubectl-networking rules map here too); Containers matrix has no dedicated port-forward technique and T1021
   sub-techniques are protocol-specific, so T1572 is a stated cross-domain best-fit. Q1 PASS: objectRef.resource=pods
@@ -160,9 +161,9 @@ reasoning survives. Append an entry per vet; keep it short.
   finding (GuardDuty-EKS / Falco default have none), but the bare create chokepoint duplicates SigmaHQ
   `kubernetes_audit_change_admission_controller.yml` and Elastic "Kubernetes Admission Webhook Created or
   Modified" — disclosed, shipped as the anchor. Q3/Q4 novel: neither reads the webhook body; the Request-level
-  grader keys on `requestObject.webhooks[].clientConfig.url` (off-cluster, matched with dual-form `|contains`)
-  and on cluster-wide `rules` over `secrets` (literal `*` matched with `|re`, avoiding the Sigma-wildcard trap),
-  and the emulation is new ground (absent from Stratus + ART). ATT&CK caveat: T1546 lists no Containers platform
+  grader keys only on `requestObject.webhooks[].clientConfig.url` (any URL-mode webhook, matched with dual-form
+  `|contains`). It deliberately does not key on cluster-wide `rules` or a `secrets` scope, because Kyverno and
+  Gatekeeper validate cluster-wide and over Secrets. The emulation is new ground (absent from Stratus + ART). ATT&CK caveat: T1546 lists no Containers platform
   (unlike TRR9008's T1685); mapping follows Elastic + the MS Threat Matrix "Malicious admission controller".
 
 - **CoreDNS / cluster-DNS ConfigMap poisoning (T1565.001) — LEAN-GO (built as TRR9027).** Q1 PASS and
@@ -172,7 +173,8 @@ reasoning survives. Append an entry per vet; keep it short.
   Elastic ships three near-identical rules incl. one at the same K8s-audit layer — disclosed. Q4 differentiated:
   the Request-level content grader on `requestObject.data.Corefile` (a `rewrite`/`template` plugin, or a
   `forward` to a literal IP) separates a poisoning edit from a benign one. Mapping caveat: T1565.001 lists no
-  Containers platform; the Corefile is stored config data being manipulated (same move as TRR9008/T1685). The
+  Containers platform; the Corefile is stored config data being manipulated (a cross-domain mapping, as
+  TRR9025/T1546 makes; not like TRR9008, whose T1685 lists Containers). The
   emulation captures and restores the real Corefile so cluster DNS is unchanged.
 
 - **Resource / permission discovery via self-subject review (T1613) — NO-GO (question 3/4).** The proposed
@@ -191,3 +193,168 @@ reasoning survives. Append an entry per vet; keep it short.
   non-spoofable in-record marker (Q1), and the open detections (Elastic's process-arg / kubeletctl host rules)
   have no honest differentiation beyond logsource (Q4). Left as the TRR9002 gap; the TRR9026 port-forward report
   restates it as its own Procedure C gap.
+
+- **Pod-bound SA token used from an unexpected source (T1528/T1550.001/T1078) — LEAN-GO (strongest Q1; Q3
+  fidelity caveat on managed clusters).** Server-set, signed-claim, non-spoofable markers in user.extra:
+  authentication.kubernetes.io/pod-name+pod-uid (v1.12; pod default v1.22), node-name+node-uid (v1.29
+  alpha/v1.32 GA), credential-id 'JTI='/x509 'X509SHA256=' (v1.29 alpha/v1.32 GA) — verified in kubernetes
+  claims.go/util.go/strategy.go; impersonated extras go to impersonatedUser.extra, so a client cannot inject
+  them. Compare against the LAST sourceIPs entry (audit types.go: all but last are client-settable via
+  XFF/X-Real-Ip). Q2 GAP: no GuardDuty EKS / GKE ETD audit rule for token-off-pod; Defender's token signal is a
+  runtime sensor, not an audit compare. Q3: a single-record off-cluster CIDR-allowlist rule is fixture-provable
+  on kind/kubeadm (kindnetd LOCAL carve-out keeps the pod IP; repo fixtures already show 10.244.0.31 vs admin
+  172.18.0.1) but DEGRADES to an approximation on EKS/GKE/AKS where the apiserver's peer is a konnectivity agent
+  / NAT (state as a demonstrated gap, like TRR9011/9022); a credential-id value_count correlation (one token
+  from >=2 sourceIPs) is a portable fallback (both prototyped in sigma_eval). sourceIPs|cidr compiles to a
+  first/whole-element LIKE prefix (wrong for XFF chains); an anchored |re on the last array element isolates the
+  trustworthy entry and survives XFF prepending. Q4: nearest prior art Elastic 'Service Account Token or
+  Certificate Access Followed by Kubernetes API Request' + 3 D4C sequences join on pod-name but need a runtime
+  sensor and never compare markers to sourceIPs or key on credential-id/node-name; SigmaHQ/Splunk/Falco ship
+  none. Use-side sibling of TRR9006 (Procedure E gap) and k8s sibling of TRR9022. Deferred to build as TRR9030
+  (k8s), detections/sigma/T1528/.
+
+- **CSR client-certificate persistence (T1098.006/T1136) — LEAN-GO as a disclosed backstop (Q4 trodden; two
+  proven build limits).** Q1 PASS: server-set objectRef.resource=certificatesigningrequests, verb=create,
+  subresource=approval, verb=update; spec.username injected server-side (strategy.go:78-97, not spoofable);
+  signerName kubernetes.io/kube-apiserver-client in requestObject.spec (needs Request level). Q2: no GuardDuty
+  EKS CSR finding, but GKE ETD ships CSR detectors and Stratus notes the technique does not succeed on EKS
+  (self-managed/kind emulation only). Q3 fixture-provable (benign baseline = kubelet-client/kubelet-serving node
+  CSRs differing only on signerName+requester) but the repo's apiserver audit policy logs NO
+  certificatesigningrequests today (new Request-level entry needed) and the benign corpus has ZERO CSR events
+  (new slice or an unscored entry = human decision). Two proven limits: the requested subject (system:masters)
+  is NOT Sigma-gradable (single-base64 forms absent from spec.request; only in the line-wrapped inner PEM, which
+  GKE decodes in ES|QL and pySigma cannot); self-approval via user.username|fieldref is non-portable (Elastic
+  Lucene+EQL raise SigmaFeatureNotSupportedByBackendError; Splunk defers). Q4: duplicates Elastic 'Kubernetes
+  Client Certificate Signing Request Created or Approved' + GKE/AKS rules; Stratus ships the emulation. Weaker
+  than TRR9025/9027 (no content grader possible). Deferred to build as TRR9035 (k8s),
+  detections/sigma/T1098.006/, as a disclosed backstop; the subject grader and the fieldref self-approval check
+  are dropped unless a human accepts a non-portable rule.
+
+- **ServiceAccount create, incl. kube-system / lookalike names (T1136.001/T1036.010) — NO-GO (Q3, reinforced by
+  Q2+Q4).** Server-set markers (verb=create, objectRef.resource=serviceaccounts, apiGroup='') are non-spoofable
+  but match every benign SA create: every namespace makes a default SA (the corpus already has the
+  service-account-controller create), every onboarding creates SAs — no discriminating field on which a hard
+  benign baseline differs. The only high-fidelity slices (kube-system/kube-public create, lookalike name) are
+  already shipped by Falco-default ('K8s Serviceaccount Created' + 'Service Account Created in Kube Namespace'
+  with its trusted_sa allowlist), SigmaHQ 'New Kubernetes Service Account Created', and GKE ETD 'Service Account
+  Created in sensitive namespace'. Same shape as the T1610 Deploy-Container NO-GO. TRR9004 correctly scoped SA
+  creation out. Dropped (maintainer accepted the NO-GO, 2026-10-20).
+
+- **Anonymous/unauthenticated and default-account access (T1078.001) — NO-GO (Q2+Q4), default-SA-use sliver at
+  most a TRR9004 note.** Q1 PASS (server-set system:anonymous / system:unauthenticated / decision=allow /
+  default SA). The anonymous-allowed chokepoint is saturated: Falco-default 'Anonymous Request Allowed',
+  GuardDuty EKS SuccessfulAnonymousAccess + Policy:Kubernetes/AnonymousAccessGranted, GKE ETD
+  anonymous-from-internet + anonymous-cluster-admin, Elastic anonymous-UA/pod-create/endpoint-enum, SigmaHQ
+  401/403, Splunk scanning — no honest differentiation. On default kubeadm/kind anonymous gets only
+  public-info-viewer discovery endpoints (bootstrappolicy policy.go:714; KEP-4633 restricts anonymous to
+  configured endpoints, beta v1.32/GA v1.34), so a real-resource anonymous allow IS the misconfig finding. The
+  default-SA-use sliver is a low-fidelity overlay on TRR9004 (an allow implies a binding) needing a benign
+  confounder the corpus lacks. Dropped (maintainer accepted the NO-GO, 2026-10-20); optionally note in TRR9004
+  that k8s_rbac_privileged_grant catches bindings TO anonymous/unauthenticated/default but not their REQUESTS,
+  left to Falco-default by design.
+
+- **EKS aws-auth ConfigMap backdoor, the in-cluster write (T1098.006) — LEAN-GO (fold into TRR9004 as Procedure
+  F; questions 2 and 4 are backstop and Sigma-counterpart).** Q1 PASS and load-bearing:
+  `objectRef.name=aws-auth` in `objectRef.namespace=kube-system` is non-spoofable AND forced, because the EKS
+  authenticator reads only that object. Q2: no GuardDuty-EKS, Defender or Falco-default control found (the
+  GuardDuty finding page was unreachable during the vet; re-check). Defender itself writes its MDC role into
+  aws-auth, a benign confounder. Q3: the bare write fires at Metadata. A content grade only approximates,
+  because one record carries the new mapping, not the old: a 'mapRoles contains system:masters' grader fired on
+  a benign node-group update (sigma_eval probe). Q4: Elastic 'EKS Authentication Configuration Modified' is the
+  same chokepoint (update/patch/delete, decision allow, minus eks:kms-storage-migrator). SigmaHQ, Splunk, Falco,
+  Panther and ART have none, and Stratus ships the emulation. This is the Sigma counterpart, plus `create`.
+  Needs an aws-auth RequestResponse policy rule (as EKS logs it) so the validator's sentinel gate can see the
+  body. aws-auth is deprecated (EKS user guide). Deferred to build as TRR9004.K8S.F.
+
+- **EKS access-entry backdoor in CloudTrail, CreateAccessEntry / AssociateAccessPolicy (T1098.006, secondary
+  T1098.003) — LEAN-GO (questions 2 and 4: backstop and differentiated).** A cloud TRR proven by
+  `validate_cloud_detections.py` fixtures, not a Kubernetes one: the grant never reaches the Kubernetes audit
+  log. Q1 PASS on `requestParameters.policyArn` (a closed set of AWS-managed cluster-access-policy ARNs) plus
+  `accessScope.type`. The cross-account form fails Q1 as Sigma can express it: `principalArn|fieldref|contains:
+  recipientAccountId` goes quiet when the attacker names its role with the victim account ID (probe), so only an
+  anchored `|re` with an org-account list would hold. Q2: no GuardDuty or Defender finding found (re-check the
+  GuardDuty list); Datadog Cloud SIEM def-000-cm5/-dzx/-b69 are closed. Q3 PASS: recorded attack (ClusterAdmin
+  at cluster scope) and hard benign (same call with only View, or only namespace scope, or denied). The bare
+  'any access-entry write' is pure-surface and needs a human CHOKEPOINT entry. Q4: Elastic ships three rules
+  (cluster-admin policy at any scope, any access-entry write, create-then-delete EQL); SigmaHQ has none. The
+  difference is scope grading, every policy that reads Secrets, and Sigma. Note: `principalArn` is URL-encoded
+  in AssociateAccessPolicy. Deferred to build as TRR9032 (aws).
+
+- **Service exposure through NodePort / LoadBalancer (T1133, MS-TA9005) — LEAN-GO (question 2 backstop; question
+  4 differentiated).** Q1 PASS: `requestObject.spec.type` is an API enum the attacker must set to expose
+  anything. `objectRef.namespace` is forced by the target, because a Service selects pods only in its own
+  namespace. Name, source ranges and internal/internet-facing annotations are attacker-chosen and must never be
+  filters. Q2: GuardDuty ExposedDashboard/KubeflowDashboardExposed (EKS) and Defender 'Exposed Kubernetes
+  service detected' already cover the sensitive-interface LoadBalancer slice. Falco's default 'Create NodePort
+  Service' covers create plus NodePort only. Q3 PASS-with-approximation: create is unambiguous; a patch or
+  update cannot tell a type change from a re-assertion in one record. The repo logs services at the Metadata
+  catch-all, so it needs a services RequestResponse policy rule (EKS and AKS already log core writes at
+  RequestResponse). Probes: Elastic's request-only shape misses a JSON patch of `/spec/type`, and a
+  stored-object branch fires on services/status unless `objectRef.subresource` is excluded (the service
+  controller patches only `status`, cloud-provider helper.go:142). Q4: the bare NodePort create is trodden
+  (Elastic, Splunk, Panther, Falco), but no open rule set covers LoadBalancer, and SigmaHQ has no Service rule.
+  Deferred to build as TRR9033 (k8s), a chokepoint plus a sensitive-interface grader.
+
+- **Credentials in ConfigMaps / pod configuration read through the API (T1552, MS-TA9027) — NO-GO (questions 1
+  and 3, reinforced by log-exposure risk).** No field scopes a ConfigMap read to one that holds a credential:
+  names are not forced, and a read record carries no content below RequestResponse. The repo's three policies
+  drop ConfigMap reads to None, and EKS, GKE and AKS kube-audit keep them at Metadata only. Falco's recommended
+  policy logs every non-kube-system ConfigMap at RequestResponse, which copies every stored credential into the
+  audit log, against the repo's never-Request rule for Secrets. Even with content, a read by the owning workload
+  looks the same as the attacker's except in identity, so no hard benign baseline can differ on one field. The
+  write-side grader (Falco 'Create/Modify Configmap With Private Credentials', Kubescape C-0012) is posture, not
+  adversary behavior. Dropped (maintainer accepted the NO-GO, 2026-10-20). Record it as an out-of-scope gap in
+  TRR9006, and warn in the apiserver policy header that Request-level pod logging copies literal env values.
+
+- **Storage and backup destruction: PVC/PV deletes (T1485), VolumeSnapshot and Velero deletes (T1490) — GO (all
+  four questions; Q3 with a stated approximation).** Server-set `verb` + `objectRef.resource`/`apiGroup` (core
+  persistentvolumeclaims/persistentvolumes; snapshot.storage.k8s.io volumesnapshots/volumesnapshotcontents;
+  velero.io deletebackuprequests create, schedules/backupstoragelocations delete) plus the authenticated
+  `user.username` separate an actor's delete from controller churn: namespace-controller deletecollection,
+  generic-garbage-collector, persistent-volume-binder or a CSI provisioner PV delete, snapshot-controller
+  content deletes, and Velero's own GC delete requests. No rule exists in SigmaHQ, Elastic, Splunk or Falco
+  k8saudit, and no test in Stratus or ART. The nearest are SigmaHQ `kubernetes_audit_deployment_deleted.yml` and
+  Elastic's AWS Backup/RDS snapshot-deletion rules, which are cloud-side. No provider-native finding was found,
+  but the AWS and GCP docs could not be read from this sandbox, so this is unverified. Gap: the PVC delete
+  record does not carry the bound PV's `persistentVolumeReclaimPolicy`, so a destructive delete (Delete) looks
+  like a non-destructive one (Retain). A Request-level grader on a `patch` that sets the reclaim or deletion
+  policy to Delete covers the 'make it destructive' step. `kubectl delete backup` is not destructive, because
+  Velero's backup sync re-creates the CR. Deferred to build as two TRRs, TRR9028 (T1485) and TRR9029 (T1490);
+  the chokepoints need human CHOKEPOINT waivers.
+
+- **Lookalike workload names (T1036.005) — LEAN-GO (Q1 and Q3 pass on a narrowed chokepoint; Q2 is GKE-native;
+  respects the T1610 NO-GO).** Controllers create pods only with `generateName`
+  (pkg/controller/controller_utils.go), so their audit records carry no `objectRef.name`. A bare pod (no
+  `objectRef.subresource`) with an EXPLICIT name in controller-generated shape (`-<6-10>-<5>` from
+  `bcdfghjklmnpqrstvwxz2456789`, or `-<5>` in a system namespace), or with a `generateName` carrying a fake
+  pod-template hash, is a client's choice and not a node's (not `system:node:*`). The rule does not key on the
+  namespace alone: SigmaHQ 'Creation Of Pod In System Namespace' scores 12 of 2666 benign-corpus hits, all
+  controllers, mirror pods and scheduler bindings, and it fires on pods/exec. It does not key on the image
+  either (Falco 'Pod Created in Kube Namespace'). GKE Event Threat Detection ships 'Defense Evasion: Potential
+  Kubernetes Pod Masquerading'. Not covered: a lookalike Deployment or DaemonSet (its pods are real controller
+  creates) and typosquats. Deferred to build as TRR9031 (k8s).
+
+- **Malicious image via an admission-policy verdict (T1204.003) — LEAN-GO (narrow; survives the T1610 NO-GO only
+  as a forwarder of policy verdicts).** For a ValidatingAdmissionPolicy binding with `validationActions` Audit,
+  the API server writes the event annotation `validation.policy.admission.k8s.io/validation_failure` (apiserver
+  dispatcher.go:312 at v1.32.2). For Deny it writes the response message "ValidatingAdmissionPolicy '<p>' with
+  binding '<b>' denied request". Both are logged at Metadata, and a client cannot set either. The marker is a
+  server-computed verdict, not the attacker-chosen image string that the T1610 entry rejects. But its meaning is
+  the site's policy, and the rule is inert without one. Engine-native reporting already exists: Kyverno
+  PolicyReports, Gatekeeper audit, Defender gated deployment, and GKE Binary Authorization. Falco exposes
+  `ka.validations.admission.policy.failure` but ships no rule; SigmaHQ, Elastic and Splunk have none.
+  Kyverno-generated VAPs map Audit to [Audit, Warn]; webhook-based image verifiers leave no such annotation.
+  Deferred to build as TRR9034 (k8s), after TRR9031, as a policy-agnostic anchor with a reference VAP. Mapping
+  and shipping the policy are human decisions.
+
+- **Container-runtime lane (shells, drift, miners, IMDS from pods, escape primitives beyond setns) — NO-GO for
+  now (question 1 for auditd, plus questions 2 and 3); recorded as out of scope, with Falco as the reference
+  (maintainer accepted, 2026-10-20).** auditd records carry no container identity: mainline
+  `include/uapi/linux/audit.h` has no container-ID record. The trusted markers (a cgroup-derived container id;
+  Falco's `proc.is_exe_upper_layer` for drift) belong to eBPF sensors that det-eng does not run in CI. Falco's
+  stable, incubating and sandbox rules cover the lane rule for rule ('Terminal shell in container', 'Drop and
+  execute new binary in container', 'Contact cloud metadata service from container', 'Detect release_agent File
+  Container Escapes', miner rules), as do Tetragon/Isovalent, Elastic D4C, the Defender sensor, GuardDuty
+  Runtime Monitoring and GKE Container Threat Detection. The bounded first step is a container-context proof of
+  the EXISTING auditd syscall rules: run their atomics inside a container, attribute events by the in-container
+  exe path, and add no new rules. Revisit only if a runtime sensor (Tetragon) and a new validator are approved.

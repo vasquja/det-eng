@@ -232,10 +232,12 @@ the host-access template in Procedure C). Keep a `Metadata` rule for `pods`
 
 **Strategy 1 — chokepoint (covers A–D).**
 Match audit events where `objectRef.apiGroup` is `batch`, `objectRef.resource` is
-`jobs` or `cronjobs`, and `verb` is `create`, `update`, `patch`, or `delete`.
-**Exclude** the two controllers (`cronjob-controller`, `job-controller`), so the
-rule stays on the identity that set the schedule up and does not alert on every
-scheduled run. Baseline the other legitimate automation identities.
+`jobs` or `cronjobs`, and `verb` is `create`, `update`, `patch`, `delete`, or
+`deletecollection`. **Exclude** the controllers that write batch objects on their own
+(`cronjob-controller`, `job-controller`, `ttl-after-finished-controller`,
+`generic-garbage-collector`), and the namespace controller's `deletecollection` when it
+empties a namespace that is being deleted, so the rule stays on the identity that set
+the schedule up and does not alert on every scheduled run. Baseline the other legitimate automation identities.
 
 - Sensor: API server audit log.
 - Rule: `detections/sigma/T1053.007/k8s_job_create.yml` (built).
@@ -323,6 +325,10 @@ a `trr9005-` object). The workflow
 [`validate-apiserver-detections.yml`](../../../.github/workflows/validate-apiserver-detections.yml)
 runs the whole loop on a `kind` cluster, and runs the validator as a negative
 control on the logs captured *before* the emulation.
+
+Prior emulation: Atomic Red Team T1053.007 test 2 ("CreateCronjob") creates a CronJob
+from a manifest with `kubectl create -f` (Procedure A); Stratus Red Team has no batch
+technique.
 
 Upstream: the SigmaHQ rule `kubernetes_audit_cronjob_modification.yml` covers the
 batch write but does not exclude the cronjob and job controllers, so it fires on

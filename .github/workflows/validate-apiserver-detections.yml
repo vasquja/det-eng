@@ -9,14 +9,16 @@ name: validate-apiserver-detections
 #   - TRR9007 (dangerous pod spec, T1611): pod/controller requestObject -> audit -> Sigma
 #   - TRR9008 (disable admission control, T1685): admissionregistration write -> audit -> Sigma
 #   - TRR9009 (impersonation, T1134):   impersonatedUser presence    -> audit -> Sigma
-#   - TRR9010 (indicator removal, T1070): events delete/deletecollection -> audit -> Sigma
+#   - TRR9010 (indicator removal, T1070): events, pod/job and namespace deletes -> audit -> Sigma
 #   - TRR9025 (malicious admission webhook, T1546): admissionregistration create + body grade
 #   - TRR9026 (pod port-forward, T1572): pods/portforward subresource -> audit -> Sigma
 #   - TRR9027 (cluster DNS poisoning, T1565.001): kube-system DNS ConfigMap write + Corefile grade
 #
 # A kind cluster runs on the ubuntu-latest runner with API server audit logging on
-# (pods, controllers, RBAC and admission configs at Request level; Secrets and tokens
-# at Metadata), and a small CRI poller on the node stands in for a runtime security
+# (pods, controllers, RBAC and admission-config creates and deletes at Request level;
+# admission-config updates and patches and the three cluster DNS ConfigMaps at
+# RequestResponse; kube-system ConfigMap creates at Request; Secrets and tokens at
+# Metadata; see detections/k8s/audit-policy-apiserver.yaml), and a small CRI poller on the node stands in for a runtime security
 # agent (detections/k8s/cri-pod-sensor.sh). The job captures a BEFORE snapshot
 # (negative control), runs the benign emulations, collects both logs, and asserts each
 # match-gated Sigma rule matches a record the emulation itself produced (named with
@@ -79,8 +81,19 @@ permissions:
   contents: read
 
 env:
-  KIND_VERSION: v0.27.0
-  KUBECTL_VERSION: v1.32.2
+  # Pinned Kubernetes for the kind cluster, the same in validate-k8s, validate-staticpod
+  # and validate-apiserver. Bump it every quarter, and before the pinned minor reaches
+  # end of life (v1.36: 2027-06-28): take the newest kind release, a kindest/node image
+  # that release publishes (by digest), and kubectl of the same minor; update the
+  # versions, the digest and both checksums in all three workflows. Kubernetes v1.36.5
+  # is released, but kind has not published a kindest/node image for it yet; move to it
+  # (or later) at the next bump.
+  KIND_VERSION: v0.33.0
+  KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
+  KIND_NODE_IMAGE: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
+  KUBE_SERVER_VERSION: v1.36.4
+  KUBECTL_VERSION: v1.36.4
+  KUBECTL_SHA256: 8b8f088da2dab964f853b38464033b1be15ede2839eca751482357c45abdd05a
   CLUSTER_NAME: apiserver
 
 jobs:
@@ -178,11 +191,14 @@ jobs:
       - name: Install kind and kubectl (pinned)
         shell: bash
         run: |
+          set -euo pipefail
           curl -fsSLo ./kind \
             "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          echo "${KIND_SHA256}  ./kind" | sha256sum -c -
           chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind
           curl -fsSLo ./kubectl \
             "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          echo "${KUBECTL_SHA256}  ./kubectl" | sha256sum -c -
           chmod +x ./kubectl && sudo mv ./kubectl /usr/local/bin/kubectl
           kind version
           kubectl version --client
@@ -193,8 +209,20 @@ jobs:
           # Run from the repo root so the relative extraMounts path resolves.
           kind create cluster \
             --name "${CLUSTER_NAME}" \
+            --image "${KIND_NODE_IMAGE}" \
             --config detections/k8s/kind-apiserver-cluster.yaml \
             --wait 150s
+
+      - name: Confirm the pinned Kubernetes version
+        shell: bash
+        run: |
+          set -euo pipefail
+          server="$(kubectl version -o json | python3 -c 'import json, sys; print(json.load(sys.stdin)["serverVersion"]["gitVersion"])')"
+          echo "Server Version: ${server}"
+          if [ "${server}" != "${KUBE_SERVER_VERSION}" ]; then
+            echo "::error::the kind cluster runs ${server}, but the pin is ${KUBE_SERVER_VERSION}"
+            exit 1
+          fi
 
       - name: Confirm audit logging is active
         shell: bash

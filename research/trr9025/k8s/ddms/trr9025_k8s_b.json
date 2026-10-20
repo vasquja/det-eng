@@ -90,7 +90,7 @@
       "properties": {
         "verb": "create",
         "objectRef.resource": "validatingwebhookconfigurations",
-        "requestObject.webhooks[].resources": "secrets",
+        "requestObject.webhooks[].clientConfig.url": "set (URL-mode)",
         "Chokepoint": "A-C; Grader: url"
       },
       "style": {

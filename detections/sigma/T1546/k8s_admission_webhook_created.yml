@@ -18,7 +18,8 @@ description: |
   keys on CREATE (installing a malicious webhook), which TRR9008 scoped out as a
   separate persistence technique. The companion grader
   (k8s_malicious_admission_webhook_created.yml) raises severity on a webhook whose
-  clientConfig points off-cluster or whose rules reach cluster-wide or over Secrets.
+  clientConfig is a url (normally off-cluster); it does not grade cluster-wide rules
+  or a Secrets scope, which the policy engines every cluster runs also have.
 
   The chokepoint fires at Metadata (verb, apiGroup, and objectRef.name are enough to
   see a create). It cannot tell a benign operator-installed webhook from a malicious

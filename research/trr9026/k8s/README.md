@@ -40,7 +40,8 @@ This TRR does not cover these related actions:
 > **ATT&CK mapping caveat.** The best available ID is **T1572 (Protocol Tunneling)**,
 > tactic Command and Control — a `kubectl port-forward` tunnels arbitrary TCP through
 > the API server, which is the mapping Elastic's kubectl-networking rules also use.
-> The ATT&CK Containers matrix has **no dedicated port-forward technique**, so T1572
+> The ATT&CK Containers matrix has **no dedicated port-forward technique**, and
+> T1572's v20 platforms are ESXi, Linux, macOS and Windows (no Containers), so T1572
 > is a stated cross-domain best-fit. The lateral-movement framing (reach an internal
 > service) is real, but the T1021 (Remote Services) sub-techniques are
 > protocol-specific (SSH/RDP/SMB/VNC) and do not fit an API-server tunnel, so T1021 is
@@ -168,7 +169,8 @@ The adversary port-forwards straight to the kubelet on `:10250`, or through
 `nodes/proxy`, bypassing the pods subresource. There is then no `pods/portforward`
 audit event — the record is a `nodes/proxy` event or nothing at all.
 
-- **Prerequisites:** a node credential or network reach to the kubelet.
+- **Prerequisites:** for the direct form, a kubelet client credential and network
+  reach to `:10250`; for the proxied form, RBAC `get`/`create` on `nodes/proxy`.
 - **Mechanics:** a direct kubelet `/portForward` call, or a request proxied through
   `nodes/proxy`.
 - **Impact:** the same tunnel, with no `pods/portforward` audit trace.
@@ -182,16 +184,22 @@ Source: [`ddms/trr9026_k8s_c.json`](ddms/trr9026_k8s_c.json) (Arrows app format)
 
 **DDM summary.** The shaded node is a node sensor, not the audit log: a direct kubelet
 port-forward writes no `pods/portforward` event. This is the TRR9002 direct-kubelet
-gap, restated for the tunnel; a `nodes/proxy` variant is partially visible as a
-`nodes/proxy` audit event (Elastic ships AKS rules there), which this report
-references rather than duplicates.
+gap, restated for the tunnel. The `nodes/proxy` variant does write an audit event (a
+`nodes/proxy` request whose `requestURI` holds `/portForward/`), but no rule in this
+repository matches it: `k8s_node_proxy_exec` (TRR9002) matches only a `requestURI`
+that contains `/exec/`, `/run/` or `/attach/`. Elastic ships a native rule on any non-system
+`nodes/proxy` request (`privilege_escalation_api_proxy_to_node.toml`) and an AKS rule
+that names `/proxy/portForward` (`execution_azure_aks_kubelet_proxy_command_endpoint.toml`);
+this report references them rather than duplicates them.
 
 ## Detection Strategy
 
 Compare the three DDMs. Procedures A and B both produce a `pods/portforward` audit
 event and differ only on the verb, so one verb-agnostic chokepoint rule covers both.
-Procedure C never produces a `pods/portforward` event, so no API-audit rule can see
-it.
+Procedure C never produces a `pods/portforward` event, so the chokepoint cannot see
+it. The direct-kubelet form writes no API audit event at all. The `nodes/proxy` form
+writes a `nodes/proxy` event that an audit rule could match, but no rule in this
+repository does.
 
 **Telemetry requirement.** The audit policy must record `pods/portforward` at
 `Metadata` or higher. The shared policy
@@ -220,8 +228,10 @@ chokepoint, not separate rules.
 **Demonstrated gap — the direct-kubelet tunnel (Procedure C).**
 A port-forward straight to the kubelet, or through `nodes/proxy`, leaves no
 `pods/portforward` event. The audit-log chokepoint is structurally blind to it, the
-same gap TRR9002 demonstrates for exec. A node/kubelet-access sensor, and the existing
-`nodes/proxy` coverage, are the only cover; the lab demonstrates the gap read-only.
+same gap TRR9002 demonstrates for exec. A node/kubelet-access sensor is the only cover
+for the direct form. The `nodes/proxy` form is audited, but no repository rule matches
+a `nodes/proxy` `/portForward/` request (`k8s_node_proxy_exec` needs `/exec/`, `/run/`
+or `/attach/` in the `requestURI`). The lab states the gap and makes no kubelet call.
 
 **Coverage summary.**
 
@@ -249,7 +259,7 @@ Red Team wrappers in [`atomics/T1572/T1572.yaml`](../../../atomics/T1572/T1572.y
 |-----------|------|--------|
 | TRR9026.K8S.A | `emulate.sh a` — port-forward to `trr9026-target` over SPDY (`verb=create`). | **built** |
 | TRR9026.K8S.B | `emulate.sh b` — port-forward to `trr9026-target` over WebSocket (`verb=get`). | **built** |
-| TRR9026.K8S.C | `emulate.sh gap` — attempt a direct-kubelet port-forward (no `pods/portforward` event). | **built** |
+| TRR9026.K8S.C | `emulate.sh gap` — print the gap: a direct-kubelet or `nodes/proxy` port-forward writes no `pods/portforward` event. Read-only; it makes no kubelet call. | **built** (statement only) |
 
 ## Detections
 
@@ -264,8 +274,10 @@ event whose `objectRef.name` is the `trr9026-target` pod. The workflow
 [`validate-apiserver-detections.yml`](../../../.github/workflows/validate-apiserver-detections.yml)
 runs the loop on a `kind` cluster, with a negative control on the pre-emulation log.
 
-Upstream: SigmaHQ has an exec rule but no `pods/portforward` rule; Falco's default
-ruleset has a `port-forward` rule. Propose the Sigma `pods/portforward` rule, matching
+Upstream: SigmaHQ has an exec rule but no `pods/portforward` rule; Falco's k8saudit
+plugin ruleset has a `port-forward` rule. Elastic's audit rules cover the `nodes/proxy`
+form, not `pods/portforward` (see Procedure C); its "Kubectl Network Configuration
+Modification" rule sees `kubectl port-forward` as a process on the client host. Propose the Sigma `pods/portforward` rule, matching
 both transports (the verb-agnostic form that catches the WebSocket `get`).
 
 ## References
@@ -278,7 +290,9 @@ both transports (the verb-agnostic form that catches the WebSocket `get`).
   <https://kubernetes.io/blog/2024/08/20/websockets-transition/>
 - Kubernetes documentation, Auditing:
   <https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/>
-- Falco default k8s_audit ruleset (the `port-forward` rule):
-  <https://github.com/falcosecurity/rules/blob/main/rules/k8s_audit_rules.yaml>
+- Falco k8saudit plugin ruleset (the `port-forward` rule):
+  <https://github.com/falcosecurity/plugins/blob/main/plugins/k8saudit/rules/k8s_audit_rules.yaml>
+- Elastic rule, Kubernetes API Server Proxying Request to Kubelet (`nodes/proxy`):
+  <https://github.com/elastic/detection-rules/blob/main/rules/integrations/kubernetes/privilege_escalation_api_proxy_to_node.toml>
 - TRR method:
   <https://github.com/tired-labs/techniques/blob/main/docs/TECHNIQUE-RESEARCH-REPORT.md>

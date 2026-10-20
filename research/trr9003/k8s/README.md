@@ -10,7 +10,7 @@
 |--------------|-------|
 | ID           | TRR9003 |
 | External IDs | T1543.005 |
-| Tactics      | Persistence |
+| Tactics      | Persistence, Privilege Escalation |
 | Platforms    | Kubernetes |
 | Contributors | det-eng |
 | Status       | draft |
@@ -453,7 +453,9 @@ the lab does not exercise it, because it needs node file telemetry.
 
 This technique is not covered by `tired-labs/techniques` (no Kubernetes TRR
 exists there), by the SigmaHQ Kubernetes audit rules (there is no static-pod or
-node-created-pod rule), or by Atomic Red Team (no static-pod atomic). This TRR,
+node-created-pod rule), by Atomic Red Team (no T1543.005 atomic), or by Stratus Red
+Team (no static-pod technique; its nearest, `k8s.privilege-escalation.privileged-pod`
+and `hostpath-volume`, go through the API server). This TRR,
 the emulation, and the rules are a first pass to fill that gap; propose the
 Strategy 2 rule upstream to SigmaHQ.
 

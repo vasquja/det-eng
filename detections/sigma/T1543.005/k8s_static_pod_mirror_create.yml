@@ -37,6 +37,7 @@ author: det-eng
 date: 2026/10/08
 tags:
   - attack.persistence
+  - attack.privilege-escalation
   - attack.t1543.005
 logsource:
   product: kubernetes

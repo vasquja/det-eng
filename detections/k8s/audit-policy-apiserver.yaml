@@ -1,7 +1,8 @@
 # API server audit policy for the TRR9004-9010, 9025-9027 lab (RBAC, Jobs/CronJobs, Secrets,
-# dangerous pod specs).
+# dangerous pod specs, admission control, impersonation, indicator removal, admission
+# webhooks, pod port-forward, cluster DNS).
 #
-# Purpose: make the telemetry the four techniques' Sigma rules key on exist, while
+# Purpose: make the telemetry these techniques' Sigma rules key on exist, while
 # keeping the log small enough to read in CI. On a default cluster the API server
 # writes NO audit log at all, so a detection has nothing to match. Load this first.
 #

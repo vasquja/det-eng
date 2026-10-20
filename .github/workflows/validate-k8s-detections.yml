@@ -38,8 +38,19 @@ permissions:
   contents: read
 
 env:
-  KIND_VERSION: v0.27.0
-  KUBECTL_VERSION: v1.32.2
+  # Pinned Kubernetes for the kind cluster, the same in validate-k8s, validate-staticpod
+  # and validate-apiserver. Bump it every quarter, and before the pinned minor reaches
+  # end of life (v1.36: 2027-06-28): take the newest kind release, a kindest/node image
+  # that release publishes (by digest), and kubectl of the same minor; update the
+  # versions, the digest and both checksums in all three workflows. Kubernetes v1.36.5
+  # is released, but kind has not published a kindest/node image for it yet; move to it
+  # (or later) at the next bump.
+  KIND_VERSION: v0.33.0
+  KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
+  KIND_NODE_IMAGE: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
+  KUBE_SERVER_VERSION: v1.36.4
+  KUBECTL_VERSION: v1.36.4
+  KUBECTL_SHA256: 8b8f088da2dab964f853b38464033b1be15ede2839eca751482357c45abdd05a
   CLUSTER_NAME: trr9002
 
 jobs:
@@ -112,11 +123,14 @@ jobs:
       - name: Install kind and kubectl (pinned)
         shell: bash
         run: |
+          set -euo pipefail
           curl -fsSLo ./kind \
             "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          echo "${KIND_SHA256}  ./kind" | sha256sum -c -
           chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind
           curl -fsSLo ./kubectl \
             "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          echo "${KUBECTL_SHA256}  ./kubectl" | sha256sum -c -
           chmod +x ./kubectl && sudo mv ./kubectl /usr/local/bin/kubectl
           kind version
           kubectl version --client
@@ -127,8 +141,20 @@ jobs:
           # Run from the repo root so the relative extraMounts path resolves.
           kind create cluster \
             --name "${CLUSTER_NAME}" \
+            --image "${KIND_NODE_IMAGE}" \
             --config detections/k8s/kind-audit-cluster.yaml \
             --wait 150s
+
+      - name: Confirm the pinned Kubernetes version
+        shell: bash
+        run: |
+          set -euo pipefail
+          server="$(kubectl version -o json | python3 -c 'import json, sys; print(json.load(sys.stdin)["serverVersion"]["gitVersion"])')"
+          echo "Server Version: ${server}"
+          if [ "${server}" != "${KUBE_SERVER_VERSION}" ]; then
+            echo "::error::the kind cluster runs ${server}, but the pin is ${KUBE_SERVER_VERSION}"
+            exit 1
+          fi
 
       - name: Confirm audit logging is active
         shell: bash

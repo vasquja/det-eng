@@ -99,7 +99,8 @@ the event annotations (`authorization.k8s.io/decision` and
 
 There is also no `replace` audit verb. An HTTP `PUT` — `kubectl replace`, or an
 apply sent as `PUT` — is recorded as `verb: update`. So the write-verb set is
-`create`, `update`, `patch`, and `delete`; nothing else is needed.
+`create`, `update`, `patch`, `delete`, and `deletecollection` (a bulk delete of the
+roles or bindings in a namespace).
 
 ### The audit log, and what Metadata level hides
 
@@ -308,7 +309,9 @@ the negative control needs to see the baseline writes and exclude them by name.
 
 **Strategy 1 — chokepoint (covers A–E).**
 Match audit events where `objectRef.apiGroup` is `rbac.authorization.k8s.io` and
-`verb` is `create`, `update`, `patch`, or `delete`. This is noisy on its own: a
+`verb` is `create`, `update`, `patch`, `delete`, or `deletecollection`. Filter one
+request: the namespace controller's `deletecollection` when it empties a namespace
+that is being deleted (the namespace delete names the actor). This is noisy on its own: a
 kubeadm cluster writes dozens of RBAC objects at bootstrap and reconciles the
 default roles continuously. Baseline the **actor**, not the object: suppress
 `system:kube-controller-manager`, `system:apiserver`, the kubeadm and
@@ -437,9 +440,16 @@ emulation (where the many bootstrap RBAC writes must not make any rule pass).
 
 Upstream: the SigmaHQ rule `kubernetes_audit_rolebinding_modification.yml`
 matches bindings only (not role writes, procedure C), does not inspect
-`requestObject`, and has no group-subject or escalate/bind detection. Propose the
-chokepoint rule (whole RBAC group, all write verbs) plus the `requestObject`
-severity rule as an improvement.
+`requestObject`, and has no group-subject or escalate/bind detection. Elastic already
+grades role bodies: "Kubernetes Creation or Modification of Sensitive Role" reads
+`requestObject`/`responseObject` rules for a wildcard, `escalate`, `bind` or
+`impersonate` (RequestResponse level only), and "Kubernetes RBAC Wildcard Elevation on
+Existing Role" reads the stored role after a patch. Falco's k8saudit ruleset has
+"ClusterRole With Wildcard Created" and "Attach to cluster-admin Role". None grades a
+built-in group subject (Procedure D) or reads a JSON-patch operation list. Stratus Red
+Team `k8s.persistence.create-admin-clusterrole` emulates Procedures A and C together.
+Propose the chokepoint rule (whole RBAC group, all write verbs) plus the
+`requestObject` severity rule as an improvement.
 
 ## References
 

@@ -22,6 +22,12 @@ description: |
   context reports when a sandbox starts. Sigma has no standard log source for
   it, so this rule declares `product: kubernetes`, `service: cri`; map those
   fields to your node sensor's.
+
+  Expected baseline: on a kubeadm cluster, the control-plane static pods
+  (kube-apiserver, kube-controller-manager, kube-scheduler, etcd) on each
+  control-plane node, every time one starts. Suppress them by name plus
+  `kubernetes.io/config.hash` per node, never by name alone: a manifest can take
+  any name.
 references:
   - https://attack.mitre.org/techniques/T1543/005/
   - https://kubernetes.io/docs/tasks/configure-pod-container/static-pod/
@@ -31,6 +37,7 @@ author: det-eng
 date: 2026/10/09
 tags:
   - attack.persistence
+  - attack.privilege-escalation
   - attack.t1543.005
 logsource:
   product: kubernetes

@@ -20,6 +20,7 @@ date: 2026/10/06
 tags:
   - attack.execution
   - attack.t1609
+  - attack.t1059.013
 logsource:
   product: kubernetes
   service: audit
@@ -32,7 +33,11 @@ detection:
       - '/exec/'
       - '/run/'
       - '/attach/'
-  condition: select_node_proxy and select_exec_path
+  # Another kubelet endpoint (the first segment after /proxy/) whose later path
+  # segments name a namespace, pod or container exec, run or attach.
+  filter_other_kubelet_endpoint:
+    requestURI|re: '^/api/v1/nodes/[^/?]+/proxy/(containerLogs|portForward|checkpoint|logs|debug)([/?].*)?$'
+  condition: select_node_proxy and select_exec_path and not filter_other_kubelet_endpoint
 falsepositives:
   - Rare. Legitimate use of the node proxy to reach kubelet exec/run/attach is
     unusual; triage every hit. Routine nodes/proxy traffic to /metrics and

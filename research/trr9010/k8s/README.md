@@ -30,8 +30,10 @@ This TRR does not cover these related actions:
 
 > ATT&CK maps this to T1070 (Indicator Removal, Stealth); Containers is a
 > platform of the parent with no container sub-technique. Clearing the audit log
-> file on the node maps to T1070.004 (File Deletion), as Elastic's own "Kubernetes
-> Events Deleted" rule tags it.
+> file on the node (Procedure E) maps to T1070.004 (File Deletion), whose v20
+> platforms are ESXi, Linux, macOS and Windows; no rule here covers Procedure E. The
+> Events rule does not carry T1070.004: an Event is an API object, not a file
+> (Elastic's "Kubernetes Events Deleted" rule tags T1070.004 anyway).
 
 ## Technique Overview
 
@@ -355,8 +357,10 @@ namespace). The workflow
 runs the loop on a `kind` cluster, with a negative control on the pre-emulation log.
 
 Upstream: the SigmaHQ rule `kubernetes_audit_events_deleted.yml` matches `delete`
-only and misses the bulk `deletecollection` wipe. Propose widening the verb list to
-`delete` and `deletecollection`.
+only and misses the bulk `deletecollection` wipe; so does Elastic's native "Kubernetes
+Events Deleted", while its AKS variant (`defense_evasion_azure_aks_events_deleted.toml`)
+already matches `deletecollection`. Propose widening the verb list to `delete` and
+`deletecollection`.
 
 ## References
 

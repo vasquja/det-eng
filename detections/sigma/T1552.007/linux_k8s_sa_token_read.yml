@@ -58,6 +58,8 @@ modified: 2026/10/16
 tags:
   - attack.credential-access
   - attack.t1552.007
+  - attack.t1528
+  - attack.t1552.001
 logsource:
   product: linux
   category: file_event

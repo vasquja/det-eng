@@ -254,7 +254,7 @@ webhook, or deletes the engine's namespace, so the endpoint is gone.
 Source: [`ddms/trr9008_k8s_d.json`](ddms/trr9008_k8s_d.json) (Arrows app format).
 
 **DDM summary.** This is a different edge, an apps-group write, so it has its own
-rule (Strategy 2). The node also sees the enforcer pods disappear. Correlate the
+rule (Strategy 3). The node also sees the enforcer pods disappear. Correlate the
 workload removal with the policy engine's namespace or app labels.
 
 ## Detection Strategy
@@ -312,6 +312,11 @@ webhook TLS material on disk so calls fail (fail-open if any webhook is Ignore).
 None of that is an API write, so the chokepoint and the grading rule are blind. A
 node file-integrity sensor on `/etc/kubernetes/manifests/kube-apiserver.yaml` and
 the webhook cert paths covers it, and the CRI sensor sees the enforcer pods vanish.
+This repository already ships the manifest half:
+[`detections/sigma/T1543.005/linux_static_pod_manifest_write.yml`](../../../detections/sigma/T1543.005/linux_static_pod_manifest_write.yml)
+(TRR9003, level high) matches a write under `/etc/kubernetes/manifests/`, which holds
+`kube-apiserver.yaml`; it is compile-only in CI (no node file telemetry), and it
+filters writes by the `kubeadm` binary. No rule covers the webhook cert paths.
 The lab demonstrates the gap read-only, by showing the apiserver manifest path on
 the node and noting no admissionregistration audit event follows an edit there.
 
@@ -363,8 +368,11 @@ runs the loop on a `kind` cluster, with a negative control on the pre-emulation 
 
 Upstream: the SigmaHQ rule `kubernetes_audit_change_admission_controller.yml`
 covers webhook configs but lists a phantom `replace` verb, cannot grade a neuter
-(no requestObject), and has no enforcer-workload edge. Propose the corrected
-chokepoint plus the neuter grader and the workload-removal rule.
+(no requestObject), and has no enforcer-workload edge. Elastic's "Kubernetes Admission
+Webhook Created or Modified" also matches `update`, `patch` and `delete` of webhook
+configurations (tagged T1546 and T1562) but reads no body, so it cannot grade a neuter
+either; Falco's k8saudit "K8s Deployment Deleted" matches any Deployment delete. Propose
+the corrected chokepoint plus the neuter grader and the workload-removal rule.
 
 ## References
 

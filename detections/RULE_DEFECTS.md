@@ -46,6 +46,9 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [L14](#l14-exe-and-comm-allowlists-trust-the-binary-not-the-code-in-it) | three Linux rules | allowlisted tools that ordinary users run (kcapi, debuggers) hide injected code | evasion | medium |
 | [K4](#k4-k8s_admission_webhook_neutered-neuters-the-audit-record-cannot-show) | `T1685/k8s_admission_webhook_neutered` | selectors on other labels, self-contradicting selectors or conditions, variable-bound constants | false negative | low |
 | [K9](#k9-k8s_coredns_corefile_poisoned-what-the-corefile-grader-does-not-grade) | `T1565.001/k8s_coredns_corefile_poisoned` | private non-cluster stub zones, `import`, mid-token CR, `#<TAB>` comments | false negative, false positive | low |
+| [K15](#k15-k8s_node_proxy_exec-a-percent-encoded-kubelet-endpoint) | `T1609/k8s_node_proxy_exec` | a percent-encoded kubelet endpoint in requestURI (unverified) | false negative | low |
+| [K16](#k16-k8s_impersonation-an-impersonation-request-without-a-user-header) | `T1134/k8s_impersonation` | `Impersonate-Group`/`-Uid`/`-Extra` without `Impersonate-User` is a 500 with no trace (unverified) | false negative | low |
+| [K17](#k17-k8s_rbac_privileged_grant-the-wildcard-clause-fires-on-read-only-roles) | `T1098.006/k8s_rbac_privileged_grant` | the `"*"` clause fires on read-only wildcard roles | false positive | low |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
@@ -164,6 +167,55 @@ whether `arping` belongs in the allowlist.
   `minikube-default-annotation-patch`.
 - **Fix**: none planned for 1 to 5.
 
+### K15. k8s_node_proxy_exec: a percent-encoded kubelet endpoint
+
+- **Rule**: [`sigma/T1609/k8s_node_proxy_exec.yml`](sigma/T1609/k8s_node_proxy_exec.yml) (level high).
+- **Kind**: false negative. **Severity**: low (not an ordinary client call; unverified).
+- **Problem**: the audit record keeps the raw `requestURI` (`req.URL.RequestURI()`),
+  but the API server builds the proxied kubelet path from the decoded URL path. A
+  kubelet endpoint written with percent-encoding in the request line would then reach
+  the kubelet as `exec`, `run` or `attach` while `requestURI` holds the encoded form,
+  which the rule's substring match does not see.
+- **Evidence**: *source* — `staging/src/k8s.io/apiserver/pkg/audit/request.go:52`,
+  `pkg/endpoints/request/requestinfo.go:135`, `pkg/endpoints/handlers/get.go:150`;
+  Go's `URL.RequestURI()` keeps the encoding while `URL.Path` decodes it. **unverified**
+  on a live cluster.
+- **Fix**: none in Sigma: the decoded path is not in the record. A live capture decides
+  whether the API server or the kubelet refuses the encoded form.
+
+### K16. k8s_impersonation: an impersonation request without a user header
+
+- **Rule**: [`sigma/T1134/k8s_impersonation.yml`](sigma/T1134/k8s_impersonation.yml) (level medium).
+- **Kind**: false negative. **Severity**: low (the request fails and grants nothing).
+- **Problem**: `Impersonate-Group`, `Impersonate-Uid` or `Impersonate-Extra-*` without
+  `Impersonate-User` is refused with HTTP 500 by `responsewriters.InternalError`
+  (plain text, no Status), so the event has no `impersonatedUser` and no message;
+  only `responseStatus.code: 500` remains.
+- **Evidence**: *source* — kubernetes v1.32.0
+  `staging/src/k8s.io/apiserver/pkg/endpoints/filters/impersonation.go:44-47,269-270`,
+  `handlers/responsewriters/errors.go:80-84`, `filters/audit.go:231-237`.
+  **unverified** on a live cluster.
+- **Fix**: none in Sigma: no field of the record names the headers.
+
+### K17. k8s_rbac_privileged_grant: the wildcard clause fires on read-only roles
+
+- **Rule**: [`sigma/T1098.006/k8s_rbac_privileged_grant.yml`](sigma/T1098.006/k8s_rbac_privileged_grant.yml) (level high).
+- **Kind**: false positive. **Severity**: low.
+- **Problem**: `sel_dangerous_rules` matches `"*"` anywhere in `requestObject.rules`,
+  so a role whose `apiGroups` or `resources` is `*` but whose verbs are read-only
+  (`list`, `watch`) fires a high-level rule. The bootstrap policy creates several such
+  roles (the resource-quota controller, the namespace controller and the garbage
+  collector read `*/*`), which is most of the 17 hits the live kind bootstrap capture
+  records for this rule (shadow mode). Read-only operators installed by GitOps fire too.
+- **Evidence**: *probe* — a ClusterRole create by `system:apiserver` with `list`/`watch`
+  on `*/*` fires; a read-only role on `pods` does not. *CI capture* — the validate-apiserver
+  live shadow slice (runs 38976160238 and 39262859317): 17 hits, budget 9.
+- **Fix**: require `*` in `verbs`, or a write or escalation verb next to the wildcard,
+  with a near-miss case for read-only `list`/`watch` on `*/*`. A separate option for a
+  human: filter `user.username: system:apiserver` (only the API server's loopback
+  client presents it), with a filtered case.
+- **Then**: the new near-miss holds and the live shadow count drops; no budget change.
+
 ## Cloud (AWS, Azure, GCP)
 
 ### C6. gcp_workforce_principalset_privileged_binding: where the privileged-role tier ends
@@ -227,9 +279,16 @@ whether `arping` belongs in the allowlist.
 
 ## Checks to add
 
-None open. (The thin-negative warning on
-`T1098.001/entra_app_federated_credential_backdoor` is gone: its reordered remove and
-repoint-away near-misses pass `check_sufficiency.py`.)
+- `T1543.005/linux_static_pod_manifest_write`: check-sufficiency R5 warns that no
+  negative breaks `selection_dir.TargetFilename`. That selection has one item, so a
+  record that breaks it shares no item with the rule and grades trivial (a write to
+  `/etc/kubernetes/manifests-disabled/kube-scheduler.yaml` by `/usr/bin/mv` does). No
+  near-miss can close the warning; its proof is the filtered cases. The R5 message
+  should not offer an item that is the only item of its selection.
+
+(The thin-negative warnings on `T1053.007/k8s_cri_job_pod` and `T1134/k8s_impersonation`
+are gone: near-misses `operator-pod-labelled-controller-uid` and
+`policy-webhook-denial-quotes-impersonate` pass `check_sufficiency.py`.)
 
 ## Closed entries
 
@@ -239,6 +298,7 @@ points here.
 | ID | Closed by | Proof |
 |----|-----------|-------|
 | K13 | new hunting rule `T1070/k8s_namespace_deleted` (level low) | positive `namespace-delete-payments`; filtered dry-run and garbage-collector cases; budget 4 (`k8s-audit-gitops-ci`) |
+| K14 | `T1070/k8s_namespace_deleted` trusts `?dryRun=All` only when the record holds no request body (with a body the API server ignores the query) | positive `namespace-delete-query-dry-run-ignored-body`; filtered `namespace-delete-dry-run-query` and `namespace-delete-dry-run-body` still hold |
 | C13 | `entra_app_federated_credential_backdoor` reads only `newValue`, in any key order | near-misses `fic-with-unapproved-issuer-removed`, `fic-repointed-away-new-value-first` and the other reordered cases |
 | C14 | `aws_resource_policy_made_public` reads a `Statement` that is one object | positives `s3-single-statement-object-public-read`, `sqs-single-statement-object-public-send`, `efs-single-statement-object-public-mount` |
 | C16 | `aws_github_oidc_role_trust_abuse` grades each `sub` value | near-miss `two-subs-pinned-ref-wildcards-grade-high`; positive `two-subs-pinned-ref-wildcards-go-to-high-rule` of the low rule |

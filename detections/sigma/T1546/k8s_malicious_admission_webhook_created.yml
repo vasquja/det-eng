@@ -28,7 +28,11 @@ description: |
   Demonstrated gap: a webhook wired to an IN-CLUSTER clientConfig.service backed by an
   attacker-controlled pod has no off-cluster URL, so this grader does not fire. The
   chokepoint still catches the create; correlate it with the creation of the backing
-  Service and pod. Metadata level cannot feed this rule: clientConfig lives in
+  Service and pod. The match is any URL-mode webhook: a url that names an in-cluster
+  host also fires (the API documents that url should not name an in-cluster Service).
+  A repoint of an existing webhook from clientConfig.service to url is an update or
+  patch, not a create, so this rule does not fire on it; only the TRR9008 chokepoint
+  (k8s_admission_webhook_disabled) does. Metadata level cannot feed this rule: clientConfig lives in
   requestObject, and without Request level a malicious and a benign webhook create are
   byte-identical. A CEL ValidatingAdmissionPolicy (Procedure C) cannot call
   off-cluster, so it is covered at the chokepoint only.
