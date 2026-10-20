@@ -12,7 +12,8 @@ key on the same API server audit log (plus one node runtime sensor rule):
   * TRR9008 (T1685, disable or modify tools) - admissionregistration disable + grade
   * TRR9009 (T1134, impersonation)       - impersonatedUser presence
   * TRR9010 (T1070, indicator removal)   - events delete/deletecollection + namespace delete
-  * TRR9025 (T1546, malicious admission webhook) - admissionregistration create + grade
+  * TRR9025 (T1546, malicious admission webhook) - admissionregistration create/SSA install
+                                           + grade, and repoint grade
   * TRR9026 (T1572, pod port-forward)    - pods/portforward subresource (verb-agnostic)
                                            + nodes/proxy /portForward/ path
   * TRR9027 (T1565.001, cluster DNS poison) - kube-system DNS ConfigMap write + Corefile grade
@@ -38,6 +39,10 @@ kindnet privileged pods). The gate is:
     too; a 'list' has no objectRef.name, so the namespace + non-system-caller pair
     is the only gate that spans A/B/C/D).
   * TRR9025 / TRR9026 : objectRef.name begins with 'trr9025-' / 'trr9026-'.
+  * TRR9025 SSA install: objectRef.name begins with 'trr9025-ssa-create' AND verb patch
+    AND responseStatus.code 201. TRR9025 D: objectRef.name begins with
+    'trr9025-hijack-<shape>' AND the shape's verb (patch, or update for the PUT) AND
+    responseStatus.code 200 (an accepted modify; a refused write does not pass).
   * TRR9026 C (nodes/proxy): requestURI contains '/trr9026-' (objectRef.name is the node).
   * TRR9008 D (scale): objectRef.name begins with 'trr9008-' AND objectRef.subresource
     is 'scale' (the kubectl scale write, which the audit policy must log at Request).
@@ -110,6 +115,34 @@ def scale_subresource(prefix):
         return ((e.get("objectRef.name") or "").startswith(prefix)
                 and e.get("objectRef.subresource") == "scale")
     gate.describe = f"objectRef.name begins with {prefix!r} and objectRef.subresource == 'scale'"
+    return gate
+
+
+def ssa_create_prefix(prefix):
+    """TRR9025 K21: a server-side-apply install of a missing object, which the API
+    server performs as a PATCH answered 201. Gated on the object name AND verb patch
+    AND responseStatus.code 201, so it proves the create-via-apply path (the create
+    rules' `verb patch and responseStatus.code 201` branch), apart from a repoint
+    (a patch answered 200) and from a plain create (verb create)."""
+    def gate(e):
+        return ((e.get("objectRef.name") or "").startswith(prefix)
+                and e.get("verb") == "patch"
+                and e.get("responseStatus.code") == 201)
+    gate.describe = (f"objectRef.name begins with {prefix!r}, verb == 'patch' and "
+                     "responseStatus.code == 201")
+    return gate
+
+
+def accepted_modify(prefix, verbs=("update", "patch")):
+    """TRR9025 D: an accepted modify (responseStatus.code 200) of an object whose name
+    begins with `prefix`, by one of `verbs`. A refused write (403, 409, 422) still carries
+    its body, so a name-only gate would pass it; this gate proves the write took effect."""
+    def gate(e):
+        return ((e.get("objectRef.name") or "").startswith(prefix)
+                and e.get("verb") in verbs
+                and e.get("responseStatus.code") == 200)
+    gate.describe = (f"objectRef.name begins with {prefix!r}, verb in {list(verbs)} and "
+                     "responseStatus.code == 200")
     return gate
 
 
@@ -282,6 +315,33 @@ MANIFEST = [
      "malicious admission-webhook create chokepoint", name_prefix("trr9025-")),
     ("T1546", "k8s_malicious_admission_webhook_created.yml", "audit", "9025 sev",
      "malicious webhook grader: clientConfig.url (Request)", name_prefix("trr9025-")),
+    # K21: the server-side-apply install is a PATCH answered 201. Both create rules
+    # match it through their SSA-create branch; gated on trr9025-ssa-create, the new
+    # URL-mode webhook the emulation installs with `kubectl apply --server-side`.
+    ("T1546", "k8s_admission_webhook_created.yml", "audit", "9025 ssa-create",
+     "create chokepoint on a server-side-apply install (verb patch, code 201)",
+     ssa_create_prefix("trr9025-ssa-create")),
+    ("T1546", "k8s_malicious_admission_webhook_created.yml", "audit", "9025 sev ssa-create",
+     "grader on a server-side-apply URL-mode install (verb patch, code 201)",
+     ssa_create_prefix("trr9025-ssa-create")),
+    # TRR9025 Procedure D: an update or patch that repoints an installed webhook to a
+    # url. Each request shape runs on its own object; each gate needs the shape's verb
+    # and an accepted modify (200), so a refused write fails CI instead of passing.
+    ("T1685", "k8s_admission_webhook_disabled.yml", "audit", "9025 D chk",
+     "TRR9008 chokepoint on the Procedure D repoints (accepted update/patch)",
+     accepted_modify("trr9025-hijack-")),
+    ("T1546", "k8s_admission_webhook_repointed_to_url.yml", "audit", "9025 D smp",
+     "repoint grader: strategic merge patch service -> url",
+     accepted_modify("trr9025-hijack-smp", ("patch",))),
+    ("T1546", "k8s_admission_webhook_repointed_to_url.yml", "audit", "9025 D json",
+     "repoint grader: JSON patch remove service, add url",
+     accepted_modify("trr9025-hijack-json", ("patch",))),
+    ("T1546", "k8s_admission_webhook_repointed_to_url.yml", "audit", "9025 D put",
+     "repoint grader: kubectl replace (PUT) with url",
+     accepted_modify("trr9025-hijack-put", ("update",))),
+    ("T1546", "k8s_admission_webhook_repointed_to_url.yml", "audit", "9025 D ssa",
+     "repoint grader: server-side apply with url (patch answered 200)",
+     accepted_modify("trr9025-hijack-ssa", ("patch",))),
     ("T1572", "k8s_pod_portforward.yml", "audit", "9026 A-B",
      "pod port-forward chokepoint (verb-agnostic subresource)", name_prefix("trr9026-")),
     ("T1572", "k8s_node_proxy_portforward.yml", "audit", "9026 C proxy",

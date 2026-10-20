@@ -50,7 +50,8 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [K16](#k16-k8s_impersonation-an-impersonation-request-without-a-user-header) | `T1134/k8s_impersonation` | on v1.34 and earlier, `Impersonate-Group`/`-Uid`/`-Extra` without `Impersonate-User` is a 500 with no trace (unverified live) | false negative | low |
 | [K17](#k17-k8s_rbac_privileged_grant-the-wildcard-clause-fires-on-bootstrap-and-read-only-roles) | `T1098.006/k8s_rbac_privileged_grant` | the `"*"` clause fires on the bootstrap controller roles and on read-only wildcard roles | false positive | low |
 | [K18](#k18-t1611-pod-spec-rules-a-json-patched-controller-template) | `T1611/k8s_podspec_controller_host_access`, `k8s_podspec_host_access` | a JSON patch of a controller pod template, or of a pod's ephemeral containers, is not graded | false negative | low |
-| [K21](#k21-trr9025-rules-a-server-side-apply-install-is-a-patch) | `T1546/k8s_admission_webhook_created`, `k8s_malicious_admission_webhook_created` | a server-side-apply install (verb patch, code 201) fires neither rule | false negative | medium |
+| [KTBD-C1](#ktbd-c1-k8s_admission_webhook_repointed_to_url-a-service-to-service-repoint-or-a-json-patch-copymove) | `T1546/k8s_admission_webhook_repointed_to_url` | a repoint to another in-cluster Service, or a JSON-patch copy/move, carries no URL | false negative | low |
+| [KTBD-C2](#ktbd-c2-admission-object-apply-patches-with-a-yaml-body-no-audit-record) | `T1546/k8s_admission_webhook_repointed_to_url`, `k8s_admission_webhook_created`, `k8s_malicious_admission_webhook_created`, `T1685/k8s_admission_webhook_disabled` | an apply patch with a YAML body is dropped from the audit log at Request level or higher | policy gap | medium |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
@@ -274,25 +275,68 @@ whether `arping` belongs in the allowlist.
   a hostPath value). Modelled on the TRR9008 JSON-patch selectors, with positives and
   near-misses.
 
-### K21. TRR9025 rules: a server-side-apply install is a patch
+### KTBD-C1. k8s_admission_webhook_repointed_to_url: a service-to-service repoint, or a JSON-patch copy/move
 
-- **Rules**: [`sigma/T1546/k8s_admission_webhook_created.yml`](sigma/T1546/k8s_admission_webhook_created.yml) (level medium),
-  [`sigma/T1546/k8s_malicious_admission_webhook_created.yml`](sigma/T1546/k8s_malicious_admission_webhook_created.yml) (level high).
-- **Kind**: false negative. **Severity**: medium (server-side apply is how current
-  GitOps tools and `kubectl apply --server-side` install objects).
-- **Problem**: server-side apply creates a missing object with a PATCH, so the audit
-  record has `verb: patch` and `responseStatus.code: 201`. Both rules key on
-  `verb: create`, so neither fires. Only TRR9008's medium chokepoint
-  `k8s_admission_webhook_disabled` does (and `k8s_admission_webhook_neutered` when the
-  body sets `failurePolicy: Ignore`).
-- **Evidence**: *probe* — a RequestResponse record (verb patch,
-  mutatingwebhookconfigurations, code 201, a `clientConfig.url`) fires neither TRR9025
-  rule and fires `k8s_admission_webhook_disabled`. *source* — the shipped
-  `detections/k8s/audit-policy-apiserver.yaml` notes server-side apply "creates the
-  object by a PATCH".
-- **Fix**: in both rules, match `verb: create` or (`verb: patch` and
-  `responseStatus.code: 201`), with a positive case each. The chokepoint's change
-  re-approves its CHOKEPOINT waiver digest.
+- **Rule**: [`sigma/T1546/k8s_admission_webhook_repointed_to_url.yml`](sigma/T1546/k8s_admission_webhook_repointed_to_url.yml) (level high).
+- **Kind**: false negative. **Severity**: low.
+- **Problem**: the Procedure D grader reads a `clientConfig.url` in the request body.
+  Two repoints carry no URL in the request:
+  1. a repoint from one `clientConfig.service` to another (an attacker-run in-cluster
+     Service): the body sets a `service`, not a `url`, so the grader does not fire. The
+     webhook now calls the attacker's pod through a Service, with no off-cluster URL;
+  2. a JSON patch `copy` or `move` that takes an existing `clientConfig.url` from
+     another webhook in the same configuration: the operation names source and target
+     paths, not a URL value, so the request carries no URL text.
+  Both fire only the TRR9008 chokepoint `k8s_admission_webhook_disabled` (any admission
+  update or patch, medium).
+- **Evidence**: *case* — near-misses
+  `smp-patch-service-to-other-service-known-miss` (blind spot 1) and
+  `jsonpatch-copy-clientconfig-known-miss` (blind spot 2) in
+  [`sigma/T1546/k8s_admission_webhook_repointed_to_url.cases.jsonl`](sigma/T1546/k8s_admission_webhook_repointed_to_url.cases.jsonl)
+  (KNOWN MISS). *probe* — gopkg.in/evanphx/json-patch.v4 v4.13.0 (the API server's
+  JSON patch library) applies
+  `[{"op":"copy","from":"/webhooks/1/clientConfig","path":"/webhooks/0/clientConfig"}]`
+  and copies webhook 1's url to webhook 0. The rule's description names both blind
+  spots.
+- **Fix**: none in Sigma for the service-to-service repoint (the discriminator is the
+  attacker's pod behind the Service, which the record does not show). For the JSON-patch
+  copy/move, a `responseObject`-based branch gated on the `copy`/`move` op could read the
+  stored `clientConfig.url` after the write (the policy records `responseObject` at
+  RequestResponse). Not built yet: it reads the stored object, not the request, so it
+  needs RequestResponse level and a case that proves it.
+
+### KTBD-C2. Admission-object apply patches with a YAML body: no audit record
+
+- **Rules**: [`sigma/T1546/k8s_admission_webhook_repointed_to_url.yml`](sigma/T1546/k8s_admission_webhook_repointed_to_url.yml) (level high),
+  [`sigma/T1546/k8s_admission_webhook_created.yml`](sigma/T1546/k8s_admission_webhook_created.yml) (medium),
+  [`sigma/T1546/k8s_malicious_admission_webhook_created.yml`](sigma/T1546/k8s_malicious_admission_webhook_created.yml) (high),
+  [`sigma/T1685/k8s_admission_webhook_disabled.yml`](sigma/T1685/k8s_admission_webhook_disabled.yml) (medium).
+- **Kind**: policy gap. **Severity**: medium.
+- **Problem**: the API server stores the raw body of a patch as `requestObject` and
+  marks it as JSON before it applies the patch. A server-side apply patch
+  (`application/apply-patch+yaml`) may carry a YAML body, which the API server accepts.
+  The audit backend cannot encode that body as JSON, so it drops the whole event. The
+  shipped policy logs `admissionregistration.k8s.io` patches at RequestResponse, so no
+  record of such a write (a server-side-apply install or repoint of a webhook
+  configuration) reaches the log, and none of the rules above fires. kubectl and
+  client-go send apply bodies as JSON, which is logged; a raw client can send YAML. The
+  webhook audit backend fails the whole batch that holds such an event.
+- **Evidence**: *source* — kubernetes v1.36.4
+  `staging/src/k8s.io/apiserver/pkg/endpoints/handlers/patch.go` (`audit.LogRequestPatch`
+  before the patch is decoded; `ApplyYAMLPatchType` decodes with `yaml.Unmarshal`),
+  `staging/src/k8s.io/apiserver/pkg/audit/context.go` (`LogRequestPatch` stores a
+  `runtime.Unknown` with `ContentType` JSON), `plugin/pkg/audit/log/backend.go` (an encode
+  error goes to `HandlePluginError`). *probe* — the v0.36.4 log backend, given an event
+  whose `requestObject` is a YAML apply body, writes 0 bytes and logs
+  `Error in audit plugin 'log' affecting 1 audit events`; with a JSON body it writes the
+  event.
+- **Fix**: none in Sigma. Watch the fallback evidence: the kube-apiserver log line
+  `Error in audit plugin '<name>' affecting N audit events` (it prints each impacted
+  event's method, user and URI) and the metric `apiserver_audit_error_total{plugin="log"}`
+  (or `webhook`). A change in the API server (log a YAML apply body converted to JSON) is
+  an upstream step for a human.
+- **Then**: a recorded YAML-bodied apply patch of a webhook configuration fires the
+  repoint grader (patch answered 200) or both create rules (patch answered 201).
 
 ## Cloud (AWS, Azure, GCP)
 
@@ -379,6 +423,7 @@ points here.
 | K15 | `T1609/k8s_node_proxy_exec` fires on a `nodes/proxy` request whose requestURI path (anything before `?`) holds a percent-encoded byte or a dot segment, whatever endpoint it seems to name, also when the encoding is in the `/api/v1/nodes/<n>/proxy/` prefix | positives `node-proxy-exec-dot-segment-after-containerlogs`, `node-proxy-exec-percent-encoded-endpoint`, `node-proxy-exec-percent-encoded-prefix-and-endpoint`; near-miss `node-proxy-containerlogs-encoded-query-only` (not verified live) |
 | K19 | `T1685/k8s_security_tool_workload_removed` retitled as a generic Deployment or DaemonSet anchor (its title claimed security tools only); matches only accepted (200/201/202) writes and filters the dry runs the record shows (the `?dryRun=All` query of an update or patch; the DeleteOptions body of a delete at Request level) | near-misses `delete-deployment-forbidden`, `delete-deployment-not-found`; filtered `delete-deployment-dry-run-body`, `scale-to-zero-patch-dry-run-query`, `kubectl-scale-zero-dry-run` |
 | K20 | `T1134/k8s_impersonation` matches the v1.36 constrained-impersonation refusals (`cannot impersonate:<mode>`, `cannot impersonate-on:<mode>:<verb>`), not only the legacy `cannot impersonate resource` | positives `denied-serviceaccount-impersonation-probe-constrained`, `denied-user-impersonation-probe-constrained`, `constrained-impersonation-username-check-denied` |
+| K21 | both TRR9025 create rules (`k8s_admission_webhook_created`, `k8s_malicious_admission_webhook_created`) match `verb: create` OR (`verb: patch` AND `responseStatus.code: 201`), so a server-side-apply install (a patch answered 201) fires both; the chokepoint's CHOKEPOINT waiver digest was re-approved | positives `ssa-create-webhook-patch-201` (chokepoint) and `ssa-create-offcluster-url-patch-201` (grader); near-misses `ssa-create-patch-answered-200-not-create` and `repoint-offcluster-url-patch-answered-200` (a patch answered 200 is a modify, not a create) |
 | C13 | `entra_app_federated_credential_backdoor` reads only `newValue`, in any key order | near-misses `fic-with-unapproved-issuer-removed`, `fic-repointed-away-new-value-first` and the other reordered cases |
 | C14 | `aws_resource_policy_made_public` reads a `Statement` that is one object | positives `s3-single-statement-object-public-read`, `sqs-single-statement-object-public-send`, `efs-single-statement-object-public-mount` |
 | C16 | `aws_github_oidc_role_trust_abuse` grades each `sub` value | near-miss `two-subs-pinned-ref-wildcards-grade-high`; positive `two-subs-pinned-ref-wildcards-go-to-high-rule` of the low rule |

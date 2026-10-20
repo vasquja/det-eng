@@ -1,15 +1,18 @@
 attack_technique: T1546
 display_name: "Event Triggered Execution (Kubernetes Malicious Admission Webhook)"
 
-# Behavioral emulation for TRR9025. Each test CREATES a harmless, throwaway dynamic
-# admission object through the API server, so the API server writes the
-# admissionregistration.k8s.io create audit event the paired detections key on. Every
-# object is named trr9025-* so a validator matches the emulation's own events, and every
-# webhook is a NO-OP: failurePolicy Ignore, a bogus unreachable off-cluster
-# clientConfig.url, and an objectSelector matching a label no object carries, so it never
-# intercepts real admission. This is the CREATE half of admission-control abuse; TRR9008
+# Behavioral emulation for TRR9025. Tests A-C INSTALL a harmless, throwaway dynamic
+# admission object through the API server (a create); test D REPOINTS harmless installed
+# webhooks to a URL (an update or patch) and installs one with a server-side apply (a
+# patch answered 201). The API server writes the admissionregistration.k8s.io audit
+# events the paired detections key on. Every object is named trr9025-* so a validator
+# matches the emulation's own events, and every webhook is a NO-OP: failurePolicy Ignore
+# (A, B) or Fail (D, so the repoint carries no neuter marker), a bogus unreachable
+# off-cluster clientConfig.url, and an objectSelector matching a label no object carries
+# (D also has rules on a bogus API group), so it never intercepts real admission. TRR9008
 # (T1685) owns disabling (delete/neuter). These need a reachable cluster with rights to
-# write admissionregistration objects and audit logging at Request level (see
+# write admissionregistration objects and audit logging at Request level for creates and
+# at Request or higher for updates and patches (see
 # detections/k8s/kind-apiserver-cluster.yaml).
 
 atomic_tests:
@@ -77,6 +80,36 @@ atomic_tests:
         bash #{source_dir}/emulate_k8s.sh c
       cleanup_command: |
         kubectl delete validatingadmissionpolicy trr9025-vap --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1546/src
+
+  - name: "TRR9025.K8S.D — repoint installed webhooks to a URL (patch, JSON patch, PUT, apply), and a server-side-apply URL-mode install"
+    auto_generated_guid: 6f0d2b8e-3a41-4c9e-9b7a-1e5c8d2f4a90
+    description: |
+      Creates four no-op Service-backed ValidatingWebhookConfigurations
+      (trr9025-hijack-smp, -json, -put, -ssa; failurePolicy Fail, rules on a bogus group,
+      an objectSelector on a label no object carries), then moves each one to the
+      off-cluster clientConfig.url with a different request shape: a strategic merge
+      patch, a JSON patch, kubectl replace (PUT) and a server-side apply. Each repoint is
+      answered 200 (a modify of an existing object). It also installs one NEW URL-mode
+      webhook (trr9025-ssa-create) with kubectl apply --server-side, which the API server
+      performs as a PATCH answered 201 (a create; K21). The webhooks are never called.
+      The audit policy logs these writes at RequestResponse.
+      Chokepoint: detections/sigma/T1685/k8s_admission_webhook_disabled.yml
+      Repoint grader: detections/sigma/T1546/k8s_admission_webhook_repointed_to_url.yml
+      Create grader: detections/sigma/T1546/k8s_malicious_admission_webhook_created.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_k8s.sh d
+      cleanup_command: |
+        kubectl delete validatingwebhookconfiguration trr9025-hijack-smp trr9025-hijack-json trr9025-hijack-put trr9025-hijack-ssa trr9025-ssa-create --ignore-not-found
     input_arguments:
       source_dir:
         description: Path to the atomic source directory.

@@ -619,6 +619,18 @@
         "k8s-audit-human-operators": 0
       }
     },
+    "T1546/k8s_admission_webhook_repointed_to_url.yml": {
+      "actors": {},
+      "distinct_actors": 0,
+      "events": 2666,
+      "hits": 0,
+      "rate_per_10k": 0.0,
+      "slices": {
+        "k8s-audit-control-plane": 0,
+        "k8s-audit-gitops-ci": 0,
+        "k8s-audit-human-operators": 0
+      }
+    },
     "T1546/k8s_malicious_admission_webhook_created.yml": {
       "actors": {},
       "distinct_actors": 0,

@@ -943,10 +943,11 @@
       "procedures": {
         "A": "Mutating webhook backdoor",
         "B": "Validating webhook Secret exfiltration",
-        "C": "CEL admission policy (chokepoint only)"
+        "C": "CEL admission policy (chokepoint only)",
+        "D": "Repoint an installed webhook to a URL"
       },
       "pub_date": "2026-10-14",
-      "last_update": "2026-10-14",
+      "last_update": "2026-10-20",
       "path": "trr9025/k8s/README.md",
       "tests": {
         "A": {
@@ -959,6 +960,10 @@
         },
         "C": {
           "text": "det-eng CEL ValidatingAdmissionPolicy behavioral emulation (chokepoint only)",
+          "url": "../atomics/T1546/src/emulate_k8s.sh"
+        },
+        "D": {
+          "text": "det-eng webhook-repoint behavioral emulation (no-op; strategic merge, JSON patch, PUT, server-side apply, plus a server-side-apply URL-mode install)",
           "url": "../atomics/T1546/src/emulate_k8s.sh"
         }
       }

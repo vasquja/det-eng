@@ -24,10 +24,14 @@ Kubernetes security policy, and removing the workload that serves them.
 This TRR does not cover these related actions:
 
 - Creating a *malicious* admission webhook (a mutating webhook that injects a
-  sidecar, or a webhook that exfiltrates every admitted object). That is
-  persistence (Event Triggered Execution, T1546), a different technique.
-  [TRR9025](../../trr9025/k8s/README.md) covers it. This report covers only the
-  disabling verbs on existing admission objects.
+  sidecar, or a webhook that exfiltrates every admitted object), or repointing an
+  installed one to an attacker URL. That is persistence (Event Triggered Execution,
+  T1546), a different technique. [TRR9025](../../trr9025/k8s/README.md) covers it. A
+  repoint is an `update` or `patch`, so this report's chokepoint
+  (`k8s_admission_webhook_disabled`) fires on it at medium; TRR9025's Procedure D
+  grader reads the new `clientConfig.url` and grades it high. This report covers only
+  the disabling verbs on existing admission objects, not the intent of the new
+  endpoint.
 - The RBAC grant that lets an adversary write admission objects. TRR9004
   (T1098.006) detects the grant; this report detects the use. An attacker
   usually needs the grant first, so the two are correlated but distinct.

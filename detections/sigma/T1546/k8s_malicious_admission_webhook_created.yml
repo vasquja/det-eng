@@ -9,7 +9,13 @@ description: |
   admissionregistration create, this rule picks out the high-confidence malicious
   shape. It fires when a created MutatingWebhookConfiguration or
   ValidatingWebhookConfiguration has a clientConfig.url (any http(s) URL; normally
-  off-cluster).
+  off-cluster). It matches a create (verb create), and the server-side-apply install
+  that creates a missing object with a PATCH answered 201 (verb patch,
+  responseStatus.code 201; K21). An in-place repoint of an installed webhook to a url
+  (an update or patch answered 200) is not a create, so this grader does not fire on
+  it; k8s_admission_webhook_repointed_to_url.yml grades that. An apply patch whose body
+  is YAML, not JSON (kubectl and client-go send JSON), is not in the audit log at
+  Request level or higher, so no rule sees that install (KTBD-C2).
 
   URL mode is the single non-spoofable, low-false-positive discriminator:
   a legitimate webhook (cert-manager, Gatekeeper, Kyverno, a sidecar injector) almost
@@ -31,8 +37,9 @@ description: |
   Service and pod. The match is any URL-mode webhook: a url that names an in-cluster
   host also fires (the API documents that url should not name an in-cluster Service).
   A repoint of an existing webhook from clientConfig.service to url is an update or
-  patch, not a create, so this rule does not fire on it; only the TRR9008 chokepoint
-  (k8s_admission_webhook_disabled) does. Metadata level cannot feed this rule: clientConfig lives in
+  patch answered 200, not a create, so this rule does not fire on it; the TRR9008
+  chokepoint (k8s_admission_webhook_disabled) and the TRR9025 Procedure D grader
+  (k8s_admission_webhook_repointed_to_url) do. Metadata level cannot feed this rule: clientConfig lives in
   requestObject, and without Request level a malicious and a benign webhook create are
   byte-identical. A CEL ValidatingAdmissionPolicy (Procedure C) cannot call
   off-cluster, so it is covered at the chokepoint only.
@@ -56,12 +63,23 @@ detection:
       - 'mutatingwebhookconfigurations'
       - 'validatingwebhookconfigurations'
     verb: 'create'
+  # Server-side apply creates a missing object with a PATCH answered 201 (K21).
+  select_webhook_ssa_create:
+    objectRef.apiGroup: 'admissionregistration.k8s.io'
+    objectRef.resource:
+      - 'mutatingwebhookconfigurations'
+      - 'validatingwebhookconfigurations'
+    verb: 'patch'
+    responseStatus.code: 201
   sel_offcluster_url:
     requestObject.webhooks|contains:
       - '"url": "http'
       - '"url":"http'
-  condition: select_webhook_create and sel_offcluster_url
+  condition: (select_webhook_create or select_webhook_ssa_create) and sel_offcluster_url
 falsepositives:
   - A legitimate webhook that genuinely uses URL mode (rare; most call an in-cluster
     Service). Baseline the known webhook name, actor, and endpoint.
+  - A server-side dry run of a URL-mode install (kubectl apply --dry-run=server, kubectl
+    diff --server-side of a new object), with ?dryRun=All in requestURI. Nothing is
+    stored. The rule does not filter it.
 level: high

@@ -16,10 +16,18 @@ description: |
   This is the inverse of TRR9008: TRR9008 keys on DELETE/UPDATE/PATCH of admission
   objects (disabling the policy engine) and deliberately EXCLUDES create; this rule
   keys on CREATE (installing a malicious webhook), which TRR9008 scoped out as a
-  separate persistence technique. The companion grader
+  separate persistence technique. A server-side apply (kubectl apply --server-side
+  and server-side-apply GitOps/Helm) installs a missing object with a PATCH answered
+  201, so this rule matches verb create, or a patch whose responseStatus.code is 201
+  (K21). A 201 patch install also fires the TRR9008 chokepoint, which is expected (an
+  install is both a create here and a write there). The companion grader
   (k8s_malicious_admission_webhook_created.yml) raises severity on a webhook whose
   clientConfig is a url (normally off-cluster); it does not grade cluster-wide rules
-  or a Secrets scope, which the policy engines every cluster runs also have.
+  or a Secrets scope, which the policy engines every cluster runs also have. An
+  in-place repoint of an installed webhook to a url (an update or patch answered 200)
+  is not a create; k8s_admission_webhook_repointed_to_url.yml grades that. An apply
+  patch whose body is YAML, not JSON (kubectl and client-go send JSON), is not in the
+  audit log at Request level or higher, so no rule sees that install (KTBD-C2).
 
   The chokepoint fires at Metadata (verb, apiGroup, and objectRef.name are enough to
   see a create). It cannot tell a benign operator-installed webhook from a malicious
@@ -45,11 +53,19 @@ detection:
   select_adm_create:
     objectRef.apiGroup: 'admissionregistration.k8s.io'
     verb: 'create'
-  condition: select_adm_create
+  # Server-side apply creates a missing object with a PATCH answered 201 (K21).
+  select_adm_ssa_create:
+    objectRef.apiGroup: 'admissionregistration.k8s.io'
+    verb: 'patch'
+    responseStatus.code: 201
+  condition: select_adm_create or select_adm_ssa_create
 falsepositives:
   - The policy engine's own install creating its webhook configuration (Gatekeeper,
     Kyverno, cert-manager's ca-injector), and GitOps or Helm deploys that install a
     webhook. Baseline these identities by user.username and user.groups.
   - Cluster bootstrap and upgrades that install the built-in admission configurations.
     Baseline the upgrade tooling.
+  - A server-side dry run of an install (kubectl create or apply --dry-run=server,
+    kubectl diff --server-side of a new object), which is a create or a patch answered
+    201 with ?dryRun=All in requestURI. Nothing is stored. The rule does not filter it.
 level: medium
