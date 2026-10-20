@@ -14,9 +14,10 @@ description: |
   also requires an exec path in requestURI. A path whose first segment after
   /proxy/ is another kubelet endpoint (containerLogs, portForward, checkpoint,
   logs, debug) is not an exec even when a later segment is named exec, run or
-  attach, so it is filtered. A nodes/proxy path that holds a percent-encoded byte
-  or a dot segment fires on its own: the kubelet receives the decoded path, which
-  can differ from the endpoint the raw requestURI seems to name.
+  attach, so it is filtered. A nodes/proxy request whose requestURI path (anything
+  before ?) holds a percent-encoded byte or a dot segment fires on its own: the
+  kubelet receives the decoded path, which can differ from the endpoint the raw
+  requestURI seems to name.
 references:
   - https://attack.mitre.org/techniques/T1609/
   - https://kubernetes.io/docs/reference/access-authn-authz/kubelet-authn-authz/
@@ -42,15 +43,17 @@ detection:
   # segments name a namespace, pod or container exec, run or attach.
   filter_other_kubelet_endpoint:
     requestURI|re: '^/api/v1/nodes/[^/?]+/proxy/(containerLogs|portForward|checkpoint|logs|debug)([/?].*)?$'
-  # The audit record keeps the raw request line, but the API server forwards the
-  # decoded path to the kubelet. A proxied path with a percent-encoded byte or a
-  # dot segment can therefore name a different endpoint than requestURI shows, so
-  # it fires whatever endpoint it appears to name (and the filter above never
-  # suppresses it). Ordinary clients send neither in a nodes/proxy path.
+  # The audit record keeps the raw request line, but the API server routes,
+  # authorizes (objectRef) and proxies the decoded path. A nodes/proxy request whose
+  # requestURI path (anything before ?) holds a percent-encoded byte or a dot
+  # segment can therefore name a different kubelet endpoint than requestURI shows,
+  # even when the encoding is in the /api/v1/nodes/<n>/proxy/ prefix itself; it
+  # fires whatever endpoint it appears to name, and the filter above never
+  # suppresses it. Ordinary clients send neither in a nodes/proxy path.
   select_path_not_normalized:
     requestURI|re:
-      - '^/api/v1/nodes/[^/?]+/proxy/[^?]*(%[0-9A-Fa-f]{2}|/\.\./)'
-      - '^/api/v1/nodes/[^/?]+/proxy/[^?]*/\.\.(\?.*)?$'
+      - '^[^?]*(%[0-9A-Fa-f]{2}|/\.\./)'
+      - '^[^?]*/\.\.(\?.*)?$'
   condition: select_node_proxy and ((select_exec_path and not filter_other_kubelet_endpoint) or select_path_not_normalized)
 falsepositives:
   - Rare. Legitimate use of the node proxy to reach kubelet exec/run/attach is

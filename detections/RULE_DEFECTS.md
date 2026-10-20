@@ -47,9 +47,9 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [K4](#k4-k8s_admission_webhook_neutered-neuters-the-audit-record-cannot-show) | `T1685/k8s_admission_webhook_neutered` | selectors on other labels, self-contradicting selectors or conditions, variable-bound constants | false negative | low |
 | [K9](#k9-k8s_coredns_corefile_poisoned-what-the-corefile-grader-does-not-grade) | `T1565.001/k8s_coredns_corefile_poisoned` | private non-cluster stub zones, `import`, mid-token CR, `#<TAB>` comments | false negative, false positive | low |
 | [K14](#k14-k8s_namespace_deleted-a-query-dry-run-at-metadata-level) | `T1070/k8s_namespace_deleted` | at Metadata level a real delete that carries `?dryRun=All` next to a body is filtered | evasion | medium |
-| [K16](#k16-k8s_impersonation-an-impersonation-request-without-a-user-header) | `T1134/k8s_impersonation` | before v1.36, `Impersonate-Group`/`-Uid`/`-Extra` without `Impersonate-User` is a 500 with no trace (unverified) | false negative | low |
+| [K16](#k16-k8s_impersonation-an-impersonation-request-without-a-user-header) | `T1134/k8s_impersonation` | on v1.34 and earlier, `Impersonate-Group`/`-Uid`/`-Extra` without `Impersonate-User` is a 500 with no trace (unverified live) | false negative | low |
 | [K17](#k17-k8s_rbac_privileged_grant-the-wildcard-clause-fires-on-bootstrap-and-read-only-roles) | `T1098.006/k8s_rbac_privileged_grant` | the `"*"` clause fires on the bootstrap controller roles and on read-only wildcard roles | false positive | low |
-| [K18](#k18-t1611-pod-spec-rules-a-json-patched-controller-template) | `T1611/k8s_podspec_controller_host_access` | a JSON patch of a controller pod template is not graded | false negative | low |
+| [K18](#k18-t1611-pod-spec-rules-a-json-patched-controller-template) | `T1611/k8s_podspec_controller_host_access`, `k8s_podspec_host_access` | a JSON patch of a controller pod template, or of a pod's ephemeral containers, is not graded | false negative | low |
 | [K21](#k21-trr9025-rules-a-server-side-apply-install-is-a-patch) | `T1546/k8s_admission_webhook_created`, `k8s_malicious_admission_webhook_created` | a server-side-apply install (verb patch, code 201) fires neither rule | false negative | medium |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
@@ -183,30 +183,41 @@ whether `arping` belongs in the allowlist.
   the body when present). *case* — positive `namespace-delete-query-dry-run-ignored-body`
   (Request level, fires); filtered `namespace-delete-dry-run-query` (Metadata level, the
   residual).
-- **Fix**: log namespace deletes at Request level (the dry-run audit-policy item of the
-  Kubernetes coverage plan), then stop trusting the query form at any level.
-- **Then**: `namespace-delete-dry-run-query` is replaced by a Request-level filtered
-  case, and this entry closes.
+- **Fix**: trust the query form only on a record that would show a body: add
+  `level: ['Request', 'RequestResponse']` to the query branch of `filter_dry_run`, next
+  to `requestObject.kind: null`. A Metadata-level `?dryRun=All` delete then fires; a real
+  query-only dry run logged at Metadata becomes a false positive, listed under
+  falsepositives (as kubectl's body dry run at Metadata already is). Separately, logging
+  namespace deletes at Request level in `detections/k8s/audit-policy-apiserver.yaml` lets
+  the lab filter its own dry runs.
+- **Then**: a new positive (a Metadata-level real delete with `?dryRun=All`) fires and a
+  new filtered case (Request level, no body, `?dryRun=All`) holds. The existing filtered
+  case `namespace-delete-dry-run-query` (Metadata) then fires, so relabelling it is a
+  human decision (sufficiency-ratchet). The entry closes.
 
 ### K16. k8s_impersonation: an impersonation request without a user header
 
 - **Rule**: [`sigma/T1134/k8s_impersonation.yml`](sigma/T1134/k8s_impersonation.yml) (level medium).
 - **Kind**: false negative. **Severity**: low (the request fails and grants nothing).
 - **Problem**: `Impersonate-Group`, `Impersonate-Uid` or `Impersonate-Extra-*` without
-  `Impersonate-User` is refused before the identity is swapped. On v1.36 (constrained
-  impersonation, the CI pin) the refusal is a 400 BadRequest Status whose message says
-  "without impersonating a user name"; the rule matches it (`select_headers_without_user`,
-  positive `impersonate-group-header-without-user-constrained`). On v1.32 the legacy
-  filter answers with HTTP 500 from `responsewriters.InternalError` (plain text, no
-  Status), so the event has no `impersonatedUser` and no message; only
-  `responseStatus.code: 500` remains. v1.33 to v1.35 (legacy filter, constrained
-  impersonation off by default) are unverified.
+  `Impersonate-User` is refused before the identity is swapped. From v1.35 both filters
+  refuse it with a 400 BadRequest Status: the legacy filter says "requested [...] without
+  impersonating a user", and the constrained filter (beta and on by default from v1.36,
+  the CI pin) says "... without impersonating a user name". The rule matches both
+  (`select_headers_without_user`, positive
+  `impersonate-group-header-without-user-constrained`). Up to v1.34 the legacy filter
+  answers with HTTP 500 from `responsewriters.InternalError` (plain text, no Status), so
+  the event has no `impersonatedUser` and no message; only `responseStatus.code: 500`
+  remains.
 - **Evidence**: *source* — kubernetes v1.32.0
   `staging/src/k8s.io/apiserver/pkg/endpoints/filters/impersonation.go:44-47,269-270`,
-  `handlers/responsewriters/errors.go:80-84`, `filters/audit.go:231-237`; v1.36.4
+  `handlers/responsewriters/errors.go:80-84`, `filters/audit.go:231-237`; v1.34.0
+  `filters/impersonation.go:269` (a plain error); v1.35.0
+  `filters/impersonation/impersonation.go:270` (`NewBadRequest`); v1.36.4
   `filters/impersonation/constrained_impersonation.go:161-162`. **unverified** on a live
   cluster.
-- **Fix**: none in Sigma for the 500 shape: no field of the record names the headers.
+- **Fix**: none in Sigma for the 500 shape (v1.34 and earlier): no field of the record
+  names the headers.
 
 ### K17. k8s_rbac_privileged_grant: the wildcard clause fires on bootstrap and read-only roles
 
@@ -236,20 +247,32 @@ whether `arping` belongs in the allowlist.
 
 ### K18. T1611 pod-spec rules: a JSON-patched controller template
 
-- **Rule**: [`sigma/T1611/k8s_podspec_controller_host_access.yml`](sigma/T1611/k8s_podspec_controller_host_access.yml) (level high).
-- **Kind**: false negative. **Severity**: low (the pods the controller then creates still
-  fire `k8s_podspec_host_access` under the controller's identity).
+- **Rules**: [`sigma/T1611/k8s_podspec_controller_host_access.yml`](sigma/T1611/k8s_podspec_controller_host_access.yml),
+  [`sigma/T1611/k8s_podspec_host_access.yml`](sigma/T1611/k8s_podspec_host_access.yml) (level high).
+- **Kind**: false negative. **Severity**: low (the pods a controller then creates still
+  fire `k8s_podspec_host_access` under the controller's identity; an ephemeral-container
+  write still fires the medium `T1609/k8s_pod_ephemeral_container`).
 - **Problem**: a JSON patch (`kubectl patch --type=json`) logs `requestObject` as the list
-  of operations, so `requestObject.spec.template.spec.*` does not exist. A JSON patch that
-  makes a Deployment's pod template privileged is not graded; a strategic-merge patch of
-  the same change is.
+  of operations, so `requestObject.spec.template.spec.*` and `requestObject.spec.*` do not
+  exist. A JSON patch that makes a Deployment's pod template privileged is not graded; a
+  strategic-merge patch of the same change is. A JSON patch of `pods/ephemeralcontainers`
+  that adds a privileged ephemeral container is not graded by the pod rule either.
 - **Evidence**: *probe* — the controller rule on a Deployment patch: strategic merge
   `{"spec":{"template":{"spec":{"containers":[{"securityContext":{"privileged":true}}]}}}}`
   fires; JSON patch `[{"op":"add","path":"/spec/template/spec/containers/0/securityContext","value":{"privileged":true}}]`
-  does not.
-- **Fix**: `requestObject|re` branches for operations under
-  `/spec/(template/spec|jobTemplate/spec/template/spec)/` that carry a dangerous field,
-  modelled on the TRR9008 JSON-patch selectors, with positives and near-misses.
+  does not. The pod rule on a `pods/ephemeralcontainers` patch: the strategic-merge
+  positive `privileged-ephemeral-debug` fires; JSON patch
+  `[{"op":"add","path":"/spec/ephemeralContainers/-","value":{"name":"dbg","securityContext":{"privileged":true}}}]`
+  does not (`k8s_pod_ephemeral_container` fires).
+- **Fix**: `requestObject|re` branches for an operation whose path is `/spec`,
+  `/spec/template`, `/spec/template/spec`, the `/spec/jobTemplate/...` equivalents, or any
+  path below them (pod rule: `/spec/ephemeralContainers` or below), and that sets a
+  dangerous field, either in the value text (`"privileged":true`, `"hostPID"`,
+  `"hostNetwork"` or `"hostIPC"` true, `"hostPath":{`, a dangerous capability in `add`) or
+  as the last path segment (`/securityContext/privileged`, `/hostPID`, `/hostNetwork`,
+  `/hostIPC` with value true; `/capabilities/add` with a dangerous value; `/volumes/-` with
+  a hostPath value). Modelled on the TRR9008 JSON-patch selectors, with positives and
+  near-misses.
 
 ### K21. TRR9025 rules: a server-side-apply install is a patch
 
@@ -353,8 +376,8 @@ points here.
 | ID | Closed by | Proof |
 |----|-----------|-------|
 | K13 | new hunting rule `T1070/k8s_namespace_deleted` (level low) | positive `namespace-delete-payments`; filtered dry-run and garbage-collector cases; budget 4 (`k8s-audit-gitops-ci`) |
-| K15 | `T1609/k8s_node_proxy_exec` fires on a `nodes/proxy` path that holds a percent-encoded byte or a dot segment, whatever endpoint it seems to name | positives `node-proxy-exec-dot-segment-after-containerlogs`, `node-proxy-exec-percent-encoded-endpoint`; near-miss `node-proxy-containerlogs-encoded-query-only` (not verified live) |
-| K19 | `T1685/k8s_security_tool_workload_removed` retitled as a generic Deployment or DaemonSet anchor (its title claimed security tools only); matches only accepted (200/201/202), non-dry-run writes | near-misses `delete-deployment-forbidden`, `delete-deployment-not-found`; filtered `delete-deployment-dry-run-body`, `scale-to-zero-patch-dry-run-query`, `kubectl-scale-zero-dry-run` |
+| K15 | `T1609/k8s_node_proxy_exec` fires on a `nodes/proxy` request whose requestURI path (anything before `?`) holds a percent-encoded byte or a dot segment, whatever endpoint it seems to name, also when the encoding is in the `/api/v1/nodes/<n>/proxy/` prefix | positives `node-proxy-exec-dot-segment-after-containerlogs`, `node-proxy-exec-percent-encoded-endpoint`, `node-proxy-exec-percent-encoded-prefix-and-endpoint`; near-miss `node-proxy-containerlogs-encoded-query-only` (not verified live) |
+| K19 | `T1685/k8s_security_tool_workload_removed` retitled as a generic Deployment or DaemonSet anchor (its title claimed security tools only); matches only accepted (200/201/202) writes and filters the dry runs the record shows (the `?dryRun=All` query of an update or patch; the DeleteOptions body of a delete at Request level) | near-misses `delete-deployment-forbidden`, `delete-deployment-not-found`; filtered `delete-deployment-dry-run-body`, `scale-to-zero-patch-dry-run-query`, `kubectl-scale-zero-dry-run` |
 | K20 | `T1134/k8s_impersonation` matches the v1.36 constrained-impersonation refusals (`cannot impersonate:<mode>`, `cannot impersonate-on:<mode>:<verb>`), not only the legacy `cannot impersonate resource` | positives `denied-serviceaccount-impersonation-probe-constrained`, `denied-user-impersonation-probe-constrained`, `constrained-impersonation-username-check-denied` |
 | C13 | `entra_app_federated_credential_backdoor` reads only `newValue`, in any key order | near-misses `fic-with-unapproved-issuer-removed`, `fic-repointed-away-new-value-first` and the other reordered cases |
 | C14 | `aws_resource_policy_made_public` reads a `Statement` that is one object | positives `s3-single-statement-object-public-read`, `sqs-single-statement-object-public-send`, `efs-single-statement-object-public-mount` |

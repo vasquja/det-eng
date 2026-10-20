@@ -33,9 +33,10 @@ description: |
     the server tries answers, so "... cannot impersonate:<mode> resource ..." or
     "... cannot impersonate-on:<mode>:<verb> resource ...".
   Impersonate-Group, -Uid or -Extra headers without Impersonate-User are refused
-  too: on v1.36 with a 400 Status whose message says "without impersonating a
-  user" (third selection); on v1.32 with a plain-text 500 that no field names
-  (RULE_DEFECTS K16). Source: kubernetes v1.32 and v1.36.4 apiserver
+  too: on v1.35 and later with a 400 Status whose message says "without
+  impersonating a user" (third selection); on v1.34 and earlier with a plain-text
+  500 that no field names (RULE_DEFECTS K16). Source: kubernetes v1.32, v1.34,
+  v1.35 and v1.36.4 apiserver
   filters/impersonation.go and filters/impersonation/constrained_impersonation.go
   and mode.go (the first mode's error is returned), responsewriters/errors.go
   (forbiddenMessage), audit/request.go (LogResponseObject copies the Status message
@@ -75,8 +76,8 @@ detection:
       - 'cannot impersonate resource'
       - 'cannot impersonate:'
       - 'cannot impersonate-on:'
-  # Impersonate-Group, -Uid or -Extra without Impersonate-User: v1.36 answers 400
-  # BadRequest "requested ... without impersonating a user[ name]".
+  # Impersonate-Group, -Uid or -Extra without Impersonate-User: v1.35 and later
+  # answer 400 BadRequest "requested ... without impersonating a user[ name]".
   select_headers_without_user:
     responseStatus.code: 400
     responseStatus.message|contains: 'without impersonating a user'
