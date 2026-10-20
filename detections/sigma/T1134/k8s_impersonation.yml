@@ -24,14 +24,23 @@ description: |
   A DENIED probe (the caller lacks the impersonate verb) carries no
   impersonatedUser: the impersonation filter refuses the request before it swaps
   the identity. The audit filter runs outside the impersonation filter, so the
-  refusal is still recorded under the real caller, with code 403 and the Status
-  message "... cannot impersonate resource ...", which the audit event keeps at
-  Metadata level. The rule matches that too (second selection). Source:
-  kubernetes v1.32 apiserver filters/impersonation.go (Forbidden before
-  LogImpersonatedUser), responsewriters/errors.go (forbiddenMessage),
-  audit/request.go (LogResponseObject copies the Status message at every level)
-  and server/config.go (WithAudit wraps WithImpersonation). Not yet recorded on a
-  live cluster.
+  refusal is still recorded under the real caller, with code 403 and a Status
+  message that the audit event keeps at Metadata level. The rule matches that too
+  (second selection). The message depends on the impersonation filter:
+  - legacy impersonation (v1.32; later minors with ConstrainedImpersonation off):
+    "... cannot impersonate resource ...";
+  - constrained impersonation (beta and on by default from v1.36): the first mode
+    the server tries answers, so "... cannot impersonate:<mode> resource ..." or
+    "... cannot impersonate-on:<mode>:<verb> resource ...".
+  Impersonate-Group, -Uid or -Extra headers without Impersonate-User are refused
+  too: on v1.36 with a 400 Status whose message says "without impersonating a
+  user" (third selection); on v1.32 with a plain-text 500 that no field names
+  (RULE_DEFECTS K16). Source: kubernetes v1.32 and v1.36.4 apiserver
+  filters/impersonation.go and filters/impersonation/constrained_impersonation.go
+  and mode.go (the first mode's error is returned), responsewriters/errors.go
+  (forbiddenMessage), audit/request.go (LogResponseObject copies the Status message
+  at every level) and server/config.go (WithAudit wraps WithImpersonation). Not yet
+  recorded on a live cluster.
 
   Metadata level is enough: impersonatedUser is a top-level audit event field.
   Request/RequestResponse are not needed. There is no node-sensor fallback:
@@ -57,11 +66,21 @@ detection:
   # before the identity is swapped, so no impersonatedUser is stamped. The audit
   # filter wraps the impersonation filter, so the refusal is still recorded, with
   # the 403 Status message "<resource> \"<name>\" is forbidden: User \"<caller>\"
-  # cannot impersonate resource \"users|groups|serviceaccounts|uids|userextras/..\"".
+  # cannot <verb> resource ...". The verb is impersonate (legacy impersonation),
+  # impersonate:<mode> or impersonate-on:<mode>:<verb> (constrained impersonation,
+  # on by default from v1.36).
   select_denied_impersonation:
     responseStatus.code: 403
-    responseStatus.message|contains: 'cannot impersonate resource'
-  condition: select_impersonation or select_denied_impersonation
+    responseStatus.message|contains:
+      - 'cannot impersonate resource'
+      - 'cannot impersonate:'
+      - 'cannot impersonate-on:'
+  # Impersonate-Group, -Uid or -Extra without Impersonate-User: v1.36 answers 400
+  # BadRequest "requested ... without impersonating a user[ name]".
+  select_headers_without_user:
+    responseStatus.code: 400
+    responseStatus.message|contains: 'without impersonating a user'
+  condition: select_impersonation or select_denied_impersonation or select_headers_without_user
 falsepositives:
   - Tools that legitimately impersonate the logged-in user, such as the Kubernetes
     Dashboard and other UIs, kubectl-sudo, oauth2-proxy gateways, and GitOps or CI

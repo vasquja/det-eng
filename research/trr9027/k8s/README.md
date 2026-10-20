@@ -287,8 +287,11 @@ Source: [`ddms/trr9027_k8s_c.json`](ddms/trr9027_k8s_c.json) (Arrows app format)
 
 **DDM summary.** Same chokepoint, `objectRef.name: coredns-custom`, verb often
 `create`. It is a sanctioned customization mechanism, so it is higher-FP: covered at
-the chokepoint and triaged there. The content grader does not read it (its snippets sit
-under arbitrary data keys, not `data.Corefile`).
+the chokepoint and triaged there. The content grader reads `data.Corefile`, so a
+`coredns-custom` snippet (under its own data key) is not graded when it is created,
+applied or merge-patched. The grader's JSON-patch clauses scan the raw operation text of
+any of the three ConfigMaps, so a snippet added by `kubectl patch --type=json` is
+graded.
 
 ### Procedure D: Recreate the coredns ConfigMap  (`TRR9027.K8S.D`)
 
@@ -371,7 +374,7 @@ read-only.
 |-----------|-----------|-----|
 | A | Strategy 1; graded by Strategy 2 | poisoned `requestObject.data.Corefile` |
 | B | Strategy 1 | `kube-dns` JSON redirect (chokepoint; triaged) |
-| C | Strategy 1 | `coredns-custom` import (chokepoint; triaged, not graded) |
+| C | Strategy 1 | `coredns-custom` import (chokepoint; triaged; graded only in the JSON-patch form) |
 | D | Strategy 1; graded by Strategy 2 | created `requestObject.data.Corefile` (Request: create rule) |
 
 One chokepoint rule covers every write to the cluster DNS ConfigMaps. One content

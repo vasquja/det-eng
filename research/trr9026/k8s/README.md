@@ -259,7 +259,7 @@ Red Team wrappers in [`atomics/T1572/T1572.yaml`](../../../atomics/T1572/T1572.y
 |-----------|------|--------|
 | TRR9026.K8S.A | `emulate.sh a` — port-forward to `trr9026-target` over SPDY (`verb=create`). | **built** |
 | TRR9026.K8S.B | `emulate.sh b` — port-forward to `trr9026-target` over WebSocket (`verb=get`). | **built** |
-| TRR9026.K8S.C | `emulate.sh gap` — print the gap: a direct-kubelet or `nodes/proxy` port-forward writes no `pods/portforward` event. Read-only; it makes no kubelet call. | **built** (statement only) |
+| TRR9026.K8S.C | `emulate.sh gap` — print the gap: a direct-kubelet port-forward writes no `pods/portforward` event. Read-only; it makes no kubelet call. | **built (statement only)** |
 
 ## Detections
 

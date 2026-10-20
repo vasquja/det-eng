@@ -51,9 +51,10 @@ env:
   # and validate-apiserver. Bump it every quarter, and before the pinned minor reaches
   # end of life (v1.36: 2027-06-28): take the newest kind release, a kindest/node image
   # that release publishes (by digest), and kubectl of the same minor; update the
-  # versions, the digest and both checksums in all three workflows. Kubernetes v1.36.5
-  # is released, but kind has not published a kindest/node image for it yet; move to it
-  # (or later) at the next bump.
+  # versions, the digest and both checksums in all three workflows, and the --image in
+  # the create commands of detections/k8s/kind-*.yaml. Next bump due by 2027-01-20.
+  # Kubernetes v1.36.5 is released, but kind has not published a kindest/node image for
+  # it yet; the maintainer chose to pin v1.36.4 until it does.
   KIND_VERSION: v0.33.0
   KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
   KIND_NODE_IMAGE: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed

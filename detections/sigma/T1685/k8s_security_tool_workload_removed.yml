@@ -8,8 +8,11 @@ description: |
   engine's default namespace (gatekeeper-system, kyverno, falco). It does not check
   that the workload is a security tool: only the namespace branch is limited to
   security tools, and the workload branch is a correlation anchor for removing an
-  enforcer. A refused request (403, 404, 409) and a server-side dry run do not fire.
-  This is the TRR9008 Strategy 3 fallback, covering Procedure D.
+  enforcer. A refused request (403, 404, 409) does not fire. A server-side dry run
+  does not fire when the record shows it: the ?dryRun=All query of an update or patch
+  (any audit level), or the DeleteOptions body of a delete (Request level). A
+  deletecollection or namespace-delete dry run logged at Metadata still fires (see
+  falsepositives). This is the TRR9008 Strategy 3 fallback, covering Procedure D.
   An adversary who does not want to touch the admission webhook configuration can
   instead remove the enforcer itself -- delete or scale down the Gatekeeper,
   Kyverno, or Falco Deployment/DaemonSet, or delete its whole namespace -- so the

@@ -250,8 +250,9 @@ reasoning survives. Append an entry per vet; keep it short.
   configured endpoints, beta v1.32/GA v1.34), so a real-resource anonymous allow IS the misconfig finding. The
   default-SA-use sliver is a low-fidelity overlay on TRR9004 (an allow implies a binding) needing a benign
   confounder the corpus lacks. Dropped (maintainer accepted the NO-GO, 2026-10-20); optionally note in TRR9004
-  that k8s_rbac_privileged_grant catches bindings TO anonymous/unauthenticated/default but not their REQUESTS,
-  left to Falco-default by design.
+  that k8s_rbac_privileged_grant catches bindings TO system:anonymous, system:unauthenticated and the
+  system:serviceaccounts groups (not to a namespace's default service account), but not their REQUESTS, left
+  to Falco-default by design.
 
 - **EKS aws-auth ConfigMap backdoor, the in-cluster write (T1098.006) — LEAN-GO (fold into TRR9004 as Procedure
   F; questions 2 and 4 are backstop and Sigma-counterpart).** Q1 PASS and load-bearing:

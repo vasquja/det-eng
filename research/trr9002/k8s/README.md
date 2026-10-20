@@ -415,7 +415,12 @@ Match audit events where `objectRef.resource` is `nodes`,
 `objectRef.subresource` is `proxy`, and `requestURI` contains `/exec/`,
 `/run/`, or `/attach/`. Do not match on the subresource alone. Monitoring
 tools read `/metrics` and `/stats` through `nodes/proxy` all the time. An
-exec path through the node proxy is very rare, so set a high level.
+exec path through the node proxy is very rare, so set a high level. Filter another
+kubelet endpoint (the first segment after `/proxy/` is `containerLogs`,
+`portForward`, `checkpoint`, `logs` or `debug`) whose later segments name a
+namespace, pod or container `exec`, `run` or `attach`. A proxied path that holds a
+percent-encoded byte or a dot segment fires whatever endpoint it seems to name: the
+kubelet receives the decoded path, which can differ from the raw `requestURI`.
 
 - Sensor: API server audit log.
 - Rule: `detections/sigma/T1609/k8s_node_proxy_exec.yml` (built).

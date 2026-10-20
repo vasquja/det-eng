@@ -97,7 +97,8 @@
       "name": "Static Pod Persistence (Kubernetes)",
       "id": "TRR9003",
       "tactics": [
-        "Persistence"
+        "Persistence",
+        "Privilege Escalation"
       ],
       "contributors": [
         "det-eng"
@@ -988,7 +989,7 @@
           "url": "../atomics/T1572/src/emulate.sh"
         },
         "C": {
-          "text": "det-eng direct-kubelet port-forward detection-gap demonstration",
+          "text": "det-eng direct-kubelet port-forward gap statement (read-only; makes no kubelet call)",
           "url": "../atomics/T1572/src/emulate.sh"
         }
       }

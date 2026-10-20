@@ -254,7 +254,7 @@ positive on the admission tooling every cluster runs.
 
 **Demonstrated gaps.**
 - **In-cluster malicious endpoint.** A webhook wired to an in-cluster
-  `clientConfig.service` backed by an attacker pod has no off-cluster URL, so the
+  `clientConfig.service` backed by an attacker pod has no `clientConfig.url`, so the
   grader does not fire — it is caught at the chokepoint only. This is a deliberate
   trade: a cluster-wide-rules-plus-Secrets heuristic would fire on Kyverno and
   Gatekeeper, so it is not used. Correlate the webhook create with the creation of
@@ -266,6 +266,12 @@ positive on the admission tooling every cluster runs.
   chokepoint `k8s_admission_webhook_disabled`, and TRR9008's
   `k8s_admission_webhook_neutered` only if the same write also sets
   `failurePolicy: Ignore` (neutered grades the fail-open field, not the URL).
+- **Server-side-apply install.** `kubectl apply --server-side` (and server-side-apply
+  GitOps or Helm) creates a missing object with a PATCH: verb `patch`,
+  `responseStatus.code` 201. Both TRR9025 rules key on `verb: create`, so neither
+  fires. Only TRR9008's medium chokepoint `k8s_admission_webhook_disabled` does, and
+  `k8s_admission_webhook_neutered` too if the body sets `failurePolicy: Ignore`.
+  Tracked as [RULE_DEFECTS K21](../../../detections/RULE_DEFECTS.md#k21-trr9025-rules-a-server-side-apply-install-is-a-patch).
 - **Control-plane bypass.** An adversary with control-plane node or etcd access can
   write a webhook configuration straight into etcd, with no API `create` and no audit
   event. The lab demonstrates this read-only (it shows that a node-local etcd write
@@ -275,13 +281,14 @@ positive on the admission tooling every cluster runs.
 
 | Procedure | Covered by | How |
 |-----------|-----------|-----|
-| A | Strategy 1; graded by Strategy 2 | off-cluster `clientConfig.url` |
-| B | Strategy 1; graded by Strategy 2 | off-cluster `clientConfig.url` |
+| A | Strategy 1; graded by Strategy 2 | URL-mode `clientConfig.url` |
+| B | Strategy 1; graded by Strategy 2 | URL-mode `clientConfig.url` |
 | C | Strategy 1 | `create` on a CEL policy (not graded; lower risk) |
 
-One chokepoint rule covers every admission-object install. One grader separates the
-malicious webhook from the hundreds of benign ones. The in-cluster-endpoint and
-repoint and control-plane-bypass variants are stated gaps.
+One chokepoint rule covers every admission-object install made by a create (POST).
+One grader separates the malicious webhook from the hundreds of benign ones. The
+in-cluster-endpoint, repoint, server-side-apply-install and control-plane-bypass
+variants are stated gaps.
 
 ## Available Emulation Tests
 

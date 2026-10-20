@@ -14,7 +14,9 @@
 # Audit-LEVEL choices, per technique:
 #   * Pods and workload controllers (TRR9007 escape, TRR9005 jobs): Request level,
 #     so requestObject.spec.* (privileged / hostPath / host namespaces / caps /
-#     the schedule) is present. Metadata would make those rules blind.
+#     the schedule) is present. Metadata would make those rules blind. Request level
+#     also copies literal env[].value strings of every pod and template into the log;
+#     a credential set as a literal env value lands there too.
 #   * RBAC (TRR9004): Request level, so requestObject (roleRef / subjects / rules)
 #     is present to grade a dangerous grant.
 #   * Admission-control objects (TRR9008, TRR9025): update and patch at

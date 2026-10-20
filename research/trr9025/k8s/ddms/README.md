@@ -16,6 +16,6 @@ policy) is covered at the chokepoint only.
 
 | File | Procedure | Primary detection node |
 |------|-----------|------------------------|
-| `trr9025_k8s_a` | TRR9025.K8S.A — mutating webhook backdoor | create audit event; off-cluster `clientConfig.url` grades it |
-| `trr9025_k8s_b` | TRR9025.K8S.B — validating webhook Secret exfiltration | create audit event; off-cluster url + `secrets` scope |
+| `trr9025_k8s_a` | TRR9025.K8S.A — mutating webhook backdoor | create audit event; any `clientConfig.url` (URL mode, normally off-cluster) grades it |
+| `trr9025_k8s_b` | TRR9025.K8S.B — validating webhook Secret exfiltration | create audit event; any `clientConfig.url` grades it; the `secrets` scope is not graded |
 | `trr9025_k8s_c` | TRR9025.K8S.C — CEL admission policy | create audit event (chokepoint only; not graded) |

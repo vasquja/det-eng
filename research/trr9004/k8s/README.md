@@ -326,11 +326,13 @@ On top of the chokepoint, match the writes that grant dangerous power: a
 `roleRef.name` of `cluster-admin`, `admin`, or `edit`; a subject that is a
 built-in group (`system:authenticated`, `system:unauthenticated`,
 `system:anonymous`, `system:serviceaccounts`, or
-`system:serviceaccounts:<namespace>`); or a `rules` list with a wildcard or an
-`escalate`/`bind`/`impersonate` verb. A JSON patch (`kubectl patch --type=json`,
+`system:serviceaccounts:<namespace>`); a `rules` list with a wildcard or an
+`escalate`/`bind`/`impersonate` verb; or a `rules` list that grants `nodes/proxy`
+or `*/proxy` with any verb (a `get` is enough to run a command in every pod on the
+node through the kubelet). A JSON patch (`kubectl patch --type=json`,
 Procedure E's form) logs `requestObject` as the operation list, so the rule also
-reads that list: an operation on `/rules` that carries a wildcard or one of the
-verbs, or an operation on `/subjects` that names one of the groups. A patch or
+reads that list: an operation on `/rules` that carries a wildcard, one of the
+verbs, `nodes/proxy` or `*/proxy`, or an operation on `/subjects` that names one of the groups. A patch or
 update of a built-in binding whose `roleRef` is `cluster-admin` (`cluster-admin`,
 `kubeadm:cluster-admins`) matches by name, because a patch carries no `roleRef`;
 this grades Procedure E's headline form, a subject appended to that binding. A
@@ -340,8 +342,8 @@ the groups above; otherwise only Strategy 1 sees it.
 The kube-system `clusterrole-aggregation-controller` re-applying the built-in
 `admin` and `edit` roles (both carry `impersonate` on `serviceaccounts`) is
 filtered, but only while the written rules carry nothing more: no wildcard, no
-`escalate` or `bind`, and no `impersonate` on `users`, `groups`, `uids` or
-`userextras`. `view` is never filtered. This keeps Procedure C's stealth variant
+`escalate` or `bind`, no `nodes/proxy`, and no `impersonate` on `users`, `groups`,
+`uids` or `userextras`. `view` is never filtered. This keeps Procedure C's stealth variant
 visible: a label patch that aggregates an existing powerful role
 (`kubectl label clusterrole cluster-admin rbac.authorization.k8s.io/aggregate-to-view=true`)
 carries no rules and does not fire, but the controller's next write of `view`,

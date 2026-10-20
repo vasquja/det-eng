@@ -534,6 +534,15 @@ python3 detections/validate_staticpod_detections.py \
   --audit-log /tmp/kube-apiserver-audit.log --cri-log /tmp/cri-pods.jsonl
 ```
 
+### Container runtime layer (out of scope)
+
+Shells in containers, container drift, miners, metadata-service calls from pods and
+escape primitives beyond `setns` run below the API server, so the audit log never sees
+them. auditd records carry no container identity, and CI collects no container-runtime
+telemetry, so this repository records the layer as out of scope (vetted NO-GO,
+2026-10-20, in the technique-selection ledger). Falco's stable, incubating and sandbox
+rules are the reference there.
+
 ## Kubernetes API server detections (TRR9004–9010, 9025–9027)
 
 Several more Kubernetes techniques key on the same API server **audit log**, so one

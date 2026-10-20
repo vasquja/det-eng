@@ -32,6 +32,10 @@ This TRR does not cover these related actions:
 - Harvesting credentials through the Docker daemon API (the Docker half of
   T1552.007). This report covers Kubernetes only.
 - Decrypting Secrets at rest in etcd.
+- Credentials read from ConfigMaps or pod env values through the API. No audit
+  level that is safe to run records the content, and a read by the owning workload
+  looks the same as an attacker's except in identity (vetted NO-GO, 2026-10-20, in
+  the technique-selection ledger).
 
 Microsoft's Threat Matrix for Kubernetes aligns this report with its Credential
 Access techniques "List K8S secrets" and "Access container service account."

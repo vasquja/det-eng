@@ -276,7 +276,9 @@ not the object.
 **Strategy 1 — chokepoint (covers A, B, C).**
 Match audit events where `objectRef.apiGroup` is `admissionregistration.k8s.io` and
 `verb` is `delete`, `deletecollection`, `update`, or `patch`. create is excluded
-(that is persistence). Baseline the policy engine's own controller, GitOps/Helm,
+(that is persistence). A server-side dry run is filtered: the `?dryRun=All` query of an
+update or patch, or the DeleteOptions body of a delete (which the shipped policy logs at
+Request level). Baseline the policy engine's own controller, GitOps/Helm,
 and cluster-upgrade tooling by `user.username`.
 
 - Sensor: API server audit log.
@@ -298,7 +300,10 @@ deletecollection), or scales one to zero: requestObject.spec.replicas 0 on the
 resource or on its scale subresource, or a JSON-patch op that sets /spec/replicas
 to 0 or copies or moves a value into it. The namespace controller's teardown
 deletecollection is filtered; the rule matches the delete of the engine's default
-namespace (gatekeeper-system, kyverno, falco) instead. Correlate with the policy
+namespace (gatekeeper-system, kyverno, falco) instead. Only accepted writes (200, 201,
+202) match, and server-side dry runs are filtered as in Strategy 1. The workload branch
+does not check that the target is a security tool; it is a correlation anchor.
+Correlate with the policy
 engine's namespace or app labels.
 
 - Sensor: API server audit log.
@@ -316,7 +321,8 @@ This repository already ships the manifest half:
 [`detections/sigma/T1543.005/linux_static_pod_manifest_write.yml`](../../../detections/sigma/T1543.005/linux_static_pod_manifest_write.yml)
 (TRR9003, level high) matches a write under `/etc/kubernetes/manifests/`, which holds
 `kube-apiserver.yaml`; it is compile-only in CI (no node file telemetry), and it
-filters writes by the `kubeadm` binary. No rule covers the webhook cert paths.
+filters writes by kubeadm, the kubelet and the package managers, each by its full
+install path. No rule covers the webhook cert paths.
 The lab demonstrates the gap read-only, by showing the apiserver manifest path on
 the node and noting no admissionregistration audit event follows an edit there.
 
