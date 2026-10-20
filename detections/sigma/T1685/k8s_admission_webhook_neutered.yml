@@ -38,7 +38,9 @@ description: |
       the whole webhooks list, a whole webhook or its matchConditions whose value
       fails open or adds a constant condition; or an operation on the whole list
       or a whole webhook that leaves no non-empty rules list (a webhook without
-      rules, or a remove of the webhook).
+      rules, or a remove of the webhook). N is any path token: the API server's
+      JSON patch library reads an index with Go strconv.Atoi and accepts a
+      negative index, so +0, -0 and -1 are indexes too.
 
   Or whose stored object (responseObject) has a webhook without rules, a constant
   matchCondition or a namespaceSelector that matches no namespace, whatever the
@@ -49,7 +51,19 @@ description: |
   rules on one webhook and dropping them from another.
 
   The body matches use |contains or |re against the JSON-serialized arrays and
-  accept both the spaced (request-body) and compact (Go) forms.
+  accept both the spaced (request-body) and compact (Go) forms. The audit log holds
+  each list as JSON; the validators flatten a list to its JSON text
+  (sigma_eval.flatten), so a SIEM must index requestObject of a JSON patch, and
+  every list field, as that text.
+
+  Two writes are not graded. A server-side dry run of an update or patch
+  (?dryRun=All in requestURI: kubectl diff, --dry-run=server, a GitOps server-side
+  diff) persists nothing; it is filtered, as the TRR9008 chokepoint filters it. A
+  server-side-apply install of a missing object is a patch answered 201 (K21): it
+  creates the object, so it cannot neuter an installed webhook. It is filtered here,
+  and the TRR9025 create rules (k8s_admission_webhook_created.yml and
+  k8s_malicious_admission_webhook_created.yml) grade it; the TRR9008 chokepoint still
+  fires on it, because it is a patch.
 
   Key order: a webhook without rules has no rules key, so the rule reads it from
   the keys around the gap. The API server encodes in Go field order (name,
@@ -100,7 +114,7 @@ references:
   - https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/
 author: det-eng
 date: 2026/10/12
-modified: 2026/10/16
+modified: 2026/10/20
 tags:
   - attack.defense-impairment
   - attack.t1685
@@ -179,20 +193,23 @@ detection:
       - '\"namespaceSelector\"\s*:\s*\{([^{}]|\{[^{}]*\})*\{[^{}]*(\"In\"[^{}]*\[\s*\"\"(\s*,\s*\"\")*\s*\][^{}]*\"kubernetes\.io/metadata\.name\"|\[\s*\"\"(\s*,\s*\"\")*\s*\][^{}]*\"kubernetes\.io/metadata\.name\"[^{}]*\"In\"|\[\s*\"\"(\s*,\s*\"\")*\s*\][^{}]*\"In\"[^{}]*\"kubernetes\.io/metadata\.name\")'
   # A JSON patch (--type=json) logs requestObject as the raw operation list. One
   # operation that sets a webhook's failurePolicy to Ignore, or that removes or
-  # empties a webhook's rules list.
+  # empties a webhook's rules list. The webhook index is any JSON-pointer token
+  # ([^/"]+, as in the TRR9025 repoint grader): the API server's JSON patch library
+  # (gopkg.in/evanphx/json-patch.v4 v4.13.0) reads an index with Go strconv.Atoi and
+  # accepts a negative index, so +0, -0 and -1 are indexes too.
   sel_jsonpatch_fail_open:
-    requestObject|re: '\{[^{}]*(\"/webhooks/[0-9]+/failurePolicy\"[^{}]*\"Ignore\"|\"Ignore\"[^{}]*\"/webhooks/[0-9]+/failurePolicy\")[^{}]*\}'
+    requestObject|re: '\{[^{}]*(\"/webhooks/[^/"]+/failurePolicy\"[^{}]*\"Ignore\"|\"Ignore\"[^{}]*\"/webhooks/[^/"]+/failurePolicy\")[^{}]*\}'
   sel_jsonpatch_rules_cleared:
-    requestObject|re: '\{[^{}]*(\"/webhooks/[0-9]+/rules\"[^{}]*(\"remove\"|\[\s*\])|(\"remove\"|\[\s*\])[^{}]*\"/webhooks/[0-9]+/rules\")[^{}]*\}'
+    requestObject|re: '\{[^{}]*(\"/webhooks/[^/"]+/rules\"[^{}]*(\"remove\"|\[\s*\])|(\"remove\"|\[\s*\])[^{}]*\"/webhooks/[^/"]+/rules\")[^{}]*\}'
   # A JSON patch operation on the whole webhooks list, on one whole webhook, or on
   # a webhook's matchConditions, whose value fails open or adds the literal-false
   # condition. An operation on the whole list or one whole webhook that leaves
   # no non-empty rules list (a webhook value with no rules, or a remove) disarms
   # it too. A deeper path (/webhooks/N/clientConfig/caBundle) does not match.
   sel_jsonpatch_whole_webhook:
-    requestObject|re: '\"path\":\s*\"/webhooks(/([0-9]+|-))?\"'
+    requestObject|re: '\"path\":\s*\"/webhooks(/[^/"]+)?\"'
   sel_jsonpatch_matchconditions:
-    requestObject|re: '\"path\":\s*\"/webhooks/([0-9]+|-)/matchConditions(/([0-9]+|-))?\"'
+    requestObject|re: '\"path\":\s*\"/webhooks/[^/"]+/matchConditions(/[^/"]+)?\"'
   sel_jsonpatch_neuter_value:
     requestObject|re:
       - '\"failurePolicy\":\s*\"Ignore\"'
@@ -211,7 +228,23 @@ detection:
         - 'gatekeeper-mutating-webhook-configuration'
     - user.username: 'system:serviceaccount:kyverno:kyverno-admission-controller'
       objectRef.name|startswith: 'kyverno-'
-  condition: select_adm_modify and (sel_neuter or (sel_update and sel_rules_omitted) or sel_response_rules_omitted or sel_matchcondition_false or sel_selector_never_matches or sel_response_never_matches or sel_jsonpatch_fail_open or sel_jsonpatch_rules_cleared or ((sel_jsonpatch_whole_webhook or sel_jsonpatch_matchconditions) and sel_jsonpatch_neuter_value) or (sel_jsonpatch_whole_webhook and not sel_jsonpatch_rules_kept)) and not filter_policy_engine_reconcile
+  # Server-side dry run of an update or patch (kubectl diff, --dry-run=server, a GitOps
+  # server-side diff): the API server reads the option from the query only and
+  # persists nothing. The TRR9008 chokepoint's filter, copied as it is.
+  filter_dry_run_write:
+    verb:
+      - 'update'
+      - 'patch'
+    requestURI|re:
+      - '[?&]dryRun=All$'
+      - '[?&]dryRun=All\&'
+  # A server-side-apply install of a missing object is a patch answered 201 (K21). It
+  # creates the object, so it cannot neuter an installed webhook; the TRR9025 create
+  # rules grade it.
+  filter_ssa_install:
+    verb: 'patch'
+    responseStatus.code: 201
+  condition: select_adm_modify and (sel_neuter or (sel_update and sel_rules_omitted) or sel_response_rules_omitted or sel_matchcondition_false or sel_selector_never_matches or sel_response_never_matches or sel_jsonpatch_fail_open or sel_jsonpatch_rules_cleared or ((sel_jsonpatch_whole_webhook or sel_jsonpatch_matchconditions) and sel_jsonpatch_neuter_value) or (sel_jsonpatch_whole_webhook and not sel_jsonpatch_rules_kept)) and not filter_policy_engine_reconcile and not filter_dry_run_write and not filter_ssa_install
 falsepositives:
   - An operator deliberately setting failurePolicy to Ignore during maintenance,
     or a webhook with legitimately empty rules. Triage every hit against the actor

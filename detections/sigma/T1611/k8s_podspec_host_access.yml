@@ -18,6 +18,11 @@ description: |
   SYS_PTRACE). The rule also catches an attempt that admission REJECTS, because
   requestObject is logged with the 403 as well.
 
+  A status write (objectRef.subresource status) is filtered, as in
+  k8s_podspec_confinement_disabled.yml: a status update that sends the full pod
+  carries the spec too, but the pod status strategy resets the spec to the stored one,
+  so it cannot add host access.
+
   The rule needs audit level Request (or higher): requestObject is absent at
   Metadata, so a Metadata-only policy makes this rule blind. The host-namespace
   fields (hostPID/hostNetwork/hostIPC) are top-level booleans; the container and
@@ -46,7 +51,9 @@ description: |
   adds a privileged ephemeral container, or one that adds an escape capability to its add
   list, whether the dangerous field is the op path's last segment (in either key order,
   with ignored extra keys between them) or set in the op value, a replace of the whole
-  object (path ""), and a copy or move into the leaf path. This closes the pod half of
+  object (path ""), and a copy or move into the leaf path. A list index in the leaf
+  path is any JSON-pointer token, because the API server's JSON patch library reads +0,
+  -0 and -1 as indexes. This closes the pod half of
   the gap once tracked as RULE_DEFECTS K18. A pod's regular containers are
   immutable after create, and host namespaces and volumes are pod-level, so the
   ephemeral-container subresource is the only write-time JSON-patch surface here.
@@ -113,7 +120,11 @@ detection:
   # a bare requestObject field. Modelled on the TRR9008 JSON-patch selectors: an op at
   # the document root (""), /spec, /spec/ephemeralContainers or below with a dangerous
   # value; a leaf op whose path's last segment is the field, in either key order; or a
-  # copy or move into that path. Between two keys of one op, the match skips whole JSON
+  # copy or move into that path. A list index in a capabilities/add path is any
+  # JSON-pointer token ([^/"]+): the API server's JSON patch library
+  # (gopkg.in/evanphx/json-patch.v4 v4.13.0) reads an index with Go strconv.Atoi and
+  # accepts a negative index, so +0, -0 and -1 are indexes too (the TRR9025 repoint
+  # grader's grammar). Between two keys of one op, the match skips whole JSON
   # strings and nested objects two levels deep (the T1685 grammar), so an ignored extra
   # key does not split the op, and it never crosses into the next op. Each value stays
   # inside Lucene's default determinization budget (10,000; the largest here is about
@@ -131,14 +142,17 @@ detection:
   sel_jp_leaf_caps:
     requestObject|re|i:
       - '\"path\"\s*:\s*\"/spec/ephemeralContainers[^"]*/capabilities/add\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"value\"\s*:\s*\[\s*((\"([^"\\]|\\.)*\"|null)\s*,\s*)*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
-      - '\"path\"\s*:\s*\"/spec/ephemeralContainers[^"]*/capabilities/add/([0-9]+|-)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"value\"\s*:\s*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
+      - '\"path\"\s*:\s*\"/spec/ephemeralContainers[^"]*/capabilities/add/[^/"]+\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"value\"\s*:\s*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
       - '\"value\"\s*:\s*\[\s*((\"([^"\\]|\\.)*\"|null)\s*,\s*)*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec/ephemeralContainers[^"]*/capabilities/add\"'
-      - '\"value\"\s*:\s*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec/ephemeralContainers[^"]*/capabilities/add/([0-9]+|-)\"'
+      - '\"value\"\s*:\s*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec/ephemeralContainers[^"]*/capabilities/add/[^/"]+\"'
   sel_jp_leaf_copy:
     requestObject|re:
-      - '\"op\"\s*:\s*\"(copy|move)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec/ephemeralContainers[^"]*(/securityContext/privileged|/capabilities/add(/([0-9]+|-))?)\"'
-      - '\"path\"\s*:\s*\"/spec/ephemeralContainers[^"]*(/securityContext/privileged|/capabilities/add(/([0-9]+|-))?)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"op\"\s*:\s*\"(copy|move)\"'
-  condition: selection_pod and (sel_privileged or sel_privileged_init or sel_privileged_ephem or sel_caps or sel_caps_init or sel_caps_ephem or sel_hostpath or sel_hostpid or sel_hostnet or sel_hostipc or sel_jp_leaf_bool or sel_jp_leaf_caps or sel_jp_leaf_copy or (sel_jp_eph_path and (sel_jp_priv_value or sel_jp_caps_value)))
+      - '\"op\"\s*:\s*\"(copy|move)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec/ephemeralContainers[^"]*(/securityContext/privileged|/capabilities/add(/[^/"]+)?)\"'
+      - '\"path\"\s*:\s*\"/spec/ephemeralContainers[^"]*(/securityContext/privileged|/capabilities/add(/[^/"]+)?)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"op\"\s*:\s*\"(copy|move)\"'
+  # A status write cannot change the spec (the status strategy resets it).
+  filter_status:
+    objectRef.subresource: 'status'
+  condition: selection_pod and (sel_privileged or sel_privileged_init or sel_privileged_ephem or sel_caps or sel_caps_init or sel_caps_ephem or sel_hostpath or sel_hostpid or sel_hostnet or sel_hostipc or sel_jp_leaf_bool or sel_jp_leaf_caps or sel_jp_leaf_copy or (sel_jp_eph_path and (sel_jp_priv_value or sel_jp_caps_value))) and not filter_status
 falsepositives:
   - Infrastructure that legitimately needs host access. kube-proxy runs privileged
     and hostNetwork; the CNI DaemonSet (kindnet, Calico, Cilium) runs privileged

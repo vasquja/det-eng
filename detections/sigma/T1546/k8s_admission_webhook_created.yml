@@ -13,14 +13,21 @@ description: |
   webhook receives a copy of every matching object and can exfiltrate Secrets. Both
   are cluster-scoped persistence that survives credential rotation.
 
-  This is the inverse of TRR9008: TRR9008 keys on DELETE/UPDATE/PATCH of admission
-  objects (disabling the policy engine) and deliberately EXCLUDES create; this rule
-  keys on CREATE (installing a malicious webhook), which TRR9008 scoped out as a
-  separate persistence technique. A server-side apply (kubectl apply --server-side
-  and server-side-apply GitOps/Helm) installs a missing object with a PATCH answered
-  201, so this rule matches verb create, or a patch whose responseStatus.code is 201
-  (K21). A 201 patch install also fires the TRR9008 chokepoint, which is expected (an
-  install is both a create here and a write there). The companion grader
+  This is the inverse of TRR9008: TRR9008 keys on the delete, update and patch verbs
+  of admission objects (disabling the policy engine) and excludes the create verb;
+  this rule keys on CREATE (installing a malicious webhook), which TRR9008 scoped out
+  as a separate persistence technique. A server-side apply (kubectl apply
+  --server-side and server-side-apply GitOps/Helm) installs a missing object with a
+  PATCH answered 201, so this rule matches verb create, or a patch whose
+  responseStatus.code is 201 (K21). A 201 patch install is a patch, so it also fires
+  the TRR9008 chokepoint (k8s_admission_webhook_disabled.yml), which is expected (an
+  install is both a create here and a write there); the TRR9008 neuter grader
+  (k8s_admission_webhook_neutered.yml) filters it. Refused installs: a create that
+  authorization, admission or validation refuses (403, 422), or that meets an object
+  of the same name (409), is still a create, and this rule fires on it. A refused
+  server-side-apply install (a patch answered 4xx) cannot be told from a refused
+  modify of an installed object, so neither TRR9025 create rule fires on it; the
+  TRR9008 chokepoint records it. The companion grader
   (k8s_malicious_admission_webhook_created.yml) raises severity on a webhook whose
   clientConfig is a url (normally off-cluster); it does not grade cluster-wide rules
   or a Secrets scope, which the policy engines every cluster runs also have. An

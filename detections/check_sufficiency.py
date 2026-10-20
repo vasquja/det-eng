@@ -417,7 +417,7 @@ CHOKEPOINT = {
         "whole signal (TRR9013 procedure C)",
         "bc64702280f8f8d1b71ea1f889322e6456424efe71995da8d9cb1589931e2229"),
     "T1098.006/k8s_rbac_write.yml": Waiver(
-        "TRR9004 chokepoint: every grant passes through an RBAC write",
+        "TRR9004 chokepoint: every RBAC-object grant passes through an RBAC write",
         "3868d4ebbf33980dd6ce221cd128d71fb4f212c4d0f678fd72d643dbee6b4e0b"),
     "T1546/k8s_admission_webhook_created.yml": Waiver(
         "TRR9025 chokepoint: creating an admission controller object (a create, or the "

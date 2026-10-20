@@ -36,14 +36,21 @@ description: |
   replaces the whole object (path ""), with a dangerous field set in a value; an
   operation whose path's last segment is a dangerous field, with the value in the same
   op in either key order and with ignored extra keys between them; and a copy or move
-  into such a path. This closes the controller half of the gap once tracked as
-  RULE_DEFECTS K18. The
+  into such a path. A list index in such a path is any JSON-pointer token, because the
+  API server's JSON patch library reads +0, -0 and -1 as indexes. This closes the
+  controller half of the gap once tracked as RULE_DEFECTS K18. The
   capability match is case-insensitive (|re|i) and accepts an optional CAP_
   prefix: the API server does not validate the names, containerd upper-cases them
   and tests ALL with EqualFold, and CRI-O also keeps a CAP_ prefix in any case. A
   privileged Job or CronJob also matches the TRR9005
   chokepoint (k8s_job_create.yml); that is the same write seen through two lenses
   (scheduled-workload vs host-access). Dedup by auditID.
+
+  A status write (objectRef.subresource status) is filtered, as in
+  k8s_podspec_confinement_disabled.yml: a controller's status update (the
+  daemon-set-controller's update of daemonsets/status) carries the full object, spec
+  included, but the status strategies reset the spec to the stored one, so it cannot
+  add host access.
 
   Needs audit level Request so requestObject is present. Baseline the
   infrastructure controllers (the CNI DaemonSet, kube-proxy) by exact name, image,
@@ -158,7 +165,10 @@ detection:
   # Leaf-path ops: the dangerous field is the op path's last segment, so the value
   # tokens above do not see it (the field name is in the path; the value is the bare
   # true / hostPath object / capability). A capabilities/add path takes a list value;
-  # an add/N or add/- path takes one name. The value-first hostPath form skips the value
+  # an add/N or add/- path takes one name. N is any JSON-pointer token ([^/"]+): the API
+  # server's JSON patch library (gopkg.in/evanphx/json-patch.v4 v4.13.0) reads an index
+  # with Go strconv.Atoi and accepts a negative index, so +0, -0 and -1 are indexes too
+  # (the TRR9025 repoint grader's grammar). The value-first hostPath form skips the value
   # and the other op keys with a string-aware grammar (whole strings at every level,
   # nested objects two levels deep), so an ignored key that holds a brace inside the
   # hostPath object does not hide the op; it does not check that the value is an object,
@@ -174,14 +184,17 @@ detection:
   sel_jp_leaf_caps:
     requestObject|re|i:
       - '\"path\"\s*:\s*\"/spec(/template/spec|/jobTemplate/spec/template/spec)[^"]*/capabilities/add\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"value\"\s*:\s*\[\s*((\"([^"\\]|\\.)*\"|null)\s*,\s*)*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
-      - '\"path\"\s*:\s*\"/spec(/template/spec|/jobTemplate/spec/template/spec)[^"]*/capabilities/add/([0-9]+|-)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"value\"\s*:\s*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
+      - '\"path\"\s*:\s*\"/spec(/template/spec|/jobTemplate/spec/template/spec)[^"]*/capabilities/add/[^/"]+\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"value\"\s*:\s*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"'
       - '\"value\"\s*:\s*\[\s*((\"([^"\\]|\\.)*\"|null)\s*,\s*)*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec(/template/spec|/jobTemplate/spec/template/spec)[^"]*/capabilities/add\"'
-      - '\"value\"\s*:\s*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec(/template/spec|/jobTemplate/spec/template/spec)[^"]*/capabilities/add/([0-9]+|-)\"'
+      - '\"value\"\s*:\s*\"((CAP_)?(SYS_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH|SYS_BOOT|SYS_RAWIO|NET_ADMIN|BPF|SYSLOG)|ALL)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec(/template/spec|/jobTemplate/spec/template/spec)[^"]*/capabilities/add/[^/"]+\"'
   sel_jp_leaf_copy:
     requestObject|re:
-      - '\"op\"\s*:\s*\"(copy|move)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec(/template/spec|/jobTemplate/spec/template/spec)([^"]*/securityContext/privileged|/hostPID|/hostNetwork|/hostIPC|[^"]*/hostPath|[^"]*/capabilities/add(/([0-9]+|-))?)\"'
-      - '\"path\"\s*:\s*\"/spec(/template/spec|/jobTemplate/spec/template/spec)([^"]*/securityContext/privileged|/hostPID|/hostNetwork|/hostIPC|[^"]*/hostPath|[^"]*/capabilities/add(/([0-9]+|-))?)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"op\"\s*:\s*\"(copy|move)\"'
-  condition: selection_ctrl and (sel_priv_tmpl or sel_priv_init_tmpl or sel_caps_tmpl or sel_caps_init_tmpl or sel_hostpath_tmpl or sel_hostpid_tmpl or sel_hostnet_tmpl or sel_hostipc_tmpl or sel_priv_cj or sel_priv_init_cj or sel_caps_cj or sel_caps_init_cj or sel_hostpath_cj or sel_hostpid_cj or sel_hostnet_cj or sel_hostipc_cj or sel_jp_leaf_bool or sel_jp_leaf_hostpath or sel_jp_leaf_caps or sel_jp_leaf_copy or (sel_jp_tmpl_path and (sel_jp_priv_value or sel_jp_hostns_value or sel_jp_hostpath_value or sel_jp_caps_value)))
+      - '\"op\"\s*:\s*\"(copy|move)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec(/template/spec|/jobTemplate/spec/template/spec)([^"]*/securityContext/privileged|/hostPID|/hostNetwork|/hostIPC|[^"]*/hostPath|[^"]*/capabilities/add(/[^/"]+)?)\"'
+      - '\"path\"\s*:\s*\"/spec(/template/spec|/jobTemplate/spec/template/spec)([^"]*/securityContext/privileged|/hostPID|/hostNetwork|/hostIPC|[^"]*/hostPath|[^"]*/capabilities/add(/[^/"]+)?)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"op\"\s*:\s*\"(copy|move)\"'
+  # A status write cannot change the spec (the status strategies reset it).
+  filter_status:
+    objectRef.subresource: 'status'
+  condition: selection_ctrl and (sel_priv_tmpl or sel_priv_init_tmpl or sel_caps_tmpl or sel_caps_init_tmpl or sel_hostpath_tmpl or sel_hostpid_tmpl or sel_hostnet_tmpl or sel_hostipc_tmpl or sel_priv_cj or sel_priv_init_cj or sel_caps_cj or sel_caps_init_cj or sel_hostpath_cj or sel_hostpid_cj or sel_hostnet_cj or sel_hostipc_cj or sel_jp_leaf_bool or sel_jp_leaf_hostpath or sel_jp_leaf_caps or sel_jp_leaf_copy or (sel_jp_tmpl_path and (sel_jp_priv_value or sel_jp_hostns_value or sel_jp_hostpath_value or sel_jp_caps_value))) and not filter_status
 falsepositives:
   - Infrastructure controllers that legitimately need host access (the CNI
     DaemonSet, kube-proxy, node-exporter, CSI drivers). Baseline these by exact
@@ -192,9 +205,4 @@ falsepositives:
     removes it (for example test hostNetwork true, then replace it with false). The
     rule does not read the op name; a filter on "test" would let an adversary hide a
     change behind one no-op test op.
-  - Under an audit policy that logs whole API groups at Request (the shipped lab policy
-    lists exact resources and logs status at Metadata), a controller's status write
-    (daemon-set-controller updating daemonsets/status) carries the full object, so a
-    workload that already requests host access fires again. A status write cannot
-    change the spec. Baseline those controller identities on the status subresource.
 level: high

@@ -143,7 +143,9 @@ detection:
     requestObject.spec.jobTemplate.spec.template.spec.initContainers|re: '\"(seccompProfile|appArmorProfile)\"\s*:\s*\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"type\"\s*:\s*\"Unconfined\"'
   sel_cj_annotation:
     requestObject.spec.jobTemplate.spec.template.metadata.annotations.seccomp.security.alpha.kubernetes.io/pod: 'unconfined'
-  # JSON patch (--type=json): requestObject is the operation list, one JSON text field.
+  # JSON patch (--type=json): requestObject is the operation list. The audit log holds
+  # it as JSON; the validators flatten a list to its JSON text (sigma_eval.flatten), so
+  # a SIEM must index requestObject of a JSON patch as that text.
   # sel_jp_conf_value: a seccompProfile/appArmorProfile object of type Unconfined in any
   # op value (the object is self-evidently the technique, so no path is needed; a root
   # replace, path "", is caught too). sel_jp_conf_leaf: one op whose path's last segment

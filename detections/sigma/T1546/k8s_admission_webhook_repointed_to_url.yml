@@ -27,9 +27,11 @@ description: |
     - an object-shaped body: an update (PUT, kubectl replace), a strategic merge patch
       (the kubectl patch default; it sets service to null and adds url), a JSON merge
       patch, a client-side apply patch and a server-side apply patch. requestObject
-      keeps the webhooks list, which the audit backend stores as JSON text; the rule
-      matches "url" followed by an http(s) value with |contains, in the spaced and the
-      compact form (the dual-form convention of the TRR9008 and TRR9025 graders);
+      keeps the webhooks list. The audit log holds it as JSON; the validators flatten a
+      list to its JSON text (sigma_eval.flatten), so a SIEM must index it, and the
+      operation list of a JSON patch, as that text. The rule matches "url" followed by
+      an http(s) value with |contains, in the spaced and the compact form (the
+      dual-form convention of the TRR9008 and TRR9025 graders);
     - a JSON patch (--type=json): requestObject is the raw operation list. The rule
       matches a value that holds a clientConfig object with a url key (a value for
       the root path "", /webhooks or /webhooks/N), a url key with an operation on
@@ -41,9 +43,13 @@ description: |
       the library ignores an unknown key in an operation and the API server drops an
       unknown field at the default fieldValidation Warn, so an attacker can put any
       object between the path and the URL.
-  Contains matches ignore case, and the regular expressions use |i: the API server
-  checks for https after Go's net/url lower-cases the scheme, and it stores the URL as
-  written, so an HTTPS:// URL is accepted.
+  The URL scheme is matched in any case: the API server checks for https after Go's
+  net/url lower-cases the scheme, and it stores the URL as written, so an HTTPS:// URL
+  is accepted. The |contains values follow Sigma's default case-insensitive matching.
+  The regular expressions fold only the scheme, with character classes
+  ([hH][tT][tT][pP][sS]?), because JSON keys and JSON-pointer paths are
+  case-sensitive and |i is not portable: pySigma renders it as (?i), which Lucene
+  reads as the literal characters ?i, so a converted |re|i value never matches there.
 
   The rule matches only an accepted modify (responseStatus.code 200). A refused write
   (403, 409, 422) changes nothing; the TRR9008 chokepoint still records the attempt. A
@@ -94,14 +100,17 @@ detection:
   # Values 4-5: an operation on /webhooks/N/clientConfig/url and an https string, in
   # either order. N is any path token (+0, -0 and -1 are indexes to the JSON patch
   # library). The match spans the list text (.*), because the API server drops an
-  # unknown key, objects included, at the default fieldValidation Warn.
+  # unknown key, objects included, at the default fieldValidation Warn. Only the URL
+  # scheme is folded, with character classes: JSON keys and JSON-pointer paths are
+  # case-sensitive, and |i is not portable (pySigma renders it as (?i), which Lucene
+  # reads as the literal characters ?i, so the value never matches there).
   sel_jsonpatch_url:
-    requestObject|re|i:
-      - '\"clientConfig\"\s*:\s*\{.*\"url\"\s*:\s*\"http'
-      - '\"/webhooks/[^/\"]+/clientConfig\".*\"url\"\s*:\s*\"http'
-      - '\"url\"\s*:\s*\"http.*\"/webhooks/[^/\"]+/clientConfig\"'
-      - '\"/webhooks/[^/\"]+/clientConfig/url\".*\"https?:'
-      - '\"https?:[^\"]*\".*\"/webhooks/[^/\"]+/clientConfig/url\"'
+    requestObject|re:
+      - '\"clientConfig\"\s*:\s*\{.*\"url\"\s*:\s*\"[hH][tT][tT][pP]'
+      - '\"/webhooks/[^/\"]+/clientConfig\".*\"url\"\s*:\s*\"[hH][tT][tT][pP]'
+      - '\"url\"\s*:\s*\"[hH][tT][tT][pP].*\"/webhooks/[^/\"]+/clientConfig\"'
+      - '\"/webhooks/[^/\"]+/clientConfig/url\".*\"[hH][tT][tT][pP][sS]?:'
+      - '\"[hH][tT][tT][pP][sS]?:[^\"]*\".*\"/webhooks/[^/\"]+/clientConfig/url\"'
   # The API server accepted the modify of an installed object (200). A refused write
   # changes nothing; a server-side-apply install of a missing object is a patch
   # answered 201, a create that the create grader owns.

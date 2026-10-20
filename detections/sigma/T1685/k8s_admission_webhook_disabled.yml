@@ -13,10 +13,19 @@ description: |
   enforce policy, so removing or disarming them clears the way for the next
   malicious pod, unsigned image, or privilege grab.
 
-  create is deliberately EXCLUDED: creating a malicious webhook is persistence
-  (Event Triggered Execution), a different technique. There is no replace audit
-  verb either: an HTTP PUT (kubectl replace, or apply sent as PUT) is recorded as
-  verb=update. So the four verbs here are the complete disabling set.
+  The create verb is deliberately EXCLUDED: creating a malicious webhook is
+  persistence (Event Triggered Execution, TRR9025), a different technique. But a
+  server-side-apply install of a missing object (kubectl apply --server-side, or a
+  GitOps or Helm deploy that uses server-side apply) is a patch answered 201, not a
+  create, so it does fire this rule (K21). The TRR9025 create rules
+  (T1546/k8s_admission_webhook_created.yml, and
+  T1546/k8s_malicious_admission_webhook_created.yml for a URL-mode webhook) fire on
+  the same record, so such an install alerts twice; that double alert is expected.
+  The TRR9008 neuter grader filters it (an install cannot neuter an installed
+  webhook). A refused server-side-apply install (a patch answered 4xx) fires neither
+  TRR9025 create rule (their patch branch needs 201); this rule records it. There is
+  no replace audit verb either: an HTTP PUT (kubectl replace, or apply sent as PUT)
+  is recorded as verb=update. So the four verbs here are the complete disabling set.
 
   The rule fires at Metadata (verb, apiGroup, and objectRef.name are enough to see
   a delete or flag a patch/update). It cannot tell a benign webhook edit from a

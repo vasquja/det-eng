@@ -231,6 +231,27 @@ def enforcer_write(prefix, verb, subresource=None, resource="deployments",
     return gate
 
 
+def enforcer_namespace_delete(name):
+    """TRR9008 D2 ns: the atomic's delete of the enforcer namespace `name` (kyverno).
+
+    The record names the real namespace and carries no trr9008 marker, so the gate is
+    the exact write: objectRef.resource 'namespaces', objectRef.name `name`, verb
+    'delete', by a caller that is not a system identity (the namespace controller's own
+    writes during the teardown are excluded; the TRR9006 pattern). The gate rests on kind
+    having no such namespace before d2 runs: the atomic creates the namespace only when
+    it is absent and deletes it only when it created it, and kind never has it, so the
+    delete happens on every CI run and the pre-emulation log holds no such record (the
+    --expect-miss negative control proves it)."""
+    def gate(e):
+        return (e.get("objectRef.resource") == "namespaces"
+                and e.get("objectRef.name") == name
+                and e.get("verb") == "delete"
+                and not str(e.get("user.username") or "").startswith("system:"))
+    gate.describe = (f"objectRef.resource == 'namespaces', objectRef.name == {name!r}, "
+                     "verb == 'delete' and user.username not 'system:*'")
+    return gate
+
+
 def job_label_prefix(prefix):
     def gate(e):
         return (e.get("labels.batch.kubernetes.io/job-name") or "").startswith(prefix)
@@ -443,6 +464,15 @@ MANIFEST = [
     ("T1685", "k8s_enforcer_workload_removed.yml", "audit", "9008 D2 delete",
      "enforcer Deployment delete in an enforcer namespace",
      enforcer_write("trr9008-", "delete")),
+    # The enforcer-namespace delete branch of both T1685 workload rules, on d2's delete
+    # of the kyverno namespace it created. No marker: the gate rests on kind having no
+    # kyverno namespace before d2 (the pre-emulation negative control has no such record).
+    ("T1685", "k8s_enforcer_workload_removed.yml", "audit", "9008 D2 ns",
+     "enforcer namespace delete (d2 deletes the kyverno namespace it created)",
+     enforcer_namespace_delete("kyverno")),
+    ("T1685", "k8s_security_tool_workload_removed.yml", "audit", "9008 D ns",
+     "anchor: enforcer namespace delete (d2 deletes the kyverno namespace it created)",
+     enforcer_namespace_delete("kyverno")),
     ("T1134", "k8s_impersonation.yml", "audit", "9009 A-D",
      "impersonation presence chokepoint", impersonation_gate),
     ("T1134", "k8s_impersonation_privileged.yml", "audit", "9009 sev",

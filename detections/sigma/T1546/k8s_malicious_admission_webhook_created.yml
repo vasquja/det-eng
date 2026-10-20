@@ -17,6 +17,15 @@ description: |
   is YAML, not JSON (kubectl and client-go send JSON), is not in the audit log at
   Request level or higher, so no rule sees that install (K23).
 
+  Refused installs. A POST create that admission or validation refuses (403 from an
+  admission webhook or policy, 409, 422) is logged with its body, so this rule and the
+  chokepoint both fire on it. A create that authorization refuses (403 before the body
+  is read) has no requestObject, so only the chokepoint fires. A refused
+  server-side-apply install (a patch answered 4xx) cannot be told from a refused modify
+  of an installed object, so neither TRR9025 create rule fires on it (the SSA branch
+  needs 201); the TRR9008 chokepoint (k8s_admission_webhook_disabled.yml) records it as
+  a patch.
+
   URL mode is the single non-spoofable, low-false-positive discriminator:
   a legitimate webhook (cert-manager, Gatekeeper, Kyverno, a sidecar injector) almost
   always calls an in-cluster Service via clientConfig.service, never a raw URL, so a
@@ -24,9 +33,10 @@ description: |
   created Secret, every pod spec -- to an attacker endpoint (Procedure A mutating
   backdoor callback, Procedure B Secret exfiltration). The match uses |contains
   against the JSON-serialized webhooks array in both the spaced (request-body) and
-  compact (Go) forms, because the audit backend stores an array field as JSON text
-  (the same dual-form convention as the TRR9008 neuter grader). It does NOT key on
-  cluster-wide rules or a secrets scope: those do not separate a malicious webhook
+  compact (Go) forms (the same dual-form convention as the TRR9008 neuter grader). The
+  audit log holds the webhooks list as JSON; the validators flatten a list to its JSON
+  text (sigma_eval.flatten), so a SIEM must index every list field as that text. It
+  does NOT key on cluster-wide rules or a secrets scope: those do not separate a malicious webhook
   from the admission tooling every cluster runs (Kyverno and Gatekeeper validate
   cluster-wide and over Secrets), so grading on them would be a high-severity false
   positive on normal installs.

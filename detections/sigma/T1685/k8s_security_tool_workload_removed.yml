@@ -29,9 +29,11 @@ description: |
 
   The scale to zero has these request shapes, all matched. A strategic-merge or
   merge patch, or a full update, carries requestObject.spec.replicas = 0. A JSON
-  patch (kubectl patch --type=json) carries an ops array, which the audit log keeps
-  as one text field, so the rule matches an op whose path is /spec/replicas and
-  whose value is 0 in that text (or -0, which the API server reads as 0; a JSON-patch
+  patch (kubectl patch --type=json) carries an ops array. The audit log holds the ops
+  array as JSON. The validators flatten a list to its JSON text (sigma_eval.flatten),
+  so a SIEM must index requestObject of a JSON patch, and every list field, as that
+  text. The rule matches an op whose path is /spec/replicas and whose value is 0 in
+  that text (or -0, which the API server reads as 0; a JSON-patch
   test op on that path also matches, and it is rare). It also matches a value that
   holds "replicas": 0, which a replace or add of /spec or of the root writes. The
   API server ignores op keys it does not know, so the match skips whole strings and
@@ -125,7 +127,8 @@ detection:
       - 'update'
       - 'patch'
     requestObject.spec.replicas: 0
-  # JSON patch: requestObject is an ops array, kept as one JSON text field. Match an
+  # JSON patch: requestObject is an ops array (JSON in the audit log; the validators
+  # flatten it to its JSON text, and a SIEM must index it as that text). Match an
   # op object with path /spec/replicas and value 0, in either key order, or a copy
   # or move whose target path is /spec/replicas (its value comes from another field
   # and is not in the request). Between the keys, the match skips whole JSON strings

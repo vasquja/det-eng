@@ -25,7 +25,9 @@ description: |
   - A strategic-merge or merge patch (kubectl scale --replicas=0 on the
     deployments/scale subresource, or kubectl patch on the deployments resource),
     or a full update of the Deployment, carries requestObject.spec.replicas = 0.
-  - A JSON patch carries an ops array, which the audit log keeps as one text field.
+  - A JSON patch carries an ops array. The audit log holds the ops array as JSON. The
+    validators flatten a list to its JSON text (sigma_eval.flatten), so a SIEM must
+    index requestObject of a JSON patch, and every list field, as that text.
     The rule matches an op whose path is /spec/replicas and whose value is 0 (or
     -0, which the API server reads as 0), a copy or move op whose target path is
     /spec/replicas, and a value that holds "replicas": 0 (a replace or add of /spec
