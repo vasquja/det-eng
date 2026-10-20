@@ -1,9 +1,9 @@
-title: Kubernetes Deployment or DaemonSet Removed or Scaled To Zero
+title: Kubernetes Deployment or DaemonSet Removed, or Deployment Scaled To Zero
 id: 735935d9-dca5-42b4-a9be-70c942592a62
 status: experimental
 description: |
   Correlation anchor: an accepted delete of ANY Deployment or DaemonSet (one object,
-  or a deletecollection) or an accepted scale-to-zero of one (an update or patch that
+  or a deletecollection) or an accepted scale to zero of a Deployment (a write that
   sets spec.replicas to 0), in any namespace, and an accepted delete of a policy
   engine's default namespace (gatekeeper-system, kyverno, falco). It does not check
   that the workload is a security tool: only the namespace branch is limited to
@@ -12,35 +12,82 @@ description: |
   does not fire when the record shows it: the ?dryRun=All query of an update or patch
   (any audit level), or the DeleteOptions body of a delete (Request level). A
   deletecollection or namespace-delete dry run logged at Metadata still fires (see
-  falsepositives). This is the TRR9008 Strategy 3 fallback, covering Procedure D.
+  falsepositives). This is the TRR9008 Strategy 3 anchor, covering Procedure D.
   An adversary who does not want to touch the admission webhook configuration can
-  instead remove the enforcer itself -- delete or scale down the Gatekeeper,
-  Kyverno, or Falco Deployment/DaemonSet, or delete its whole namespace -- so the
+  instead remove the enforcer itself -- delete the Gatekeeper, Kyverno, or Falco
+  Deployment/DaemonSet, scale the Deployment down, or delete its whole namespace -- so the
   webhook endpoint is gone; paired with a failurePolicy of Ignore, admission then
   fails open and nothing blocks.
 
   This is a different edge than the admission-config chokepoint: it is an apps-group
   write, not an admissionregistration one. It is noisy on its own (deployments are
-  scaled and deleted routinely), so correlate with the policy engine's namespace or
-  app labels (gatekeeper-system, kyverno, falco) and baseline normal scaling.
+  scaled and deleted routinely), so its level is low. The alert for Procedure D is
+  k8s_enforcer_workload_removed.yml (level high): the same writes, limited to the
+  default namespaces of Gatekeeper, Kyverno and Falco. Use this rule to correlate:
+  an enforcer installed in another namespace, or the same identity that also
+  changed an admission configuration. Baseline normal scaling.
 
-  The scale-to-zero has three request shapes, all matched. A strategic-merge or
+  The scale to zero has these request shapes, all matched. A strategic-merge or
   merge patch, or a full update, carries requestObject.spec.replicas = 0. A JSON
   patch (kubectl patch --type=json) carries an ops array, which the audit log keeps
   as one text field, so the rule matches an op whose path is /spec/replicas and
-  whose value is 0 in that text (a JSON-patch test op on that path also matches; it
-  is rare). The API server ignores op keys it does not know, so the match skips
-  whole strings and nested objects (two levels) between the keys; an extra key
+  whose value is 0 in that text (or -0, which the API server reads as 0; a JSON-patch
+  test op on that path also matches, and it is rare). It also matches a value that
+  holds "replicas": 0, which a replace or add of /spec or of the root writes. The
+  API server ignores op keys it does not know, so the match skips whole strings and
+  nested objects (two levels) between the keys; an extra key
   nested deeper, or a brace inside a string inside a nested object, splits the op
   and is not matched. A copy or move op whose target
   path is /spec/replicas also matches: it sets the replica count from another field
   (for example an added /spec/minReadySeconds of 0), so the value is not in the
-  request, and such a write is not routine. kubectl scale writes the deployments/scale subresource
+  request, and such a write is not routine. A key or value that the patch text
+  writes with a JSON escape (\u0061) is not matched; kubectl sends the patch again
+  encoded, with no escapes and with the keys in the order from, op, path, value.
+  kubectl scale writes the deployments/scale subresource
   (objectRef.resource deployments, objectRef.subresource scale,
   requestObject.spec.replicas = 0); an audit policy must list deployments/scale
   explicitly to record that body, as the shipped
   detections/k8s/audit-policy-apiserver.yaml does. A policy that logs the
-  subresource at Metadata hides the kubectl scale form from this rule.
+  subresource at Metadata hides the kubectl scale form from this rule. kubectl
+  scale with --current-replicas or --resource-version reads the Scale object and
+  writes it back with an update (PUT) of the subresource. The record holds the
+  decoded autoscaling/v1 Scale, encoded again, and its spec.replicas field is
+  omitempty: a scale to 0 leaves no replicas key. The rule matches a Scale update
+  body without spec.replicas for that reason. A patch of the subresource is applied
+  to the current Scale, and the result is decoded: a replicas key that the patch
+  removes decodes as 0 (a merge or strategic patch with "replicas": null or "spec":
+  null, a JSON-patch remove of /spec/replicas, a replace of /spec with {}). So the
+  rule matches every patch of the scale subresource at Request level except a merge
+  or strategic patch with spec.replicas from 1 to 2147483647 and none of the
+  directives below, and a JSON patch that is one replace or add of /spec/replicas
+  with a value above 0 (op, path, value).
+
+  A strategic merge patch (the kubectl patch default), on the resource or on the
+  scale subresource, has two more shapes. First, the API server merges it as a map
+  of int64 values and then converts the count to the int32 field with no range
+  check, so 4294967296 (2^32) or -4294967296 becomes 0. The API server refuses a
+  negative result, so the rule matches an accepted patch with spec.replicas above
+  2147483647 or below 0. (A merge patch, a JSON patch and an update decode into the
+  int32 field and refuse such a count.) Second, a directive can drop or set the
+  count: "$patch": "delete" in spec makes the Scale's spec empty and drops the count
+  in the same map, and a key "$deleteFromPrimitiveList/replicas" in spec or
+  "$deleteFromPrimitiveList/spec" at the root acts as the plain key when the
+  current object holds a number or a map there. No client sends that key for these
+  fields, so the rule matches it with any value. A directive with a null value is
+  not in the record as a field, so a Scale patch that holds a count above 0 and also
+  a null "$deleteFromPrimitiveList/replicas" (or "$deleteFromPrimitiveList/spec")
+  does not fire (detections/RULE_DEFECTS.md KTBD-F4).
+
+  A write of the
+  status subresource cannot change spec.replicas, so it is filtered: the deployment
+  controller's update of deployments/status carries the whole Deployment, with
+  spec.replicas 0 after a scale to zero, and a policy that logs every apps
+  subresource at Request records it.
+
+  A DaemonSet has no replica count, so for a DaemonSet only a delete fires. A patch
+  that gives its pod template a nodeSelector, a node affinity or a nodeName that no
+  node matches removes every pod of the DaemonSet, and neither this rule nor
+  k8s_enforcer_workload_removed.yml matches it (detections/RULE_DEFECTS.md KTBD-F1).
 
   A DELETE on the collection URL (client-go DeleteCollection, or a raw DELETE with
   a label selector) is recorded as verb deletecollection and removes every matching
@@ -53,6 +100,8 @@ description: |
 references:
   - https://attack.mitre.org/techniques/T1685/
   - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+  - https://github.com/kubernetes/kubernetes/blob/v1.36.4/staging/src/k8s.io/apimachinery/pkg/util/strategicpatch/patch.go
+  - https://github.com/kubernetes/kubernetes/blob/v1.36.4/staging/src/k8s.io/apimachinery/pkg/runtime/converter.go
 author: det-eng
 date: 2026/10/12
 tags:
@@ -88,13 +137,80 @@ detection:
   # keeps each value inside Lucene's default determinization budget (10,000; about
   # 3,800 states, against about 15,000 when strings were also read inside nested
   # objects), so Elasticsearch runs it without a raised max_determinized_states.
+  # The last value matches a key "replicas" with the value 0 anywhere in the text: an
+  # op that replaces or adds /spec (or the root) with a value that holds replicas 0.
+  # In a Deployment only spec.replicas and status.replicas have that key, and a write
+  # of the main resource ignores status.
   sel_scale_zero_jsonpatch:
     verb: 'patch'
     requestObject|re:
-      - '\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec/replicas\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"value\"\s*:\s*0\s*[,}]'
-      - '\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"value\"\s*:\s*0\s*,([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec/replicas\"'
+      - '\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec/replicas\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"value\"\s*:\s*-?0\s*[,}]'
+      - '\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"value\"\s*:\s*-?0\s*,([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec/replicas\"'
       - '\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"op\"\s*:\s*\"(copy|move)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec/replicas\"'
       - '\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec/replicas\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"op\"\s*:\s*\"(copy|move)\"'
+      - '\"replicas\"\s*:\s*-?0\s*[,}]'
+  # An update (PUT) of the scale subresource is logged as the decoded autoscaling/v1
+  # Scale, encoded again; spec.replicas is omitempty, so a scale to 0 has no replicas
+  # key. kind Scale proves that the record holds the body (Request level); a
+  # Metadata-level record has no requestObject at all.
+  sel_scale_update_omitted_zero:
+    verb: 'update'
+    objectRef.subresource: 'scale'
+    requestObject.kind: 'Scale'
+    requestObject.spec.replicas: null
+  # A strategic merge patch is merged as a map of int64 values, and then the count is
+  # converted to the int32 field with no range check (apimachinery v1.36.4
+  # runtime/converter.go), so 4294967296 (2^32) or -4294967296 becomes 0. The API
+  # server refuses a negative result, so an accepted patch whose body holds a count
+  # outside 0..2147483647 was truncated. (A merge patch, a JSON patch and an update
+  # decode into the int32 field and refuse such a count.)
+  sel_replicas_out_of_range:
+    - verb: 'patch'
+      requestObject.spec.replicas|gt: 2147483647
+    - verb: 'patch'
+      requestObject.spec.replicas|lt: 0
+  # Strategic merge directives that drop or set the count while the body shows
+  # another one (apimachinery v1.36.4 util/strategicpatch mergeMap). "$patch":
+  # "delete" in spec makes the Scale's spec empty (a Deployment without a spec is
+  # refused). A key "$deleteFromPrimitiveList/<name>" is for a list of primitives;
+  # when the current object holds a number or a map at <name>, the merge uses the
+  # key as <name>. No client sends it for spec or replicas, so any value fires. A
+  # null value is not in the record as a field (KTBD-F4).
+  sel_smp_directive:
+    - verb: 'patch'
+      requestObject.spec.$patch: 'delete'
+    - verb: 'patch'
+      requestObject.spec.$deleteFromPrimitiveList/replicas|exists: true
+    - verb: 'patch'
+      requestObject.$deleteFromPrimitiveList/spec.replicas|exists: true
+    - verb: 'patch'
+      requestObject.$deleteFromPrimitiveList/spec.$deleteFromPrimitiveList/replicas|exists: true
+    - verb: 'patch'
+      requestObject.$deleteFromPrimitiveList/spec.$patch|exists: true
+    - verb: 'patch'
+      requestObject.$deleteFromPrimitiveList/spec.$retainKeys|exists: true
+  # A patch of the scale subresource: the API server applies it to the current Scale
+  # and decodes the result, so a replicas key that the patch removes (null, a JSON-
+  # patch remove or move, a replace of /spec) decodes as 0. Request level holds the
+  # body; a Metadata-level record has none.
+  sel_scale_patch_body:
+    verb: 'patch'
+    objectRef.subresource: 'scale'
+    level:
+      - 'Request'
+      - 'RequestResponse'
+  # ... except a patch that sets a count above 0: a merge or strategic patch (a
+  # count above 2147483647 or a directive fires through the two blocks above),
+  filter_scale_patch_positive:
+    requestObject.spec.replicas|gt: 0
+  # or a JSON patch of one replace or add op of /spec/replicas (keys in the order
+  # kubectl sends: op, path, value). Any other JSON patch of the Scale fires.
+  filter_scale_jsonpatch_positive:
+    requestObject|re: '^\s*\[\s*\{\s*\"op\"\s*:\s*\"(replace|add)\"\s*,\s*\"path\"\s*:\s*\"/spec/replicas\"\s*,\s*\"value\"\s*:\s*[1-9][0-9]*\s*\}\s*\]\s*$'
+  # A write of the status subresource cannot change spec; the deployment
+  # controller's update of deployments/status carries the whole Deployment.
+  filter_status_subresource:
+    objectRef.subresource: 'status'
   # The namespace controller's teardown sweep of a namespace being deleted.
   filter_namespace_teardown:
     user.username: 'system:serviceaccount:kube-system:namespace-controller'
@@ -136,14 +252,21 @@ detection:
       - 'deletecollection'
     requestObject.dryRun|contains: 'All'
   condition: >-
-    ((select_apps and (sel_delete or sel_scale_zero or sel_scale_zero_jsonpatch)
-    and not filter_namespace_teardown) or sel_enforcer_namespace_delete)
+    ((select_apps
+    and (sel_delete or sel_scale_zero or sel_scale_zero_jsonpatch or sel_scale_update_omitted_zero
+    or sel_replicas_out_of_range or sel_smp_directive
+    or (sel_scale_patch_body and not filter_scale_patch_positive
+    and not filter_scale_jsonpatch_positive))
+    and not filter_namespace_teardown and not filter_status_subresource)
+    or sel_enforcer_namespace_delete)
     and sel_accepted and not filter_dry_run_write and not filter_dry_run_delete_body
 falsepositives:
   - Routine scaling and teardown of deployments and daemonsets. This rule is a
-    correlation anchor; alert only when the target is a known security workload
-    (by namespace or app label) or when it correlates with an admission-config
-    change by the same identity. Baseline controllers and GitOps.
+    correlation anchor; k8s_enforcer_workload_removed.yml alerts on the default
+    namespaces of the security workloads. Alert on this rule only when the target
+    is a known security workload in another namespace (by namespace or app label)
+    or when it correlates with an admission-config change by the same identity.
+    Baseline controllers and GitOps.
   - Scale-to-zero schedulers (kube-downscaler, KEDA, an off-hours GitOps overlay)
     scale workloads to 0 by design. Baseline those identities.
   - Planned removal of Gatekeeper, Kyverno or Falco (its namespace deleted on
@@ -152,4 +275,10 @@ falsepositives:
     shipped lab policy logs those at Metadata, which holds no DeleteOptions body, so
     the dry run still fires; a single apps delete (Request level) and every update
     or patch dry run are filtered.
-level: medium
+  - A patch of a scale subresource that changes no count (a label of the Scale), or
+    a JSON patch of it that sets a count above 0 in another shape than one op,
+    path, value op. Both are rare.
+  - A strategic merge patch with "$deleteFromPrimitiveList/replicas" or
+    "$deleteFromPrimitiveList/spec" that sets a count above 0. No client sends these
+    keys for these fields.
+level: low

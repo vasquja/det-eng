@@ -58,8 +58,8 @@ exploit to get past the policy engine. They turn it off. They delete the webhook
 configuration so nothing validates admission; they leave it in place but neuter
 it, setting failurePolicy to Ignore so an outage is silently allowed, or emptying
 the rules so it never fires; or they leave admission alone and remove the enforcer
-itself, deleting or scaling the Gatekeeper, Kyverno, or Falco workload to zero so
-the webhook endpoint is gone. After any of these, the next malicious pod, the next
+itself, deleting the Gatekeeper, Kyverno, or Falco workload (or scaling a
+Deployment to zero) so the webhook endpoint is gone. After any of these, the next malicious pod, the next
 unsigned image, the next privileged workload sails through. It is a one-request
 defense-impairment step that clears the way for everything else.
 
@@ -101,12 +101,30 @@ deployments resource. A `kubectl scale` uses the deployments/scale subresource,
 which an audit policy must list explicitly (as deployments/scale) to capture with a
 body, because Kubernetes audit resource matching is exact. The shipped policy
 (`detections/k8s/audit-policy-apiserver.yaml`) lists deployments/scale,
-statefulsets/scale and replicasets/scale at Request. A JSON patch
-(`kubectl patch --type=json`) carries an ops array, not a spec, so a scale to zero
-is an op on /spec/replicas. Deleting the engine's whole namespace removes its
-workloads too: the API server records the actor's namespace delete, and then the
-namespace controller deletes the workloads with one deletecollection per resource
-type.
+statefulsets/scale and replicasets/scale at Request. A plain `kubectl scale` sends a
+merge patch of the subresource. With `--current-replicas` or `--resource-version`,
+kubectl reads the Scale object and writes it back with an update (PUT). The API
+server logs the decoded autoscaling/v1 Scale of an update, encoded again, and its
+`spec.replicas` field is `omitempty`: a scale to 0 leaves no `replicas` key in the
+record. A patch of the scale subresource is applied to the current Scale, and the
+result is decoded: a `replicas` key that the patch removes (a merge patch with
+`"replicas": null`, a JSON-patch `remove`, a replace of `/spec`) decodes as 0, so it
+is a scale to zero too. On the deployments resource the same patch resets the count
+to its default of 1. A strategic merge patch (the `kubectl patch` default) has two
+more ways to reach 0, on the resource and on the subresource. The API server merges
+it as a map of int64 values and then converts the count to the int32 field with no
+range check, so a count of 4294967296 (2^32) becomes 0. Its directives can also drop
+or set the count: `"$patch": "delete"` in the Scale's spec empties the spec, and a
+`$deleteFromPrimitiveList/replicas` key (or `$deleteFromPrimitiveList/spec` at the
+root) acts as the plain key when the current object holds a number or a map there.
+A JSON patch (`kubectl patch --type=json`) carries an ops array,
+not a spec, so a scale to zero is an op on /spec/replicas, or a replace of `/spec`
+whose value holds `replicas: 0`. A write of the status subresource cannot change the
+spec. A DaemonSet has no replica count at all: it runs one pod on each node that its
+pod template allows. Deleting the engine's whole namespace
+removes its workloads too: the API server records the actor's namespace delete, and
+then the namespace controller deletes the workloads with one deletecollection per
+resource type.
 
 ### Why the technique works
 
@@ -123,7 +141,7 @@ the control-plane bypass the API server never sees.
 | A | TRR9008.K8S.A | Delete a ValidatingWebhookConfiguration | `delete validatingwebhookconfigurations` |
 | B | TRR9008.K8S.B | Delete a MutatingWebhookConfiguration | `delete mutatingwebhookconfigurations` |
 | C | TRR9008.K8S.C | Neuter a webhook configuration in place | `update`/`patch` a webhook config |
-| D | TRR9008.K8S.D | Remove the enforcer's workload | `delete`/scale a Deployment or DaemonSet |
+| D | TRR9008.K8S.D | Remove the enforcer's workload | `delete` a Deployment or DaemonSet, scale a Deployment to zero, or `delete` the namespace |
 
 > A tool is not a procedure. `kubectl`, a client library, Helm, and a raw HTTP
 > client all send the same admission write. They are the same procedure.
@@ -242,14 +260,40 @@ not have. They fire the chokepoint only.
 
 ### Procedure D: Remove the enforcer's workload  (`TRR9008.K8S.D`)
 
-The adversary deletes or scales to zero the Deployment or DaemonSet that serves the
-webhook, or deletes the engine's namespace, so the endpoint is gone.
+The adversary deletes the Deployment or DaemonSet that serves the webhook (or runs
+the sensor), scales the Deployment to zero, or deletes the engine's namespace, so the
+endpoint is gone.
 
 - **Prerequisites:** `delete` or `patch`/`update` on the policy engine's
-  Deployment/DaemonSet (or its scale subresource), or `delete` on its namespace.
+  Deployment/DaemonSet (or the Deployment's scale subresource), or `delete` on its
+  namespace.
 - **Mechanics:** with failurePolicy already Ignore, admission then fails open.
 - **Impact:** enforcement stops without touching the webhook config.
 - **Tools on this path:** `kubectl delete`/`scale`/`patch`, any client.
+
+Each project's install instructions name a default namespace: `gatekeeper-system`
+for Gatekeeper (`deploy/gatekeeper.yaml` and its Helm chart), `kyverno` for Kyverno
+(its `install.yaml` and Helm chart) and `falco` for Falco (its Helm chart). An
+operator can install an engine in another namespace, so the namespace is a strong
+hint, not proof.
+
+The rules do not see every way to stop the enforcer:
+
+- A DaemonSet (Falco) has no replica count. A patch that gives its pod template a
+  nodeSelector, a node affinity or a nodeName that no node matches makes the
+  DaemonSet controller delete every Falco pod. Neither rule matches that write
+  ([`RULE_DEFECTS.md` KTBD-F1](../../../detections/RULE_DEFECTS.md#ktbd-f1-t1685-enforcer-removal-rules-a-daemonset-unscheduled-by-its-pod-template)).
+- A strategic merge patch of the scale subresource can hold a count above 0 and
+  also a null `$deleteFromPrimitiveList/replicas`. In most runs the merge deletes the
+  count after it sets it, so the Scale goes to 0. A null value is not a field in the
+  record, so the record looks like a scale up, and neither rule matches it
+  ([`RULE_DEFECTS.md` KTBD-F4](../../../detections/RULE_DEFECTS.md#ktbd-f4-t1685-enforcer-removal-rules-a-null-strategic-merge-directive-next-to-a-count)).
+- The webhook can stop without an apps write. Gatekeeper's webhooks call the Service
+  `gatekeeper-webhook-service` in `gatekeeper-system`, and its validating webhook has
+  failurePolicy Ignore, so a delete of that Service (or of its EndpointSlices) turns
+  the validation off. A NetworkPolicy that blocks the webhook port does the same, and
+  so does a ResourceQuota of 0 pods in the engine's namespace followed by pod
+  deletes. These are core or networking writes; no TRR9008 rule matches them.
 
 #### Detection Data Model — `TRR9008.K8S.D`
 
@@ -258,8 +302,15 @@ webhook, or deletes the engine's namespace, so the endpoint is gone.
 Source: [`ddms/trr9008_k8s_d.json`](ddms/trr9008_k8s_d.json) (Arrows app format).
 
 **DDM summary.** This is a different edge, an apps-group write, so it has its own
-rule (Strategy 3). The node also sees the enforcer pods disappear. Correlate the
-workload removal with the policy engine's namespace or app labels.
+rules (Strategy 3). The two shaded nodes are the primary detections. The first is
+the apps write: a delete of a Deployment or DaemonSet, or a scale to zero of a
+Deployment (a patch or update with `spec.replicas` 0, a Scale update without
+`spec.replicas`, a patch of the scale subresource that sets no count above 0, a
+strategic merge patch that truncates or drops the count, or a JSON-patch op on
+/spec/replicas). The alert rule limits it to the engines' default
+namespaces; the anchor rule matches it in every namespace. The second is the delete
+of an engine's default namespace, which both rules match. The node also sees the
+enforcer pods disappear.
 
 ## Detection Strategy
 
@@ -300,18 +351,32 @@ has a webhook without rules, a constant condition or such a selector.
 
 **Strategy 3 — enforcer removal (covers D).**
 Match an apps-group write that deletes a Deployment/DaemonSet (verb delete or
-deletecollection), or scales one to zero: requestObject.spec.replicas 0 on the
-resource or on its scale subresource, or a JSON-patch op that sets /spec/replicas
-to 0 or copies or moves a value into it. The namespace controller's teardown
-deletecollection is filtered; the rule matches the delete of the engine's default
-namespace (gatekeeper-system, kyverno, falco) instead. Only accepted writes (200, 201,
-202) match, and server-side dry runs are filtered as in Strategy 1. The workload branch
-does not check that the target is a security tool; it is a correlation anchor.
-Correlate with the policy
-engine's namespace or app labels.
+deletecollection), or scales a Deployment to zero: requestObject.spec.replicas 0 on
+the resource or on its scale subresource, an update of the scale subresource whose
+Scale body has no spec.replicas (the 0 is omitted), a patch of the scale subresource
+that does not set a count above 0 (a null, a JSON-patch remove, a replace of
+`/spec`), a strategic merge patch with a count outside the int32 range or with a
+directive that drops or sets the count (`"$patch": "delete"` in spec, a
+`$deleteFromPrimitiveList/replicas` or `$deleteFromPrimitiveList/spec` key), or a
+JSON patch that sets /spec/replicas to 0 (or -0), copies or moves a value into it,
+or replaces `/spec` with a value that holds replicas 0. A write of the
+status subresource is filtered. The namespace controller's teardown deletecollection
+is filtered; the rules match the delete of the engine's default namespace
+(gatekeeper-system, kyverno, falco) instead. Only accepted writes (200, 201, 202)
+match, and server-side dry runs are filtered as in Strategy 1. Neither rule matches a
+DaemonSet whose pod template is changed so that no node runs it (KTBD-F1), a Scale
+patch with a null directive next to a count above 0 (KTBD-F4), or a
+webhook stopped by a write outside the apps group (see Procedure D).
+
+Two rules share this logic. The alert rule (level high) matches the workload writes
+only in the three default namespaces, plus the namespace delete. The anchor rule
+(level low) matches the workload writes in every namespace: it does not check that
+the target is a security tool. Use it to correlate an enforcer that is installed in
+another namespace, or an identity that also changed an admission configuration.
 
 - Sensor: API server audit log.
-- Rule: `detections/sigma/T1685/k8s_security_tool_workload_removed.yml` (built).
+- Rule (alert): `detections/sigma/T1685/k8s_enforcer_workload_removed.yml` (built).
+- Rule (anchor): `detections/sigma/T1685/k8s_security_tool_workload_removed.yml` (built).
 
 **Demonstrated gap — the control-plane bypass.**
 An adversary with control-plane node access can disable admission without any
@@ -337,18 +402,22 @@ the node and noting no admissionregistration audit event follows an edit there.
 | A | Strategy 1 (chokepoint) | delete `validatingwebhookconfigurations` |
 | B | Strategy 1 (chokepoint) | delete `mutatingwebhookconfigurations` |
 | C | Strategy 1; graded by Strategy 2 | `update`/`patch` webhook config; failurePolicy Ignore / rules [] |
-| D | Strategy 3 (fallback) | delete or scale-to-zero the enforcer Deployment/DaemonSet |
+| D | Strategy 3 (alert and anchor) | delete the enforcer Deployment/DaemonSet, scale the Deployment to zero, or delete its namespace (not a DaemonSet that no node runs: KTBD-F1) |
 
 One chokepoint rule covers the three admission-config paths. A severity rule grades
-the neuter. A fallback covers the enforcer-workload removal.
+the neuter. An alert rule covers the enforcer-workload removal in the engines'
+default namespaces, and an anchor rule covers it in every namespace.
 
 ## Available Emulation Tests
 
 The tests run in a lab cluster with the shared audit policy (now recording the
 admission group at Request level, and its updates and patches at RequestResponse). The lab is a `kind` cluster; its config and audit
-policy are in [`detections/k8s/`](../../../detections/k8s/). Every object is named
-`trr9008-*`, and every webhook is a no-op (failurePolicy Ignore, rules scoped to a
-bogus apiGroup) that cannot affect a real admission request. One script drives them:
+policy are in [`detections/k8s/`](../../../detections/k8s/). Every object the tests
+create is named `trr9008-*` (the namespace of test d is `trr9008`), except the
+`kyverno` namespace: test d2 creates it only when it is absent, labels it
+`trr9008-created=true`, and deletes it again. Its records carry no marker, so the
+validator does not gate them. Every webhook is a no-op (failurePolicy Ignore, rules
+scoped to a bogus apiGroup) that cannot affect a real admission request. One script drives them:
 [`atomics/T1685/src/emulate_k8s.sh`](../../../atomics/T1685/src/emulate_k8s.sh),
 with Atomic Red Team wrappers in
 [`atomics/T1685/T1685.yaml`](../../../atomics/T1685/T1685.yaml)
@@ -360,6 +429,7 @@ with Atomic Red Team wrappers in
 | TRR9008.K8S.B | `emulate_k8s.sh b` — apply then delete a no-op MutatingWebhookConfiguration. | **built** |
 | TRR9008.K8S.C | `emulate_k8s.sh c` — neuter a webhook config (failurePolicy Ignore, rules []), then four more shapes on their own configs: a merge patch and a JSON patch that replace the webhooks list and drop rules, a constant-false matchCondition, and a namespaceSelector that matches no namespace. | **built** |
 | TRR9008.K8S.D | `emulate_k8s.sh d` — create a pause Deployment, scale it to zero with `kubectl scale` and with a patch, delete it. | **built** |
+| TRR9008.K8S.D | `emulate_k8s.sh d2` — the same in the `kyverno` namespace (created, labelled `trr9008-created=true`, and deleted only when it is absent): a pause Deployment `trr9008-enforcer-standin`, scaled to zero with `kubectl scale --current-replicas=1` (an update of the scale subresource) and with a plain `kubectl scale`, then deleted. | **built** |
 
 ## Detections
 
@@ -367,12 +437,19 @@ with Atomic Red Team wrappers in
 |----------|--------|------------|--------|
 | 1 (chokepoint) | A, B, C | [`detections/sigma/T1685/k8s_admission_webhook_disabled.yml`](../../../detections/sigma/T1685/k8s_admission_webhook_disabled.yml) | API server audit log |
 | 2 (severity) | grades C | [`detections/sigma/T1685/k8s_admission_webhook_neutered.yml`](../../../detections/sigma/T1685/k8s_admission_webhook_neutered.yml) | API server audit log (Request, RequestResponse) |
-| 3 (fallback) | D | [`detections/sigma/T1685/k8s_security_tool_workload_removed.yml`](../../../detections/sigma/T1685/k8s_security_tool_workload_removed.yml) | API server audit log |
+| 3 (alert) | D | [`detections/sigma/T1685/k8s_enforcer_workload_removed.yml`](../../../detections/sigma/T1685/k8s_enforcer_workload_removed.yml) | API server audit log |
+| 3 (anchor) | D | [`detections/sigma/T1685/k8s_security_tool_workload_removed.yml`](../../../detections/sigma/T1685/k8s_security_tool_workload_removed.yml) | API server audit log |
 
 The validator
 [`detections/validate_apiserver_detections.py`](../../../detections/validate_apiserver_detections.py)
 reads the API server audit log the emulation produced and asserts each rule matches
-an event naming a `trr9008-` object. The workflow
+an event naming a `trr9008-` object; for the alert rule, a `trr9008-` object in the
+`kyverno` namespace (`9008 D2`), and each write of it on its own: the update of its
+scale subresource (`9008 D2 put`), the patch of it (`9008 D2 patch`) and the
+Deployment delete (`9008 D2 delete`). The anchor rule is also proven on that update
+(`9008 D put`). The atomic's delete of the `kyverno` namespace is not gated: its
+record names the real namespace, which carries no emulation marker, so the sidecar
+cases prove that branch. The workflow
 [`validate-apiserver-detections.yml`](../../../.github/workflows/validate-apiserver-detections.yml)
 runs the loop on a `kind` cluster, with a negative control on the pre-emulation log.
 
@@ -381,8 +458,11 @@ covers webhook configs but lists a phantom `replace` verb, cannot grade a neuter
 (no requestObject), and has no enforcer-workload edge. Elastic's "Kubernetes Admission
 Webhook Created or Modified" also matches `update`, `patch` and `delete` of webhook
 configurations (tagged T1546 and T1562) but reads no body, so it cannot grade a neuter
-either; Falco's k8saudit "K8s Deployment Deleted" matches any Deployment delete. Propose
-the corrected chokepoint plus the neuter grader and the workload-removal rule.
+either; Falco's k8saudit "K8s Deployment Deleted" (priority INFO) and the SigmaHQ rule
+`kubernetes_audit_deployment_deleted.yml` (level low) match any Deployment delete, with
+no scale-to-zero and no namespace scope. Stratus Red Team and Atomic Red Team have no
+Kubernetes test that removes an enforcer. Propose the corrected chokepoint plus the
+neuter grader and the workload-removal rules.
 
 ## References
 
@@ -399,5 +479,28 @@ the corrected chokepoint plus the neuter grader and the workload-removal rule.
   <https://github.com/SigmaHQ/sigma/blob/master/rules/application/kubernetes/audit/kubernetes_audit_change_admission_controller.yml>
 - Microsoft Threat Matrix for Kubernetes:
   <https://microsoft.github.io/Threat-Matrix-for-Kubernetes/>
+- Default install namespaces: Gatekeeper `deploy/gatekeeper.yaml`
+  (<https://github.com/open-policy-agent/gatekeeper/blob/master/deploy/gatekeeper.yaml>;
+  it also defines the Service `gatekeeper-webhook-service` and the validating webhook's
+  failurePolicy Ignore) and the Gatekeeper Helm chart
+  (<https://github.com/open-policy-agent/gatekeeper/blob/master/charts/gatekeeper/README.md>),
+  the Kyverno release `install.yaml`
+  (<https://github.com/kyverno/kyverno/releases/download/v1.15.0/install.yaml>) and
+  Helm chart (<https://github.com/kyverno/kyverno/blob/main/charts/kyverno/README.md>),
+  and the Falco Helm chart
+  (<https://github.com/falcosecurity/charts/blob/master/charts/falco/README.md>).
+- Kubernetes v1.36.4 source, the audit record of an update (the decoded object,
+  encoded again) and the Scale type (`spec.replicas` is `omitempty`):
+  <https://github.com/kubernetes/kubernetes/blob/v1.36.4/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/update.go>,
+  <https://github.com/kubernetes/kubernetes/blob/v1.36.4/staging/src/k8s.io/api/autoscaling/v1/types.go>
+- Kubernetes v1.36.4 source, how a patch is applied (to the current object encoded as
+  JSON, then decoded) and the DaemonSet controller's node check:
+  <https://github.com/kubernetes/kubernetes/blob/v1.36.4/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/patch.go>,
+  <https://github.com/kubernetes/kubernetes/blob/v1.36.4/pkg/controller/daemon/daemon_controller.go>
+- Kubernetes v1.36.4 source, the strategic merge of a patch (its directives, and the
+  `$deleteFromPrimitiveList/` key on a field that is not a list) and the conversion
+  of the merged map to the typed object (no int32 range check):
+  <https://github.com/kubernetes/kubernetes/blob/v1.36.4/staging/src/k8s.io/apimachinery/pkg/util/strategicpatch/patch.go>,
+  <https://github.com/kubernetes/kubernetes/blob/v1.36.4/staging/src/k8s.io/apimachinery/pkg/runtime/converter.go>
 - TRR method:
   <https://github.com/tired-labs/techniques/blob/main/docs/TECHNIQUE-RESEARCH-REPORT.md>

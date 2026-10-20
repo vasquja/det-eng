@@ -17,4 +17,4 @@ is shared by A–C).
 | `trr9008_k8s_a` | TRR9008.K8S.A — delete a ValidatingWebhookConfiguration | admission-write audit event (chokepoint, A–C) |
 | `trr9008_k8s_b` | TRR9008.K8S.B — delete a MutatingWebhookConfiguration | admission-write audit event (chokepoint, A–C) |
 | `trr9008_k8s_c` | TRR9008.K8S.C — neuter a webhook config | admission-write audit event; failurePolicy/rules at Request |
-| `trr9008_k8s_d` | TRR9008.K8S.D — remove the enforcer workload | apps-write audit event (fallback); node sensor |
+| `trr9008_k8s_d` | TRR9008.K8S.D — remove the enforcer workload | apps-write audit event (alert in the engines' default namespaces; anchor in any namespace) and the engine-namespace delete; node sensor |

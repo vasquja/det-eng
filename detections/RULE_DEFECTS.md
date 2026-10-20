@@ -56,6 +56,8 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [KTBD-E1](#ktbd-e1-k8s_rbac_sensitive_permission_grant-the-bootstrap-roles-fire) | `T1098.006/k8s_rbac_sensitive_permission_grant` | the built-in roles the API server writes at bootstrap (system:aggregate-to-edit, system:node, system:kube-controller-manager) fire | false positive | low |
 | [KTBD-E2](#ktbd-e2-k8s_rbac_sensitive_permission_grant-residual-blind-spots) | `T1098.006/k8s_rbac_sensitive_permission_grant` | a JSON-patch operation list is not read; pods/ephemeralcontainers and resourceNames are not graded; a bind to an existing sensitive role is not graded here | false negative | low |
 | [KTBD-E3](#ktbd-e3-k8s_eks_aws_auth_configmap_modified-chokepoint-residuals) | `T1098.006/k8s_eks_aws_auth_configmap_modified` | a denied create logs no objectRef.name; a server-side apply with a YAML body is dropped by the JSON audit backend | false negative | low |
+| [KTBD-F1](#ktbd-f1-t1685-enforcer-removal-rules-a-daemonset-unscheduled-by-its-pod-template) | `T1685/k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed` | a DaemonSet (Falco) whose pod template gets a nodeSelector, affinity or nodeName that no node matches loses every pod, and neither rule fires | false negative | medium |
+| [KTBD-F4](#ktbd-f4-t1685-enforcer-removal-rules-a-null-strategic-merge-directive-next-to-a-count) | `T1685/k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed` | a strategic merge patch of deployments/scale with a count above 0 and a null `$deleteFromPrimitiveList/replicas` (or `/spec`) scales to 0, and neither rule fires | false negative | low |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
@@ -485,6 +487,75 @@ whether `arping` belongs in the allowlist.
   backstop for the dropped-event case; the denied-create case is by design (the
   record simply lacks the identity to key on). Both are documented, not fixed in Sigma.
 
+### KTBD-F1. T1685 enforcer-removal rules: a DaemonSet unscheduled by its pod template
+
+- **Rules**: [`sigma/T1685/k8s_enforcer_workload_removed.yml`](sigma/T1685/k8s_enforcer_workload_removed.yml) (level high),
+  [`sigma/T1685/k8s_security_tool_workload_removed.yml`](sigma/T1685/k8s_security_tool_workload_removed.yml) (level low).
+- **Kind**: false negative. **Severity**: medium (Falco, the runtime sensor that the
+  high rule names, runs as a DaemonSet, and one patch removes every Falco pod; a
+  delete of the DaemonSet or of its namespace still fires).
+- **Problem**: a DaemonSet has no replica count, so neither rule has a scale-to-zero
+  shape for it. A patch or update that gives the DaemonSet's pod template a
+  nodeSelector, a required node affinity or a nodeName that no node matches makes the
+  DaemonSet controller delete the daemon pod on every node. No branch of either rule
+  reads the pod template's scheduling fields.
+- **Evidence**: *probe* — a patch of `daemonsets/falco` in namespace `falco` (Request
+  level, code 200) with requestObject
+  `{"spec":{"template":{"spec":{"nodeSelector":{"example.com/none":"true"}}}}}` fires
+  neither rule; the sidecar confounders `daemonset-nodeselector-matches-no-node-known-miss`
+  (high rule) and `anchor-daemonset-nodeselector-matches-no-node-known-miss` (anchor)
+  hold that record. *source* — Kubernetes v1.36.4
+  `pkg/controller/daemon/daemon_controller.go`: `NodeShouldRunDaemonPod` returns false
+  when the template's node affinity or nodeSelector does not fit the node, and
+  `podsShouldBeOnNode` then deletes the daemon pods on that node.
+- **Fix**: in the high rule, a branch for an accepted update or patch of daemonsets in
+  the enforcer namespaces whose requestObject sets `spec.template.spec.nodeSelector`,
+  `spec.template.spec.affinity` or `spec.template.spec.nodeName` (a merge-patch or
+  update body, or JSON-patch text on those paths). A Helm or GitOps upgrade that
+  writes the chart's own nodeSelector writes the same fields, so the branch needs a
+  benign budget, which a human approves.
+- **Then**: the two KNOWN MISS confounders become positives (a relabel, which
+  `sufficiency-ratchet` sends to a human), with near-misses in another namespace.
+
+### KTBD-F4. T1685 enforcer-removal rules: a null strategic merge directive next to a count
+
+- **Rules**: [`sigma/T1685/k8s_enforcer_workload_removed.yml`](sigma/T1685/k8s_enforcer_workload_removed.yml) (level high),
+  [`sigma/T1685/k8s_security_tool_workload_removed.yml`](sigma/T1685/k8s_security_tool_workload_removed.yml) (level low).
+- **Kind**: false negative. **Severity**: low (a hand-written strategic merge patch
+  of the scale subresource that no client sends; the result depends on Go map order,
+  so it can need a second try; `kubectl scale --replicas=0` and the other
+  scale-to-zero shapes fire).
+- **Problem**: a strategic merge patch of deployments/scale holds `spec.replicas`
+  above 0 and also the key `$deleteFromPrimitiveList/replicas` in spec (or
+  `$deleteFromPrimitiveList/spec` at the root) with the value null. The merge uses
+  that key as the plain key, and a null deletes the count. The merge reads the keys
+  in Go map order, so in most runs the delete comes after the count, and the Scale
+  decodes to 0. The rules match the same keys with a non-null value
+  (`sel_smp_directive`). A null value is not a field in the flattened record, and a
+  log store reads a null field as absent, so the record looks like a scale to 3, and
+  `filter_scale_patch_positive` removes it. A null child of a root
+  `$deleteFromPrimitiveList/spec` (`{"replicas": null}`) is the same gap. On the
+  deployments resource the same null resets the count to its default of 1, so only
+  the scale subresource is affected.
+- **Evidence**: *probe* — a patch of `deployments/scale` in namespace `kyverno`
+  (Request level, code 200) with requestObject
+  `{"spec":{"replicas":3,"$deleteFromPrimitiveList/replicas":null}}` fires neither
+  rule; the sidecar confounders `scale-smp-null-alias-with-count-known-miss` (high
+  rule) and `anchor-scale-smp-null-alias-with-count-known-miss` (anchor) hold that
+  record. *source* — Kubernetes v1.36.4
+  `staging/src/k8s.io/apimachinery/pkg/util/strategicpatch/patch.go`: `mergeMap`
+  maps a `$deleteFromPrimitiveList/` key to the plain key
+  (`preprocessDeletionListForMerging`) and deletes the key on a null value. A Go
+  probe with the apimachinery and api v0.36.4 modules (the code of
+  `strategicPatchObject`) gave replicas 0 in 39 of 40 runs, with no error.
+- **Fix**: log deployments/scale (and statefulsets/scale, replicasets/scale) at
+  RequestResponse in `detections/k8s/audit-policy-apiserver.yaml`, and add a branch
+  for an accepted patch or update of the scale subresource whose responseObject is
+  a Scale without `spec.replicas` (the result, which the request body cannot show).
+  The policy change adds log volume, which a human approves.
+- **Then**: the two KNOWN MISS confounders become positives (a relabel, which
+  `sufficiency-ratchet` sends to a human).
+
 ## Cloud (AWS, Azure, GCP)
 
 ### C6. gcp_workforce_principalset_privileged_binding: where the privileged-role tier ends
@@ -572,6 +643,8 @@ points here.
 | K19 | `T1685/k8s_security_tool_workload_removed` retitled as a generic Deployment or DaemonSet anchor (its title claimed security tools only); matches only accepted (200/201/202) writes and filters the dry runs the record shows (the `?dryRun=All` query of an update or patch; the DeleteOptions body of a delete at Request level) | near-misses `delete-deployment-forbidden`, `delete-deployment-not-found`; filtered `delete-deployment-dry-run-body`, `scale-to-zero-patch-dry-run-query`, `kubectl-scale-zero-dry-run` |
 | K20 | `T1134/k8s_impersonation` matches the v1.36 constrained-impersonation refusals (`cannot impersonate:<mode>`, `cannot impersonate-on:<mode>:<verb>`), not only the legacy `cannot impersonate resource` | positives `denied-serviceaccount-impersonation-probe-constrained`, `denied-user-impersonation-probe-constrained`, `constrained-impersonation-username-check-denied` |
 | K21 | both TRR9025 create rules (`k8s_admission_webhook_created`, `k8s_malicious_admission_webhook_created`) match `verb: create` OR (`verb: patch` AND `responseStatus.code: 201`), so a server-side-apply install (a patch answered 201) fires both; the chokepoint's CHOKEPOINT waiver digest was re-approved | positives `ssa-create-webhook-patch-201` (chokepoint) and `ssa-create-offcluster-url-patch-201` (grader); near-misses `ssa-create-patch-answered-200-not-create` and `repoint-offcluster-url-patch-answered-200` (a patch answered 200 is a modify, not a create) |
+| KTBD-F2 | `T1685/k8s_security_tool_workload_removed` (and the new `T1685/k8s_enforcer_workload_removed`) match the scale-to-zero shapes that the anchor missed: an update (PUT) of deployments/scale whose re-encoded autoscaling/v1 Scale omits `spec.replicas` 0 (`kubectl scale --current-replicas`/`--resource-version`); a patch of the scale subresource that sets no count above 0 (a merge or strategic `null`, a JSON-patch `remove`, a replace of `/spec`); a JSON-patch value `-0`; a JSON patch that replaces `/spec` with a spec that holds replicas 0; a strategic merge patch whose count is outside the int32 range (the merge truncates 2^32 to 0); a strategic merge directive that drops or sets the count (`"$patch": "delete"` in spec, a non-null `$deleteFromPrimitiveList/replicas` in spec or `$deleteFromPrimitiveList/spec` at the root; the null form is KTBD-F4) | positives `deployment-smp-replicas-two-to-the-32`, `scale-smp-replicas-two-to-the-32`, `deployment-smp-replicas-minus-two-to-the-32`, `scale-smp-spec-patch-delete-with-count`, `deployment-smp-delete-from-primitive-list-replicas`, `deployment-smp-delete-from-primitive-list-spec`, `deployment-smp-nested-delete-from-primitive-list-alias`, `scale-smp-delete-from-primitive-list-replicas-with-count`, `scale-smp-root-alias-patch-delete-with-count`, `scale-smp-root-alias-retain-keys-with-count` (high rule) and their `anchor-` twins; near-misses `deployment-smp-replicas-three`, `deployment-smp-replicas-two-to-the-32-forbidden`, `deployment-smp-replicas-two-to-the-32-monitoring`, `scale-smp-spec-patch-replace-with-count`, `deployment-smp-delete-from-primitive-list-finalizers`; filtered `deployment-smp-delete-from-primitive-list-replicas-dry-run`; positives `kubectl-scale-zero-update-omitted-replicas`, `anchor-scale-merge-patch-replicas-null`, `anchor-scale-jsonpatch-remove-replicas`, `anchor-scale-jsonpatch-set-count-then-remove`, `anchor-deployment-jsonpatch-replace-spec-replicas-zero`, `anchor-deployment-jsonpatch-value-minus-zero-raw-text`; near-misses `hpa-scale-update-to-three`, `scale-update-metadata-level-no-body`, `anchor-scale-patch-metadata-level-no-body`, `anchor-deployment-merge-patch-replicas-null-defaults-to-one`, `anchor-deployment-jsonpatch-replace-spec-replicas-two`; filtered `kubectl-scale-zero-update-dry-run`, `anchor-kubectl-scale-to-two`, `anchor-scale-jsonpatch-replace-to-three` |
+| KTBD-F3 | `T1685/k8s_security_tool_workload_removed` (and `T1685/k8s_enforcer_workload_removed`) filter a write of a status subresource: the deployment controller's update of deployments/status carries the whole Deployment, with `spec.replicas` 0 after a scale to zero, and fired the rule under a policy that logs every apps subresource at Request | filtered `anchor-deployment-controller-status-update-zero-replicas` (anchor), `deployment-controller-status-update-zero-replicas` (high rule) |
 | C13 | `entra_app_federated_credential_backdoor` reads only `newValue`, in any key order | near-misses `fic-with-unapproved-issuer-removed`, `fic-repointed-away-new-value-first` and the other reordered cases |
 | C14 | `aws_resource_policy_made_public` reads a `Statement` that is one object | positives `s3-single-statement-object-public-read`, `sqs-single-statement-object-public-send`, `efs-single-statement-object-public-mount` |
 | C16 | `aws_github_oidc_role_trust_abuse` grades each `sub` value | near-miss `two-subs-pinned-ref-wildcards-grade-high`; positive `two-subs-pinned-ref-wildcards-go-to-high-rule` of the low rule |

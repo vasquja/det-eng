@@ -59,6 +59,15 @@ kindnet privileged pods). The gate is:
   * TRR9026 C (nodes/proxy): requestURI contains '/trr9026-' (objectRef.name is the node).
   * TRR9008 D (scale): objectRef.name begins with 'trr9008-' AND objectRef.subresource
     is 'scale' (the kubectl scale write, which the audit policy must log at Request).
+  * TRR9008 D2: objectRef.name begins with 'trr9008-' AND objectRef.namespace is a
+    policy engine's default namespace (gatekeeper-system, kyverno, falco): the
+    stand-in in kyverno. Each write the atomic makes has its own row too: D2 put adds
+    verb update of objectRef.subresource 'scale' (the kubectl scale --current-replicas
+    PUT; its Scale body has no replicas key for 0), D2 patch adds verb patch of
+    'scale' (the plain kubectl scale), and D2 delete adds verb delete of the
+    deployments resource itself. D put proves the anchor rule on the same gate as D2
+    put. The atomic's delete of the kyverno namespace is not gated: that record names
+    the real namespace, which carries no emulation marker.
   * TRR9027: objectRef.name is a cluster-DNS ConfigMap (coredns / kube-dns /
     coredns-custom) in kube-system AND the write carries the 'trr9027' sentinel in its
     requestObject (the coredns ConfigMap exists at bootstrap, so the name alone is not
@@ -187,6 +196,38 @@ def jsonpatch_gate(prefix, resource, subresource=None):
     sub = f"/{subresource}" if subresource else ""
     gate.describe = (f"objectRef.name begins with {prefix!r}, resource {resource}{sub}, verb "
                      "patch, and requestObject is a JSON-patch operation list (starts with '[')")
+    return gate
+
+
+ENFORCER_NAMESPACES = ("gatekeeper-system", "kyverno", "falco")
+
+
+def enforcer_ns(prefix, namespaces=ENFORCER_NAMESPACES):
+    """TRR9008 D2: a record of an object whose name begins with `prefix` in a policy
+    engine's default namespace (the stand-in Deployment in kyverno)."""
+    def gate(e):
+        return ((e.get("objectRef.name") or "").startswith(prefix)
+                and e.get("objectRef.namespace") in namespaces)
+    gate.describe = (f"objectRef.name begins with {prefix!r} and objectRef.namespace in "
+                     f"{', '.join(namespaces)}")
+    return gate
+
+
+def enforcer_write(prefix, verb, subresource=None, resource="deployments",
+                   namespaces=ENFORCER_NAMESPACES):
+    """TRR9008 D2 put / patch / delete: one write of the stand-in Deployment, so that
+    each branch of the alert rule that the atomic exercises is proven on its own
+    record. `subresource` None is the deployments resource itself. The update (PUT) of
+    deployments/scale (kubectl scale --current-replicas) holds the Scale encoded again,
+    so a scale to 0 has no spec.replicas key (omitempty)."""
+    in_ns = enforcer_ns(prefix, namespaces)
+
+    def gate(e):
+        return (in_ns(e) and e.get("verb") == verb
+                and e.get("objectRef.resource") == resource
+                and e.get("objectRef.subresource") == subresource)
+    gate.describe = (f"{in_ns.describe}, verb == {verb!r}, objectRef.resource == "
+                     f"{resource!r} and objectRef.subresource == {subresource!r}")
     return gate
 
 
@@ -383,10 +424,25 @@ MANIFEST = [
     ("T1685", "k8s_admission_webhook_neutered.yml", "audit", "9008 C nssel",
      "neuter: namespaceSelector that matches no namespace", name_prefix("trr9008-neuter-nssel")),
     ("T1685", "k8s_security_tool_workload_removed.yml", "audit", "9008 D",
-     "enforcer workload removal fallback", name_prefix("trr9008-")),
+     "enforcer workload removal anchor (any namespace)", name_prefix("trr9008-")),
     ("T1685", "k8s_security_tool_workload_removed.yml", "audit", "9008 D scale",
      "enforcer scale-to-zero via kubectl scale (deployments/scale at Request)",
      scale_subresource("trr9008-")),
+    ("T1685", "k8s_security_tool_workload_removed.yml", "audit", "9008 D put",
+     "anchor: scale-to-zero by a PUT of deployments/scale (kubectl scale --current-replicas)",
+     enforcer_write("trr9008-", "update", "scale")),
+    ("T1685", "k8s_enforcer_workload_removed.yml", "audit", "9008 D2",
+     "enforcer workload removal in an enforcer namespace (the stand-in in kyverno)",
+     enforcer_ns("trr9008-")),
+    ("T1685", "k8s_enforcer_workload_removed.yml", "audit", "9008 D2 put",
+     "enforcer scale-to-zero by a PUT of deployments/scale (the Scale body omits replicas 0)",
+     enforcer_write("trr9008-", "update", "scale")),
+    ("T1685", "k8s_enforcer_workload_removed.yml", "audit", "9008 D2 patch",
+     "enforcer scale-to-zero by a patch of deployments/scale (plain kubectl scale)",
+     enforcer_write("trr9008-", "patch", "scale")),
+    ("T1685", "k8s_enforcer_workload_removed.yml", "audit", "9008 D2 delete",
+     "enforcer Deployment delete in an enforcer namespace",
+     enforcer_write("trr9008-", "delete")),
     ("T1134", "k8s_impersonation.yml", "audit", "9009 A-D",
      "impersonation presence chokepoint", impersonation_gate),
     ("T1134", "k8s_impersonation_privileged.yml", "audit", "9009 sev",

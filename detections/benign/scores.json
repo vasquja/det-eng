@@ -966,6 +966,18 @@
         "k8s-audit-human-operators": 0
       }
     },
+    "T1685/k8s_enforcer_workload_removed.yml": {
+      "actors": {},
+      "distinct_actors": 0,
+      "events": 2666,
+      "hits": 0,
+      "rate_per_10k": 0.0,
+      "slices": {
+        "k8s-audit-control-plane": 0,
+        "k8s-audit-gitops-ci": 0,
+        "k8s-audit-human-operators": 0
+      }
+    },
     "T1685/k8s_security_tool_workload_removed.yml": {
       "actors": {
         "system:serviceaccount:argocd:argocd-application-controller": 8,
