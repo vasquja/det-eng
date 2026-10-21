@@ -6,9 +6,15 @@
 #
 # Each procedure DISABLES a harmless, throwaway admission object (NEVER a real
 # Gatekeeper/Kyverno/Falco webhook), so the API server writes the audit events the
-# paired Sigma rules key on. Every object is named trr9008-* so a validator matches
-# the emulation's own events. The webhooks are no-ops (failurePolicy Ignore, rules
-# scoped to a bogus apiGroup) that cannot affect any real admission request.
+# paired Sigma rules key on. Every object the tests create is named trr9008-* (the
+# namespace of procedure d is trr9008) so a validator matches the emulation's own
+# events. The one exception is the kyverno namespace: d2 creates it only when it is
+# absent, labels it trr9008-created=true, and deletes it only when it created it. Its
+# records carry no trr9008 marker, so the validator gates the namespace delete by the
+# exact write (rows 9008 D2 ns and 9008 D ns), which rests on the kind cluster having
+# no kyverno namespace before d2 runs. The webhooks are no-ops
+# (failurePolicy Ignore, rules scoped to a bogus apiGroup) that cannot affect any
+# real admission request.
 #
 # Run ONE procedure:
 #   ./emulate_k8s.sh a      delete a ValidatingWebhookConfiguration
@@ -18,6 +24,11 @@
 #                           patch that replace the webhooks list and drop rules, a constant
 #                           matchCondition, and a namespaceSelector that matches no namespace
 #   ./emulate_k8s.sh d      scale-to-zero (kubectl scale, then patch) and delete a stand-in enforcer Deployment
+#   ./emulate_k8s.sh d2     the same removal in the kyverno namespace (a policy engine's default
+#                           namespace): a stand-in Deployment scaled to zero by two kubectl scale
+#                           shapes (an update of deployments/scale, then a patch), then deleted;
+#                           the kyverno namespace is created (labelled trr9008-created=true) and
+#                           deleted only when it is absent
 #   ./emulate_k8s.sh gap    node-local bypass demonstration (read-only)
 #   ./emulate_k8s.sh all    every item, in order, then clean up
 #
@@ -33,6 +44,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NS="${TRR9008_NAMESPACE:-trr9008}"
 NODE="${TRR9008_NODE:-apiserver-control-plane}"
+# Procedure D2's namespace: Kyverno's default install namespace. Fixed, because the
+# precise rule and the validator gate list only the engines' default namespaces.
+ENFORCER_NS="kyverno"
 
 log() { printf '[trr9008] %s\n' "$*" >&2; }
 
@@ -41,6 +55,10 @@ cleanup() {
   kubectl delete validatingwebhookconfiguration trr9008-vwc trr9008-neuter trr9008-neuter-merge \
     trr9008-neuter-json trr9008-neuter-const trr9008-neuter-nssel --ignore-not-found >/dev/null 2>&1 || true
   kubectl delete mutatingwebhookconfiguration trr9008-mwc --ignore-not-found >/dev/null 2>&1 || true
+  kubectl -n "$ENFORCER_NS" delete deployment trr9008-enforcer-standin --ignore-not-found >/dev/null 2>&1 || true
+  # Only a namespace that d2 created carries this label; a kyverno namespace that
+  # existed before the test has no such label and is kept.
+  kubectl delete namespace -l trr9008-created=true --ignore-not-found >/dev/null 2>&1 || true
   kubectl delete namespace "$NS" --ignore-not-found >/dev/null 2>&1 || true
 }
 
@@ -130,6 +148,56 @@ procedure_d() {
   kubectl -n "$NS" delete deployment trr9008-deploy --ignore-not-found >/dev/null 2>&1 || true
 }
 
+# Procedure D, in a policy engine's default namespace (kyverno), for the precise rule
+# k8s_enforcer_workload_removed.yml. The stand-in is a harmless pause Deployment named
+# trr9008-enforcer-standin; this NEVER touches a real Kyverno workload. Two kubectl scale
+# shapes: --current-replicas=1 makes kubectl read the Scale object and write it back with
+# an update (PUT) of deployments/scale, whose audit record holds the Scale encoded again
+# (spec.replicas is omitempty, so the 0 is not in the record); the plain form then writes
+# a merge patch of spec.replicas 0. The atomic creates the kyverno namespace only when it
+# is absent, and deletes it only when it created it: that delete is the precise rule's
+# namespace branch. A cluster that already has a kyverno namespace keeps it. The
+# namespace the atomic creates carries the label trr9008-created=true, so cleanup (and
+# the Atomic Red Team cleanup_command) can remove it after an interrupted run.
+procedure_d2() {
+  local created_ns=0 phase
+  # A kyverno namespace that an earlier run deleted can still be terminating. Wait for
+  # it to go, so that this run creates (and deletes) its own namespace.
+  phase="$(kubectl get namespace "$ENFORCER_NS" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+  if [ "$phase" = "Terminating" ]; then
+    log "D2: namespace $ENFORCER_NS is terminating; wait for it to go"
+    kubectl wait --for=delete "namespace/$ENFORCER_NS" --timeout=120s >/dev/null 2>&1 || true
+  fi
+  if ! kubectl get namespace "$ENFORCER_NS" >/dev/null 2>&1; then
+    kubectl create -f - >/dev/null 2>&1 <<EOF && created_ns=1 || true
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: $ENFORCER_NS
+  labels:
+    trr9008-created: "true"
+EOF
+  fi
+  phase="$(kubectl get namespace "$ENFORCER_NS" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+  if [ "$phase" != "Active" ]; then
+    log "D2: namespace $ENFORCER_NS is not active (phase '${phase:-absent}'); D2 skipped"
+    return 0
+  fi
+  log "D2: create stand-in deployment trr9008-enforcer-standin in namespace $ENFORCER_NS, scale it to zero (update, then patch), then delete it"
+  kubectl -n "$ENFORCER_NS" create deployment trr9008-enforcer-standin \
+    --image=registry.k8s.io/pause:3.9 --replicas=1 >/dev/null 2>&1 || true
+  kubectl -n "$ENFORCER_NS" scale deployment trr9008-enforcer-standin \
+    --current-replicas=1 --replicas=0 >/dev/null 2>&1 || true
+  kubectl -n "$ENFORCER_NS" scale deployment trr9008-enforcer-standin --replicas=0 >/dev/null 2>&1 || true
+  kubectl -n "$ENFORCER_NS" delete deployment trr9008-enforcer-standin --ignore-not-found >/dev/null 2>&1 || true
+  if [ "$created_ns" = 1 ]; then
+    log "D2: delete namespace $ENFORCER_NS (the atomic created it)"
+    kubectl delete namespace "$ENFORCER_NS" --ignore-not-found --timeout=60s >/dev/null 2>&1 || true
+  else
+    log "D2: namespace $ENFORCER_NS existed before the atomic; it is kept"
+  fi
+}
+
 # Gap — the node-local bypass. An attacker with control-plane node access can disable
 # admission WITHOUT an admissionregistration write (edit the kube-apiserver static
 # manifest --disable-admission-plugins, or tamper with the webhook TLS material). None
@@ -154,15 +222,16 @@ run_one() {
     b) procedure_b ;;
     c) procedure_c ;;
     d) procedure_d ;;
+    d2) procedure_d2 ;;
     gap) procedure_gap ;;
-    *) log "unknown item: $1 (use a|b|c|d|gap|all)"; exit 2 ;;
+    *) log "unknown item: $1 (use a|b|c|d|d2|gap|all)"; exit 2 ;;
   esac
 }
 
 main() {
   local which="${1:-all}"
   if [ "$which" = "all" ]; then
-    for p in a b c d gap; do run_one "$p"; done
+    for p in a b c d d2 gap; do run_one "$p"; done
     cleanup
   else
     run_one "$which"

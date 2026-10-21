@@ -417,11 +417,12 @@ CHOKEPOINT = {
         "whole signal (TRR9013 procedure C)",
         "bc64702280f8f8d1b71ea1f889322e6456424efe71995da8d9cb1589931e2229"),
     "T1098.006/k8s_rbac_write.yml": Waiver(
-        "TRR9004 chokepoint: every grant passes through an RBAC write",
+        "TRR9004 chokepoint: every RBAC-object grant passes through an RBAC write",
         "3868d4ebbf33980dd6ce221cd128d71fb4f212c4d0f678fd72d643dbee6b4e0b"),
     "T1546/k8s_admission_webhook_created.yml": Waiver(
-        "TRR9025 chokepoint: creating an admission controller object",
-        "118564279afcfcfef6afacfd241e9feb60f7768a5a5248998f6be0ccbff47638"),
+        "TRR9025 chokepoint: creating an admission controller object (a create, or the "
+        "server-side-apply create that is a patch answered 201; K21)",
+        "00eb9aa313f7fb56185913ee8d658f2e6c09e233130e90b11559df560a8042e3"),
     "T1552.007/k8s_secret_access.yml": Waiver(
         "TRR9006 chokepoint: every API read of a Secret",
         "02c75f50efdcbadbde1687c623b0557c797fd190c8ccc2f0a1b4b8421100d596"),
@@ -453,7 +454,7 @@ CHOKEPOINT = {
         "b50573eddab59ad45de592ca2f1fe47f1cdcb700f3440aaf8da792129da08357"),
     "T1685/k8s_admission_webhook_disabled.yml": Waiver(
         "TRR9008 chokepoint: any delete/update/patch of an admission control object",
-        "34a75208472f9d548854b8b1dea375818e889a0cfed910907da006c3cd53b37d"),
+        "e9fdca67f2beaec55e04446b628c07e78f95f16e5ac638d2087ca1f67bb136bd"),
 }
 
 

@@ -1,0 +1,231 @@
+title: Kubernetes Pod Spec Disables Seccomp or AppArmor Confinement
+id: 794f5a5b-154d-4114-b2d1-cf14746f72c5
+status: experimental
+description: |
+  Detects a pod write, or a workload controller write (Deployment, DaemonSet,
+  StatefulSet, ReplicaSet, ReplicationController, Job, CronJob), whose pod spec sets a
+  seccomp or AppArmor profile of type Unconfined. This is the TRR9007 Procedure E
+  rule, a level below the host-access rules (they do not fire on Unconfined):
+  Unconfined removes the syscall filter
+  (seccomp) or the mandatory access control profile (AppArmor) that the container
+  runtime applies by default (RuntimeDefault), so calls that the default profiles block
+  (unshare, keyctl, mount, ptrace and others) reach the kernel. It does not give the pod
+  the host by itself, so the level is medium; with a capability or a kernel bug it opens
+  the escape paths T1611 names. Pod Security Standards Baseline forbids both settings
+  (pod-security-admission check_appArmorProfile.go and check_seccompProfile_baseline.go
+  allow only RuntimeDefault, Localhost or undefined).
+
+  It reads, at the pod level and in each container, init container and ephemeral
+  container (the controller template and the CronJob job template too):
+    - securityContext.seccompProfile.type: Unconfined;
+    - securityContext.appArmorProfile.type: Unconfined (the field is GA since v1.30);
+    - the pod annotation seccomp.security.alpha.kubernetes.io/pod: unconfined (on a
+      pod, a controller template and a CronJob job template). The seccomp annotations
+      have no effect since v1.27: up to v1.26 the API server copied them to the
+      seccompProfile field when it admitted the pod (applySeccompVersionSkew), and
+      v1.27 removed that copy (the API server warns "non-functional in v1.27+"). On a
+      current cluster this is an attempt with no effect.
+  Container lists are JSON text: a profile matches only as a seccompProfile or
+  appArmorProfile object whose own type key is Unconfined, in either key order, so a
+  localhostProfile file named "unconfined" or a container named so does not fire.
+  Inside the profile object the match skips whole JSON strings and nested objects two
+  levels deep (the T1685 grammar), so an ignored extra key before type (a patch body
+  keeps the client's raw bytes and key order; the API server drops the key with a
+  warning) does not hide the profile. A key nested three levels deep inside the profile
+  object splits it and is not matched, as in the T1685 rule.
+
+  The per-container annotations (container.apparmor.security.beta.kubernetes.io/NAME,
+  still honoured: the API server copies it to the container's appArmorProfile field in
+  PrepareForCreate (applyAppArmorVersionSkew, pkg/registry/core/pod/strategy.go), which
+  runs AFTER the audit record of the request is written (LogRequestObject in
+  handlers/create.go), so the request body holds only the annotation; and the
+  non-functional container.seccomp.security.alpha.kubernetes.io/NAME) put the container
+  name in the key. A Sigma field name cannot be a pattern, so in a pod or controller body
+  the rule reads them only from kubectl's last-applied-configuration annotation, which
+  kubectl apply writes with a fixed key. A pod or template created another way with that
+  annotation is not seen (RULE_DEFECTS K24). A JSON patch that sets one is graded
+  (below).
+
+  A JSON patch (kubectl patch --type=json) logs requestObject as the operation list, so
+  requestObject.spec.* does not exist; the sel_jp_conf_* and sel_jpobj_* branches read
+  that text instead (they apply only to a JSON patch, because a strategic-merge or
+  update body flattens to requestObject.spec.* and never to a bare requestObject
+  field). They grade a seccompProfile or appArmorProfile object of type Unconfined
+  anywhere in an op value (an op at the document root, path "", included); an op whose path's last segment is the
+  profile's type with the value Unconfined, in either key order, with ignored extra keys
+  between the keys (the T1685 skip grammar: whole strings and nested objects two levels
+  deep); an op path that ends in the profile together with an op value object whose own
+  type key is Unconfined (sel_jpobj_path and sel_jpobj_value, read apart, so an ignored
+  op key at any depth does not split them); a per-container AppArmor or seccomp
+  annotation, or the seccomp pod annotation, set to unconfined in an op value or as the
+  op's leaf path; and a copy or move into one of those paths (its value comes from
+  another field and is not in the request). The branches do not read the op name, so a
+  "test" op that asserts Unconfined matches too (see falsepositives).
+
+  A status write (objectRef.subresource status) is filtered: a controller's status
+  update carries the full object, spec included, but the status strategies reset the
+  spec to the stored one, so it cannot remove confinement. The rule needs audit level
+  Request: requestObject is absent at Metadata. It fires on a request that admission
+  refuses too (a Pod Security Admission rejection is logged with the body).
+references:
+  - https://attack.mitre.org/techniques/T1611/
+  - https://attack.mitre.org/techniques/T1685/
+  - https://kubernetes.io/docs/tutorials/security/seccomp/
+  - https://kubernetes.io/docs/tutorials/security/apparmor/
+  - https://kubernetes.io/docs/concepts/security/pod-security-standards/
+author: det-eng
+date: 2026/10/20
+tags:
+  # Primary: T1611 Escape to Host (privilege-escalation). Secondary: T1685 Disable or
+  # Modify Tools (defense-impairment) -- removing the runtime's default seccomp/AppArmor
+  # confinement weakens a kernel-level control. In ATT&CK Enterprise v20 the T1562.*
+  # family is revoked in favour of T1685; tactic TA0005 is renamed Stealth and TA0112
+  # Defense Impairment is added (research/README.md), so this is the current pair.
+  - attack.privilege-escalation
+  - attack.t1611
+  - attack.defense-impairment
+  - attack.t1685
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  selection_pod:
+    objectRef.resource: 'pods'
+    verb:
+      - 'create'
+      - 'update'
+      - 'patch'
+  selection_ctrl:
+    objectRef.resource:
+      - 'deployments'
+      - 'daemonsets'
+      - 'statefulsets'
+      - 'replicasets'
+      - 'replicationcontrollers'
+      - 'jobs'
+      - 'cronjobs'
+    verb:
+      - 'create'
+      - 'update'
+      - 'patch'
+  sel_pod_seccomp:
+    requestObject.spec.securityContext.seccompProfile.type: 'Unconfined'
+  sel_pod_apparmor:
+    requestObject.spec.securityContext.appArmorProfile.type: 'Unconfined'
+  sel_pod_containers:
+    requestObject.spec.containers|re: '\"(seccompProfile|appArmorProfile)\"\s*:\s*\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"type\"\s*:\s*\"Unconfined\"'
+  sel_pod_init:
+    requestObject.spec.initContainers|re: '\"(seccompProfile|appArmorProfile)\"\s*:\s*\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"type\"\s*:\s*\"Unconfined\"'
+  sel_pod_ephem:
+    requestObject.spec.ephemeralContainers|re: '\"(seccompProfile|appArmorProfile)\"\s*:\s*\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"type\"\s*:\s*\"Unconfined\"'
+  sel_pod_annotation:
+    requestObject.metadata.annotations.seccomp.security.alpha.kubernetes.io/pod: 'unconfined'
+  # kubectl apply records the applied manifest under a fixed key; the per-container
+  # annotations are inside it as plain JSON text.
+  sel_last_applied:
+    requestObject.metadata.annotations.kubectl.kubernetes.io/last-applied-configuration|re: '\"container\.(apparmor\.security\.beta|seccomp\.security\.alpha)\.kubernetes\.io/[^\"]+\"\s*:\s*\"unconfined\"'
+  sel_tmpl_seccomp:
+    requestObject.spec.template.spec.securityContext.seccompProfile.type: 'Unconfined'
+  sel_tmpl_apparmor:
+    requestObject.spec.template.spec.securityContext.appArmorProfile.type: 'Unconfined'
+  sel_tmpl_containers:
+    requestObject.spec.template.spec.containers|re: '\"(seccompProfile|appArmorProfile)\"\s*:\s*\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"type\"\s*:\s*\"Unconfined\"'
+  sel_tmpl_init:
+    requestObject.spec.template.spec.initContainers|re: '\"(seccompProfile|appArmorProfile)\"\s*:\s*\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"type\"\s*:\s*\"Unconfined\"'
+  sel_tmpl_annotation:
+    requestObject.spec.template.metadata.annotations.seccomp.security.alpha.kubernetes.io/pod: 'unconfined'
+  sel_cj_seccomp:
+    requestObject.spec.jobTemplate.spec.template.spec.securityContext.seccompProfile.type: 'Unconfined'
+  sel_cj_apparmor:
+    requestObject.spec.jobTemplate.spec.template.spec.securityContext.appArmorProfile.type: 'Unconfined'
+  sel_cj_containers:
+    requestObject.spec.jobTemplate.spec.template.spec.containers|re: '\"(seccompProfile|appArmorProfile)\"\s*:\s*\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"type\"\s*:\s*\"Unconfined\"'
+  sel_cj_init:
+    requestObject.spec.jobTemplate.spec.template.spec.initContainers|re: '\"(seccompProfile|appArmorProfile)\"\s*:\s*\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"type\"\s*:\s*\"Unconfined\"'
+  sel_cj_annotation:
+    requestObject.spec.jobTemplate.spec.template.metadata.annotations.seccomp.security.alpha.kubernetes.io/pod: 'unconfined'
+  # JSON patch (--type=json): requestObject is the operation list. The audit log holds
+  # it as JSON; the validators flatten a list to its JSON text (sigma_eval.flatten), so
+  # a SIEM must index requestObject of a JSON patch as that text.
+  # sel_jp_conf_value: a seccompProfile/appArmorProfile object of type Unconfined in any
+  # op value (the object is self-evidently the technique, so no path is needed; a root
+  # replace, path "", is caught too). sel_jp_conf_leaf: one op whose path's last segment
+  # is the type of a seccompProfile/appArmorProfile and whose value is Unconfined (a
+  # whole profile object at the profile path is the sel_jpobj_* pair below).
+  # sel_jp_conf_annotation: a per-container AppArmor/seccomp annotation or the seccomp pod
+  # annotation set to unconfined, in a value (a whole annotations map) or as a leaf path
+  # (a JSON pointer writes the key's "/" as "~1"). sel_jp_conf_copy: a copy or move into
+  # one of those paths. Between two keys of one op, the match skips whole JSON strings and
+  # nested objects two levels deep (the T1685 grammar), so an ignored extra key does not
+  # split the op; it never crosses the op's own closing brace, so it never pairs a path
+  # from one op with a value from the next. Each value stays inside Lucene's default
+  # determinization budget (10,000; the largest here is about 6,400 states).
+  sel_jp_conf_value:
+    requestObject|re: '\"(seccompProfile|appArmorProfile)\"\s*:\s*\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"type\"\s*:\s*\"Unconfined\"'
+  sel_jp_conf_leaf:
+    requestObject|re:
+      - '\"path\"\s*:\s*\"/spec[^"]*/(seccompProfile|appArmorProfile)/type\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"value\"\s*:\s*\"Unconfined\"'
+      - '\"value\"\s*:\s*\"Unconfined\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec[^"]*/(seccompProfile|appArmorProfile)/type\"'
+  # A whole profile object written to the profile path (path .../seccompProfile or
+  # .../appArmorProfile, value {"type": "Unconfined"}): the value object alone does not
+  # name the profile, so the pair needs an op path that ends in the profile AND an op
+  # value object whose own type key is Unconfined. The two halves are read apart (as the
+  # host-access rules read sel_jp_tmpl_path and their value tokens), so an ignored extra
+  # op key, at any depth and in either key order, does not split them. The price: the
+  # pair also joins a profile path in one op with an unrelated value object whose type key
+  # is Unconfined in another op (for example a labels map {"type": "Unconfined"}); no
+  # routine patch is known to do that (see falsepositives).
+  sel_jpobj_path:
+    requestObject|re: '\"path\"\s*:\s*\"/spec[^"]*/(seccompProfile|appArmorProfile)\"'
+  sel_jpobj_value:
+    requestObject|re: '\"value\"\s*:\s*\{([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"type\"\s*:\s*\"Unconfined\"'
+  sel_jp_conf_annotation:
+    requestObject|re:
+      - '\"(container\.(apparmor\.security\.beta|seccomp\.security\.alpha)\.kubernetes\.io/[^"]+|seccomp\.security\.alpha\.kubernetes\.io/pod)\"\s*:\s*\"unconfined\"'
+      - '\"path\"\s*:\s*\"(/spec(/template|/jobTemplate/spec/template))?/metadata/annotations/(container\.(apparmor\.security\.beta|seccomp\.security\.alpha)\.kubernetes\.io\~1[^"]+|seccomp\.security\.alpha\.kubernetes\.io\~1pod)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"value\"\s*:\s*\"unconfined\"'
+      - '\"value\"\s*:\s*\"unconfined\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"(/spec(/template|/jobTemplate/spec/template))?/metadata/annotations/(container\.(apparmor\.security\.beta|seccomp\.security\.alpha)\.kubernetes\.io\~1[^"]+|seccomp\.security\.alpha\.kubernetes\.io\~1pod)\"'
+  sel_jp_conf_copy:
+    requestObject|re:
+      - '\"op\"\s*:\s*\"(copy|move)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"/spec[^"]*/(seccompProfile|appArmorProfile)(/type)?\"'
+      - '\"path\"\s*:\s*\"/spec[^"]*/(seccompProfile|appArmorProfile)(/type)?\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"op\"\s*:\s*\"(copy|move)\"'
+      - '\"op\"\s*:\s*\"(copy|move)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"path\"\s*:\s*\"(/spec(/template|/jobTemplate/spec/template))?/metadata/annotations/(container\.(apparmor\.security\.beta|seccomp\.security\.alpha)\.kubernetes\.io\~1[^"]+|seccomp\.security\.alpha\.kubernetes\.io\~1pod)\"'
+      - '\"path\"\s*:\s*\"(/spec(/template|/jobTemplate/spec/template))?/metadata/annotations/(container\.(apparmor\.security\.beta|seccomp\.security\.alpha)\.kubernetes\.io\~1[^"]+|seccomp\.security\.alpha\.kubernetes\.io\~1pod)\"([^{}"]|\"([^"\\]|\\.)*\"|\{([^{}]|\{[^{}]*\})*\})*\"op\"\s*:\s*\"(copy|move)\"'
+  # A status write cannot change the spec (the status strategies reset it).
+  filter_status:
+    objectRef.subresource: 'status'
+  # A write of the main resource has no objectRef.subresource. The status filter is
+  # written as (sel_main_resource or not filter_status), so that a backend with
+  # three-valued logic (ES|QL and other SQL backends, where NOT of a test on a
+  # missing field is NULL) does not drop every main-resource write.
+  sel_main_resource:
+    objectRef.subresource: null
+  condition: >-
+    ((selection_pod and (1 of sel_pod_* or sel_last_applied))
+    or (selection_ctrl and (1 of sel_tmpl_* or 1 of sel_cj_* or sel_last_applied))
+    or ((selection_pod or selection_ctrl) and (1 of sel_jp_conf_* or (sel_jpobj_path and sel_jpobj_value))))
+    and (sel_main_resource or not filter_status)
+falsepositives:
+  - Workloads that need syscalls the default profiles block and run Unconfined on
+    purpose (some CI runners and Docker-in-Docker builders, debuggers, node agents).
+    Baseline them by exact workload name, image and identity, not by the field and not
+    by namespace.
+  - Cilium's default Helm values (seen in v1.16.0, v1.17.6 and v1.18.2, rendered for
+    Kubernetes v1.30 and later) set the pod-level appArmorProfile Unconfined (and, in
+    v1.18, seccompProfile Unconfined) on the cilium agent, cilium-envoy and
+    cilium-node-init DaemonSets in kube-system. Every helm install or upgrade of those DaemonSets fires, and so does
+    every agent pod create by system:serviceaccount:kube-system:daemon-set-controller
+    (each node join or rollout). Baseline them by exact DaemonSet name, image and
+    identity, as the host-access rules do for the CNI.
+  - A remediation JSON patch whose "test" op asserts the old Unconfined value before it
+    replaces it (test .../seccompProfile/type Unconfined, then replace it with
+    RuntimeDefault). The rule does not read the op name; a filter on "test" would let an
+    adversary hide a change behind one no-op test op.
+  - A copy or move op into a profile or annotation path fires whatever value it moves
+    (for example a RuntimeDefault profile copied from one container to another). Such an
+    op is rare in routine change.
+  - A JSON patch that writes a profile object at a profile path in one op and a value
+    object whose type key is Unconfined (a labels or nodeSelector map) in another op;
+    the sel_jpobj_* pair reads the two halves apart. No routine patch is known to do so.
+  - Legacy manifests that still carry the seccomp pod annotation set to unconfined
+    (no effect since v1.27; v1.26 and earlier API servers copied it to the field).
+level: medium

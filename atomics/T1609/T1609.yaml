@@ -1,9 +1,11 @@
 attack_technique: T1609
 display_name: Container Administration Command (Kubernetes)
 
-# Behavioral emulation for TRR9002. Each test drives one control path that runs
-# a command in a container, so the API server writes the audit events the paired
-# Sigma rules key on. Every test runs the benign command `id`. These need a
+# Behavioral emulation for TRR9002. Each test drives one control path to a
+# container or its kubelet, so the API server writes the audit events the paired
+# Sigma rules key on. Tests A to D run the benign command `id`. Test F grants a
+# temporary service account `get` on nodes/proxy, reads two kubelet pod lists
+# (the output is discarded), and deletes the RBAC objects. These need a
 # reachable Kubernetes cluster with audit logging on (see
 # detections/k8s/kind-audit-cluster.yaml) and the TRR9002 target pod applied.
 
@@ -131,6 +133,43 @@ atomic_tests:
         bash #{source_dir}/emulate.sh e
       cleanup_command: |
         true
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1609/src
+
+  - name: "TRR9002.K8S.F — kubelet pod read through the API server node proxy"
+    auto_generated_guid: 8c1f3a07-4e52-4d79-b1a6-3f7c0e9d2b16
+    description: |
+      Reads the kubelet /runningpods/ and /pods endpoints through the API server
+      node proxy as a dedicated service account (trr9002-node-reader) that holds
+      only `get` on nodes/proxy. This is the main step of Stratus Red Team
+      k8s.privilege-escalation.nodes-proxy. The audit record shows
+      objectRef.resource=nodes, subresource=proxy, verb=get, with the kubelet
+      endpoint in requestURI — not pods/exec, and not a pods list or get on the
+      API. The reads use a token minted for the service account, so
+      user.username is the service account. The test creates the RBAC objects,
+      reads, then deletes them.
+
+      /checkpoint (a POST, audit verb create) is not called: it writes a
+      container memory and file-system dump to disk on the node. The sidecar
+      cases for the rule cover it instead.
+
+      Detection: objectRef.resource=nodes, subresource=proxy, requestURI naming
+      the kubelet /pods, /runningpods, or /checkpoint endpoint.
+      Rule: detections/sigma/T1609/k8s_node_proxy_kubelet_api.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh f
+      cleanup_command: |
+        kubectl delete clusterrolebinding trr9002-node-reader --ignore-not-found
+        kubectl delete clusterrole trr9002-node-reader --ignore-not-found
+        kubectl -n "${TRR9002_NAMESPACE:-default}" delete serviceaccount trr9002-node-reader --ignore-not-found
     input_arguments:
       source_dir:
         description: Path to the atomic source directory.

@@ -20,7 +20,13 @@
 This TRR covers privilege escalation and persistence through **Kubernetes
 RBAC**: writing or changing the objects in the `rbac.authorization.k8s.io` API
 group (`roles`, `clusterroles`, `rolebindings`, `clusterrolebindings`) so that
-an identity the adversary controls gains more permission than it had.
+an identity the adversary controls gains more permission than it had. It also
+covers one adjacent object: on Amazon EKS, the `kube-system/aws-auth` ConfigMap
+that maps IAM principals to RBAC identities (Procedure F). That is a `core/v1`
+ConfigMap, not an `rbac.authorization.k8s.io` object, but writing it is a
+Kubernetes API call the audit log records, and it grants the same kind of
+standing access, so it is in scope here (the exclusion list below explains the
+boundary).
 
 This TRR does not cover these related actions:
 
@@ -28,10 +34,15 @@ This TRR does not cover these related actions:
   access it already has, with no permission change. ATT&CK T1078 (Valid
   Accounts) covers that. The chokepoint here is the *write* that changes a
   permission, not a login.
-- Granting a cloud IAM role on a managed cluster (GKE, EKS, AKS). That write
-  happens in the cloud provider's API, not the Kubernetes API server, so the
-  Kubernetes audit log does not see it. ATT&CK T1098.003 (Additional Cloud
-  Roles) covers it. A managed-cluster attack can chain both.
+- Granting a cloud IAM role on a managed cluster, when the grant is a cloud API
+  write. An EKS access entry, a GKE IAM binding, or an AKS role assignment is a
+  call to the cloud provider's API, not the Kubernetes API server, so the
+  Kubernetes audit log does not see it; ATT&CK T1098.003 (Additional Cloud Roles)
+  covers it, and a managed-cluster attack can chain both. The **EKS aws-auth
+  ConfigMap is the exception**: it is an ordinary Kubernetes ConfigMap in
+  kube-system, so a write to it *does* reach the Kubernetes API server and the
+  audit log. Mapping an IAM principal through aws-auth is therefore in scope here,
+  as Procedure F.
 - Creating a Kubernetes identity (a ServiceAccount). This report changes what an
   identity *can do*, not whether it exists.
 
@@ -135,6 +146,8 @@ to separate an operator or a controller from an adversary.
 | C | TRR9004.K8S.C | Write a wildcard or escalate/bind role | `create`/`update`/`patch` `clusterroles` or `roles` |
 | D | TRR9004.K8S.D | Bind a built-in group (mass grant) | `create` binding with a Group subject |
 | E | TRR9004.K8S.E | Patch an existing binding or role | `patch`/`update` any RBAC object |
+| F | TRR9004.K8S.F | Map an IAM principal through the EKS aws-auth ConfigMap | `create`/`update`/`patch`/`delete` `configmaps` `kube-system/aws-auth` |
+| G | TRR9004.K8S.G | Write a sensitive (non-wildcard) role: exec, token, cluster-wide secret reads | `create`/`update`/`patch` `clusterroles` or `roles` |
 
 > A tool is not a procedure. `kubectl`, `client-go`, Helm, Argo CD, and a raw
 > HTTP client all send the same RBAC write. They are the same procedure. The
@@ -146,8 +159,9 @@ Green borders are operations the client performs. Blue borders are operations
 the API server performs. Black borders are the abstract effect. The pill on a
 node names the telemetry that records it, and the `Key: value` lines are the
 details a rule can match. A shaded node is the primary detection opportunity. In
-every procedure here the shaded node is the same one: the API server's audit of
-the RBAC write.
+Procedures A–E and G the shaded node is the same one: the API server's audit of
+the RBAC write. Procedure F is the exception: its shaded node is the API server's
+audit of the `configmaps` write to `kube-system/aws-auth`.
 
 ### Procedure A: ClusterRoleBinding to a powerful ClusterRole  (`TRR9004.K8S.A`)
 
@@ -175,7 +189,8 @@ Source: [`ddms/trr9004_k8s_a.json`](ddms/trr9004_k8s_a.json) (Arrows app format)
 **DDM summary.** The shaded node is the API server's authorize-and-audit of the
 RBAC write (*Authorize + Audit RBAC Write*). It fires at `Metadata` on
 `objectRef.apiGroup: rbac.authorization.k8s.io` with a write verb, which is the
-invariant for every procedure. `roleRef` (the fact that this binds a ClusterRole,
+invariant for every RBAC procedure (A–E and G; Procedure F keys on the
+`kube-system/aws-auth` ConfigMap write instead). `roleRef` (the fact that this binds a ClusterRole,
 and which one) is on the next node, visible only at `Request` level — that is
 what grades the severity.
 
@@ -291,13 +306,92 @@ keys on the API group and the write verb, not on `create`, it sees this path
 where a create-only rule does not. The added subject or rule is in
 `requestObject` at `Request` level.
 
+### Procedure F: Map an IAM principal through the EKS aws-auth ConfigMap  (`TRR9004.K8S.F`)
+
+On an Amazon EKS cluster whose authentication mode is `CONFIG_MAP` or
+`API_AND_CONFIG_MAP`, the AWS IAM authenticator reads one ConfigMap,
+`kube-system/aws-auth`, and maps each IAM role or user it lists (`mapRoles`,
+`mapUsers`, `mapAccounts`) to a Kubernetes username and groups. The adversary
+edits that ConfigMap to map an IAM principal they control to `system:masters`, or
+to a group that a binding grants cluster-admin.
+
+Unlike an EKS *access entry*, a GKE IAM binding, or an AKS role assignment — each
+a cloud-API write that never reaches the Kubernetes audit log — aws-auth is an
+ordinary Kubernetes ConfigMap, so the write *is* a Kubernetes API call and the
+audit log records it. That is why this managed-cluster grant is in scope here.
+
+- **Prerequisites:** `create`/`update`/`patch` on `configmaps` in `kube-system`
+  (or cluster-admin). The cluster must use the aws-auth authentication path.
+- **Mechanics:** no RBAC object changes, so the `k8s_rbac_*` rules do not see it.
+  The access survives pod, node and RBAC clean-up, because it lives in the IAM
+  mapping, not in a Kubernetes binding.
+- **Impact:** persistent cluster access for an IAM principal the adversary holds.
+- **Tools on this path:** `kubectl edit/patch/apply configmap aws-auth`, `eksctl`,
+  a client `PATCH`/`PUT`, Stratus Red Team
+  `eks.persistence.backdoor-aws-auth-configmap` (a client-go `Update`).
+
+#### Detection Data Model — `TRR9004.K8S.F`
+
+![DDM - Map an IAM principal through the EKS aws-auth ConfigMap](ddms/trr9004_k8s_f.png)
+
+Source: [`ddms/trr9004_k8s_f.json`](ddms/trr9004_k8s_f.json) (Arrows app format).
+
+**DDM summary.** The shaded node is the API server's audit of the `configmaps`
+write to `kube-system/aws-auth`. It fires at `Metadata`:
+`objectRef.resource: configmaps`, `objectRef.namespace: kube-system`,
+`objectRef.name: aws-auth`, and a write verb are all present, and the object name
+is forced (the IAM authenticator reads only that name). The grey node — the IAM
+authenticator mapping the principal — is out of the Kubernetes audit scope (it
+runs in EKS). A content grade cannot stand on one record: every `update`
+re-sends the existing admin mapping, so the chokepoint is the detection and the
+actor is the discriminator.
+
+### Procedure G: Write a sensitive (non-wildcard) role  (`TRR9004.K8S.G`)
+
+Rather than a wildcard, the adversary writes a Role or ClusterRole whose rules
+grant a *specific* permission that is not a wildcard but acts close to
+cluster-admin once bound: command execution in pods (`pods/exec` or `pods/attach`
+with `create` or `get`), minting service-account tokens (`serviceaccounts/token`
+with `create`), or reading every Secret in the cluster (`secrets` with `get`,
+`list` or `watch`, in a ClusterRole). It is a distinct procedure from C by its
+content, the way Procedure D is distinct from A and B: the write verb and resource
+are the same as C's, but the dangerous grant is an explicit, named permission
+rather than a wildcard or an `escalate`/`bind` verb, so a different grader (a
+medium one) covers it and the high-severity wildcard grader does not.
+
+- **Prerequisites:** `create`/`update`/`patch` on `roles` or `clusterroles`; the
+  `escalate` verb (or a pre-existing grant) to add a permission beyond what the
+  writer holds.
+- **Mechanics:** the role grants nothing until it is bound; it is the raw material
+  for escalation, one step quieter than a wildcard.
+- **Impact:** exec into any pod, mint a token for any service account, or read
+  every Secret — each a path to broader control.
+- **Tools on this path:** `kubectl create clusterrole`/`role --verb=... --resource=...`,
+  `kubectl apply`, `kubectl patch`.
+
+#### Detection Data Model — `TRR9004.K8S.G`
+
+![DDM - Write a sensitive non-wildcard role](ddms/trr9004_k8s_g.png)
+
+Source: [`ddms/trr9004_k8s_g.json`](ddms/trr9004_k8s_g.json) (Arrows app format).
+
+**DDM summary.** Same chokepoint audit event as Procedure C, resource
+`clusterroles` or `roles`. The grading node reads the `rules` list at `Request`
+level: `pods/exec`/`pods/attach` with `create`/`get`, `serviceaccounts/token`
+with `create`, or `secrets` reads in a ClusterRole. At `Metadata` a sensitive
+role and a read-only role are indistinguishable.
+
 ## Detection Strategy
 
-Compare the five DDMs. Every procedure is a mutating call against the
-`rbac.authorization.k8s.io` API group, and every one leaves the same kind of
-audit event. There is no path that escalates through RBAC without this write. So
-the plan is one chokepoint rule, plus one severity rule that reads the request
-body to grade the grant.
+Compare the seven DDMs. Procedures A–E and G are mutating calls against the
+`rbac.authorization.k8s.io` API group, and every one leaves the same kind of RBAC
+audit event; there is no path that escalates through RBAC without this write.
+Procedure F is a write of the `kube-system/aws-auth` ConfigMap — a different API
+object, a different audit event, but the same persistence effect. So the plan is
+**two chokepoint rules** (Strategy 1 for the RBAC write, Strategy 4 for the
+aws-auth write) plus **two severity rules** that read the request body to grade an
+RBAC grant (Strategy 2, high, for wildcards and escalate/bind; Strategy 3, medium,
+for explicit sensitive permissions).
 
 **Telemetry requirement.** The audit policy must record the
 `rbac.authorization.k8s.io` group for the write verbs at **Request** (or
@@ -307,7 +401,16 @@ any `level: None` rule, and keep it user-agnostic: do not drop
 because an adversary who impersonates a controller would then be invisible, and
 the negative control needs to see the baseline writes and exclude them by name.
 
-**Strategy 1 — chokepoint (covers A–E).**
+For Procedure F the audit policy must record `kube-system/aws-auth` ConfigMap
+writes at **Metadata** or above (never `None`), which is enough for the chokepoint
+to fire. This repo logs the `update`, `patch` and `delete` at `RequestResponse`, as
+EKS logs them, so the stored `mapRoles` after an update or patch are kept for
+triage; it logs the `create` at `Request` (the kube-system ConfigMap create rule).
+The validator's sentinel gate needs only `Request`: it reads the create body and
+the patch body. See
+[`detections/k8s/audit-policy-apiserver.yaml`](../../../detections/k8s/audit-policy-apiserver.yaml).
+
+**Strategy 1 — chokepoint (covers A–E and G).**
 Match audit events where `objectRef.apiGroup` is `rbac.authorization.k8s.io` and
 `verb` is `create`, `update`, `patch`, `delete`, or `deletecollection`. Filter one
 request: the namespace controller's `deletecollection` when it empties a namespace
@@ -316,7 +419,14 @@ kubeadm cluster writes dozens of RBAC objects at bootstrap and reconciles the
 default roles continuously. Baseline the **actor**, not the object: suppress
 `system:kube-controller-manager`, `system:apiserver`, the kubeadm and
 `system:bootstrappers` identities, and known GitOps or CI service accounts by
-`user.username` and `user.groups`.
+`user.username` and `user.groups`. Every RBAC-object grant passes through an RBAC
+write, so this rule covers A–E and G. Procedure F (aws-auth) changes no RBAC object;
+Strategy 4 covers it. Two companion rules grade the same writes:
+`k8s_rbac_privileged_grant` (Strategy 2, high) and
+`k8s_rbac_sensitive_permission_grant` (Strategy 3, medium). One write leaves no record
+at all: a server-side apply patch with a YAML body, which the JSON audit backend drops
+at Request level or higher
+([`RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) K23).
 
 - Sensor: API server audit log.
 - Rule: `detections/sigma/T1098.006/k8s_rbac_write.yml` (built).
@@ -356,6 +466,56 @@ which is exactly the gap below.
 - Sensor: API server audit log at `Request` level.
 - Rule: `detections/sigma/T1098.006/k8s_rbac_privileged_grant.yml` (built).
 
+**Strategy 3 — sensitive-grant severity (grades G, and a sensitive grant added by
+Procedure E except as a JSON patch; needs Request level).**
+A medium companion to Strategy 2 for the writes that grant a *specific*
+sensitive permission rather than a wildcard. Match a Role or ClusterRole write
+whose `rules` grant, each inside one rule object: `pods/exec` or `pods/attach`
+with `create` or `get` (command execution in pods); `serviceaccounts/token` with
+`create` (mint tokens); or `secrets` with `get`/`list`/`watch` in a ClusterRole
+(read every Secret). The `*/exec`, `*/attach` and `*/token` resource forms count,
+because RBAC matches `*/<subresource>` on every resource. The verb and the
+resource must be in the same rule object, in either key order (a create or update
+body is in Go field order; a patch keeps the client's order). It therefore grades
+Procedure G (whose emulated shape is a create of such a role) and a Procedure E
+write that adds a sensitive grant through a create, update, or merge/strategic/apply
+patch; it does **not** grade Procedure E's emulated JSON patch (`kubectl patch
+--type=json`), whose `requestObject` is an operation list this rule does not read
+(K27). It also does **not** grade Procedure C: C is a wildcard or an
+`escalate`/`bind`/`impersonate` role, and this rule deliberately does not read the
+wildcard `*` verb or resource, so a C write raises the high-severity Strategy 2
+alert only; a rule that is both wildcard and explicit raises both. The `clusterrole-aggregation-controller` writing the built-in `admin`
+and `edit` (which carry these by design) is filtered; `view` is not, so a role
+aggregated into `view` fires on the controller's next write. Limits
+([`RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) K26, K27): the
+bootstrap roles the API server writes fire (`system:aggregate-to-edit`,
+`system:node`, `system:kube-controller-manager`; `edit` itself does not, it is
+written with only an aggregation rule), a JSON-patch operation list is not read,
+and `pods/ephemeralcontainers` and `resourceNames` are not graded.
+
+- Sensor: API server audit log at `Request` level.
+- Rule: `detections/sigma/T1098.006/k8s_rbac_sensitive_permission_grant.yml` (built).
+
+**Strategy 4 — aws-auth chokepoint (covers F).**
+Match an audit event whose `objectRef.resource` is `configmaps`, whose
+`objectRef.namespace` is `kube-system`, whose `objectRef.name` is `aws-auth`, and
+whose `verb` is `create`, `update`, `patch` or `delete`. This is the EKS
+managed-identity path (Procedure F). The object name is forced — the IAM
+authenticator reads only that one ConfigMap — so the marker is load-bearing and
+non-spoofable. Metadata level is enough. Fire on any outcome of an `update`,
+`patch` or `delete` (a denied write is an attempt worth a look), and on an
+authorized `create`. A `create` that authorization denies logs no
+`objectRef.name` ([`RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) K28),
+and a server-side apply sent as raw YAML is dropped by the JSON audit backend (K23),
+so neither can fire. Baseline the
+real writers by actor
+(`eks:kms-storage-migrator`, `eksctl`, the Terraform provider, Defender's
+agentless-discovery role). A content grade cannot stand on one record, so this
+stays a chokepoint.
+
+- Sensor: API server audit log.
+- Rule: `detections/sigma/T1098.006/k8s_eks_aws_auth_configmap_modified.yml` (built).
+
 **Demonstrated gap — the Metadata blindness.**
 Emulate Procedure A (bind the read-only `view` role) and read the audit event at
 `Metadata`: it shows `objectRef.resource: clusterrolebindings`,
@@ -392,10 +552,15 @@ mutation of RBAC off the audit path.
 | B | Strategy 1; graded by Strategy 2 | `create rolebindings` with `roleRef.kind: ClusterRole` |
 | C | Strategy 1; graded by Strategy 2 | `create`/`update`/`patch` role with wildcard or escalate/bind |
 | D | Strategy 1; graded by Strategy 2 | binding with a built-in Group subject |
-| E | Strategy 1; graded by Strategy 2 | `patch`/`update` an existing RBAC object |
+| E | Strategy 1; graded by Strategy 2; Strategy 3 for a sensitive grant added by a non-JSON-patch write | `patch`/`update` an existing RBAC object |
+| F | Strategy 4 | `create`/`update`/`patch`/`delete` `kube-system/aws-auth` |
+| G | Strategy 1; graded by Strategy 3 | `create`/`update`/`patch` role granting exec, token or cluster-wide secrets |
 
-One chokepoint rule covers every procedure. One severity rule, which needs
-`Request` level, tells a dangerous grant from an everyday one.
+The RBAC chokepoint rule (Strategy 1) covers every RBAC-write procedure (A–E, G);
+a separate chokepoint (Strategy 4) covers the EKS aws-auth write (F). Two severity
+rules read the request body to grade a grant: Strategy 2 (high) for wildcards,
+escalate/bind, powerful bindings and group subjects, and Strategy 3 (medium) for
+sensitive non-wildcard permissions.
 
 ## Available Emulation Tests
 
@@ -403,7 +568,9 @@ The tests run in a lab cluster with an audit policy that records the RBAC group
 at `Request` level. The lab is a `kind` cluster; its config and audit policy are
 in [`detections/k8s/`](../../../detections/k8s/). Every object the tests write is
 named with the unique prefix `trr9004-`, so a validator matches the emulation's
-own events and the many bootstrap RBAC writes cannot be confused for it. One
+own events and the many bootstrap RBAC writes cannot be confused for it.
+(Procedure F is the exception: the aws-auth object name is fixed, so the validator
+gates it on the `trr9004` sentinel the emulation writes into the body.) One
 script drives them all:
 [`atomics/T1098.006/src/emulate.sh`](../../../atomics/T1098.006/src/emulate.sh),
 with an Atomic Red Team wrapper in
@@ -416,17 +583,28 @@ with an Atomic Red Team wrapper in
 | TRR9004.K8S.C | `emulate.sh c` — create a read-only role and a wildcard role that is never bound. | **built** |
 | TRR9004.K8S.D | `emulate.sh d` — bind the `view` role to a throwaway group (the mass-grant shape). | **built** |
 | TRR9004.K8S.E | `emulate.sh e` — patch the benign role to add a rule (`verb: patch`). | **built** |
+| TRR9004.K8S.F | `emulate.sh f` — create, patch and delete the EKS aws-auth ConfigMap with a `trr9004` sentinel; it touches only an aws-auth it wrote (it skips when it cannot read the object or the object exists without being exactly its own, and removes only a leftover that is exactly what it writes). | **built** |
+| TRR9004.K8S.G | `emulate.sh g` — create `trr9004-cr-secrets` (secrets get/list), `trr9004-role-exec` (create pods/exec) and `trr9004-role-token` (create serviceaccounts/token), none bound. | **built** |
 
 Every binding points at the read-only `view` role, the wildcard role is never
-bound, and the group binding uses a throwaway group `trr9004-nogroup` that no
-principal belongs to. Nothing gains real power.
+bound, the group binding uses a throwaway group `trr9004-nogroup` that no
+principal belongs to, the sensitive roles (Procedure G) are never bound, and the
+aws-auth procedure (F) touches only an aws-auth it wrote: it skips when it cannot
+read the object or the object exists without being exactly its own, and removes
+only a leftover that is exactly what it writes. Its patch carries the create's
+`resourceVersion` and its delete a `resourceVersion` precondition, so the API
+server refuses either (409 Conflict) if another writer changed the object in
+between. It maps its one added role to a throwaway group, not `system:masters`.
+Nothing gains real power.
 
 ## Detections
 
 | Strategy | Covers | Sigma rule | Sensor |
 |----------|--------|------------|--------|
-| 1 (chokepoint) | A, B, C, D, E | [`detections/sigma/T1098.006/k8s_rbac_write.yml`](../../../detections/sigma/T1098.006/k8s_rbac_write.yml) | API server audit log |
+| 1 (chokepoint) | A, B, C, D, E, G | [`detections/sigma/T1098.006/k8s_rbac_write.yml`](../../../detections/sigma/T1098.006/k8s_rbac_write.yml) | API server audit log |
 | 2 (severity) | grades A–E | [`detections/sigma/T1098.006/k8s_rbac_privileged_grant.yml`](../../../detections/sigma/T1098.006/k8s_rbac_privileged_grant.yml) | API server audit log (Request) |
+| 3 (severity) | grades G; E except a JSON patch | [`detections/sigma/T1098.006/k8s_rbac_sensitive_permission_grant.yml`](../../../detections/sigma/T1098.006/k8s_rbac_sensitive_permission_grant.yml) | API server audit log (Request) |
+| 4 (chokepoint) | F | [`detections/sigma/T1098.006/k8s_eks_aws_auth_configmap_modified.yml`](../../../detections/sigma/T1098.006/k8s_eks_aws_auth_configmap_modified.yml) | API server audit log |
 
 The auditd validator (`detections/validate_detections.py`) replays syscall
 atomics and cannot test these rules. The Kubernetes API server loop has its own
@@ -434,7 +612,8 @@ validator,
 [`detections/validate_apiserver_detections.py`](../../../detections/validate_apiserver_detections.py):
 it reads the API server audit log the emulation produced and asserts each Sigma
 rule above matches an event from the emulation itself (one naming a `trr9004-`
-object). The workflow
+object, or — for the fixed-name aws-auth object — one carrying the `trr9004`
+sentinel the emulation writes into the body). The workflow
 [`validate-apiserver-detections.yml`](../../../.github/workflows/validate-apiserver-detections.yml)
 runs the whole loop on a `kind` cluster for every change to these files, and runs
 the validator as a negative control on the audit log captured *before* the
@@ -453,6 +632,20 @@ Team `k8s.persistence.create-admin-clusterrole` emulates Procedures A and C toge
 Propose the chokepoint rule (whole RBAC group, all write verbs) plus the
 `requestObject` severity rule as an improvement.
 
+For the sensitive-grant severity rule (Strategy 3), the nearest prior art is
+Elastic's "Kubernetes Creation or Modification of Sensitive Role", whose one query
+grades the wildcard/escalate tier and the `pods/exec`/`serviceaccounts/token`/`secrets`
+tier together; Falco's "ClusterRole With Pod Exec Created" grades the exec grant
+alone. This rule splits the explicit-permission tier into a medium rule separate
+from the high wildcard rule, so a sensitive grant and a wildcard grant raise
+different severities. For the aws-auth chokepoint (Strategy 4, Procedure F), the
+nearest prior art is Elastic's "EKS Authentication Configuration Modified" (same
+chokepoint: `configmaps` + name `aws-auth` + `kube-system` + update/patch/delete);
+Stratus Red Team `eks.persistence.backdoor-aws-auth-configmap` ships the emulation.
+SigmaHQ, Splunk ESCU, Panther and Falco carry no aws-auth rule. This is the Sigma
+counterpart of Elastic's rule — it adds `create` (a delete-and-recreate) and is
+proven in CI on a live kind audit log; it is not a discovery.
+
 ## References
 
 - MITRE ATT&CK, T1098.006 Additional Container Cluster Roles:
@@ -470,6 +663,15 @@ Propose the chokepoint rule (whole RBAC group, all write verbs) plus the
   <https://github.com/SigmaHQ/sigma/blob/master/rules/application/kubernetes/audit/kubernetes_audit_rolebinding_modification.yml>
 - Elastic rule, Kubernetes Cluster-Admin Role Binding Created:
   <https://www.elastic.co/docs/reference/security/prebuilt-rules/rules/integrations/kubernetes/persistence_cluster_admin_rolebinding_created>
+- Elastic rule, Kubernetes Creation or Modification of Sensitive Role (the exec /
+  token / cluster-wide-secrets tier):
+  <https://www.elastic.co/docs/reference/security/prebuilt-rules/rules/integrations/kubernetes/persistence_sensitive_role_creation_or_modification>
+- Elastic rule, EKS Authentication Configuration Modified (the aws-auth chokepoint):
+  <https://www.elastic.co/docs/reference/security/prebuilt-rules/rules/integrations/kubernetes/persistence_kubernetes_eks_aws_auth_configmap_modified>
+- Stratus Red Team, Backdoor aws-auth EKS ConfigMap:
+  <https://stratus-red-team.cloud/attack-techniques/EKS/eks.persistence.backdoor-aws-auth-configmap/>
+- AWS documentation, Grant IAM users and roles access to Kubernetes (the aws-auth
+  ConfigMap): <https://docs.aws.amazon.com/eks/latest/userguide/auth-configmap.html>
 - Microsoft Threat Matrix for Kubernetes:
   <https://microsoft.github.io/Threat-Matrix-for-Kubernetes/>
 - TRR method:

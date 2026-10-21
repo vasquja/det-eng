@@ -1,0 +1,79 @@
+title: Kubelet Pod Read or Checkpoint Through the Kubernetes Node Proxy
+id: 5b1d7e0a-3c42-4f8e-9a6b-1e2d3c4b5a69
+status: experimental
+description: |
+  Detects a call through the API server node proxy (nodes/proxy) to a kubelet
+  endpoint that reads every pod on the node (/pods, /runningpods) or checkpoints a
+  running container (/checkpoint). The kubelet endpoint is the first path segment
+  after the /api/v1/<resource>/<name>/proxy/ prefix. The match is anchored on that
+  prefix, so a later segment named pods, runningpods or checkpoint (a namespace,
+  pod or container name, or a query value) does not match.
+
+  /pods returns the full spec of every pod on the node, literal environment
+  values included. /runningpods/ returns the pod list from the container runtime:
+  the name, namespace and UID of each pod, and the name and image of each
+  container. Neither read needs a pods list or get on the API: this is container
+  and resource discovery (T1613). /checkpoint is a POST (audit verb create) that
+  writes the container's memory and file system to an archive on the node, from
+  which secrets can be read: this is credential access through the Container API
+  (T1552.007). This rule lives in the TRR9002 (T1609) folder as Procedure F,
+  since it covers the same nodes/proxy to kubelet surface as the node-proxy exec
+  rule; attack.t1609 is the folder technique, not the behavior.
+
+  The main step of Stratus Red Team k8s.privilege-escalation.nodes-proxy is a
+  service-account GET of .../proxy/runningpods/, which this rule matches.
+
+  Path forms. The API server joins the proxied path with path.Join before it
+  sends the request to the kubelet. This drops empty (//) and single-dot (/./)
+  segments, resolves .. segments, and uses the decoded path. Empty and single-dot
+  segments directly after /proxy/ are matched here (for example /proxy//pods or
+  /proxy/./runningpods/). A percent-encoded byte or a .. segment is left to
+  k8s_node_proxy_exec.yml, whose path-normalization branch fires on any
+  nodes/proxy path that holds one. A path that names a literal endpoint here and
+  also holds one of those (for example /proxy/pods/../runningpods/) fires both
+  rules; that double alert is intended, because such a request is itself
+  anomalous.
+
+  Command execution through the same proxy (/exec, /run, /attach) is
+  k8s_node_proxy_exec.yml; a tunnel (/portForward) is
+  T1572/k8s_node_proxy_portforward.yml (TRR9026). Monitoring scrapes (/metrics,
+  /stats, /configz, /healthz) do not match.
+references:
+  - https://attack.mitre.org/techniques/T1613/
+  - https://attack.mitre.org/techniques/T1552/007/
+  - https://kubernetes.io/docs/reference/access-authn-authz/kubelet-authn-authz/
+author: det-eng
+date: 2026/10/20
+tags:
+  - attack.discovery
+  - attack.t1613
+  - attack.credential-access
+  - attack.t1552.007
+  - attack.execution
+  - attack.t1609
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_node_proxy:
+    objectRef.resource: 'nodes'
+    objectRef.subresource: 'proxy'
+  # The kubelet endpoint is the first path segment after the
+  # /api/v1/<resource>/<name>/proxy/ prefix; the ^ anchor stops a later segment
+  # (a namespace, pod or container named pods or proxy) from matching. The prefix
+  # also accepts a namespaced resource (services/proxy), so objectRef.resource
+  # alone separates a Service proxy. Empty and single-dot segments before the
+  # endpoint are allowed: the API server drops them before it proxies the path.
+  # /runningpods ends in a slash on the kubelet; /pods and /checkpoint take a
+  # trailing path or query.
+  select_kubelet_endpoint:
+    requestURI|re: '^/api/v1/(namespaces/[^/?]+/)?[a-z]+/[^/?]+/proxy/(\.?/)*(pods|runningpods|checkpoint)([/?].*)?$'
+  condition: select_node_proxy and select_kubelet_endpoint
+falsepositives:
+  - An SRE reading the kubelet pod list with kubectl get --raw
+    /api/v1/nodes/<node>/proxy/pods while it debugs a node. Baseline those
+    identities by user.username. This is the rule's benign-corpus budget
+    (detections/benign/budgets.json).
+  - Container checkpoint for forensics or live migration (the ContainerCheckpoint
+    feature). Rare and operator-driven; triage every hit.
+level: medium

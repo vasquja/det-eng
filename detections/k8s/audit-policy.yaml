@@ -38,7 +38,8 @@ rules:
       - group: ""
         resources: ["pods/ephemeralcontainers"]
 
-  # Procedure D: command execution forwarded through the API server node proxy.
+  # Procedures D and F: kubelet endpoints through the API server node proxy (D runs a
+  # command; F reads the kubelet's pod lists).
   - level: Metadata
     resources:
       - group: ""

@@ -368,6 +368,18 @@ node access can edit CoreDNS's mounted config on disk or in etcd with no API wri
 no audit event; a node file/etcd sensor is the only cover, which the lab notes
 read-only.
 
+**Audit-pipeline gap — a YAML apply body.**
+A server-side apply patch whose body is YAML (not the JSON that kubectl and client-go
+send) leaves no audit record at Request level or higher: the API server logs the raw
+patch body as JSON, the JSON log backend cannot encode it, and it drops the whole
+event. The shipped policy logs the three DNS ConfigMaps at RequestResponse, so such a
+write of `coredns`, `kube-dns` or `coredns-custom` fires neither rule. Procedures B and
+C write by server-side apply; their emulation sends JSON and is logged. A create (D)
+is a POST, which the API server re-encodes as JSON, so it is not affected. The
+operator signal is the kube-apiserver line `Error in audit plugin` and the metric
+`apiserver_audit_error_total`. Tracked as
+[RULE_DEFECTS K23](../../../detections/RULE_DEFECTS.md#k23-apply-patches-with-a-yaml-body-no-audit-record-at-request-level-or-higher).
+
 **Coverage summary.**
 
 | Procedure | Covered by | How |
@@ -378,8 +390,8 @@ read-only.
 | D | Strategy 1; graded by Strategy 2 | created `requestObject.data.Corefile` (Request: create rule) |
 
 One chokepoint rule covers every write to the cluster DNS ConfigMaps. One content
-grader separates a Corefile poisoning from a benign edit. Availability deletion and the
-node bypass are stated gaps.
+grader separates a Corefile poisoning from a benign edit. Availability deletion, the
+node bypass and a YAML apply body (K23) are stated gaps.
 
 ## Available Emulation Tests
 

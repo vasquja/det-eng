@@ -13,10 +13,19 @@ description: |
   enforce policy, so removing or disarming them clears the way for the next
   malicious pod, unsigned image, or privilege grab.
 
-  create is deliberately EXCLUDED: creating a malicious webhook is persistence
-  (Event Triggered Execution), a different technique. There is no replace audit
-  verb either: an HTTP PUT (kubectl replace, or apply sent as PUT) is recorded as
-  verb=update. So the four verbs here are the complete disabling set.
+  The create verb is deliberately EXCLUDED: creating a malicious webhook is
+  persistence (Event Triggered Execution, TRR9025), a different technique. But a
+  server-side-apply install of a missing object (kubectl apply --server-side, or a
+  GitOps or Helm deploy that uses server-side apply) is a patch answered 201, not a
+  create, so it does fire this rule (K21). The TRR9025 create rules
+  (T1546/k8s_admission_webhook_created.yml, and
+  T1546/k8s_malicious_admission_webhook_created.yml for a URL-mode webhook) fire on
+  the same record, so such an install alerts twice; that double alert is expected.
+  The TRR9008 neuter grader filters it (an install cannot neuter an installed
+  webhook). A refused server-side-apply install (a patch answered 4xx) fires neither
+  TRR9025 create rule (their patch branch needs 201); this rule records it. There is
+  no replace audit verb either: an HTTP PUT (kubectl replace, or apply sent as PUT)
+  is recorded as verb=update. So the four verbs here are the complete disabling set.
 
   The rule fires at Metadata (verb, apiGroup, and objectRef.name are enough to see
   a delete or flag a patch/update). It cannot tell a benign webhook edit from a
@@ -45,14 +54,23 @@ detection:
       - 'update'
       - 'patch'
   # Server-side dry run of an update or patch: the options are read from the query
-  # only, so ?dryRun=All (the whole parameter) is what the server used.
+  # only, so ?dryRun=All (the whole parameter) is what the server used. The first
+  # "?" starts the query (the logged path is escaped, so it has no raw "?"), and Go
+  # net/url splits the query at "&". So dryRun=All must come directly after that "?"
+  # or after an "&", and end at an "&" or at the end. A value of another parameter
+  # ("?fieldManager=?dryRun=All", "x%26dryRun=All") is not a dry run.
   filter_dry_run_write:
     verb:
       - 'update'
       - 'patch'
-    requestURI|re:
-      - '[?&]dryRun=All$'
-      - '[?&]dryRun=All\&'
+    requestURI|re: '^[^?]*\?(.*\&)?dryRun=All(\&.*)?$'
+  # Part of the dry-run filter: Go net/url (go1.24.12, go1.25.6, go1.26 and later,
+  # in a binary whose go.mod sets go 1.24 or later; Kubernetes v1.36.4 builds with
+  # Go 1.26.5) reads no parameter, dryRun too, of a query with 10,000 or more "&",
+  # and the API server then stores the write. A dry run counts only when the URI holds at most
+  # 100 "&" (no client sends more).
+  sel_query_parsed:
+    requestURI|re: '^[^&]*(\&[^&]*){0,100}$'
   # Server-side dry run of a delete: in the DeleteOptions body (Request level, as
   # the shipped policy logs admissionregistration deletes). The query form is not
   # filtered for a delete: with a body present the API server ignores the query.
@@ -61,7 +79,7 @@ detection:
       - 'delete'
       - 'deletecollection'
     requestObject.dryRun|contains: 'All'
-  condition: select_adm_write and not filter_dry_run_write and not filter_dry_run_delete_body
+  condition: select_adm_write and not (filter_dry_run_write and sel_query_parsed) and not filter_dry_run_delete_body
 falsepositives:
   - The policy engine's own controller reconciling its webhook configuration
     (Gatekeeper, Kyverno), and GitOps or Helm upgrades that replace a webhook

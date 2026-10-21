@@ -26,10 +26,10 @@ description: |
   (system:serviceaccount:*), cross-namespace, into kube-system or a Secrets-bearing or
   database pod, off-hours, or from an unexpected sourceIP. Falco's default k8saudit
   ruleset ships an equivalent port-forward rule; this is its provider-agnostic
-  Sigma/pySigma counterpart, and the first pods/portforward rule in the Sigma rule set
-  (SigmaHQ ships only the exec sibling). It does not see a port-forward that goes
-  directly to the kubelet or through nodes/proxy (that leaves a nodes/proxy or no API
-  audit record), which is the TRR9002 direct-kubelet gap.
+  Sigma/pySigma counterpart; SigmaHQ ships no pods/portforward rule, only the exec
+  sibling. It does not see a port-forward through nodes/proxy (TRR9026 Procedure C,
+  covered by k8s_node_proxy_portforward) or one that goes directly to the kubelet
+  :10250 (Procedure D, the TRR9002 direct-kubelet gap).
 references:
   - https://attack.mitre.org/techniques/T1572/
   - https://kubernetes.io/docs/tasks/access-application-cluster/port-forward-access-application-cluster/

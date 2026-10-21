@@ -2,23 +2,26 @@ name: validate-apiserver-detections
 
 # Proves the API-server Kubernetes loops on a real Kubernetes cluster, on ONE kind
 # cluster that all the techniques share (they all key on the same API server audit log):
-#   - TRR9004 (RBAC, T1098.006):        rbac write        -> audit -> Sigma
+#   - TRR9004 (RBAC, T1098.006):        rbac write, and kube-system/aws-auth ConfigMap write -> audit -> Sigma
 #   - TRR9005 (Jobs/CronJobs, T1053.007): batch write      -> audit -> Sigma,
 #                                         and the executed job pod -> node sensor
 #   - TRR9006 (Secrets, T1552.007):     secret read / token -> audit -> Sigma
 #   - TRR9007 (dangerous pod spec, T1611): pod/controller requestObject -> audit -> Sigma
-#   - TRR9008 (disable admission control, T1685): admissionregistration write -> audit -> Sigma
+#   - TRR9008 (disable admission control, T1685): admissionregistration write, and apps-group
+#                                         enforcer workload removal -> audit -> Sigma
 #   - TRR9009 (impersonation, T1134):   impersonatedUser presence    -> audit -> Sigma
 #   - TRR9010 (indicator removal, T1070): events, pod/job and namespace deletes -> audit -> Sigma
-#   - TRR9025 (malicious admission webhook, T1546): admissionregistration create + body grade
-#   - TRR9026 (pod port-forward, T1572): pods/portforward subresource -> audit -> Sigma
+#   - TRR9025 (malicious admission webhook, T1546): admissionregistration create/SSA install + body grade, repoint grade
+#   - TRR9026 (pod port-forward, T1572): pods/portforward subresource and nodes/proxy /portForward/ -> audit -> Sigma
 #   - TRR9027 (cluster DNS poisoning, T1565.001): kube-system DNS ConfigMap write + Corefile grade
 #
 # A kind cluster runs on the ubuntu-latest runner with API server audit logging on
 # (pod creates, updates and patches; controller and RBAC writes and deletes, except
-# deletecollection; admission-config creates and deletes at Request level;
-# admission-config updates and patches and the three cluster DNS ConfigMaps at
-# RequestResponse; kube-system ConfigMap creates at Request; pod and Event deletes,
+# deletecollection, with the deployments, statefulsets and replicasets scale
+# subresources; admission-config creates and deletes at Request level;
+# admission-config updates and patches, the three cluster DNS ConfigMaps, and the
+# kube-system/aws-auth ConfigMap update/patch/delete at RequestResponse; kube-system
+# ConfigMap creates at Request; pods/portforward and nodes/proxy, pod and Event deletes,
 # Secrets and tokens at Metadata; see detections/k8s/audit-policy-apiserver.yaml), and a small CRI poller on the node stands in for a runtime security
 # agent (detections/k8s/cri-pod-sensor.sh). The job captures a BEFORE snapshot
 # (negative control), runs the benign emulations, collects both logs, and asserts each

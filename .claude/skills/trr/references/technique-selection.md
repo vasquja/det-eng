@@ -192,7 +192,8 @@ reasoning survives. Append an entry per vet; keep it short.
   negative-control gap. At the node/process/network layer where it IS observable there is no trusted,
   non-spoofable in-record marker (Q1), and the open detections (Elastic's process-arg / kubeletctl host rules)
   have no honest differentiation beyond logsource (Q4). Left as the TRR9002 gap; the TRR9026 port-forward report
-  restates it as its own Procedure C gap.
+  restates it as its own Procedure D gap (Procedure C, the port-forward through the node proxy, is detected by
+  `k8s_node_proxy_portforward`).
 
 - **Pod-bound SA token used from an unexpected source (T1528/T1550.001/T1078) — LEAN-GO (strongest Q1; Q3
   fidelity caveat on managed clusters).** Server-set, signed-claim, non-spoofable markers in user.extra:
@@ -265,7 +266,9 @@ reasoning survives. Append an entry per vet; keep it short.
   same chokepoint (update/patch/delete, decision allow, minus eks:kms-storage-migrator). SigmaHQ, Splunk, Falco,
   Panther and ART have none, and Stratus ships the emulation. This is the Sigma counterpart, plus `create`.
   Needs an aws-auth RequestResponse policy rule (as EKS logs it) so the validator's sentinel gate can see the
-  body. aws-auth is deprecated (EKS user guide). Deferred to build as TRR9004.K8S.F.
+  body. aws-auth is deprecated (EKS user guide). **Built as TRR9004.K8S.F** (rule
+  `k8s_eks_aws_auth_configmap_modified.yml`, a bare chokepoint; the aws-auth RequestResponse policy rule and the
+  sentinel gate were added; no response-code or `eks:kms-storage-migrator` filter, both baselined by actor).
 
 - **EKS access-entry backdoor in CloudTrail, CreateAccessEntry / AssociateAccessPolicy (T1098.006, secondary
   T1098.003) — LEAN-GO (questions 2 and 4: backstop and differentiated).** A cloud TRR proven by

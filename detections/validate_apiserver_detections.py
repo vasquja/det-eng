@@ -5,15 +5,19 @@ emulations produced. Sibling of validate_k8s_detections.py (TRR9002) and
 validate_staticpod_detections.py (TRR9003), extended to the techniques that all
 key on the same API server audit log (plus one node runtime sensor rule):
 
-  * TRR9004 (T1098.006, RBAC)            - rbac writes
+  * TRR9004 (T1098.006, RBAC)            - rbac writes + kube-system/aws-auth ConfigMap
+                                           write
   * TRR9005 (T1053.007, Jobs/CronJobs)   - batch writes + a node CRI job-pod rule
   * TRR9006 (T1552.007, Secrets)         - secret reads + TokenRequest
   * TRR9007 (T1611, dangerous pod spec)  - pod + controller requestObject
-  * TRR9008 (T1685, disable or modify tools) - admissionregistration disable + grade
+  * TRR9008 (T1685, disable or modify tools) - admissionregistration disable + grade,
+                                           and apps-group enforcer workload removal
   * TRR9009 (T1134, impersonation)       - impersonatedUser presence
   * TRR9010 (T1070, indicator removal)   - events delete/deletecollection + namespace delete
-  * TRR9025 (T1546, malicious admission webhook) - admissionregistration create + grade
+  * TRR9025 (T1546, malicious admission webhook) - admissionregistration create/SSA install
+                                           + grade, and repoint grade
   * TRR9026 (T1572, pod port-forward)    - pods/portforward subresource (verb-agnostic)
+                                           + nodes/proxy /portForward/ path
   * TRR9027 (T1565.001, cluster DNS poison) - kube-system DNS ConfigMap write + Corefile grade
 
 The loop this proves, for each match-gated rule:
@@ -29,7 +33,20 @@ are intentionally generic and a fresh kind cluster is full of baseline matches
 kindnet privileged pods). The gate is:
 
   * TRR9004 / TRR9005 (audit) / TRR9007 : objectRef.name begins with 'trr9004-' /
-    'trr9005-' / 'trr9007-'.
+    'trr9005-' / 'trr9007-'. (The sensitive-grant severity rule shares the 'trr9004-'
+    gate; its roles trr9004-cr-secrets / trr9004-role-exec / trr9004-role-token are
+    never bound.)
+  * TRR9007 E (confinement removed): the exact object and resource, with no subresource:
+    pod trr9007-unconfined (pod-level seccomp), pod trr9007-unconfined-aa (container
+    AppArmor) and Deployment trr9007-unconfined-depl, so each row proves its own record
+    (a name prefix would let the Deployment's records pass the pod rows).
+  * TRR9007 K18 and E jp (JSON patch): objectRef.name begins with trr9007-jp-depl /
+    trr9007-jp-pod, resource deployments or pods/ephemeralcontainers, verb patch, and
+    requestObject is the JSON-patch operation list.
+  * TRR9004 F (aws-auth): objectRef.name is 'aws-auth' in kube-system AND some field
+    carries the 'trr9004' sentinel (the object name is fixed, so a name prefix cannot
+    gate it; the emulation writes the sentinel in the body, and there is no aws-auth on
+    kind before the emulation runs, so the pre-emulation log cannot pass).
   * TRR9005 (cri)  : the pod sandbox's batch.kubernetes.io/job-name begins with
     'trr9005-'.
   * TRR9006        : objectRef.namespace is the fixed emulation namespace AND the
@@ -37,8 +54,28 @@ kindnet privileged pods). The gate is:
     too; a 'list' has no objectRef.name, so the namespace + non-system-caller pair
     is the only gate that spans A/B/C/D).
   * TRR9025 / TRR9026 : objectRef.name begins with 'trr9025-' / 'trr9026-'.
+  * TRR9025 SSA install: objectRef.name begins with 'trr9025-ssa-create' AND verb patch
+    AND responseStatus.code 201. TRR9025 D: objectRef.name begins with
+    'trr9025-hijack-<shape>' AND the shape's verb (patch, or update for the PUT) AND
+    responseStatus.code 200 (an accepted modify; a refused write does not pass).
+  * TRR9026 C (nodes/proxy): requestURI contains '/trr9026-' (objectRef.name is the node).
   * TRR9008 D (scale): objectRef.name begins with 'trr9008-' AND objectRef.subresource
     is 'scale' (the kubectl scale write, which the audit policy must log at Request).
+  * TRR9008 D2: objectRef.name begins with 'trr9008-' AND objectRef.namespace is a
+    policy engine's default namespace (gatekeeper-system, kyverno, falco): the
+    stand-in in kyverno. Each write the atomic makes has its own row too: D2 put adds
+    verb update of objectRef.subresource 'scale' (the kubectl scale --current-replicas
+    PUT; its Scale body has no replicas key for 0), D2 patch adds verb patch of
+    'scale' (the plain kubectl scale), and D2 delete adds verb delete of the
+    deployments resource itself. D put proves the anchor rule on the same gate as D2
+    put.
+  * TRR9008 D2 ns / D ns (the atomic's delete of the kyverno namespace): that record
+    names the real namespace and carries no emulation marker, so the gate is the exact
+    write: objectRef.resource 'namespaces', objectRef.name 'kyverno', verb delete, and a
+    user.username that is not 'system:*'. D2 ns proves the alert rule and D ns the anchor
+    rule. The gate rests on kind having no kyverno namespace before d2 runs (d2 creates
+    it only when it is absent and deletes it only when it created it), so the
+    pre-emulation log holds no such record.
   * TRR9027: objectRef.name is a cluster-DNS ConfigMap (coredns / kube-dns /
     coredns-custom) in kube-system AND the write carries the 'trr9027' sentinel in its
     requestObject (the coredns ConfigMap exists at bootstrap, so the name alone is not
@@ -111,10 +148,132 @@ def scale_subresource(prefix):
     return gate
 
 
+def ssa_create_prefix(prefix):
+    """TRR9025 K21: a server-side-apply install of a missing object, which the API
+    server performs as a PATCH answered 201. Gated on the object name AND verb patch
+    AND responseStatus.code 201, so it proves the create-via-apply path (the create
+    rules' `verb patch and responseStatus.code 201` branch), apart from a repoint
+    (a patch answered 200) and from a plain create (verb create)."""
+    def gate(e):
+        return ((e.get("objectRef.name") or "").startswith(prefix)
+                and e.get("verb") == "patch"
+                and e.get("responseStatus.code") == 201)
+    gate.describe = (f"objectRef.name begins with {prefix!r}, verb == 'patch' and "
+                     "responseStatus.code == 201")
+    return gate
+
+
+def accepted_modify(prefix, verbs=("update", "patch")):
+    """TRR9025 D: an accepted modify (responseStatus.code 200) of an object whose name
+    begins with `prefix`, by one of `verbs`. A refused write (403, 409, 422) still carries
+    its body, so a name-only gate would pass it; this gate proves the write took effect."""
+    def gate(e):
+        return ((e.get("objectRef.name") or "").startswith(prefix)
+                and e.get("verb") in verbs
+                and e.get("responseStatus.code") == 200)
+    gate.describe = (f"objectRef.name begins with {prefix!r}, verb in {list(verbs)} and "
+                     "responseStatus.code == 200")
+    return gate
+
+
+def name_resource(name, resource):
+    """TRR9007 E: the write of exactly the object `name` of `resource` (no subresource), so
+    the pod rows and the Deployment row of Procedure E each prove a record of their own."""
+    def gate(e):
+        return (e.get("objectRef.name") == name and e.get("objectRef.resource") == resource
+                and not e.get("objectRef.subresource"))
+    gate.describe = (f"objectRef.name == {name!r}, objectRef.resource == {resource!r}, and no "
+                     "objectRef.subresource")
+    return gate
+
+
+def jsonpatch_gate(prefix, resource, subresource=None):
+    """TRR9007 K18: a kubectl patch --type=json of `resource` named `prefix`* whose audit
+    requestObject is the operation list (a JSON text that flattens to one `requestObject`
+    field beginning with '['). This gates the JSON-patch delivery specifically: a
+    strategic-merge or full-object write flattens to requestObject.spec.* instead and
+    never meets it, so a pass proves the rule's requestObject|re JSON-patch branches
+    fired on a real JSON patch, not a merge look-alike."""
+    def gate(e):
+        ro = e.get("requestObject")
+        return ((e.get("objectRef.name") or "").startswith(prefix)
+                and e.get("objectRef.resource") == resource
+                and (subresource is None or e.get("objectRef.subresource") == subresource)
+                and e.get("verb") == "patch"
+                and isinstance(ro, str) and ro.lstrip().startswith("["))
+    sub = f"/{subresource}" if subresource else ""
+    gate.describe = (f"objectRef.name begins with {prefix!r}, resource {resource}{sub}, verb "
+                     "patch, and requestObject is a JSON-patch operation list (starts with '[')")
+    return gate
+
+
+ENFORCER_NAMESPACES = ("gatekeeper-system", "kyverno", "falco")
+
+
+def enforcer_ns(prefix, namespaces=ENFORCER_NAMESPACES):
+    """TRR9008 D2: a record of an object whose name begins with `prefix` in a policy
+    engine's default namespace (the stand-in Deployment in kyverno)."""
+    def gate(e):
+        return ((e.get("objectRef.name") or "").startswith(prefix)
+                and e.get("objectRef.namespace") in namespaces)
+    gate.describe = (f"objectRef.name begins with {prefix!r} and objectRef.namespace in "
+                     f"{', '.join(namespaces)}")
+    return gate
+
+
+def enforcer_write(prefix, verb, subresource=None, resource="deployments",
+                   namespaces=ENFORCER_NAMESPACES):
+    """TRR9008 D2 put / patch / delete: one write of the stand-in Deployment, so that
+    each branch of the alert rule that the atomic exercises is proven on its own
+    record. `subresource` None is the deployments resource itself. The update (PUT) of
+    deployments/scale (kubectl scale --current-replicas) holds the Scale encoded again,
+    so a scale to 0 has no spec.replicas key (omitempty)."""
+    in_ns = enforcer_ns(prefix, namespaces)
+
+    def gate(e):
+        return (in_ns(e) and e.get("verb") == verb
+                and e.get("objectRef.resource") == resource
+                and e.get("objectRef.subresource") == subresource)
+    gate.describe = (f"{in_ns.describe}, verb == {verb!r}, objectRef.resource == "
+                     f"{resource!r} and objectRef.subresource == {subresource!r}")
+    return gate
+
+
+def enforcer_namespace_delete(name):
+    """TRR9008 D2 ns: the atomic's delete of the enforcer namespace `name` (kyverno).
+
+    The record names the real namespace and carries no trr9008 marker, so the gate is
+    the exact write: objectRef.resource 'namespaces', objectRef.name `name`, verb
+    'delete', by a caller that is not a system identity (the namespace controller's own
+    writes during the teardown are excluded; the TRR9006 pattern). The gate rests on kind
+    having no such namespace before d2 runs: the atomic creates the namespace only when
+    it is absent and deletes it only when it created it, and kind never has it, so the
+    delete happens on every CI run and the pre-emulation log holds no such record (the
+    --expect-miss negative control proves it)."""
+    def gate(e):
+        return (e.get("objectRef.resource") == "namespaces"
+                and e.get("objectRef.name") == name
+                and e.get("verb") == "delete"
+                and not str(e.get("user.username") or "").startswith("system:"))
+    gate.describe = (f"objectRef.resource == 'namespaces', objectRef.name == {name!r}, "
+                     "verb == 'delete' and user.username not 'system:*'")
+    return gate
+
+
 def job_label_prefix(prefix):
     def gate(e):
         return (e.get("labels.batch.kubernetes.io/job-name") or "").startswith(prefix)
     gate.describe = f"labels.batch.kubernetes.io/job-name begins with {prefix!r}"
+    return gate
+
+
+def uri_contains(sub):
+    """A record whose requestURI contains `sub`. For a nodes/proxy request objectRef.name
+    is the NODE name, not the emulation's target, so the emulation's marker rides in the
+    requestURI (the kubelet path), which is the only field that names the target pod."""
+    def gate(e):
+        return sub in (e.get("requestURI") or "")
+    gate.describe = f"requestURI contains {sub!r}"
     return gate
 
 
@@ -173,6 +332,23 @@ def coredns_gate(e):
     return any("trr9027" in str(v) for v in e.values())
 
 
+def aws_auth_gate(e):
+    """TRR9004 F: the emulation's own aws-auth write, told apart by the trr9004 sentinel.
+
+    aws-auth is a fixed object name (the IAM authenticator reads only kube-system/aws-auth),
+    so a name_prefix gate cannot work. Name + namespace alone is not enough either: a real
+    aws-auth exists on an EKS cluster. The emulation puts its unique 'trr9004' sentinel into
+    the body (a create at Request and a patch at RequestResponse both carry it). Modeled on
+    coredns_gate. On kind there is no aws-auth before the emulation runs, so the
+    pre-emulation log cannot pass this gate.
+    """
+    if e.get("objectRef.namespace") != "kube-system":
+        return False
+    if (e.get("objectRef.name") or "") != "aws-auth":
+        return False
+    return any("trr9004" in str(v) for v in e.values())
+
+
 def coredns_gate_named(name):
     """TRR9027, one procedure: the sentinel-marked write to the DNS ConfigMap `name`."""
     def gate(e):
@@ -213,14 +389,21 @@ trr9010_gate.describe = ("objectRef.name begins with 'trr9010-', or verb == dele
                          "in objectRef.namespace 'trr9010'")
 coredns_gate.describe = ("objectRef.namespace == 'kube-system', objectRef.name in coredns / "
                          "kube-dns / coredns-custom, and some field contains 'trr9027'")
+aws_auth_gate.describe = ("objectRef.namespace == 'kube-system', objectRef.name == 'aws-auth', "
+                          "and some field contains 'trr9004'")
 
 
 # (technique folder, rule file, source, label, note, gate). Order is report order.
 MANIFEST = [
-    ("T1098.006", "k8s_rbac_write.yml", "audit", "9004 A-E",
+    ("T1098.006", "k8s_rbac_write.yml", "audit", "9004 A-E,G",
      "RBAC write chokepoint", name_prefix("trr9004-")),
     ("T1098.006", "k8s_rbac_privileged_grant.yml", "audit", "9004 sev",
      "RBAC dangerous-grant severity (Request)", name_prefix("trr9004-")),
+    ("T1098.006", "k8s_rbac_sensitive_permission_grant.yml", "audit", "9004 sens",
+     "RBAC sensitive-grant severity: exec / token / cluster-wide secrets (Request)",
+     name_prefix("trr9004-")),
+    ("T1098.006", "k8s_eks_aws_auth_configmap_modified.yml", "audit", "9004 F",
+     "EKS aws-auth ConfigMap write chokepoint", aws_auth_gate),
     ("T1053.007", "k8s_job_create.yml", "audit", "9005 A-D",
      "batch write chokepoint", name_prefix("trr9005-")),
     ("T1053.007", "k8s_cri_job_pod.yml", "cri", "9005 pod",
@@ -233,6 +416,25 @@ MANIFEST = [
      "pod-spec host-access chokepoint (Request)", name_prefix("trr9007-")),
     ("T1611", "k8s_podspec_controller_host_access.yml", "audit", "9007 ctrl",
      "controller-template host-access (Request)", name_prefix("trr9007-")),
+    ("T1611", "k8s_podspec_confinement_disabled.yml", "audit", "9007 E",
+     "pod-level seccomp Unconfined on a pod (Request)", name_resource("trr9007-unconfined", "pods")),
+    ("T1611", "k8s_podspec_confinement_disabled.yml", "audit", "9007 E aa",
+     "container AppArmor Unconfined on a pod (Request)", name_resource("trr9007-unconfined-aa", "pods")),
+    ("T1611", "k8s_podspec_confinement_disabled.yml", "audit", "9007 E ctrl",
+     "seccomp Unconfined on a Deployment template (Request)",
+     name_resource("trr9007-unconfined-depl", "deployments")),
+    ("T1611", "k8s_podspec_confinement_disabled.yml", "audit", "9007 E jp",
+     "seccomp Unconfined on an ephemeral container via a JSON patch (Request)",
+     jsonpatch_gate("trr9007-jp-pod", "pods", "ephemeralcontainers")),
+    # K18: the JSON-patch delivery, proven live. A kubectl patch --type=json makes a
+    # Deployment template privileged, and adds a privileged ephemeral container to a pod
+    # (pods/ephemeralcontainers). The gate requires the JSON-patch operation list, so a
+    # pass proves the rules' requestObject|re branches fired on a real JSON patch.
+    ("T1611", "k8s_podspec_controller_host_access.yml", "audit", "9007 K18 ctrl",
+     "controller host-access via a JSON patch (Request)", jsonpatch_gate("trr9007-jp-depl", "deployments")),
+    ("T1611", "k8s_podspec_host_access.yml", "audit", "9007 K18 eph",
+     "privileged ephemeral container via a JSON patch (Request)",
+     jsonpatch_gate("trr9007-jp-pod", "pods", "ephemeralcontainers")),
     ("T1685", "k8s_admission_webhook_disabled.yml", "audit", "9008 A-C",
      "admission-control disable chokepoint", name_prefix("trr9008-")),
     ("T1685", "k8s_admission_webhook_neutered.yml", "audit", "9008 sev",
@@ -251,10 +453,34 @@ MANIFEST = [
     ("T1685", "k8s_admission_webhook_neutered.yml", "audit", "9008 C nssel",
      "neuter: namespaceSelector that matches no namespace", name_prefix("trr9008-neuter-nssel")),
     ("T1685", "k8s_security_tool_workload_removed.yml", "audit", "9008 D",
-     "enforcer workload removal fallback", name_prefix("trr9008-")),
+     "enforcer workload removal anchor (any namespace)", name_prefix("trr9008-")),
     ("T1685", "k8s_security_tool_workload_removed.yml", "audit", "9008 D scale",
      "enforcer scale-to-zero via kubectl scale (deployments/scale at Request)",
      scale_subresource("trr9008-")),
+    ("T1685", "k8s_security_tool_workload_removed.yml", "audit", "9008 D put",
+     "anchor: scale-to-zero by a PUT of deployments/scale (kubectl scale --current-replicas)",
+     enforcer_write("trr9008-", "update", "scale")),
+    ("T1685", "k8s_enforcer_workload_removed.yml", "audit", "9008 D2",
+     "enforcer workload removal in an enforcer namespace (the stand-in in kyverno)",
+     enforcer_ns("trr9008-")),
+    ("T1685", "k8s_enforcer_workload_removed.yml", "audit", "9008 D2 put",
+     "enforcer scale-to-zero by a PUT of deployments/scale (the Scale body omits replicas 0)",
+     enforcer_write("trr9008-", "update", "scale")),
+    ("T1685", "k8s_enforcer_workload_removed.yml", "audit", "9008 D2 patch",
+     "enforcer scale-to-zero by a patch of deployments/scale (plain kubectl scale)",
+     enforcer_write("trr9008-", "patch", "scale")),
+    ("T1685", "k8s_enforcer_workload_removed.yml", "audit", "9008 D2 delete",
+     "enforcer Deployment delete in an enforcer namespace",
+     enforcer_write("trr9008-", "delete")),
+    # The enforcer-namespace delete branch of both T1685 workload rules, on d2's delete
+    # of the kyverno namespace it created. No marker: the gate rests on kind having no
+    # kyverno namespace before d2 (the pre-emulation negative control has no such record).
+    ("T1685", "k8s_enforcer_workload_removed.yml", "audit", "9008 D2 ns",
+     "enforcer namespace delete (d2 deletes the kyverno namespace it created)",
+     enforcer_namespace_delete("kyverno")),
+    ("T1685", "k8s_security_tool_workload_removed.yml", "audit", "9008 D ns",
+     "anchor: enforcer namespace delete (d2 deletes the kyverno namespace it created)",
+     enforcer_namespace_delete("kyverno")),
     ("T1134", "k8s_impersonation.yml", "audit", "9009 A-D",
      "impersonation presence chokepoint", impersonation_gate),
     ("T1134", "k8s_impersonation_privileged.yml", "audit", "9009 sev",
@@ -270,8 +496,38 @@ MANIFEST = [
      "malicious admission-webhook create chokepoint", name_prefix("trr9025-")),
     ("T1546", "k8s_malicious_admission_webhook_created.yml", "audit", "9025 sev",
      "malicious webhook grader: clientConfig.url (Request)", name_prefix("trr9025-")),
+    # K21: the server-side-apply install is a PATCH answered 201. Both create rules
+    # match it through their SSA-create branch; gated on trr9025-ssa-create, the new
+    # URL-mode webhook the emulation installs with `kubectl apply --server-side`.
+    ("T1546", "k8s_admission_webhook_created.yml", "audit", "9025 ssa-create",
+     "create chokepoint on a server-side-apply install (verb patch, code 201)",
+     ssa_create_prefix("trr9025-ssa-create")),
+    ("T1546", "k8s_malicious_admission_webhook_created.yml", "audit", "9025 sev ssa-create",
+     "grader on a server-side-apply URL-mode install (verb patch, code 201)",
+     ssa_create_prefix("trr9025-ssa-create")),
+    # TRR9025 Procedure D: an update or patch that repoints an installed webhook to a
+    # url. Each request shape runs on its own object; each gate needs the shape's verb
+    # and an accepted modify (200), so a refused write fails CI instead of passing.
+    ("T1685", "k8s_admission_webhook_disabled.yml", "audit", "9025 D chk",
+     "TRR9008 chokepoint on the Procedure D repoints (accepted update/patch)",
+     accepted_modify("trr9025-hijack-")),
+    ("T1546", "k8s_admission_webhook_repointed_to_url.yml", "audit", "9025 D smp",
+     "repoint grader: strategic merge patch service -> url",
+     accepted_modify("trr9025-hijack-smp", ("patch",))),
+    ("T1546", "k8s_admission_webhook_repointed_to_url.yml", "audit", "9025 D json",
+     "repoint grader: JSON patch remove service, add url",
+     accepted_modify("trr9025-hijack-json", ("patch",))),
+    ("T1546", "k8s_admission_webhook_repointed_to_url.yml", "audit", "9025 D put",
+     "repoint grader: kubectl replace (PUT) with url",
+     accepted_modify("trr9025-hijack-put", ("update",))),
+    ("T1546", "k8s_admission_webhook_repointed_to_url.yml", "audit", "9025 D ssa",
+     "repoint grader: server-side apply with url (patch answered 200)",
+     accepted_modify("trr9025-hijack-ssa", ("patch",))),
     ("T1572", "k8s_pod_portforward.yml", "audit", "9026 A-B",
      "pod port-forward chokepoint (verb-agnostic subresource)", name_prefix("trr9026-")),
+    ("T1572", "k8s_node_proxy_portforward.yml", "audit", "9026 C proxy",
+     "port-forward through nodes/proxy (requestURI /proxy/portForward/; objectRef.name is "
+     "the node, so gate on the marker in requestURI)", uri_contains("/trr9026-")),
     ("T1565.001", "k8s_coredns_configmap_modified.yml", "audit", "9027 A",
      "cluster DNS ConfigMap write chokepoint: coredns patch", coredns_gate_modified("coredns")),
     ("T1565.001", "k8s_coredns_configmap_modified.yml", "audit", "9027 B",

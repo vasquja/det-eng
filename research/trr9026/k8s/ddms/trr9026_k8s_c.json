@@ -59,11 +59,12 @@
         "x": 0,
         "y": 0
       },
-      "caption": "Port-Forward Direct To Kubelet",
+      "caption": "Reach Kubelet portForward via Node Proxy",
       "labels": [],
       "properties": {
-        "Target": "kubelet :10250 /portForward",
-        "Bypass": "API server"
+        "Transport": "nodes/proxy",
+        "Client": "raw client (kubeletctl / kubectl --raw)",
+        "Note": "not kubectl port-forward"
       },
       "style": {
         "border-color": "#68bc00",
@@ -79,19 +80,22 @@
     {
       "id": "n1",
       "position": {
-        "x": 320,
+        "x": 360,
         "y": 0
       },
-      "caption": "No pods/portforward Audit Event",
+      "caption": "Authorize + Audit nodes/proxy",
       "labels": [
-        "Node Sensor"
+        "K8s Audit Log"
       ],
       "properties": {
-        "K8s Audit Log": "NO event (the gap)",
-        "Sensor": "node / kubelet log only"
+        "verb": "get or create",
+        "objectRef.resource": "nodes",
+        "objectRef.subresource": "proxy",
+        "requestURI": "/proxy/portForward/",
+        "Chokepoint": "C (verb-agnostic)"
       },
       "style": {
-        "border-color": "#653294",
+        "border-color": "#0062b1",
         "border-width": 3,
         "caption-font-size": 16,
         "label-position": "outside",
@@ -105,13 +109,13 @@
     {
       "id": "n2",
       "position": {
-        "x": 640,
+        "x": 760,
         "y": 0
       },
-      "caption": "Tunnel With No API Trace",
+      "caption": "TCP Tunnel To Pod Network",
       "labels": [],
       "properties": {
-        "Effect": "undetected tunnel"
+        "Effect": "tunnel / lateral movement"
       },
       "style": {
         "border-color": "#000000",

@@ -30,6 +30,20 @@
 #     hold secrets (Helm release payloads; see the rule), and a Corefile can hold
 #     credentials (route53, azure, tsig). Read the two TRR9027 rules below before you
 #     deploy this policy.
+#   * EKS aws-auth ConfigMap (TRR9004 Procedure F): update, patch and delete of
+#     kube-system/aws-auth at RequestResponse. An update or patch records the stored
+#     mapRoles/mapUsers after the write; a delete records only DeleteOptions and a
+#     Status, not the stored ConfigMap. The validator's sentinel gate reads the create
+#     body (Request) and the patch body; a create names no object at policy-eval time, so
+#     the kube-system ConfigMap create rule (Request) logs it. aws-auth holds IAM role
+#     ARNs, Kubernetes usernames and group names, and NO credentials (the EKS IAM
+#     authenticator maps IAM principals to RBAC identities; it stores no key). This
+#     matches how EKS itself audits aws-auth at RequestResponse.
+#   * Caveat for every rule above at Request or RequestResponse (RULE_DEFECTS.md
+#     K23): a server-side apply patch sent with a raw YAML body is dropped by the
+#     JSON audit backend, so such a write leaves no line, whatever the resource;
+#     `kubectl apply --server-side` sends JSON and is not affected. Watch
+#     apiserver_audit_error_total and the "Error in audit plugin" log line.
 #   * Secrets and serviceaccounts/token (TRR9006): Metadata level, NEVER Request or
 #     RequestResponse -- those copy the Secret's base64 data and the signed token
 #     into the log, turning the log itself into a credential store.
@@ -52,11 +66,15 @@ rules:
   # --- TRR9026: pod port-forward tunnel at Metadata (resource/subresource/verb) ---
   # The pods subresource is not covered by the pods rule above (audit resource matching
   # is exact), and a port-forward is get (WebSocket) or create (SPDY); Metadata carries
-  # the objectRef.subresource the rule keys on. No request body is needed.
+  # the objectRef.subresource the rule keys on. No request body is needed. nodes/proxy
+  # is pinned here too so Procedure C (port-forward through the node proxy) keeps its
+  # requestURI even if a later None rule drops nodes/proxy reads; without this entry a
+  # request from any caller but the three control-plane accounts in the None rule
+  # below would reach the final Metadata catch-all anyway.
   - level: Metadata
     resources:
       - group: ""
-        resources: ["pods/portforward"]
+        resources: ["pods/portforward", "nodes/proxy"]
 
   # --- TRR9005 + TRR9007: workload controllers at Request (embedded templates) ---
   # TRR9005 keys on batch writes; TRR9007 grades the embedded pod template. Keep
@@ -112,6 +130,26 @@ rules:
       - group: "admissionregistration.k8s.io"
         resources: ["validatingwebhookconfigurations", "mutatingwebhookconfigurations",
                      "validatingadmissionpolicies", "validatingadmissionpolicybindings"]
+
+  # --- TRR9004 F: EKS aws-auth ConfigMap writes in kube-system at RequestResponse ---
+  # The IAM authenticator maps the IAM principals in kube-system/aws-auth
+  # (data.mapRoles, .mapUsers, .mapAccounts) to RBAC identities. An update or patch of
+  # aws-auth is logged at RequestResponse (the stored mapRoles after the write); a delete
+  # records only DeleteOptions and a Status. The rule is scoped by resourceNames to
+  # aws-auth only, so no other kube-system ConfigMap has its body copied here. The
+  # validator's sentinel gate reads the create body (Request, from the create rule below)
+  # and the patch body. A create names no object when the policy is evaluated, so it
+  # falls to the kube-system ConfigMap create rule (Request) below -- as the TRR9027
+  # coredns create does. This matches how EKS audits aws-auth. Above the catch-all so it
+  # wins. (A raw-YAML server-side apply is dropped by the JSON audit backend; see
+  # RULE_DEFECTS.md K23.)
+  - level: RequestResponse
+    namespaces: ["kube-system"]
+    verbs: ["update", "patch", "delete"]
+    resources:
+      - group: ""
+        resources: ["configmaps"]
+        resourceNames: ["aws-auth"]
 
   # --- TRR9027: cluster DNS ConfigMap writes in kube-system at RequestResponse ---
   # The coredns Corefile (and the kube-dns/coredns-custom redirects) live in

@@ -145,6 +145,37 @@ atomic_tests:
         type: string
         default: PathToAtomicsFolder/T1685/src
 
+  - name: "TRR9008.K8S.D — remove a stand-in enforcer workload in the kyverno namespace (Kubernetes)"
+    auto_generated_guid: 40b34102-8658-4d46-8948-b0b8933f332d
+    description: |
+      Procedure D in a policy engine's default namespace. Creates the kyverno namespace
+      only when it is absent (labelled trr9008-created=true; it waits first for a kyverno
+      namespace that is still terminating), and a harmless pause Deployment
+      trr9008-enforcer-standin in it. Scales the Deployment to zero twice: kubectl scale
+      --current-replicas=1, which reads the Scale object and writes it back with an
+      update (PUT) of the deployments/scale subresource, then a plain kubectl scale (a
+      patch). Then deletes the Deployment, and deletes the kyverno namespace only when
+      the test created it.
+      Never touches a real Kyverno workload; a kyverno namespace that existed before is
+      kept.
+      Rule: detections/sigma/T1685/k8s_enforcer_workload_removed.yml
+      Anchor rule: detections/sigma/T1685/k8s_security_tool_workload_removed.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_k8s.sh d2
+      cleanup_command: |
+        kubectl -n kyverno delete deployment trr9008-enforcer-standin --ignore-not-found
+        kubectl delete namespace -l trr9008-created=true --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1685/src
+
   - name: "TRR9008.K8S — node-local admission bypass (detection gap, Kubernetes)"
     auto_generated_guid: 9597a1ca-7b5d-4310-bfd4-2c792b4d1545
     description: |

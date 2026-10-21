@@ -1,0 +1,138 @@
+title: Kubernetes Admission Webhook Repointed to a URL
+id: 0b7e4f2a-6c1d-4e8b-9a3f-5d2c7e9b1a64
+status: experimental
+description: |
+  Detects an accepted update or patch of an existing MutatingWebhookConfiguration or
+  ValidatingWebhookConfiguration whose request body sets a webhook's
+  clientConfig.url. This is the TRR9025 Procedure D grader: it takes over a webhook
+  that is already installed (and often already trusted, such as a policy engine or a
+  sidecar injector) instead of creating a new one. After the write, the API server
+  sends every admitted object the webhook's rules select to the URL. A mutating
+  webhook can then change each object, and a validating webhook receives a copy of
+  each object, Secrets included. A repointed policy-engine webhook also stops
+  enforcing, because the new endpoint answers.
+
+  The create grader (k8s_malicious_admission_webhook_created.yml) keys on a create
+  (verb create, or the server-side-apply install that is verb patch with
+  responseStatus.code 201), so it does not see an in-place repoint of an installed
+  object. The TRR9008 chokepoint (k8s_admission_webhook_disabled.yml) fires, at level
+  medium, on every admissionregistration update or patch that is not a server-side dry
+  run, and the TRR9008 neuter grader fires only when the same write also disarms the
+  webhook (fail-open or never-match). This rule grades the URL.
+
+  The upstream API reserves clientConfig.url for an endpoint that is not a Service in
+  the cluster: an in-cluster webhook uses clientConfig.service. So the rule matches
+  any URL, not only an off-cluster host. Request shapes (the shipped policy logs them
+  at RequestResponse; kubectl and client-go send every body as JSON):
+    - an object-shaped body: an update (PUT, kubectl replace), a strategic merge patch
+      (the kubectl patch default; it sets service to null and adds url), a JSON merge
+      patch, a client-side apply patch and a server-side apply patch. requestObject
+      keeps the webhooks list. The audit log holds it as JSON; the validators flatten a
+      list to its JSON text (sigma_eval.flatten), so a SIEM must index it, and the
+      operation list of a JSON patch, as that text. The rule matches "url" followed by
+      an http(s) value with |contains, in the spaced and the compact form (the
+      dual-form convention of the TRR9008 and TRR9025 graders);
+    - a JSON patch (--type=json): requestObject is the raw operation list. The rule
+      matches a value that holds a clientConfig object with a url key (a value for
+      the root path "", /webhooks or /webhooks/N), a url key with an operation on
+      /webhooks/N/clientConfig, or an operation on /webhooks/N/clientConfig/url with
+      an https string, each in either key order. N is any path token: the API
+      server's JSON patch library (gopkg.in/evanphx/json-patch.v4 v4.13.0) reads an
+      index with Go strconv.Atoi and accepts a negative index, so +0, -0 and -1 are
+      indexes too. The match spans the operation list, not one operation, because
+      the library ignores an unknown key in an operation and the API server drops an
+      unknown field at the default fieldValidation Warn, so an attacker can put any
+      object between the path and the URL.
+  The URL scheme is matched in any case: the API server checks for https after Go's
+  net/url lower-cases the scheme, and it stores the URL as written, so an HTTPS:// URL
+  is accepted. The |contains values follow Sigma's default case-insensitive matching.
+  The regular expressions fold only the scheme, with character classes
+  ([hH][tT][tT][pP][sS]?), because JSON keys and JSON-pointer paths are
+  case-sensitive and |i is not portable: pySigma renders it as (?i), which Lucene
+  reads as the literal characters ?i, so a converted |re|i value never matches there.
+
+  The rule matches only an accepted modify (responseStatus.code 200). A refused write
+  (403, 409, 422) changes nothing; the TRR9008 chokepoint still records the attempt. A
+  server-side-apply install of a new URL-mode webhook is a patch answered 201: it is a
+  create, not a repoint, and the create grader owns it. A server-side dry run
+  (?dryRun=All: kubectl diff, --dry-run=server, a GitOps server-side diff) persists
+  nothing and is filtered, as the TRR9008 chokepoint filters it.
+
+  The rule grades the request, not the change: no old value is logged. A full-object
+  write (PUT or server-side apply) of a configuration that already calls a URL fires
+  again, and such a configuration is a finding by itself (the create grader fired when
+  it was installed). An apply patch whose body is YAML, not JSON, is not in the audit
+  log at Request level or higher, so no rule sees it (K23). Blind spots, tracked in
+  detections/RULE_DEFECTS.md K22: a JSON patch copy or move operation that takes
+  the url from another webhook (no URL in the request), and a repoint from one Service
+  to another (an attacker-controlled Service in the cluster), which the chokepoint sees
+  only. A CustomResourceDefinition conversion webhook is a different object and is not
+  graded. Metadata level cannot feed this rule: clientConfig is only in requestObject.
+references:
+  - https://attack.mitre.org/techniques/T1546/
+  - https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+author: det-eng
+date: 2026/10/20
+tags:
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1546
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_webhook_modify:
+    objectRef.apiGroup: 'admissionregistration.k8s.io'
+    objectRef.resource:
+      - 'mutatingwebhookconfigurations'
+      - 'validatingwebhookconfigurations'
+    verb:
+      - 'update'
+      - 'patch'
+  sel_body_url:
+    requestObject.webhooks|contains:
+      - '"url": "http'
+      - '"url":"http'
+  # A JSON patch logs requestObject as the raw operation list (JSON text). Values 1-3:
+  # a url key in a clientConfig object (a value for the root, /webhooks or
+  # /webhooks/N), or with an operation on /webhooks/N/clientConfig, in either order.
+  # Values 4-5: an operation on /webhooks/N/clientConfig/url and an https string, in
+  # either order. N is any path token (+0, -0 and -1 are indexes to the JSON patch
+  # library). The match spans the list text (.*), because the API server drops an
+  # unknown key, objects included, at the default fieldValidation Warn. Only the URL
+  # scheme is folded, with character classes: JSON keys and JSON-pointer paths are
+  # case-sensitive, and |i is not portable (pySigma renders it as (?i), which Lucene
+  # reads as the literal characters ?i, so the value never matches there).
+  sel_jsonpatch_url:
+    requestObject|re:
+      - '\"clientConfig\"\s*:\s*\{.*\"url\"\s*:\s*\"[hH][tT][tT][pP]'
+      - '\"/webhooks/[^/\"]+/clientConfig\".*\"url\"\s*:\s*\"[hH][tT][tT][pP]'
+      - '\"url\"\s*:\s*\"[hH][tT][tT][pP].*\"/webhooks/[^/\"]+/clientConfig\"'
+      - '\"/webhooks/[^/\"]+/clientConfig/url\".*\"[hH][tT][tT][pP][sS]?:'
+      - '\"[hH][tT][tT][pP][sS]?:[^\"]*\".*\"/webhooks/[^/\"]+/clientConfig/url\"'
+  # The API server accepted the modify of an installed object (200). A refused write
+  # changes nothing; a server-side-apply install of a missing object is a patch
+  # answered 201, a create that the create grader owns.
+  select_accepted:
+    responseStatus.code: 200
+  # Server-side dry run (kubectl diff, --dry-run=server): the API server reads the
+  # option from the query only and persists nothing. The TRR9008 chokepoint's filter
+  # and its sel_query_parsed (T1685/k8s_admission_webhook_disabled.yml explains them):
+  # dryRun=All must be a whole parameter of the query, and the query must have at
+  # most 100 "&".
+  filter_dry_run:
+    requestURI|re: '^[^?]*\?(.*\&)?dryRun=All(\&.*)?$'
+  sel_query_parsed:
+    requestURI|re: '^[^&]*(\&[^&]*){0,100}$'
+  condition: select_webhook_modify and select_accepted and (sel_body_url or sel_jsonpatch_url) and not (filter_dry_run and sel_query_parsed)
+falsepositives:
+  - A legitimate webhook that calls an external URL (rare; most call an in-cluster
+    Service), on every full-object write of its configuration. Baseline the webhook
+    name, the actor and the endpoint.
+  - A webhook served from the control-plane host by URL (for example a loopback
+    address). Baseline it the same way.
+  - A JSON patch that writes a webhook's clientConfig (or its url path) and, in
+    another operation of the same list, a url key or an https string, such as a
+    runbook annotation (rare; the match spans the operation list).
+level: high

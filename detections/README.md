@@ -366,24 +366,80 @@ differently:
 | `[` and `&&` `--` `~~` `\|\|` inside a class | an escaped `\[`; KQL reads the pairs as set operators |
 | a value over 1000 characters | Elasticsearch's `index.max_regex_length` default; split it |
 
-**Differences no lint removes.** A backend must still translate the edges: Lucene has
-no anchors and matches the whole value, so a search-style `|re` needs `.*` around it
-(drop it where the pattern starts with `^` or ends with `$`); pySigma's Lucene backend
-does not add it today, and it renders `|re|i` as `(?i)`, which Lucene does not parse.
-In Python, RE2 and PCRE `.` does not match a line break unless `|re|s` is set; in
-Lucene it always does. `\s` is `[\t\n\r ]` in Lucene (no vertical tab or form
-feed), ASCII whitespace without the vertical tab in RE2, and Unicode whitespace in
-Python and KQL. A rule that must split on the blanks of a Unicode-aware parser (the
-CoreDNS Corefile lexer) lists U+00A0 and U+0085 as literal characters in its class;
-write such a value as a YAML double-quoted string with `\u00A0`/`\u0085` escapes,
-because PyYAML folds a raw U+0085 into a line break. No portable construct names a
-carriage return, vertical tab or form feed alone. A long pattern can also exceed
-Lucene's default determinization budget (`max_determinized_states`, 10,000): a check
-with Lucene 10.1's `RegExp` found that every `|re` value parses and fits the budget
-(the largest, a JSON-patch root grammar of
-`T1565.001/k8s_coredns_corefile_poisoned.yml`, needs 7,986 states), and that each
-value, wrapped in `.*`, gives the same verdict as Python and RE2 on every case, fixture
-and benign-corpus value of its field.
+**Differences no lint removes.** A backend must still translate the edges. A check with
+pySigma 1.5.1 (`pySigma-backend-elasticsearch` 2.1.1) and Lucene 10.1 found these:
+
+- **Anchors.** Lucene has no anchors and matches the whole value, so a search-style
+  `|re` needs `.*` around it (drop it where the pattern starts with `^` or ends with
+  `$`). pySigma's Lucene backend does not add it today.
+- **Case folding.** pySigma renders `|re|i` as an inline `(?i)` for Lucene, ES|QL
+  `RLIKE` and EQL `regex~`. Lucene reads `(?i)` as the literal characters `?i`, with no
+  error, so a converted `|re|i` value never matches. Use the regexp query's
+  `case_insensitive` flag, or fold the case with classes (`[hH][tT][tT][pP]`), as
+  `T1546/k8s_admission_webhook_repointed_to_url.yml` does for its URL scheme. These
+  rules still use `|re|i`: `T1611/k8s_podspec_host_access.yml` and
+  `T1611/k8s_podspec_controller_host_access.yml` (the capability names),
+  `T1098.001/azure_managed_identity_federated_credential_backdoor.yml` and
+  `T1537/aws_efs_file_system_policy_made_public.yml`.
+- **A `/` in a field name.** pySigma's Lucene backend does not escape `/` in a field
+  name, and `query_string` reads it as the start of a `/regex/` term, so the query does
+  not parse. Escape it as `\/`. The keys are annotation and label keys
+  (`kubectl.kubernetes.io/last-applied-configuration`,
+  `seccomp.security.alpha.kubernetes.io/pod`, `batch.kubernetes.io/job-name`,
+  `kubernetes.io/config.source`) and strategic-merge directive keys
+  (`$deleteFromPrimitiveList/<name>`). The rules: `T1611/k8s_podspec_confinement_disabled.yml`,
+  `T1685/k8s_enforcer_workload_removed.yml`, `T1685/k8s_security_tool_workload_removed.yml`,
+  `T1053.007/k8s_cri_job_pod.yml` and `T1543.005/k8s_cri_static_pod_start.yml`. KQL
+  needs bracket access (`requestObject.spec['$deleteFromPrimitiveList/replicas']`) for a
+  key with `.`, `/` or `$`.
+- **`|exists` on EQL.** pySigma's EQL backend cannot convert `|exists` ("Field exists
+  expressions are not supported"). Write `<field> != null` there. It affects
+  `sel_smp_directive` in both T1685 workload rules, and `T1053.007/k8s_cri_job_pod.yml`.
+  Lucene (`_exists_:`), ES|QL (`is not null`) and Splunk (`=*`) convert it.
+- **`not` and a missing field.** Sigma's `not` is null-safe: a record without the
+  filter's field does not match the filter, so the rule still fires. The SQLite backend
+  that the validators use wraps each negation as `NOT COALESCE(<test>, 0)`, which keeps
+  that meaning. ES|QL and other SQL-semantics backends use three-valued logic: a test on
+  a missing field is NULL, `NOT NULL` is NULL, and `WHERE` keeps only true. So
+  `and not <filter>` drops every record that lacks the filter's field, and CI cannot
+  see it. A deployment there must make each negation null-safe:
+  `(<field> is null or not <filter>)`, or a Sigma `field: null` selection ORed with the
+  `not`. The three T1611 pod-spec rules and both T1685 workload rules
+  (`k8s_enforcer_workload_removed.yml` and the anchor
+  `k8s_security_tool_workload_removed.yml`) use the second form for each filter on a
+  field that a record can lack (`objectRef.subresource`, `requestObject.dryRun`,
+  `requestObject.spec.replicas`, and the `requestObject` text of a JSON patch), and
+  lose no positive. A probe that removed the `COALESCE` wrappers, and made a regular
+  expression on a missing field NULL, found 16 rules that still lose positives, all of
+  them on `main` too: the three T1070 delete rules, the seven T1537 public-policy rules,
+  `T1550.001/aws_eks_irsa_web_identity_assumed_off_cluster.yml`,
+  `T1098.001/aws_github_oidc_role_trust_abuse.yml` (4 of 8),
+  `T1098.001/aws_github_oidc_role_trust_ref_wildcard.yml` (5 of 5),
+  `T1098.001/gcp_workload_identity_pool_provider_created.yml` (4 of 5),
+  `T1199/gcp_workforce_pool_provider_no_attribute_condition.yml` (1 of 3) and
+  `T1685/k8s_admission_webhook_disabled.yml` (5 of 8: its delete-body dry-run filter
+  drops every delete without a body, Procedures A and B included). Wave 4 of the
+  Kubernetes coverage plan (item 4.2, the backend mapping proof harness) measures and
+  fixes these.
+- **`.` and a line break.** In Python, RE2 and PCRE `.` does not match a line break
+  unless `|re|s` is set; in Lucene it always does.
+- **`\s`.** `\s` is `[\t\n\r ]` in Lucene (no vertical tab or form feed), ASCII
+  whitespace without the vertical tab in RE2, and Unicode whitespace in Python and KQL.
+  A rule that must split on the blanks of a Unicode-aware parser (the CoreDNS Corefile
+  lexer) lists U+00A0 and U+0085 as literal characters in its class; write such a value
+  as a YAML double-quoted string with `\u00A0`/`\u0085` escapes, because PyYAML folds a
+  raw U+0085 into a line break. No portable construct names a carriage return, vertical
+  tab or form feed alone.
+- **Determinization budget.** A long pattern can exceed Lucene's default determinization
+  budget (`max_determinized_states`, 10,000). A check with Lucene 10.1's `RegExp`
+  found that every `|re` value (321 at this writing) parses and fits the budget. With
+  case folding (`ASCII_CASE_INSENSITIVE`, as the `case_insensitive` flag uses), the
+  largest is the JSON-patch capability grammar of
+  `T1611/k8s_podspec_controller_host_access.yml` (8,094 states); without it, the
+  JSON-patch root grammar of `T1565.001/k8s_coredns_corefile_poisoned.yml` (7,986
+  states). Each value, wrapped in `.*` (no `.*` before a leading `^` or after a
+  trailing `$`), gives the same verdict as Python and RE2 on every case, fixture and
+  benign-corpus value of its field.
 
 ## The benign corpus (false-positive scores)
 
@@ -467,8 +523,9 @@ The Kubernetes rules (`sigma/T1609/`) key on the API server **audit log**, not
 on syscalls, so they have their own layer stack and validator:
 
 1. **Emulation** (`atomics/T1609/`) — `emulate.sh` runs the benign command `id`
-   through each control path (exec, attach, ephemeral container, node proxy,
-   direct kubelet).
+   through each control path (exec, attach, ephemeral container, node proxy),
+   makes one read-only direct kubelet call, and reads the kubelet pod lists
+   through the node proxy as a temporary service account (Procedure F).
 2. **Audit policy** (`k8s/audit-policy.yaml`) — makes the telemetry exist. A
    default cluster writes no audit log, so a rule has nothing to match. The
    `k8s/kind-audit-cluster.yaml` config mounts it into a `kind` cluster.
@@ -492,7 +549,25 @@ python3 detections/validate_k8s_detections.py \
 The audit log is flattened to the dotted field names the rules use
 (`objectRef.resource`, `user.username`, ...) and each rule runs through the
 same pySigma backend as the auditd rules. A rule passes only on an event from
-the emulation itself (one naming the target pod), not on any event in the log.
+the emulation itself (one naming the target pod, or for Procedure F the
+`trr9002-node-reader` service account), not on any event in the log.
+
+**The list-as-JSON-text contract.** The API server audit log holds lists as JSON
+arrays (`requestObject.rules`, `requestObject.webhooks`, `requestObject.spec.containers`),
+and it holds the `requestObject` of a JSON patch as the raw operation array. The
+validators flatten every list to its JSON text (`sigma_eval.flatten`), and many
+Kubernetes rules match that text with `|contains` or `|re`: for example
+`requestObject.spec.*containers|re` (T1611), `requestObject.rules|re` (T1098.006),
+`requestObject.webhooks|contains` (T1546) and `requestObject|re` in the JSON-patch
+branches of the T1546, T1611 and T1685 rules. A SIEM pipeline must index each such
+field, and the `requestObject` of a JSON patch, as that JSON text, as the cloud rules
+require for their nested lists (see [External cloud detections](#external-cloud-detections-aws-azure-gcp)).
+Elastic's Kubernetes audit integration does not meet this contract: it maps
+`requestObject.rules` as `nested`, and its ingest pipeline removes
+`requestObject.metadata`, so the T1611 confinement rule's pod-annotation branches
+(`sel_pod_annotation`, and `sel_last_applied` on kubectl's
+`last-applied-configuration`) cannot match there (elastic/integrations `packages/kubernetes/data_stream/audit_logs`,
+`fields/fields.yml` and `elasticsearch/ingest_pipeline/default.yml`).
 
 `.github/workflows/validate-k8s-detections.yml` runs the whole loop on a `kind`
 cluster for every change to the TRR9002 files, strict: a rule that does not
@@ -552,15 +627,15 @@ validator (`validate_apiserver_detections.py`), and one workflow
 
 | TRR | Technique | Chokepoint rule(s) | Audit level |
 |-----|-----------|--------------------|-------------|
-| TRR9004 | RBAC (T1098.006) | `sigma/T1098.006/k8s_rbac_write.yml` + a Request-level severity rule | Request |
+| TRR9004 | RBAC (T1098.006) | `sigma/T1098.006/k8s_rbac_write.yml` + two Request-level severity rules (`k8s_rbac_privileged_grant.yml` high; `k8s_rbac_sensitive_permission_grant.yml` medium) + `k8s_eks_aws_auth_configmap_modified.yml` (EKS aws-auth, Procedure F) | Request (RBAC); RequestResponse for `kube-system/aws-auth` update/patch/delete, Request for the kube-system ConfigMap create |
 | TRR9005 | Jobs/CronJobs (T1053.007) | `sigma/T1053.007/k8s_job_create.yml` + a node-runtime job-pod rule | Request |
 | TRR9006 | Secrets (T1552.007) | `sigma/T1552.007/k8s_secret_access.yml` + a TokenRequest rule | Metadata |
-| TRR9007 | Dangerous pod spec (T1611) | `sigma/T1611/k8s_podspec_host_access.yml` + a controller rule | Request |
-| TRR9008 | Disable admission control (T1685) | `sigma/T1685/k8s_admission_webhook_disabled.yml` + a neuter grader + a workload-removal rule | Request (RequestResponse for webhook-configuration update and patch) |
+| TRR9007 | Dangerous pod spec (T1611) | `sigma/T1611/k8s_podspec_host_access.yml` + a controller rule + a confinement (Unconfined) rule | Request |
+| TRR9008 | Disable admission control (T1685) | `sigma/T1685/k8s_admission_webhook_disabled.yml` + a neuter grader + an enforcer-removal rule (the engines' default namespaces) and its any-namespace anchor | Request (RequestResponse for webhook-configuration update and patch) |
 | TRR9009 | Impersonation (T1134) | `sigma/T1134/k8s_impersonation.yml` + a privileged-target rule | Metadata |
 | TRR9010 | Indicator removal (T1070) | `sigma/T1070/k8s_events_deleted.yml` + a workload-deletion rule + a namespace-delete hunting rule | Metadata |
-| TRR9025 | Malicious admission webhook (T1546) | `sigma/T1546/k8s_admission_webhook_created.yml` + a Request-level body grader | Request |
-| TRR9026 | Pod port-forward (T1572) | `sigma/T1572/k8s_pod_portforward.yml` (verb-agnostic subresource) | Metadata |
+| TRR9025 | Malicious admission webhook (T1546) | `sigma/T1546/k8s_admission_webhook_created.yml` + a create grader and a repoint grader | Request (RequestResponse for update/patch) |
+| TRR9026 | Pod port-forward (T1572) | `sigma/T1572/k8s_pod_portforward.yml` (verb-agnostic subresource) + a nodes/proxy `/portForward/` rule | Metadata |
 | TRR9027 | Cluster DNS poisoning (T1565.001) | `sigma/T1565.001/k8s_coredns_configmap_modified.yml` + a Corefile grader | Metadata + RequestResponse (the three DNS ConfigMaps) + Request (kube-system ConfigMap creates; drop that rule where Helm stores releases in kube-system ConfigMaps) |
 
 The audit **level** is per technique: pods, workload controllers, RBAC, and
@@ -572,7 +647,13 @@ of the three `kube-system` DNS ConfigMaps (`coredns`, `kube-dns`, `coredns-custo
 at `RequestResponse`, so the stored Corefile is graded whatever the patch type; every
 ConfigMap create in `kube-system` is at `Request` (a create names no object when the
 policy is evaluated, so the rule cannot name the three), so a delete-and-recreate
-(TRR9027 Procedure D) is graded. Two costs come with these levels:
+(TRR9027 Procedure D) is graded. An update, patch or delete of the EKS
+`kube-system/aws-auth` ConfigMap (TRR9004 Procedure F) is likewise at `RequestResponse`,
+as EKS logs it, so the stored `mapRoles` after an update or patch are kept for triage
+(its create falls to the kube-system ConfigMap create rule at `Request`); the
+validator's `trr9004` sentinel gate needs only `Request` (the create body and the patch
+body). aws-auth holds IAM role ARNs, Kubernetes usernames and group names, and no
+credentials. Two costs come with these levels:
 - A Corefile can hold plugin credentials (route53 `aws_access_key`, azure `secret`,
   tsig `secret`); every write to it then copies them into the log.
 - Helm 2 (Tiller), and Helm 3 with `HELM_DRIVER=configmap`, store each release in
@@ -589,7 +670,8 @@ bootstrap coredns ConfigMap. So the validator gates each rule on the emulation's
 own marker (each `MANIFEST` entry in `validate_apiserver_detections.py` names its gate):
 for example a `trr90NN-` object name, the `trr9009` impersonated user or group, the
 `trr9006` namespace with a non-system caller, a `trr9005-` Job label on the node
-sensor, or the `trr9027` sentinel in each procedure's DNS-ConfigMap write (procedure A patches
+sensor, the `trr9004` sentinel in the fixed-name `kube-system/aws-auth` write (whose
+object name cannot be prefixed), or the `trr9027` sentinel in each procedure's DNS-ConfigMap write (procedure A patches
 `coredns`; B and C create `kube-dns` and `coredns-custom` by server-side apply, a
 patch by name that the policy logs with its body; D deletes `coredns` and recreates it
 with the sentinel, then restores the saved object and fails the step unless the restored

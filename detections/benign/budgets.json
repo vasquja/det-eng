@@ -165,6 +165,11 @@
       "max_hits": 18,
       "why": "documented noise: port-forward to databases and dashboards by operators (both transports)."
     },
+    "T1609/k8s_node_proxy_kubelet_api.yml": {
+      "mode": "enforce",
+      "max_hits": 3,
+      "why": "documented noise: SRE kubectl get --raw of the kubelet /pods list through nodes/proxy (the k8s-audit-human-operators adminpath template), approved by the maintainer 2026-10-20. Dropping /pods to reach 0 would let an attacker read /pods instead of /runningpods."
+    },
     "T1609/k8s_pod_ephemeral_container.yml": {
       "mode": "enforce",
       "max_hits": 10,

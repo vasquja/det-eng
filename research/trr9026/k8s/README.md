@@ -18,8 +18,9 @@
 ### Scope Statement
 
 This TRR covers **port-forward tunneling** through the Kubernetes API server: using
-the `pods/portforward` subresource to open a TCP tunnel from the client, through the
-kube-apiserver, to a port on a pod — reaching an in-cluster service, database, or
+the `pods/portforward` subresource, or the `nodes/proxy` subresource to the kubelet
+`/portForward` endpoint (Procedure C), to open a TCP tunnel from the client, through
+the kube-apiserver, to a port on a pod — reaching an in-cluster service, database, or
 dashboard the client could not reach directly.
 
 This TRR does not cover these related actions:
@@ -29,10 +30,11 @@ This TRR does not cover these related actions:
   port-forward out** ("It opens a network tunnel. It does not run a command."); this
   report owns that tunnel. Port-forward and exec are siblings on the same
   chokepoint family (a pod subresource), different subresources.
-- Port-forward that goes **directly to the kubelet** (`:10250`) or through
-  `nodes/proxy`, bypassing the pods subresource. That leaves a `nodes/proxy` record
-  or no API audit event at all; it is the direct-kubelet gap TRR9002 already
-  documents, and it is Procedure C here (a demonstrated gap).
+- Port-forward that goes **directly to the kubelet** (`:10250`), bypassing the API
+  server. That leaves no API audit event at all; it is the direct-kubelet gap TRR9002
+  already documents, and it is Procedure D here (a demonstrated gap). Port-forward
+  through **`nodes/proxy`** does leave an audit record (`objectRef.resource: nodes`,
+  `subresource: proxy`), and Procedure C now covers it with a dedicated rule.
 - The application-layer attack carried **over** the tunnel (a database login, a
   dashboard exploit). The tunnel is the C2/lateral-movement primitive; what rides it
   is a separate technique.
@@ -112,7 +114,8 @@ Secrets-bearing or database pod, off-hours, or from an unexpected source IP.
 |-----------|----|------|-------------|
 | A | TRR9026.K8S.A | Port-forward over SPDY | `create pods/portforward` |
 | B | TRR9026.K8S.B | Port-forward over WebSocket | `get pods/portforward` |
-| C | TRR9026.K8S.C | Direct-kubelet / nodes-proxy tunnel | kubelet `:10250` (no pods/portforward event) |
+| C | TRR9026.K8S.C | Port-forward through the node proxy | `nodes/proxy` to kubelet `/portForward` |
+| D | TRR9026.K8S.D | Direct-kubelet tunnel | kubelet `:10250` (no API audit event) |
 
 > A tool is not a procedure. `kubectl port-forward`, a client library, and a raw HTTP
 > client all send the same `pods/portforward` request. They are the same procedure;
@@ -163,60 +166,114 @@ Source: [`ddms/trr9026_k8s_b.json`](ddms/trr9026_k8s_b.json) (Arrows app format)
 **DDM summary.** Same chokepoint, `verb: get`. A create-only rule would miss this; the
 rule is verb-agnostic and matches both.
 
-### Procedure C: Direct-kubelet / nodes-proxy tunnel  (`TRR9026.K8S.C`)
+### Procedure C: Port-forward through the node proxy  (`TRR9026.K8S.C`)
 
-The adversary port-forwards straight to the kubelet on `:10250`, or through
-`nodes/proxy`, bypassing the pods subresource. There is then no `pods/portforward`
-audit event — the record is a `nodes/proxy` event or nothing at all.
+The adversary reaches the kubelet `/portForward` endpoint through the API server node
+proxy (`nodes/proxy`), not the pods subresource. There is then no `pods/portforward`
+event, but the API server does authorize and audit the `nodes/proxy` request: the
+record shows `objectRef.resource: nodes`, `objectRef.subresource: proxy`, and the
+`/proxy/portForward/` path in `requestURI`. `objectRef.name` is the node, so the target
+pod is carried only in `requestURI`.
 
-- **Prerequisites:** for the direct form, a kubelet client credential and network
-  reach to `:10250`; for the proxied form, RBAC `get`/`create` on `nodes/proxy`.
-- **Mechanics:** a direct kubelet `/portForward` call, or a request proxied through
-  `nodes/proxy`.
-- **Impact:** the same tunnel, with no `pods/portforward` audit trace.
-- **Tools on this path:** `kubeletctl`, a raw client to `:10250`.
+- **Prerequisites:** RBAC `get`/`create` on `nodes/proxy`, and a raw client — `kubectl
+  port-forward` never uses this path.
+- **Mechanics:** a request to `/api/v1/nodes/<node>/proxy/portForward/<ns>/<pod>`,
+  proxied to the kubelet. WebSocket is a `get`, SPDY is a `create`, so the record's
+  verb is `get` or `create`.
+- **Impact:** the same TCP tunnel, recorded as a `nodes/proxy` event, not a
+  `pods/portforward` one.
+- **Tools on this path:** `kubeletctl`, a raw client, `kubectl get --raw`.
 
 #### Detection Data Model — `TRR9026.K8S.C`
 
-![DDM - Direct-kubelet tunnel](ddms/trr9026_k8s_c.png)
+![DDM - Port-forward through the node proxy](ddms/trr9026_k8s_c.png)
 
 Source: [`ddms/trr9026_k8s_c.json`](ddms/trr9026_k8s_c.json) (Arrows app format).
 
+**DDM summary.** The shaded node is the API server's authorize-and-audit of the
+`nodes/proxy` request (`objectRef.resource: nodes`, `objectRef.subresource: proxy`,
+`requestURI` holds `/proxy/portForward/`), the chokepoint for Procedure C. The rule
+is verb-agnostic (`get` for WebSocket, `create` for SPDY). `k8s_node_proxy_exec`
+(TRR9002) does not fire on this path: its filter excludes the `portForward` endpoint,
+and the path names no `/exec/`, `/run/` or `/attach/`. Nearest prior art: Elastic ships
+a native rule on any non-system `nodes/proxy` request
+(`privilege_escalation_api_proxy_to_node.toml`) and an AKS rule that names
+`/proxy/portForward` (`execution_azure_aks_kubelet_proxy_command_endpoint.toml`); this
+report references them and ships a provider-agnostic Sigma rule scoped to the
+port-forward endpoint.
+
+### Procedure D: Direct-kubelet tunnel  (`TRR9026.K8S.D`)
+
+The adversary port-forwards straight to the kubelet on `:10250`, bypassing the API
+server. There is then no API audit event at all — the record exists only on the node.
+
+- **Prerequisites:** a kubelet client credential and network reach to `:10250`.
+- **Mechanics:** a direct kubelet `/portForward` call, no API server in the path.
+- **Impact:** the same tunnel, with no API audit trace.
+- **Tools on this path:** `kubeletctl`, a raw client to `:10250`.
+
+#### Detection Data Model — `TRR9026.K8S.D`
+
+![DDM - Direct-kubelet tunnel](ddms/trr9026_k8s_d.png)
+
+Source: [`ddms/trr9026_k8s_d.json`](ddms/trr9026_k8s_d.json) (Arrows app format).
+
 **DDM summary.** The shaded node is a node sensor, not the audit log: a direct kubelet
-port-forward writes no `pods/portforward` event. This is the TRR9002 direct-kubelet
-gap, restated for the tunnel. The `nodes/proxy` variant does write an audit event (a
-`nodes/proxy` request whose `requestURI` holds `/portForward/`), but no rule in this
-repository matches it: `k8s_node_proxy_exec` (TRR9002) matches only a `requestURI`
-that contains `/exec/`, `/run/` or `/attach/`. Elastic ships a native rule on any non-system
-`nodes/proxy` request (`privilege_escalation_api_proxy_to_node.toml`) and an AKS rule
-that names `/proxy/portForward` (`execution_azure_aks_kubelet_proxy_command_endpoint.toml`);
-this report references them rather than duplicates them.
+port-forward writes no API audit event. This is the TRR9002 direct-kubelet gap,
+restated for the tunnel. A node/kubelet-access sensor is the only cover; the lab states
+the gap and makes no kubelet call.
 
 ## Detection Strategy
 
-Compare the three DDMs. Procedures A and B both produce a `pods/portforward` audit
+Compare the four DDMs. Procedures A and B both produce a `pods/portforward` audit
 event and differ only on the verb, so one verb-agnostic chokepoint rule covers both.
-Procedure C never produces a `pods/portforward` event, so the chokepoint cannot see
-it. The direct-kubelet form writes no API audit event at all. The `nodes/proxy` form
-writes a `nodes/proxy` event that an audit rule could match, but no rule in this
-repository does.
+Procedure C never produces a `pods/portforward` event, but it does produce a
+`nodes/proxy` event with the `/proxy/portForward/` path, which a second verb-agnostic
+rule covers. Procedure D, the direct-kubelet form, writes no API audit event at all, so
+the audit-log chokepoints are structurally blind to it.
 
 **Telemetry requirement.** The audit policy must record `pods/portforward` at
 `Metadata` or higher. The shared policy
 (`detections/k8s/audit-policy-apiserver.yaml`) records it: this report adds an
 explicit `pods/portforward` Metadata rule so the capture is self-documenting and does
-not rely on the catch-all. No request body is needed.
+not rely on the catch-all. No request body is needed. Strategy 2 needs the
+`nodes/proxy` subresource at `Metadata` or higher, with `requestURI`. This report
+pins `nodes/proxy` at `Metadata` in the same TRR9026 rule, so the capture is
+self-documenting and does not rely on the final catch-all; a policy that drops
+`nodes/proxy` (or all `nodes` subresources) at `None` would make Strategy 2 blind.
 
 **Strategy 1 — chokepoint (covers A, B).**
 Match an audit event where `objectRef.resource` is `pods` and `objectRef.subresource`
-is `portforward`, with no verb filter. This is the first `pods/portforward` rule in
-the Sigma rule set (SigmaHQ ships only the exec sibling); Falco's default k8saudit
-ruleset ships an equivalent `port-forward` rule, so this is its provider-agnostic
-Sigma/pySigma counterpart, stated as a backstop, not a discovery. It is a low-fidelity
+is `portforward`, with no verb filter. SigmaHQ ships no `pods/portforward` rule
+(only the exec sibling); Falco's default k8saudit ruleset ships an equivalent
+`port-forward` rule, so this is its provider-agnostic Sigma/pySigma counterpart,
+stated as a backstop, not a discovery. It is a low-fidelity
 hunting anchor: baseline the identities that legitimately port-forward.
 
 - Sensor: API server audit log.
 - Rule: `detections/sigma/T1572/k8s_pod_portforward.yml` (built).
+
+**Strategy 2 — node-proxy chokepoint (covers C).**
+Match an audit event where `objectRef.resource` is `nodes` and `objectRef.subresource`
+is `proxy`, the `requestURI` path (the text before `?`) names the kubelet
+`/portForward` endpoint, with no verb filter. This is the port-forward tunnel reached
+through `nodes/proxy`. The kubelet routes `/portForward` case-sensitively (the
+camelCase route), so the rule matches the camelCase `portForward` segment — the same
+casing `k8s_node_proxy_exec` (TRR9002) uses for this endpoint in its filter. The API
+server joins the proxied path with `path.Join` before it routes it to the kubelet, so
+it drops empty (`//`) and single-dot (`/./`) segments and resolves `/../`, and it
+decodes percent encoding. The two rules split these shapes: `k8s_node_proxy_exec`
+fires on any `nodes/proxy` `requestURI` path that holds a percent-encoded byte or a
+`/../` segment, whatever endpoint it seems to name, so a port-forward behind an
+encoded endpoint is detected there. This rule allows empty and single-dot segments
+between `/proxy/` and `portForward/` (for example `/proxy//portForward/` or
+`/proxy/./portForward/`), which `k8s_node_proxy_exec` does not match. A request that
+names `/portForward/` and also holds a percent-encoded byte or a `/../` segment (for
+example `/proxy/portForward/../run/...`) fires both rules — an acceptable, documented
+double alert, because such a request is itself anomalous.
+
+- Sensor: API server audit log.
+- Rule: `detections/sigma/T1572/k8s_node_proxy_portforward.yml` (built).
 
 **Correlation and severity lift (built on Strategy 1).**
 A port-forward is high-signal when the context is wrong: the principal is a service
@@ -225,13 +282,11 @@ caller, the target is in kube-system or is a Secrets-bearing or database pod, th
 is off-hours, or the `sourceIPs` are unexpected. These are triage lifts on the
 chokepoint, not separate rules.
 
-**Demonstrated gap — the direct-kubelet tunnel (Procedure C).**
-A port-forward straight to the kubelet, or through `nodes/proxy`, leaves no
-`pods/portforward` event. The audit-log chokepoint is structurally blind to it, the
-same gap TRR9002 demonstrates for exec. A node/kubelet-access sensor is the only cover
-for the direct form. The `nodes/proxy` form is audited, but no repository rule matches
-a `nodes/proxy` `/portForward/` request (`k8s_node_proxy_exec` needs `/exec/`, `/run/`
-or `/attach/` in the `requestURI`). The lab states the gap and makes no kubelet call.
+**Demonstrated gap — the direct-kubelet tunnel (Procedure D).**
+A port-forward straight to the kubelet on `:10250` leaves no API audit event at all.
+The audit-log chokepoints are structurally blind to it, the same gap TRR9002
+demonstrates for exec. A node/kubelet-access sensor is the only cover. The lab states
+the gap and makes no kubelet call.
 
 **Coverage summary.**
 
@@ -239,10 +294,11 @@ or `/attach/` in the `requestURI`). The lab states the gap and makes no kubelet 
 |-----------|-----------|-----|
 | A | Strategy 1 (chokepoint) | `create pods/portforward` (SPDY) |
 | B | Strategy 1 (chokepoint) | `get pods/portforward` (WebSocket) |
-| C | gap (node sensor) | direct kubelet `:10250`; no `pods/portforward` event |
+| C | Strategy 2 (node-proxy chokepoint) | `nodes/proxy` with `/proxy/portForward/`, any verb |
+| D | gap (node sensor) | direct kubelet `:10250`; no API audit event |
 
-One verb-agnostic chokepoint rule covers both API-server transports. The direct-kubelet
-tunnel is a stated gap, shared with TRR9002.
+Two verb-agnostic chokepoint rules cover the API-server transports and the node-proxy
+path. The direct-kubelet tunnel is a stated gap, shared with TRR9002.
 
 ## Available Emulation Tests
 
@@ -259,26 +315,36 @@ Red Team wrappers in [`atomics/T1572/T1572.yaml`](../../../atomics/T1572/T1572.y
 |-----------|------|--------|
 | TRR9026.K8S.A | `emulate.sh a` — port-forward to `trr9026-target` over SPDY (`verb=create`). | **built** |
 | TRR9026.K8S.B | `emulate.sh b` — port-forward to `trr9026-target` over WebSocket (`verb=get`). | **built** |
-| TRR9026.K8S.C | `emulate.sh gap` — print the gap: a direct-kubelet port-forward writes no `pods/portforward` event. Read-only; it makes no kubelet call. | **built (statement only)** |
+| TRR9026.K8S.C | `emulate.sh c` — reach the kubelet `/portForward` for `trr9026-target` through `nodes/proxy` (`kubectl get --raw`). The un-upgraded GET is refused, but the API server writes the `nodes/proxy` record; a real tunnel writes the same `requestURI`. | **built** |
+| TRR9026.K8S.D | `emulate.sh d` — print the gap: a direct-kubelet port-forward writes no API audit event. Read-only; it makes no kubelet call. | **built (statement only)** |
 
 ## Detections
 
 | Strategy | Covers | Sigma rule | Sensor |
 |----------|--------|------------|--------|
 | 1 (chokepoint) | A, B | [`detections/sigma/T1572/k8s_pod_portforward.yml`](../../../detections/sigma/T1572/k8s_pod_portforward.yml) | API server audit log |
+| 2 (node-proxy chokepoint) | C | [`detections/sigma/T1572/k8s_node_proxy_portforward.yml`](../../../detections/sigma/T1572/k8s_node_proxy_portforward.yml) | API server audit log |
 
 The validator
 [`detections/validate_apiserver_detections.py`](../../../detections/validate_apiserver_detections.py)
-reads the API server audit log the emulation produced and asserts the rule matches an
-event whose `objectRef.name` is the `trr9026-target` pod. The workflow
+reads the API server audit log the emulation produced and asserts the Strategy 1 rule
+matches an event whose `objectRef.name` is the `trr9026-target` pod, and the Strategy 2
+rule matches a `nodes/proxy` event whose `requestURI` carries the `trr9026-` marker
+(for a `nodes/proxy` request `objectRef.name` is the node, so the pod rides in
+`requestURI`). The workflow
 [`validate-apiserver-detections.yml`](../../../.github/workflows/validate-apiserver-detections.yml)
 runs the loop on a `kind` cluster, with a negative control on the pre-emulation log.
 
 Upstream: SigmaHQ has an exec rule but no `pods/portforward` rule; Falco's k8saudit
 plugin ruleset has a `port-forward` rule. Elastic's audit rules cover the `nodes/proxy`
-form, not `pods/portforward` (see Procedure C); its "Kubectl Network Configuration
-Modification" rule sees `kubectl port-forward` as a process on the client host. Propose the Sigma `pods/portforward` rule, matching
-both transports (the verb-agnostic form that catches the WebSocket `get`).
+form (see Procedure C): "Kubernetes API Server Proxying Request to Kubelet"
+(`privilege_escalation_api_proxy_to_node.toml`) on any non-system `nodes/proxy` request,
+and an AKS rule that names `/proxy/portForward`
+(`execution_azure_aks_kubelet_proxy_command_endpoint.toml`); its "Kubectl Network
+Configuration Modification" rule sees `kubectl port-forward` as a process on the client
+host. Propose the two Sigma rules: the `pods/portforward` chokepoint matching both
+transports (the verb-agnostic form that catches the WebSocket `get`), and the
+`nodes/proxy` `/proxy/portForward/` rule as a provider-agnostic counterpart to Elastic's.
 
 ## References
 
@@ -290,9 +356,13 @@ both transports (the verb-agnostic form that catches the WebSocket `get`).
   <https://kubernetes.io/blog/2024/08/20/websockets-transition/>
 - Kubernetes documentation, Auditing:
   <https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/>
+- Kubernetes documentation, Kubelet authentication/authorization:
+  <https://kubernetes.io/docs/reference/access-authn-authz/kubelet-authn-authz/>
 - Falco k8saudit plugin ruleset (the `port-forward` rule):
   <https://github.com/falcosecurity/plugins/blob/main/plugins/k8saudit/rules/k8s_audit_rules.yaml>
 - Elastic rule, Kubernetes API Server Proxying Request to Kubelet (`nodes/proxy`):
   <https://github.com/elastic/detection-rules/blob/main/rules/integrations/kubernetes/privilege_escalation_api_proxy_to_node.toml>
+- Elastic rule, Kubelet proxy command endpoint on AKS (`/proxy/portForward`):
+  <https://github.com/elastic/detection-rules/blob/main/rules/integrations/azure/execution_azure_aks_kubelet_proxy_command_endpoint.toml>
 - TRR method:
   <https://github.com/tired-labs/techniques/blob/main/docs/TECHNIQUE-RESEARCH-REPORT.md>

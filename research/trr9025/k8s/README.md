@@ -20,17 +20,25 @@
 This TRR covers persistence and privilege escalation through a **malicious dynamic
 admission controller**: creating a MutatingWebhookConfiguration or a
 ValidatingWebhookConfiguration (or a CEL ValidatingAdmissionPolicy) in the
-`admissionregistration.k8s.io` API group so that the adversary's endpoint runs on,
-or receives a copy of, every object the API server admits.
+`admissionregistration.k8s.io` API group, or **repointing an installed one to a URL**,
+so that the adversary's endpoint runs on, or receives a copy of, every object the API
+server admits. An install is a `create` (Procedures A–C), or a server-side apply that
+the API server performs as a `patch` answered 201 (K21); a repoint is an `update` or
+`patch` of an installed object (Procedure D).
 
 This TRR does not cover these related actions:
 
 - **Disabling** admission control — deleting a webhook configuration, neutering one
   in place, or removing the policy engine's workload. ATT&CK T1685 covers that, and
-  it is TRR9008 in this repository. TRR9008 keys on delete/update/patch and
-  **explicitly excludes `create`**, naming the creation of a malicious webhook as a
-  separate report; this is that report. Detecting the disable plus the install gives
-  both halves of the admission-control attack surface.
+  it is TRR9008 in this repository. TRR9008 keys on the delete, update and patch
+  verbs and excludes the `create` verb, naming the creation of a malicious webhook as
+  a separate report; this is that report. A server-side-apply install is a `patch`
+  answered 201, so the TRR9008 chokepoint fires on it too, and the TRR9008 neuter
+  grader filters it (K21). Detecting the disable plus the install gives
+  both halves of the admission-control attack surface. A **repoint** (Procedure D) is
+  an update or patch too, so TRR9008's chokepoint (`k8s_admission_webhook_disabled`)
+  fires on it at medium; this report's Procedure D grader reads the URL and grades it
+  high. The two are complementary: TRR9008 sees the write, TRR9025 D grades its intent.
 - The RBAC grant that lets an adversary write admission objects. TRR9004
   (T1098.006) detects the grant; this report detects the use. An attacker usually
   needs the grant first, so the two are correlated but distinct.
@@ -105,8 +113,10 @@ so this report covers it at the chokepoint only and does not grade it as high.
 
 ### The audit shape, and the two levels
 
-Every install is a `create` on the `admissionregistration.k8s.io` group. Webhook
-configurations are cluster-scoped, so the audit event carries `objectRef.name` with
+Every install is a `create` on the `admissionregistration.k8s.io` group, or a
+server-side apply that the API server performs as a `patch` answered 201; a repoint
+(Procedure D) is an `update` or a `patch` answered 200. Webhook configurations are
+cluster-scoped, so the audit event carries `objectRef.name` with
 an empty `objectRef.namespace`; the gate for an emulation is the name. A create is
 fully described at `Metadata` level (verb, apiGroup, resource, name), which is enough
 to fire the chokepoint. But `Metadata` hides whether the webhook is malicious: the
@@ -135,6 +145,7 @@ create and, to grade it, read the submitted webhook body.
 | A | TRR9025.K8S.A | Mutating webhook backdoor | `create mutatingwebhookconfigurations` |
 | B | TRR9025.K8S.B | Validating webhook Secret exfiltration | `create validatingwebhookconfigurations` |
 | C | TRR9025.K8S.C | CEL admission policy (chokepoint only) | `create validatingadmissionpolicies` |
+| D | TRR9025.K8S.D | Repoint an installed webhook to a URL | `update`/`patch` of a `validating`/`mutatingwebhookconfigurations` |
 
 > A tool is not a procedure. `kubectl`, a client library, Helm, and a raw HTTP client
 > all send the same admission-object create. They are the same procedure.
@@ -214,20 +225,71 @@ Source: [`ddms/trr9025_k8s_c.json`](ddms/trr9025_k8s_c.json) (Arrows app format)
 deliberately does not fire (CEL cannot exfiltrate off-cluster), so C is caught by the
 chokepoint and triaged, not graded high.
 
+### Procedure D: Repoint an installed webhook to a URL  (`TRR9025.K8S.D`)
+
+The adversary does not install a new webhook; they take over one that is already
+installed and trusted (a policy engine, a sidecar injector) by changing its
+`clientConfig` from an in-cluster `service` to a `url` they control. After the write,
+the API server sends every object the webhook's rules select to the URL. A mutating
+webhook then changes each object; a validating webhook receives a copy of each object,
+Secrets included; and a repointed policy-engine webhook stops enforcing, because the
+new endpoint answers.
+
+The write is an `update` or a `patch` of the installed object, in several request
+shapes: a strategic merge patch (the `kubectl patch` default, which nulls `service` and
+sets `url`), a JSON merge patch, a JSON patch (`--type=json`, whose body is the
+operation list), a `PUT` (`kubectl replace`; the API server refuses an unconditional
+update of a webhook configuration, so the `PUT` carries the current `resourceVersion`,
+which kubectl fills in), a client-side apply, and a server-side apply. Each accepted
+write is answered `200` (it modifies an object that already exists), which separates it
+from a server-side-apply *install* of a new object (a `patch` answered `201`, which is a
+create; see K21 in the
+[closed entries](../../../detections/RULE_DEFECTS.md#closed-entries)).
+
+- **Prerequisites:** `update`/`patch` on an installed `validating`/`mutatingwebhookconfigurations`.
+- **Mechanics:** the write replaces the endpoint; the webhook keeps its rules and
+  selectors, so it keeps matching the same objects.
+- **Impact:** the same hijack, Secret exfiltration, or policy-off effect as a fresh
+  install, but against a webhook the cluster already trusts.
+- **Tools on this path:** `kubectl patch`, `kubectl replace`, `kubectl apply`
+  (client-side or `--server-side`), any client.
+
+#### Detection Data Model — `TRR9025.K8S.D`
+
+![DDM - Repoint an installed webhook to a URL](ddms/trr9025_k8s_d.png)
+
+Source: [`ddms/trr9025_k8s_d.json`](ddms/trr9025_k8s_d.json) (Arrows app format).
+
+**DDM summary.** The shaded node is the API server's authorize-and-audit of the
+update/patch (logged at RequestResponse, so `requestObject` carries the URL). The same
+write fires the TRR9008 chokepoint at medium; the Procedure D grader reads the URL and
+grades it high. The grader reads the object-shaped bodies and the JSON-patch operation
+list, matches only an accepted write (`200`) that is not a server-side dry run, and is
+case-insensitive on the scheme (Go `net/url` lower-cases the scheme before the `https`
+check and stores the URL as written, so an `HTTPS://` URL is accepted).
+
 ## Detection Strategy
 
-Compare the three DDMs. Every procedure is a `create` on the
-`admissionregistration.k8s.io` group, so one chokepoint rule covers all three. A and
-B are gradable from the submitted body; C is not, by design.
+Compare the four DDMs. A, B and C install an object on the
+`admissionregistration.k8s.io` group (a `create`, or a server-side apply that is a
+`patch` answered 201), so one chokepoint rule covers all three. A and B are gradable
+from the submitted body; C is not, by design. D modifies an installed object (an
+`update` or `patch` answered 200), which the create chokepoint does not see: the TRR9008
+chokepoint fires on it (Strategy 4), and the Procedure D grader (Strategy 3) grades it.
 
 **Telemetry requirement.** The audit policy must record `admissionregistration.k8s.io`
-creates at `Request` level so `requestObject.webhooks` is present. The shared policy
-(`detections/k8s/audit-policy-apiserver.yaml`) already does; no change is needed.
+creates at `Request` level, and updates and patches at `Request` level or higher, so
+`requestObject.webhooks` is present. The shared policy
+(`detections/k8s/audit-policy-apiserver.yaml`) already does (creates at `Request`,
+updates and patches at `RequestResponse`); no change is needed.
 
 **Strategy 1 — chokepoint (covers A, B, C).**
 Match an audit event where `objectRef.apiGroup` is `admissionregistration.k8s.io` and
-`verb` is `create`. This is the inverse of the TRR9008 chokepoint, which keys on the
-disabling verbs and excludes create. It is noisy — cert-manager, Gatekeeper, Kyverno,
+`verb` is `create`, or `verb` is `patch` with `responseStatus.code` 201 (a
+server-side-apply install; K21). This is the inverse of the TRR9008 chokepoint, which
+keys on the disabling verbs and excludes the `create` verb. A server-side-apply install
+is a `patch`, so the TRR9008 chokepoint also fires on it (an expected double alert),
+and the TRR9008 neuter grader filters it. It is noisy — cert-manager, Gatekeeper, Kyverno,
 and Helm legitimately create webhooks — so baseline the installer identity by
 `user.username`/`user.groups`. SigmaHQ's `kubernetes_audit_change_admission_controller`
 and Elastic's "Kubernetes Admission Webhook Created or Modified" cover this same
@@ -252,6 +314,58 @@ positive on the admission tooling every cluster runs.
 - Sensor: API server audit log at Request level.
 - Rule: `detections/sigma/T1546/k8s_malicious_admission_webhook_created.yml` (built).
 
+Both create rules also match a **server-side-apply install**, which the API server
+performs as a `patch` answered `201` (K21): the chokepoint and the grader match
+`verb: create` OR (`verb: patch` AND `responseStatus.code: 201`), so
+`kubectl apply --server-side` and server-side-apply GitOps or Helm installs are not
+missed. An apply patch with a YAML (not JSON) body is the exception: it leaves no
+record at all (see the gaps below).
+
+Refused installs:
+
+- A POST create that admission or validation refuses (403 from an admission webhook
+  or policy, 409, 422) is logged with its body, so both create rules fire on it.
+- A create that authorization refuses (403 before the body is read) has no
+  `requestObject`, so only the chokepoint fires.
+- A refused server-side-apply install (a `patch` answered 4xx) cannot be told from a
+  refused modify of an installed object, so neither create rule fires on it (their
+  `patch` branch needs 201). The TRR9008 chokepoint records it as a patch.
+
+**Strategy 3 — repoint grader (grades D; needs Request level or higher).**
+Match an accepted (`200`) `update` or `patch` of an installed MutatingWebhookConfiguration
+or ValidatingWebhookConfiguration whose request body sets a webhook's `clientConfig.url`.
+The rule reads the object-shaped body (PUT, strategic merge, JSON merge, client-side
+and server-side apply) with `|contains` against the serialized `webhooks` array, and
+the JSON-patch operation list with a small `|re` set. The set folds the case of the URL
+scheme with character classes (`[hH][tT][tT][pP]`), not with `|re|i`, because pySigma
+renders `|re|i` as `(?i)`, which Lucene reads as literal text. In that set the webhook index is
+any path token, because the API server's JSON patch library (`json-patch.v4` v4.13.0)
+reads an index with Go `strconv.Atoi` and accepts a negative index (`+0`, `-0` and `-1`
+all select a webhook). The set also matches across the operation list, not inside one
+operation, because the library ignores an unknown key in an operation and the API
+server drops an unknown field at the default `fieldValidation=Warn`. A `patch` answered
+`201` is a create, not a repoint, so the create grader owns it. A refused write (403, 409, 422)
+changes nothing and does not fire; a server-side dry run (`?dryRun=All`, for example
+`kubectl diff`) persists nothing and is filtered, as the TRR9008 chokepoint filters it:
+`dryRun=All` must be a whole parameter of the query (not a value such as
+`?fieldManager=?dryRun=All`), and the URI must hold at most 100 `&` (Go `net/url` reads no
+parameter of a query that has more than 10,000).
+The rule reads only `requestObject`, so Request level is enough; the shipped policy logs
+`admissionregistration.k8s.io` update and patch at RequestResponse. No policy change is
+needed.
+
+- Sensor: API server audit log at Request level or higher (the shipped policy uses
+  RequestResponse).
+- Rule: `detections/sigma/T1546/k8s_admission_webhook_repointed_to_url.yml` (built).
+
+**Strategy 4 — modify chokepoint (covers D).** TRR9008's chokepoint matches every
+`admissionregistration.k8s.io` update, patch or delete that is not a server-side dry
+run, at Metadata. It fires on every Procedure D repoint at medium, whatever the request
+shape (also on the shapes that Strategy 3 cannot grade, listed in the gaps below).
+
+- Sensor: API server audit log.
+- Rule: `detections/sigma/T1685/k8s_admission_webhook_disabled.yml` (built, TRR9008).
+
 **Demonstrated gaps.**
 - **In-cluster malicious endpoint.** A webhook wired to an in-cluster
   `clientConfig.service` backed by an attacker pod has no `clientConfig.url`, so the
@@ -259,19 +373,29 @@ positive on the admission tooling every cluster runs.
   trade: a cluster-wide-rules-plus-Secrets heuristic would fire on Kyverno and
   Gatekeeper, so it is not used. Correlate the webhook create with the creation of
   its backing Service and pod instead.
-- **Repoint of an existing webhook.** Both rules key on `verb: create`. An `update` or
-  `patch` that changes an installed webhook's `clientConfig` from a `service` to an
-  off-cluster `url` (strategic-merge, JSON patch, `kubectl replace`, client-side or
-  server-side apply) fires neither TRR9025 rule. It fires only TRR9008's medium
-  chokepoint `k8s_admission_webhook_disabled`, and TRR9008's
-  `k8s_admission_webhook_neutered` only if the same write also sets
-  `failurePolicy: Ignore` (neutered grades the fail-open field, not the URL).
-- **Server-side-apply install.** `kubectl apply --server-side` (and server-side-apply
-  GitOps or Helm) creates a missing object with a PATCH: verb `patch`,
-  `responseStatus.code` 201. Both TRR9025 rules key on `verb: create`, so neither
-  fires. Only TRR9008's medium chokepoint `k8s_admission_webhook_disabled` does, and
-  `k8s_admission_webhook_neutered` too if the body sets `failurePolicy: Ignore`.
-  Tracked as [RULE_DEFECTS K21](../../../detections/RULE_DEFECTS.md#k21-trr9025-rules-a-server-side-apply-install-is-a-patch).
+- **Repoint to another Service, or a JSON-patch copy/move.** Procedure D's grader reads
+  a `url` in the request body. A repoint from one `clientConfig.service` to another (an
+  attacker-run in-cluster Service) carries no URL, and a JSON-patch `copy` or `move`
+  that takes the URL from another webhook carries no URL in the request either; both
+  fire only the TRR9008 chokepoint. Tracked as
+  [RULE_DEFECTS K22](../../../detections/RULE_DEFECTS.md#k22-k8s_admission_webhook_repointed_to_url-a-service-to-service-repoint-or-a-json-patch-copymove).
+- **Service-side takeover.** A change to the webhook's backing Service (its selector,
+  or a change to type `ExternalName`) moves the webhook's traffic without any
+  `admissionregistration.k8s.io` write. The API server's default webhook resolver sends
+  a webhook whose Service is `ExternalName` to `https://<externalName>:<port>`
+  (kubernetes v1.36.4 `apiserver/pkg/util/proxy/proxy.go` `ResolveCluster`). Neither
+  TRR9008 nor this report fires. The attacker also needs a serving certificate that the
+  webhook's `caBundle` trusts for the Service name. Out of scope here; a rule on Service
+  writes (a patch to type `ExternalName`, or a selector change on a Service that a
+  webhook names) is the cover.
+- **YAML apply body.** A server-side apply patch whose body is YAML (not the JSON that
+  kubectl and client-go send) is dropped from the audit log at Request level or higher,
+  because the audit backend cannot encode the raw body as JSON. No rule sees that
+  install or repoint; the fallback is the kube-apiserver error line and the
+  `apiserver_audit_error_total` metric. The gap is not specific to admission objects:
+  it holds for every resource that the shipped policy logs at Request or higher.
+  Tracked as
+  [RULE_DEFECTS K23](../../../detections/RULE_DEFECTS.md#k23-apply-patches-with-a-yaml-body-no-audit-record-at-request-level-or-higher).
 - **Control-plane bypass.** An adversary with control-plane node or etcd access can
   write a webhook configuration straight into etcd, with no API `create` and no audit
   event. The lab demonstrates this read-only (it shows that a node-local etcd write
@@ -284,11 +408,14 @@ positive on the admission tooling every cluster runs.
 | A | Strategy 1; graded by Strategy 2 | URL-mode `clientConfig.url` |
 | B | Strategy 1; graded by Strategy 2 | URL-mode `clientConfig.url` |
 | C | Strategy 1 | `create` on a CEL policy (not graded; lower risk) |
+| D | Strategy 4 (TRR9008 chokepoint, medium); graded by Strategy 3 | accepted `update`/`patch` sets `clientConfig.url` |
 
-One chokepoint rule covers every admission-object install made by a create (POST).
-One grader separates the malicious webhook from the hundreds of benign ones. The
-in-cluster-endpoint, repoint, server-side-apply-install and control-plane-bypass
-variants are stated gaps.
+The chokepoint covers every admission-object install, whether a `create` (POST) or a
+server-side apply (a `patch` answered 201). The create grader separates the malicious
+install from the hundreds of benign ones; the Procedure D grader separates a malicious
+repoint. The in-cluster-endpoint, service-to-service-repoint / JSON-patch-copy-move,
+Service-side-takeover, YAML-apply-body and control-plane-bypass variants are stated
+gaps.
 
 ## Available Emulation Tests
 
@@ -296,8 +423,11 @@ The tests run in a lab cluster with the shared audit policy. The lab is a `kind`
 cluster; its config and audit policy are in
 [`detections/k8s/`](../../../detections/k8s/). Every object is named `trr9025-*` so a
 validator matches the emulation's own events, and every webhook is a **no-op**
-(`failurePolicy: Ignore`, a bogus unreachable `clientConfig.url`, scoped so it cannot
-intercept real admission), the same safety convention as TRR9008. One script drives
+(`failurePolicy: Ignore` for A and B, or `Fail` for D so that the repoint carries no
+neuter marker; a bogus unreachable `clientConfig.url`, or before the D repoint a Service
+that does not exist; an `objectSelector` that matches no object, and for D rules on a
+bogus API group), so the API server never calls it. This is the same safety convention
+as TRR9008. One script drives
 them:
 [`atomics/T1546/src/emulate_k8s.sh`](../../../atomics/T1546/src/emulate_k8s.sh), with
 Atomic Red Team wrappers in
@@ -308,26 +438,37 @@ Atomic Red Team wrappers in
 | TRR9025.K8S.A | `emulate_k8s.sh a` — create a no-op MutatingWebhookConfiguration with an off-cluster URL and wildcard rules. | **built** |
 | TRR9025.K8S.B | `emulate_k8s.sh b` — create a no-op ValidatingWebhookConfiguration scoped to Secrets with an off-cluster URL. | **built** |
 | TRR9025.K8S.C | `emulate_k8s.sh c` — create a benign CEL ValidatingAdmissionPolicy (chokepoint only). | **built** |
+| TRR9025.K8S.D | `emulate_k8s.sh d` — repoint four no-op Service-backed webhooks to the URL (strategic merge patch, JSON patch, PUT, server-side apply), and install one URL-mode webhook with `kubectl apply --server-side` (the create-via-patch-201 path). | **built** |
 | TRR9025.K8S (gap) | `emulate_k8s.sh gap` — show the control-plane etcd path on the node (read-only). | **built** |
 
 ## Detections
 
 | Strategy | Covers | Sigma rule | Sensor |
 |----------|--------|------------|--------|
-| 1 (chokepoint) | A, B, C | [`detections/sigma/T1546/k8s_admission_webhook_created.yml`](../../../detections/sigma/T1546/k8s_admission_webhook_created.yml) | API server audit log |
-| 2 (grader) | A, B | [`detections/sigma/T1546/k8s_malicious_admission_webhook_created.yml`](../../../detections/sigma/T1546/k8s_malicious_admission_webhook_created.yml) | API server audit log (Request) |
+| 1 (chokepoint) | A, B, C (create or server-side-apply install) | [`detections/sigma/T1546/k8s_admission_webhook_created.yml`](../../../detections/sigma/T1546/k8s_admission_webhook_created.yml) | API server audit log |
+| 2 (create grader) | A, B | [`detections/sigma/T1546/k8s_malicious_admission_webhook_created.yml`](../../../detections/sigma/T1546/k8s_malicious_admission_webhook_created.yml) | API server audit log (Request) |
+| 3 (repoint grader) | D | [`detections/sigma/T1546/k8s_admission_webhook_repointed_to_url.yml`](../../../detections/sigma/T1546/k8s_admission_webhook_repointed_to_url.yml) | API server audit log (Request or higher) |
+| 4 (TRR9008 modify chokepoint) | D | [`detections/sigma/T1685/k8s_admission_webhook_disabled.yml`](../../../detections/sigma/T1685/k8s_admission_webhook_disabled.yml) | API server audit log |
 
 The validator
 [`detections/validate_apiserver_detections.py`](../../../detections/validate_apiserver_detections.py)
 reads the API server audit log the emulation produced and asserts each rule matches an
-event whose `objectRef.name` carries the `trr9025-` marker. The workflow
+event whose `objectRef.name` carries the `trr9025-` marker. The server-side-apply
+install gate also needs verb `patch` and `responseStatus.code` 201; each Procedure D gate
+needs the shape's verb and `responseStatus.code` 200, so a refused write fails CI. The
+workflow
 [`validate-apiserver-detections.yml`](../../../.github/workflows/validate-apiserver-detections.yml)
 runs the loop on a `kind` cluster, with a negative control on the pre-emulation log.
 
-Upstream: SigmaHQ `kubernetes_audit_change_admission_controller.yml` and Elastic
-"Kubernetes Admission Webhook Created or Modified" both match the create at Metadata.
-Propose the Request-level grader that reads the webhook body to separate an
-off-cluster exfiltration webhook from a benign in-cluster one.
+Upstream: SigmaHQ `kubernetes_audit_change_admission_controller.yml` (verbs create,
+delete, patch, replace, update) and Elastic "Kubernetes Admission Webhook Created or
+Modified" (create, update, patch, delete) both match the create and the modify at
+Metadata, without reading the body. Their modify clauses are the nearest prior art for
+Procedure D: they fire on every webhook-configuration write. This report's Procedure D
+grader reads the request body and grades only an accepted update/patch that sets
+`clientConfig.url`, so it separates a hijacking repoint from a routine caBundle or
+rules edit. Propose the Request/RequestResponse-level graders that read the webhook body
+to separate an off-cluster exfiltration or repoint from a benign in-cluster one.
 
 ## References
 

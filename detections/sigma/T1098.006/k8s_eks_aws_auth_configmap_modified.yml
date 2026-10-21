@@ -1,0 +1,83 @@
+title: Kubernetes EKS aws-auth ConfigMap Modified
+id: afcaf21e-67a0-44ba-ac47-ec4ea9dc414e
+status: experimental
+description: |
+  Detects a write to the EKS aws-auth ConfigMap: an audit event whose
+  objectRef.resource is configmaps, whose objectRef.namespace is kube-system,
+  whose objectRef.name is aws-auth, and whose verb is create, update, patch or
+  delete. This is the TRR9004 Strategy 4 chokepoint for Procedure F (map an IAM
+  principal through the aws-auth ConfigMap).
+
+  On an EKS cluster whose authentication mode is CONFIG_MAP or
+  API_AND_CONFIG_MAP, the AWS IAM authenticator reads kube-system/aws-auth and
+  maps each IAM role or user it lists (mapRoles, mapUsers, mapAccounts) to a
+  Kubernetes username and groups. An adversary who can write that ConfigMap maps
+  an IAM principal they control to system:masters, or to a group that a binding
+  grants cluster-admin. The access survives pod, node and RBAC clean-up, because
+  no RBAC object changes: the k8s_rbac_* rules do not see it.
+
+  The marker is load-bearing: the authenticator reads only the ConfigMap named
+  aws-auth in kube-system, so an adversary cannot rename it and keep the mapping.
+  objectRef.resource, objectRef.namespace, objectRef.name and verb are set by the
+  API server. For an update, patch or delete the name comes from the request URL, so
+  the record carries it whatever the outcome; for a create (a POST to the collection)
+  objectRef.name is filled by the create handler from the object's metadata.name, and
+  that handler runs only after authorization admits the request. So the rule fires on
+  any outcome of an update, patch or delete (a denied write is an attempt worth a look,
+  as k8s_coredns_configmap_modified treats it) and on an authorized create; a create
+  that authorization denies (403) never reaches the handler, so its record has no
+  objectRef.name and cannot be tied to aws-auth (detections/RULE_DEFECTS.md K28).
+  A server-side apply sent with a raw YAML body is dropped by the JSON audit backend at
+  Request level and above, so that write leaves no record (K23, an audit-pipeline gap
+  for every resource logged at Request or higher).
+  Metadata level is enough for the update, patch and delete.
+
+  Create is included: a delete followed by a create (kubectl create, a POST) replaces
+  the mapping and is a create. A bulk deletecollection of kube-system ConfigMaps that
+  removes aws-auth carries no objectRef.name, so it is not matched; the create of the
+  replacement fires. Elastic's "EKS Authentication Configuration Modified" rule keys on
+  the same chokepoint with update, patch and delete; Stratus Red Team
+  eks.persistence.backdoor-aws-auth-configmap emulates it with an update. A content
+  grade (for example "mapRoles contains system:masters") cannot tell an attack from a
+  benign edit in one record, because every update re-sends the existing admin mapping;
+  so this rule stays a chokepoint. Baseline the actor, not the object.
+references:
+  - https://attack.mitre.org/techniques/T1098/006/
+  - https://docs.aws.amazon.com/eks/latest/userguide/auth-configmap.html
+  - https://stratus-red-team.cloud/attack-techniques/EKS/eks.persistence.backdoor-aws-auth-configmap/
+author: det-eng
+date: 2026/10/20
+tags:
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1098.006
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_aws_auth:
+    objectRef.resource: 'configmaps'
+    objectRef.namespace: 'kube-system'
+    objectRef.name: 'aws-auth'
+    verb:
+      - 'create'
+      - 'update'
+      - 'patch'
+      - 'delete'
+  condition: select_aws_auth
+falsepositives:
+  - Cluster provisioning and node-group changes that add a node role (eksctl create
+    nodegroup, eksctl create iamidentitymapping, the Terraform kubernetes provider,
+    the EKS blueprints). Baseline the automation identities by user.username and
+    user.groups.
+  - The EKS control plane's own writer eks:kms-storage-migrator (re-encrypts the
+    object after a KMS key change). aws-auth and access-entry usernames cannot
+    start with eks:, so the name cannot be spoofed through a mapping; baseline it.
+  - Microsoft Defender for Containers adds its MDCContainersAgentlessDiscoveryK8sRole
+    to aws-auth when agentless discovery is turned on for the cluster.
+  - On a cluster in API authentication mode the authenticator ignores aws-auth, so a
+    write there grants nothing; the audit record cannot show the mode (read it from
+    DescribeCluster accessConfig.authenticationMode).
+  - A dry-run write (requestURI carries dryRun=All) persists nothing but still fires;
+    triage by the dryRun=All query parameter.
+level: medium

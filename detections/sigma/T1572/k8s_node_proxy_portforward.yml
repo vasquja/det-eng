@@ -1,0 +1,85 @@
+title: Kubernetes Port-Forward Tunnel Through the Node Proxy
+id: 2f6d9c1a-4b8e-4c7a-9d2f-7e1a6c0b3d54
+status: experimental
+description: |
+  Detects a port-forward tunnel opened to the kubelet through the Kubernetes API
+  server node proxy (nodes/proxy), where the proxied request path names the kubelet
+  /portForward endpoint. The audit record shows objectRef.resource=nodes,
+  objectRef.subresource=proxy -- NOT pods/portforward -- so the TRR9026 chokepoint
+  rule (k8s_pod_portforward) does not see it. This is the nodes/proxy half of TRR9026
+  Procedure C. A caller with RBAC get or create on nodes/proxy reaches the kubelet
+  port-forward route and tunnels arbitrary TCP to a pod's network, the same protocol
+  tunnel for lateral movement or command and control, while leaving a nodes/proxy
+  record instead of a pods/portforward one.
+
+  The rule does NOT filter on verb, by design. A port-forward over WebSocket is an
+  HTTP GET upgrade, recorded with verb=get; a port-forward over the legacy SPDY
+  transport is an HTTP POST upgrade, recorded with verb=create. The emulation's
+  un-upgraded GET is also verb=get. Matching the subresource and the endpoint path
+  regardless of verb is the invariant. objectRef.name for a nodes/proxy request is the
+  NODE name (set by the API server from the path), not the pod, so the pod target is
+  carried in requestURI; the rule keys on the server-set resource/subresource pair and
+  the /proxy/portForward/ path, never on a name a caller chose.
+
+  kubectl port-forward itself never uses nodes/proxy: it sends pods/portforward, which
+  k8s_pod_portforward covers. The node-proxy path is reached by a raw client
+  (for example kubeletctl, or kubectl get --raw). The kubelet routes /portForward
+  case-sensitively (the camelCase route), so the rule matches the camelCase
+  portForward segment, the same casing TRR9002's k8s_node_proxy_exec filter uses for
+  this endpoint. The rule reads only the path part of requestURI (the text before ?),
+  so a query string that holds /proxy/portForward/ does not fire it.
+
+  Consistency with k8s_node_proxy_exec (TRR9002): the API server joins the proxied
+  path segments with path.Join before it sends the request to the kubelet, so it
+  drops empty segments (//) and single-dot segments (/./) and resolves /../; it also
+  decodes percent encoding in the path. The raw requestURI can therefore name a
+  different kubelet endpoint than the one the kubelet receives. The two rules split
+  these shapes: k8s_node_proxy_exec fires on any nodes/proxy requestURI path that
+  holds a percent-encoded byte or a /../ segment, whatever endpoint it seems to name,
+  so a port-forward behind an encoded endpoint (for example portForwar%64) is detected
+  there. This rule accepts empty and single-dot segments between /proxy/ and
+  portForward/ (for example /proxy//portForward/ or /proxy/./portForward/), which
+  k8s_node_proxy_exec does not match. A request that names /proxy/portForward/ and
+  also holds a percent-encoded byte or a /../ segment (for example
+  /proxy/portForward/../run/...) fires both rules. That double alert is acceptable and
+  documented, because such a request is itself anomalous.
+
+  Routine nodes/proxy traffic (metrics and stats scraping) does not match, because the
+  rule requires the portForward endpoint in the path. A legitimate port-forward
+  through nodes/proxy is rare: kubectl port-forward uses pods/portforward, so a hit
+  comes from a raw client, for example an operator who debugs a node. Triage every
+  hit, the same as k8s_node_proxy_exec. Use the principal, the source IP, and the
+  target namespace and pod in requestURI to assess it.
+  The direct-kubelet form on TCP 10250, which bypasses the API server, writes no API
+  audit event and stays a documented gap (TRR9026 Procedure D), the same gap TRR9002
+  documents for exec. Nearest prior art: Elastic's "Kubernetes API Server Proxying
+  Request to Kubelet" rule on any non-system nodes/proxy path and its AKS rule that
+  names /proxy/portForward; this is a provider-agnostic Sigma counterpart scoped to the
+  port-forward endpoint.
+references:
+  - https://attack.mitre.org/techniques/T1572/
+  - https://kubernetes.io/docs/reference/access-authn-authz/kubelet-authn-authz/
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+author: det-eng
+date: 2026/10/20
+tags:
+  - attack.command-and-control
+  - attack.t1572
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_node_proxy:
+    objectRef.resource: 'nodes'
+    objectRef.subresource: 'proxy'
+  select_portforward_endpoint:
+    # Path part only (before ?). Empty and single-dot segments between /proxy/ and
+    # portForward/ are allowed: the API server drops them before it proxies the path.
+    requestURI|re: '^[^?]*/proxy/(\.?/)*portForward/'
+  condition: select_node_proxy and select_portforward_endpoint
+falsepositives:
+  - Rare. An operator who debugs a node and reaches the kubelet port-forward route
+    through nodes/proxy with a raw client. Routine nodes/proxy traffic to /metrics and
+    /stats does not match. Triage every hit on the actor, the source IP, and the
+    target namespace and pod in requestURI.
+level: high

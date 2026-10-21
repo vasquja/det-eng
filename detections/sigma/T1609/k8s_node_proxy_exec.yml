@@ -14,8 +14,10 @@ description: |
   also requires an exec path in requestURI. A path whose first segment after
   /proxy/ is another kubelet endpoint (containerLogs, portForward, checkpoint,
   logs, debug) is not an exec even when a later segment is named exec, run or
-  attach, so it is filtered. A nodes/proxy request whose requestURI path (anything
-  before ?) holds a percent-encoded byte or a dot segment fires on its own: the
+  attach, so it is filtered. Empty (//) and single-dot (/./) segments before that
+  endpoint do not change it: the API server drops them with path.Join before it
+  proxies the path. A nodes/proxy request whose requestURI path (anything
+  before ?) holds a percent-encoded byte or a .. segment fires on its own: the
   kubelet receives the decoded path, which can differ from the endpoint the raw
   requestURI seems to name.
 references:
@@ -40,12 +42,16 @@ detection:
       - '/run/'
       - '/attach/'
   # Another kubelet endpoint (the first segment after /proxy/) whose later path
-  # segments name a namespace, pod or container exec, run or attach.
+  # segments name a namespace, pod or container exec, run or attach. Empty (//) and
+  # single-dot (/./) segments before the endpoint are allowed: the API server joins the
+  # proxied path with path.Join, which drops them (as k8s_node_proxy_kubelet_api.yml and
+  # T1572/k8s_node_proxy_portforward.yml read the endpoint). A .. segment is not
+  # allowed here, and select_path_not_normalized fires on it outside this filter.
   filter_other_kubelet_endpoint:
-    requestURI|re: '^/api/v1/nodes/[^/?]+/proxy/(containerLogs|portForward|checkpoint|logs|debug)([/?].*)?$'
+    requestURI|re: '^/api/v1/nodes/[^/?]+/proxy/(\.?/)*(containerLogs|portForward|checkpoint|logs|debug)([/?].*)?$'
   # The audit record keeps the raw request line, but the API server routes,
   # authorizes (objectRef) and proxies the decoded path. A nodes/proxy request whose
-  # requestURI path (anything before ?) holds a percent-encoded byte or a dot
+  # requestURI path (anything before ?) holds a percent-encoded byte or a ..
   # segment can therefore name a different kubelet endpoint than requestURI shows,
   # even when the encoding is in the /api/v1/nodes/<n>/proxy/ prefix itself; it
   # fires whatever endpoint it appears to name, and the filter above never

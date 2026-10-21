@@ -1,0 +1,245 @@
+{
+  "style": {
+    "font-family": "sans-serif",
+    "background-color": "#ffffff",
+    "background-image": "",
+    "background-size": "100%",
+    "node-color": "#ffffff",
+    "border-width": 4,
+    "border-color": "#000000",
+    "radius": 50,
+    "node-padding": 5,
+    "node-margin": 2,
+    "outside-position": "auto",
+    "node-icon-image": "",
+    "node-background-image": "",
+    "icon-position": "inside",
+    "icon-size": 64,
+    "caption-position": "inside",
+    "caption-max-width": 200,
+    "caption-color": "#000000",
+    "caption-font-size": 16,
+    "caption-font-weight": "normal",
+    "label-position": "outside",
+    "label-display": "pill",
+    "label-color": "#000000",
+    "label-background-color": "#ffffff",
+    "label-border-color": "#000000",
+    "label-border-width": 2,
+    "label-font-size": 14,
+    "label-padding": 5,
+    "label-margin": 4,
+    "directionality": "directed",
+    "detail-position": "inline",
+    "detail-orientation": "parallel",
+    "arrow-width": 5,
+    "arrow-color": "#000000",
+    "margin-start": 5,
+    "margin-end": 5,
+    "margin-peer": 20,
+    "attachment-start": "normal",
+    "attachment-end": "normal",
+    "relationship-icon-image": "",
+    "type-color": "#000000",
+    "type-background-color": "#ffffff",
+    "type-border-color": "#000000",
+    "type-border-width": 0,
+    "type-font-size": 16,
+    "type-padding": 5,
+    "property-position": "outside",
+    "property-alignment": "colon",
+    "property-color": "#000000",
+    "property-font-size": 16,
+    "property-font-weight": "normal"
+  },
+  "nodes": [
+    {
+      "id": "n0",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "caption": "Read Pod List",
+      "labels": [],
+      "properties": {
+        "Method": "GET (audit verb get)",
+        "Permission": "nodes/proxy get",
+        "Path": ".../nodes/NODE/proxy/pods or /runningpods/"
+      },
+      "style": {
+        "border-color": "#68bc00",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top"
+      }
+    },
+    {
+      "id": "n1",
+      "position": {
+        "x": 500,
+        "y": 0
+      },
+      "caption": "Authorize Node Proxy",
+      "labels": [
+        "K8s Audit Log"
+      ],
+      "properties": {
+        "objectRef.resource": "nodes",
+        "objectRef.subresource": "proxy",
+        "requestURI": "first segment after /proxy/: pods, runningpods, checkpoint"
+      },
+      "style": {
+        "border-color": "#0062b1",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top",
+        "node-color": "#fff2a8"
+      }
+    },
+    {
+      "id": "n2",
+      "position": {
+        "x": 900,
+        "y": 0
+      },
+      "caption": "Forward Request",
+      "labels": [],
+      "properties": {
+        "To": "kubelet API",
+        "Path": "joined with path.Join"
+      },
+      "style": {
+        "border-color": "#0062b1",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top"
+      }
+    },
+    {
+      "id": "n3",
+      "position": {
+        "x": 1250,
+        "y": 0
+      },
+      "caption": "Return Pod List",
+      "labels": [],
+      "properties": {
+        "From": "kubelet",
+        "/pods": "pod specs, env values",
+        "/runningpods/": "pod names, images"
+      },
+      "style": {
+        "border-color": "#653294",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top"
+      }
+    },
+    {
+      "id": "n4",
+      "position": {
+        "x": 0,
+        "y": 300
+      },
+      "caption": "Checkpoint Container",
+      "labels": [],
+      "properties": {
+        "Method": "POST (audit verb create)",
+        "Permission": "nodes/proxy create",
+        "Path": ".../nodes/NODE/proxy/checkpoint/NS/POD/CTR"
+      },
+      "style": {
+        "border-color": "#68bc00",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "bottom"
+      }
+    },
+    {
+      "id": "n5",
+      "position": {
+        "x": 1250,
+        "y": 300
+      },
+      "caption": "Write Checkpoint Archive",
+      "labels": [],
+      "properties": {
+        "By": "kubelet and container runtime",
+        "Where": "node, kubelet root dir checkpoints/",
+        "Holds": "container memory, file system"
+      },
+      "style": {
+        "border-color": "#653294",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "bottom"
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "id": "r0",
+      "fromId": "n0",
+      "toId": "n1",
+      "type": "",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r1",
+      "fromId": "n1",
+      "toId": "n2",
+      "type": "",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r2",
+      "fromId": "n2",
+      "toId": "n3",
+      "type": "",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r3",
+      "fromId": "n4",
+      "toId": "n1",
+      "type": "",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r4",
+      "fromId": "n2",
+      "toId": "n5",
+      "type": "",
+      "properties": {},
+      "style": {}
+    }
+  ]
+}

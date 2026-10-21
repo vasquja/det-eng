@@ -71,7 +71,8 @@ description: |
 
     A full-object or strategic-merge patch carries the Corefile at
     requestObject.data.Corefile (a string), matched directly; a JSON patch (kubectl
-    patch --type=json) submits an ops array, so requestObject is one JSON text field in
+    patch --type=json) submits an ops array, which the validators flatten to one JSON
+    text field (sigma_eval.flatten; a SIEM must index it the same way), in
     which a line break is the two characters backslash-n -- the rule matches that raw
     form too (plugin, environment placeholder, root block, public forward, cluster
     zone). At RequestResponse level, which the shipped policy sets for the three DNS

@@ -55,21 +55,49 @@ atomic_tests:
         type: string
         default: PathToAtomicsFolder/T1572/src
 
-  - name: "TRR9026.K8S.C — direct-kubelet port-forward (no audit event)"
-    auto_generated_guid: 4699bf90-bf39-4f07-848c-367d919bc0d6
+  - name: "TRR9026.K8S.C — port-forward through nodes/proxy to the kubelet /portForward"
+    auto_generated_guid: 5a8e1d7c-2f64-4b93-8c0a-6d3f9e2b1a47
     description: |
-      Read-only demonstration of the gap: a port-forward straight to the kubelet :10250
-      /portForward (for example with kubeletctl) bypasses the API server and leaves no
-      pods/portforward audit event, so the API-audit chokepoint is blind -- the TRR9002
-      direct-kubelet gap, restated. Makes no kubelet call.
-      Rule: detections/sigma/T1572/k8s_pod_portforward.yml (does not see this path)
+      Reaches the kubelet /portForward endpoint through the API server node proxy
+      (nodes/proxy), not pods/portforward. The audit record shows objectRef.resource=nodes,
+      subresource=proxy, with the /proxy/portForward/ path and the target pod trr9026-target
+      in requestURI (objectRef.name is the node). kubectl port-forward never uses this path;
+      a raw client (kubeletctl, or kubectl get --raw) does. The GET carries no upgrade
+      header, so the kubelet refuses the un-upgraded request and no tunnel establishes, but
+      the API server still writes the nodes/proxy audit record; a real tunnel writes the same
+      requestURI.
+      Chokepoint: objectRef.resource=nodes, subresource=proxy, requestURI /proxy/portForward/.
+      Rule: detections/sigma/T1572/k8s_node_proxy_portforward.yml
     supported_platforms:
       - containers
     executor:
       name: bash
       elevation_required: false
       command: |
-        bash #{source_dir}/emulate.sh gap
+        bash #{source_dir}/emulate.sh c
+      cleanup_command: |
+        kubectl delete pod trr9026-target --ignore-not-found --force --grace-period=0
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1572/src
+
+  - name: "TRR9026.K8S.D — direct-kubelet port-forward (no audit event)"
+    auto_generated_guid: 4699bf90-bf39-4f07-848c-367d919bc0d6
+    description: |
+      Read-only demonstration of the gap: a port-forward straight to the kubelet :10250
+      /portForward (for example with kubeletctl) bypasses the API server and leaves no
+      API audit event, so the API-audit chokepoint is blind -- the TRR9002 direct-kubelet
+      gap, restated. Makes no kubelet call.
+      Rule: detections/sigma/T1572/k8s_node_proxy_portforward.yml (does not see this path)
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh d
       cleanup_command: |
         true
     input_arguments:

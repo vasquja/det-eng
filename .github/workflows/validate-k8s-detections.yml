@@ -5,7 +5,9 @@ name: validate-k8s-detections
 #
 # A kind cluster (Kubernetes in Docker) runs on the ubuntu-latest runner with
 # API server audit logging turned on. The job runs the benign emulation
-# (each procedure runs `id`), copies the audit log off the control-plane node,
+# (procedures A-D run `id`; E makes one read-only direct kubelet call; F reads
+# kubelet pod lists through nodes/proxy as a temporary service account), copies
+# the audit log off the control-plane node,
 # and asserts each paired Sigma rule, run by pySigma, matches an event from the
 # emulation itself. As a negative control it also runs the validator on the
 # audit log captured BEFORE the emulation, where no rule may pass. On a public
@@ -179,7 +181,7 @@ jobs:
             > /tmp/pre-emulation-audit.log
           echo "Captured $(wc -l < /tmp/pre-emulation-audit.log) pre-emulation audit lines."
 
-      - name: Emulate T1609 procedures (benign `id`)
+      - name: Emulate T1609 procedures (benign)
         shell: bash
         run: |
           bash atomics/T1609/src/emulate.sh all

@@ -49,7 +49,9 @@
       "name": "Command Execution in a Running Container (Kubernetes)",
       "id": "TRR9002",
       "tactics": [
-        "Execution"
+        "Execution",
+        "Discovery",
+        "Credential Access"
       ],
       "contributors": [
         "det-eng"
@@ -65,10 +67,11 @@
         "B": "Attach through the API server",
         "C": "Ephemeral debug container",
         "D": "Exec through the API server node proxy",
-        "E": "Exec directly through the kubelet API"
+        "E": "Exec directly through the kubelet API",
+        "F": "Kubelet pod read or checkpoint through the node proxy"
       },
       "pub_date": "2026-10-06",
-      "last_update": "2026-10-06",
+      "last_update": "2026-10-20",
       "path": "trr9002/k8s/README.md",
       "tests": {
         "A": {
@@ -89,6 +92,10 @@
         },
         "E": {
           "text": "det-eng direct-kubelet detection-gap demonstration",
+          "url": "../atomics/T1609/src/emulate.sh"
+        },
+        "F": {
+          "text": "det-eng node-proxy kubelet pod-read behavioral emulation",
           "url": "../atomics/T1609/src/emulate.sh"
         }
       }
@@ -148,10 +155,12 @@
         "B": "Namespaced RoleBinding to a ClusterRole",
         "C": "Write a wildcard or escalate/bind role",
         "D": "Bind a built-in group (mass grant)",
-        "E": "Patch an existing binding or role"
+        "E": "Patch an existing binding or role",
+        "F": "Map an IAM principal through the EKS aws-auth ConfigMap",
+        "G": "Write a sensitive (non-wildcard) role: exec, token, cluster-wide secret reads"
       },
       "pub_date": "2026-10-12",
-      "last_update": "2026-10-12",
+      "last_update": "2026-10-20",
       "path": "trr9004/k8s/README.md",
       "tests": {
         "A": {
@@ -172,6 +181,14 @@
         },
         "E": {
           "text": "det-eng role patch behavioral emulation",
+          "url": "../atomics/T1098.006/src/emulate.sh"
+        },
+        "F": {
+          "text": "det-eng EKS aws-auth ConfigMap write behavioral emulation (sentinel; touches only an aws-auth it wrote, with resourceVersion preconditions)",
+          "url": "../atomics/T1098.006/src/emulate.sh"
+        },
+        "G": {
+          "text": "det-eng sensitive-role write behavioral emulation (exec, token, cluster-wide secrets; never bound)",
           "url": "../atomics/T1098.006/src/emulate.sh"
         }
       }
@@ -288,10 +305,11 @@
         "A": "Privileged container",
         "B": "hostPath mount of a sensitive node directory",
         "C": "Host namespace (hostPID/hostNetwork/hostIPC)",
-        "D": "Added dangerous capabilities"
+        "D": "Added dangerous capabilities",
+        "E": "Seccomp or AppArmor confinement removed"
       },
       "pub_date": "2026-10-12",
-      "last_update": "2026-10-12",
+      "last_update": "2026-10-20",
       "path": "trr9007/k8s/README.md",
       "tests": {
         "A": {
@@ -308,6 +326,10 @@
         },
         "D": {
           "text": "det-eng added-capabilities pod-spec behavioral emulation (sleep-only)",
+          "url": "../atomics/T1611/src/emulate_k8s.sh"
+        },
+        "E": {
+          "text": "det-eng seccomp/AppArmor Unconfined pods and Deployment behavioral emulation (sleep-only)",
           "url": "../atomics/T1611/src/emulate_k8s.sh"
         }
       }
@@ -334,7 +356,7 @@
         "D": "Remove the enforcer's workload"
       },
       "pub_date": "2026-10-12",
-      "last_update": "2026-10-16",
+      "last_update": "2026-10-20",
       "path": "trr9008/k8s/README.md",
       "tests": {
         "A": {
@@ -350,7 +372,7 @@
           "url": "../atomics/T1685/src/emulate_k8s.sh"
         },
         "D": {
-          "text": "det-eng enforcer-workload removal behavioral emulation (scale-to-zero + delete)",
+          "text": "det-eng enforcer-workload removal behavioral emulation (scale-to-zero + delete; d2 in the kyverno namespace)",
           "url": "../atomics/T1685/src/emulate_k8s.sh"
         }
       }
@@ -936,10 +958,11 @@
       "procedures": {
         "A": "Mutating webhook backdoor",
         "B": "Validating webhook Secret exfiltration",
-        "C": "CEL admission policy (chokepoint only)"
+        "C": "CEL admission policy (chokepoint only)",
+        "D": "Repoint an installed webhook to a URL"
       },
       "pub_date": "2026-10-14",
-      "last_update": "2026-10-14",
+      "last_update": "2026-10-20",
       "path": "trr9025/k8s/README.md",
       "tests": {
         "A": {
@@ -952,6 +975,10 @@
         },
         "C": {
           "text": "det-eng CEL ValidatingAdmissionPolicy behavioral emulation (chokepoint only)",
+          "url": "../atomics/T1546/src/emulate_k8s.sh"
+        },
+        "D": {
+          "text": "det-eng webhook-repoint behavioral emulation (no-op; strategic merge, JSON patch, PUT, server-side apply, plus a server-side-apply URL-mode install)",
           "url": "../atomics/T1546/src/emulate_k8s.sh"
         }
       }
@@ -974,10 +1001,11 @@
       "procedures": {
         "A": "Port-forward over SPDY",
         "B": "Port-forward over WebSocket",
-        "C": "Direct-kubelet / nodes-proxy tunnel"
+        "C": "Port-forward through the node proxy",
+        "D": "Direct-kubelet tunnel"
       },
       "pub_date": "2026-10-14",
-      "last_update": "2026-10-14",
+      "last_update": "2026-10-20",
       "path": "trr9026/k8s/README.md",
       "tests": {
         "A": {
@@ -989,6 +1017,10 @@
           "url": "../atomics/T1572/src/emulate.sh"
         },
         "C": {
+          "text": "det-eng nodes/proxy port-forward behavioral emulation (requestURI /proxy/portForward/)",
+          "url": "../atomics/T1572/src/emulate.sh"
+        },
+        "D": {
           "text": "det-eng direct-kubelet port-forward gap statement (read-only; makes no kubelet call)",
           "url": "../atomics/T1572/src/emulate.sh"
         }

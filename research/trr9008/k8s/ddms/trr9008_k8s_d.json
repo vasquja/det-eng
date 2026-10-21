@@ -59,10 +59,10 @@
         "x": 0,
         "y": 0
       },
-      "caption": "Delete or Scale Enforcer Deployment",
+      "caption": "Delete or Scale Enforcer Workload",
       "labels": [],
       "properties": {
-        "Verb": "delete / patch replicas 0"
+        "Verb": "delete; scale a Deployment to 0"
       },
       "style": {
         "border-color": "#68bc00",
@@ -87,8 +87,9 @@
       ],
       "properties": {
         "objectRef.apiGroup": "apps",
-        "objectRef.resource": "deployments",
-        "Strategy": "2 (fallback)"
+        "objectRef.resource": "deployments, daemonsets",
+        "objectRef.namespace": "gatekeeper-system, kyverno, falco (alert)",
+        "Strategy": "3 (alert + anchor)"
       },
       "style": {
         "border-color": "#0062b1",
@@ -147,6 +148,55 @@
         "property-font-size": 14,
         "outside-position": "bottom"
       }
+    },
+    {
+      "id": "n4",
+      "position": {
+        "x": 300,
+        "y": 300
+      },
+      "caption": "Delete Engine Namespace",
+      "labels": [],
+      "properties": {
+        "Verb": "delete"
+      },
+      "style": {
+        "border-color": "#68bc00",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "bottom"
+      }
+    },
+    {
+      "id": "n5",
+      "position": {
+        "x": 600,
+        "y": 300
+      },
+      "caption": "Authorize + Audit Namespace Delete",
+      "labels": [
+        "K8s Audit Log"
+      ],
+      "properties": {
+        "objectRef.resource": "namespaces",
+        "objectRef.name": "gatekeeper-system, kyverno, falco",
+        "Strategy": "3 (alert + anchor)"
+      },
+      "style": {
+        "border-color": "#0062b1",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "bottom",
+        "node-color": "#fff2a8"
+      }
     }
   ],
   "relationships": [
@@ -170,6 +220,22 @@
       "id": "r2",
       "fromId": "n2",
       "toId": "n3",
+      "type": "",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r3",
+      "fromId": "n4",
+      "toId": "n5",
+      "type": "",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r4",
+      "fromId": "n5",
+      "toId": "n2",
       "type": "",
       "properties": {},
       "style": {}

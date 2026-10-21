@@ -5,13 +5,20 @@ description: |
   Detects any write (create, update, patch, delete, deletecollection) to a
   Kubernetes RBAC object in the rbac.authorization.k8s.io API group: roles,
   clusterroles, rolebindings, and clusterrolebindings. This is the TRR9004
-  Strategy 1 chokepoint. Every path
-  that grants, widens, or persists a permission has to pass through the API
-  server as an rbac write to take effect, so one rule covers all five procedures:
-  binding a powerful ClusterRole (A), a namespaced RoleBinding that references a
-  ClusterRole (B), writing a wildcard or escalate/bind role (C), binding a
-  built-in group for a mass grant (D), and patching an existing binding or role
-  (E).
+  Strategy 1 chokepoint. Every RBAC-object grant (a path that grants, widens, or
+  persists a permission through a Role, ClusterRole, RoleBinding or
+  ClusterRoleBinding) has to pass through the API server as an rbac write to take
+  effect, so one rule covers Procedures A to E and G: binding a powerful
+  ClusterRole (A), a namespaced RoleBinding that references a ClusterRole (B),
+  writing a wildcard or escalate/bind role (C), binding a built-in group for a mass
+  grant (D), patching an existing binding or role (E), and writing a sensitive
+  (non-wildcard) role that grants pod exec or attach, token minting or cluster-wide
+  Secret reads (G).
+
+  The EKS aws-auth mapping (Procedure F) does not pass through an rbac write: it maps
+  an IAM principal to a Kubernetes user and groups through the kube-system/aws-auth
+  ConfigMap, and no RBAC object changes. k8s_eks_aws_auth_configmap_modified.yml
+  covers Procedure F.
 
   The verb is the ordinary create/update/patch/delete/deletecollection. The
   special RBAC authorization verbs escalate and bind are NOT the audit verb: they are
@@ -31,8 +38,11 @@ description: |
   bindings continuously. Baseline the actor, not the object: suppress
   system:kube-controller-manager, system:apiserver, the kubeadm and
   system:bootstrappers identities, and known GitOps or CI service accounts by
-  user.username and user.groups, then let the companion rule
-  (k8s_rbac_privileged_grant.yml) raise severity on the dangerous grants.
+  user.username and user.groups, then let the two companion rules raise severity:
+  k8s_rbac_privileged_grant.yml (high) on the dangerous grants (a wildcard,
+  escalate, bind, impersonate, nodes/proxy, a powerful roleRef or a group subject),
+  and k8s_rbac_sensitive_permission_grant.yml (medium) on a role that grants pod
+  exec or attach, token minting or cluster-wide Secret reads.
 references:
   - https://attack.mitre.org/techniques/T1098/006/
   - https://kubernetes.io/docs/reference/access-authn-authz/rbac/
