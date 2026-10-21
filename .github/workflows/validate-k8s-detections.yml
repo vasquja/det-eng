@@ -1,4 +1,8 @@
 name: validate-k8s-detections
+# A dispatch with a label (the weekly k8s-version-matrix.yml driver) puts the label in
+# the run name, so the driver can find its own run. Every other run keeps the default
+# name (an empty run-name). The job and check names do not change.
+run-name: ${{ inputs.label && format('{0} [{1}]', github.workflow, inputs.label) || '' }}
 
 # Proves the TRR9002 loop on a real Kubernetes cluster:
 #   emulate a procedure -> API server audit event -> Sigma rule fires.
@@ -29,7 +33,31 @@ on:
   # ALWAYS reports. The `changes` job decides from the diff whether the heavy job
   # runs; a skip on an unrelated PR counts as success. Push to main stays filtered.
   pull_request:
+  # The inputs let the weekly version matrix (k8s-version-matrix.yml) run these same
+  # steps on another Kubernetes minor. An empty input keeps the pin in env below, and
+  # push, pull_request and schedule runs always use the pins.
   workflow_dispatch:
+    inputs:
+      node_image:
+        description: 'kindest/node image as name:vX.Y.Z@sha256:<digest> (empty: the pin)'
+        required: false
+        default: ''
+        type: string
+      kubectl_version:
+        description: 'kubectl version as vX.Y.Z, with kubectl_sha256 (empty: the pin)'
+        required: false
+        default: ''
+        type: string
+      kubectl_sha256:
+        description: 'sha256 of that kubectl linux/amd64 binary, from dl.k8s.io (empty: the pin)'
+        required: false
+        default: ''
+        type: string
+      label:
+        description: 'Label for the run name (the version matrix finds its run by it)'
+        required: false
+        default: ''
+        type: string
   # Weekly regression: re-prove every rule even when no file in the paths above
   # changed (pySigma, the runner image, kind and the kernel drift underneath).
   # A schedule event has no PR base, so the `changes` job decides relevant=true.
@@ -48,12 +76,20 @@ env:
   # the create commands of detections/k8s/kind-*.yaml. Next bump due by 2027-01-20.
   # Kubernetes v1.36.5 is released, but kind has not published a kindest/node image for
   # it yet; the maintainer chose to pin v1.36.4 until it does.
+  # A workflow_dispatch can replace the node image and kubectl (the inputs above, for
+  # the version matrix); the pins below stay the only values for every other event.
+  # When the pin moves, also move the legs of .github/workflows/k8s-version-matrix.yml
+  # to the previous and the next minor that the new kind release publishes (image by
+  # digest from its release notes; kubectl version and .sha256 from dl.k8s.io).
+  # Then update the version sentences in detections/README.md (the matrix paragraph
+  # and the Kubernetes version notes) and the Version notes of TRR9002, TRR9006 and
+  # TRR9009 (research/trr90NN/k8s/README.md).
   KIND_VERSION: v0.33.0
   KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
-  KIND_NODE_IMAGE: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
+  KIND_NODE_IMAGE: ${{ inputs.node_image || 'kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed' }}
   KUBE_SERVER_VERSION: v1.36.4
-  KUBECTL_VERSION: v1.36.4
-  KUBECTL_SHA256: 8b8f088da2dab964f853b38464033b1be15ede2839eca751482357c45abdd05a
+  KUBECTL_VERSION: ${{ inputs.kubectl_version || 'v1.36.4' }}
+  KUBECTL_SHA256: ${{ inputs.kubectl_sha256 || '8b8f088da2dab964f853b38464033b1be15ede2839eca751482357c45abdd05a' }}
   CLUSTER_NAME: trr9002
 
 jobs:
@@ -125,8 +161,25 @@ jobs:
 
       - name: Install kind and kubectl (pinned)
         shell: bash
+        env:
+          IN_KUBECTL_VERSION: ${{ inputs.kubectl_version }}
+          IN_KUBECTL_SHA256: ${{ inputs.kubectl_sha256 }}
         run: |
           set -euo pipefail
+          # A dispatch can replace the pins (inputs). Give kubectl_version and
+          # kubectl_sha256 together, and check each value's form before use.
+          if [ -n "${IN_KUBECTL_VERSION}${IN_KUBECTL_SHA256}" ] \
+             && { [ -z "${IN_KUBECTL_VERSION}" ] || [ -z "${IN_KUBECTL_SHA256}" ]; }; then
+            echo "::error::give the inputs kubectl_version and kubectl_sha256 together"
+            exit 1
+          fi
+          image_re='^[a-z0-9._:/-]+:v[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}$'
+          [[ "${KIND_NODE_IMAGE}" =~ ${image_re} ]] \
+            || { echo "::error::node image '${KIND_NODE_IMAGE}' is not name:vX.Y.Z@sha256:<64 hex>"; exit 1; }
+          [[ "${KUBECTL_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || { echo "::error::kubectl version '${KUBECTL_VERSION}' is not vX.Y.Z"; exit 1; }
+          [[ "${KUBECTL_SHA256}" =~ ^[0-9a-f]{64}$ ]] \
+            || { echo "::error::kubectl sha256 '${KUBECTL_SHA256}' is not 64 hex digits"; exit 1; }
           curl -fsSLo ./kind \
             "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
           echo "${KIND_SHA256}  ./kind" | sha256sum -c -
@@ -150,14 +203,22 @@ jobs:
 
       - name: Confirm the pinned Kubernetes version
         shell: bash
+        env:
+          IN_NODE_IMAGE: ${{ inputs.node_image }}
         run: |
           set -euo pipefail
+          want="${KUBE_SERVER_VERSION}"; what="the pin"
+          if [ -n "${IN_NODE_IMAGE}" ]; then
+            # A dispatch with another node image: the image tag names the version.
+            ref="${KIND_NODE_IMAGE%%@*}"; want="${ref##*:}"; what="the node image tag"
+          fi
           server="$(kubectl version -o json | python3 -c 'import json, sys; print(json.load(sys.stdin)["serverVersion"]["gitVersion"])')"
           echo "Server Version: ${server}"
-          if [ "${server}" != "${KUBE_SERVER_VERSION}" ]; then
-            echo "::error::the kind cluster runs ${server}, but the pin is ${KUBE_SERVER_VERSION}"
+          if [ "${server}" != "${want}" ]; then
+            echo "::error::the kind cluster runs ${server}, but ${what} is ${want}"
             exit 1
           fi
+          echo "Kubernetes ${server} (node image ${KIND_NODE_IMAGE}, kubectl ${KUBECTL_VERSION})" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Confirm audit logging is active
         shell: bash

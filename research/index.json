@@ -71,7 +71,7 @@
         "F": "Kubelet pod read or checkpoint through the node proxy"
       },
       "pub_date": "2026-10-06",
-      "last_update": "2026-10-20",
+      "last_update": "2026-10-21",
       "path": "trr9002/k8s/README.md",
       "tests": {
         "A": {
@@ -261,7 +261,7 @@
         "E": "Read a mounted token off disk (the gap)"
       },
       "pub_date": "2026-10-12",
-      "last_update": "2026-10-12",
+      "last_update": "2026-10-21",
       "path": "trr9006/k8s/README.md",
       "tests": {
         "A": {
@@ -309,7 +309,7 @@
         "E": "Seccomp or AppArmor confinement removed"
       },
       "pub_date": "2026-10-12",
-      "last_update": "2026-10-20",
+      "last_update": "2026-10-21",
       "path": "trr9007/k8s/README.md",
       "tests": {
         "A": {
@@ -400,7 +400,7 @@
         "D": "Impersonate a uid or extras"
       },
       "pub_date": "2026-10-12",
-      "last_update": "2026-10-12",
+      "last_update": "2026-10-21",
       "path": "trr9009/k8s/README.md",
       "tests": {
         "A": {

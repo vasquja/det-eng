@@ -125,6 +125,24 @@ credential already on disk. A detection must use context — who, from where, wi
 which client, against which namespace — and a node sensor for the one path the
 audit log cannot see.
 
+### Version notes
+
+The weekly version matrix runs the Kubernetes labs on the CI pin and on the minors
+beside it (see [Kubernetes version notes](../../../detections/README.md#kubernetes-version-notes),
+and the paragraph above it for the versions).
+
+- client-go WatchListClient is on from v1.35
+  ([known_features.go v1.37.0 L141-144](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/client-go/features/known_features.go#L141-L144);
+  off at v1.32.2 L76). An informer then opens one watch with `sendInitialEvents=true`
+  instead of a list and a watch
+  ([reflector.go v1.37.0 L361, L475-483](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/client-go/tools/cache/reflector.go#L361)).
+  So, from v1.35, the controllers' benign Secret reads are mostly `watch`, not `list`.
+  `k8s_secret_access.yml` matches get, list and watch, so the chokepoint still sees them;
+  a baseline that counts benign readers by verb must count `watch` too.
+- The server side of the watch list (the WatchList gate) is on from v1.34
+  ([apiserver kube_features.go v1.37.0 L487-493](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/apiserver/pkg/features/kube_features.go#L487-L493)),
+  so every leg serves it.
+
 ## Procedures
 
 | Procedure | ID | Name | Entry point |

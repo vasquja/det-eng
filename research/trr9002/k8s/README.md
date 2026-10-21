@@ -193,6 +193,42 @@ from a bad one. Authorization is the only control. A detection must use
 context: who sent the request, from where, with which client, into which
 container, and with which command.
 
+### Version notes
+
+The weekly version matrix runs the Kubernetes labs on the CI pin and on the minors
+beside it (see [Kubernetes version notes](../../../detections/README.md#kubernetes-version-notes),
+and the paragraph above it for the versions).
+
+- From kubectl v1.36, `kubectl debug` uses the `general` profile when `--profile` is
+  not given
+  ([debug.go v1.36.4 L216](https://github.com/kubernetes/kubernetes/blob/v1.36.4/staging/src/k8s.io/kubectl/pkg/cmd/debug/debug.go#L216);
+  `legacy` at v1.35.8 L217), and that profile adds SYS_PTRACE to the debug container
+  ([profiles.go v1.36.4 L214-215, L419-427](https://github.com/kubernetes/kubernetes/blob/v1.36.4/staging/src/k8s.io/kubectl/pkg/cmd/debug/profiles.go#L419-L427)):
+  to the ephemeral container, and also to the container of a `--copy-to` pod copy
+  (same file, L206-212).
+  So Procedure C with kubectl v1.36 or later sends that capability, and with kubectl
+  v1.35 it does not. The TRR9002 lab logs `pods/ephemeralcontainers` at Metadata
+  and `k8s_pod_ephemeral_container.yml` keys on the subresource, so this rule does not
+  change. Where a cluster logs that patch at Request, every default `kubectl debug`
+  from kubectl v1.36 or later also matches TRR9007's `k8s_podspec_host_access.yml`
+  (T1611, level high). A default `kubectl debug <pod> --copy-to=<new>` (a `pods`
+  create, not a TRR9002 procedure) matches it too, wherever `pods` creates are logged
+  at Request. Whether it must is an open human decision
+  ([RULE_DEFECTS KTBD-D1](../../../detections/RULE_DEFECTS.md#ktbd-d1-k8s_podspec_host_access-a-default-kubectl-debug-from-kubectl-v136-adds-sys_ptrace)).
+- kubectl v1.37.0 keeps `KUBECTL_REMOTE_COMMAND_WEBSOCKETS`
+  ([cmd/util/helpers.go v1.37.0 L445](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/kubectl/pkg/cmd/util/helpers.go#L445)),
+  so Procedure A still runs once over WebSocket and once over SPDY on every leg.
+  AuthorizePodWebsocketUpgradeCreatePermission is on from v1.35
+  ([kube_features.go v1.37.0 L1370-1372](https://github.com/kubernetes/kubernetes/blob/v1.37.0/pkg/features/kube_features.go#L1370-L1372)),
+  so every leg also checks `create` on the WebSocket upgrade.
+- `kubectl apply` stays client-side by default (`--server-side` false,
+  [cmd/util/helpers.go v1.37.0 L512](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/kubectl/pkg/cmd/util/helpers.go#L512)),
+  so the target pod's apply is still a `create`.
+- `userAgent` names the kubectl version of each leg (client-go builds it as
+  `<command>/<version> (<os>/<arch>) kubernetes/<commit>`,
+  [rest/config.go v1.37.0 L527-530](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/client-go/rest/config.go#L527-L530)).
+  No rule keys on it.
+
 ## Procedures
 
 | ID | Title | Tactic | Entry point |

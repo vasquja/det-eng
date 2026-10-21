@@ -297,7 +297,14 @@ Match a pod write (`objectRef.resource: pods`, verb `create`/`update`/`patch`)
 whose `requestObject.spec` has a privileged container, a `hostPath` volume, a host
 namespace, or a dangerous capability. This also catches a privileged ephemeral
 container and a rejected (403) attempt. A status write (`pods/status`) is filtered: its
-status strategy keeps the stored spec, so it cannot add host access.
+status strategy keeps the stored spec, so it cannot add host access. From kubectl v1.36
+(the CI pin), a default `kubectl debug` adds `SYS_PTRACE` to its debug container: to the
+ephemeral container (a `pods/ephemeralcontainers` patch), and to the container of a
+`--copy-to` pod copy (a `pods` create). So this strategy also fires on routine debugging
+where that patch or that create is logged at `Request`. Whether it must is an open human
+decision
+([RULE_DEFECTS KTBD-D1](../../../detections/RULE_DEFECTS.md#ktbd-d1-k8s_podspec_host_access-a-default-kubectl-debug-from-kubectl-v136-adds-sys_ptrace); see the
+[Kubernetes version notes](../../../detections/README.md#kubernetes-version-notes)).
 
 - Sensor: API server audit log (`Request` level).
 - Rule: `detections/sigma/T1611/k8s_podspec_host_access.yml` (built).

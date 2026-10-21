@@ -61,6 +61,8 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [K29](#k29-t1685-enforcer-removal-rules-a-daemonset-unscheduled-by-its-pod-template) | `T1685/k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed` | a DaemonSet (Falco) whose pod template gets a nodeSelector, affinity or nodeName that no node matches loses every pod, and neither rule fires | false negative | medium |
 | [K32](#k32-t1685-enforcer-removal-rules-a-null-strategic-merge-directive-next-to-a-count) | `T1685/k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed` | a strategic merge patch of deployments/scale with a count above 0 and a null `$deleteFromPrimitiveList/replicas` (or `/spec`) scales to 0, and neither rule fires | false negative | low |
 | [K33](#k33-json-text-skip-grammars-a-key-nested-three-levels-deep-splits-an-operation) | `T1685/k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed`, `k8s_admission_webhook_neutered`, `T1611/k8s_podspec_controller_host_access`, `k8s_podspec_host_access`, `k8s_podspec_confinement_disabled` | an ignored key nested three levels deep, or a brace string inside a nested object, splits a JSON-patch operation or a profile object, so it is not graded (Lucene's budget) | false negative | low |
+| [KTBD-D1](#ktbd-d1-k8s_podspec_host_access-a-default-kubectl-debug-from-kubectl-v136-adds-sys_ptrace) | `T1611/k8s_podspec_host_access` | from kubectl v1.36 (the CI pin), a default `kubectl debug` adds SYS_PTRACE to its debug container, in an ephemeral container (a `pods/ephemeralcontainers` patch) and in a `--copy-to` pod copy (a `pods` create), and fires this level-high rule where that write is logged at Request | false positive, description | medium |
+| [KTBD-D2](#ktbd-d2-api-server-lab-policy-mutatingadmissionpolicy-deletes-at-metadata-hide-a-dry-run) | the API server lab policy (`k8s/audit-policy-apiserver.yaml`), for the delete dry-run filter of the T1685 webhook-disabled rule | the lab logs MutatingAdmissionPolicy and binding deletes at Metadata, so a server-side dry-run delete of one fires that rule (its delete dry-run filter needs the body) | policy gap | low |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
@@ -645,6 +647,125 @@ whether `arping` belongs in the allowlist.
   gap, with a rule on those fields.
 - **Then**: the KNOWN MISS confounders fire; relabelling them as positives is a human
   decision under the sufficiency ratchet.
+
+### KTBD-D1. k8s_podspec_host_access: a default kubectl debug from kubectl v1.36 adds SYS_PTRACE
+
+- **Rule**: [`sigma/T1611/k8s_podspec_host_access.yml`](sigma/T1611/k8s_podspec_host_access.yml) (level high).
+- **Kind**: false positive, description. **Severity**: medium (routine operator noise
+  wherever `pods/ephemeralcontainers` patches or `pods` creates are logged at Request, as
+  the shipped API server lab policy logs both).
+- **Problem**: from kubectl v1.36 (the CI pin), `kubectl debug` uses the `general`
+  profile when `--profile` is not given. That profile adds the `SYS_PTRACE` capability to
+  the debug container in both pod forms of `kubectl debug`:
+  - the ephemeral form (`kubectl debug <pod>`), a strategic merge patch of
+    `pods/ephemeralcontainers`, which the `sel_caps_ephem` selection reads;
+  - the copy form (`kubectl debug <pod> --copy-to=<new>`), a plain `pods` create of the
+    copy, which the `sel_caps` selection reads. The capability goes on the new debug
+    container, or on the existing container that `--container` names, and the copy also
+    shares the process namespace.
+
+  The rule grades `SYS_PTRACE` as an escape capability, so every default `kubectl debug`
+  of a pod from a kubectl v1.36 or later client fires this level-high T1611 rule where
+  that write is logged at Request. The copy form does not depend on how
+  `pods/ephemeralcontainers` is logged: it fires wherever `pods` creates are logged at
+  Request, as the API server lab policy logs them
+  ([`k8s/audit-policy-apiserver.yaml`](k8s/audit-policy-apiserver.yaml) L59-64).
+  kubectl v1.35 and earlier (default profile `legacy`) add no capability in either
+  form, and their debug bodies do not fire. (The node form,
+  `kubectl debug node/<name>`, mounts the host root and uses the host namespaces with
+  both profiles, so it fires on every kubectl version and is not part of this change.)
+  The rule's falsepositives text names only `kubectl debug --profile=general or
+  sysadmin` and an ephemeral container, so it does not say that the default fires, or
+  that a copy fires. The benign corpus cannot measure this noise: the `kubectl debug`
+  template of `k8s-audit-human-operators` models only the ephemeral form, with kubectl
+  v1.30 and v1.31 bodies (no `securityContext`), so `scores.json` records 0 hits for
+  this rule on that slice, and no template models a `--copy-to` create. CI does not see
+  it either: the TRR9002 lab logs `pods/ephemeralcontainers` and `pods` at Metadata, and
+  no step of the API server lab runs `kubectl debug`.
+- **Evidence**: *probe* (`sigma_eval.py`, all 31 Kubernetes audit rules) — a
+  Request-level `pods/ephemeralcontainers` patch whose ephemeral container has
+  `securityContext.capabilities.add: ["SYS_PTRACE"]` (the kubectl v1.36 default body)
+  fires; the same body with no `securityContext` (the v1.35 `legacy` body) does not; the
+  v1.36 patch at Metadata level does not. `T1609/k8s_pod_ephemeral_container` fires on
+  all three, as it keys on the subresource. A Request-level `pods` create of a copy with
+  `shareProcessNamespace: true` and `SYS_PTRACE` on a new debug container (the kubectl
+  v1.36 `--copy-to` body) fires, and so does the same copy with `SYS_PTRACE` on the
+  existing container (`--copy-to --container=<existing>`); the copy with no
+  `securityContext` (the v1.35 `legacy` copy body) does not, and the v1.36 copy at
+  Metadata level does not. This rule is the only rule that fires on a copy. A node debug
+  pod (host-root `hostPath`, `hostPID`, `hostNetwork`, `hostIPC`) fires for both
+  profiles. *source* — kubectl `staging/src/k8s.io/kubectl/pkg/cmd/debug/debug.go`
+  v1.36.4 L216 (default `ProfileGeneral`) and v1.35.8 L217 (default `ProfileLegacy`);
+  `debug.go` v1.36.4 L628 (`debugByCopy` creates the copy with `Pods(...).Create`) and
+  L776-850 (`generatePodCopyWithDebugContainer` appends the debug container, or takes the
+  one `--container` names, and calls `o.Applier.Apply(copied, c.Name, pod)` at L850);
+  `profiles.go` v1.36.4 L157-170 (`getDebugStyle`: `podCopy` when the pod is not the
+  target), L206-212 (copy style: `allowProcessTracing` at L211, `shareProcessNamespace`
+  at L212), L214-215 (ephemeral style: `allowProcessTracing`), L201-204 (node style) and
+  L419-427 (`addCapability(c, "SYS_PTRACE")`); `profiles.go` v1.35.8 L181-184 (`legacy`
+  copy style: it only removes labels) and L185-186 (`legacy` ephemeral style: no change).
+  *corpus* — `k8s-audit-human-operators`, template "kubectl debug: ephemeral debug
+  container in a distroless pod" (user agents kubectl v1.30.5 and v1.31.1), 0 hits; no
+  `--copy-to` template.
+- **Fix**: a human decision (plan item C3-3c); no rule changes in the pull request that
+  records this entry. Each choice must cover both forms. The choices include: keep the
+  level-high alert and baseline the known operator identities (for the patch and for the
+  create); or grade, at a lower level in a separate rule, a write whose only escape
+  signal is `SYS_PTRACE` on one container: an ephemeral container, or a pod create
+  (the `--copy-to` shape; an attacker's pod can have the same shape, so this choice
+  lowers that alert too). In each case, correct the falsepositives text to say that a
+  default `kubectl debug` from kubectl v1.36 fires, in the ephemeral and in the copy
+  form.
+- **Then**: the benign corpus gains a kubectl v1.36 or later ephemeral `kubectl debug`
+  body and a kubectl v1.36 or later `--copy-to` pod-create body (a corpus change that a
+  human approves), and the rule's budget, level or a new near-miss case follows the
+  decision. The entry closes.
+
+### KTBD-D2. API server lab policy: MutatingAdmissionPolicy deletes at Metadata hide a dry run
+
+- **Scope**: the API server lab policy
+  ([`k8s/audit-policy-apiserver.yaml`](k8s/audit-policy-apiserver.yaml)) and the one rule
+  whose filter needs the record it does not keep,
+  [`sigma/T1685/k8s_admission_webhook_disabled.yml`](sigma/T1685/k8s_admission_webhook_disabled.yml)
+  (level medium). As K23, this entry names no rule file in the Summary row or in a Rules
+  bullet: `research/tools/coverage_report.py` maps a listed rule to all its procedures,
+  and this gap of the lab policy does not touch what those procedures send (they write
+  webhook configurations, which the policy logs at Request). Whether it must name the
+  rule is a human decision.
+- **Kind**: policy gap. **Severity**: low (a dry run changes nothing, and
+  MutatingAdmissionPolicy is served by default only from v1.36).
+- **Problem**: the rule filters a server-side dry-run delete by its DeleteOptions body
+  (`filter_dry_run_delete_body`: `requestObject.dryRun` contains `All`), and its
+  falsepositives text says that the shipped lab policy records that body (Request
+  level). That is true for the four resources that the admission-control rows of
+  [`k8s/audit-policy-apiserver.yaml`](k8s/audit-policy-apiserver.yaml) list (the two
+  webhook configurations, ValidatingAdmissionPolicy and its binding). It is not true for
+  `mutatingadmissionpolicies` and `mutatingadmissionpolicybindings`: their writes fall to
+  the Metadata catch-all, which logs no `requestObject`. So a `kubectl delete
+  --dry-run=server` of a MutatingAdmissionPolicy or its binding fires the rule, and the
+  same dry run of a webhook configuration is filtered. MutatingAdmissionPolicy is GA and
+  on by default from v1.36 (the CI pin), so the pin and the v1.37 leg of the version
+  matrix serve it. The rule's description does not list the MutatingAdmissionPolicy
+  resources, though `select_adm_write` matches them (it keys on the API group).
+- **Evidence**: *probe* — a Metadata-level `delete` of `mutatingadmissionpolicies` (no
+  `requestObject`, as the lab logs a `--dry-run=server` delete) fires; a Metadata-level
+  `deletecollection` of `mutatingadmissionpolicybindings` fires; a Request-level `delete`
+  of a `validatingwebhookconfigurations` object whose DeleteOptions body has `dryRun:
+  ["All"]` does not fire, and the same delete without `dryRun` fires. *source* —
+  `detections/k8s/audit-policy-apiserver.yaml` L117-132 (the update/patch and
+  create/delete rows list only the four resources) and its Metadata catch-all; apiserver
+  `staging/src/k8s.io/apiserver/pkg/features/kube_features.go` v1.36.4 L443-447
+  (MutatingAdmissionPolicy GA and on from 1.36). No emulation creates a
+  MutatingAdmissionPolicy, so no CI record shows it.
+- **Fix**: a human decision: add `mutatingadmissionpolicies` and
+  `mutatingadmissionpolicybindings` to the two admission-control rows of
+  `detections/k8s/audit-policy-apiserver.yaml` (RequestResponse for update and patch,
+  Request for create, delete and deletecollection), so the lab logs the DeleteOptions
+  body and the rule's dry-run filter can read it. Name both resources in the rule's
+  description.
+- **Then**: no case changes (the delete dry-run filter already reads the body of any
+  `admissionregistration.k8s.io` delete). The entry closes when the policy rows list both
+  resources.
 
 ## Cloud (AWS, Azure, GCP)
 

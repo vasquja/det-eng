@@ -87,6 +87,27 @@ or runtime artifact of an impersonation and no API-server bypass: it is implemen
 wholly inside the API server. So the audit log is the sole sensor. If audit is off,
 or the request is logged at level None, coverage is zero.
 
+### Version notes
+
+The weekly version matrix runs the Kubernetes labs on the CI pin and on the minors
+beside it (see [Kubernetes version notes](../../../detections/README.md#kubernetes-version-notes),
+and the paragraph above it for the versions).
+
+- From v1.35 the audit Event has `authenticationMetadata.impersonationConstraint`, set
+  only when constrained impersonation authorized the request
+  ([audit/v1/types.go v1.35.8 L93-95, L148-153](https://github.com/kubernetes/kubernetes/blob/v1.35.8/staging/src/k8s.io/apiserver/pkg/apis/audit/v1/types.go#L148-L153)).
+  No rule or validator gate reads it: the chokepoint keys on `impersonatedUser`, which
+  both modes stamp.
+- ConstrainedImpersonation is alpha (off) in v1.35 and beta (on) from v1.36
+  ([apiserver kube_features.go v1.37.0 L367-370](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/apiserver/pkg/features/kube_features.go#L367-L370)).
+  So a refusal on the v1.35 leg would carry the legacy message (`cannot impersonate
+  resource`), and a refusal on the v1.36 and v1.37 legs a constrained message (`cannot
+  impersonate:<mode>`, `cannot impersonate-on:<mode>:<verb>`). No leg sends a refusal
+  probe (see the next item). `k8s_impersonation.yml` matches all three messages.
+- The constrained refusal cases in the sidecar are built from the v1.36.4 source and are
+  not recorded live: the emulation runs no probe by a caller without the impersonate
+  verb, so no leg proves those shapes live yet.
+
 ## Procedures
 
 | Procedure | ID | Name | Entry point |

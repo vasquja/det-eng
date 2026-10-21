@@ -502,6 +502,119 @@ check the sha256 of both binaries, and fail when the cluster's server version di
 from the pin. The pin moves every quarter, and before the pinned minor reaches end of
 life; the `env` block of each workflow says how.
 
+`.github/workflows/k8s-version-matrix.yml` runs the three Kubernetes workflows every
+week on the minors beside the pin: v1.35.8 and v1.37.0, the newest kindest/node images
+of those minors that kind v0.33.0 publishes. (v1.34 is not in the matrix: it reaches end
+of life on 2026-10-27.) Each leg dispatches one workflow with the `workflow_dispatch`
+inputs `node_image`, `kubectl_version`, `kubectl_sha256` and `label`, finds its run by
+the label in the run name, and waits for it. The steps stay in one file, and the job and
+check names do not change. A red leg only alerts: the matrix is not a required check,
+and it blocks nothing. It runs on `main` only, because a child run reports its checks on
+the head commit of its ref. Empty inputs, and every push, pull request and schedule run,
+use the pins. On `main`, a red leg shows a red `validate-*` check on main's head commit,
+which gates no pull request. The `validate-apiserver-detections` badge in the top-level
+README shows only the schedule runs (`?event=schedule`: the weekly run on the pin), so
+a leg does not change it. A cancelled leg also cancels its run, when it has found that run.
+
+### Kubernetes version notes
+
+These upstream changes can move the rules' inputs or the emulations when the cluster
+moves from the old pin (v1.32.2, kind v0.27.0) to v1.35, v1.36 (the pin) or v1.37. Each
+item names its source at the tag. Each rule claim was checked with `sigma_eval.py` on
+constructed events.
+
+- **Impersonation (TRR9009).** The audit Event has
+  `authenticationMetadata.impersonationConstraint` from v1.35
+  ([audit/v1/types.go v1.35.8 L93-95, L148-153](https://github.com/kubernetes/kubernetes/blob/v1.35.8/staging/src/k8s.io/apiserver/pkg/apis/audit/v1/types.go#L93-L95)).
+  ConstrainedImpersonation is alpha (off) in v1.35 and beta (on) from v1.36
+  ([apiserver kube_features.go v1.37.0 L367-370](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/apiserver/pkg/features/kube_features.go#L367-L370)),
+  so a refusal on the v1.35 leg has the legacy message. `k8s_impersonation.yml` matches
+  the legacy and the constrained refusal messages. No rule or validator gate reads
+  `authenticationMetadata`, and the TRR9009 gate keys on `impersonatedUser`. The
+  constrained refusal cases are built from source, not recorded live (the emulation
+  runs no probe by a caller without the impersonate verb).
+- **Watch-list reads (TRR9006).** client-go WatchListClient is on from v1.35
+  ([known_features.go v1.37.0 L141-144](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/client-go/features/known_features.go#L141-L144);
+  off at v1.32.2 L76). An informer then opens one watch with `sendInitialEvents=true`
+  instead of a list and a watch
+  ([reflector.go v1.37.0 L361, L475-483](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/client-go/tools/cache/reflector.go#L361)),
+  so controller Secret reads move from `list` to `watch`. `k8s_secret_access.yml`
+  matches get, list and watch.
+- **kubectl debug profile (TRR9002, TRR9007).** From kubectl v1.36, `kubectl debug`
+  uses the `general` profile when `--profile` is not given
+  ([debug.go v1.36.4 L216](https://github.com/kubernetes/kubernetes/blob/v1.36.4/staging/src/k8s.io/kubectl/pkg/cmd/debug/debug.go#L216);
+  `legacy` at v1.35.8 L217). The general profile adds SYS_PTRACE to the debug container
+  in both pod forms: the ephemeral container of `kubectl debug <pod>`, a
+  `pods/ephemeralcontainers` patch
+  ([profiles.go v1.36.4 L214-215, L419-427](https://github.com/kubernetes/kubernetes/blob/v1.36.4/staging/src/k8s.io/kubectl/pkg/cmd/debug/profiles.go#L214-L215)),
+  and the copy of `kubectl debug <pod> --copy-to=<new>`, a `pods` create (same file,
+  L206-212; the copy also shares the process namespace). The legacy profile adds no
+  capability in either form (profiles.go v1.35.8 L181-186). So the pinned kubectl
+  (v1.36.4) already adds SYS_PTRACE. Every default `kubectl debug` of a pod from kubectl
+  v1.36 or later matches `k8s_podspec_host_access.yml` (T1611, level high) where its
+  write is logged at Request: the patch where a policy logs `pods/ephemeralcontainers`
+  at Request, and the copy wherever `pods` creates are logged at Request (the API
+  server lab policy logs both). The TRR9002 lab logs both at Metadata, and no step in
+  the API server lab runs `kubectl debug`, so CI does not see this. Whether a default
+  `kubectl debug` must be a high T1611 alert is an open human decision
+  ([RULE_DEFECTS KTBD-D1](RULE_DEFECTS.md#ktbd-d1-k8s_podspec_host_access-a-default-kubectl-debug-from-kubectl-v136-adds-sys_ptrace));
+  the rules do not change here.
+- **Cgroup v1 (all labs).** The kubelet defaults `failCgroupV1` to true from v1.35
+  ([v1beta1/defaults.go v1.35.8 L292-294](https://github.com/kubernetes/kubernetes/blob/v1.35.8/pkg/kubelet/apis/config/v1beta1/defaults.go#L292-L294);
+  false at v1.32.2 L289-291), and kind does not set it. A local lab on a cgroup v1 host
+  does not start. The CI runners start the v1.36.4 cluster, so they are not on cgroup v1.
+- **kubeadm config (all labs).** kind v0.33.0 renders kubeadm v1beta4 for v1.36 and
+  later, and v1beta3 below
+  ([kubeadm/config.go L673-679](https://github.com/kubernetes-sigs/kind/blob/v0.33.0/pkg/cluster/internal/kubeadm/config.go#L673-L679)).
+  The `extraArgs` map in `k8s/kind-*.yaml` is native to v1beta3, and kind converts it to
+  the v1beta4 list because the patch sets no `apiVersion`
+  ([patch/kubeadm_merge.go L96-104](https://github.com/kubernetes-sigs/kind/blob/v0.33.0/pkg/internal/patch/kubeadm_merge.go#L96-L104)).
+  So the audit flags render on every leg (the v1.36.4 run shows all four `--audit-`
+  flags).
+- **Node image (all labs).** The kind v0.33.0 base image is Debian 13 (trixie) with
+  containerd v2.3.4, runc v1.4.3 and crictl v1.36.0; kind v0.27.0 had Debian 12,
+  containerd v2.0.2 and crictl v1.32.0
+  ([images/base/Dockerfile v0.33.0 L23, L127, L145, L160](https://github.com/kubernetes-sigs/kind/blob/v0.33.0/images/base/Dockerfile#L23);
+  v0.27.0 L23, L125, L158).
+  All three legs use images of kind v0.33.0, so the node runtime is not what differs
+  between them.
+- **Exec, attach and port-forward (TRR9002, TRR9026).** kubectl v1.37.0 keeps both
+  transport switches, `KUBECTL_REMOTE_COMMAND_WEBSOCKETS` and
+  `KUBECTL_PORT_FORWARD_WEBSOCKETS`
+  ([cmd/util/helpers.go v1.37.0 L445-446](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/kubectl/pkg/cmd/util/helpers.go#L445-L446)).
+  The server's PortForwardWebsockets is beta and on
+  ([kube_features.go v1.37.0 L2010-2013](https://github.com/kubernetes/kubernetes/blob/v1.37.0/pkg/features/kube_features.go#L2010-L2013)),
+  and AuthorizePodWebsocketUpgradeCreatePermission is on from v1.35 (same file,
+  L1370-1372). `kubectl apply` stays client-side by default (`--server-side` false,
+  helpers.go v1.37.0 L512), so an apply of a new object is still a `create`.
+- **MutatingAdmissionPolicy (TRR9008, TRR9025).** It is GA and on from v1.36, and beta
+  and off in v1.35
+  ([apiserver kube_features.go v1.36.4 L443-447](https://github.com/kubernetes/kubernetes/blob/v1.36.4/staging/src/k8s.io/apiserver/pkg/features/kube_features.go#L443-L447)).
+  The API server lab policy (`k8s/audit-policy-apiserver.yaml`) has no row for
+  `mutatingadmissionpolicies` or `mutatingadmissionpolicybindings`, so their writes fall
+  to its Metadata catch-all. `k8s_admission_webhook_created.yml` (create) and
+  `k8s_admission_webhook_disabled.yml` (delete, deletecollection, update, patch) key on
+  the `admissionregistration.k8s.io` group and the verb, so they match these writes. At
+  Metadata a delete has no DeleteOptions body, so the delete dry-run filter of
+  `k8s_admission_webhook_disabled.yml` cannot see one, and a server-side dry-run delete
+  of a MutatingAdmissionPolicy or its binding also fires
+  ([RULE_DEFECTS KTBD-D2](RULE_DEFECTS.md#ktbd-d2-api-server-lab-policy-mutatingadmissionpolicy-deletes-at-metadata-hide-a-dry-run)).
+  No grader reads a policy body, and no emulation creates one.
+- **userAgent.** client-go builds it as `<command>/<version> (<os>/<arch>)
+  kubernetes/<commit>`
+  ([rest/config.go v1.37.0 L527-530](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/client-go/rest/config.go#L527-L530)),
+  so it carries the kubectl and component versions of each leg. No Kubernetes rule and
+  no validator gate keys on `userAgent`.
+- **Bootstrap objects (shadow slice).** Some bootstrap controller roles exist only when a
+  feature gate of that minor is on. For example, the
+  `system:controller:device-taint-eviction-controller` role needs DRADeviceTaints
+  ([bootstrappolicy/controller_policy.go v1.36.4 L227, L251](https://github.com/kubernetes/kubernetes/blob/v1.36.4/plugin/pkg/auth/authorizer/rbac/bootstrappolicy/controller_policy.go#L227)),
+  which is off in v1.35 and on from v1.36
+  ([kube_features.go v1.36.4 L1369-1372](https://github.com/kubernetes/kubernetes/blob/v1.36.4/pkg/features/kube_features.go#L1369-L1372);
+  v1.35.8 L1244-1246). So the role exists on the pin and on the v1.37 leg, but not on
+  the v1.35 leg, and the shadow benign counts of the live slice can differ per leg. Compare a
+  leg only with earlier runs of the same leg.
+
 ## Manual run
 
 ```
