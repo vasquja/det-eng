@@ -105,7 +105,8 @@ For every rule, [`../score_benign.py`](../score_benign.py) reports:
 - **rate per 10k**: hits per 10,000 events of the rule's logsource, so slices of
   different sizes compare;
 - **actors**: who is behind the hits: the distinct processes (auditd `exe`, else
-  `comm`) or principals (Kubernetes audit `user.username`; CloudTrail the session
+  `comm`; node file events the process `Image`) or principals (Kubernetes audit
+  `user.username`; CloudTrail the session
   issuer's role ARN, else `userIdentity.arn`, so one role counts once across its
   sessions; the Azure and GCP caller or principal fields). For the Kubernetes CRI
   log it is the pod's namespace, not a principal. One noisy actor is an allowlist
@@ -171,6 +172,13 @@ services of one provider (Azure `activitylogs`, `auditlogs`, `signinlogs`); and 
 `COMPILE_ONLY` rule has no validator log to compare. The `sufficiency-ratchet` check
 covers both on a pull request: it fails when a rule that exists on the base branch
 changes its logsource (or a correlation base's), so the move goes to a human.
+
+The node file-event slice (`linux` / `file_event`, no service) is read by category, so
+it scores only the two node file-event rules (`linux_static_pod_manifest_write`,
+`linux_k8s_sa_token_read`), and the auditd slice reads neither of them. It models an
+open-capable sensor (Falco, Tetragon, or auditd `open`/`openat`), which also reports
+reads. Both rules fire on routine reads there; the rule defects are tracked as
+[`L15` and `L16`](../RULE_DEFECTS.md#linux-auditd-and-node-file-events).
 
 A slice can hold real multi-event behaviour as a **sequence** template, sharing one
 draw of the variables with per-step delays: runc's memfd re-exec, or a namespace

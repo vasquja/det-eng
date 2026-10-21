@@ -310,6 +310,8 @@ loop; the loop demonstrates the gap instead. Pair it with detection-by-absence.
 
 - Sensor: a file integrity monitor, auditd, or an EDR/runtime agent on each node.
 - Rule: `detections/sigma/T1552.007/linux_k8s_sa_token_read.yml` (built).
+- Known defect: the rule fires on each workload's routine re-reads of its own token
+  ([`RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) L16).
 
 **Demonstrated gap.**
 Emulate Procedure E — read a projected token file on the node, read-only — and

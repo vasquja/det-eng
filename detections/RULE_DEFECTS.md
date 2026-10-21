@@ -46,6 +46,8 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | ID | Rule | Problem | Kind | Severity |
 |----|------|---------|------|----------|
 | [L14](#l14-exe-and-comm-allowlists-trust-the-binary-not-the-code-in-it) | three Linux rules | allowlisted tools that ordinary users run (kcapi, debuggers) hide injected code | evasion | medium |
+| [L15](#l15-linux_static_pod_manifest_write-fires-on-reads-of-the-manifests) | `T1543.005/linux_static_pod_manifest_write` | on an open-capable sensor every read of a manifest by a process outside `filter_install` fires (a tar backup; Ansible's `stat` module, its `file` and `lsattr` children, the `copy` module's checksum read): `selection_dir` has no event-type item | false positive, description | medium |
+| [L16](#l16-linux_k8s_sa_token_read-fires-on-every-workload-that-reads-its-own-token) | `T1552.007/linux_k8s_sa_token_read` | every workload's client library re-reads its own token (at most about once a minute, on its next API request after its cached copy expires), and the in-container selection has no reader constraint | false positive, description | high |
 | [K4](#k4-k8s_admission_webhook_neutered-neuters-the-audit-record-cannot-show) | `T1685/k8s_admission_webhook_neutered` | selectors on other labels, self-contradicting selectors or conditions, variable-bound constants | false negative | low |
 | [K9](#k9-k8s_coredns_corefile_poisoned-what-the-corefile-grader-does-not-grade) | `T1565.001/k8s_coredns_corefile_poisoned` | private non-cluster stub zones, `import`, mid-token CR, `#<TAB>` comments | false negative, false positive | low |
 | [K14](#k14-k8s_namespace_deleted-a-query-dry-run-at-metadata-level) | `T1070/k8s_namespace_deleted` | at Metadata level a real delete that carries `?dryRun=All` next to a body is filtered | evasion | medium |
@@ -110,6 +112,205 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
   `memfd_create_execveat` on every container start and exec; a user running
   `cryptsetup open --test-passphrase --link-vk-to-keyring` (cryptsetup 2.7.1 and
   later) fires `keyring_add_key_burst` once per key.
+
+### L15. linux_static_pod_manifest_write: fires on reads of the manifests
+
+- **Rule**: [`sigma/T1543.005/linux_static_pod_manifest_write.yml`](sigma/T1543.005/linux_static_pod_manifest_write.yml) (level high).
+- **Kind**: false positive, description. **Severity**: medium (routine noise where a
+  backup job or configuration management reads the control-plane manifests).
+- **Problem**: the description says "a file create or write", and the logsource is
+  Sigma's `file_event` category, but `selection_dir` has only the path item
+  (`TargetFilename|contains: '/etc/kubernetes/manifests/'`). No item restricts the
+  event type. On a sensor that also reports opens for read (Falco, Tetragon, auditd
+  `open`/`openat` with PATH records), every process outside `filter_install` that
+  reads a manifest fires: an operator's `tar` backup of `/etc/kubernetes`; each
+  Ansible `copy` or `template` task on a manifest, also when nothing changes (its
+  `stat` module reads the file for a checksum, then runs
+  `file --mime-type --mime-encoding` and `lsattr -vd` on it); a scanner; a `cat`. The
+  kubelet re-lists the directory every 20 s (`fileCheckFrequency`) and opens each
+  manifest; only the `filter_install` Image entry keeps those reads quiet. Ansible's
+  `atomic_move` writes (it creates a `.ansible_tmp<random><name>` file in the
+  directory, copies the new content into it and renames it over the manifest) are real
+  writes: they are the configuration-management noise that the rule's falsepositives
+  names, not this defect.
+
+  The root cause is shared with
+  [L16](#l16-linux_k8s_sa_token_read-fires-on-every-workload-that-reads-its-own-token):
+  the two node rules declare the same logsource (`linux` / `file_event`), but they need
+  opposite inputs. This rule must see only writes. `linux_k8s_sa_token_read` must see
+  reads (an open of the token), and its description says that a creation-only producer
+  makes it blind.
+- **Evidence**: *corpus* — slice `linux-k8s-node-file-events` v3 (1501 events). The
+  pull request that adds this entry also adds the slice, so these figures are in the
+  `benign/scores.json` of that pull request, not in the snapshot at `00216e3`. 103
+  hits, 91 of them reads: `/usr/bin/lsattr` x36 (two opens in each of 18 Ansible
+  `stat` runs), `/usr/bin/python3.12` x34 (the 18 `stat` checksum reads, and for each
+  of 4 changes the `copy` module's checksum read, the temp-file create, the write of
+  the new content into the temp file and the rename), `/usr/bin/file` x18 and
+  `/usr/bin/tar` x15 (3 backups, each reads the 5 manifests). Of the 430 events under
+  `/etc/kubernetes/manifests/`, the kubelet's 307 opens and kubeadm's 20 upgrade reads
+  and renames (2 runs) are quiet only through `filter_install`.
+  `score_benign.py --examples 1` explains the first hit: `selection_dir` holds on
+  `TargetFilename='/etc/kubernetes/manifests/kube-apiserver.yaml'`, and
+  `filter_install` does not match `Image='/usr/bin/python3.12'`. Budget 118
+  (`--reseeds 10`).
+  *probe* — a scratch copy of the rule with a second selection `selection_write:
+  EventType: [create, write, rename]` and the condition
+  `selection_dir and selection_write and not filter_install` raises 12 hits on the
+  slice (the Ansible writes only; 15 over the reseeds), and each of the rule's 8
+  sidecar cases keeps its outcome. *source* — Kubernetes v1.36.4
+  `pkg/kubelet/config/file.go` (`extractFromDir`: a `Glob` of `[^.]*`, then an
+  `os.Open` of each manifest) and the default `fileCheckFrequency` of 20 s
+  (`pkg/kubelet/apis/config/v1beta1/defaults.go`); Ansible 2.17.5
+  `lib/ansible/plugins/action/__init__.py` `_execute_remote_stat` (the `copy` and
+  `template` actions run `stat` on the destination with `get_checksum`, and leave
+  `get_mime` and `get_attributes` at their default `true`), `lib/ansible/modules/stat.py`
+  (`digest_from_file`, then `file --mime-type --mime-encoding <path>`, then
+  `get_file_attributes`: `lsattr -vd <path>`), `lib/ansible/modules/copy.py`
+  (`module.sha1(dest)` before `atomic_move`) and `lib/ansible/module_utils/basic.py`
+  `atomic_move` (`tempfile.mkstemp(prefix=b'.ansible_tmp', dir=b_dest_dir,
+  suffix=b_suffix)` after `os.rename` fails with EXDEV, EPERM, EACCES, ETXTBSY or
+  EBUSY, then `shutil.move(b_src, b_tmp_dest_name, copy_function=shutil.copy ...)`
+  and `os.rename(b_tmp_dest_name, b_dest)`); CPython 3.12 `Lib/shutil.py` (`move`
+  calls the copy function when its own `os.rename` raises `OSError`, as it does across
+  file systems, and `copyfile` opens the destination with `open(dst, 'wb')`);
+  e2fsprogs 1.47.0 `lib/e2p/fgetflags.c` and `lib/e2p/fgetversion.c` (`lsattr -v`
+  opens the file once in each).
+- **Fix** (a human decision), one of:
+  - *A, an event-type item.* Require a write or create event type where the pipeline
+    maps one (Falco `evt.is_open_write`, an auditd watch with `-p wa`, or an
+    `EventType` field as in the sidecar cases). An event-type field is not part of
+    Sigma's `file_event` taxonomy, and a creation-only producer that has no such field
+    never matches an item on it. So put the item in a processing-pipeline step that
+    applies to this rule only, or in one rule variant for each sensor. Option A works
+    for both node rules on one event stream: this rule keeps only the writes, and the
+    token rule still gets the reads.
+  - *B, creation-only input.* State in the rule that it must get creation-only events
+    (Sysmon for Linux FileCreate). A pipeline that feeds `linux` / `file_event` from
+    such a producer gives `linux_k8s_sa_token_read` no reads, so that rule is blind
+    ([L16](#l16-linux_k8s_sa_token_read-fires-on-every-workload-that-reads-its-own-token)).
+    Option B therefore also needs the token rule on its own logsource (for example
+    Sigma's `file_access` category, with its own benign slice), or a pipeline that
+    sends the reads only to the token rule.
+- **Then**: with the item in the rule (the probe's variant), a new near-miss case,
+  `tar` opening `/etc/kubernetes/manifests/kube-apiserver.yaml` with `EventType: open`
+  and `breaks: [selection_write.EventType]`, stays quiet; the positives keep firing;
+  the budget drops to the Ansible writes (15 over the reseeds of slice v3). A scratch
+  run of that variant with that case passes `rule_cases.py` and the sufficiency
+  ratchet, and clears this rule's R5 "thin" warning. This also closes the
+  `linux_static_pod_manifest_write` item under [Checks to add](#checks-to-add); remove
+  it in the same pull request. The rule edit changes the rule's
+  `COMPILE_ONLY` digest in `check_sufficiency.py`, which a human re-approves. With the
+  item in the pipeline, a case cannot name it in `breaks` (R3 fails a `breaks` that
+  names no condition atom), so prove that fix with a pipeline test instead.
+
+### L16. linux_k8s_sa_token_read: fires on every workload that reads its own token
+
+- **Rule**: [`sigma/T1552.007/linux_k8s_sa_token_read.yml`](sigma/T1552.007/linux_k8s_sa_token_read.yml) (level high).
+- **Kind**: false positive, description. **Severity**: high (a high-level rule fires on
+  routine activity of most clusters).
+- **Problem**: `selection_container` matches an open of any
+  `.../secrets/kubernetes.io/serviceaccount/.../token` path by any process except the
+  kubelet: it has no reader constraint. Each workload that calls the API server reads
+  that file again and again, not only at start as the description and falsepositives
+  say. client-go's cached file token source keeps the token for one minute less a
+  10 s leeway (`period: time.Minute`, `leeway: 10 * time.Second`), and reads the file
+  again on the next request after that. The Python client (`token_refresh_period`,
+  one minute) and the Java client (60 s) do the same, and kube-proxy reads the token
+  through the `tokenFile` of its kubeconfig. So the rule fires up to about once a
+  minute for each such container, CoreDNS and kube-proxy included; a client that
+  mostly holds watches open makes fewer requests, and reads the token less often. The
+  falsepositives text tells the operator to baseline the expected reader per image; at
+  level high and without that baseline, the rule behaves as a hunting rule.
+  `selection_node` (the node-side `kubernetes.io~projected/` path) does not show this
+  problem on the slice: there only the kubelet opens those files. The logsource has
+  the root cause that
+  [L15](#l15-linux_static_pod_manifest_write-fires-on-reads-of-the-manifests)
+  records: this rule needs reads, and a pipeline that gives `linux` / `file_event`
+  only creation events makes it blind.
+- **Evidence**: *corpus* — slice `linux-k8s-node-file-events` v3 (1501 events). The
+  pull request that adds this entry also adds the slice, so these figures are in the
+  `benign/scores.json` of that pull request, not in the snapshot at `00216e3`. 251
+  hits, each an open of the in-container token by its own workload, from 9 images
+  (`/coredns` x51, `/usr/local/bin/kube-proxy` x30, `/opt/java/openjdk/bin/java` x29,
+  `/opt/bin/flanneld` x26, `/usr/bin/local-path-provisioner` x25, `/app/server` x24,
+  `/usr/local/bin/python3.12` x23, `/metrics-server` x22,
+  `/nginx-ingress-controller` x21). The kubelet has 344 events under
+  `kubernetes.io~projected/`. Its 127 creates and compare reads of a projected `token`
+  file are quiet through `filter_expected`. Its other 217 events there (the `ca.crt`
+  and `namespace` creates and reads, and the `..data` renames) do not end in `/token`
+  and match no selection. `score_benign.py --examples 1` explains the first hit
+  (actor `/coredns`): `selection_container` holds on
+  `/var/run/secrets/kubernetes.io/serviceaccount/token`. Budget 266 (`--reseeds 10`).
+  *probe* — scratch copies of the rule (results on the slice, and the most over the
+  reseeds):
+  - `selection_node and not filter_expected` alone: 0 hits (0). It fires on the 3
+    node-side positives (`node-path-projected-token`,
+    `node-path-resolved-timestamp-token`, `binary-named-kubelet-reads-token`).
+  - `selection_container and selection_reader and not filter_expected`, where
+    `selection_reader` is `Image|endswith` this list: the shells `/sh`, `/bash`,
+    `/dash`, `/ash`, `/zsh`, `/busybox`; the file readers `/cat`, `/head`, `/tail`,
+    `/base64`, `/dd`, `/cp`, `/tar`, `/strings`, `/xxd`, `/od`; the interpreters
+    `/python`, `/python3`, `/python3.12`, `/perl`, `/ruby`, `/node`, `/php`; the
+    network tools `/curl`, `/wget`, `/nc`, `/ncat`, `/socat`. 23 hits (39): the Python
+    workload, whose own client runs in the interpreter `/usr/local/bin/python3.12`. It
+    fires on the 3 in-container positives (`shell-reads-incontainer-token` with
+    `/usr/bin/head`, `run-secrets-spelling-known-miss` and
+    `incontainer-resolved-timestamp-token-known-miss` with `/usr/bin/cat`), but not on
+    positive `binary-named-mount-reads-token` (`/tmp/mount`, a name that is in no
+    list). `/java` is not in the list; with it, the Java workload adds 29 hits (52 on
+    the slice, 67 over the reseeds).
+  - The same list without the interpreters: 0 hits (0), and it misses a Python
+    one-liner (`/usr/bin/python3`) that reads the token.
+  - The same list without the file readers (only shells, interpreters and network
+    tools): it fires on none of the 3 in-container positives.
+
+  *source* — Kubernetes v1.36.4 `staging/src/k8s.io/client-go/transport/token_source.go`
+  (`NewCachedFileTokenSource`; `cachingTokenSource.Token` reads the file again only
+  when it is called after the cached token's expiry less the leeway),
+  `staging/src/k8s.io/client-go/rest/config.go` (`InClusterConfig`),
+  `cmd/kubeadm/app/phases/addons/proxy/manifests.go` (`tokenFile`);
+  kubernetes-client/python `kubernetes/base/config/incluster_config.py`;
+  kubernetes-client/java `util/.../credentials/TokenFileAuthentication.java`.
+- **Fix** (a human decision): give the node-path branch its own high rule, and keep
+  this rule as the low hunting rule. That keeps every sidecar case, so the gates
+  accept it:
+  - Keep `linux_k8s_sa_token_read.yml` with both branches and all its cases, and
+    lower its level to low, with the per-image baseline as its documented noise. The
+    level is not part of `detection_digest`, so its `COMPILE_ONLY` waiver stays
+    valid. Correct its description and falsepositives: a workload's client re-reads
+    the token while it runs, not only at start.
+  - Add a new high rule with only the node-path branch
+    (`selection_node and not filter_expected`), with its own sidecar, a
+    `COMPILE_ONLY` waiver that a human approves, and an entry in TRR9006 Strategy 3
+    and its Detections table.
+  - An in-container rule with a reader list (level medium) is optional. Its list must
+    hold shells, file readers, interpreters and network tools (the probe's list):
+    without the file readers it misses `head` and `cat`. Any binary outside the list
+    evades it (`binary-named-mount-reads-token`), and a workload that runs in an
+    interpreter still fires it, so it does not replace the hunting rule.
+
+  Do not split the rule by moving cases out of `linux_k8s_sa_token_read.yml`. A
+  scratch run of that split fails the required gates: the near-miss of the branch that
+  leaves (`reads-namespace-file-not-token` or `projected-configmap-file-read`) has no
+  condition atom left to break (R3), and the sufficiency ratchet reports the moved
+  cases as gone. Only a human can accept that red ratchet.
+- **Then**: the new high rule raises 0 hits on the slice (0 over the reseeds of slice
+  v3). Its sidecar holds copies of the 3 node-side positives, of
+  `kubelet-writes-projected-token` (filtered) and of `projected-configmap-file-read`
+  (near-miss, `breaks: [selection_node.TargetFilename|endswith]`), and a new
+  near-miss: `/coredns` opening `/var/run/secrets/kubernetes.io/serviceaccount/token`,
+  `breaks: [selection_node.TargetFilename|contains]`. A scratch run of this plan
+  passes `rule_cases.py`, the sufficiency ratchet and the benign budgets; the new rule
+  fails only R1 and R4 until a human adds its `COMPILE_ONLY` waiver (R4 asks a
+  validator-registered rule for an emulation identity, and does not apply to a
+  compile-only rule). The low rule keeps its cases and its budget (266), and its
+  budget's `why` becomes `documented noise:` once this entry closes. An in-container
+  reader rule, if added, keeps copies of `shell-reads-incontainer-token`,
+  `run-secrets-spelling-known-miss` and `incontainer-resolved-timestamp-token-known-miss`
+  as positives that must fire, adds the `/coredns` read as a near-miss that breaks
+  `selection_reader.Image|endswith`, gets its own `COMPILE_ONLY` waiver, and gets its
+  budget from `--reseeds 10` (39 for the probe's list on slice v3).
 
 ### Live-capture hits not yet attributed
 

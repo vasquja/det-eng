@@ -357,6 +357,9 @@ is specific, because almost nothing writes to this directory after install.
 
 - Sensor: node file integrity monitor / EDR (file event telemetry).
 - Rule: [`detections/sigma/T1543.005/linux_static_pod_manifest_write.yml`](../../../detections/sigma/T1543.005/linux_static_pod_manifest_write.yml) (built; node sensor, not validated by the audit-log loop).
+- Known defect: on a sensor that also reports reads, the rule also fires when a process
+  outside its install filter reads a manifest (a backup, configuration management)
+  ([`RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) L15).
 
 **Strategy 4 — fallback (covers B).**
 Watch the kubelet configuration and the kubelet's outbound connections. A write

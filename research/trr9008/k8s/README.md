@@ -416,7 +416,10 @@ This repository already ships the manifest half:
 (TRR9003, level high) matches a write under `/etc/kubernetes/manifests/`, which holds
 `kube-apiserver.yaml`; it is compile-only in CI (no node file telemetry), and it
 filters writes by kubeadm, the kubelet and the package managers, each by its full
-install path. No rule covers the webhook cert paths.
+install path. On a sensor that also reports reads, it also fires when a process
+outside its install filter reads a manifest
+([`RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) L15). No rule covers the
+webhook cert paths.
 The lab demonstrates the gap read-only, by showing the apiserver manifest path on
 the node and noting no admissionregistration audit event follows an edit there.
 

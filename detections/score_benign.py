@@ -11,7 +11,8 @@ SQLite backend, and reports for each rule:
   hits             alerts the rule raised on benign activity
   rate_per_10k     hits per 10,000 events of the rule's logsource
   actors           who is behind those hits: the first field present of ACTOR_FIELDS
-                   for the logsource (auditd exe, else comm; Kubernetes audit
+                   for the logsource (auditd exe, else comm; node file events the
+                   process Image; Kubernetes audit
                    user.username; Kubernetes CRI the pod's metadata.namespace, not a
                    principal; CloudTrail the session issuer's role ARN before
                    userIdentity.arn, so one role counts once across its sessions;
@@ -93,9 +94,12 @@ DEFECTS = os.path.join(REPO, "detections", "RULE_DEFECTS.md")
 SNAPSHOT = os.path.join(benign_corpus.ROOT, "scores.json")
 TOP_ACTORS = 10
 
-# Who did it, per logsource: the first field present on a hit event.
+# Who did it, per logsource: the first field present on a hit event. A logsource
+# with no service is keyed by its category (linux / file_event: the node file-event
+# rules).
 ACTOR_FIELDS = {
     ("linux", "auditd"): ["exe", "comm"],
+    ("linux", "file_event"): ["Image"],
     ("kubernetes", "audit"): ["user.username"],
     ("kubernetes", "cri"): ["metadata.namespace"],
     # The session issuer (the role) before the per-session ARN, so one role used by
@@ -118,7 +122,7 @@ ACTOR_FIELDS = {
 
 
 def actor(event, logsource):
-    key = (logsource.get("product"), logsource.get("service"))
+    key = (logsource.get("product"), logsource.get("service") or logsource.get("category"))
     for field in ACTOR_FIELDS.get(key, []):
         if event.get(field) not in (None, ""):
             return str(event[field])
