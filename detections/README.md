@@ -494,6 +494,73 @@ probe-confirmed SKIP does not. On a public repository the run is free.
 request, on push to `main`, and weekly: `rule-cases`, `check-sufficiency`,
 `sufficiency-ratchet` (pull requests only), `benign-corpus`
 (`score_benign.py --check --enforce`) and the shadow `benign-linux-live` capture.
+It also runs `schedule-freshness` (not on push), which reads the Actions API; see
+below.
+
+**Weekly scheduled runs.** Each workflow file with a `schedule:` trigger (the
+cron line is in the file) runs once a week, so CI proves a rule again when only
+pySigma, the runner image or the kernel changed. GitHub can start a scheduled run
+late (about 7 hours on 2026-10-19), drop it under high load, or not start it when
+the workflow is disabled, and nothing fails when that happens. The
+`schedule-freshness` job in `detection-quality.yml` checks for this. It finds the
+workflow files with a `schedule:` trigger at run time (so a new scheduled
+workflow is checked with no edit), and `.github/scripts/check_schedule_freshness.py`
+reads the newest scheduled runs of each from the Actions API (the job has
+`actions: read`):
+
+- The scheduled and manual (`workflow_dispatch`) runs warn when the newest
+  successful scheduled run is more than 8 days old, or when one red scheduled run
+  (failure, cancelled, timed out) follows it. They fail at more than 15 days, at
+  two red scheduled runs in a row, or when GitHub reports the workflow as
+  disabled.
+- A pull request only warns, with an annotation, for the same conditions.
+- `detection-quality.yml` holds the check, and its other jobs run again in the
+  same run. So its own red scheduled runs are not counted (two of them can come
+  from this check), only the age of its newest scheduled run, and its scheduled
+  run counts as fresh for itself. A manual run after a fix is not held by the red
+  runs that the old cause made.
+- Phase: all the weekly crons are on Monday morning. The crons of `lint-trr.yml`
+  and the `validate-*.yml` workflows (06:11 to 06:43 UTC) come before the cron of
+  `detection-quality.yml` (06:53 UTC). Their scheduled runs usually end in
+  minutes, before it starts (on 2026-10-19 they ended 6 to 55 minutes before it).
+  So the scheduled run sees ages of about 0, 7, 14 or 21 days. A red run counts as
+  soon as it has ended: one red week warns, and two red weeks in a row fail. A run
+  that GitHub drops (no run at all) shows only by age: one dropped week is not
+  seen (7 days is ok), two in a row warn (a warning on a green run sends no
+  notice), and three in a row fail. For a workflow whose cron is after 06:53 UTC,
+  add 7 days. A pull request or a manual run at another time of the week sees
+  other ages, and warns from day 8.
+- A workflow with no successful scheduled run yet (a new one) only warns, also
+  when its runs are red. It is new while its oldest scheduled run is 15 days old
+  or less. With no scheduled run at all, or when GitHub does not list it as a
+  workflow, it is new while `main` has no such file, or the version on `main` has
+  no schedule trigger, or has had it, unchanged, for 15 days or less. After that,
+  it fails: the schedule never started, or never passed.
+- A schedule must run at least once a week (the day-of-month and month fields of
+  one cron entry are `*`). Another schedule stops the job (exit 2), so that a human
+  picks thresholds for it first.
+- An API error that a re-run can clear (a rate limit, or a 5xx, a 429, a network
+  error or a truncated answer on all its attempts, up to 4; or a request that the
+  time budget below stops) fails the scheduled and manual runs (exit 2), and only
+  warns on a pull request. Any other API error (for example a 403 or a 404, which
+  is a fault in the token or its permissions) or an answer of the wrong shape
+  fails every run, also on a pull request. An error on one workflow does not stop
+  the check of the others. `--self-test` proves the grading on constructed API
+  answers in the same job.
+- A slow API outage ends as API errors, not at the job's `timeout-minutes` (which
+  would end the step with no report). An attempt waits at most 15 seconds. After
+  one request fails on all its attempts, each later request gets one attempt. The
+  reads stop 240 seconds after the first one (`--api-budget`), and a request that
+  this budget stops is an API error that a re-run can clear. Each workflow still
+  gets its own row, written as soon as it is graded. With 8 scheduled workflows
+  and no answer at all, the reads end after about 215 seconds.
+
+In a public repository, GitHub disables the scheduled workflows after 60 days
+without repository activity. That also disables `detection-quality.yml`, so this
+job cannot report it: a pull request then gets no check from these workflows.
+When a human enables the workflows again, the next run names each workflow that
+is still disabled. A failed scheduled run opens no issue; GitHub sends its notice
+to the user who last changed the cron line.
 
 The three Kubernetes workflows (`validate-k8s-detections.yml`,
 `validate-staticpod-detections.yml` and `validate-apiserver-detections.yml`) run their
