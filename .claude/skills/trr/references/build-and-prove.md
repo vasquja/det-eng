@@ -392,7 +392,8 @@ approval that lands after they have passed leaves the merge to a human (see
   - `sufficiency-ratchet` (pull requests only) compares every rule with the base
     branch: its sufficiency report (cases, negatives, positives, logsource) and its
     benign-corpus hits.
-  - `benign-corpus` checks the FP snapshot and budgets.
+  - `benign-corpus` checks the FP snapshot and budgets, and smoke-tests the live
+    capture split (`score_benign.py --extra-split-at`) on a constructed capture.
   - `benign-linux-live` is a shadow capture of a real runner workload.
 
 Every validator also runs weekly on a schedule, so a rule re-proves itself after

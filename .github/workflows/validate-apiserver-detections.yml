@@ -47,6 +47,8 @@ on:
       - 'detections/k8s/kind-apiserver-cluster.yaml'
       - 'detections/k8s/cri-pod-sensor.sh'
       - 'detections/benign/k8s/workload.sh'
+      - 'detections/score_benign.py'
+      - 'detections/benign_corpus.py'
       - 'detections/sigma/T1098.006/**'
       - 'detections/sigma/T1053.007/**'
       - 'detections/sigma/T1552.007/**'
@@ -168,6 +170,8 @@ jobs:
             'detections/k8s/kind-apiserver-cluster.yaml' \
             'detections/k8s/cri-pod-sensor.sh' \
             'detections/benign/k8s/workload.sh' \
+            'detections/score_benign.py' \
+            'detections/benign_corpus.py' \
             'detections/sigma/T1098.006/' \
             'detections/sigma/T1053.007/' \
             'detections/sigma/T1552.007/' \
@@ -323,7 +327,13 @@ jobs:
         continue-on-error: true
         timeout-minutes: 15
         shell: bash
-        run: bash detections/benign/k8s/workload.sh
+        run: |
+          # The split point of the live slice: a request received before it is cluster
+          # bootstrap, one at or after it is the operator workload (score_benign.py
+          # --extra-split-at). The format is the audit log's requestReceivedTimestamp
+          # (UTC, microseconds); the kind node shares the runner's clock.
+          echo "BENIGN_START=$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)" >> "$GITHUB_ENV"
+          bash detections/benign/k8s/workload.sh
 
       - name: Capture the logs before the emulation (negative control)
         shell: bash
@@ -417,8 +427,13 @@ jobs:
             --cri-log /tmp/pre-emulation-cri.jsonl --expect-miss | tee /tmp/apineg.out
 
       - name: Score the pre-emulation log as a live benign slice (shadow)
-        # Bootstrap + operator workload, scored for every kubernetes/audit rule. Shadow
-        # only: what a rule matches here is reported, never enforced.
+        # Bootstrap + operator workload, scored for every kubernetes/audit rule, split at
+        # BENIGN_START into kind-live-bootstrap and kind-live-workload. Shadow only: what
+        # a rule matches here is reported, never enforced; only a workload rule over its
+        # corpus budget is annotated, and so is a window with no timed event. If
+        # BENIGN_START is empty, or is not the UTC time that the workload step writes
+        # (a `date` with no %6N, for example), a warning says so and every hit on the
+        # unsplit capture is annotated: a bad value never stops the scoring.
         if: always()
         continue-on-error: true
         shell: bash
@@ -427,10 +442,18 @@ jobs:
             echo "No pre-emulation audit log was captured; nothing to score."
             exit 0
           fi
+          split=()
+          utc='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?Z$'
+          if [[ "${BENIGN_START:-}" =~ $utc ]]; then
+            split=(--extra-split-at "${BENIGN_START}")
+          else
+            echo "BENIGN_START='${BENIGN_START:-}' is not a UTC time such as 2026-10-20T18:01:25.454000Z."
+            echo "::warning title=benign-corpus::BENIGN_START is empty, unset or malformed, so the live capture is scored unsplit (every hit warns)"
+          fi
           python3 detections/score_benign.py \
             --extra-slice /tmp/pre-emulation-audit.log \
             --extra-logsource kubernetes/audit \
-            --extra-label kind-bootstrap-and-workload \
+            --extra-label kind-live "${split[@]}" \
             --examples 0 --markdown "$GITHUB_STEP_SUMMARY"
 
       - name: Publish results to job summary

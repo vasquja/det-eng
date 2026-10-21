@@ -48,7 +48,47 @@ Two live captures are also scored in CI, in shadow mode only. Neither is committ
 
 - **kind bootstrap + operator workload.** In `validate-apiserver-detections`, the
   API server audit log captured before the emulation runs. It includes a fresh
-  cluster's own traffic plus [`k8s/workload.sh`](k8s/workload.sh).
+  cluster's own traffic plus [`k8s/workload.sh`](k8s/workload.sh). Just before the
+  workload starts, the job records `BENIGN_START` (UTC with microseconds, the format
+  of the audit log's `requestReceivedTimestamp`). The kind node and the runner use
+  one kernel clock, so the two times compare directly.
+  `score_benign.py --extra-split-at "$BENIGN_START"` then scores two windows apart:
+  - `kind-live-bootstrap`: the requests received before `BENIGN_START`. This is the
+    cluster's own install traffic, for example the API server's
+    `rbac/bootstrap-roles` hook (`system:apiserver`), kubeadm and the kind add-ons
+    (`kubernetes-admin`, `kubernetes-super-admin`), and the first static and
+    DaemonSet pods. It occurs once per cluster, so its rows are reported only.
+    Each row shows the rule's corpus budget for reference only; no row is flagged
+    or annotated.
+  - `kind-live-workload`: the requests received at or after `BENIGN_START`, and any
+    event with no usable `requestReceivedTimestamp` (missing, null, or not an
+    RFC 3339 time with a zone), so such an event cannot be hidden in the bootstrap
+    part. This is the operator workload plus the cluster's background traffic. Each
+    row shows the rule's corpus budget (its `max_hits` for the whole committed
+    corpus). A rule over it is flagged `OVER corpus budget` and annotated as a
+    warning. Nothing is enforced. The window holds some hundreds of events and the
+    corpus some thousands, so a row inside its budget is a coarse check, not a rate.
+
+  A wrong split point can still move every hit into the bootstrap part, for
+  example when `BENIGN_START` is later than the whole capture. So when either
+  window holds no timed event, the run prints a `WARNING` that gives the cause and
+  the times of the first and last event, annotates it, and writes it in the
+  summary section of that window: the split then proves nothing. When
+  `BENIGN_START` is empty or is not a UTC time in that format, the step warns and
+  scores the capture unsplit, and every hit is annotated as before the split
+  existed. This job runs only when its
+  own paths change (they include `score_benign.py` and `benign_corpus.py`, but not
+  `budgets.json`), weekly, or by hand. So the `benign-corpus` check in
+  `detection-quality` runs
+  [`smoke_live_split.py`](../../.github/scripts/smoke_live_split.py) on every
+  change. It scores a constructed capture in which one rule is over its corpus
+  budget in both windows, and fails unless only the workload row is flagged and
+  annotated (in the text, the JSON and the markdown).
+
+  The bootstrap window does not belong in the benign corpus: install-once traffic
+  would be most of a rule's hits and rate. A sanitized workload window can become a
+  recorded `kubernetes/audit` slice (there is none today). That is a corpus change
+  for a human to decide, because the existing budgets then apply to it.
 - **Ubuntu runner workload.** The `benign-linux-live` job in `detection-quality`
   records [`linux/workload.sh`](linux/workload.sh) under the det-eng audit rules
   with [`linux/capture.py`](linux/capture.py) and uploads the capture as an
@@ -179,6 +219,8 @@ python3 detections/score_benign.py --reseeds 10 # most hits over 10 reseeds: the
 python3 detections/score_benign.py --baseline-scores base-scores.json  # fail on any rule noisier than that snapshot
 python3 detections/score_benign.py --extra-slice capture.jsonl \
     --extra-logsource linux/auditd --extra-label my-host   # score a live capture (shadow)
+python3 detections/score_benign.py --extra-slice audit.log --extra-label kind-live \
+    --extra-split-at 2026-10-20T18:01:25.454000Z  # Kubernetes audit: bootstrap and workload apart
 ```
 
 ## Maintaining the corpus
