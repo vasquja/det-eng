@@ -9,9 +9,12 @@
 # throwaway namespace only. Procedure F deletes a whole namespace, so it uses its own
 # throwaway namespace trr9010-ns-f, never trr9010 or any other.
 #
-# Note: a delete request is audited even when the object does not exist (the request
-# is recorded with its objectRef.name and a 404), so the chokepoint telemetry exists
-# whether or not the create succeeded first.
+# Note: a delete request is audited even when the object does not exist (a 404), but a
+# 404 delete proves nothing about the procedure, so the validator needs each delete to
+# be accepted (200). Each procedure therefore creates the object it deletes, and the
+# create must succeed: a failed create fails the procedure. Each Event names an
+# involvedObject in the Event's own namespace, which the API server's Event validation
+# requires outside the default namespace.
 #
 # Run ONE procedure:
 #   ./emulate.sh a      delete a single Event (core group)
@@ -35,7 +38,42 @@ PROXY_PORT="${TRR9010_PROXY_PORT:-8911}"
 
 log() { printf '[trr9010] %s\n' "$*" >&2; }
 
-ensure_ns() { kubectl get namespace "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS" >/dev/null 2>&1 || true; }
+# ---- fail-loud procedure bookkeeping (C1-4) --------------------------------
+# `must CMD` runs a procedure's action and returns its exit code (stderr shown on
+# failure). `run_proc P` times procedure_P, appends one ledger line to $DETENG_LEDGER
+# (set by CI; unset = no ledger) and records a failure without stopping the run, so
+# `all` attempts every procedure and then exits 1 naming the failures. Cleanup and the
+# read-only gap print keep `|| true`.
+TRR="TRR9010"
+FAILED=()
+now_utc() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }
+must() {
+  local out rc=0
+  out="$("$@" 2>&1 >/dev/null)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "FAILED (exit $rc): $*"
+    [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/    /' >&2
+  fi
+  return "$rc"
+}
+run_proc() {
+  local p="$1" start end rc=0
+  start="$(now_utc)"
+  "procedure_$p" || rc=$?
+  end="$(now_utc)"
+  if [ -n "${DETENG_LEDGER:-}" ]; then
+    printf '{"trr":"%s","procedure":"%s","start":"%s","end":"%s","exit":%d,"expect":0}\n' \
+      "$TRR" "$p" "$start" "$end" "$rc" >> "$DETENG_LEDGER"
+  fi
+  if [ "$rc" -ne 0 ]; then
+    FAILED+=("$p")
+    [ -n "${GITHUB_ACTIONS:-}" ] && \
+      echo "::error title=${TRR} procedure ${p}::procedure ${p} failed (exit ${rc})"
+  fi
+  return 0
+}
+
+ensure_ns() { kubectl get namespace "$NS" >/dev/null 2>&1 || must kubectl create namespace "$NS"; }
 cleanup() {
   log "cleanup: deleting namespace $NS (cascades events and pods)"
   kubectl delete namespace "$NS" --ignore-not-found >/dev/null 2>&1 || true
@@ -44,52 +82,56 @@ cleanup() {
 
 # Procedure A — delete a single core v1 Event.
 procedure_a() {
-  ensure_ns
-  kubectl apply -f "$SCRIPT_DIR/k8s-event-core.yaml" >/dev/null 2>&1 || true
-  log "A: delete core Event trr9010-evt-a (the delete is audited regardless)"
-  kubectl -n "$NS" delete event trr9010-evt-a >/dev/null 2>&1 || true
+  ensure_ns || return
+  must kubectl apply -f "$SCRIPT_DIR/k8s-event-core.yaml" || return
+  log "A: create, then delete core Event trr9010-evt-a (an accepted delete)"
+  must kubectl -n "$NS" delete event trr9010-evt-a
 }
 
 # Procedure B — bulk-wipe Events with a collection DELETE. Uses kubectl proxy + a
 # raw DELETE on the events collection, which is recorded as verb=deletecollection
 # regardless of how many events match (version-independent).
 procedure_b() {
-  ensure_ns
+  ensure_ns || return
   log "B: deletecollection on Events in $NS (bulk cover-up)"
   kubectl proxy --port="$PROXY_PORT" >/dev/null 2>&1 &
-  local proxy_pid=$!
+  local proxy_pid=$! rc=0
   sleep 2
-  curl -s -X DELETE "http://127.0.0.1:${PROXY_PORT}/api/v1/namespaces/${NS}/events" >/dev/null 2>&1 || true
+  # -fsS: curl fails on an HTTP error, so a refused or unreachable deletecollection
+  # fails the step instead of being swallowed (the audited verb is deletecollection).
+  must curl -fsS -X DELETE "http://127.0.0.1:${PROXY_PORT}/api/v1/namespaces/${NS}/events" || rc=$?
   kill "$proxy_pid" >/dev/null 2>&1 || true
+  return "$rc"
 }
 
 # Procedure C — delete an Event via the events.k8s.io group.
 procedure_c() {
-  ensure_ns
-  kubectl apply -f "$SCRIPT_DIR/k8s-event-eventsk8s.yaml" >/dev/null 2>&1 || true
-  log "C: delete events.k8s.io Event trr9010-evt-c"
-  kubectl -n "$NS" delete events.events.k8s.io trr9010-evt-c >/dev/null 2>&1 || true
+  ensure_ns || return
+  must kubectl apply -f "$SCRIPT_DIR/k8s-event-eventsk8s.yaml" || return
+  log "C: create, then delete events.k8s.io Event trr9010-evt-c (an accepted delete)"
+  must kubectl -n "$NS" delete events.events.k8s.io trr9010-evt-c
 }
 
 # Procedure D — delete a Pod to destroy the running-workload record.
 procedure_d() {
-  ensure_ns
+  ensure_ns || return
   log "D: create then delete pod trr9010-workload (evidence removal)"
-  kubectl -n "$NS" run trr9010-workload --image=busybox:1.36 --restart=Never \
-    --command -- sleep 3600 >/dev/null 2>&1 || true
+  must kubectl -n "$NS" run trr9010-workload --image=busybox:1.36 --restart=Never \
+    --command -- sleep 3600 || return
   sleep 2
-  kubectl -n "$NS" delete pod trr9010-workload --force --grace-period=0 >/dev/null 2>&1 || true
+  must kubectl -n "$NS" delete pod trr9010-workload --force --grace-period=0
 }
 
 # Procedure F — delete a whole namespace to destroy its Events. The emulation creates
-# its own throwaway namespace trr9010-ns-f and one Event in it, then deletes the
-# namespace. The actor's record is the namespace delete (verb delete, resource
-# namespaces, 200); the namespace controller then deletes the Events with a
-# deletecollection that the Events rule filters as teardown.
+# its own throwaway namespace trr9010-ns-f and one Event in it (the create must succeed,
+# so the namespace really holds an Event), then deletes the namespace. The actor's
+# record is the namespace delete (verb delete, resource namespaces, 200); the namespace
+# controller then deletes the Events with a deletecollection that the Events rule
+# filters as teardown.
 procedure_f() {
   log "F: create namespace $NS_F with an Event, then delete the whole namespace"
-  kubectl get namespace "$NS_F" >/dev/null 2>&1 || kubectl create namespace "$NS_F" >/dev/null 2>&1 || true
-  kubectl create -f - >/dev/null 2>&1 <<EOF || true
+  kubectl get namespace "$NS_F" >/dev/null 2>&1 || must kubectl create namespace "$NS_F" || return
+  must kubectl create -f - <<EOF || return
 apiVersion: v1
 kind: Event
 metadata:
@@ -97,8 +139,9 @@ metadata:
   namespace: ${NS_F}
 involvedObject:
   apiVersion: v1
-  kind: Namespace
-  name: ${NS_F}
+  kind: ConfigMap
+  name: trr9010-anchor
+  namespace: ${NS_F}
 reason: Trr9010Benign
 message: benign TRR9010 namespace-delete emulation
 type: Normal
@@ -108,7 +151,7 @@ firstTimestamp: "2026-10-16T00:00:00Z"
 lastTimestamp: "2026-10-16T00:00:00Z"
 count: 1
 EOF
-  kubectl delete namespace "$NS_F" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  must kubectl delete namespace "$NS_F" --ignore-not-found --wait=false
 }
 
 # Gap — the node-local bypass. Clearing or truncating the API server audit log file
@@ -130,12 +173,7 @@ procedure_gap() {
 
 run_one() {
   case "$1" in
-    a) procedure_a ;;
-    b) procedure_b ;;
-    c) procedure_c ;;
-    d) procedure_d ;;
-    f) procedure_f ;;
-    gap) procedure_gap ;;
+    a|b|c|d|f|gap) run_proc "$1" ;;
     *) log "unknown item: $1 (use a|b|c|d|f|gap|all)"; exit 2 ;;
   esac
 }
@@ -143,10 +181,14 @@ run_one() {
 main() {
   local which="${1:-all}"
   if [ "$which" = "all" ]; then
-    for p in a b c d f gap; do run_one "$p"; done
+    for p in a b c d f gap; do run_proc "$p"; done
     cleanup
   else
     run_one "$which"
+  fi
+  if [ "${#FAILED[@]}" -gt 0 ]; then
+    log "emulation FAILED: procedure(s) ${FAILED[*]}"
+    exit 1
   fi
   log "emulation complete: $which"
 }

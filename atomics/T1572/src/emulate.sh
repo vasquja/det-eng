@@ -35,9 +35,45 @@ NS="${TRR9026_NAMESPACE:-default}"
 
 log() { printf '[trr9026] %s\n' "$*" >&2; }
 
+# ---- fail-loud procedure bookkeeping (C1-4) --------------------------------
+# `must CMD` runs a procedure's action and returns its exit code (stderr shown on
+# failure). `run_proc P` times procedure_P, appends one ledger line to $DETENG_LEDGER
+# (set by CI; unset = no ledger) and records a failure without stopping the run, so
+# `all` attempts every procedure and then exits 1 naming the failures. Cleanup keeps
+# `|| true`.
+TRR="TRR9026"
+FAILED=()
+now_utc() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }
+must() {
+  local out rc=0
+  out="$("$@" 2>&1 >/dev/null)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "FAILED (exit $rc): $*"
+    [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/    /' >&2
+  fi
+  return "$rc"
+}
+run_proc() {
+  local p="$1" start end rc=0
+  start="$(now_utc)"
+  "procedure_$p" || rc=$?
+  end="$(now_utc)"
+  if [ -n "${DETENG_LEDGER:-}" ]; then
+    printf '{"trr":"%s","procedure":"%s","start":"%s","end":"%s","exit":%d,"expect":0}\n' \
+      "$TRR" "$p" "$start" "$end" "$rc" >> "$DETENG_LEDGER"
+  fi
+  if [ "$rc" -ne 0 ]; then
+    FAILED+=("$p")
+    [ -n "${GITHUB_ACTIONS:-}" ] && \
+      echo "::error title=${TRR} procedure ${p}::procedure ${p} failed (exit ${rc})"
+  fi
+  return 0
+}
+
 ensure_pod() {
   kubectl -n "$NS" get pod "$POD" >/dev/null 2>&1 || \
-    kubectl apply -f "$SCRIPT_DIR/target-pod.yaml" >/dev/null 2>&1 || true
+    must kubectl apply -f "$SCRIPT_DIR/target-pod.yaml" || return
+  # Readiness, not the gate-matched action: it may time out without failing the step.
   kubectl -n "$NS" wait --for=condition=Ready "pod/$POD" --timeout=120s >/dev/null 2>&1 || true
 }
 
@@ -47,26 +83,39 @@ cleanup() {
 }
 
 # Open a port-forward in the background, hold it long enough for the API server to
-# write the ResponseStarted audit event, then tear it down.
+# write the ResponseStarted audit event, then tear it down. Its stderr goes to a
+# temporary file, which is shown when the tunnel does not establish.
 _portforward() {
-  local localport="$1"
-  kubectl -n "$NS" port-forward "pod/$POD" "${localport}:8080" >/dev/null 2>&1 &
+  local localport="$1" errf
+  errf="$(mktemp)"
+  kubectl -n "$NS" port-forward "pod/$POD" "${localport}:8080" >/dev/null 2>"$errf" &
   local pid=$!
   sleep 3
+  # The tunnel must still be up after the hold: if port-forward exited early it never
+  # established, so the ResponseStarted audit record the rule keys on was not written.
+  if ! kill -0 "$pid" 2>/dev/null; then
+    log "port-forward exited before the 3s hold (the tunnel did not establish)"
+    wait "$pid" >/dev/null 2>&1 || true
+    if [ -s "$errf" ]; then sed 's/^/    /' "$errf" >&2; fi
+    rm -f "$errf"
+    return 1
+  fi
   kill "$pid" >/dev/null 2>&1 || true
   wait "$pid" >/dev/null 2>&1 || true
+  rm -f "$errf"
+  return 0
 }
 
 # Procedure A — SPDY transport (POST upgrade -> verb=create).
 procedure_a() {
-  ensure_pod
+  ensure_pod || return
   log "A: port-forward to $POD over SPDY (verb=create)"
   KUBECTL_PORT_FORWARD_WEBSOCKETS=false _portforward 18080
 }
 
 # Procedure B — WebSocket transport (GET upgrade -> verb=get).
 procedure_b() {
-  ensure_pod
+  ensure_pod || return
   log "B: port-forward to $POD over WebSocket (verb=get)"
   KUBECTL_PORT_FORWARD_WEBSOCKETS=true _portforward 18081
 }
@@ -82,13 +131,39 @@ procedure_b() {
 # server still writes the nodes/proxy audit record the paired rule keys on. A real
 # tunnel writes the same requestURI. The call is allowed to fail under set -e.
 procedure_c() {
-  ensure_pod
-  local node path
+  ensure_pod || return
+  local node path out rc=0
   node="$(kubectl -n "$NS" get pod "$POD" -o jsonpath='{.spec.nodeName}' 2>/dev/null || true)"
   node="${node:-apiserver-control-plane}"
   path="/api/v1/nodes/${node}/proxy/portForward/${NS}/${POD}?port=8080"
   log "C: port-forward via node proxy -> nodes/proxy, requestURI has /proxy/portForward/ (node=$node)"
-  kubectl get --raw "$path" >/dev/null 2>&1 || true
+  out="$(kubectl get --raw "$path" 2>&1 >/dev/null)" || rc=$?
+  # The un-upgraded GET is REFUSED by the kubelet (it requires an upgrade), and that
+  # refusal is the expected outcome: the API server still writes the nodes/proxy audit
+  # record the rule keys on. Encode the expectation rather than swallow it: the kubelet's
+  # refusal (or an unexpected success) is fine; any other failure is not. In v1.36.4 the
+  # kubelet's proxy answers an un-upgraded stream request with a 500 whose text body is
+  # "Upgrade request required" (UpgradeAwareHandler with upgradeRequired, the kubelet
+  # responder), which client-go reports as 'Error from server (InternalError): an error on
+  # the server ("Upgrade request required") ...'; a handshake refusal is a 400 ('the
+  # server rejected our request'). Only an answer that came back from the server counts:
+  # kubectl's own connection errors ('Unable to connect to the server', 'The connection to
+  # the server ... was refused') never reached the API server, so nothing was audited.
+  if [ "$rc" -eq 0 ]; then
+    log "C: the node-proxy GET unexpectedly succeeded (the nodes/proxy record is still audited)"
+    return 0
+  fi
+  if printf '%s' "$out" | grep -qiE 'Unable to connect to the server|connection to the server'; then
+    log "C: the node-proxy GET never reached the API server (a client connection error)"
+  elif printf '%s' "$out" | grep -q 'Error from server' \
+      && printf '%s' "$out" | grep -qiE 'Upgrade request required|unable to upgrade|rejected our request|an error on the server'; then
+    log "C: the kubelet refused the un-upgraded GET as expected (nodes/proxy record still audited)"
+    return 0
+  else
+    log "C: the node-proxy GET failed with an error that is not the kubelet's upgrade refusal"
+  fi
+  [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/    /' >&2
+  return 1
 }
 
 # Procedure D — the direct-kubelet tunnel. A port-forward straight to the kubelet on
@@ -102,10 +177,7 @@ procedure_d() {
 
 run_one() {
   case "$1" in
-    a) procedure_a ;;
-    b) procedure_b ;;
-    c) procedure_c ;;
-    d) procedure_d ;;
+    a|b|c|d) run_proc "$1" ;;
     *) log "unknown item: $1 (use a|b|c|d|all)"; exit 2 ;;
   esac
 }
@@ -113,10 +185,14 @@ run_one() {
 main() {
   local which="${1:-all}"
   if [ "$which" = "all" ]; then
-    for p in a b c d; do run_one "$p"; done
+    for p in a b c d; do run_proc "$p"; done
     cleanup
   else
     run_one "$which"
+  fi
+  if [ "${#FAILED[@]}" -gt 0 ]; then
+    log "emulation FAILED: procedure(s) ${FAILED[*]}"
+    exit 1
   fi
   log "emulation complete: $which"
 }

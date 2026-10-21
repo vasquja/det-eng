@@ -37,13 +37,58 @@ NODE="${TRR9006_NODE:-apiserver-control-plane}"
 
 log() { printf '[trr9006] %s\n' "$*" >&2; }
 
+# ---- fail-loud procedure bookkeeping (C1-4) --------------------------------
+# `must CMD` runs a procedure's action and returns its exit code (stderr shown on
+# failure). `create_ok CMD` is `must` for a create that treats AlreadyExists as
+# success (so a shared ensure_setup is idempotent without a prior GET). `run_proc P`
+# times procedure_P, appends one ledger line to $DETENG_LEDGER (set by CI; unset = no
+# ledger) and records a failure without stopping the run. Cleanup keeps `|| true`.
+TRR="TRR9006"
+FAILED=()
+now_utc() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }
+must() {
+  local out rc=0
+  out="$("$@" 2>&1 >/dev/null)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "FAILED (exit $rc): $*"
+    [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/    /' >&2
+  fi
+  return "$rc"
+}
+create_ok() {
+  local out rc=0
+  out="$("$@" 2>&1 >/dev/null)" || rc=$?
+  if [ "$rc" -eq 0 ] || printf '%s' "$out" | grep -qi 'AlreadyExists'; then
+    return 0
+  fi
+  log "FAILED (exit $rc): $*"
+  [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/    /' >&2
+  return "$rc"
+}
+run_proc() {
+  local p="$1" start end rc=0
+  start="$(now_utc)"
+  "procedure_$p" || rc=$?
+  end="$(now_utc)"
+  if [ -n "${DETENG_LEDGER:-}" ]; then
+    printf '{"trr":"%s","procedure":"%s","start":"%s","end":"%s","exit":%d,"expect":0}\n' \
+      "$TRR" "$p" "$start" "$end" "$rc" >> "$DETENG_LEDGER"
+  fi
+  if [ "$rc" -ne 0 ]; then
+    FAILED+=("$p")
+    [ -n "${GITHUB_ACTIONS:-}" ] && \
+      echo "::error title=${TRR} procedure ${p}::procedure ${p} failed (exit ${rc})"
+  fi
+  return 0
+}
+
+# Create the namespace, Secret and SA, treating AlreadyExists as success, so no GET
+# precedes Procedure B's read (the GET used to look like B's own request; C1-3/C1-4).
 ensure_setup() {
-  kubectl get namespace "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS" >/dev/null
-  kubectl -n "$NS" get secret "$SECRET" >/dev/null 2>&1 || \
-    kubectl -n "$NS" create secret generic "$SECRET" \
-      --from-literal=token=benign-not-a-real-credential >/dev/null
-  kubectl -n "$NS" get serviceaccount "$SA" >/dev/null 2>&1 || \
-    kubectl -n "$NS" create serviceaccount "$SA" >/dev/null
+  create_ok kubectl create namespace "$NS" || return
+  create_ok kubectl -n "$NS" create secret generic "$SECRET" \
+    --from-literal=token=benign-not-a-real-credential || return
+  create_ok kubectl -n "$NS" create serviceaccount "$SA"
 }
 
 cleanup() {
@@ -53,61 +98,65 @@ cleanup() {
 
 # Procedure A — list Secrets in the namespace (verb=list, no objectRef.name).
 procedure_a() {
-  ensure_setup
+  ensure_setup || return
   log "A: list Secrets in $NS (verb=list)"
-  kubectl -n "$NS" get secrets >/dev/null 2>&1 || true
+  must kubectl -n "$NS" get secrets
 }
 
 # Procedure B — get one Secret by name (verb=get). The only value returned is the
 # benign literal the test created.
 procedure_b() {
-  ensure_setup
+  ensure_setup || return
   log "B: get Secret $SECRET in $NS (verb=get)"
-  kubectl -n "$NS" get secret "$SECRET" -o yaml >/dev/null 2>&1 || true
+  must kubectl -n "$NS" get secret "$SECRET" -o yaml
 }
 
-# Procedure C — watch Secrets (verb=watch). The client disconnects after 5s.
+# Procedure C — watch Secrets (verb=watch). The client disconnects after 5s (the
+# request-timeout ends the watch with a clean exit).
 procedure_c() {
-  ensure_setup
+  ensure_setup || return
   log "C: watch Secrets in $NS for 5s (verb=watch)"
-  kubectl -n "$NS" get secrets --watch --request-timeout=5s >/dev/null 2>&1 || true
+  must kubectl -n "$NS" get secrets --watch --request-timeout=5s
 }
 
 # Procedure D — mint a short-lived token for the throwaway SA (TokenRequest).
 # The SA holds no RBAC, so the token grants nothing; it expires on its own.
 procedure_d() {
-  ensure_setup
+  ensure_setup || return
   log "D: mint a token for $SA via the TokenRequest API (verb=create, subresource=token)"
-  kubectl -n "$NS" create token "$SA" --duration=10m >/dev/null 2>&1 || true
+  must kubectl -n "$NS" create token "$SA" --duration=10m
 }
 
-# Procedure E — the gap. Read an already-mounted service-account token off the
-# node filesystem, read-only, and show the API server audit log gains no event.
-# No API call is made, so the chokepoint cannot see it (mirrors TRR9002 e).
+# Procedure E — the gap. Read an already-mounted token off the node filesystem; it makes
+# NO API call, so the audit log gains no event (C2-4's absence check proves it). The read
+# must actually happen: E FAILS unless the node read printed 'read-ok' (a 'no-token-file'
+# result, or no node access, is a failure, not a silent pass).
 procedure_e() {
+  local out
   if [ -n "${TRR9006_NODE_EXEC:-}" ]; then
     log "E: reading a projected token file on the node (custom exec)"
-    $TRR9006_NODE_EXEC 'f=$(find /var/lib/kubelet/pods -path "*kubernetes.io~projected*/token" 2>/dev/null | head -1); [ -n "$f" ] && head -c 20 "$f" >/dev/null && echo read-ok || echo no-token-file' || true
+    out="$($TRR9006_NODE_EXEC 'f=$(find /var/lib/kubelet/pods -path "*kubernetes.io~projected*/token" 2>/dev/null | head -1); [ -n "$f" ] && head -c 20 "$f" >/dev/null && echo read-ok || echo no-token-file' 2>/dev/null || true)"
   elif command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -qx "$NODE"; then
     log "E: reading a projected token file on node $NODE (read-only)"
-    docker exec "$NODE" sh -c '
+    out="$(docker exec "$NODE" sh -c '
       f=$(find /var/lib/kubelet/pods -path "*kubernetes.io~projected*/token" 2>/dev/null | head -1)
       [ -n "$f" ] && head -c 20 "$f" >/dev/null 2>&1 && echo read-ok || echo no-token-file
-    ' || true
+    ' 2>/dev/null || true)"
   else
-    log "E: no node access (docker/TRR9006_NODE_EXEC) — skipping the gap demonstration"
-    return 0
+    log "E: no node access (docker/TRR9006_NODE_EXEC) — cannot read a token off disk"
+    return 1
+  fi
+  printf '%s\n' "$out"
+  if ! printf '%s' "$out" | grep -qx 'read-ok'; then
+    log "E: the on-disk token read did not return 'read-ok' (got: ${out:-<empty>})"
+    return 1
   fi
   log "E: done — expect NO secrets/serviceaccounts audit event for this read"
 }
 
 run_one() {
   case "$1" in
-    a) procedure_a ;;
-    b) procedure_b ;;
-    c) procedure_c ;;
-    d) procedure_d ;;
-    e) procedure_e ;;
+    a|b|c|d|e) run_proc "$1" ;;
     *) log "unknown procedure: $1 (use a|b|c|d|e|all)"; exit 2 ;;
   esac
 }
@@ -115,10 +164,14 @@ run_one() {
 main() {
   local which="${1:-all}"
   if [ "$which" = "all" ]; then
-    for p in a b c d e; do run_one "$p"; done
+    for p in a b c d e; do run_proc "$p"; done
     cleanup
   else
     run_one "$which"
+  fi
+  if [ "${#FAILED[@]}" -gt 0 ]; then
+    log "emulation FAILED: procedure(s) ${FAILED[*]}"
+    exit 1
   fi
   log "emulation complete: $which"
 }

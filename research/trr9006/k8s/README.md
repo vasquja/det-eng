@@ -383,9 +383,12 @@ The Kubernetes API server loop has its own validator,
 [`detections/validate_apiserver_detections.py`](../../../detections/validate_apiserver_detections.py):
 it reads the API server audit log the emulation produced and asserts Strategies 1
 and 2 match an event from the emulation itself (one in the `trr9006` namespace by
-the non-system test identity). Strategy 3 is compiled, not match-gated: it needs
-node file telemetry the audit loop does not produce, so Procedure E documents the
-gap instead. The workflow
+the non-system test identity), for each procedure on its own: A's list, B's get of
+`trr9006-cred`, C's watch and D's token create. Strategy 3 is compiled, not
+match-gated: it needs node file telemetry the audit loop does not produce, so
+Procedure E documents the gap instead. With the emulation ledger, an absence check
+asserts that gap: no event that Strategy 1 or 2 matches, from a non-system caller, falls
+in E's time window, and E must have run and read the token (`read-ok`). The workflow
 [`validate-apiserver-detections.yml`](../../../.github/workflows/validate-apiserver-detections.yml)
 runs the loop on a `kind` cluster, and runs the validator as a negative control on
 the audit log captured *before* the emulation (no `trr9006` namespace yet, so no

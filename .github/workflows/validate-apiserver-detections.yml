@@ -223,6 +223,14 @@ jobs:
     needs: changes
     if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
+    env:
+      # Each emulation appends one line per procedure (window + exit status) here; the
+      # validator binds each procedure gate to its window with --ledger (C1-3).
+      DETENG_LEDGER: /tmp/emulation-ledger.jsonl
+      # The only images the atomics and the benign workload run; pre-pulled with a
+      # bounded retry and loaded into the node so a Docker Hub hiccup does not flake pod
+      # starts (C1-5).
+      LAB_IMAGES: busybox:1.36 registry.k8s.io/pause:3.9
     steps:
       - uses: actions/checkout@v4
 
@@ -266,6 +274,7 @@ jobs:
           kubectl version --client
 
       - name: Create kind cluster with audit logging
+        id: cluster
         shell: bash
         run: |
           # Run from the repo root so the relative extraMounts path resolves.
@@ -300,6 +309,30 @@ jobs:
           docker exec "${CLUSTER_NAME}-control-plane" \
             cat /etc/kubernetes/manifests/kube-apiserver.yaml | grep -- --audit- \
             || { echo "::error::audit flags not set on the API server"; exit 1; }
+
+      - name: Pre-pull the lab images and wait for the default service account
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Start the emulation ledger empty, so each procedure's window is this run's.
+          : > "${DETENG_LEDGER}"
+          # Docker Hub pulls from inside the node are the main source of flaky pod starts;
+          # pull on the runner with a bounded retry, then load each image into the node.
+          for img in ${LAB_IMAGES}; do
+            ok=
+            for i in 1 2 3; do
+              if docker pull -q "$img"; then ok=1; break; fi
+              echo "pull of $img failed (attempt $i)"
+              # Back off only before another attempt.
+              if [ "$i" -lt 3 ]; then sleep $((i * 10)); fi
+            done
+            [ -n "$ok" ] || { echo "::error::could not pull $img after 3 attempts"; exit 1; }
+            kind load docker-image --name "${CLUSTER_NAME}" "$img"
+          done
+          # A pod create before the token controller has made the default SA fails with
+          # 'serviceaccount "default" not found'; wait for it (kubectl 1.31+).
+          kubectl -n default wait --for=create serviceaccount/default --timeout=60s
 
       - name: Start the node runtime sensor (CRI pod sandboxes)
         shell: bash
@@ -348,62 +381,134 @@ jobs:
           echo "Captured $(wc -l < /tmp/pre-emulation-audit.log) pre-emulation audit lines."
 
       - name: Emulate TRR9004 (RBAC, benign view bindings)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: bash atomics/T1098.006/src/emulate.sh all
 
       - name: Emulate TRR9005 (Jobs/CronJobs, benign id)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: bash atomics/T1053.007/src/emulate.sh all
 
       - name: Emulate TRR9006 (Secrets, benign reads + token)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         env:
           TRR9006_NODE: apiserver-control-plane
         run: bash atomics/T1552.007/src/emulate.sh all
 
       - name: Emulate TRR9007 (dangerous pod specs, sleep-only)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         env:
           TRR9007_NODE: apiserver-control-plane
         run: bash atomics/T1611/src/emulate_k8s.sh all
 
       - name: Emulate TRR9008 (disable admission control, no-op webhooks)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         env:
           TRR9008_NODE: apiserver-control-plane
         run: bash atomics/T1685/src/emulate_k8s.sh all
 
       - name: Emulate TRR9009 (impersonation, read-only)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: bash atomics/T1134/src/emulate.sh all
 
       - name: Emulate TRR9010 (indicator removal, throwaway events/pod)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         env:
           TRR9010_NODE: apiserver-control-plane
         run: bash atomics/T1070/src/emulate.sh all
 
       - name: Emulate TRR9025 (malicious admission webhooks, no-op)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         env:
           TRR9025_NODE: apiserver-control-plane
         run: bash atomics/T1546/src/emulate_k8s.sh all
 
       - name: Emulate TRR9026 (pod port-forward, harmless tunnel)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: bash atomics/T1572/src/emulate.sh all
 
       - name: Emulate TRR9027 (cluster DNS poisoning, sentinel + restore)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         env:
           TRR9027_NODE: apiserver-control-plane
         run: bash atomics/T1565.001/src/emulate.sh all
 
       - name: Collect the audit log and the node sensor log
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: |
-          # Give the final events a moment to flush.
-          sleep 3
+          set -euo pipefail
+          # Flush barrier in place of a fixed `sleep 3`: poll (at most 30 s) until the audit
+          # log holds an event received AFTER the ledger's last `end` (the moment the final
+          # procedure returned). A request received after that moment was audited after
+          # every procedure's own requests completed, so their events are in the file. The
+          # atomics' cleanup and the control plane's lease renewals (every ~2 s, logged at
+          # Metadata) always write such an event. Both sides are RFC3339 UTC and are
+          # compared as times, and a partly written last line is skipped. The barrier never
+          # fails the step: after 30 s it warns and the step collects the log anyway.
+          python3 - <<'PY'
+          import json, os, subprocess, time
+          from datetime import datetime, timezone
+
+
+          def ts(value):
+              try:
+                  t = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+              except ValueError:
+                  return None
+              return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+          ends = []
+          ledger = os.environ["DETENG_LEDGER"]
+          if os.path.exists(ledger):
+              with open(ledger, encoding="utf-8", errors="replace") as fh:
+                  for line in fh:
+                      try:
+                          t = ts(json.loads(line)["end"])
+                      except (ValueError, KeyError, TypeError):
+                          continue
+                      if t is not None:
+                          ends.append(t)
+          target = max(ends) if ends else None
+          node = os.environ["CLUSTER_NAME"] + "-control-plane"
+          out = "/tmp/kube-apiserver-audit.log"
+          for second in range(31):
+              with open(out, "wb") as fh:
+                  subprocess.run(["docker", "exec", node, "cat",
+                                  "/var/log/kubernetes/kube-apiserver-audit.log"],
+                                 stdout=fh, check=False)
+              if target is None:
+                  print("The ledger has no end time; collecting without a flush barrier.")
+                  break
+              newest = None
+              with open(out, encoding="utf-8", errors="replace") as fh:
+                  for line in fh:
+                      try:
+                          t = ts(json.loads(line).get("requestReceivedTimestamp"))
+                      except (ValueError, AttributeError):
+                          continue  # a partly written last line, or not an event
+                      if t is not None and (newest is None or t > newest):
+                          newest = t
+              if newest is not None and newest > target:
+                  print(f"The audit log holds an event after the last procedure end "
+                        f"({target.isoformat()}) after {second} s.")
+                  break
+              if second < 30:
+                  time.sleep(1)
+          else:
+              print(f"::warning::no audit event after the last procedure end ({target}) "
+                    "within 30 s; collecting the log anyway")
+          PY
           docker exec "${CLUSTER_NAME}-control-plane" \
             cat /var/log/kubernetes/kube-apiserver-audit.log \
             > /tmp/kube-apiserver-audit.log
@@ -413,13 +518,15 @@ jobs:
           echo "Collected $(wc -l < /tmp/cri-pods.jsonl) CRI sensor snapshots."
 
       - name: Validate detections (emulate -> audit + node sensor -> Sigma)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: |
           python3 detections/validate_apiserver_detections.py \
             --audit-log /tmp/kube-apiserver-audit.log \
-            --cri-log /tmp/cri-pods.jsonl | tee /tmp/apival.out
+            --cri-log /tmp/cri-pods.jsonl --ledger "${DETENG_LEDGER}" | tee /tmp/apival.out
 
       - name: Negative control (no rule may pass without the emulation)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: |
           python3 detections/validate_apiserver_detections.py \
@@ -484,6 +591,7 @@ jobs:
             /tmp/pre-emulation-audit.log
             /tmp/cri-pods.jsonl
             /tmp/pre-emulation-cri.jsonl
+            ${{ env.DETENG_LEDGER }}
           if-no-files-found: ignore
 
       - name: Delete the cluster

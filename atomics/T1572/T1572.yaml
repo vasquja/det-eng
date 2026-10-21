@@ -15,7 +15,8 @@ atomic_tests:
     auto_generated_guid: 09447039-08df-4a22-98c8-1a22854e5b10
     description: |
       Opens a port-forward to pod trr9026-target over the legacy SPDY transport (POST
-      upgrade), recorded as verb=create on pods/portforward.
+      upgrade), recorded as verb=create on pods/portforward. The test fails if the tunnel
+      exits before the 3 s hold (it did not establish).
       Chokepoint: objectRef.resource=pods, objectRef.subresource=portforward.
       Rule: detections/sigma/T1572/k8s_pod_portforward.yml
     supported_platforms:
@@ -38,7 +39,8 @@ atomic_tests:
     description: |
       Opens a port-forward to pod trr9026-target over the WebSocket transport
       (portforward.k8s.io, GET upgrade), recorded as verb=get on pods/portforward. A
-      create-only rule would miss this; the verb-agnostic rule catches it.
+      create-only rule would miss this; the verb-agnostic rule catches it. The test fails
+      if the tunnel exits before the 3 s hold (it did not establish).
       Rule: detections/sigma/T1572/k8s_pod_portforward.yml
     supported_platforms:
       - containers
@@ -65,7 +67,9 @@ atomic_tests:
       a raw client (kubeletctl, or kubectl get --raw) does. The GET carries no upgrade
       header, so the kubelet refuses the un-upgraded request and no tunnel establishes, but
       the API server still writes the nodes/proxy audit record; a real tunnel writes the same
-      requestURI.
+      requestURI. The test expects that refusal: it passes on the kubelet's upgrade refusal
+      (or on an unexpected success; the nodes/proxy record is audited in both cases) and
+      fails on any other error (a connection error or another refusal never wrote the record).
       Chokepoint: objectRef.resource=nodes, subresource=proxy, requestURI /proxy/portForward/.
       Rule: detections/sigma/T1572/k8s_node_proxy_portforward.yml
     supported_platforms:

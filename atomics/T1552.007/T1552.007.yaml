@@ -86,7 +86,9 @@ atomic_tests:
       the node filesystem, read-only. No API call is made, so the API server audit
       log gains no event: the audit-log chokepoint is blind to it. Only a node
       file-event sensor (or detection-by-absence) catches it. Demonstrates the gap
-      the same way TRR9002 Procedure E documents the direct-kubelet gap.
+      the same way TRR9002 Procedure E documents the direct-kubelet gap. The test fails
+      unless the node read succeeds ('read-ok'), so it needs node access (docker exec on
+      kind, or TRR9006_NODE_EXEC).
       Node-sensor rule: detections/sigma/T1552.007/linux_k8s_sa_token_read.yml
     supported_platforms:
       - containers

@@ -132,9 +132,10 @@ atomic_tests:
       mapRoles entry, patches it to append a backdoor role mapped to a throwaway
       group (trr9004-unbound-group, NOT system:masters), then deletes it. On an EKS
       cluster the IAM authenticator would map that role to the cluster; on kind
-      nothing reads it. It touches only an aws-auth it wrote: it skips when it
-      cannot read the object or the object exists without being exactly its own,
-      and it removes only a leftover that is exactly what it writes. The patch
+      nothing reads it. It touches only an aws-auth it wrote: it skips when the
+      object exists without being exactly its own, it fails without a write when it
+      cannot read the object, and it removes only a leftover that is exactly what it
+      writes. A refused create, patch or delete fails the test. The patch
       carries the create's resourceVersion and the delete a resourceVersion
       precondition, so the API server refuses either (409 Conflict) if another
       writer changed the object in between; a real EKS mapping is never

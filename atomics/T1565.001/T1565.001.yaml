@@ -101,7 +101,8 @@ atomic_tests:
       (trr9027stub.example.invalid forwarded to a TEST-NET IP), then restores the original
       Corefile. Skips a coredns ConfigMap that has an owner, an addon-manager label or the
       EKS add-on label (eks.amazonaws.com/component), and skips the run unless
-      `kubectl auth can-i` allows create, patch and delete of ConfigMaps in kube-system.
+      `kubectl auth can-i` allows create, patch and delete of ConfigMaps in kube-system
+      (a failed read of coredns, or a can-i check that gives no answer, fails the test).
       Puts the saved object back if the create fails, then checks that coredns exists
       with the saved Corefile byte for byte (trailing line break included); if not, it
       prints a ::error:: line with the saved object and exits 1. A create names no object when the

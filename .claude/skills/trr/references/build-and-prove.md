@@ -332,6 +332,31 @@ PascalCase — match `subjectFromWebIdentityToken`, not `SubjectFromWebIdentityT
   `(TRR, folder, rulefile, attack.json, benign.json, provider, note, marker(substr, *fields))`.
   The `marker()` gate checks that at least one named flattened field of a firing attack
   record contains the substring.
+- The Kubernetes API-server validator (`detections/validate_apiserver_detections.py`)
+  registers `(folder, rulefile, source, label, note, gate)`, where `source` is `audit`
+  or `cri`. Its `gate` is either one callable (any marked record passes, as in the cloud
+  validator) or a **list of `(procedure, gate)` pairs**: then the entry passes only when
+  every procedure has a matching record of its own, so a procedure that fails silently —
+  or whose write the API server refused — fails the entry (`--expect-miss` inverts this:
+  any one procedure matching fails the negative control). Build each gate with
+  `rec(verb, resource, sub, name|prefix, ns, user, also, code, window)`, or bind a precise
+  helper gate (a body sentinel, a JSON-patch operation list) with `win(gate, window, code)`.
+  Both require an accepted response (2xx, or 101 for a streaming upgrade) by default. A
+  procedure that is meant to be refused states its expected `code`: TRR9009's denied
+  impersonation probes require `403`, and TRR9026 C's kubelet-refused `nodes/proxy` GET
+  takes any code (`code=None`, with a comment) until a live record pins it. The gate's
+  `window=(trr, procedure)` keys the emulation ledger: run the validator with
+  `--ledger $DETENG_LEDGER`, and each atomic must append one JSON line per procedure
+  (`{"trr","procedure","start","end","exit","expect"}`, UTC microseconds) so a record is
+  attributed to the procedure whose window brackets its `requestReceivedTimestamp`.
+  Module-level `PROCEDURES` ({`(trr_id, LETTER)` → sorted rule paths}) is derived from
+  these labels; it is the interface for the procedure coverage report. A documented gap is
+  asserted with an `ABSENCE` entry (a rule that must match nothing from the gate's callers
+  in a procedure's window; it fails when that procedure did not run or failed).
+  Emulations are **fail-loud**: a `must`/`run_proc` helper block times each procedure,
+  writes its ledger row, and makes `all` exit 1 naming any failed procedure. A skip
+  returns 0 only for a lab condition that makes the action unsafe or impossible by design
+  (for example a real cluster's own object); a read or write that errors is a failure.
 
 ## TRR README + DDMs (trr_lint)
 

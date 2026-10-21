@@ -5,8 +5,10 @@ display_name: "Indicator Removal (Kubernetes Events and Workload Records)"
 # server, so the delete/deletecollection audit events the paired detections key on
 # exist. Everything happens in a throwaway namespace trr9010 with uniquely named
 # objects, so a validator matches the emulation's own events. A delete is audited
-# even when the object does not exist, so the telemetry exists regardless. These need
-# a reachable cluster and audit logging (see detections/k8s/kind-apiserver-cluster.yaml).
+# even when the object does not exist (a 404), but the validator needs each delete to be
+# accepted (200), so each test first creates what it deletes, and a failed create fails
+# the test. These need a reachable cluster and audit logging (see
+# detections/k8s/kind-apiserver-cluster.yaml).
 
 atomic_tests:
   - name: "TRR9010.K8S.A — delete a single Kubernetes Event (core group)"

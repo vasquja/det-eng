@@ -405,10 +405,11 @@ sidecar case `mirror-create-privileged-static-pod` proves it on a `system:node`
 pods-create that carries the spec. That is a weaker signal than a direct user create:
 it looks like a kubelet action, so triage on the node identity together with the
 dangerous spec, and confirm with the node sensor that the privileged container is
-really running. The `emulate_k8s.sh gap` test writes the static pod and shows that the
-node runtime sees it (`crictl`). It does not assert the mirror create (it can log
-`static: no mirror pod object yet`), and no validator gate isolates a `system:node`
-create.
+really running. The `emulate_k8s.sh gap` test writes the static pod, polls up to 60 s for
+the kubelet's mirror pod `trr9007-escape-static-<node>`, and fails if it never registers;
+the `9007 static` validator entry gates the pod-spec chokepoint on that mirror create (a
+`create pods` with a `trr9007-escape-static-` name and a `system:node:` caller, in the
+gap procedure's ledger window), so a `system:node` create is now isolated and proven.
 
 **Demonstrated gap — the Request-level dependency.**
 The real blind spot is the audit level, not the delivery. Under a `Metadata`-only
@@ -471,7 +472,7 @@ Linux setns test for the same technique).
 | TRR9007.K8S.E | `emulate_k8s.sh e` — a pod with a pod-level seccomp `Unconfined`, a pod with a container AppArmor `Unconfined`, and a Deployment whose template sets seccomp `Unconfined` (one object per setting; all only sleep). | **built** |
 | controller delivery | `emulate_k8s.sh ctrl` — a Deployment with a privileged template. | **built** |
 | JSON-patch delivery | `emulate_k8s.sh jp` — a Deployment made privileged by a `kubectl patch --type=json`, and a privileged ephemeral container that also sets seccomp `Unconfined`, added to a pod by a JSON patch (gates the JSON-patch branches of all three rules live; K18). | **built** |
-| static-pod delivery | `emulate_k8s.sh gap` — a dangerous static pod on the node; the node sensor sees the running pod. The script does not assert the `system:node` mirror create. | **built** |
+| static-pod delivery | `emulate_k8s.sh gap` — a dangerous static pod on the node; the node sensor sees the running pod, and the script polls up to 60 s for the kubelet's `system:node` mirror create (the `9007 static` chokepoint gate), failing if it never registers. | **built** |
 
 ## Detections
 
@@ -489,8 +490,10 @@ it reads the API server audit log the emulation produced and asserts Strategies 
 Procedure E rows gate on the exact object (each pod and the Deployment proves its own
 record), and the JSON-patch rows gate on the patch record whose `requestObject` is the
 operation list.
-A `system:node` mirror create that carries the spec matches Strategy 1 (sidecar case
-`mirror-create-privileged-static-pod`); the validator gate does not isolate it.
+A `system:node` mirror create that carries the spec matches Strategy 1 (sidecar cases
+`mirror-create-privileged-static-pod` and `static-pod-mirror-create-escape`). The
+`9007 static` entry isolates it: `create pods`, a `trr9007-escape-static-` name, a
+`system:node:` caller, in the gap procedure's ledger window.
 Strategy 3 is the TRR9003 CRI rule, validated by its own loop. The workflow
 [`validate-apiserver-detections.yml`](../../../.github/workflows/validate-apiserver-detections.yml)
 runs the loop on a `kind` cluster and runs the validator as a negative control on

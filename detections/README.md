@@ -858,20 +858,71 @@ with the sentinel, then restores the saved object and fails the step unless the 
 Corefile matches byte for byte; each is proven separately). The negative control
 proves a pass depends on the emulation, not the baseline.
 
+**Per-procedure gates and the emulation ledger.** A `MANIFEST` entry's gate is either
+one callable (any marked record passes, as before) or a list of `(procedure, gate)`
+pairs. With a list, the entry passes only when **every** procedure has a matching record
+of its own, so one procedure that fails silently — or whose write the API server refused
+— fails the entry; in `--expect-miss` mode the entry fails if **any** one procedure
+matches. Most gates are built with `rec(verb, resource, sub, name|prefix, ns, user,
+also, code, window)`; a gate that needs a precise helper (a body sentinel, a JSON-patch
+operation list, a marker in the `requestURI`) is bound to its procedure with
+`win(gate, window, code)`. Both, by default, require an accepted response (a 2xx, or 101
+for a streaming upgrade), so a cleanup `DELETE` that hit a 404, or a refused create, can
+no longer stand in for a procedure. Two procedures are refused by design, and their
+gates say so. TRR9009's denied impersonation probes (A, the group probe, C, D and the
+gap) pass only on a `403`, and a `200` there fails the gate, because it would mean a
+throwaway identity had gained rights; only the `system:masters` list is expected to be
+`200`. TRR9026 Procedure C sends an un-upgraded `nodes/proxy` GET that the kubelet
+refuses: its gate takes any response code (`code=None`), because the audit record is
+the proof and no live record has pinned the kubelet's refusal code yet. The atomic
+passes on the kubelet's upgrade refusal (or on an unexpected success, which the API
+server audits too) and fails on any other error.
+
+The `--ledger` flag binds each procedure gate to its own time window and exit status.
+Each emulation appends one JSON line per procedure to `$DETENG_LEDGER`
+(`{"trr","procedure","start","end","exit","expect"}`, UTC to the microsecond); with a
+ledger, a gate also requires the record's `requestReceivedTimestamp` to fall inside that
+procedure's `[start, end]` and the procedure to have exited as expected, and a missing
+row is reported as "did not run". This tells apart two procedures that send the same
+request shape, and fails a procedure that did not run or failed. Without `--ledger` the
+gates fall back to fields only, so a local run and an old log still work (the CI negative
+control runs without a ledger, on field gates only). The CI job sets `DETENG_LEDGER`,
+passes `--ledger`, and uploads the ledger with the logs so a reviewer can re-run the
+validator offline (`--ledger` is refused with `--expect-miss`, so the negative control
+can never be narrowed to a window). A documented gap is asserted with an **absence
+check**: with a ledger, TRR9006 Procedure E (an on-disk token read) must leave no
+`k8s_secret_access` or `k8s_secret_token_request` event by a non-system caller (in any
+namespace) in E's window. Controller and kubelet reads (`system:*`) are left out so that
+background traffic cannot flake the check. The check also fails when E did not run or
+failed, and when a matching event has no `requestReceivedTimestamp` to place it in time.
+In this validator, a ledger line that does not parse fails the run, because a corrupt
+ledger proves nothing.
+
+Module-level `PROCEDURES` maps `(trr_id, LETTER)` (e.g. `('TRR9004', 'A')`) to the sorted
+rule paths that gate that procedure with a gate of its own. It is the interface for the
+procedure coverage report (`research/tools/coverage_report.py`), so that a procedure
+counts as proven by a gate of its own, not by a file-name substring test.
+
 ```
 python3 detections/validate_apiserver_detections.py --dry-run     # compile only
 python3 detections/validate_apiserver_detections.py \
-  --audit-log /tmp/kube-apiserver-audit.log --cri-log /tmp/cri-pods.jsonl
+  --audit-log /tmp/kube-apiserver-audit.log --cri-log /tmp/cri-pods.jsonl \
+  --ledger /tmp/emulation-ledger.jsonl
 ```
 
 TRR9006 Procedure E (reading an already-mounted token off disk) bypasses the API
 server, so it leaves no audit event. Its rule
 (`sigma/T1552.007/linux_k8s_sa_token_read.yml`) is compiled but not match-gated here;
-the emulation documents the gap the way TRR9002 Procedure E does. The TRR9007
-static-pod delivery also skips the API server's admission, but the kubelet's mirror
-create is audited as `system:node:<node>`. TRR9003's CRI rule for the static pod is
-not compiled by this validator; `validate_staticpod_detections.py` compiles and
-match-gates it on the TRR9003 emulation.
+the emulation documents the gap the way TRR9002 Procedure E does, and (with a ledger)
+the absence check asserts it: no secret-read or token-request event by a non-system
+caller in E's window.
+The TRR9007 static-pod delivery also skips the API server's admission, but the kubelet's
+mirror create is audited as `system:node:<node>` and carries the spec at `Request` level,
+so the `9007 static` entry match-gates the pod-spec chokepoint on it (`create pods`, a
+`trr9007-escape-static-` name, a `system:node:` caller, in the gap procedure's window);
+the emulation polls up to 60 s for that mirror pod and fails if it never registers.
+TRR9003's CRI rule for the static pod is not compiled by this validator;
+`validate_staticpod_detections.py` compiles and match-gates it on the TRR9003 emulation.
 
 ## External cloud detections (AWS, Azure, GCP)
 

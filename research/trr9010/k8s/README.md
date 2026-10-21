@@ -358,9 +358,13 @@ Red Team wrappers in [`atomics/T1070/T1070.yaml`](../../../atomics/T1070/T1070.y
 The validator
 [`detections/validate_apiserver_detections.py`](../../../detections/validate_apiserver_detections.py)
 reads the API server audit log the emulation produced and asserts Strategies 1, 2 and
-4 match an event the emulation produced (a `trr9010-` named delete, which includes the
-delete of namespace `trr9010-ns-f`, or the bulk deletecollection in the `trr9010`
-namespace). The workflow
+4 match a record of each procedure's own: the accepted (200) delete of Event
+`trr9010-evt-a` (A, core group) and `trr9010-evt-c` (C, events.k8s.io), the bulk
+deletecollection in the `trr9010` namespace (B), the pod delete (D) and the delete of
+namespace `trr9010-ns-f` (F). A 404 delete does not count, so the emulation creates each
+Event first; each Event names an `involvedObject` (or `regarding`) in its own namespace,
+because the API server's Event validation refuses one outside `default` that does not.
+The workflow
 [`validate-apiserver-detections.yml`](../../../.github/workflows/validate-apiserver-detections.yml)
 runs the loop on a `kind` cluster, with a negative control on the pre-emulation log.
 

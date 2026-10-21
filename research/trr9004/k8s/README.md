@@ -583,15 +583,15 @@ with an Atomic Red Team wrapper in
 | TRR9004.K8S.C | `emulate.sh c` — create a read-only role and a wildcard role that is never bound. | **built** |
 | TRR9004.K8S.D | `emulate.sh d` — bind the `view` role to a throwaway group (the mass-grant shape). | **built** |
 | TRR9004.K8S.E | `emulate.sh e` — patch the benign role to add a rule (`verb: patch`). | **built** |
-| TRR9004.K8S.F | `emulate.sh f` — create, patch and delete the EKS aws-auth ConfigMap with a `trr9004` sentinel; it touches only an aws-auth it wrote (it skips when it cannot read the object or the object exists without being exactly its own, and removes only a leftover that is exactly what it writes). | **built** |
+| TRR9004.K8S.F | `emulate.sh f` — create, patch and delete the EKS aws-auth ConfigMap with a `trr9004` sentinel; it touches only an aws-auth it wrote (it skips when the object exists without being exactly its own, fails without a write when it cannot read the object, and removes only a leftover that is exactly what it writes); a refused create, patch or delete fails it. | **built** |
 | TRR9004.K8S.G | `emulate.sh g` — create `trr9004-cr-secrets` (secrets get/list), `trr9004-role-exec` (create pods/exec) and `trr9004-role-token` (create serviceaccounts/token), none bound. | **built** |
 
 Every binding points at the read-only `view` role, the wildcard role is never
 bound, the group binding uses a throwaway group `trr9004-nogroup` that no
 principal belongs to, the sensitive roles (Procedure G) are never bound, and the
-aws-auth procedure (F) touches only an aws-auth it wrote: it skips when it cannot
-read the object or the object exists without being exactly its own, and removes
-only a leftover that is exactly what it writes. Its patch carries the create's
+aws-auth procedure (F) touches only an aws-auth it wrote: it skips when the object
+exists without being exactly its own, fails without a write when it cannot read the
+object, and removes only a leftover that is exactly what it writes. Its patch carries the create's
 `resourceVersion` and its delete a `resourceVersion` precondition, so the API
 server refuses either (409 Conflict) if another writer changed the object in
 between. It maps its one added role to a throwaway group, not `system:masters`.

@@ -50,6 +50,41 @@ ENFORCER_NS="kyverno"
 
 log() { printf '[trr9008] %s\n' "$*" >&2; }
 
+# ---- fail-loud procedure bookkeeping (C1-4) --------------------------------
+# `must CMD` runs a procedure's action and returns its exit code (stderr shown on
+# failure). `run_proc P` times procedure_P, appends one ledger line to $DETENG_LEDGER
+# (set by CI; unset = no ledger) and records a failure without stopping the run, so
+# `all` attempts every procedure and then exits 1 naming the failures. Cleanup and the
+# read-only gap print keep `|| true`.
+TRR="TRR9008"
+FAILED=()
+now_utc() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }
+must() {
+  local out rc=0
+  out="$("$@" 2>&1 >/dev/null)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "FAILED (exit $rc): $*"
+    [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/    /' >&2
+  fi
+  return "$rc"
+}
+run_proc() {
+  local p="$1" start end rc=0
+  start="$(now_utc)"
+  "procedure_$p" || rc=$?
+  end="$(now_utc)"
+  if [ -n "${DETENG_LEDGER:-}" ]; then
+    printf '{"trr":"%s","procedure":"%s","start":"%s","end":"%s","exit":%d,"expect":0}\n' \
+      "$TRR" "$p" "$start" "$end" "$rc" >> "$DETENG_LEDGER"
+  fi
+  if [ "$rc" -ne 0 ]; then
+    FAILED+=("$p")
+    [ -n "${GITHUB_ACTIONS:-}" ] && \
+      echo "::error title=${TRR} procedure ${p}::procedure ${p} failed (exit ${rc})"
+  fi
+  return 0
+}
+
 cleanup() {
   log "cleanup: removing every trr9008- object"
   kubectl delete validatingwebhookconfiguration trr9008-vwc trr9008-neuter trr9008-neuter-merge \
@@ -65,15 +100,15 @@ cleanup() {
 # Procedure A — delete a ValidatingWebhookConfiguration.
 procedure_a() {
   log "A: apply then delete validatingwebhookconfiguration trr9008-vwc"
-  kubectl apply -f "$SCRIPT_DIR/k8s-vwc.yaml" >/dev/null 2>&1 || true
-  kubectl delete validatingwebhookconfiguration trr9008-vwc --ignore-not-found >/dev/null 2>&1 || true
+  must kubectl apply -f "$SCRIPT_DIR/k8s-vwc.yaml" || return
+  must kubectl delete validatingwebhookconfiguration trr9008-vwc --ignore-not-found
 }
 
 # Procedure B — delete a MutatingWebhookConfiguration.
 procedure_b() {
   log "B: apply then delete mutatingwebhookconfiguration trr9008-mwc"
-  kubectl apply -f "$SCRIPT_DIR/k8s-mwc.yaml" >/dev/null 2>&1 || true
-  kubectl delete mutatingwebhookconfiguration trr9008-mwc --ignore-not-found >/dev/null 2>&1 || true
+  must kubectl apply -f "$SCRIPT_DIR/k8s-mwc.yaml" || return
+  must kubectl delete mutatingwebhookconfiguration trr9008-mwc --ignore-not-found
 }
 
 # Procedure C — neuter a webhook config in place. Apply an "enforcing" (failurePolicy
@@ -81,18 +116,26 @@ procedure_b() {
 # request body carries the neuter markers the severity rule grades (verb=patch).
 procedure_c() {
   log "C: apply trr9008-neuter (enforcing), then neuter it (failurePolicy Ignore, rules [])"
-  kubectl apply -f "$SCRIPT_DIR/k8s-neuter-vwc.yaml" >/dev/null 2>&1 || true
-  kubectl patch validatingwebhookconfiguration trr9008-neuter --type=merge -p \
+  must kubectl apply -f "$SCRIPT_DIR/k8s-neuter-vwc.yaml" || return
+  must kubectl patch validatingwebhookconfiguration trr9008-neuter --type=merge -p \
     '{"webhooks":[{"name":"w.trr9008.example.com","admissionReviewVersions":["v1"],"sideEffects":"None","failurePolicy":"Ignore","clientConfig":{"service":{"namespace":"trr9008","name":"trr9008-nosvc","path":"/nope","port":443}},"rules":[]}]}' \
-    >/dev/null 2>&1 || true
-  kubectl delete validatingwebhookconfiguration trr9008-neuter --ignore-not-found >/dev/null 2>&1 || true
+    || return
+  must kubectl delete validatingwebhookconfiguration trr9008-neuter --ignore-not-found || return
   procedure_c_variants
 }
 
 # The same harmless enforcing config under another name ($1), for one neuter variant.
+# Returns the apply's exit code (its stderr is shown on failure), so a failed install
+# fails the procedure instead of being swallowed.
 _apply_neuter_copy() {
-  sed "s/^  name: trr9008-neuter\$/  name: $1/" "$SCRIPT_DIR/k8s-neuter-vwc.yaml" \
-    | kubectl apply -f - >/dev/null 2>&1 || true
+  local out rc=0
+  out="$(sed "s/^  name: trr9008-neuter\$/  name: $1/" "$SCRIPT_DIR/k8s-neuter-vwc.yaml" \
+    | kubectl apply -f - 2>&1 >/dev/null)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "FAILED (exit $rc): apply neuter copy $1"
+    [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/    /' >&2
+  fi
+  return "$rc"
 }
 
 # Procedure C, more request shapes of the same in-place neuter. Each runs on its own
@@ -112,23 +155,23 @@ procedure_c_variants() {
   local w='{"name":"w.trr9008.example.com","admissionReviewVersions":["v1"],"sideEffects":"None","clientConfig":{"service":{"namespace":"trr9008","name":"trr9008-nosvc","path":"/nope","port":443}}'
   local r='"rules":[{"apiGroups":["trr9008.example.com"],"apiVersions":["v1"],"operations":["CREATE"],"resources":["widgets"],"scope":"Namespaced"}]'
   log "C: merge patch replaces the webhooks list of trr9008-neuter-merge with a webhook without rules"
-  _apply_neuter_copy trr9008-neuter-merge
-  kubectl patch validatingwebhookconfiguration trr9008-neuter-merge --type=merge \
-    -p "{\"webhooks\":[${w}}]}" >/dev/null 2>&1 || true
+  _apply_neuter_copy trr9008-neuter-merge || return
+  must kubectl patch validatingwebhookconfiguration trr9008-neuter-merge --type=merge \
+    -p "{\"webhooks\":[${w}}]}" || return
   log "C: JSON patch replaces the webhooks list of trr9008-neuter-json, dropping rules from one webhook"
-  _apply_neuter_copy trr9008-neuter-json
-  kubectl patch validatingwebhookconfiguration trr9008-neuter-json --type=json \
-    -p "[{\"op\":\"replace\",\"path\":\"/webhooks\",\"value\":[${w},${r}},${w/w.trr9008/w2.trr9008}}]}]" >/dev/null 2>&1 || true
+  _apply_neuter_copy trr9008-neuter-json || return
+  must kubectl patch validatingwebhookconfiguration trr9008-neuter-json --type=json \
+    -p "[{\"op\":\"replace\",\"path\":\"/webhooks\",\"value\":[${w},${r}},${w/w.trr9008/w2.trr9008}}]}]" || return
   log "C: add a constant-false matchCondition (1 == 2) to trr9008-neuter-const"
-  _apply_neuter_copy trr9008-neuter-const
-  kubectl patch validatingwebhookconfiguration trr9008-neuter-const --type=merge \
+  _apply_neuter_copy trr9008-neuter-const || return
+  must kubectl patch validatingwebhookconfiguration trr9008-neuter-const --type=merge \
     -p '{"webhooks":[{"name":"w.trr9008.example.com","admissionReviewVersions":["v1"],"sideEffects":"None","clientConfig":{"service":{"namespace":"trr9008","name":"trr9008-nosvc","path":"/nope","port":443}},"rules":[{"apiGroups":["trr9008.example.com"],"apiVersions":["v1"],"operations":["CREATE"],"resources":["widgets"],"scope":"Namespaced"}],"matchConditions":[{"name":"never","expression":"1 == 2"}]}]}' \
-    >/dev/null 2>&1 || true
+    || return
   log "C: set a namespaceSelector on trr9008-neuter-nssel that matches no namespace"
-  _apply_neuter_copy trr9008-neuter-nssel
-  kubectl patch validatingwebhookconfiguration trr9008-neuter-nssel \
+  _apply_neuter_copy trr9008-neuter-nssel || return
+  must kubectl patch validatingwebhookconfiguration trr9008-neuter-nssel \
     -p '{"webhooks":[{"name":"w.trr9008.example.com","namespaceSelector":{"matchExpressions":[{"key":"kubernetes.io/metadata.name","operator":"DoesNotExist"}]}}]}' \
-    >/dev/null 2>&1 || true
+    || return
   kubectl delete validatingwebhookconfiguration trr9008-neuter-merge trr9008-neuter-json \
     trr9008-neuter-const trr9008-neuter-nssel --ignore-not-found >/dev/null 2>&1 || true
 }
@@ -139,13 +182,13 @@ procedure_c_variants() {
 # policy lists it at Request, so its body is logged), and kubectl patch writes
 # spec.replicas on the deployments resource.
 procedure_d() {
-  kubectl get namespace "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS" >/dev/null 2>&1 || true
+  kubectl get namespace "$NS" >/dev/null 2>&1 || must kubectl create namespace "$NS" || return
   log "D: create stand-in deployment trr9008-deploy, scale it to zero (scale, then patch), then delete it"
-  kubectl -n "$NS" create deployment trr9008-deploy \
-    --image=registry.k8s.io/pause:3.9 --replicas=1 >/dev/null 2>&1 || true
-  kubectl -n "$NS" scale deployment trr9008-deploy --replicas=0 >/dev/null 2>&1 || true
-  kubectl -n "$NS" patch deployment trr9008-deploy -p '{"spec":{"replicas":0}}' >/dev/null 2>&1 || true
-  kubectl -n "$NS" delete deployment trr9008-deploy --ignore-not-found >/dev/null 2>&1 || true
+  must kubectl -n "$NS" create deployment trr9008-deploy \
+    --image=registry.k8s.io/pause:3.9 --replicas=1 || return
+  must kubectl -n "$NS" scale deployment trr9008-deploy --replicas=0 || return
+  must kubectl -n "$NS" patch deployment trr9008-deploy -p '{"spec":{"replicas":0}}' || return
+  must kubectl -n "$NS" delete deployment trr9008-deploy --ignore-not-found
 }
 
 # Procedure D, in a policy engine's default namespace (kyverno), for the precise rule
@@ -169,7 +212,9 @@ procedure_d2() {
     kubectl wait --for=delete "namespace/$ENFORCER_NS" --timeout=120s >/dev/null 2>&1 || true
   fi
   if ! kubectl get namespace "$ENFORCER_NS" >/dev/null 2>&1; then
-    kubectl create -f - >/dev/null 2>&1 <<EOF && created_ns=1 || true
+    # `must` prints the API server's reason when the create is refused; the phase check
+    # below then decides (a create that lost a race to another creator is not a failure).
+    if must kubectl create -f - <<EOF
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -177,22 +222,30 @@ metadata:
   labels:
     trr9008-created: "true"
 EOF
+    then
+      created_ns=1
+    fi
   fi
   phase="$(kubectl get namespace "$ENFORCER_NS" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
   if [ "$phase" != "Active" ]; then
-    log "D2: namespace $ENFORCER_NS is not active (phase '${phase:-absent}'); D2 skipped"
-    return 0
+    # Not a safe skip: the namespace could not be created, is still terminating, or the
+    # read failed, so none of D2's gated writes can happen. Fail the procedure.
+    log "D2: namespace $ENFORCER_NS is not active (phase '${phase:-absent}'); D2 cannot run"
+    return 1
   fi
   log "D2: create stand-in deployment trr9008-enforcer-standin in namespace $ENFORCER_NS, scale it to zero (update, then patch), then delete it"
-  kubectl -n "$ENFORCER_NS" create deployment trr9008-enforcer-standin \
-    --image=registry.k8s.io/pause:3.9 --replicas=1 >/dev/null 2>&1 || true
-  kubectl -n "$ENFORCER_NS" scale deployment trr9008-enforcer-standin \
-    --current-replicas=1 --replicas=0 >/dev/null 2>&1 || true
-  kubectl -n "$ENFORCER_NS" scale deployment trr9008-enforcer-standin --replicas=0 >/dev/null 2>&1 || true
-  kubectl -n "$ENFORCER_NS" delete deployment trr9008-enforcer-standin --ignore-not-found >/dev/null 2>&1 || true
+  must kubectl -n "$ENFORCER_NS" create deployment trr9008-enforcer-standin \
+    --image=registry.k8s.io/pause:3.9 --replicas=1 || return
+  must kubectl -n "$ENFORCER_NS" scale deployment trr9008-enforcer-standin \
+    --current-replicas=1 --replicas=0 || return
+  must kubectl -n "$ENFORCER_NS" scale deployment trr9008-enforcer-standin --replicas=0 || return
+  must kubectl -n "$ENFORCER_NS" delete deployment trr9008-enforcer-standin --ignore-not-found || return
   if [ "$created_ns" = 1 ]; then
+    # --wait=false: the accepted DELETE is the gated record, so only the DELETE decides
+    # the result; a slow namespace finalizer must not fail the procedure (kubectl's wait
+    # for deletion returns its timeout as a non-zero exit). Cleanup removes a leftover.
     log "D2: delete namespace $ENFORCER_NS (the atomic created it)"
-    kubectl delete namespace "$ENFORCER_NS" --ignore-not-found --timeout=60s >/dev/null 2>&1 || true
+    must kubectl delete namespace "$ENFORCER_NS" --ignore-not-found --wait=false
   else
     log "D2: namespace $ENFORCER_NS existed before the atomic; it is kept"
   fi
@@ -218,12 +271,7 @@ procedure_gap() {
 
 run_one() {
   case "$1" in
-    a) procedure_a ;;
-    b) procedure_b ;;
-    c) procedure_c ;;
-    d) procedure_d ;;
-    d2) procedure_d2 ;;
-    gap) procedure_gap ;;
+    a|b|c|d|d2|gap) run_proc "$1" ;;
     *) log "unknown item: $1 (use a|b|c|d|d2|gap|all)"; exit 2 ;;
   esac
 }
@@ -231,10 +279,14 @@ run_one() {
 main() {
   local which="${1:-all}"
   if [ "$which" = "all" ]; then
-    for p in a b c d d2 gap; do run_one "$p"; done
+    for p in a b c d d2 gap; do run_proc "$p"; done
     cleanup
   else
     run_one "$which"
+  fi
+  if [ "${#FAILED[@]}" -gt 0 ]; then
+    log "emulation FAILED: procedure(s) ${FAILED[*]}"
+    exit 1
   fi
   log "emulation complete: $which"
 }
