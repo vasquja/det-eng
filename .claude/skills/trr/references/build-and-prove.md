@@ -175,7 +175,10 @@ distant, or trivial if no base is visible.
 It **warns** (never fails) on *thin* checks: a rule whose exercised-atom ratio is
 below half its platform's median, or whose negatives exercise only filters (or only
 surface items and filters) and no discriminating selection item. Treat that warning
-as a request to add near-misses.
+as a request to add near-misses. When its hint starts "No near-miss can break", no
+case can break the items it names: add the filtered cases it names, if any, and keep
+the warning. If the rule lacks an item that the technique really has (an event type, a
+provenance field), record that as a rule defect in `detections/RULE_DEFECTS.md`.
 
 On a pull request, the `sufficiency-ratchet` job compares every rule with the base
 branch. It fails on:

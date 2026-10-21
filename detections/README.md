@@ -276,7 +276,12 @@ and the gate prints the new digest for a human to re-approve. Its `level`,
 It warns (never fails) about *thin* checks (**R5**): rules that exercise fewer than
 half as many of their condition items as the median rule of their platform (over
 the rules that have any verified negative), or whose negatives break only filters
-(or only surface items and filters) and no discriminating selection item.
+(or only surface items and filters) and no discriminating selection item. When the
+hint starts "No near-miss can break", no case can break the items it names (each is
+the only selection item of its branch): add the filtered cases it names, if any, and
+keep the warning. If the rule lacks an item that the technique really has (an event
+type, a provenance field), record that as a rule defect in
+[`RULE_DEFECTS.md`](RULE_DEFECTS.md).
 
 With `--baseline FILE` (the base branch's `--json` report) it also runs the
 **ratchet**. The report records every sidecar case by name, with its kind and a

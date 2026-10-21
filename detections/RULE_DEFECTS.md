@@ -1034,9 +1034,27 @@ whether `arping` belongs in the allowlist.
 - `T1543.005/linux_static_pod_manifest_write`: check-sufficiency R5 warns that no
   negative breaks `selection_dir.TargetFilename`. That selection has one item, so a
   record that breaks it shares no item with the rule and grades trivial (a write to
-  `/etc/kubernetes/manifests-disabled/kube-scheduler.yaml` by `/usr/bin/mv` does). No
-  near-miss can close the warning; its proof is the filtered cases. The R5 message
-  should not offer an item that is the only item of its selection.
+  `/etc/kubernetes/manifests-disabled/kube-scheduler.yaml` by `/usr/bin/mv` does).
+  While the rule has no selection item other than `selection_dir.TargetFilename` (its
+  condition is `selection_dir and not filter_install`), no near-miss can close the
+  warning; its proof is the filtered cases. The R5 hint no longer asks for that
+  near-miss: `check_sufficiency.py` does not offer an item that its shape test shows to
+  be the only selection item of its branch (with the item true, the condition reads no
+  other selection item) and that the grader confirms (in no truth assignment of the
+  rule's items does a verdict count a flip of it), and says that no near-miss can break
+  it. The shape test does not clear every item that no case can break: the hint still
+  offers `a` in `(a and not f) or b`, an item that is also negated (`m` in
+  `(a and m) or not m`) and an item whose flip alone never fires the rule (`a` in
+  `(a and b) or b`). The grader search reads every truth assignment, so no item of a
+  rule of more than 12 items is cleared. On 2026-10-21 (main at `df43bcd`), no rule of
+  16 or fewer items in the repository (correlations aside) had an offered item or filter
+  that no case can break (an exhaustive search over the grader's verdicts found none).
+  No gate repeats that search, so a rule added later can change this. The warning stays,
+  because what it reports is true (no verified negative breaks a discriminating
+  selection item) and a warning never fails the gate. A second required item added to
+  the rule only to satisfy the gate is not a fix. An item added for a real reason is a
+  fix (for example, an event-type item that keeps reads of the manifests quiet): a
+  near-miss that breaks only that item then closes the warning.
 
 (The thin-negative warnings on `T1053.007/k8s_cri_job_pod` and `T1134/k8s_impersonation`
 are gone: near-misses `operator-pod-labelled-controller-uid` and
