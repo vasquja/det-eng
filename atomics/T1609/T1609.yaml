@@ -87,11 +87,13 @@ atomic_tests:
   - name: "TRR9002.K8S.D — exec through the API server node proxy"
     auto_generated_guid: 7e0b1c55-3a92-4d61-8c24-6f9a2d4b8e04
     description: |
-      Runs `id` through the API server node proxy: a request to
-      nodes/<node>/proxy that names the kubelet /run endpoint. The audit record
-      shows objectRef.resource=nodes, subresource=proxy, with the exec path in
-      requestURI — not pods/exec. Many monitoring service accounts hold
-      nodes/proxy, so this path bypasses a pods/exec rule.
+      Runs `id` through the API server node proxy: a POST to
+      nodes/<node>/proxy that names the kubelet /run endpoint (the kubelet
+      registers /run for POST only, so `kubectl create --raw` is used, not a
+      GET). The audit record shows objectRef.resource=nodes, subresource=proxy,
+      verb=create, with the run path in requestURI — not pods/exec. Many
+      monitoring service accounts hold nodes/proxy, so this path bypasses a
+      pods/exec rule. The test checks that the kubelet output holds `uid=`.
 
       Detection: objectRef.resource=nodes, subresource=proxy, requestURI
       containing /exec/, /run/, or /attach/.

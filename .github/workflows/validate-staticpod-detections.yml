@@ -158,6 +158,15 @@ jobs:
     needs: changes
     if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
+    env:
+      # Each emulated procedure appends one line (its window + exit status); the
+      # validator binds each procedure gate to its window (--ledger). Job-level so
+      # the emulate and validate steps share it; the version pins stay in the
+      # workflow-level env block above.
+      DETENG_LEDGER: /tmp/emulation-ledger.jsonl
+      # The only image the static pods run, loaded into the node before use so a
+      # Docker Hub hiccup inside the node cannot flake a pod start.
+      LAB_IMAGES: busybox:1.36
     steps:
       - uses: actions/checkout@v4
 
@@ -201,6 +210,7 @@ jobs:
           kubectl version --client
 
       - name: Create kind cluster with audit logging
+        id: cluster
         shell: bash
         run: |
           # Run from the repo root so the relative extraMounts path resolves.
@@ -236,7 +246,22 @@ jobs:
             cat /etc/kubernetes/manifests/kube-apiserver.yaml | grep -- --audit- \
             || { echo "::error::audit flags not set on the API server"; exit 1; }
 
+      - name: Load the lab image and wait for the default service account
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        run: |
+          # Docker Hub pulls inside the node are the main source of flaky pod
+          # starts: pull on the runner with a bounded retry, then load into the node.
+          for img in ${LAB_IMAGES}; do
+            for i in 1 2 3; do docker pull -q "$img" && break; sleep $((i * 10)); done
+            kind load docker-image --name "${CLUSTER_NAME}" "$img"
+          done
+          # A pod create before the token controller makes sa/default fails with
+          # 'serviceaccount "default" not found' (kubectl 1.31+ supports --for=create).
+          kubectl -n default wait --for=create serviceaccount/default --timeout=60s
+
       - name: Capture the audit log before the emulation (negative control)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: |
           # Wait for the control-plane mirror pods, so the baseline the rule also
@@ -250,6 +275,7 @@ jobs:
           echo "Captured $(wc -l < /tmp/pre-emulation-audit.log) pre-emulation audit lines."
 
       - name: Start the node runtime sensor (CRI pod sandboxes)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: |
           # Stand-in for a runtime security agent on the node: record every pod
@@ -271,32 +297,56 @@ jobs:
           echo "Sensor live; pre-emulation snapshot is $(wc -c < /tmp/pre-emulation-cri.jsonl) bytes."
 
       - name: Emulate T1543.005 static pods (benign busybox)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: |
           bash atomics/T1543.005/src/emulate.sh all
 
       - name: Collect the audit log and the node sensor log
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: |
-          # Give the mirror-pod create event a moment to flush.
-          sleep 3
-          docker exec "${CLUSTER_NAME}-control-plane" \
-            cat /var/log/kubernetes/kube-apiserver-audit.log \
-            > /tmp/kube-apiserver-audit.log
+          # Poll (max 30 s) until the audit log holds the last audit record the
+          # validator gates: the kubelet's refused mirror-pod create for the
+          # invalid-namespace pod (trr9003-ghost, code 404), sent during the GAP
+          # procedure. The injected pod's mirror create came earlier (Procedure A
+          # saw the mirror pod in the API before it ended). There is no steady
+          # traffic to wait for here: audit-policy-staticpod.yaml drops leases and
+          # every get/list/watch, and Procedure B makes no API call, so a test for
+          # "an event newer than the ledger's last end" would always time out.
+          found=0
+          for _ in $(seq 1 30); do
+            docker exec "${CLUSTER_NAME}-control-plane" \
+              cat /var/log/kubernetes/kube-apiserver-audit.log \
+              > /tmp/kube-apiserver-audit.log || true
+            # One grep, not grep | grep -q: under pipefail an early grep -q exit can
+            # fail the pipeline (SIGPIPE) although it matched.
+            if grep -Eq '"name": *"trr9003-ghost[^"]*".*"code": *404|"code": *404.*"name": *"trr9003-ghost' \
+                 /tmp/kube-apiserver-audit.log; then
+              found=1; break
+            fi
+            sleep 1
+          done
+          if [ "${found}" -ne 1 ]; then
+            echo "::notice title=collect::no trr9003-ghost mirror-create (code 404) in the audit log after 30 s; collecting the log as it is (the validator names what is missing)"
+          fi
           echo "Collected $(wc -l < /tmp/kube-apiserver-audit.log) audit lines."
           docker exec "${CLUSTER_NAME}-control-plane" \
             cat /var/log/cri-pods.jsonl > /tmp/cri-pods.jsonl
           echo "Collected $(wc -l < /tmp/cri-pods.jsonl) CRI sensor snapshots."
 
       - name: Validate detections (static pod -> audit log + node sensor -> Sigma)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: |
           # shell: bash enables pipefail, so tee does not mask the exit code.
           python3 detections/validate_staticpod_detections.py \
             --audit-log /tmp/kube-apiserver-audit.log \
-            --cri-log /tmp/cri-pods.jsonl | tee /tmp/spval.out
+            --cri-log /tmp/cri-pods.jsonl \
+            --ledger "${DETENG_LEDGER}" | tee /tmp/spval.out
 
       - name: Negative control (the baseline alone may not pass)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: |
           python3 detections/validate_staticpod_detections.py \
@@ -331,6 +381,7 @@ jobs:
             /tmp/pre-emulation-audit.log
             /tmp/cri-pods.jsonl
             /tmp/pre-emulation-cri.jsonl
+            /tmp/emulation-ledger.jsonl
           if-no-files-found: ignore
 
       - name: Delete the cluster

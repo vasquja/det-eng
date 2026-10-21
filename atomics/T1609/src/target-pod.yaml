@@ -1,8 +1,14 @@
 # Target workload for the TRR9002 emulation tests.
 #
 # One throwaway pod the tests run commands against. It runs `sleep` as its main
-# process so it stays up. stdin/tty are kept open so the attach test
-# (Procedure B) has an interactive main process to connect to.
+# process so it stays up. stdin is kept open so a client can attach with -i.
+#
+# tty is false on purpose. The kubelet takes the attach TTY setting from the
+# container spec (kubelet_pods.go GetAttach), and `kubectl attach` without -i
+# asks for stdout and stderr with no TTY. With tty: true the runtime refuses that
+# request ("tty and stderr cannot both be true", containerd CRI streaming server),
+# so the Procedure B attach would fail at once. With tty: false the attach stream
+# stays connected until the emulation stops it.
 #
 # This is a lab target, not a secure example: it exists only to receive the
 # benign emulation commands and is deleted with the cluster.
@@ -20,7 +26,7 @@ spec:
       image: busybox:1.36
       command: ["sh", "-c", "sleep 3600"]
       stdin: true
-      tty: true
+      tty: false
       resources:
         requests:
           cpu: "10m"

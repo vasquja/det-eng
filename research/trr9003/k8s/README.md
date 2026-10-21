@@ -440,16 +440,23 @@ which checks one rule per sensor on the telemetry the emulation produced:
   the injected static pod *and* the invalid-namespace pod, the one the API
   server never stores. It must also match none of the sandboxes the API server
   scheduled (`config.source: api`), which the lab always has.
-- **Strategy 2, API server audit log.** The audit rule must match the
-  mirror-pod create of the injected static pod.
+- **Strategy 2, API server audit log.** The audit rule must match the injected
+  static pod's stored mirror pod (a `create pods` by `system:node:...`, code
+  2xx) *and* the invalid-namespace pod's mirror-create attempt, which the API
+  server refuses with 404 (namespace not found) but still audits — the one
+  audit-log trace of the evasion variant.
 
 Both rules also match the control-plane static pods by design, so a baseline
 match alone does not pass; the validator reports the baseline separately. The
-workflow
+emulation writes a ledger (one JSON line per procedure — `A`, `GAP`, `B` — with
+its time window and exit status); with `--ledger` the validator also requires
+each matched record to fall inside its procedure's window (an audit event by
+`requestReceivedTimestamp`, a CRI sandbox by `createdAt`) and the procedure to
+have exited as expected, and it fails a procedure that did not run. The workflow
 [`validate-staticpod-detections.yml`](../../../.github/workflows/validate-staticpod-detections.yml)
 runs the whole loop on a `kind` cluster for every change to these files, and
 runs the validator as a negative control on the logs captured before the
-emulation (no rule may pass there).
+emulation (no gate may match there).
 
 Strategy 3's rule is a node file-event rule; it compiles in the validator but
 the lab does not exercise it, because it needs node file telemetry.

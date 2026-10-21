@@ -149,6 +149,15 @@ jobs:
     needs: changes
     if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
+    env:
+      # Each emulated procedure appends one line (its window + exit status); the
+      # validator binds each procedure gate to its window (--ledger). Job-level so
+      # the emulate and validate steps share it; the version pins stay in the
+      # workflow-level env block above.
+      DETENG_LEDGER: /tmp/emulation-ledger.jsonl
+      # The only image the atomics and the target pod run, loaded into the node
+      # before use so a Docker Hub hiccup inside the node cannot flake a pod start.
+      LAB_IMAGES: busybox:1.36
     steps:
       - uses: actions/checkout@v4
 
@@ -192,6 +201,7 @@ jobs:
           kubectl version --client
 
       - name: Create kind cluster with audit logging
+        id: cluster
         shell: bash
         run: |
           # Run from the repo root so the relative extraMounts path resolves.
@@ -227,13 +237,29 @@ jobs:
             cat /etc/kubernetes/manifests/kube-apiserver.yaml | grep -- --audit- \
             || { echo "::error::audit flags not set on the API server"; exit 1; }
 
+      - name: Load the lab image and wait for the default service account
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        run: |
+          # Docker Hub pulls inside the node are the main source of flaky pod
+          # starts: pull on the runner with a bounded retry, then load into the node.
+          for img in ${LAB_IMAGES}; do
+            for i in 1 2 3; do docker pull -q "$img" && break; sleep $((i * 10)); done
+            kind load docker-image --name "${CLUSTER_NAME}" "$img"
+          done
+          # A pod create before the token controller makes sa/default fails with
+          # 'serviceaccount "default" not found' (kubectl 1.31+ supports --for=create).
+          kubectl -n default wait --for=create serviceaccount/default --timeout=60s
+
       - name: Apply the target pod
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: |
           kubectl apply -f atomics/T1609/src/target-pod.yaml
           kubectl wait --for=condition=Ready pod/trr9002-target --timeout=120s
 
       - name: Capture the audit log before the emulation (negative control)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: |
           sleep 3
@@ -243,28 +269,53 @@ jobs:
           echo "Captured $(wc -l < /tmp/pre-emulation-audit.log) pre-emulation audit lines."
 
       - name: Emulate T1609 procedures (benign)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
+        env:
+          # Procedure E runs its kubelet call inside this node container.
+          TRR9002_CP_CONTAINER: ${{ env.CLUSTER_NAME }}-control-plane
         run: |
           bash atomics/T1609/src/emulate.sh all
 
       - name: Collect the API server audit log
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: |
-          # Give the final ResponseComplete events a moment to flush.
-          sleep 3
-          docker exec "${CLUSTER_NAME}-control-plane" \
-            cat /var/log/kubernetes/kube-apiserver-audit.log \
-            > /tmp/kube-apiserver-audit.log
+          # Poll (max 30 s) until the audit log holds an event NEWER than the
+          # ledger's last 'end' — i.e. the log has flushed past the end of the
+          # emulation. Steady control-plane traffic gives such an event within a
+          # few seconds: audit-policy.yaml keeps lease updates (leader election,
+          # node heartbeats) at Metadata. This replaces a fixed sleep. If the
+          # emulation wrote no ledger, copy once and move on.
+          flushed=0
+          for _ in $(seq 1 30); do
+            docker exec "${CLUSTER_NAME}-control-plane" \
+              cat /var/log/kubernetes/kube-apiserver-audit.log \
+              > /tmp/kube-apiserver-audit.log || true
+            # Both timestamps are fixed-width RFC3339 microsecond UTC (the ledger
+            # from date -u +%6NZ, the audit field from k8s metav1.MicroTime), so a
+            # lexicographic string compare is chronological.
+            last_end="$({ grep -o '"end": *"[^"]*"' "${DETENG_LEDGER}" 2>/dev/null || true; } | sed -E 's/.*"end": *"//; s/"$//' | sort | tail -1)"
+            newest="$({ grep -o '"requestReceivedTimestamp": *"[^"]*"' /tmp/kube-apiserver-audit.log 2>/dev/null || true; } | sed -E 's/.*"requestReceivedTimestamp": *"//; s/"$//' | sort | tail -1)"
+            if [ -z "${last_end}" ] || [[ "${newest}" > "${last_end}" ]]; then flushed=1; break; fi
+            sleep 1
+          done
+          if [ "${flushed}" -ne 1 ]; then
+            echo "::notice title=collect::no audit event newer than the emulation ledger's last end (${last_end}) after 30 s; collecting the log as it is"
+          fi
           echo "Collected $(wc -l < /tmp/kube-apiserver-audit.log) audit lines."
 
       - name: Validate detections (atomic -> audit -> Sigma)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: |
           # shell: bash enables pipefail, so tee does not mask the exit code.
           python3 detections/validate_k8s_detections.py \
-            --audit-log /tmp/kube-apiserver-audit.log | tee /tmp/k8sval.out
+            --audit-log /tmp/kube-apiserver-audit.log \
+            --ledger "${DETENG_LEDGER}" | tee /tmp/k8sval.out
 
       - name: Negative control (no rule may pass without the emulation)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: |
           python3 detections/validate_k8s_detections.py \
@@ -296,6 +347,7 @@ jobs:
           path: |
             /tmp/kube-apiserver-audit.log
             /tmp/pre-emulation-audit.log
+            /tmp/emulation-ledger.jsonl
           if-no-files-found: ignore
 
       - name: Delete the cluster

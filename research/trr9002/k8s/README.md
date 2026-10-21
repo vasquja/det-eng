@@ -351,8 +351,17 @@ server. The path of the request points to the kubelet `/exec`, `/run`, or
 `/attach` endpoint. The API server forwards the request to the kubelet. The
 kubelet runs the command in the container.
 
+The kubelet registers `/run` for the POST method only
+(`pkg/kubelet/server/server.go`), so the emulation sends a POST, not a GET:
+`kubectl create --raw ".../proxy/run/<ns>/<pod>/<container>?cmd=id" -f /dev/null`
+(`kubectl create --raw` issues a POST; the empty `-f` file is the request body).
+The kubelet runs the command and returns its output, which for `id` holds
+`uid=`. A GET to the same path is answered 405 and never runs the command, so
+the audit record of that GET proves nothing about execution.
+
 - **Prerequisites:** permission on `nodes/proxy`. For a WebSocket request,
-  `get` is enough. Many monitoring service accounts have this permission.
+  `get` is enough; for the `/run` POST, `create`. Many monitoring service
+  accounts have this permission.
 - **Mechanics:** the same kubelet endpoints as Procedure E, but through the
   API server.
 - **Impact:** command execution in any container on the node, including
@@ -366,12 +375,12 @@ kubelet runs the command in the container.
 
 Source: [`ddms/trr9002_k8s_d.json`](ddms/trr9002_k8s_d.json) (Arrows app format).
 
-**DDM summary.** The audit event shows `nodes/proxy`, not `pods/exec`. So the
-Procedure A rule does not see it. The anchor is the combination of the
-`nodes/proxy` subresource and an exec path in `requestURI`. The subresource
-alone is not sufficient. Monitoring tools use `nodes/proxy` every few seconds
-to read `/metrics` and `/stats`. The path separates exec from that normal
-traffic.
+**DDM summary.** The audit event shows `nodes/proxy`, not `pods/exec`, with
+`verb: create` for the `/run` POST. So the Procedure A rule does not see it. The
+anchor is the combination of the `nodes/proxy` subresource and an exec path in
+`requestURI`. The subresource alone is not sufficient. Monitoring tools use
+`nodes/proxy` every few seconds to read `/metrics` and `/stats`. The path
+separates exec from that normal traffic.
 
 ### Procedure E: Exec directly through the kubelet API  (`TRR9002.K8S.E`)
 
@@ -652,10 +661,10 @@ Atomic Red Team wrapper in
 | ID | Test | Status |
 |----|------|--------|
 | TRR9002.K8S.A | `emulate.sh a` — `kubectl exec` with `id`, once over WebSocket and once over SPDY. Confirms the audit log shows `verb: get` and `verb: create`. | **built** |
-| TRR9002.K8S.B | `emulate.sh b` — attach to the target pod with `kubectl attach`. | **built** |
+| TRR9002.K8S.B | `emulate.sh b` — attach to the target pod with `kubectl attach` (no `-i`), hold the stream for 2 s, then stop it. The target container has `tty: false`: the kubelet takes the attach TTY setting from the container spec, and the runtime refuses a TTY attach that also asks for stderr. | **built** |
 | TRR9002.K8S.C | `emulate.sh c` — add an ephemeral container with `kubectl debug`. | **built** |
-| TRR9002.K8S.D | `emulate.sh d` — run `id` through `nodes/proxy` to the kubelet `/run` endpoint. | **built** |
-| TRR9002.K8S.E | `emulate.sh e` — call the kubelet directly (read-only), from inside the control-plane node. Shows the API server records no event. | **built** |
+| TRR9002.K8S.D | `emulate.sh d` — run `id` through `nodes/proxy` with a POST to the kubelet `/run` endpoint (`kubectl create --raw`); checks the output holds `uid=`. | **built** |
+| TRR9002.K8S.E | `emulate.sh e` — call the kubelet directly (read-only), from inside the control-plane node. The call checks the kubelet's self-signed serving certificate against its own CA (`/var/lib/kubelet/pki/kubelet.crt`) by the node name, and fails on a TLS error or a non-2xx answer. Shows the API server records no event. | **built** |
 | TRR9002.K8S.F | `emulate.sh f` — read the kubelet `/runningpods/` and `/pods` endpoints through `nodes/proxy` as a service account (`trr9002-node-reader`) that holds only `get` on `nodes/proxy`. Does not call `/checkpoint` live. | **built** |
 
 ## Detections
@@ -672,16 +681,34 @@ The auditd validator (`detections/validate_detections.py`) replays syscall
 atomics and cannot test these rules. The Kubernetes loop has its own validator,
 [`detections/validate_k8s_detections.py`](../../../detections/validate_k8s_detections.py):
 it reads the API server audit log the emulation produced and asserts each Sigma
-rule above matches an event from the emulation itself (one naming the target
-pod, or for F the `trr9002-node-reader` service account). The workflow
+rule above fires on the emulation's own records. Each procedure has its own gate,
+and a rule's entry passes only when every procedure it serves has a record of its
+own: A over WebSocket (`pods/exec`, verb `get`, code 101) and A over SPDY
+(`pods/exec`, verb `create`, code 101), B (`pods/attach` on the target,
+`container=app`, code 101), C (`pods/ephemeralcontainers` on the target, code
+200), D (`nodes/proxy`, verb `create`, the `/proxy/run/<ns>/<pod>/` path, code
+200) and the two Procedure F reads (`nodes/proxy` get of the kubelet
+`/runningpods/` and `/pods` by the `trr9002-node-reader` service account, code
+200). The two exec gates make the TRR's key finding — exec recorded as both
+`verb: get` (WebSocket) and `verb: create` (SPDY) — a pass/fail check, not just a
+printed note. The emulation writes a ledger (one JSON line per procedure: its
+time window and exit status); with `--ledger` the validator also requires each
+record to fall inside its procedure's window and the procedure to have exited as
+expected, which tells apart two procedures that send the same request shape and
+fails a procedure that did not run. The workflow
 [`validate-k8s-detections.yml`](../../../.github/workflows/validate-k8s-detections.yml)
 runs the whole loop on a `kind` cluster for every change to these files, and
 runs the validator as a negative control on the audit log captured before the
-emulation (it must not pass there).
+emulation (no procedure gate may match there).
 
 Strategy 4 (Procedure E) has no audit-log rule by design: a direct kubelet
 request never reaches the API server, so the `emulate.sh e` test documents the
-gap rather than feeding a rule. A node runtime sensor covers it.
+gap rather than feeding a rule. A node runtime sensor covers it. With
+`--ledger`, the validator asserts the gap: Procedure E must have run and reached
+the kubelet (its ledger exit is 0, from `curl -f`), and no TRR9002 rule may match
+any audit event inside E's window. When the emulation writes a ledger or runs in
+CI, an E that cannot reach the node (no `docker`, or no node container) records a
+non-zero exit, so a skip cannot read as a tested gap.
 
 Prior art: Falco's k8saudit "Attach/Exec Pod" and "EphemeralContainers Created" are
 the same chokepoints as Strategies 1 and 2; Elastic "Kubernetes User Exec into Pod"

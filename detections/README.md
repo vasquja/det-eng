@@ -708,9 +708,12 @@ The Kubernetes rules (`sigma/T1609/`) key on the API server **audit log**, not
 on syscalls, so they have their own layer stack and validator:
 
 1. **Emulation** (`atomics/T1609/`) — `emulate.sh` runs the benign command `id`
-   through each control path (exec, attach, ephemeral container, node proxy),
-   makes one read-only direct kubelet call, and reads the kubelet pod lists
-   through the node proxy as a temporary service account (Procedure F).
+   through each control path (exec, attach, ephemeral container, and a POST to
+   the kubelet `/run` through the node proxy), makes one read-only direct kubelet
+   call, and reads the kubelet pod lists through the node proxy as a temporary
+   service account (Procedure F). Each procedure's action must succeed or the
+   step fails, naming the procedure; the run appends one ledger line per
+   procedure (`$DETENG_LEDGER`: its time window and exit status).
 2. **Audit policy** (`k8s/audit-policy.yaml`) — makes the telemetry exist. A
    default cluster writes no audit log, so a rule has nothing to match. The
    `k8s/kind-audit-cluster.yaml` config mounts it into a `kind` cluster.
@@ -722,9 +725,10 @@ Validate the loop (emulate -> audit -> rule fires):
 # Compile the rules only — no cluster needed:
 python3 detections/validate_k8s_detections.py --dry-run
 
-# Full run against an audit log you collected from the cluster:
+# Full run against an audit log you collected from the cluster, with the
+# emulation ledger (bind each procedure gate to its window and exit status):
 python3 detections/validate_k8s_detections.py \
-  --audit-log /tmp/kube-apiserver-audit.log
+  --audit-log /tmp/kube-apiserver-audit.log --ledger /tmp/emulation-ledger.jsonl
 
 # Negative control, on a log collected BEFORE the emulation ran:
 python3 detections/validate_k8s_detections.py \
@@ -733,9 +737,22 @@ python3 detections/validate_k8s_detections.py \
 
 The audit log is flattened to the dotted field names the rules use
 (`objectRef.resource`, `user.username`, ...) and each rule runs through the
-same pySigma backend as the auditd rules. A rule passes only on an event from
-the emulation itself (one naming the target pod, or for Procedure F the
-`trr9002-node-reader` service account), not on any event in the log.
+same pySigma backend as the auditd rules. Each MANIFEST entry carries one gate
+per procedure (and per variant), and the entry passes only when every gate
+matches a record of its own: A over WebSocket (`pods/exec`, verb `get`, code
+101) and A over SPDY (`pods/exec`, verb `create`, code 101), B (`pods/attach`,
+`container=app`, code 101), C (`pods/ephemeralcontainers`, code 200), D
+(`nodes/proxy`, verb `create`, the `/proxy/run/` path, code 200) and the two
+Procedure F reads (`nodes/proxy` get of `/runningpods/` and `/pods` by the
+`trr9002-node-reader` service account, code 200). With `--ledger`, a gate also
+needs its record inside the procedure's time window and the procedure to have
+exited as expected, which tells apart procedures of the same shape and fails a
+procedure that did not run. Procedure E (the direct kubelet call) is the
+documented gap: with `--ledger` the validator asserts it ran and that no TRR9002
+rule matches any audit event inside E's window. `validate_k8s_detections.py`
+exposes a module-level `PROCEDURES` map — `(TRR id, letter)` to the rule files
+that gate that procedure — which `research/tools/coverage_report.py` reads to
+mark a procedure Proven only with a per-procedure gate.
 
 **The list-as-JSON-text contract.** The API server audit log holds lists as JSON
 arrays (`requestObject.rules`, `requestObject.webhooks`, `requestObject.spec.containers`),
@@ -763,7 +780,15 @@ captures the audit log before the emulation and runs the validator on it with
 `.github/workflows/validate-staticpod-detections.yml` do the same for TRR9003
 (T1543.005), where the gate matters most: both rules the validator match-gates
 (the CRI rule and the mirror-pod rule) also match the control-plane static pods
-every node starts, so only the emulation's own pods count.
+every node starts, so only the emulation's own pods count. Each rule gates the
+injected static pod *and* the invalid-namespace evasion variant — the CRI rule
+on both running sandboxes, the mirror-pod rule on the stored mirror (code 2xx)
+and on the refused mirror-create attempt (code 404). Its emulation writes the
+same per-procedure ledger (`A`, `GAP`, `B`); with `--ledger` a CRI sandbox is
+bound to its window by `createdAt` and an audit event by
+`requestReceivedTimestamp`. It also exposes a `PROCEDURES` map for the coverage
+report. Procedure B stays a read-only demonstration with no telemetry, so it has
+no gate.
 
 ### Node runtime sensor (TRR9003 Strategy 1)
 
@@ -791,7 +816,8 @@ a scheduled pod).
 
 ```
 python3 detections/validate_staticpod_detections.py \
-  --audit-log /tmp/kube-apiserver-audit.log --cri-log /tmp/cri-pods.jsonl
+  --audit-log /tmp/kube-apiserver-audit.log --cri-log /tmp/cri-pods.jsonl \
+  --ledger /tmp/emulation-ledger.jsonl
 ```
 
 ### Container runtime layer (out of scope)

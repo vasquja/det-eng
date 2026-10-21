@@ -33,6 +33,33 @@ GHOST_NS="trr9003-nonexistent"
 
 log() { printf '[trr9003] %s\n' "$*" >&2; }
 
+# ---- procedure bookkeeping (shared shape across the det-eng Kubernetes atomics) ----
+# `run_proc` times each procedure, appends one ledger line (DETENG_LEDGER, set by
+# CI; unset = no ledger) and records a failure without stopping the run, so every
+# procedure is attempted and the run exits 1 at the end naming the failures. A
+# static pod is written once and never retried: a retried write would hide the
+# first failure, and readiness comes from polling the node, not from a re-drop.
+TRR="TRR9003"
+FAILED=()
+now() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }
+run_proc() {
+  local p="$1" start end rc=0
+  start="$(now)"
+  "procedure_$p" || rc=$?
+  end="$(now)"
+  if [ -n "${DETENG_LEDGER:-}" ]; then
+    printf '{"trr":"%s","procedure":"%s","start":"%s","end":"%s","exit":%d,"expect":0}\n' \
+      "$TRR" "$(printf '%s' "$p" | tr '[:lower:]' '[:upper:]')" "$start" "$end" "$rc" \
+      >> "$DETENG_LEDGER"
+  fi
+  if [ "$rc" -ne 0 ]; then
+    FAILED+=("$p")
+    [ -n "${GITHUB_ACTIONS:-}" ] && \
+      echo "::error title=${TRR} procedure ${p}::procedure ${p} failed (exit ${rc})"
+  fi
+  return 0
+}
+
 # Run a command on the node. Default: docker exec into the kind node container.
 # Override with TRR9003_NODE_EXEC for a different lab (it receives a shell -c arg).
 node_sh() {
@@ -74,11 +101,14 @@ ensure_node() {
 procedure_a() {
   local dst="$MANIFEST_DIR/${STATIC_NAME}.yaml"
   local mirror="${STATIC_NAME}-${NODE}"
+  local rc=0 i
   log "A: write static pod manifest to the node ($dst)"
-  node_put_manifest "$SCRIPT_DIR/static-pod.yaml" "$dst"
+  if ! node_put_manifest "$SCRIPT_DIR/static-pod.yaml" "$dst"; then
+    log "A: could not write the manifest to the node"
+    return 1
+  fi
 
   log "A: wait for the kubelet to register the mirror pod ($mirror)"
-  local i
   for i in $(seq 1 30); do
     if kubectl -n default get pod "$mirror" >/dev/null 2>&1; then
       break
@@ -91,13 +121,19 @@ procedure_a() {
       -o jsonpath='{.metadata.annotations.kubernetes\.io/config\.source}' 2>/dev/null || true)"
     log "A: mirror pod present — config.source='${src:-?}' (expect 'file', never 'api')"
     log "A: the API server audit log now has a 'create pods' by system:node:${NODE}"
+    if [ "$src" != "file" ]; then
+      log "A: FAILED — config.source is '${src:-?}', not 'file' (not a static pod?)"
+      rc=1
+    fi
   else
-    log "A: mirror pod did not appear within the timeout (check node $NODE)"
+    log "A: FAILED — mirror pod did not appear within the timeout (check node $NODE)"
+    rc=1
   fi
 
   log "A: clean up — remove the manifest so the kubelet stops the static pod"
   node_sh "rm -f '$dst'" || true
   kubectl -n default wait --for=delete "pod/$mirror" --timeout=30s >/dev/null 2>&1 || true
+  return "$rc"
 }
 
 # Procedure A, evasion variant — the detection gap.
@@ -107,18 +143,42 @@ procedure_a() {
 # needs a node runtime sensor, not the audit log.
 procedure_gap() {
   local dst="$MANIFEST_DIR/${GHOST_NAME}.yaml"
+  local rc=0 seen=0
   log "gap: write a static pod manifest with a non-existent namespace ($GHOST_NS)"
-  node_put_manifest "$SCRIPT_DIR/static-pod-evasion.yaml" "$dst"
+  if ! node_put_manifest "$SCRIPT_DIR/static-pod-evasion.yaml" "$dst"; then
+    log "gap: could not write the manifest to the node"
+    return 1
+  fi
 
-  log "gap: give the kubelet a few seconds to start the pod"
-  sleep 10
-
-  log "gap: the node runtime SEES the pod sandbox (crictl):"
-  node_sh "crictl pods --name '$GHOST_NAME' 2>/dev/null || true" || true
+  # Poll crictl for the ghost sandbox instead of a fixed sleep: the kubelet starts
+  # it asynchronously, and its createdAt must fall inside this procedure's ledger
+  # window, so the window stays open until the node runtime actually reports it.
+  log "gap: poll the node runtime (crictl) for the ghost pod sandbox"
+  for _ in $(seq 1 30); do
+    if node_sh "crictl pods --name '$GHOST_NAME' --state ready -q 2>/dev/null | grep -q ." ; then
+      seen=1
+      break
+    fi
+    sleep 2
+  done
+  if [ "$seen" -eq 1 ]; then
+    log "gap: the node runtime SEES the pod sandbox (crictl):"
+    node_sh "crictl pods --name '$GHOST_NAME' 2>/dev/null || true" || true
+  else
+    log "gap: FAILED — the ghost pod sandbox never became ready on the node ($NODE)"
+    rc=1
+  fi
 
   log "gap: the API server has NO pod OBJECT for it (kubectl get pods -A):"
-  if kubectl get pods -A 2>/dev/null | grep -q "$GHOST_NAME"; then
+  # List first: a kubectl that fails (API server unreachable) must not read as
+  # "no object" — that would claim the gap with nothing checked.
+  local pods
+  if ! pods="$(kubectl get pods -A --no-headers 2>&1)"; then
+    log "gap: FAILED — cannot list pods, so the missing API object is not checked: $pods"
+    rc=1
+  elif grep -q "$GHOST_NAME" <<<"$pods"; then
     log "gap: UNEXPECTED — a '$GHOST_NAME' pod object is visible in the API"
+    rc=1
   else
     log "gap: confirmed — '$GHOST_NAME' has no pod object in 'kubectl get pods -A'"
     log "gap: the kubelet's mirror-pod ATTEMPT is still audited (as a FAILED create,"
@@ -128,7 +188,9 @@ procedure_gap() {
 
   log "gap: clean up — remove the manifest"
   node_sh "rm -f '$dst'" || true
+  # Give the kubelet a moment to tear the sandbox down (best-effort; a read-only wait).
   sleep 3
+  return "$rc"
 }
 
 # Procedure B — reconfigure the kubelet static source (read-only demonstration).
@@ -150,10 +212,8 @@ procedure_b() {
 
 run_one() {
   case "$1" in
-    a)   procedure_a ;;
-    gap) procedure_gap ;;
-    b)   procedure_b ;;
-    *)   log "unknown procedure: $1 (use a|gap|b|all)"; exit 2 ;;
+    a|gap|b) run_proc "$1" ;;
+    *)       log "unknown procedure: $1 (use a|gap|b|all)"; exit 2 ;;
   esac
 }
 
@@ -164,6 +224,10 @@ main() {
     for p in a gap b; do run_one "$p"; done
   else
     run_one "$which"
+  fi
+  if [ "${#FAILED[@]}" -gt 0 ]; then
+    log "emulation FAILED: procedure(s) ${FAILED[*]}"
+    exit 1
   fi
   log "emulation complete: $which"
 }

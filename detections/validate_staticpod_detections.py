@@ -16,6 +16,9 @@ Two rules are match-gated, one per sensor:
   * Strategy 2, the fallback — API server audit log:
         the kubelet registers a mirror pod -> the API server writes a
         `create pods` event by a node identity -> the audit rule matches it.
+    It must match the injected pod's stored mirror pod (code 2xx) AND the
+    invalid-namespace pod's mirror-create attempt, which the API server
+    refuses with 404 (namespace not found) but still audits.
 
 Both rules also match the control-plane static pods every kubeadm node starts,
 by design (a documented false positive). So a match alone proves nothing about
@@ -43,9 +46,20 @@ Modes:
         emulation pod, or a failed control, fails the run (exit 1). A rule whose
         log is not given is skipped.
 
+    ... --ledger PATH
+        The emulation ledger (atomics/T1543.005/src/emulate.sh appends one JSON
+        line per procedure to $DETENG_LEDGER: trr, procedure, start, end, exit,
+        expect; the invalid-namespace variant is procedure GAP). With it, a gate
+        also needs its record inside its procedure's [start, end] (an audit
+        event by requestReceivedTimestamp, a CRI sandbox by createdAt), and the
+        procedure's exit to equal its expect; a procedure with no row did not
+        run, and its gates fail. Without --ledger the gates use the record
+        fields only (local runs, old logs).
+
     ... --expect-miss
         Negative control, for logs captured BEFORE the emulation ran: exit 1 if
-        any rule passes. Proves the baseline alone cannot pass.
+        any one gate of any rule matches. Proves the baseline alone cannot pass.
+        It uses the field gates only (--ledger is ignored).
 
     ... --report
         Report misses in the summary instead of failing on them.
@@ -60,6 +74,11 @@ came closest to the rule, item by item; or, when none does, that the emulation
 may not have run. A failed CRI control shows the API-scheduled sandbox(es) the
 rule matched and why, or which config.source values the sensor recorded. A
 failed --expect-miss shows the emulation event(s) the rule matched and why.
+
+The module-level PROCEDURES map gives, per (TRR, procedure letter), the rule
+files whose MANIFEST entry gates that procedure with a gate of its own
+(research/tools/coverage_report.py reads it). Procedure B is a read-only
+demonstration with no telemetry, so no gate and no PROCEDURES key names it.
 """
 
 import argparse
@@ -67,6 +86,7 @@ import glob
 import json
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sigma_eval  # noqa: E402
@@ -85,6 +105,7 @@ INJECTED_PREFIX = "trr9003-static"
 GHOST_NAME = "trr9003-ghost"
 
 CONFIG_SOURCE = "annotations.kubernetes.io/config.source"
+TRR = "TRR9003"
 
 
 def _starts(field, prefix):
@@ -94,21 +115,69 @@ def _starts(field, prefix):
     return gate
 
 
+def _code_in(*codes):
+    def gate(e):
+        try:
+            return int(e.get("responseStatus.code")) in codes
+        except (TypeError, ValueError):
+            return False
+    gate.describe = f"responseStatus.code in {list(codes)}"
+    return gate
+
+
+def mark(*preds, window=None, procedure=None, time="requestReceivedTimestamp"):
+    """A gate for one procedure's own record: every predicate holds. `window` is
+    the (TRR, procedure) key of its ledger row, `time` the record field the window
+    reads, and `procedure` the (TRR, letter) the gate proves (default: window)."""
+    def gate(e):
+        return all(p(e) for p in preds)
+    gate.describe = " and ".join(p.describe for p in preds)
+    gate.window = window
+    gate.procedure = procedure or window
+    gate.time_field = time
+    return gate
+
+
+STORED = tuple(range(200, 300))  # a mirror pod the API server stored
+
 # Each match-gated rule: the log it reads, the procedures it covers, a note, and
-# the emulation events it must match (all of them). The Strategy 3 file-event
-# rule in the same folder needs node file telemetry; it is compiled, not gated.
+# the emulation records it must match (all of them, one gate each). The
+# invalid-namespace variant of Procedure A runs as its own ledger procedure (GAP).
+# The Strategy 3 file-event rule in the same folder needs node file telemetry; it
+# is compiled, not gated.
 MANIFEST = [
     ("k8s_cri_static_pod_start.yml", "cri", "A",
      "kubelet starts a pod from a non-API source (Strategy 1 chokepoint; B is a "
      "read-only demo with no telemetry)",
-     [("injected static pod", _starts("metadata.name", INJECTED_PREFIX)),
+     [("injected static pod", mark(_starts("metadata.name", INJECTED_PREFIX),
+                                   window=(TRR, "A"), time="createdAt")),
       ("invalid-namespace static pod (the audit-log gap)",
-       _starts("metadata.name", GHOST_NAME))]),
+       mark(_starts("metadata.name", GHOST_NAME), window=(TRR, "GAP"),
+            procedure=(TRR, "A"), time="createdAt"))]),
     ("k8s_static_pod_mirror_create.yml", "audit", "A",
      "mirror pod create by a node identity (Strategy 2 fallback; B is a read-only "
      "demo with no telemetry)",
-     [("injected static pod", _starts("objectRef.name", INJECTED_PREFIX))]),
+     [("injected static pod", mark(_starts("objectRef.name", INJECTED_PREFIX),
+                                   _code_in(*STORED), window=(TRR, "A"))),
+      ("invalid-namespace mirror-create attempt (refused, 404)",
+       mark(_starts("objectRef.name", GHOST_NAME), _code_in(404), window=(TRR, "GAP"),
+            procedure=(TRR, "A")))]),
 ]
+
+
+def _procedures(manifest, folder):
+    """{(TRR, letter): sorted rule paths}: the rules whose MANIFEST entry gates that
+    procedure with a gate of its own."""
+    out = {}
+    for fname, _source, _proc, _note, required in manifest:
+        for _label, gate in required:
+            key = getattr(gate, "procedure", None)
+            if key:
+                out.setdefault(key, set()).add(f"{folder}/{fname}")
+    return {key: sorted(paths) for key, paths in sorted(out.items())}
+
+
+PROCEDURES = _procedures(MANIFEST, os.path.basename(RULES_DIR))
 
 # Control-plane static pods a kubeadm/kind node starts — the baseline both rules
 # also match, by design.
@@ -382,6 +451,120 @@ def write_json(path, report):
         fh.write("\n")
 
 
+# ---- the emulation ledger (procedure windows) ------------------------------
+# The same contract as validate_apiserver_detections.py and
+# validate_k8s_detections.py; each validator stays standalone. Each emulation run
+# appends one JSON line per procedure:
+#   {"trr": "TRR9003", "procedure": "A", "start": "...Z", "end": "...Z",
+#    "exit": 0, "expect": 0}
+# start and end are UTC ISO 8601 with microseconds. The kind node is a container
+# on the runner, so the audit timestamps, the CRI createdAt and the ledger read
+# the same kernel clock.
+
+
+def _ts(value):
+    """A UTC datetime from an ISO 8601 timestamp (any number of fraction digits,
+    'Z' or an offset) or from a CRI createdAt (nanoseconds since the epoch, an
+    integer or a digit string); None when it does not parse."""
+    if value is None or value == "" or isinstance(value, bool):
+        return None
+    text = str(value).strip()
+    if text.isdigit():
+        sec, nsec = divmod(int(text), 10**9)
+        return datetime.fromtimestamp(sec, tz=timezone.utc) + timedelta(microseconds=nsec // 1000)
+    if text[-1:] in ("Z", "z"):
+        text = text[:-1] + "+00:00"
+    head, dot, rest = text.partition(".")
+    if dot:  # fromisoformat takes at most 6 fraction digits on older Pythons
+        digits = ""
+        for ch in rest:
+            if not ch.isdigit():
+                break
+            digits += ch
+        text = f"{head}.{digits[:6].ljust(6, '0')}{rest[len(digits):]}"
+    try:
+        t = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return t.astimezone(timezone.utc)
+
+
+def _iso(t):
+    return t.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _ledger_key(trr, procedure):
+    """('TRR9003', 'A') from 'TRR9003'/'9003' and 'A'/'a'."""
+    t = str(trr or "").strip().upper()
+    if t.isdigit():
+        t = "TRR" + t
+    return (t, str(procedure or "").strip().upper())
+
+
+def load_ledger(path):
+    """{(TRR, PROCEDURE): row}; a later row for the same procedure wins (a re-run)."""
+    rows = {}
+    with open(path, encoding="utf-8") as fh:
+        for n, line in enumerate(fh, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                print(f"[ledger] line {n} is not JSON; ignored")
+                continue
+            if not isinstance(row, dict):
+                continue
+            rows[_ledger_key(row.get("trr"), row.get("procedure"))] = {
+                "start": _ts(row.get("start")), "end": _ts(row.get("end")),
+                "exit": row.get("exit"), "expect": row.get("expect", 0)}
+    return rows
+
+
+def _same_int(a, b):
+    try:
+        return int(a) == int(b)
+    except (TypeError, ValueError):
+        return False
+
+
+def ledger_state(ledger, key):
+    """(ok, text): whether the procedure's row lets a record count, and why not."""
+    row = ledger.get(key)
+    if row is None:
+        return False, "no ledger row: the procedure did not run"
+    if row["start"] is None or row["end"] is None:
+        return False, "the ledger row has no readable start or end"
+    if not _same_int(row["exit"], row["expect"]):
+        return False, f"the procedure exited {row['exit']}, expected {row['expect']}"
+    return True, f"window [{_iso(row['start'])}, {_iso(row['end'])}]"
+
+
+def windowed(gate, ledger):
+    """The gate, also bound to its procedure's ledger row when a ledger is given."""
+    key = getattr(gate, "window", None)
+    if ledger is None or key is None:
+        return gate
+    ok, state = ledger_state(ledger, key)
+    row = ledger.get(key)
+    field = getattr(gate, "time_field", "requestReceivedTimestamp")
+
+    def bound(e):
+        if not ok:
+            return False
+        t = _ts(e.get(field))
+        return t is not None and row["start"] <= t <= row["end"] and gate(e)
+    bound.describe = (f"{gate.describe}; ledger {key[0]}.{key[1]}: "
+                      + (f"{field} in the {state}" if ok else state))
+    bound.window = key
+    bound.procedure = getattr(gate, "procedure", key)
+    bound.ledger = state
+    return bound
+
+
 def main():
     ap = argparse.ArgumentParser(description="Validate TRR9003 static-pod detections.")
     ap.add_argument("--audit-log", default="/tmp/kube-apiserver-audit.log",
@@ -396,11 +579,14 @@ def main():
                     help="Report misses instead of failing on them.")
     ap.add_argument("--json", metavar="PATH",
                     help="Also write a machine-readable report (results + explanations).")
+    ap.add_argument("--ledger", metavar="PATH",
+                    help="Emulation ledger (JSON lines, one per procedure): bind each gate "
+                         "to its procedure's window and exit status.")
     args = ap.parse_args()
     report = {"validator": "staticpod",
               "mode": "dry-run" if args.dry_run else
               "expect-miss" if args.expect_miss else "validate",
-              "results": [], "controls": []}
+              "results": [], "procedures": {}, "controls": []}
     code = validate(args, report)
     if args.json:
         report["exit"] = code
@@ -461,6 +647,19 @@ def validate(args, report):
     if not logs:
         print("SKIP: no log to validate against (exit 0).")
         return 0 if not parse_errors else 1
+    ledger = None
+    if args.ledger and args.expect_miss:
+        print("--ledger is ignored with --expect-miss: the negative control uses the field "
+              "gates only.")
+    elif args.ledger:
+        if not os.path.exists(args.ledger):
+            print(f"ERROR: ledger not found: {args.ledger} (the emulation wrote no ledger "
+                  "row; did it run, with DETENG_LEDGER set?)")
+            return 1
+        ledger = load_ledger(args.ledger)
+        mine = sorted(k for k in ledger if k[0] == TRR)
+        print(f"Loaded {len(ledger)} ledger row(s) from {args.ledger}; {TRR}: "
+              + (", ".join(f"{k[1]} exit {ledger[k]['exit']}" for k in mine) or "none"))
     print()
 
     passes = misses = skipped = 0
@@ -478,24 +677,36 @@ def validate(args, report):
         if source == "audit":
             matched = dedup_by_audit_id(matched)
         hits_by_source[source] = matched
-        found = [(label, [e for e in matched if pred(e)]) for label, pred in required]
-        ours = sum(len(events) for _, events in found)
+        preds = [(label, windowed(pred, ledger)) for label, pred in required]
+        found = [(label, [e for e in matched if pred(e)]) for label, pred in preds]
+        ours = len({id(e) for _, events in found for e in events})
         other = len(matched) - ours
         rule_path = os.path.join(RULES_DIR, fname)
-        passed = all(events for _, events in found)
+        every, some = all(events for _, events in found), any(events for _, events in found)
+        passed = some if args.expect_miss else every
         explanation = []
         if passed:
             passes += 1
-            detail = f"matched every emulation pod (+{other} other, e.g. control-plane baseline)"
+            detail = (f"matched every emulation pod (+{other} other, e.g. control-plane baseline)"
+                      if every else f"matched an emulation pod (+{other} other)")
             print(f"PASS  [{proc}] {fname}: {detail}")
         else:
             misses += 1
             detail = ("missed an emulation pod"
                       + (f" ({other} baseline/unrelated match(es) ignored)" if other else ""))
             print(f"MISS  [{proc}] {fname}: {detail}")
-        for (label, events), (_, pred) in zip(found, required):
-            mark = "ok  " if events else "MISS"
-            print(f"        {mark} {label}: {len(events)} match(es)")
+        for (label, events), (_, pred) in zip(found, preds):
+            mark_ = "ok  " if events else "MISS"
+            state = getattr(pred, "ledger", None)
+            print(f"        {mark_} {label}: {len(events)} match(es)"
+                  + (f" [ledger: {state}]" if state and not events else ""))
+            key = getattr(pred, "procedure", None)
+            if key:
+                entry = report["procedures"].setdefault(f"{key[0]}.{key[1]}",
+                                                        {"status": "ok", "gates": {}})
+                entry["gates"][f"{fname}: {label}"] = len(events)
+                if not events:
+                    entry["status"] = "MISS"
             if not events and not args.expect_miss:
                 lines = [f"{label}:"] + ["  " + ln for ln in explained(
                     explain_gated_miss, rule_path, logs[source], pred, matched)]
@@ -537,7 +748,7 @@ def validate(args, report):
     if args.expect_miss:
         if passes:
             print(f"NEGATIVE CONTROL FAILED: {passes} rule(s) passed on logs "
-                  "captured before the emulation ran.")
+                  "captured before the emulation ran (a gate matched).")
             return 1
         print("Negative control held: the baseline alone does not pass any rule.")
         return 0
@@ -553,7 +764,9 @@ def validate(args, report):
               "rule(s) skipped for lack of a log.")
         return 0
     print("All TRR9003 match-gated detections fired on the emulated telemetry, "
-          "including the invalid-namespace pod the audit log cannot see running.")
+          "including the invalid-namespace pod the audit log cannot see running"
+          + (", every record inside its procedure's ledger window." if ledger is not None
+             else " (field gates only, no ledger)."))
     return 0
 
 
