@@ -63,8 +63,8 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [K29](#k29-t1685-enforcer-removal-rules-a-daemonset-unscheduled-by-its-pod-template) | `T1685/k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed` | a DaemonSet (Falco) whose pod template gets a nodeSelector, affinity or nodeName that no node matches loses every pod, and neither rule fires | false negative | medium |
 | [K32](#k32-t1685-enforcer-removal-rules-a-null-strategic-merge-directive-next-to-a-count) | `T1685/k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed` | a strategic merge patch of deployments/scale with a count above 0 and a null `$deleteFromPrimitiveList/replicas` (or `/spec`) scales to 0, and neither rule fires | false negative | low |
 | [K33](#k33-json-text-skip-grammars-a-key-nested-three-levels-deep-splits-an-operation) | `T1685/k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed`, `k8s_admission_webhook_neutered`, `T1611/k8s_podspec_controller_host_access`, `k8s_podspec_host_access`, `k8s_podspec_confinement_disabled` | an ignored key nested three levels deep, or a brace string inside a nested object, splits a JSON-patch operation or a profile object, so it is not graded (Lucene's budget) | false negative | low |
-| [KTBD-D1](#ktbd-d1-k8s_podspec_host_access-a-default-kubectl-debug-from-kubectl-v136-adds-sys_ptrace) | `T1611/k8s_podspec_host_access` | from kubectl v1.36 (the CI pin), a default `kubectl debug` adds SYS_PTRACE to its debug container, in an ephemeral container (a `pods/ephemeralcontainers` patch) and in a `--copy-to` pod copy (a `pods` create), and fires this level-high rule where that write is logged at Request | false positive, description | medium |
-| [KTBD-D2](#ktbd-d2-api-server-lab-policy-mutatingadmissionpolicy-deletes-at-metadata-hide-a-dry-run) | the API server lab policy (`k8s/audit-policy-apiserver.yaml`), for the delete dry-run filter of the T1685 webhook-disabled rule | the lab logs MutatingAdmissionPolicy and binding deletes at Metadata, so a server-side dry-run delete of one fires that rule (its delete dry-run filter needs the body) | policy gap | low |
+| [K34](#k34-k8s_podspec_host_access-a-default-kubectl-debug-from-kubectl-v136-adds-sys_ptrace) | `T1611/k8s_podspec_host_access` | from kubectl v1.36 (the CI pin), a default `kubectl debug` adds SYS_PTRACE to its debug container, in an ephemeral container (a `pods/ephemeralcontainers` patch) and in a `--copy-to` pod copy (a `pods` create), and fires this level-high rule where that write is logged at Request | false positive, description | medium |
+| [K35](#k35-api-server-lab-policy-mutatingadmissionpolicy-deletes-at-metadata-hide-a-dry-run) | the API server lab policy (`k8s/audit-policy-apiserver.yaml`), for the delete dry-run filter of the T1685 webhook-disabled rule | the lab logs MutatingAdmissionPolicy and binding deletes at Metadata, so a server-side dry-run delete of one fires that rule (its delete dry-run filter needs the body) | policy gap | low |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
@@ -849,7 +849,7 @@ whether `arping` belongs in the allowlist.
 - **Then**: the KNOWN MISS confounders fire; relabelling them as positives is a human
   decision under the sufficiency ratchet.
 
-### KTBD-D1. k8s_podspec_host_access: a default kubectl debug from kubectl v1.36 adds SYS_PTRACE
+### K34. k8s_podspec_host_access: a default kubectl debug from kubectl v1.36 adds SYS_PTRACE
 
 - **Rule**: [`sigma/T1611/k8s_podspec_host_access.yml`](sigma/T1611/k8s_podspec_host_access.yml) (level high).
 - **Kind**: false positive, description. **Severity**: medium (routine operator noise
@@ -922,7 +922,7 @@ whether `arping` belongs in the allowlist.
   human approves), and the rule's budget, level or a new near-miss case follows the
   decision. The entry closes.
 
-### KTBD-D2. API server lab policy: MutatingAdmissionPolicy deletes at Metadata hide a dry run
+### K35. API server lab policy: MutatingAdmissionPolicy deletes at Metadata hide a dry run
 
 - **Scope**: the API server lab policy
   ([`k8s/audit-policy-apiserver.yaml`](k8s/audit-policy-apiserver.yaml)) and the one rule

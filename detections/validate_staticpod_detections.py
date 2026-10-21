@@ -504,8 +504,11 @@ def _ledger_key(trr, procedure):
 
 
 def load_ledger(path):
-    """{(TRR, PROCEDURE): row}; a later row for the same procedure wins (a re-run)."""
-    rows = {}
+    """({(TRR, PROCEDURE): row}, [problem, ...]); a later row for the same procedure wins
+    (a re-run). A line that is not a JSON object with trr and procedure is a problem, and
+    the caller fails the run on any problem, as validate_apiserver_detections.py does: a
+    truncated or corrupt ledger must not pass quietly."""
+    rows, problems = {}, []
     with open(path, encoding="utf-8") as fh:
         for n, line in enumerate(fh, 1):
             line = line.strip()
@@ -513,15 +516,17 @@ def load_ledger(path):
                 continue
             try:
                 row = json.loads(line)
-            except json.JSONDecodeError:
-                print(f"[ledger] line {n} is not JSON; ignored")
+            except json.JSONDecodeError as e:
+                problems.append(f"line {n}: not valid JSON ({e.msg}): {line[:80]!r}")
                 continue
-            if not isinstance(row, dict):
+            if not isinstance(row, dict) or not row.get("trr") or not row.get("procedure"):
+                problems.append(f"line {n}: not a ledger row (needs trr and procedure): "
+                                f"{line[:80]!r}")
                 continue
             rows[_ledger_key(row.get("trr"), row.get("procedure"))] = {
                 "start": _ts(row.get("start")), "end": _ts(row.get("end")),
                 "exit": row.get("exit"), "expect": row.get("expect", 0)}
-    return rows
+    return rows, problems
 
 
 def _same_int(a, b):
@@ -656,7 +661,11 @@ def validate(args, report):
             print(f"ERROR: ledger not found: {args.ledger} (the emulation wrote no ledger "
                   "row; did it run, with DETENG_LEDGER set?)")
             return 1
-        ledger = load_ledger(args.ledger)
+        ledger, problems = load_ledger(args.ledger)
+        if problems:
+            for p in problems:
+                print(f"ERROR: ledger {args.ledger} {p}")
+            return 1
         mine = sorted(k for k in ledger if k[0] == TRR)
         print(f"Loaded {len(ledger)} ledger row(s) from {args.ledger}; {TRR}: "
               + (", ".join(f"{k[1]} exit {ledger[k]['exit']}" for k in mine) or "none"))

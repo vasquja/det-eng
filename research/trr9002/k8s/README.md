@@ -214,7 +214,7 @@ and the paragraph above it for the versions).
   (T1611, level high). A default `kubectl debug <pod> --copy-to=<new>` (a `pods`
   create, not a TRR9002 procedure) matches it too, wherever `pods` creates are logged
   at Request. Whether it must is an open human decision
-  ([RULE_DEFECTS KTBD-D1](../../../detections/RULE_DEFECTS.md#ktbd-d1-k8s_podspec_host_access-a-default-kubectl-debug-from-kubectl-v136-adds-sys_ptrace)).
+  ([RULE_DEFECTS K34](../../../detections/RULE_DEFECTS.md#k34-k8s_podspec_host_access-a-default-kubectl-debug-from-kubectl-v136-adds-sys_ptrace)).
 - kubectl v1.37.0 keeps `KUBECTL_REMOTE_COMMAND_WEBSOCKETS`
   ([cmd/util/helpers.go v1.37.0 L445](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/kubectl/pkg/cmd/util/helpers.go#L445)),
   so Procedure A still runs once over WebSocket and once over SPDY on every leg.

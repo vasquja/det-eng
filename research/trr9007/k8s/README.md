@@ -303,7 +303,7 @@ ephemeral container (a `pods/ephemeralcontainers` patch), and to the container o
 `--copy-to` pod copy (a `pods` create). So this strategy also fires on routine debugging
 where that patch or that create is logged at `Request`. Whether it must is an open human
 decision
-([RULE_DEFECTS KTBD-D1](../../../detections/RULE_DEFECTS.md#ktbd-d1-k8s_podspec_host_access-a-default-kubectl-debug-from-kubectl-v136-adds-sys_ptrace); see the
+([RULE_DEFECTS K34](../../../detections/RULE_DEFECTS.md#k34-k8s_podspec_host_access-a-default-kubectl-debug-from-kubectl-v136-adds-sys_ptrace); see the
 [Kubernetes version notes](../../../detections/README.md#kubernetes-version-notes)).
 
 - Sensor: API server audit log (`Request` level).

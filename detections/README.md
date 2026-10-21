@@ -629,7 +629,7 @@ constructed events.
   server lab policy logs both). The TRR9002 lab logs both at Metadata, and no step in
   the API server lab runs `kubectl debug`, so CI does not see this. Whether a default
   `kubectl debug` must be a high T1611 alert is an open human decision
-  ([RULE_DEFECTS KTBD-D1](RULE_DEFECTS.md#ktbd-d1-k8s_podspec_host_access-a-default-kubectl-debug-from-kubectl-v136-adds-sys_ptrace));
+  ([RULE_DEFECTS K34](RULE_DEFECTS.md#k34-k8s_podspec_host_access-a-default-kubectl-debug-from-kubectl-v136-adds-sys_ptrace));
   the rules do not change here.
 - **Cgroup v1 (all labs).** The kubelet defaults `failCgroupV1` to true from v1.35
   ([v1beta1/defaults.go v1.35.8 L292-294](https://github.com/kubernetes/kubernetes/blob/v1.35.8/pkg/kubelet/apis/config/v1beta1/defaults.go#L292-L294);
@@ -670,7 +670,7 @@ constructed events.
   Metadata a delete has no DeleteOptions body, so the delete dry-run filter of
   `k8s_admission_webhook_disabled.yml` cannot see one, and a server-side dry-run delete
   of a MutatingAdmissionPolicy or its binding also fires
-  ([RULE_DEFECTS KTBD-D2](RULE_DEFECTS.md#ktbd-d2-api-server-lab-policy-mutatingadmissionpolicy-deletes-at-metadata-hide-a-dry-run)).
+  ([RULE_DEFECTS K35](RULE_DEFECTS.md#k35-api-server-lab-policy-mutatingadmissionpolicy-deletes-at-metadata-hide-a-dry-run)).
   No grader reads a policy body, and no emulation creates one.
 - **userAgent.** client-go builds it as `<command>/<version> (<os>/<arch>)
   kubernetes/<commit>`
@@ -926,8 +926,9 @@ check**: with a ledger, TRR9006 Procedure E (an on-disk token read) must leave n
 namespace) in E's window. Controller and kubelet reads (`system:*`) are left out so that
 background traffic cannot flake the check. The check also fails when E did not run or
 failed, and when a matching event has no `requestReceivedTimestamp` to place it in time.
-In this validator, a ledger line that does not parse fails the run, because a corrupt
-ledger proves nothing.
+A ledger line that does not parse, or is not a row with `trr` and `procedure`, fails
+the run, because a corrupt ledger proves nothing. The TRR9002 and TRR9003 validators
+do the same.
 
 Module-level `PROCEDURES` maps `(trr_id, LETTER)` (e.g. `('TRR9004', 'A')`) to the sorted
 rule paths that gate that procedure with a gate of its own. It is the interface for the
