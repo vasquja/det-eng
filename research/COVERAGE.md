@@ -7,8 +7,8 @@ Mapped to ATT&CK, 24 of 24 techniques have a rule (100%). Counted by execution p
 | Status | Procedures | Share | Meaning |
 |--------|-----------:|------:|---------|
 | Proven | 66 | 55% | emulated, validated in CI, no open defect |
-| Proven, open defect | 17 | 14% | validated in CI; a known miss or noise is tracked |
-| Claimed | 13 | 11% | a rule maps to it, but this procedure is not emulated, has no per-procedure gate yet, or the rule is in no validator |
+| Proven, open defect | 18 | 15% | validated in CI; a known miss or noise is tracked |
+| Claimed | 12 | 10% | a rule maps to it, but this procedure is not emulated, has no per-procedure gate yet, or the rule is in no validator |
 | Sensor only | 4 | 3% | needs a sensor that no Sigma rule reads |
 | Gap | 19 | 16% | researched, no detection |
 
@@ -17,7 +17,7 @@ Mapped to ATT&CK, 24 of 24 techniques have a rule (100%). Counted by execution p
 | Platform | Procedures | Proven | Proven, open defect | Claimed | Sensor only | Gap |
 |----------|-----------:|------:|------:|------:|------:|------:|
 | Linux | 7 | 5 | 0 | 0 | 2 | 0 |
-| Kubernetes | 55 | 38 | 12 | 2 | 2 | 1 |
+| Kubernetes | 55 | 38 | 13 | 1 | 2 | 1 |
 | AWS | 32 | 13 | 4 | 5 | 0 | 10 |
 | Azure | 13 | 5 | 0 | 4 | 0 | 4 |
 | GCP | 12 | 5 | 1 | 2 | 0 | 4 |
@@ -33,7 +33,7 @@ Each procedure letter is followed by its status: **P** proven, **D** proven with
 | [TRR9003](trr9003/k8s/README.md) | Static Pod Persistence (Kubernetes) | T1543.005 | Kubernetes | 1/2 | A:P B:**C** |
 | [TRR9004](trr9004/k8s/README.md) | Additional Container Cluster Roles (Kubernetes) | T1098.006 | Kubernetes | 6/7 | A:P B:P C:P D:P E:P F:**D** G:P |
 | [TRR9005](trr9005/k8s/README.md) | Container Orchestration Job (Kubernetes) | T1053.007 | Kubernetes | 4/4 | A:P B:P C:P D:P |
-| [TRR9006](trr9006/k8s/README.md) | Unsecured Credentials: Container API (Kubernetes) | T1552.007 | Kubernetes | 4/5 | A:P B:P C:P D:P E:**C** |
+| [TRR9006](trr9006/k8s/README.md) | Unsecured Credentials: Container API (Kubernetes) | T1552.007 | Kubernetes | 4/5 | A:P B:P C:P D:P E:**D** |
 | [TRR9007](trr9007/k8s/README.md) | Escape to Host via a Dangerous Pod Spec (Kubernetes) | T1611 | Kubernetes | 0/5 | A:**D** B:**D** C:**D** D:**D** E:**D** |
 | [TRR9008](trr9008/k8s/README.md) | Disabling Admission Control (Kubernetes) | T1685 | Kubernetes | 3/4 | A:P B:P C:P D:**D** |
 | [TRR9009](trr9009/k8s/README.md) | User Impersonation (Kubernetes) | T1134 | Kubernetes | 0/4 | A:**D** B:**D** C:**D** D:**D** |
@@ -84,7 +84,6 @@ Each procedure letter is followed by its status: **P** proven, **D** proven with
 | `TRR9024.LIN.B` | Loadable kernel module | Sensor only | backlog | – |
 | `TRR9024.LIN.C` | Userland library preload | Sensor only | backlog | – |
 | `TRR9003.K8S.B` | Reconfigure the kubelet static source | Claimed | built (read-only) | `k8s_cri_static_pod_start`, `k8s_static_pod_mirror_create` |
-| `TRR9006.K8S.E` | Read a mounted token off disk (the gap) | Claimed | built | `linux_k8s_sa_token_read` |
 | `TRR9011.AWS.C` | On-host IMDS read, then off-instance use | Claimed | backlog | `aws_imds_creds_used_off_instance` |
 | `TRR9011.AWS.D` | Retrieval via SSM, then off-instance use | Claimed | backlog | `aws_imds_creds_used_off_instance` |
 | `TRR9012.AWS.C` | STS pivot to temporary creds | Claimed | backlog | `aws_leaked_access_key_recon` |
@@ -97,6 +96,7 @@ Each procedure letter is followed by its status: **P** proven, **D** proven with
 | `TRR9018.GCP.B` | Loosen an existing provider trust | Claimed | documented | `gcp_workload_identity_pool_provider_created` |
 | `TRR9020.GCP.B` | Loosen an existing workforce provider trust | Claimed | documented | `gcp_workforce_pool_provider_no_attribute_condition` |
 | `TRR9004.K8S.F` | Map an IAM principal through the EKS aws-auth ConfigMap | Proven, open defect | built | `k8s_eks_aws_auth_configmap_modified` (K28) |
+| `TRR9006.K8S.E` | Read a mounted token off disk (the gap) | Proven, open defect | built | `linux_k8s_sa_token_read` (L16) |
 | `TRR9007.K8S.A` | Privileged container | Proven, open defect | built | `k8s_podspec_host_access` (K33, K34) |
 | `TRR9007.K8S.B` | hostPath mount of a sensitive node directory | Proven, open defect | built | `k8s_podspec_host_access` (K33, K34) |
 | `TRR9007.K8S.C` | Host namespace (hostPID/hostNetwork/hostIPC) | Proven, open defect | built | `k8s_podspec_host_access` (K33, K34) |

@@ -28,8 +28,8 @@
 <text x="20" y="212" fill="#1f2328" font-size="13" font-weight="400" text-anchor="start">Kubernetes</text>
 <rect x="250" y="198" width="440" height="18" rx="4" fill="#eef1f4"/>
 <rect x="250.0" y="198" width="302.5" height="18" fill="#1a7f37"/>
-<rect x="554.0" y="198" width="94.5" height="18" fill="#bf8700"/>
-<rect x="650.0" y="198" width="14.5" height="18" fill="#8c959f"/>
+<rect x="554.0" y="198" width="102.5" height="18" fill="#bf8700"/>
+<rect x="658.0" y="198" width="6.5" height="18" fill="#8c959f"/>
 <rect x="666.0" y="198" width="14.5" height="18" fill="#0969da"/>
 <rect x="682.0" y="198" width="6.5" height="18" fill="#cf222e"/>
 <text x="800" y="212" fill="#59636e" font-size="13" font-weight="400" text-anchor="end">38/55 proven</text>
