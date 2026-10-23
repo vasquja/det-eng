@@ -1113,8 +1113,8 @@ PROCEDURES = _build_procedures()
 # Each emulation step appends one JSON line per procedure it ran, to $DETENG_LEDGER:
 #   {"trr": "TRR9004", "procedure": "a", "start": ISO, "end": ISO, "exit": 0, "expect": 0}
 # with start and end in UTC to the microsecond. With --ledger, a gate that carries a
-# window=(trr, procedure) also requires the record's requestReceivedTimestamp to fall
-# inside that procedure's window AND the procedure to have exited as expected. That
+# window=(trr, procedure) also requires the record's time (requestReceivedTimestamp for an
+# audit event, Timestamp for a node file event) to fall inside that procedure's window AND the procedure to have exited as expected. That
 # attributes each record to the procedure that made it, even when two procedures send
 # the same request shape (a setup GET and Procedure B's GET of the same Secret), and it
 # fails a procedure that did not run or that failed. Without --ledger the gates fall

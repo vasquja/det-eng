@@ -982,8 +982,8 @@ server audits too) and fails on any other error.
 The `--ledger` flag binds each procedure gate to its own time window and exit status.
 Each emulation appends one JSON line per procedure to `$DETENG_LEDGER`
 (`{"trr","procedure","start","end","exit","expect"}`, UTC to the microsecond); with a
-ledger, a gate also requires the record's `requestReceivedTimestamp` to fall inside that
-procedure's `[start, end]` and the procedure to have exited as expected, and a missing
+ledger, a gate also requires the record's time (`requestReceivedTimestamp` for an audit
+event, `Timestamp` for a node file event) to fall inside that procedure's `[start, end]` and the procedure to have exited as expected, and a missing
 row is reported as "did not run". This tells apart two procedures that send the same
 request shape, and fails a procedure that did not run or failed. Without `--ledger` the
 gates fall back to fields only, so a local run and an old log still work (the CI negative

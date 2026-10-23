@@ -266,7 +266,8 @@ system identities and any event-exporter service accounts by `user.username`.
 **Strategy 2 — workload-record fallback (covers D).**
 Match a delete or deletecollection of Pods or Jobs (the namespace controller's
 teardown sweep is filtered, and so is a server-side dry run whose DeleteOptions body
-the record holds). This is low fidelity; use it for correlation only
+the record holds; a delete with no body whose query holds `?dryRun=All` still fires,
+[RULE_DEFECTS K36](../../../detections/RULE_DEFECTS.md#k36-delete-dry-run-filters-read-only-the-body-a-query-only-dry-run-fires)). This is low fidelity; use it for correlation only
 — the same identity that also deleted Events, a deletion in a sensitive namespace,
 or a Job whose creation the identity made.
 
