@@ -1,11 +1,16 @@
 name: validate-apiserver-detections
+# A dispatch with a label (the weekly k8s-version-matrix.yml driver) puts the label in
+# the run name, so the driver can find its own run. Every other run keeps the default
+# name (an empty run-name). The job and check names do not change.
+run-name: ${{ inputs.label && format('{0} [{1}]', github.workflow, inputs.label) || '' }}
 
 # Proves the API-server Kubernetes loops on a real Kubernetes cluster, on ONE kind
 # cluster that all the techniques share (they all key on the same API server audit log):
 #   - TRR9004 (RBAC, T1098.006):        rbac write, and kube-system/aws-auth ConfigMap write -> audit -> Sigma
 #   - TRR9005 (Jobs/CronJobs, T1053.007): batch write      -> audit -> Sigma,
 #                                         and the executed job pod -> node sensor
-#   - TRR9006 (Secrets, T1552.007):     secret read / token -> audit -> Sigma
+#   - TRR9006 (Secrets, T1552.007):     secret read / token -> audit -> Sigma, and an
+#                                         on-node token read -> node file sensor -> Sigma
 #   - TRR9007 (dangerous pod spec, T1611): pod/controller requestObject -> audit -> Sigma
 #   - TRR9008 (disable admission control, T1685): admissionregistration write, and apps-group
 #                                         enforcer workload removal -> audit -> Sigma
@@ -16,15 +21,18 @@ name: validate-apiserver-detections
 #   - TRR9027 (cluster DNS poisoning, T1565.001): kube-system DNS ConfigMap write + Corefile grade
 #
 # A kind cluster runs on the ubuntu-latest runner with API server audit logging on
-# (pod creates, updates and patches; controller and RBAC writes and deletes, except
-# deletecollection, with the deployments, statefulsets and replicasets scale
-# subresources; admission-config creates and deletes at Request level;
+# (pod creates, updates and patches; controller writes, deletes and deletecollections
+# and RBAC writes and deletes, with the deployments, statefulsets and replicasets scale
+# subresources; pod, Event and namespace deletes and deletecollections, so a dry run's
+# DeleteOptions body is logged; admission-config creates and deletes at Request level;
 # admission-config updates and patches, the three cluster DNS ConfigMaps, and the
 # kube-system/aws-auth ConfigMap update/patch/delete at RequestResponse; kube-system
-# ConfigMap creates at Request; pods/portforward and nodes/proxy, pod and Event deletes,
+# ConfigMap creates at Request; pods/portforward and nodes/proxy,
 # Secrets and tokens at Metadata; see detections/k8s/audit-policy-apiserver.yaml), and a small CRI poller on the node stands in for a runtime security
-# agent (detections/k8s/cri-pod-sensor.sh). The job captures a BEFORE snapshot
-# (negative control), runs the benign emulations, collects both logs, and asserts each
+# agent (detections/k8s/cri-pod-sensor.sh), and the runner's auditd stands in for a
+# node file sensor (a read watch on one projected token, detections/k8s/auditd_file_events.py).
+# The job captures a BEFORE snapshot
+# (negative control), runs the benign emulations, collects the three logs, and asserts each
 # match-gated Sigma rule matches a record the emulation itself produced (named with
 # that technique's unique marker). The shipped rules are generic and a fresh kind
 # cluster is full of baseline matches (bootstrap RBAC, controller jobs, controller
@@ -42,7 +50,10 @@ on:
       - 'detections/k8s/audit-policy-apiserver.yaml'
       - 'detections/k8s/kind-apiserver-cluster.yaml'
       - 'detections/k8s/cri-pod-sensor.sh'
+      - 'detections/k8s/auditd_file_events.py'
       - 'detections/benign/k8s/workload.sh'
+      - 'detections/score_benign.py'
+      - 'detections/benign_corpus.py'
       - 'detections/sigma/T1098.006/**'
       - 'detections/sigma/T1053.007/**'
       - 'detections/sigma/T1552.007/**'
@@ -74,7 +85,31 @@ on:
   # is skipped (a skipped required check counts as success, so an unrelated PR is
   # never blocked). Push to main stays path-filtered -- it is post-merge.
   pull_request:
+  # The inputs let the weekly version matrix (k8s-version-matrix.yml) run these same
+  # steps on another Kubernetes minor. An empty input keeps the pin in env below, and
+  # push, pull_request and schedule runs always use the pins.
   workflow_dispatch:
+    inputs:
+      node_image:
+        description: 'kindest/node image as name:vX.Y.Z@sha256:<digest> (empty: the pin)'
+        required: false
+        default: ''
+        type: string
+      kubectl_version:
+        description: 'kubectl version as vX.Y.Z, with kubectl_sha256 (empty: the pin)'
+        required: false
+        default: ''
+        type: string
+      kubectl_sha256:
+        description: 'sha256 of that kubectl linux/amd64 binary, from dl.k8s.io (empty: the pin)'
+        required: false
+        default: ''
+        type: string
+      label:
+        description: 'Label for the run name (the version matrix finds its run by it)'
+        required: false
+        default: ''
+        type: string
   # Weekly regression: re-prove every rule even when no file in the paths above
   # changed (pySigma, the runner image, kind and the kernel drift underneath).
   # A schedule event has no PR base, so the `changes` job decides relevant=true.
@@ -93,12 +128,20 @@ env:
   # the create commands of detections/k8s/kind-*.yaml. Next bump due by 2027-01-20.
   # Kubernetes v1.36.5 is released, but kind has not published a kindest/node image for
   # it yet; the maintainer chose to pin v1.36.4 until it does.
+  # A workflow_dispatch can replace the node image and kubectl (the inputs above, for
+  # the version matrix); the pins below stay the only values for every other event.
+  # When the pin moves, also move the legs of .github/workflows/k8s-version-matrix.yml
+  # to the previous and the next minor that the new kind release publishes (image by
+  # digest from its release notes; kubectl version and .sha256 from dl.k8s.io).
+  # Then update the version sentences in detections/README.md (the matrix paragraph
+  # and the Kubernetes version notes) and the Version notes of TRR9002, TRR9006 and
+  # TRR9009 (research/trr90NN/k8s/README.md).
   KIND_VERSION: v0.33.0
   KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
-  KIND_NODE_IMAGE: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
+  KIND_NODE_IMAGE: ${{ inputs.node_image || 'kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed' }}
   KUBE_SERVER_VERSION: v1.36.4
-  KUBECTL_VERSION: v1.36.4
-  KUBECTL_SHA256: 8b8f088da2dab964f853b38464033b1be15ede2839eca751482357c45abdd05a
+  KUBECTL_VERSION: ${{ inputs.kubectl_version || 'v1.36.4' }}
+  KUBECTL_SHA256: ${{ inputs.kubectl_sha256 || '8b8f088da2dab964f853b38464033b1be15ede2839eca751482357c45abdd05a' }}
   CLUSTER_NAME: apiserver
 
 jobs:
@@ -131,7 +174,10 @@ jobs:
             'detections/k8s/audit-policy-apiserver.yaml' \
             'detections/k8s/kind-apiserver-cluster.yaml' \
             'detections/k8s/cri-pod-sensor.sh' \
+            'detections/k8s/auditd_file_events.py' \
             'detections/benign/k8s/workload.sh' \
+            'detections/score_benign.py' \
+            'detections/benign_corpus.py' \
             'detections/sigma/T1098.006/' \
             'detections/sigma/T1053.007/' \
             'detections/sigma/T1552.007/' \
@@ -183,6 +229,14 @@ jobs:
     needs: changes
     if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
+    env:
+      # Each emulation appends one line per procedure (window + exit status) here; the
+      # validator binds each procedure gate to its window with --ledger (C1-3).
+      DETENG_LEDGER: /tmp/emulation-ledger.jsonl
+      # The only images the atomics and the benign workload run; pre-pulled with a
+      # bounded retry and loaded into the node so a Docker Hub hiccup does not flake pod
+      # starts (C1-5).
+      LAB_IMAGES: busybox:1.36 registry.k8s.io/pause:3.9
     steps:
       - uses: actions/checkout@v4
 
@@ -195,8 +249,25 @@ jobs:
 
       - name: Install kind and kubectl (pinned)
         shell: bash
+        env:
+          IN_KUBECTL_VERSION: ${{ inputs.kubectl_version }}
+          IN_KUBECTL_SHA256: ${{ inputs.kubectl_sha256 }}
         run: |
           set -euo pipefail
+          # A dispatch can replace the pins (inputs). Give kubectl_version and
+          # kubectl_sha256 together, and check each value's form before use.
+          if [ -n "${IN_KUBECTL_VERSION}${IN_KUBECTL_SHA256}" ] \
+             && { [ -z "${IN_KUBECTL_VERSION}" ] || [ -z "${IN_KUBECTL_SHA256}" ]; }; then
+            echo "::error::give the inputs kubectl_version and kubectl_sha256 together"
+            exit 1
+          fi
+          image_re='^[a-z0-9._:/-]+:v[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}$'
+          [[ "${KIND_NODE_IMAGE}" =~ ${image_re} ]] \
+            || { echo "::error::node image '${KIND_NODE_IMAGE}' is not name:vX.Y.Z@sha256:<64 hex>"; exit 1; }
+          [[ "${KUBECTL_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || { echo "::error::kubectl version '${KUBECTL_VERSION}' is not vX.Y.Z"; exit 1; }
+          [[ "${KUBECTL_SHA256}" =~ ^[0-9a-f]{64}$ ]] \
+            || { echo "::error::kubectl sha256 '${KUBECTL_SHA256}' is not 64 hex digits"; exit 1; }
           curl -fsSLo ./kind \
             "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
           echo "${KIND_SHA256}  ./kind" | sha256sum -c -
@@ -209,6 +280,7 @@ jobs:
           kubectl version --client
 
       - name: Create kind cluster with audit logging
+        id: cluster
         shell: bash
         run: |
           # Run from the repo root so the relative extraMounts path resolves.
@@ -220,14 +292,22 @@ jobs:
 
       - name: Confirm the pinned Kubernetes version
         shell: bash
+        env:
+          IN_NODE_IMAGE: ${{ inputs.node_image }}
         run: |
           set -euo pipefail
+          want="${KUBE_SERVER_VERSION}"; what="the pin"
+          if [ -n "${IN_NODE_IMAGE}" ]; then
+            # A dispatch with another node image: the image tag names the version.
+            ref="${KIND_NODE_IMAGE%%@*}"; want="${ref##*:}"; what="the node image tag"
+          fi
           server="$(kubectl version -o json | python3 -c 'import json, sys; print(json.load(sys.stdin)["serverVersion"]["gitVersion"])')"
           echo "Server Version: ${server}"
-          if [ "${server}" != "${KUBE_SERVER_VERSION}" ]; then
-            echo "::error::the kind cluster runs ${server}, but the pin is ${KUBE_SERVER_VERSION}"
+          if [ "${server}" != "${want}" ]; then
+            echo "::error::the kind cluster runs ${server}, but ${what} is ${want}"
             exit 1
           fi
+          echo "Kubernetes ${server} (node image ${KIND_NODE_IMAGE}, kubectl ${KUBECTL_VERSION})" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Confirm audit logging is active
         shell: bash
@@ -236,7 +316,35 @@ jobs:
             cat /etc/kubernetes/manifests/kube-apiserver.yaml | grep -- --audit- \
             || { echo "::error::audit flags not set on the API server"; exit 1; }
 
+      - name: Pre-pull the lab images and wait for the default service account
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Start the emulation ledger empty, so each procedure's window is this run's.
+          : > "${DETENG_LEDGER}"
+          # Docker Hub pulls from inside the node are the main source of flaky pod starts;
+          # pull on the runner with a bounded retry, then load each image into the node.
+          for img in ${LAB_IMAGES}; do
+            ok=
+            for i in 1 2 3; do
+              if docker pull -q "$img"; then ok=1; break; fi
+              echo "pull of $img failed (attempt $i)"
+              # Back off only before another attempt.
+              if [ "$i" -lt 3 ]; then sleep $((i * 10)); fi
+            done
+            [ -n "$ok" ] || { echo "::error::could not pull $img after 3 attempts"; exit 1; }
+            kind load docker-image --name "${CLUSTER_NAME}" "$img"
+          done
+          # A pod create before the token controller has made the default SA fails with
+          # 'serviceaccount "default" not found'; wait for it (kubectl 1.31+).
+          kubectl -n default wait --for=create serviceaccount/default --timeout=60s
+
       - name: Start the node runtime sensor (CRI pod sandboxes)
+        # Guarded like every other step that needs the cluster: an earlier failure
+        # (a pre-pull, a Confirm step) must not skip it, or the collect step and the
+        # negative control have no CRI log and print no gate result.
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: |
           # Stand-in for a runtime security agent on the node: record every pod
@@ -254,19 +362,96 @@ jobs:
           docker exec "${NODE}" test -s /var/log/cri-pods.jsonl \
             || { echo "::error::the CRI sensor wrote nothing"; exit 1; }
 
+      - name: Start the node file-event sensor (auditd, TRR9006 Strategy 3)
+        # A failure here must not skip the steps after it (the benign slice, the
+        # pre-emulation capture), so it cannot stop the audit and CRI gates. The 9006 E
+        # file gate fails closed without this sensor: no watch, no file event, MISS.
+        id: filesensor
+        continue-on-error: true
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Stand-in for a node file-access sensor (FIM / EDR). The kind node is a
+          # container on the runner's kernel and audit is not namespaced, so the
+          # runner's auditd records the node's syscalls. Install it the same way
+          # validate-detections.yml does on this runner image.
+          sudo apt-get update
+          sudo apt-get install -y auditd
+          sudo systemctl start auditd || sudo service auditd start
+          # The token is on a tmpfs that the kubelet mounts inside the node's own mount
+          # namespace (a projected volume is a memory-backed emptyDir). A directory-tree
+          # watch added from the runner (-w DIR, or -F dir=DIR: the same recursive
+          # rule) tags only the mounts the runner's namespace sees, so it misses that
+          # read. A per-file watch added through /proc/<node pid>/root resolves the
+          # path in the node's mount namespace and records it. So pin one token file of
+          # a long-lived kube-system pod on the node (kube-proxy), watch that file, and
+          # have Procedure E read exactly that file (TRR9006_TOKEN_FILE). Only paths are
+          # handled here; the token's bytes are never read by this step or recorded.
+          NODE="${CLUSTER_NAME}-control-plane"
+          NODE_PID="$(docker inspect -f '{{.State.Pid}}' "${NODE}")"
+          kubectl -n kube-system wait --for=condition=Ready pod -l k8s-app=kube-proxy \
+            --field-selector "spec.nodeName=${NODE}" --timeout=120s
+          POD_UID="$(kubectl -n kube-system get pod -l k8s-app=kube-proxy \
+            --field-selector "spec.nodeName=${NODE}" -o jsonpath='{.items[0].metadata.uid}')"
+          TOKEN_FILE="$(docker exec "${NODE}" sh -c "ls -d /var/lib/kubelet/pods/${POD_UID}/volumes/kubernetes.io~projected/kube-api-access-*/token 2>/dev/null | head -1")"
+          if [ -z "${POD_UID}" ] || [ -z "${TOKEN_FILE}" ]; then
+            echo "::error::no kube-proxy projected token file on ${NODE} (pod uid '${POD_UID}')"; exit 1
+          fi
+          # token -> ..data/token -> ..<timestamp>/token: watch the file it resolves to.
+          REAL="$(docker exec "${NODE}" readlink -f "${TOKEN_FILE}")"
+          WATCH="/proc/${NODE_PID}/root${REAL}"
+          # The runner user cannot traverse /proc/<pid>/root of a root process; root can.
+          sudo test -f "${WATCH}" || { echo "::error::cannot reach ${WATCH} as root on the runner"; exit 1; }
+          # Canary: read the non-secret ca.crt beside the token under its own watch and
+          # key, and fail here (not only at the gate) when the runner's auditd records
+          # no read on the node's tmpfs.
+          CA_FILE="${TOKEN_FILE%/token}/ca.crt"
+          CA_REAL="$(docker exec "${NODE}" readlink -f "${CA_FILE}")"
+          sudo auditctl -a always,exit -F path="/proc/${NODE_PID}/root${CA_REAL}" -F perm=r -F key=k8s_node_canary
+          docker exec "${NODE}" cat "${CA_FILE}" >/dev/null
+          seen=0
+          for _ in $(seq 1 10); do
+            # One grep on the file, not cat | grep -q: under pipefail an early grep exit
+            # can fail the pipeline (SIGPIPE) although it matched.
+            if sudo grep -qF "name=\"${CA_FILE}\"" /var/log/audit/audit.log; then seen=1; break; fi
+            sleep 1
+          done
+          if [ "${seen}" -ne 1 ]; then
+            echo "::error::the runner's auditd recorded no read of ${CA_FILE} on node ${NODE}: the node file-event sensor cannot see this node's projected volumes"; exit 1
+          fi
+          sudo auditctl -a always,exit -F path="${WATCH}" -F perm=r -F key=k8s_node_file
+          rules="$(sudo auditctl -l)"
+          grep -qF k8s_node_file <<<"${rules}" || { echo "::error::auditd watch not set"; exit 1; }
+          echo "TRR9006_TOKEN_FILE=${TOKEN_FILE}" >> "$GITHUB_ENV"
+          echo "Canary held; watching ${TOKEN_FILE} (resolves to ${REAL}) for reads."
+
       - name: Benign operator workload (live false-positive slice)
         # Ordinary operator activity in its own namespace (detections/benign/k8s/), run
         # BEFORE the pre-emulation capture so that log holds bootstrap + operator
         # traffic. It never uses an emulation marker and cleans up after itself; a
         # failure here must not stop the emulations, so it cannot fail the job.
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         continue-on-error: true
         timeout-minutes: 15
         shell: bash
-        run: bash detections/benign/k8s/workload.sh
+        run: |
+          # The split point of the live slice: a request received before it is cluster
+          # bootstrap, one at or after it is the operator workload (score_benign.py
+          # --extra-split-at). The format is the audit log's requestReceivedTimestamp
+          # (UTC, microseconds); the kind node shares the runner's clock.
+          echo "BENIGN_START=$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)" >> "$GITHUB_ENV"
+          bash detections/benign/k8s/workload.sh
 
       - name: Capture the logs before the emulation (negative control)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
+        env:
+          FILESENSOR_OUTCOME: ${{ steps.filesensor.outcome }}
         run: |
+          if [ "${FILESENSOR_OUTCOME}" != "success" ]; then
+            echo "::error title=file sensor::the node file-event sensor did not start (outcome '${FILESENSOR_OUTCOME}'); the 9006 E file gate will fail"
+          fi
           # Wait for the baseline privileged workloads (kube-proxy, kindnet) so the
           # pre-emulation log carries the matches the gate must exclude.
           kubectl wait --for=condition=Ready nodes --all --timeout=120s || true
@@ -275,89 +460,205 @@ jobs:
             cat /var/log/kubernetes/kube-apiserver-audit.log \
             > /tmp/pre-emulation-audit.log
           echo "Captured $(wc -l < /tmp/pre-emulation-audit.log) pre-emulation audit lines."
+          # Node file-event baseline (negative control): the watched token file's own
+          # readers (the kubelet's volume resync, kube-proxy) may be in it, but the
+          # marked reader has not run, so the 9006 E gate must stay quiet here. The
+          # validator prints how many file events this capture holds; with none, the
+          # gate can fail only on a stray marked-reader event. Its file control checks
+          # that the rule matches none of the kubelet's reads (a notice when none).
+          sudo cat /var/log/audit/audit.log 2>/dev/null | sudo tee /tmp/pre-audit-raw.log >/dev/null || true
+          python3 detections/k8s/auditd_file_events.py /tmp/pre-audit-raw.log \
+            --key k8s_node_file > /tmp/pre-emulation-file.jsonl || true
+          echo "Captured $(wc -l < /tmp/pre-emulation-file.jsonl) pre-emulation file event(s)."
 
       - name: Emulate TRR9004 (RBAC, benign view bindings)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: bash atomics/T1098.006/src/emulate.sh all
 
       - name: Emulate TRR9005 (Jobs/CronJobs, benign id)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: bash atomics/T1053.007/src/emulate.sh all
 
       - name: Emulate TRR9006 (Secrets, benign reads + token)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         env:
           TRR9006_NODE: apiserver-control-plane
         run: bash atomics/T1552.007/src/emulate.sh all
 
       - name: Emulate TRR9007 (dangerous pod specs, sleep-only)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         env:
           TRR9007_NODE: apiserver-control-plane
         run: bash atomics/T1611/src/emulate_k8s.sh all
 
       - name: Emulate TRR9008 (disable admission control, no-op webhooks)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         env:
           TRR9008_NODE: apiserver-control-plane
         run: bash atomics/T1685/src/emulate_k8s.sh all
 
       - name: Emulate TRR9009 (impersonation, read-only)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: bash atomics/T1134/src/emulate.sh all
 
       - name: Emulate TRR9010 (indicator removal, throwaway events/pod)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         env:
           TRR9010_NODE: apiserver-control-plane
         run: bash atomics/T1070/src/emulate.sh all
 
       - name: Emulate TRR9025 (malicious admission webhooks, no-op)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         env:
           TRR9025_NODE: apiserver-control-plane
         run: bash atomics/T1546/src/emulate_k8s.sh all
 
       - name: Emulate TRR9026 (pod port-forward, harmless tunnel)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: bash atomics/T1572/src/emulate.sh all
 
       - name: Emulate TRR9027 (cluster DNS poisoning, sentinel + restore)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         env:
           TRR9027_NODE: apiserver-control-plane
         run: bash atomics/T1565.001/src/emulate.sh all
 
       - name: Collect the audit log and the node sensor log
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
+        env:
+          FILESENSOR_OUTCOME: ${{ steps.filesensor.outcome }}
         run: |
-          # Give the final events a moment to flush.
-          sleep 3
+          set -euo pipefail
+          # Flush barrier in place of a fixed `sleep 3`: poll (at most 30 s) until the audit
+          # log holds an event received AFTER the ledger's last `end` (the moment the final
+          # procedure returned). A request received after that moment was audited after
+          # every procedure's own requests completed, so their events are in the file. The
+          # atomics' cleanup and the control plane's lease renewals (every ~2 s, logged at
+          # Metadata) always write such an event. Both sides are RFC3339 UTC and are
+          # compared as times, and a partly written last line is skipped. The barrier never
+          # fails the step: after 30 s it warns and the step collects the log anyway.
+          python3 - <<'PY'
+          import json, os, subprocess, time
+          from datetime import datetime, timezone
+
+
+          def ts(value):
+              try:
+                  t = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+              except ValueError:
+                  return None
+              return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+          ends = []
+          ledger = os.environ["DETENG_LEDGER"]
+          if os.path.exists(ledger):
+              with open(ledger, encoding="utf-8", errors="replace") as fh:
+                  for line in fh:
+                      try:
+                          t = ts(json.loads(line)["end"])
+                      except (ValueError, KeyError, TypeError):
+                          continue
+                      if t is not None:
+                          ends.append(t)
+          target = max(ends) if ends else None
+          node = os.environ["CLUSTER_NAME"] + "-control-plane"
+          out = "/tmp/kube-apiserver-audit.log"
+          for second in range(31):
+              with open(out, "wb") as fh:
+                  subprocess.run(["docker", "exec", node, "cat",
+                                  "/var/log/kubernetes/kube-apiserver-audit.log"],
+                                 stdout=fh, check=False)
+              if target is None:
+                  print("The ledger has no end time; collecting without a flush barrier.")
+                  break
+              newest = None
+              with open(out, encoding="utf-8", errors="replace") as fh:
+                  for line in fh:
+                      try:
+                          t = ts(json.loads(line).get("requestReceivedTimestamp"))
+                      except (ValueError, AttributeError):
+                          continue  # a partly written last line, or not an event
+                      if t is not None and (newest is None or t > newest):
+                          newest = t
+              if newest is not None and newest > target:
+                  print(f"The audit log holds an event after the last procedure end "
+                        f"({target.isoformat()}) after {second} s.")
+                  break
+              if second < 30:
+                  time.sleep(1)
+          else:
+              print(f"::warning::no audit event after the last procedure end ({target}) "
+                    "within 30 s; collecting the log anyway")
+          PY
           docker exec "${CLUSTER_NAME}-control-plane" \
             cat /var/log/kubernetes/kube-apiserver-audit.log \
             > /tmp/kube-apiserver-audit.log
           echo "Collected $(wc -l < /tmp/kube-apiserver-audit.log) audit lines."
+          # Not fatal, as in validate-staticpod: a missing sensor log must not stop the
+          # file-event collection below. The redirect leaves an empty file, and the CRI
+          # gates fail closed on it (no record -> MISS).
           docker exec "${CLUSTER_NAME}-control-plane" \
-            cat /var/log/cri-pods.jsonl > /tmp/cri-pods.jsonl
+            cat /var/log/cri-pods.jsonl > /tmp/cri-pods.jsonl \
+            || echo "::warning title=CRI sensor::no CRI sensor log on the node; the CRI gates fail closed on the empty log"
           echo "Collected $(wc -l < /tmp/cri-pods.jsonl) CRI sensor snapshots."
+          # Node file events: poll (max 30 s) for the marked reader's record (TRR9006
+          # Procedure E reads the watched token through /usr/local/bin/trr9006-reader),
+          # then convert the auditd records to linux/file_event JSON lines. The
+          # validator fails closed if the record never appears (gate MISS), so this
+          # never masks a real miss.
+          rules="$(sudo auditctl -l 2>/dev/null || true)"
+          if [ "${FILESENSOR_OUTCOME}" != "success" ]; then
+            echo "::warning title=file sensor::the node file-event sensor did not start (outcome '${FILESENSOR_OUTCOME}'), so the file log holds no token read"
+          elif ! grep -qF k8s_node_file <<<"${rules}"; then
+            echo "::warning title=file sensor::the token watch is gone (did the kubelet rotate the token, so audit dropped the watch with its directory?)"
+          fi
+          for _ in $(seq 1 30); do
+            sudo cat /var/log/audit/audit.log 2>/dev/null | sudo tee /tmp/node-audit-raw.log >/dev/null || true
+            grep -q 'exe="/usr/local/bin/trr9006-reader"' /tmp/node-audit-raw.log && break
+            sleep 1
+          done
+          python3 detections/k8s/auditd_file_events.py /tmp/node-audit-raw.log \
+            --key k8s_node_file > /tmp/node-file-events.jsonl || true
+          echo "Collected $(wc -l < /tmp/node-file-events.jsonl) file event(s)."
 
       - name: Validate detections (emulate -> audit + node sensor -> Sigma)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: |
           python3 detections/validate_apiserver_detections.py \
             --audit-log /tmp/kube-apiserver-audit.log \
-            --cri-log /tmp/cri-pods.jsonl | tee /tmp/apival.out
+            --cri-log /tmp/cri-pods.jsonl --file-log /tmp/node-file-events.jsonl \
+            --ledger "${DETENG_LEDGER}" | tee /tmp/apival.out
 
       - name: Negative control (no rule may pass without the emulation)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: |
           python3 detections/validate_apiserver_detections.py \
             --audit-log /tmp/pre-emulation-audit.log \
-            --cri-log /tmp/pre-emulation-cri.jsonl --expect-miss | tee /tmp/apineg.out
+            --cri-log /tmp/pre-emulation-cri.jsonl \
+            --file-log /tmp/pre-emulation-file.jsonl --expect-miss | tee /tmp/apineg.out
 
       - name: Score the pre-emulation log as a live benign slice (shadow)
-        # Bootstrap + operator workload, scored for every kubernetes/audit rule. Shadow
-        # only: what a rule matches here is reported, never enforced.
+        # Bootstrap + operator workload, scored for every kubernetes/audit rule, split at
+        # BENIGN_START into kind-live-bootstrap and kind-live-workload. Shadow only: what
+        # a rule matches here is reported, never enforced; only a workload rule over its
+        # corpus budget is annotated, and so is a window with no timed event. If
+        # BENIGN_START is empty, or is not the UTC time that the workload step writes
+        # (a `date` with no %6N, for example), a warning says so and every hit on the
+        # unsplit capture is annotated: a bad value never stops the scoring.
         if: always()
         continue-on-error: true
         shell: bash
@@ -366,10 +667,18 @@ jobs:
             echo "No pre-emulation audit log was captured; nothing to score."
             exit 0
           fi
+          split=()
+          utc='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?Z$'
+          if [[ "${BENIGN_START:-}" =~ $utc ]]; then
+            split=(--extra-split-at "${BENIGN_START}")
+          else
+            echo "BENIGN_START='${BENIGN_START:-}' is not a UTC time such as 2026-10-20T18:01:25.454000Z."
+            echo "::warning title=benign-corpus::BENIGN_START is empty, unset or malformed, so the live capture is scored unsplit (every hit warns)"
+          fi
           python3 detections/score_benign.py \
             --extra-slice /tmp/pre-emulation-audit.log \
             --extra-logsource kubernetes/audit \
-            --extra-label kind-bootstrap-and-workload \
+            --extra-label kind-live "${split[@]}" \
             --examples 0 --markdown "$GITHUB_STEP_SUMMARY"
 
       - name: Publish results to job summary
@@ -400,6 +709,9 @@ jobs:
             /tmp/pre-emulation-audit.log
             /tmp/cri-pods.jsonl
             /tmp/pre-emulation-cri.jsonl
+            /tmp/node-file-events.jsonl
+            /tmp/pre-emulation-file.jsonl
+            ${{ env.DETENG_LEDGER }}
           if-no-files-found: ignore
 
       - name: Delete the cluster

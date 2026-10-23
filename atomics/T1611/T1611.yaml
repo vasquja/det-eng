@@ -229,12 +229,14 @@ atomic_tests:
       Writes a dangerous static pod manifest (privileged + hostPath / + hostPID) to
       the kubelet's static-pod directory on the node. The kubelet runs it straight
       through the container runtime, then registers a mirror pod so the API shows it.
+      The test polls up to 60s for that mirror pod and fails if it never registers.
       The node runtime sensor sees the running container; the mirror create is
       audited as a system:node pods-create carrying the spec, so at Request level the
       chokepoint catches it too (links to TRR9003). Under a Metadata-only audit
       policy the spec is hidden and only the node sensor sees the container. The
       container only sleeps. Needs node access (docker exec on kind), as TRR9003 does.
-      Node-sensor rule: detections/sigma/T1543.005/k8s_cri_static_pod_start.yml
+      Node-sensor rule: detections/sigma/T1543.005/k8s_cri_static_pod_start.yml;
+      API chokepoint rule: detections/sigma/T1611/k8s_podspec_host_access.yml
     supported_platforms:
       - containers
     executor:

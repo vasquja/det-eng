@@ -9,10 +9,11 @@ description: |
   TRR9003 Procedure A (Static Pod Persistence, T1543.005), Strategy 3.
 
   This is a NODE sensor rule. It needs host file-event telemetry (file integrity
-  monitoring, auditd, or an EDR agent). It is NOT an API server audit rule, and
-  the TRR9003 audit-log validation loop does not exercise it; the node runtime
-  chokepoint (Strategy 1) and this file-event rule cover the paths the control
-  plane cannot see.
+  monitoring, auditd, or an EDR agent). It is NOT an API server audit rule; the
+  API server audit log cannot see the write. CI gates it with a node file-event
+  sensor (validate_staticpod_detections.py, procedure A, log source file). The
+  node runtime chokepoint (Strategy 1) and this file-event rule cover the paths
+  the control plane cannot see.
 
   Almost nothing writes to this directory after install, so a write by anything
   other than the package manager or kubeadm is high signal. Pair with the
@@ -25,7 +26,7 @@ references:
   - https://www.elastic.co/guide/en/security/current/kubernetes-static-pod-manifest-file-access.html
 author: det-eng
 date: 2026/10/08
-modified: 2026/10/16
+modified: 2026/10/23
 tags:
   - attack.persistence
   - attack.privilege-escalation

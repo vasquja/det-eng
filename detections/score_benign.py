@@ -11,7 +11,8 @@ SQLite backend, and reports for each rule:
   hits             alerts the rule raised on benign activity
   rate_per_10k     hits per 10,000 events of the rule's logsource
   actors           who is behind those hits: the first field present of ACTOR_FIELDS
-                   for the logsource (auditd exe, else comm; Kubernetes audit
+                   for the logsource (auditd exe, else comm; node file events the
+                   process Image; Kubernetes audit
                    user.username; Kubernetes CRI the pod's metadata.namespace, not a
                    principal; CloudTrail the session issuer's role ARN before
                    userIdentity.arn, so one role counts once across its sessions;
@@ -52,7 +53,19 @@ the snapshot is stale; --update rewrites it.
 
 A live capture (the kind cluster's pre-emulation audit log, a recorded Linux
 benign workload) can be scored with --extra-slice. Extra slices are reported in
-shadow mode only and never enter the snapshot.
+shadow mode only and never enter the snapshot. --extra-logsource names the
+capture's logsource as the slice listing prints it: product/service
+(kubernetes/audit, the default; linux/auditd), or product/category for a
+logsource with no service (linux/file_event, read by category);
+product/category=NAME is always a category. When no scored rule reads that
+logsource, a warning says so, because the capture then scores nothing and lists
+no row. --extra-split-at T splits a
+Kubernetes audit capture by requestReceivedTimestamp: <label>-bootstrap (before T,
+the cluster's own install traffic) and <label>-workload (at or after T). Each row
+shows the rule's corpus budget; only a workload row over it is flagged and warned
+(an event with no usable requestReceivedTimestamp counts as workload). A window
+with no timed event is warned too, because then the split proves nothing.
+Nothing is enforced.
 
 Usage:
     python3 detections/score_benign.py                 # report
@@ -63,7 +76,8 @@ Usage:
     python3 detections/score_benign.py --baseline-scores BASE/detections/benign/scores.json
                                                        # fail on any rule noisier than the base
     python3 detections/score_benign.py --extra-slice /tmp/pre-emulation-audit.log \\
-        --extra-logsource kubernetes/audit --extra-label kind-bootstrap
+        --extra-logsource kubernetes/audit --extra-label kind-live \\
+        --extra-split-at 2026-10-20T18:01:25.454000Z  # bootstrap and workload apart
 """
 
 import argparse
@@ -72,6 +86,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import benign_corpus  # noqa: E402
@@ -85,9 +100,12 @@ DEFECTS = os.path.join(REPO, "detections", "RULE_DEFECTS.md")
 SNAPSHOT = os.path.join(benign_corpus.ROOT, "scores.json")
 TOP_ACTORS = 10
 
-# Who did it, per logsource: the first field present on a hit event.
+# Who did it, per logsource: the first field present on a hit event. A logsource
+# with no service is keyed by its category (linux / file_event: the node file-event
+# rules).
 ACTOR_FIELDS = {
     ("linux", "auditd"): ["exe", "comm"],
+    ("linux", "file_event"): ["Image"],
     ("kubernetes", "audit"): ["user.username"],
     ("kubernetes", "cri"): ["metadata.namespace"],
     # The session issuer (the role) before the per-session ARN, so one role used by
@@ -110,7 +128,7 @@ ACTOR_FIELDS = {
 
 
 def actor(event, logsource):
-    key = (logsource.get("product"), logsource.get("service"))
+    key = (logsource.get("product"), logsource.get("service") or logsource.get("category"))
     for field in ACTOR_FIELDS.get(key, []):
         if event.get(field) not in (None, ""):
             return str(event[field])
@@ -332,9 +350,28 @@ def grown_actors(old, new):
             for a, n in new["actors"].items() if n > was.get(a, 0)]
 
 
+def extra_logsource(text, rules):
+    """The logsource that --extra-logsource names, as a slice logsource.
+
+    PRODUCT/NAME is written as the slice listing prints a slice: its service, else
+    its category. NAME is a service (kubernetes/audit, linux/auditd), unless no rule
+    in rules reads it as a service of PRODUCT and some rule reads it as a category
+    (linux/file_event: the node file-event rules name no service).
+    PRODUCT/category=NAME is always a category.
+    """
+    product, _, name = text.partition("/")
+    if name.startswith("category="):
+        return {"product": product, "category": name[len("category="):]}
+    as_service = {"product": product, "service": name}
+    as_category = {"product": product, "category": name}
+    if not any(reads(as_service, r["logsource"]) for r in rules) \
+            and any(reads(as_category, r["logsource"]) for r in rules):
+        return as_category
+    return as_service
+
+
 def load_extra(path, logsource, label):
-    """A live capture as a slice: JSONL raw events (or one JSON array)."""
-    product, _, service = logsource.partition("/")
+    """A live capture as a slice with this logsource: JSONL raw events (or one JSON array)."""
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
     try:
@@ -349,9 +386,82 @@ def load_extra(path, logsource, label):
                     raw.append(json.loads(line))
                 except json.JSONDecodeError:
                     continue
-    spec = {"id": label, "version": 0, "logsource": {"product": product, "service": service},
-            "fidelity": "recorded"}
+    spec = {"id": label, "version": 0, "logsource": dict(logsource), "fidelity": "recorded"}
     return benign_corpus.Slice(spec, path, raw)
+
+
+# RFC 3339 date-time (section 5.6) with seconds and a zone; "T", "t" or a space between.
+_RFC3339 = re.compile(r"(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?"
+                      r"(?:([Zz])|([+-])(\d{2}):(\d{2}))", re.ASCII)
+
+
+def audit_time(text):
+    """An RFC 3339 time with a zone as an aware datetime in UTC, else None.
+
+    The audit log writes requestReceivedTimestamp as a MicroTime in UTC
+    (2026-10-20T18:01:25.454000Z, apimachinery RFC3339Micro); an unset one is null.
+    Only the RFC 3339 form is accepted: a time with no zone, no seconds or another
+    ISO 8601 form (a week date, the basic format) cannot be placed against the split
+    with certainty, so it is None too. So is a time that is out of the datetime range
+    in UTC (0001-01-01T00:00:00+01:00). A fraction keeps its first six digits (the
+    microseconds that a MicroTime holds); the digits after them are dropped.
+    """
+    if not isinstance(text, str):
+        return None
+    m = _RFC3339.fullmatch(text.strip())
+    if not m:
+        return None
+    year, month, day, hour, minute, second, frac, utc, sign, oh, om = m.groups()
+    if not utc and (int(oh) > 23 or int(om) > 59):  # time-numoffset: 00-23 ":" 00-59
+        return None
+    try:
+        zone = timezone.utc if utc else timezone(
+            (1 if sign == "+" else -1) * timedelta(hours=int(oh), minutes=int(om)))
+        return datetime(int(year), int(month), int(day), int(hour), int(minute), int(second),
+                        int((frac or "0")[:6].ljust(6, "0")), tzinfo=zone).astimezone(timezone.utc)
+    except (ValueError, OverflowError):  # month 13, hour 24, second 60; out of range in UTC
+        return None
+
+
+def split_time(text):
+    """argparse type of --extra-split-at."""
+    when = audit_time(text)
+    if when is None:
+        raise argparse.ArgumentTypeError(
+            f"{text!r} is not an RFC 3339 time with seconds and a zone "
+            "(e.g. 2026-10-20T18:01:25.454000Z)")
+    return when
+
+
+def stamp(when):
+    """An aware datetime in the audit log's form (UTC, microseconds)."""
+    u = when.astimezone(timezone.utc)
+    return f"{u.year:04d}-{u:%m-%dT%H:%M:%S.%f}Z"  # %Y does not pad a year under 1000
+
+
+def received_at(event):
+    """The usable requestReceivedTimestamp of an audit event, else None."""
+    return audit_time(event.get("requestReceivedTimestamp")) if isinstance(event, dict) else None
+
+
+def split_extra(extra, cut):
+    """(<label>-bootstrap, <label>-workload, untimed) of a live Kubernetes audit capture.
+
+    Bootstrap holds the events received before cut (requestReceivedTimestamp < cut),
+    workload the rest. An event with no usable requestReceivedTimestamp (missing,
+    null, not a string, or not an RFC 3339 time with a zone) goes to the workload
+    part, the part that warns, so such an event never hides a hit in the bootstrap
+    part; `untimed` counts those events.
+    """
+    before, after, untimed = [], [], 0
+    for e in extra.raw:
+        when = received_at(e)
+        if when is None:
+            untimed += 1
+        (before if when is not None and when < cut else after).append(e)
+    parts = [benign_corpus.Slice(dict(extra.spec, id=f"{extra.id}-{name}"), extra.path, raw)
+             for name, raw in (("bootstrap", before), ("workload", after))]
+    return parts[0], parts[1], untimed
 
 
 def annotate(level, message):
@@ -368,8 +478,18 @@ def main():
                     help="fail when a rule in enforce mode exceeds its budget")
     ap.add_argument("--extra-slice", help="also score a live capture (JSONL), shadow only")
     ap.add_argument("--extra-logsource", default="kubernetes/audit",
-                    help="product/service of --extra-slice (default kubernetes/audit)")
+                    help="logsource of --extra-slice as the slice listing prints it: "
+                         "product/service, or product/category for a logsource with no "
+                         "service (linux/file_event); product/category=NAME is always a "
+                         "category (default kubernetes/audit). If no rule reads it, a "
+                         "warning says so")
     ap.add_argument("--extra-label", default="live-capture", help="name for --extra-slice")
+    ap.add_argument("--extra-split-at", type=split_time, metavar="RFC3339",
+                    help="split a kubernetes/audit --extra-slice at this RFC 3339 time (with "
+                         "seconds and a zone): events with requestReceivedTimestamp before it "
+                         "are scored as <label>-bootstrap, the rest (and events with no usable "
+                         "time) as <label>-workload; only workload rows over the rule's corpus "
+                         "budget are flagged and warned, and so is an empty window (shadow)")
     ap.add_argument("--markdown", help="append a markdown report to this file")
     ap.add_argument("--json", help="write the full report as JSON to this file")
     ap.add_argument("--examples", type=int, default=1,
@@ -382,6 +502,10 @@ def main():
                          "both raises more hits now than in FILE (a rise inside its budget "
                          "then waits for a human); an unreadable FILE fails")
     args = ap.parse_args()
+    if args.extra_split_at is not None and (not args.extra_slice
+                                            or args.extra_logsource != "kubernetes/audit"):
+        ap.error("--extra-split-at splits a --extra-slice on requestReceivedTimestamp, so it "
+                 "needs --extra-slice with --extra-logsource kubernetes/audit")
 
     base = None
     if args.baseline_scores:
@@ -395,9 +519,10 @@ def main():
             return 1
 
     rules = load_rules(args.rules or None)
+    every = load_rules() if args.rules else rules
     slices = benign_corpus.load_corpus()
     default, budgets, exempt = load_budgets()
-    unknown = sorted((set(budgets) | set(exempt)) - {r["key"] for r in load_rules()})
+    unknown = sorted((set(budgets) | set(exempt)) - {r["key"] for r in every})
     if unknown:
         print(f"ERROR: budgets.json names rule(s) that do not exist: {', '.join(unknown)}")
         return 1
@@ -476,19 +601,76 @@ def main():
                     for line in sigma_explain.explain_hit(r["model"], hit[0]):
                         print("  " + line)
 
-    extra_rows = []
+    extra_parts = []  # [(part, compared, [(rule key, score, corpus budget, over it)])]
+    split, untimed, empty, timed = args.extra_split_at, 0, {}, {}  # empty: {part: why}
+    cut = "" if split is None else stamp(split)
+    unread = None  # why no scored rule reads the live capture
     if args.extra_slice:
-        extra = load_extra(args.extra_slice, args.extra_logsource, args.extra_label)
-        xscores, xexamples = score(rules, [extra])
-        print(f"\nLive capture {args.extra_label} ({args.extra_logsource}, "
-              f"{len(extra.events)} event(s)) - shadow only:")
-        for key, sc in sorted(xscores.items(), key=lambda kv: (-kv[1]["hits"], kv[0])):
-            actors = ", ".join(f"{a} x{n}" for a, n in list(sc["actors"].items())[:3])
-            print(f"  {key:<{width}} hits {sc['hits']:>5}  per10k {sc['rate_per_10k']:>8}  {actors}")
-            extra_rows.append((key, sc))
-            if sc["hits"]:
-                annotate("warning", f"{key} fired {sc['hits']} time(s) on the live benign "
-                         f"capture {args.extra_label} (shadow)")
+        extra = load_extra(args.extra_slice, extra_logsource(args.extra_logsource, every),
+                           args.extra_label)
+        # A logsource that no rule reads scores nothing and lists no row, which looks
+        # like a clean capture. Say so, with the logsources that the rules do read.
+        if not any(reads(extra.logsource, r["logsource"]) for r in rules):
+            known = sorted({f"{r['logsource'].get('product')}/"
+                            f"{r['logsource'].get('service') or r['logsource'].get('category')}"
+                            for r in rules})
+            unread = (f"no scored rule reads --extra-logsource {args.extra_logsource}, so the "
+                      f"live capture {extra.id} scores nothing. The scored rules read: "
+                      f"{', '.join(known) or 'nothing'} (shadow)")
+            print(f"\nWARNING: {unread}")
+            annotate("warning", unread)
+        parts = [(extra, False)]
+        if split is not None:
+            boot, work, untimed = split_extra(extra, split)
+            parts = [(boot, False), (work, True)]
+            print(f"\nLive capture {extra.id} ({len(extra.events)} event(s)) split at {cut} "
+                  f"(requestReceivedTimestamp): {len(boot.events)} bootstrap, "
+                  f"{len(work.events)} workload event(s)"
+                  + (f" ({untimed} with no usable requestReceivedTimestamp: missing, null, "
+                     "or not an RFC 3339 time with a zone; counted as workload)"
+                     if untimed else ""))
+            # A window with no timed event means the split point is outside the capture
+            # (BENIGN_START written too late or too early, or a workload that did nothing):
+            # every hit then sits in one window, so the split proves nothing. Say so.
+            times = sorted(t for t in map(received_at, extra.raw) if t is not None)
+            span = (f"first at {stamp(times[0])}, last at {stamp(times[-1])}" if times
+                    else "no event has a usable requestReceivedTimestamp")
+            timed = {boot.id: len(boot.raw), work.id: len(work.raw) - untimed}
+            for part, side in ((boot, "before"), (work, "at or after")):
+                if not timed[part.id]:
+                    msg = (f"--extra-split-at {cut} left {part.id} with no timed event: no "
+                           f"event in {extra.id} was received {side} it ({span}). The split "
+                           "proves nothing; check BENIGN_START (shadow)")
+                    empty[part.id] = msg
+                    print(f"WARNING: {msg}")
+                    annotate("warning", msg)
+        for part, compared in parts:
+            xscores, _ = score(rules, [part])
+            print(f"\nLive capture {part.id} ({args.extra_logsource}, "
+                  f"{len(part.events)} event(s)) - shadow only"
+                  + (", compared with each rule's corpus budget:" if compared else ":"))
+            prows = []
+            for key, sc in sorted(xscores.items(), key=lambda kv: (-kv[1]["hits"], kv[0])):
+                actors = ", ".join(f"{a} x{n}" for a, n in list(sc["actors"].items())[:3])
+                cap = budget_for(key, default, budgets).get("max_hits", 0)
+                over = compared and sc["hits"] > cap
+                print(f"  {key:<{width}} hits {sc['hits']:>5}  per10k {sc['rate_per_10k']:>8}  "
+                      f"budget {cap:>4}{'  OVER corpus budget' if over else ''}  {actors}")
+                prows.append((key, sc, cap, over))
+                # Unsplit, every hit warns. Split, only a workload rule over its corpus
+                # budget warns: bootstrap hits are install-once traffic, reported only.
+                if over:
+                    annotate("warning", f"{key} fired {sc['hits']} time(s) on the live benign "
+                             f"capture {part.id}, over its corpus budget of {cap} (shadow)")
+                elif sc["hits"] and split is None:
+                    annotate("warning", f"{key} fired {sc['hits']} time(s) on the live benign "
+                             f"capture {part.id} (shadow)")
+            extra_parts.append((part, compared, prows))
+            if compared:
+                print(f"  {sum(1 for *_, over in prows if over)} rule(s) over their corpus "
+                      f"budget on {part.id} (shadow: warned, never enforced)"
+                      + ("; the window holds no timed event, see the WARNING above."
+                         if part.id in empty else "."))
 
     for r, sc, b in over_shadow:
         annotate("warning", f"{r['key']} fired {sc['hits']} time(s) on the benign corpus "
@@ -499,13 +681,24 @@ def main():
 
     snap = snapshot(scores, slices) if not args.rules else None
     if args.json:
+        # extra: {rule key: score} unsplit; {part: {rule key: score}} split.
+        xjson = {part.id: {k: sc for k, sc, *_ in prows} for part, _, prows in extra_parts}
+        if split is None:
+            xjson = next(iter(xjson.values()), {})
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump({"snapshot": snap or snapshot(scores, slices),
                        "unscored": unscored,
                        "unscored_not_exempt": unexempt,
                        "over_budget": {"enforce": [r["key"] for r, *_ in over_enforce],
                                        "shadow": [r["key"] for r, *_ in over_shadow]},
-                       "extra": {k: v for k, v in extra_rows}}, fh, indent=2, sort_keys=True)
+                       "extra": xjson,
+                       "extra_split": None if split is None else {
+                           "at": cut, "untimed": untimed,
+                           "events": {part.id: len(part.raw) for part, *_ in extra_parts},
+                           "timed": timed, "empty": list(empty),
+                           "over_corpus_budget": [k for _, compared, prows in extra_parts
+                                                  if compared for k, *_, over in prows if over]}},
+                      fh, indent=2, sort_keys=True)
     if args.markdown:
         with open(args.markdown, "a", encoding="utf-8") as fh:
             fh.write("## Benign corpus false-positive scores\n\n")
@@ -521,12 +714,31 @@ def main():
             if unscored:
                 fh.write(f"\nNot scored (no slice for their logsource): "
                          f"{', '.join(f'`{k}`' + ('' if k in exempt else ' (NOT EXEMPT)') for k in unscored)}\n")
-            if extra_rows:
-                fh.write(f"\n### Live capture `{args.extra_label}` (shadow)\n\n"
-                         "| rule | hits | per 10k | top actors |\n|---|---:|---:|---|\n")
-                for key, sc in extra_rows:
+            for part, compared, prows in extra_parts:
+                fh.write(f"\n### Live capture `{part.id}` (shadow)\n\n")
+                if unread:  # the same text as the log
+                    fh.write(f"**WARNING:** {unread}.\n\n")
+                if part.id in empty:  # the same cause and times as the text log
+                    fh.write(f"**WARNING:** {empty[part.id]}.\n\n")
+                if split is not None and not compared:
+                    fh.write(f"{len(part.events)} event(s) received before {cut} (the cluster "
+                             "bootstrap). Reported only: each row shows the rule's corpus "
+                             "budget for reference, and no row is flagged or warned.\n\n")
+                elif compared:
+                    fh.write(f"{len(part.events)} event(s) received at or after {cut}, or with "
+                             "no usable time (the operator workload"
+                             + (f"; {untimed} with no usable requestReceivedTimestamp: missing, "
+                                "null, or not an RFC 3339 time with a zone" if untimed else "")
+                             + "). Only a rule over its corpus budget is flagged and warned "
+                             "(shadow: never enforced).\n\n")
+                fh.write("| rule | hits | per 10k | corpus budget |"
+                         + (" status |" if compared else "") + " top actors |\n"
+                         + "|---|---:|---:|---:|" + ("---|" if compared else "") + "---|\n")
+                for key, sc, cap, over in prows:
                     actors = "; ".join(f"`{a}` x{n}" for a, n in list(sc["actors"].items())[:3])
-                    fh.write(f"| `{key}` | {sc['hits']} | {sc['rate_per_10k']} | {actors} |\n")
+                    status = (" **OVER corpus budget** |" if over else " ok |") if compared else ""
+                    fh.write(f"| `{key}` | {sc['hits']} | {sc['rate_per_10k']} | {cap} |"
+                             f"{status} {actors} |\n")
             fh.write("\n")
 
     status = 0

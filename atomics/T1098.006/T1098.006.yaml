@@ -6,10 +6,16 @@ display_name: "Account Manipulation: Additional Container Cluster Roles (Kuberne
 # needs (the audit event for the rbac.authorization.k8s.io write) exists for the
 # paired detections. Every object is named trr9004-* so a validator matches the
 # emulation's own events, not the many bootstrap/reconcile RBAC writes a kubeadm
-# cluster makes. Bindings point at the read-only built-in `view` role; the one
-# wildcard role is never bound; the group binding uses a throwaway group. Nothing
-# gains real power. These need a reachable cluster with RBAC write rights (see
-# detections/k8s/kind-apiserver-cluster.yaml).
+# cluster makes. The main binding of each procedure points at the read-only built-in
+# `view` role; the one wildcard role is never bound; the group binding uses a
+# throwaway group. A, B, D and E each also make ONE inert graded object, deleted at
+# once by the next kubectl call (a failed delete fails the test): the built-in `edit`
+# role bound to the user trr9004-nouser, for whom no credential exists (A
+# cluster-wide, B in the throwaway namespace trr9004-sev); an empty role bound to the
+# group system:serviceaccounts:trr9004-none (no such namespace); and a JSON patch
+# that adds impersonate to an unbound role. So the high-severity grader is proven
+# live, and no principal that authenticates gains power. These need a reachable
+# cluster with RBAC write rights (see detections/k8s/kind-apiserver-cluster.yaml).
 
 atomic_tests:
   - name: "TRR9004.K8S.A — ClusterRoleBinding to a built-in ClusterRole"
@@ -20,6 +26,9 @@ atomic_tests:
       instead; the audit event shape (create clusterrolebindings) is identical.
       Chokepoint (Strategy 1): objectRef.apiGroup=rbac.authorization.k8s.io, a write
       verb. Rule: detections/sigma/T1098.006/k8s_rbac_write.yml
+      A-sev then binds the least privileged graded role `edit` to the nonexistent
+      user trr9004-nouser (deleted at once), to prove the high-severity grader
+      k8s_rbac_privileged_grant live.
     supported_platforms:
       - containers
     executor:
@@ -28,7 +37,7 @@ atomic_tests:
       command: |
         bash #{source_dir}/emulate.sh a
       cleanup_command: |
-        kubectl delete clusterrolebinding trr9004-crb-view --ignore-not-found
+        kubectl delete clusterrolebinding trr9004-crb-view trr9004-crb-admin --ignore-not-found
     input_arguments:
       source_dir:
         description: Path to the atomic source directory.
@@ -42,6 +51,10 @@ atomic_tests:
       The binding lives in one namespace but reaches a cluster-wide role; the tell
       is requestObject.roleRef.kind=ClusterRole (Request level).
       Rule: detections/sigma/T1098.006/k8s_rbac_write.yml
+      B-sev then creates an inert `edit` RoleBinding to the nonexistent user
+      trr9004-nouser in a throwaway namespace trr9004-sev (the binding is deleted
+      at once, the namespace in cleanup), to prove the high-severity grader on a
+      namespaced binding.
     supported_platforms:
       - containers
     executor:
@@ -51,6 +64,8 @@ atomic_tests:
         bash #{source_dir}/emulate.sh b
       cleanup_command: |
         kubectl -n default delete rolebinding trr9004-rb-view --ignore-not-found
+        kubectl -n trr9004-sev delete rolebinding trr9004-rb-edit --ignore-not-found
+        kubectl delete namespace trr9004-sev --ignore-not-found
     input_arguments:
       source_dir:
         description: Path to the atomic source directory.
@@ -88,6 +103,10 @@ atomic_tests:
       at once -- that is a real grant and is documentation only, never run. The
       group-subject shape is the telemetry.
       Severity rule: detections/sigma/T1098.006/k8s_rbac_privileged_grant.yml
+      D-sev then binds an EMPTY ClusterRole (trr9004-cr-empty, no rules) to the
+      group system:serviceaccounts:trr9004-none (the binding, then the role, are
+      deleted at once), so the mass-grant group-subject shape fires the grader
+      while nothing is granted.
     supported_platforms:
       - containers
     executor:
@@ -96,7 +115,8 @@ atomic_tests:
       command: |
         bash #{source_dir}/emulate.sh d
       cleanup_command: |
-        kubectl delete clusterrolebinding trr9004-crb-grp --ignore-not-found
+        kubectl delete clusterrolebinding trr9004-crb-grp trr9004-crb-sev-grp --ignore-not-found
+        kubectl delete clusterrole trr9004-cr-empty --ignore-not-found
     input_arguments:
       source_dir:
         description: Path to the atomic source directory.
@@ -110,6 +130,9 @@ atomic_tests:
       not create), the stealthy amend-an-existing-object path that detections
       watching only `create` miss.
       Rule: detections/sigma/T1098.006/k8s_rbac_write.yml
+      E-sev then JSON-patches an UNBOUND ClusterRole (trr9004-cr-esc) to add
+      `impersonate` on users (deleted at once), so the grader's JSON-patch branch
+      is proven live while the rule grants nothing (the role is never bound).
     supported_platforms:
       - containers
     executor:
@@ -118,7 +141,7 @@ atomic_tests:
       command: |
         bash #{source_dir}/emulate.sh e
       cleanup_command: |
-        kubectl delete clusterrole trr9004-cr-benign trr9004-cr-wild --ignore-not-found
+        kubectl delete clusterrole trr9004-cr-benign trr9004-cr-wild trr9004-cr-esc --ignore-not-found
     input_arguments:
       source_dir:
         description: Path to the atomic source directory.
@@ -132,9 +155,10 @@ atomic_tests:
       mapRoles entry, patches it to append a backdoor role mapped to a throwaway
       group (trr9004-unbound-group, NOT system:masters), then deletes it. On an EKS
       cluster the IAM authenticator would map that role to the cluster; on kind
-      nothing reads it. It touches only an aws-auth it wrote: it skips when it
-      cannot read the object or the object exists without being exactly its own,
-      and it removes only a leftover that is exactly what it writes. The patch
+      nothing reads it. It touches only an aws-auth it wrote: it skips when the
+      object exists without being exactly its own, it fails without a write when it
+      cannot read the object, and it removes only a leftover that is exactly what it
+      writes. A refused create, patch or delete fails the test. The patch
       carries the create's resourceVersion and the delete a resourceVersion
       precondition, so the API server refuses either (409 Conflict) if another
       writer changed the object in between; a real EKS mapping is never

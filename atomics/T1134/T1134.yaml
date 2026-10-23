@@ -16,6 +16,8 @@ atomic_tests:
       Lists namespaces while impersonating a throwaway user (--as=trr9009-impersonated).
       The audit event carries user.username (the real caller) and impersonatedUser.username
       (the borrowed user).
+      The borrowed identity holds no RBAC, so the test expects a 403 for it and fails if
+      the request is allowed, or if the caller may not impersonate at all.
       Chokepoint: impersonatedUser.username present.
       Rule: detections/sigma/T1134/k8s_impersonation.yml
     supported_platforms:
@@ -38,7 +40,8 @@ atomic_tests:
     description: |
       Lists namespaces impersonating a throwaway group, then impersonating system:masters
       to exercise the privileged-target severity rule (read-only, so the borrowed
-      cluster-admin does nothing but list).
+      cluster-admin does nothing but list). The throwaway-group list expects a 403 and
+      fails if it is allowed; the system:masters list must succeed (200).
       Chokepoint rule: detections/sigma/T1134/k8s_impersonation.yml
       Severity rule: detections/sigma/T1134/k8s_impersonation_privileged.yml
     supported_platforms:
@@ -61,6 +64,8 @@ atomic_tests:
     description: |
       Lists namespaces impersonating a throwaway service account that holds no RBAC
       (--as=system:serviceaccount:trr9009:trr9009-sa). The borrowed token grants nothing.
+      The borrowed identity holds no RBAC, so the test expects a 403 for it and fails if
+      the request is allowed, or if the caller may not impersonate at all.
       Rule: detections/sigma/T1134/k8s_impersonation.yml
     supported_platforms:
       - containers
@@ -82,6 +87,8 @@ atomic_tests:
     description: |
       Lists namespaces impersonating a user and a uid (--as-uid). The username is always
       present, so the chokepoint fires.
+      The borrowed identity holds no RBAC, so the test expects a 403 for it and fails if
+      the request is allowed, or if the caller may not impersonate at all.
       Rule: detections/sigma/T1134/k8s_impersonation.yml
     supported_platforms:
       - containers
@@ -104,7 +111,8 @@ atomic_tests:
       A forbidden impersonated read (get secrets as a throwaway user with no rights). The
       caller may impersonate, so impersonatedUser is stamped, but the borrowed identity is
       denied (decision=forbid). The presence chokepoint catches it where an allow-only rule
-      would not. Read-only and harmless.
+      would not. Read-only and harmless. The test expects that 403 and fails if the read
+      is allowed, or if the caller may not impersonate at all.
       Rule: detections/sigma/T1134/k8s_impersonation.yml
     supported_platforms:
       - containers

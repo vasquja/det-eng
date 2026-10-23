@@ -408,7 +408,8 @@ it again at once with the original Corefile plus an inert sentinel stub zone, an
 restores the original Corefile**; it skips a coredns ConfigMap that has an owner, an
 addon-manager label or the EKS add-on label (`eks.amazonaws.com/component`), runs only
 when `kubectl auth can-i` allows create, patch and delete of ConfigMaps in
-`kube-system`, puts the saved object back if the create fails, and then checks that
+`kube-system` (a read or a can-i check that errors fails the procedure, without a
+write), puts the saved object back if the create fails, and then checks that
 `coredns` exists with the saved Corefile byte for byte; if not, it prints a `::error::`
 line with the saved object and exits 1.
 B and C run only when no ConfigMap of that name exists (a GKE `kube-dns` or an AKS

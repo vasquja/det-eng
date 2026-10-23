@@ -27,8 +27,9 @@ description: |
   namespaces by design (CI deployers, GitOps controllers, tenant operators) by
   user.username and objectRef.name, and correlate a hit with the same actor's other
   writes (an Events delete, a workload delete, an RBAC or admission change) in the
-  same window. Metadata level is enough: verb, resource, name, identity and
-  responseStatus.code are all in the record.
+  same window. Metadata level is enough to fire: verb, resource, name, identity and
+  responseStatus.code are all in the record. The body form of the dry-run filter
+  needs Request level; the shipped lab policy logs namespace deletes at Request.
 
   A server-side dry run deletes nothing and is filtered: dryRun ["All"] in the
   DeleteOptions body (requestObject), or '?dryRun=All' in requestURI when the record
@@ -36,9 +37,10 @@ description: |
   audit.k8s.io/truncated, lost its body and is not trusted). When a DELETE has a body, the API server reads DeleteOptions
   from the body and ignores the query, so a query dry run next to a recorded body is
   not trusted. kubectl delete --dry-run=server sends the dry run in the body, which a
-  Metadata-level record does not hold, so at Metadata level that dry run still fires;
-  a Metadata-level record also cannot show a body, so there the query form is still
-  trusted.
+  Metadata-level record does not hold, so at Metadata level that dry run still fires
+  (at Request level, as the shipped lab policy logs it, it is filtered); a
+  Metadata-level record also cannot show a body, so there the query form is still
+  trusted (detections/RULE_DEFECTS.md K14).
 references:
   - https://attack.mitre.org/techniques/T1070/
   - https://kubernetes.io/docs/tasks/administer-cluster/namespaces/#deleting-a-namespace
@@ -98,5 +100,6 @@ falsepositives:
     patterns); this rule is for hunting and correlation, not a standalone alert.
   - Planned removal of an application or an add-on with its namespace.
   - kubectl delete namespace --dry-run=server logged at Metadata level (the dry run
-    is in the request body, which that level does not record).
+    is in the request body, which that level does not record). The shipped lab policy
+    logs namespace deletes at Request, so there it is filtered.
 level: low

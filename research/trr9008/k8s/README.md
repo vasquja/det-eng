@@ -87,7 +87,9 @@ HTTP method maps to the audit verb: DELETE (single) to delete, DELETE (collectio
 to deletecollection, PUT to update, PATCH to patch. There is no replace audit verb.
 Webhook configurations are cluster-scoped, so the audit event carries
 objectRef.name with an empty objectRef.namespace; the gate for an emulation is the
-name, not the namespace. A delete is fully described at Metadata level. A neuter
+name, not the namespace. A delete is described at Metadata level well enough to fire
+the chokepoint; only Request level records the DeleteOptions body that shows a
+server-side dry run, so the shared lab policy logs these deletes at Request. A neuter
 via update or patch is not: at Metadata you see that a webhook config changed but
 not that failurePolicy became Ignore or rules became empty. Grading the neuter needs
 the requestObject, which exists only at Request level, and for some patches the stored
@@ -170,7 +172,8 @@ Source: [`ddms/trr9008_k8s_a.json`](ddms/trr9008_k8s_a.json) (Arrows app format)
 
 **DDM summary.** The shaded node is the API server's authorize-and-audit of the
 admission write (`objectRef.apiGroup: admissionregistration.k8s.io`, a disabling
-verb), the chokepoint for A, B, and C. A delete is fully described at Metadata.
+verb), the chokepoint for A, B, and C. A delete is described at Metadata well enough to
+fire the chokepoint; its dry-run filter needs the DeleteOptions body (Request level).
 
 ### Procedure B: Delete a MutatingWebhookConfiguration  (`TRR9008.K8S.B`)
 
@@ -345,7 +348,9 @@ Request level). The query counts only when `dryRun=All` is a whole parameter of 
 (the first `?` starts the query, and Go `net/url` splits it at `&`), so a value of
 another parameter, such as `?fieldManager=?dryRun=All`, is not a dry run. It also
 counts only when the URI holds at most 100 `&`: Go `net/url` reads no parameter of a
-query that has more than 10,000, and the API server then stores the write. Baseline the policy engine's own controller, GitOps/Helm,
+query that has more than 10,000, and the API server then stores the write. A delete or
+deletecollection with no body whose query holds `?dryRun=All` is a dry run too, but it
+still fires ([RULE_DEFECTS K36](../../../detections/RULE_DEFECTS.md#k36-delete-dry-run-filters-read-only-the-body-a-query-only-dry-run-fires)). Baseline the policy engine's own controller, GitOps/Helm,
 and cluster-upgrade tooling by `user.username`.
 
 - Sensor: API server audit log.
@@ -414,9 +419,16 @@ the webhook cert paths covers it, and the CRI sensor sees the enforcer pods vani
 This repository already ships the manifest half:
 [`detections/sigma/T1543.005/linux_static_pod_manifest_write.yml`](../../../detections/sigma/T1543.005/linux_static_pod_manifest_write.yml)
 (TRR9003, level high) matches a write under `/etc/kubernetes/manifests/`, which holds
-`kube-apiserver.yaml`; it is compile-only in CI (no node file telemetry), and it
+`kube-apiserver.yaml`. CI gates it on TRR9003 Procedure A with the node file-event
+sensor (an auditd write watch on the static-pod directory). No CI emulation edits
+`kube-apiserver.yaml` (the sensor records kubeadm's bootstrap write of it, and the
+staticpod file control checks that the rule stays quiet on that write), so this TRR's
+control-plane edit is not exercised live. It
 filters writes by kubeadm, the kubelet and the package managers, each by its full
-install path. No rule covers the webhook cert paths.
+install path. On a sensor that also reports reads, it also fires when a process
+outside its install filter reads a manifest
+([`RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) L15). No rule covers the
+webhook cert paths.
 The lab demonstrates the gap read-only, by showing the apiserver manifest path on
 the node and noting no admissionregistration audit event follows an edit there.
 
@@ -467,6 +479,22 @@ with Atomic Red Team wrappers in
 | TRR9008.K8S.C | `emulate_k8s.sh c` — neuter a webhook config (failurePolicy Ignore, rules []), then four more shapes on their own configs: a merge patch and a JSON patch that replace the webhooks list and drop rules, a constant-false matchCondition, and a namespaceSelector that matches no namespace. | **built** |
 | TRR9008.K8S.D | `emulate_k8s.sh d` — create a pause Deployment, scale it to zero with `kubectl scale` and with a patch, delete it. | **built** |
 | TRR9008.K8S.D | `emulate_k8s.sh d2` — the same in the `kyverno` namespace (created only when absent, labelled `trr9008-created=true`, and deleted only when the test created it): a pause Deployment `trr9008-enforcer-standin`, scaled to zero with `kubectl scale --current-replicas=1` (an update of the scale subresource) and with a plain `kubectl scale`, then deleted. | **built** |
+
+`emulate_k8s.sh dryrun` is a control, not a procedure. It installs `trr9008-dryrun-vwc`
+(the Procedure C copy) and a pause Deployment `trr9008-dryrun-standin` in the
+`gatekeeper-system` namespace (created only when absent and labelled as d2 labels
+`kyverno`), then sends each write with `--dry-run=server`: a neuter merge patch and a
+delete of the webhook configuration; a patch of `spec.replicas` 0, both `kubectl
+scale` shapes, a delete of the Deployment and a deletecollection of the Deployments
+that carry its label (`kubectl delete --raw` with a DeleteOptions body that holds
+`dryRun: ["All"]`); and a delete of the `gatekeeper-system` namespace. When that
+namespace existed before the test (it has no `trr9008-created` label), the step fails
+before its first write and sends nothing to it. Then it checks that the webhook still
+fails closed, the Deployment still asks for one replica and the namespace is still
+Active. A server-side dry run persists nothing, so with the emulation ledger the
+validator's must-not-match checks (`MISS_MANIFEST`) assert that the chokepoint, the
+neuter grader and both workload rules match none of these records, and that each rule
+fires on each shape once its dry-run marker is removed.
 
 ## Detections
 

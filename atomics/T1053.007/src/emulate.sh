@@ -32,6 +32,41 @@ IMG="${TRR9005_IMAGE:-busybox:1.36}"
 
 log() { printf '[trr9005] %s\n' "$*" >&2; }
 
+# ---- fail-loud procedure bookkeeping (C1-4) --------------------------------
+# `must CMD` runs a procedure's action, prints its stderr on failure, and returns its
+# exit code. `run_proc P` times procedure_P, appends one ledger line to $DETENG_LEDGER
+# (set by CI; unset = no ledger) and records a failure without stopping the run, so
+# `all` attempts every procedure and then exits 1 naming the failures. Cleanup keeps
+# `|| true`: a failed cleanup must not hide a result.
+TRR="TRR9005"
+FAILED=()
+now_utc() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }
+must() {
+  local out rc=0
+  out="$("$@" 2>&1 >/dev/null)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "FAILED (exit $rc): $*"
+    [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/    /' >&2
+  fi
+  return "$rc"
+}
+run_proc() {
+  local p="$1" start end rc=0
+  start="$(now_utc)"
+  "procedure_$p" || rc=$?
+  end="$(now_utc)"
+  if [ -n "${DETENG_LEDGER:-}" ]; then
+    printf '{"trr":"%s","procedure":"%s","start":"%s","end":"%s","exit":%d,"expect":0}\n' \
+      "$TRR" "$p" "$start" "$end" "$rc" >> "$DETENG_LEDGER"
+  fi
+  if [ "$rc" -ne 0 ]; then
+    FAILED+=("$p")
+    [ -n "${GITHUB_ACTIONS:-}" ] && \
+      echo "::error title=${TRR} procedure ${p}::procedure ${p} failed (exit ${rc})"
+  fi
+  return 0
+}
+
 cleanup() {
   log "cleanup: removing every trr9005- batch object"
   kubectl -n "$NS" delete cronjob trr9005-cron --ignore-not-found >/dev/null 2>&1 || true
@@ -45,8 +80,8 @@ cleanup() {
 # one gate-matchable event.
 procedure_a() {
   log "A: create cronjob trr9005-cron (schedule 0 0 31 2 * -- never fires)"
-  kubectl -n "$NS" create cronjob trr9005-cron \
-    --image="$IMG" --schedule="0 0 31 2 *" -- /bin/true >/dev/null 2>&1 || true
+  must kubectl -n "$NS" create cronjob trr9005-cron \
+    --image="$IMG" --schedule="0 0 31 2 *" -- /bin/true
 }
 
 # Procedure B — create a one-shot Job that runs `id` then sleeps briefly, so the
@@ -54,9 +89,10 @@ procedure_a() {
 # job-name=trr9005-job) before cleanup removes it.
 procedure_b() {
   log "B: create one-shot job trr9005-job (runs id, then sleeps for the sensor)"
-  kubectl -n "$NS" create job trr9005-job \
-    --image="$IMG" -- sh -c 'id; sleep 30' >/dev/null 2>&1 || true
+  must kubectl -n "$NS" create job trr9005-job \
+    --image="$IMG" -- sh -c 'id; sleep 30' || return
   log "B: wait for the job pod to start so the node sensor records it"
+  # Readiness, not the gate-matched action: it may time out without failing the step.
   kubectl -n "$NS" wait --for=condition=Ready pod \
     -l batch.kubernetes.io/job-name=trr9005-job --timeout=60s >/dev/null 2>&1 || true
   sleep 3
@@ -67,24 +103,21 @@ procedure_b() {
 # fields appear in the Request-level audit event for triage.
 procedure_c() {
   log "C: apply host-access job trr9005-hostjob (privileged + hostPath, /bin/true)"
-  kubectl apply -f "$SCRIPT_DIR/hostjob.yaml" >/dev/null 2>&1 || true
+  must kubectl apply -f "$SCRIPT_DIR/hostjob.yaml"
 }
 
 # Procedure D — modify the existing CronJob (suspend it). The modification path
 # the chokepoint must catch (verb=patch, not create).
 procedure_d() {
-  kubectl -n "$NS" get cronjob trr9005-cron >/dev/null 2>&1 || procedure_a
+  kubectl -n "$NS" get cronjob trr9005-cron >/dev/null 2>&1 || procedure_a || return
   log "D: patch cronjob trr9005-cron (suspend: true) -> verb=patch"
-  kubectl -n "$NS" patch cronjob trr9005-cron --type=merge \
-    -p '{"spec":{"suspend":true}}' >/dev/null 2>&1 || true
+  must kubectl -n "$NS" patch cronjob trr9005-cron --type=merge \
+    -p '{"spec":{"suspend":true}}'
 }
 
 run_one() {
   case "$1" in
-    a) procedure_a ;;
-    b) procedure_b ;;
-    c) procedure_c ;;
-    d) procedure_d ;;
+    a|b|c|d) run_proc "$1" ;;
     *) log "unknown procedure: $1 (use a|b|c|d|all)"; exit 2 ;;
   esac
 }
@@ -92,10 +125,14 @@ run_one() {
 main() {
   local which="${1:-all}"
   if [ "$which" = "all" ]; then
-    for p in a b c d; do run_one "$p"; done
+    for p in a b c d; do run_proc "$p"; done
     cleanup
   else
     run_one "$which"
+  fi
+  if [ "${#FAILED[@]}" -gt 0 ]; then
+    log "emulation FAILED: procedure(s) ${FAILED[*]}"
+    exit 1
   fi
   log "emulation complete: $which"
 }

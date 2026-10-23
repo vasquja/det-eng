@@ -348,17 +348,15 @@ Waiver = namedtuple("Waiver", "why digest keep", defaults=((),))
 # Rules no validator can match-gate, because CI does not collect their telemetry.
 # Each still needs a passing positive in its sidecar. Adding an entry is a waiver
 # of R1: a human decides it, with the reason, and approves the change.
+#
+# The two node file-event rules (T1552.007/linux_k8s_sa_token_read and
+# T1543.005/linux_static_pod_manifest_write) were waived here while CI collected no
+# node file telemetry. The kind CI jobs now run an auditd node file-event sensor
+# (C2-7): validate_apiserver_detections.py gates the token read on TRR9006 Procedure
+# E, and validate_staticpod_detections.py gates the manifest write on TRR9003
+# Procedure A, both with a 'file' log source. The gate the waiver excused is met, so
+# the waivers are removed (a human decision, taken with that sensor in the same PR).
 COMPILE_ONLY = {
-    "T1552.007/linux_k8s_sa_token_read.yml": Waiver(
-        "node file-access telemetry (open of the projected service-account token) is not "
-        "collected on the kind CI cluster; validate_apiserver_detections.py compiles the rule "
-        "but cannot match-gate it",
-        "6f804a1c8803da991d9e40ab979849b1b861a50c69d4ad0f22affa72dde2de8c"),
-    "T1543.005/linux_static_pod_manifest_write.yml": Waiver(
-        "node file-write telemetry (a manifest dropped in the kubelet's staticPodPath) is not "
-        "collected on the kind CI cluster; validate_staticpod_detections.py compiles the rule "
-        "but cannot match-gate it",
-        "92bcf921011c78b176ffff52be16597931125706c5468bd6ee120f3ecaadd40d"),
 }
 
 # Pure-surface rules: every positive item is a SURFACE_FIELDS field, so the rule
@@ -647,9 +645,14 @@ def _proven_on(label, entry):
         return {"product": "kubernetes", "service": "audit"}
     if label in ("apiserver", "trr9003"):
         source = entry[2] if label == "apiserver" else entry[1]
+        # The node file-event sensor (C2-7): a 'file' source proves a rule on the
+        # Linux file_event log (the node file-integrity / EDR / auditd open+write
+        # telemetry the two node rules read), not the Kubernetes audit log.
+        if source == "file":
+            return {"product": "linux", "category": "file_event"}
         if source not in ("audit", "cri"):
             raise ValueError(f"MANIFEST entry {entry!r:.120} names log source {source!r}, "
-                             "not 'audit' or 'cri'")
+                             "not 'audit', 'cri' or 'file'")
         return {"product": "kubernetes", "service": source}
     if label == "cloud":
         provider = str(entry[5]).lower()
@@ -806,8 +809,194 @@ def _cases_rel(path):
     return rel(rule_cases.cases_path(path))
 
 
+def _with_true(node, atom):
+    """The condition tree with `atom` true: True, False or the subtree it still reads."""
+    if node[0] == "id":
+        return True if node[1] == atom else node
+    if node[0] == "not":
+        inner = _with_true(node[1], atom)
+        return (not inner) if isinstance(inner, bool) else ("not", inner)
+    done = node[0] == "or"  # one true child decides an OR, one false child an AND
+    kids = [_with_true(c, atom) for c in node[1]]
+    if any(k is done for k in kids):
+        return done
+    kids = [k for k in kids if not isinstance(k, bool)]
+    return (not done) if not kids else kids[0] if len(kids) == 1 else (node[0], kids)
+
+
+def _reads(node):
+    """The items a condition (sub)tree reads."""
+    if isinstance(node, bool):
+        return set()
+    return {node[1]} if node[0] == "id" else set().union(*(_reads(c) for c in (
+        [node[1]] if node[0] == "not" else node[1])))
+
+
+# _lone_atoms() searches every truth assignment of a rule's items, so it searches only
+# a rule of at most this many items.
+LONE_SEARCH_ITEMS = 12
+
+
+def _lone_atoms(rule):
+    """The items of a plain rule that no near-miss can break: each fires the rule alone.
+
+    An item is lone when the condition never negates it and, with it true, the
+    condition can still hold and reads no other selection item. (Filters, items that
+    are also negated, and items that hold on an empty record are not selection items:
+    the grader keeps them when it asks whether a flip shares a branch.) A record that
+    one flip of the item makes fire then holds no selection item of that branch, so
+    rule_cases.py grades it trivial or does not count that flip.
+
+    The grader then confirms each such item: sigma_explain's own verdict runs on every
+    truth assignment of the rule's items (_counted_flips), and an item that one of
+    those verdicts counts as a negative's flip is not lone. A rule of more than
+    LONE_SEARCH_ITEMS items is not searched, so none of its items is lone. The shape
+    test does not clear every item that no case can break: it keeps `a` in
+    `(a and not f) or b`, an item that is also negated (`m` in `(a and m) or not m`),
+    and an item whose flip alone never fires the rule (`a` in `(a and b) or b`)."""
+    if rule.is_correlation or len(rule.atoms) > LONE_SEARCH_ITEMS:
+        return set()
+    selection = {a for a in rule.atoms if rule.polarity[a] == {"+"} and a not in rule.vacuous}
+    lone = set()
+    for atom in rule.positive_atoms():
+        if rule.polarity[atom] != {"+"}:
+            continue  # also negated: kept (the shape test does not decide it)
+        rest = _with_true(rule.tree, atom)
+        if rest is not False and not _reads(rest) & selection:
+            lone.add(atom)
+    return lone - _counted_flips(rule) if lone else lone
+
+
+def _counted_flips(rule):
+    """The items that sigma_explain counts as a negative's flip (a near-miss or filtered
+    verdict's atoms) in some truth assignment of the plain rule's items. A case or a
+    fixture record can break only such an item (rule_cases.run_case)."""
+    counted = set()
+    for bits in itertools.product((False, True), repeat=len(rule.atoms)):
+        truth = dict(zip(rule.atoms, bits))
+        fired = rule.evaluate(truth)
+        if not fired:
+            verdict = rule.verdict({}, truth, fired)
+            if verdict.kind in sigma_explain.NON_TRIVIAL:
+                counted.update(verdict.atoms)
+    return counted
+
+
+def _merge_key(rule, items):
+    """The `field|mods` key that each of `items` writes, when they all write the same one
+    without `|all` (so one item with a list of their values matches the same records);
+    else None."""
+    keys = set()
+    for atom in items:
+        block = rule.block_of[atom]
+        definition = rule.definitions.get(block)
+        rest = atom[len(block):]
+        m = re.match(r"\[(\d+)\]", rest)
+        if m and isinstance(definition, list):
+            definition, rest = definition[int(m.group(1))], rest[m.end():]
+        elif isinstance(definition, list) and len(definition) == 1:
+            definition = definition[0]
+        name = rest.lstrip(".")
+        found = [k for k in definition if str(k) == name or str(k).split("|")[0] == name] \
+            if name and isinstance(definition, dict) else []
+        if len(found) != 1:
+            return None
+        keys.add(str(found[0]))
+    key = keys.pop() if len(keys) == 1 else None
+    return key if key is not None and "all" not in key.split("|")[1:] else None
+
+
+def _no_near_miss_hint(rule, key, target, dropped, filters, lone, cloud_fixture, exclude,
+                       name_keyed=False):
+    """_negative_hint() when every item it could offer is lone (`dropped`).
+
+    `exclude` names the items that the caller sets aside: for R2 and R5 the items that
+    the rule's verified negatives already break (so a non-empty `exclude` means the rule
+    has a negative, and PRESENCE, which excuses only a rule with none, does not help it),
+    for R4 (`name_keyed`) the name-keyed items, which a new negative must not break
+    alone. `filters` are the rule's filters outside `exclude`. A pure-surface rule that
+    CHOKEPOINT (`key`) does not list fails R2 whatever its negatives, so for it the hint
+    says to restore its argument first."""
+    shown = ", ".join(atom_spec(rule, a) for a in dropped[:6]) \
+        + (f" (+{len(dropped) - 6} more)" if len(dropped) > 6 else "")
+    text = f"No near-miss can break {shown}: " \
+           + ("it is" if len(dropped) == 1 else "each is") + " the only selection item of " \
+           "its branch (filters, items that are also negated, and items that hold on an empty " \
+           "record do not count), so a record without it holds no selection item of that " \
+           "branch (rule_cases.py grades such a record trivial, or does not count that flip " \
+           "because the record holds no item of the branch)"
+    trip = ""
+    if filters:
+        trip = f"a filtered case to {target} (an allowlisted look-alike doing the " \
+               f"positive's exact call) that trips one of: {', '.join(filters[:4])}"
+        if cloud_fixture:
+            trip += f", or add such a record to `{rel(cloud_fixture)}` (the fixture must " \
+                    "stay clean for every rule that reads it)"
+    selected = [a for a in rule.positive_atoms() if a not in rule.vacuous]
+    disc = discriminating_atoms(rule)
+    if not disc and key not in CHOKEPOINT:
+        # check_rule fails a pure-surface rule outside CHOKEPOINT, whatever its negatives.
+        text += ". Every positive item of the rule is a surface field, and R2 fails such a " \
+                "rule whatever its negatives: restore its argument. Only if the record kind " \
+                "itself is the technique may a human list the rule in CHOKEPOINT" \
+                + (" and in PRESENCE" if len(selected) == 1 and not rule.negated_atoms()
+                   and not exclude else "") \
+                + " in check_sufficiency.py, with the reason"
+        return text + (f"; then add {trip}" if trip else "")
+    keyed = [a for a in rule.atoms if a in exclude] if name_keyed else []
+    if keyed and not filters:
+        # Every item outside `exclude` that a negative could break is named above.
+        return text + "; every other item and filter that a negative can break is " \
+            "name-keyed (" + ", ".join(keyed) + "), so " \
+            "every negative the rule can have breaks only name-keyed items: add a filter " \
+            "or, where the technique has one, a second required item to the branch of each " \
+            "item named above"
+    if trip:
+        text += f"; add {trip}"
+    if rule.negated_atoms():
+        if set(selected) <= lone:
+            text += "; its proof is the positive and the filtered cases, and its " \
+                    "benign-corpus budget if a benign slice reads its log source " \
+                    "(score_benign.py says which)"
+        return text
+    text += "; the rule has no filter for a filtered case to trip"
+    if not set(disc) <= lone:
+        # Not reached from check_rule or thin_checks: R2 and R5 set aside no
+        # discriminating item, and R4 returned above.
+        return text  # a discriminating item left out by `exclude` may still be broken
+    if len(selected) == 1 and not exclude:
+        return text + ", and it has one positive item (items that hold on an empty record " \
+            "aside), so a human may list it in PRESENCE in check_sufficiency.py, with the " \
+            "reason; its proof is then the positive and its benign-corpus budget"
+    # A pure-surface rule here is in CHOKEPOINT, so any negative counts for it.
+    text += ", so no negative can break " + ("a discriminating item" if disc else "an item") \
+        + " or a filter: "
+    merge = _merge_key(rule, selected) \
+        if len(selected) > 1 and set(selected) <= lone and not rule.vacuous else None
+    if merge:
+        text += f"its items all read `{merge}`, so merge them into one item with a list of " \
+                "values (a human may then list the rule in PRESENCE, with the reason), or "
+    text += "add a filter or, where the technique has one, a second required item to the " \
+            "branch of each item named above"
+    if len(selected) > 1:
+        text += ", or move each such branch to a rule of its own (a human may then list a " \
+                "rule of one item and no filter in " \
+                + ("PRESENCE" if disc else "CHOKEPOINT and PRESENCE") + ", with the reason)"
+    return text
+
+
 def _negative_hint(rule, path, exclude=(), cloud_fixture=None, keep_extra=None):
-    """'Add a near-miss case to X that keeps <surface> and breaks one of: <items>'."""
+    """'Add a near-miss case to X that keeps <surface> and breaks one of: <items>',
+    or 'No near-miss can break <items>: ...' when no item is left to offer.
+
+    The hint does not offer an item that _lone_atoms() clears (no near-miss can
+    break it). For R4 (`keep_extra`), a flip of any item outside `exclude` (the
+    name-keyed items) clears the failure, so when no discriminating item is left the
+    hint offers the surface items that are not lone. When no item is left, the hint
+    says so, names the filters that a filtered case can still trip (those not in
+    `exclude`), and says what is left: the rule's proof when no selection item of it
+    can be broken, or how to change the rule when no negative can be what the caller
+    needs (_no_near_miss_hint)."""
     target = f"`{_cases_rel(path)}`"
     if rule.is_correlation:
         bases = [a for a in rule.atoms if a.startswith("base:") and a not in exclude]
@@ -828,13 +1017,25 @@ def _negative_hint(rule, path, exclude=(), cloud_fixture=None, keep_extra=None):
         # A pure chokepoint rule: its surface is the technique, so break part of it.
         picks = [a for a in rule.positive_atoms() if a not in exclude]
         keep = others
+
+    lone = _lone_atoms(rule)
+    dropped = [a for a in picks if a in lone]
+    picks = [a for a in picks if a not in lone]
+    if dropped and not picks and keep_extra:
+        # R4: a flip of any item outside `exclude` clears it, so offer the surface too.
+        picks = [a for a in rule.positive_atoms() if a not in exclude and a not in lone]
+        dropped = [a for a in rule.positive_atoms() if a not in exclude and a in lone]
+        keep = others
+    filters = [a for a in rule.negated_atoms() if a not in exclude]
+    if dropped and not picks:
+        return _no_near_miss_hint(rule, rule_key(path), target, dropped, filters, lone,
+                                  cloud_fixture, exclude, name_keyed=bool(keep_extra))
     if keep_extra:
         keep = f"{keep_extra} and {keep}"
     text = f"Add a near-miss case to {target} that keeps {keep} and breaks exactly one of: " \
            f"{', '.join(atom_spec(rule, a) for a in picks[:6])}"
     if len(picks) > 6:
         text += f" (+{len(picks) - 6} more; `rule_cases.py --atoms` lists them)"
-    filters = [a for a in rule.negated_atoms() if a not in exclude]
     if filters:
         text += f"; or a filtered case (an allowlisted look-alike doing the positive's exact " \
                 f"call) that trips one of: {', '.join(filters[:4])}"
@@ -1308,9 +1509,11 @@ def check_rule(path, positives, cloud, proven=None, atomics=None):
     presence = (len([a for a in rule.positive_atoms() if a not in getattr(rule, "vacuous", ())])
                 == 1 and not rule.negated_atoms()) if not rule.is_correlation else False
     if r.key in PRESENCE and not presence:
+        # The R2 hint (_negative_hint) says which negative, if any, the rule can have.
         r.warn("R2", "listed in PRESENCE but the rule has more than one positive item or a "
-                     "filter, so a near-miss is possible; remove the stale waiver from "
-                     "check_sufficiency.py and add one")
+                     "filter, so PRESENCE does not cover it: remove the stale waiver from "
+                     "check_sufficiency.py (an R2 failure, if the rule has one, says what "
+                     "negative it needs)")
     if not r.negatives and r.key in PRESENCE and presence:
         r.warn("R2", "presence rule (PRESENCE waiver): no negative can be one item flip from "
                      f"firing; its proof is the positive case and its benign-corpus budget "

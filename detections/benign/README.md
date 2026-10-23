@@ -48,7 +48,47 @@ Two live captures are also scored in CI, in shadow mode only. Neither is committ
 
 - **kind bootstrap + operator workload.** In `validate-apiserver-detections`, the
   API server audit log captured before the emulation runs. It includes a fresh
-  cluster's own traffic plus [`k8s/workload.sh`](k8s/workload.sh).
+  cluster's own traffic plus [`k8s/workload.sh`](k8s/workload.sh). Just before the
+  workload starts, the job records `BENIGN_START` (UTC with microseconds, the format
+  of the audit log's `requestReceivedTimestamp`). The kind node and the runner use
+  one kernel clock, so the two times compare directly.
+  `score_benign.py --extra-split-at "$BENIGN_START"` then scores two windows apart:
+  - `kind-live-bootstrap`: the requests received before `BENIGN_START`. This is the
+    cluster's own install traffic, for example the API server's
+    `rbac/bootstrap-roles` hook (`system:apiserver`), kubeadm and the kind add-ons
+    (`kubernetes-admin`, `kubernetes-super-admin`), and the first static and
+    DaemonSet pods. It occurs once per cluster, so its rows are reported only.
+    Each row shows the rule's corpus budget for reference only; no row is flagged
+    or annotated.
+  - `kind-live-workload`: the requests received at or after `BENIGN_START`, and any
+    event with no usable `requestReceivedTimestamp` (missing, null, or not an
+    RFC 3339 time with a zone), so such an event cannot be hidden in the bootstrap
+    part. This is the operator workload plus the cluster's background traffic. Each
+    row shows the rule's corpus budget (its `max_hits` for the whole committed
+    corpus). A rule over it is flagged `OVER corpus budget` and annotated as a
+    warning. Nothing is enforced. The window holds some hundreds of events and the
+    corpus some thousands, so a row inside its budget is a coarse check, not a rate.
+
+  A wrong split point can still move every hit into the bootstrap part, for
+  example when `BENIGN_START` is later than the whole capture. So when either
+  window holds no timed event, the run prints a `WARNING` that gives the cause and
+  the times of the first and last event, annotates it, and writes it in the
+  summary section of that window: the split then proves nothing. When
+  `BENIGN_START` is empty or is not a UTC time in that format, the step warns and
+  scores the capture unsplit, and every hit is annotated as before the split
+  existed. This job runs only when its
+  own paths change (they include `score_benign.py` and `benign_corpus.py`, but not
+  `budgets.json`), weekly, or by hand. So the `benign-corpus` check in
+  `detection-quality` runs
+  [`smoke_live_split.py`](../../.github/scripts/smoke_live_split.py) on every
+  change. It scores a constructed capture in which one rule is over its corpus
+  budget in both windows, and fails unless only the workload row is flagged and
+  annotated (in the text, the JSON and the markdown).
+
+  The bootstrap window does not belong in the benign corpus: install-once traffic
+  would be most of a rule's hits and rate. A sanitized workload window can become a
+  recorded `kubernetes/audit` slice (there is none today). That is a corpus change
+  for a human to decide, because the existing budgets then apply to it.
 - **Ubuntu runner workload.** The `benign-linux-live` job in `detection-quality`
   records [`linux/workload.sh`](linux/workload.sh) under the det-eng audit rules
   with [`linux/capture.py`](linux/capture.py) and uploads the capture as an
@@ -65,7 +105,8 @@ For every rule, [`../score_benign.py`](../score_benign.py) reports:
 - **rate per 10k**: hits per 10,000 events of the rule's logsource, so slices of
   different sizes compare;
 - **actors**: who is behind the hits: the distinct processes (auditd `exe`, else
-  `comm`) or principals (Kubernetes audit `user.username`; CloudTrail the session
+  `comm`; node file events the process `Image`) or principals (Kubernetes audit
+  `user.username`; CloudTrail the session
   issuer's role ARN, else `userIdentity.arn`, so one role counts once across its
   sessions; the Azure and GCP caller or principal fields). For the Kubernetes CRI
   log it is the pod's namespace, not a principal. One noisy actor is an allowlist
@@ -132,12 +173,29 @@ services of one provider (Azure `activitylogs`, `auditlogs`, `signinlogs`); and 
 covers both on a pull request: it fails when a rule that exists on the base branch
 changes its logsource (or a correlation base's), so the move goes to a human.
 
+The node file-event slice (`linux` / `file_event`, no service) is read by category, so
+it scores only the two node file-event rules (`linux_static_pod_manifest_write`,
+`linux_k8s_sa_token_read`), and the auditd slice reads neither of them. It models an
+open-capable sensor (Falco, Tetragon, or auditd `open`/`openat`), which also reports
+reads. Both rules fire on routine reads there; the rule defects are tracked as
+[`L15` and `L16`](../RULE_DEFECTS.md#linux-auditd-and-node-file-events).
+
 A slice can hold real multi-event behaviour as a **sequence** template, sharing one
 draw of the variables with per-step delays: runc's memfd re-exec, or a namespace
 deletion and its controller's cleanup. Events drawn independently almost never line
 up inside a correlation window. Keys that differ only by case (`requestId` and
 `RequestID`) cannot share one slice, because SQLite folds column case; split such
 records across slices.
+
+The three synthetic `kubernetes/audit` slices (`k8s-audit-control-plane`,
+`k8s-audit-gitops-ci`, `k8s-audit-human-operators`) say that their levels follow
+[`../k8s/audit-policy-apiserver.yaml`](../k8s/audit-policy-apiserver.yaml), but they
+predate its Request-level rule for pod, Event, namespace and workload deletes: their
+45 deletes and deletecollections of those resources are at Metadata, with no
+DeleteOptions body. Moved to Request with a DeleteOptions body (propagationPolicy, no
+dryRun), they change no rule's hit count. The slice version that gives each actor its
+real body (the kubelet, the garbage collector, kubectl, the namespace controller) is a
+corpus change that a human approves.
 
 ## Tracking it over time
 
@@ -179,7 +237,19 @@ python3 detections/score_benign.py --reseeds 10 # most hits over 10 reseeds: the
 python3 detections/score_benign.py --baseline-scores base-scores.json  # fail on any rule noisier than that snapshot
 python3 detections/score_benign.py --extra-slice capture.jsonl \
     --extra-logsource linux/auditd --extra-label my-host   # score a live capture (shadow)
+python3 detections/score_benign.py --extra-slice node-file-events.jsonl \
+    --extra-logsource linux/file_event --extra-label my-node  # node file events, read by category
+python3 detections/score_benign.py --extra-slice audit.log --extra-label kind-live \
+    --extra-split-at 2026-10-20T18:01:25.454000Z  # Kubernetes audit: bootstrap and workload apart
 ```
+
+Write `--extra-logsource` as the slice listing prints a slice: `product/service`, or
+`product/category` for a logsource with no service. The scorer reads the second part
+as a service, unless no rule reads it as a service and some rule reads it as a
+category (`linux/file_event`). `product/category=NAME` is always a category. When no
+scored rule reads the logsource, the capture scores nothing, so the scorer prints a
+`WARNING`, annotates it as a warning and writes it to the markdown report. A wrong
+logsource cannot quietly score nothing.
 
 ## Maintaining the corpus
 

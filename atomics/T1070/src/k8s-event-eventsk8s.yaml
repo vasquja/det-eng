@@ -1,6 +1,10 @@
 # TRR9010 Procedure C target — a harmless events.k8s.io/v1 Event the emulation
-# creates and then deletes. The delete is the detection telemetry; if creation is
-# skipped the delete attempt is still audited with objectRef.name=trr9010-evt-c.
+# creates and then deletes. The delete is the detection telemetry, and the validator
+# needs it to be accepted (200), so the create must succeed first. The API server's
+# Event validation (pkg/apis/core/validation/events.go, legacyValidateEvent, which also
+# runs for events.k8s.io/v1, where regarding becomes involvedObject) refuses an Event
+# outside default and kube-system whose regarding has no namespace, so the Event names
+# an object in trr9010 (the object need not exist).
 apiVersion: events.k8s.io/v1
 kind: Event
 metadata:
@@ -13,7 +17,8 @@ action: Benign
 reason: Trr9010Benign
 regarding:
   apiVersion: v1
-  kind: Namespace
-  name: trr9010
+  kind: ConfigMap
+  name: trr9010-anchor
+  namespace: trr9010
 note: benign TRR9010 indicator-removal emulation
 type: Normal

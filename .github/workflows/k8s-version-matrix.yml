@@ -1,0 +1,162 @@
+name: k8s-version-matrix
+
+# Weekly: run the three Kubernetes validators (validate-k8s, validate-staticpod and
+# validate-apiserver) on the Kubernetes minors beside the pin, not only on the pin
+# (v1.36.4). Each leg dispatches one validator workflow with a node image and a
+# matching kubectl (its workflow_dispatch inputs), so the steps stay in one file and
+# the required check names do not change. A dispatch made with GITHUB_TOKEN does
+# start a run (GitHub documents workflow_dispatch as an exception to the rule that
+# GITHUB_TOKEN events start no run). The leg then finds its own run by the unique
+# label in the run name, waits for it, and fails when it fails.
+#
+# A red leg only alerts. This workflow is not a required check and blocks nothing. A
+# leg runs on main only: a child run reports its checks (validate-k8s, ...) on the
+# head commit of the ref it ran on, so on a pull request branch a red leg would turn
+# that pull request's required check red. On main, a red leg shows a red validate-*
+# check on main's head commit, which gates no pull request. The README badge of
+# validate-apiserver shows only the schedule runs (the pin), not these dispatches.
+#
+# A cancelled leg (by hand, or at timeout-minutes) cancels its run too. A leg cancelled
+# before it found its run (from the dispatch until the run appears, usually 10 to 20
+# seconds) leaves that run going.
+#
+# The legs: the newest kindest/node image of each minor that kind v0.33.0 (the pinned
+# kind) publishes, other than the pin. Checked on 2026-10-21 in the kind v0.33.0
+# release notes and with the Docker Hub registry API (the manifest digest of each
+# tag); the kubectl sha256 is the .sha256 file on dl.k8s.io.
+#   v1.35.8 (previous minor; v1.35.9 is released, but kind v0.33.0 has no image of it)
+#   v1.37.0 (next minor; v1.37.1 is released, but kind v0.33.0 has no image of it)
+#   v1.34.11 is left out: v1.34 reaches end of life on 2026-10-27.
+# Move the legs when the pin moves: the bump procedure in the env block of the
+# validator workflows names this file.
+
+on:
+  schedule:
+    - cron: '17 7 * * 1'   # Monday, after every other Monday cron (lint-trr, the validators and detection-quality, 06:11-06:53)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write   # dispatch the validator workflows, and read and cancel their runs
+
+concurrency:
+  group: k8s-version-matrix
+  cancel-in-progress: false
+
+jobs:
+  leg:
+    name: matrix ${{ matrix.node.version }} ${{ matrix.workflow }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        node:
+          - version: v1.35.8
+            image: kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
+            kubectl_sha256: 874d5e72dbb819f43cff16bcd1e4f8bac5b7f2361fe1e55049b0a6c676fb0cbf
+          - version: v1.37.0
+            image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+            kubectl_sha256: 6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f
+        workflow:
+          - validate-k8s-detections.yml
+          - validate-staticpod-detections.yml
+          - validate-apiserver-detections.yml
+    steps:
+      - name: Dispatch the validator and wait for its run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          WORKFLOW: ${{ matrix.workflow }}
+          VERSION: ${{ matrix.node.version }}
+          NODE_IMAGE: ${{ matrix.node.image }}
+          KUBECTL_SHA256: ${{ matrix.node.kubectl_sha256 }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error::run this workflow on main only (it ran on ${GITHUB_REF}): a child run reports its checks on the head commit of its ref, so on a pull request branch a red leg would turn that pull request's required check red"
+            exit 1
+          fi
+          # Unique per leg (version and workflow) and per attempt; the child puts it in
+          # its run name.
+          label="k8s-version-matrix ${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT} ${VERSION} ${WORKFLOW%-detections.yml}"
+          # The runner cancels a step (by hand, or at timeout-minutes) with SIGINT to this
+          # shell only, then SIGTERM 7.5 s later, then a kill 2.5 s after that. Bash runs a
+          # trap only when the current foreground command ends, so each long wait below
+          # runs in the background under `wait`, which a trapped signal ends at once. The
+          # trap then cancels the dispatched run, if the leg has found it.
+          id=""; url=""; bgpid=""
+          on_cancel() {
+            trap - INT TERM
+            if [ -n "${bgpid}" ]; then kill "${bgpid}" 2> /dev/null || true; fi
+            if [ -n "${id}" ]; then
+              echo "::warning::the leg was cancelled; cancelling ${url}"
+              gh run cancel "${id}" > /dev/null || echo "::warning::could not cancel ${url}"
+            else
+              echo "::warning::the leg was cancelled before it found its run (label '${label}'); that run is not cancelled"
+            fi
+            exit 130
+          }
+          trap on_cancel INT TERM
+          # pause <seconds>: sleep in the background and wait for it.
+          pause() { sleep "$1" & bgpid=$!; wait "${bgpid}" || true; bgpid=""; }
+          gh workflow run "${WORKFLOW}" --ref main \
+            -f node_image="${NODE_IMAGE}" \
+            -f kubectl_version="${VERSION}" \
+            -f kubectl_sha256="${KUBECTL_SHA256}" \
+            -f label="${label}"
+          echo "Dispatched ${WORKFLOW} with label '${label}'."
+          # The run appears a few seconds after the dispatch. Find it by the label at
+          # the end of its run name ("<workflow name> [<label>]"), never by time.
+          ids=""
+          for _ in $(seq 1 30); do
+            pause 10
+            ids="$(gh run list --workflow "${WORKFLOW}" --event workflow_dispatch --branch main \
+                     --limit 50 --json databaseId,displayTitle \
+                   | jq -r --arg l "[${label}]" '.[] | select(.displayTitle | endswith($l)) | .databaseId')" \
+              || ids=""   # an API error on one poll: try again
+            [ -n "${ids}" ] && break
+          done
+          if [ -z "${ids}" ]; then
+            echo "::error::no run of ${WORKFLOW} with label '${label}' appeared within 5 minutes"
+            exit 1
+          fi
+          if [ "$(wc -l <<< "${ids}")" -ne 1 ]; then
+            echo "::error::more than one run of ${WORKFLOW} carries the label '${label}': $(tr '\n' ' ' <<< "${ids}")"
+            exit 1
+          fi
+          id="${ids}"
+          url="https://github.com/${GH_REPO}/actions/runs/${id}"
+          echo "Run: ${url}"
+          # Wait on the run's status, not on the exit code of the watch: `gh run watch`
+          # returns at its first API error, so it is only a way to wait. When a watch
+          # stops and the run is not completed, the leg waits 60 s and watches again, so
+          # a run that is still going is never reported as ended. timeout-minutes bounds
+          # the wait; only a status that cannot be read 30 times in a row (30 minutes or
+          # more) fails the leg before that. The verdict is the run's own conclusion,
+          # read in the same call as its completed status.
+          unread=0
+          while :; do
+            # (The redirect is on the background command only: a redirect on the waiting
+            # command would also apply to the trap's messages.)
+            gh run watch "${id}" --exit-status --interval 60 > /dev/null & bgpid=$!
+            rc=0; wait "${bgpid}" || rc=$?; bgpid=""
+            state="$(gh run view "${id}" --json status,conclusion --jq '.status + " " + .conclusion')" \
+              || state=""
+            status="${state%% *}"; conclusion="${state#* }"
+            [ "${status}" = "completed" ] && break
+            if [ -n "${status}" ]; then unread=0; else unread=$((unread + 1)); fi
+            if [ "${unread}" -ge 30 ]; then
+              echo "::error::the status of ${url} could not be read 30 times in a row; the run may still be going"
+              exit 1
+            fi
+            echo "::warning::the watch stopped (exit ${rc}) and ${url} is '${status:-unreadable}', not completed; watching again in 60 s"
+            pause 60
+          done
+          echo "- ${WORKFLOW} on ${VERSION}: ${conclusion:-no conclusion} (${url})" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${conclusion}" != "success" ]; then
+            echo "::error::${WORKFLOW} on ${VERSION}: the run completed with conclusion '${conclusion}': ${url}"
+            exit 1
+          fi
+          echo "${WORKFLOW} on ${VERSION}: success"

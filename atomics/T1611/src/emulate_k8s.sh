@@ -36,10 +36,45 @@ MANIFEST_DIR="${TRR9007_MANIFEST_DIR:-/etc/kubernetes/manifests}"
 
 log() { printf '[trr9007] %s\n' "$*" >&2; }
 
+# ---- fail-loud procedure bookkeeping (C1-4) --------------------------------
+# `must CMD` runs a procedure's action and returns its exit code (stderr shown on
+# failure). `run_proc P` times procedure_P, appends one ledger line to $DETENG_LEDGER
+# (set by CI; unset = no ledger) and records a failure without stopping the run, so
+# `all` attempts every procedure and then exits 1 naming the failures. Cleanup, and the
+# node poll in the gap, keep `|| true`.
+TRR="TRR9007"
+FAILED=()
+now_utc() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }
+must() {
+  local out rc=0
+  out="$("$@" 2>&1 >/dev/null)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "FAILED (exit $rc): $*"
+    [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/    /' >&2
+  fi
+  return "$rc"
+}
+run_proc() {
+  local p="$1" start end rc=0
+  start="$(now_utc)"
+  "procedure_$p" || rc=$?
+  end="$(now_utc)"
+  if [ -n "${DETENG_LEDGER:-}" ]; then
+    printf '{"trr":"%s","procedure":"%s","start":"%s","end":"%s","exit":%d,"expect":0}\n' \
+      "$TRR" "$p" "$start" "$end" "$rc" >> "$DETENG_LEDGER"
+  fi
+  if [ "$rc" -ne 0 ]; then
+    FAILED+=("$p")
+    [ -n "${GITHUB_ACTIONS:-}" ] && \
+      echo "::error title=${TRR} procedure ${p}::procedure ${p} failed (exit ${rc})"
+  fi
+  return 0
+}
+
 apply_pod() {
   local file="$1" name="$2"
   log "apply $name (host access requested; container only sleeps)"
-  kubectl apply -f "$SCRIPT_DIR/$file" >/dev/null 2>&1 || true
+  must kubectl apply -f "$SCRIPT_DIR/$file"
 }
 
 cleanup() {
@@ -62,11 +97,11 @@ procedure_d() { apply_pod k8s-caps-pod.yaml trr9007-caps ; }
 # Deployment whose template sets seccomp Unconfined. Every container only sleeps.
 procedure_e() {
   log "e: apply pod trr9007-unconfined (pod-level seccomp Unconfined; no host access; container only sleeps)"
-  kubectl apply -f "$SCRIPT_DIR/k8s-unconfined-pod.yaml" >/dev/null 2>&1 || true
+  must kubectl apply -f "$SCRIPT_DIR/k8s-unconfined-pod.yaml" || return
   log "e: apply pod trr9007-unconfined-aa (container AppArmor Unconfined; no host access; container only sleeps)"
-  kubectl apply -f "$SCRIPT_DIR/k8s-unconfined-apparmor-pod.yaml" >/dev/null 2>&1 || true
+  must kubectl apply -f "$SCRIPT_DIR/k8s-unconfined-apparmor-pod.yaml" || return
   log "e: apply deployment trr9007-unconfined-depl (seccomp Unconfined template)"
-  kubectl apply -f "$SCRIPT_DIR/k8s-unconfined-deployment.yaml" >/dev/null 2>&1 || true
+  must kubectl apply -f "$SCRIPT_DIR/k8s-unconfined-deployment.yaml"
 }
 
 # K18 (JSON-patch grading): kubectl patch --type=json logs requestObject as the operation
@@ -78,17 +113,17 @@ procedure_e() {
 # branch (Procedure E by a JSON patch). The containers only sleep.
 procedure_jp() {
   log "jp: apply plain trr9007-jp-depl and trr9007-jp-pod (non-privileged, sleep only)"
-  kubectl apply -f "$SCRIPT_DIR/k8s-jsonpatch-deployment.yaml" >/dev/null 2>&1 || true
-  kubectl apply -f "$SCRIPT_DIR/k8s-jsonpatch-pod.yaml" >/dev/null 2>&1 || true
+  must kubectl apply -f "$SCRIPT_DIR/k8s-jsonpatch-deployment.yaml" || return
+  must kubectl apply -f "$SCRIPT_DIR/k8s-jsonpatch-pod.yaml" || return
+  # Readiness, not the gate-matched action: it may time out without failing the step.
   kubectl -n "$NS" wait --for=condition=Ready pod/trr9007-jp-pod --timeout=90s >/dev/null 2>&1 || true
   log "jp: JSON patch the Deployment template to privileged (--type=json)"
-  kubectl -n "$NS" patch deployment trr9007-jp-depl --type=json \
+  must kubectl -n "$NS" patch deployment trr9007-jp-depl --type=json \
     -p '[{"op":"add","path":"/spec/template/spec/containers/0/securityContext","value":{"privileged":true}}]' \
-    >/dev/null 2>&1 || true
+    || return
   log "jp: JSON patch a privileged, seccomp-Unconfined ephemeral container onto trr9007-jp-pod (--subresource=ephemeralcontainers --type=json)"
-  kubectl -n "$NS" patch pod trr9007-jp-pod --subresource=ephemeralcontainers --type=json \
-    -p '[{"op":"add","path":"/spec/ephemeralContainers","value":[{"name":"trr9007-dbg","image":"busybox:1.36","command":["sleep","3600"],"securityContext":{"privileged":true,"seccompProfile":{"type":"Unconfined"}},"terminationMessagePolicy":"File","imagePullPolicy":"IfNotPresent"}]}]' \
-    >/dev/null 2>&1 || true
+  must kubectl -n "$NS" patch pod trr9007-jp-pod --subresource=ephemeralcontainers --type=json \
+    -p '[{"op":"add","path":"/spec/ephemeralContainers","value":[{"name":"trr9007-dbg","image":"busybox:1.36","command":["sleep","3600"],"securityContext":{"privileged":true,"seccompProfile":{"type":"Unconfined"}},"terminationMessagePolicy":"File","imagePullPolicy":"IfNotPresent"}]}]'
 }
 
 # Controller delivery — the dangerous spec on a Deployment's template. The
@@ -96,50 +131,57 @@ procedure_jp() {
 # real identity); the controller fallback rule keys on it.
 procedure_ctrl() {
   log "ctrl: apply deployment trr9007-depl (privileged template)"
-  kubectl apply -f "$SCRIPT_DIR/k8s-host-deployment.yaml" >/dev/null 2>&1 || true
+  must kubectl apply -f "$SCRIPT_DIR/k8s-host-deployment.yaml"
 }
 
 # Static-pod delivery. The kubelet runs the dangerous pod from a node-local
 # manifest, then registers a mirror pod so the API shows it. The node runtime sees
 # the running container; the mirror create is audited as system:node, carrying the
 # spec at Request level, so the chokepoint catches it there too (links to TRR9003).
+# The mirror pod the kubelet registers for a static pod is named <pod>-<node>, so the
+# '9007 static' validator gate keys on the trr9007-escape-static- prefix and a
+# system:node:<node> caller. Poll up to 60 s for it and FAIL if it never appears (its
+# create is the audited record the gate needs); the fixed `sleep 8` used to race it.
 procedure_gap() {
-  local dst="$MANIFEST_DIR/trr9007-escape-static.yaml"
+  local dst="$MANIFEST_DIR/trr9007-escape-static.yaml" mirror="trr9007-escape-static-${NODE}"
+  local rc=0
   if [ -n "${TRR9007_NODE_EXEC:-}" ]; then
     log "static: write a dangerous static pod via custom node exec"
-    $TRR9007_NODE_EXEC "cat > $dst" < "$SCRIPT_DIR/k8s-static-pod-escape.yaml" || true
+    $TRR9007_NODE_EXEC "cat > $dst" < "$SCRIPT_DIR/k8s-static-pod-escape.yaml"
   elif command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -qx "$NODE"; then
     log "static: write a dangerous static pod to $NODE:$dst"
-    docker exec -i "$NODE" sh -c "cat > $dst" < "$SCRIPT_DIR/k8s-static-pod-escape.yaml" || true
-    sleep 8
-    log "static: the node runtime SEES the running container (crictl):"
-    docker exec "$NODE" sh -c "crictl pods --name trr9007-escape-static 2>/dev/null || true" || true
-    if kubectl get pods -A 2>/dev/null | grep -q trr9007-escape-static; then
-      log "static: the kubelet registered a mirror pod -> a system:node pods-create is audited"
-      log "static: (at Request level that create carries the spec, so the chokepoint matches it)"
-    else
-      log "static: no mirror pod object yet (it may still be registering)"
-    fi
-    log "static: clean up — remove the static pod manifest"
-    docker exec "$NODE" sh -c "rm -f $dst" || true
-    sleep 3
+    docker exec -i "$NODE" sh -c "cat > $dst" < "$SCRIPT_DIR/k8s-static-pod-escape.yaml"
   else
-    log "static: no node access (docker/TRR9007_NODE_EXEC) — skipping the static-pod delivery"
-    return 0
+    log "static: no node access (docker/TRR9007_NODE_EXEC) — cannot deliver the static pod"
+    return 1
+  fi
+  log "static: poll up to 60s for the kubelet's mirror pod $mirror (its system:node create is audited)"
+  for _ in $(seq 1 60); do
+    if kubectl get pod "$mirror" -n "$NS" >/dev/null 2>&1; then
+      log "static: the kubelet registered mirror pod $mirror -> a system:node pods-create is audited"
+      log "static: (at Request level that create carries the spec, so the chokepoint matches it)"
+      break
+    fi
+    sleep 1
+  done
+  if ! kubectl get pod "$mirror" -n "$NS" >/dev/null 2>&1; then
+    log "static: the mirror pod $mirror never appeared within 60s"
+    rc=1
+  fi
+  log "static: the node runtime SEES the running container (crictl):"
+  docker exec "$NODE" sh -c "crictl pods --name trr9007-escape-static 2>/dev/null || true" >&2 2>/dev/null || true
+  log "static: clean up — remove the static pod manifest"
+  docker exec "$NODE" sh -c "rm -f $dst" >/dev/null 2>&1 || true
+  if [ -n "${TRR9007_NODE_EXEC:-}" ]; then
+    $TRR9007_NODE_EXEC "rm -f $dst" >/dev/null 2>&1 || true
   fi
   log "static: the node sensor is the only view under a Metadata-only audit policy (requestObject absent)"
+  return "$rc"
 }
 
 run_one() {
   case "$1" in
-    a) procedure_a ;;
-    b) procedure_b ;;
-    c) procedure_c ;;
-    d) procedure_d ;;
-    e) procedure_e ;;
-    ctrl) procedure_ctrl ;;
-    jp) procedure_jp ;;
-    gap) procedure_gap ;;
+    a|b|c|d|e|ctrl|jp|gap) run_proc "$1" ;;
     *) log "unknown item: $1 (use a|b|c|d|e|ctrl|jp|gap|all)"; exit 2 ;;
   esac
 }
@@ -147,10 +189,14 @@ run_one() {
 main() {
   local which="${1:-all}"
   if [ "$which" = "all" ]; then
-    for p in a b c d e ctrl jp gap; do run_one "$p"; done
+    for p in a b c d e ctrl jp gap; do run_proc "$p"; done
     cleanup
   else
     run_one "$which"
+  fi
+  if [ "${#FAILED[@]}" -gt 0 ]; then
+    log "emulation FAILED: procedure(s) ${FAILED[*]}"
+    exit 1
   fi
   log "emulation complete: $which"
 }

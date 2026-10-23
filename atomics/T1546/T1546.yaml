@@ -137,3 +137,29 @@ atomic_tests:
         description: Path to the atomic source directory.
         type: string
         default: PathToAtomicsFolder/T1546/src
+
+  - name: "TRR9025.K8S — server-side dry-run repoint to a URL (control: must not fire)"
+    auto_generated_guid: c231d668-706a-424f-9523-14ddcafc3dda
+    description: |
+      A control, not a procedure. Installs a no-op Service-backed
+      ValidatingWebhookConfiguration trr9025-dryrun-vwc (as Procedure D does), then sends
+      Procedure D's strategic merge patch (service -> the off-cluster url) with
+      --dry-run=server, and checks that the stored webhook still calls its Service. A
+      server-side dry run persists nothing, so the rules below must match none of these
+      records (the validator's must-not-match checks).
+      Repoint grader: detections/sigma/T1546/k8s_admission_webhook_repointed_to_url.yml
+      Chokepoint: detections/sigma/T1685/k8s_admission_webhook_disabled.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_k8s.sh dryrun
+      cleanup_command: |
+        kubectl delete validatingwebhookconfiguration trr9025-dryrun-vwc --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1546/src

@@ -125,6 +125,24 @@ credential already on disk. A detection must use context — who, from where, wi
 which client, against which namespace — and a node sensor for the one path the
 audit log cannot see.
 
+### Version notes
+
+The weekly version matrix runs the Kubernetes labs on the CI pin and on the minors
+beside it (see [Kubernetes version notes](../../../detections/README.md#kubernetes-version-notes),
+and the paragraph above it for the versions).
+
+- client-go WatchListClient is on from v1.35
+  ([known_features.go v1.37.0 L141-144](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/client-go/features/known_features.go#L141-L144);
+  off at v1.32.2 L76). An informer then opens one watch with `sendInitialEvents=true`
+  instead of a list and a watch
+  ([reflector.go v1.37.0 L361, L475-483](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/client-go/tools/cache/reflector.go#L361)).
+  So, from v1.35, the controllers' benign Secret reads are mostly `watch`, not `list`.
+  `k8s_secret_access.yml` matches get, list and watch, so the chokepoint still sees them;
+  a baseline that counts benign readers by verb must count `watch` too.
+- The server side of the watch list (the WatchList gate) is on from v1.34
+  ([apiserver kube_features.go v1.37.0 L487-493](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/apiserver/pkg/features/kube_features.go#L487-L493)),
+  so every leg serves it.
+
 ## Procedures
 
 | Procedure | ID | Name | Entry point |
@@ -287,11 +305,23 @@ token mint by a human or a non-system service account — unusual.
 
 **Strategy 3 — node sensor (covers E; the gap).**
 Match a read of the token file on the container or node filesystem. This needs
-host file-event telemetry, so it is not exercised by the audit-log validation
-loop; the loop demonstrates the gap instead. Pair it with detection-by-absence.
+host file-event telemetry, which the API-server audit loop does not produce; CI
+now stands one up (a node file-event sensor), so the rule has a live gate. Pair it
+with detection-by-absence.
 
 - Sensor: a file integrity monitor, auditd, or an EDR/runtime agent on each node.
-- Rule: `detections/sigma/T1552.007/linux_k8s_sa_token_read.yml` (built).
+  In CI the apiserver job runs the runner's auditd with a per-file read watch on one
+  projected token file of the node's kube-proxy pod, added through
+  `/proc/<node pid>/root`. The token is on a tmpfs that the kubelet mounts inside the
+  node's own mount namespace, so a directory-tree watch added from the runner does
+  not see the read; a canary read of the `ca.crt` beside the token checks the watch
+  before the emulation. `detections/k8s/auditd_file_events.py` converts the records
+  to `file_event` JSON lines, and the apiserver validator gates the rule with a
+  `file` log source.
+- Rule: `detections/sigma/T1552.007/linux_k8s_sa_token_read.yml` (built, gated).
+- Known defect: the rule fires on each workload's routine re-reads of its own token
+  ([`RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) L16), so the coverage
+  report marks Procedure E "Proven, open defect".
 
 **Demonstrated gap.**
 Emulate Procedure E — read a projected token file on the node, read-only — and
@@ -348,8 +378,9 @@ with an Atomic Red Team wrapper in
 | TRR9006.K8S.E | `emulate.sh e` — read a mounted token off the node (shows no audit event). | **built** |
 
 The Secret holds a benign literal, not a real credential; the minted token is for
-a service account that holds no RBAC and expires on its own; Procedure E reads
-only the first bytes of a token file, read-only.
+a service account that holds no RBAC and expires on its own; Procedure E reads one
+projected token file, read-only, through a marked copy of cat, and discards the
+bytes (they never reach a command line or a log).
 
 ## Detections
 
@@ -363,9 +394,19 @@ The Kubernetes API server loop has its own validator,
 [`detections/validate_apiserver_detections.py`](../../../detections/validate_apiserver_detections.py):
 it reads the API server audit log the emulation produced and asserts Strategies 1
 and 2 match an event from the emulation itself (one in the `trr9006` namespace by
-the non-system test identity). Strategy 3 is compiled, not match-gated: it needs
-node file telemetry the audit loop does not produce, so Procedure E documents the
-gap instead. The workflow
+the non-system test identity), for each procedure on its own: A's list, B's get of
+`trr9006-cred`, C's watch and D's token create. Strategy 3 is now match-gated on a
+`file` log source: Procedure E reads the watched node token through a marked copy
+of cat (`/usr/local/bin/trr9006-reader`), the node file-event sensor records the
+open, and the validator gates the rule on that read in E's window. A false-positive
+control requires that the rule matches none of the kubelet's own reads of that token
+(when the log holds some). Live CI has recorded no kubelet read of the watched token
+in any run so far (3 of 3 runs to 2026-10-23, each watched for about 2 minutes), so
+this control has had no live input. The kubelet filter is proven by the sidecar
+filtered case `kubelet-writes-projected-token`. The audit-log gap is proven at the
+same time: with the emulation ledger, an absence check asserts that no event
+Strategy 1 or 2 matches, from a non-system caller, falls in E's time window, and E
+must have run and read the token (`read-ok`). The workflow
 [`validate-apiserver-detections.yml`](../../../.github/workflows/validate-apiserver-detections.yml)
 runs the loop on a `kind` cluster, and runs the validator as a negative control on
 the audit log captured *before* the emulation (no `trr9006` namespace yet, so no

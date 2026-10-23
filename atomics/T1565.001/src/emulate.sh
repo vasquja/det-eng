@@ -66,6 +66,56 @@ SENTINEL_BLOCK=$'\ntrr9027poison.example.invalid:53 {\n    errors\n    rewrite n
 
 log() { printf '[trr9027] %s\n' "$*" >&2; }
 
+# ---- fail-loud procedure bookkeeping (C1-4) --------------------------------
+# `must CMD` runs a procedure's action and returns its exit code (stderr shown on
+# failure); `apply_stdin ARGS` is `must kubectl ARGS -f -` for a body on stdin, from a
+# producer piped into it (pipefail is on, so the pipeline reports the write's exit), and
+# it shows the API server's reason when the write is refused.
+# `run_proc P` times procedure_P, appends one ledger line to $DETENG_LEDGER (set by CI;
+# unset = no ledger) and records a failure without stopping the run, so `all` attempts
+# every procedure and then exits 1 naming the failures. A procedure returns non-zero
+# when its gate-matched write was refused; the SAFETY restore of coredns still runs, and
+# a FAILED restore still hard-exits 1 (coredns must not be left changed). The SAFETY
+# restore writes keep `|| true` (`_corefile_equals` then checks the result), and so do
+# cleanup and the read-only gap print.
+TRR="TRR9027"
+FAILED=()
+now_utc() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }
+must() {
+  local out rc=0
+  out="$("$@" 2>&1 >/dev/null)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "FAILED (exit $rc): $*"
+    [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/    /' >&2
+  fi
+  return "$rc"
+}
+apply_stdin() {
+  local out rc=0
+  out="$(kubectl "$@" -f - 2>&1 >/dev/null)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "FAILED (exit $rc): kubectl $* -f - (stdin)"
+    [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/    /' >&2
+  fi
+  return "$rc"
+}
+run_proc() {
+  local p="$1" start end rc=0
+  start="$(now_utc)"
+  "procedure_$p" || rc=$?
+  end="$(now_utc)"
+  if [ -n "${DETENG_LEDGER:-}" ]; then
+    printf '{"trr":"%s","procedure":"%s","start":"%s","end":"%s","exit":%d,"expect":0}\n' \
+      "$TRR" "$p" "$start" "$end" "$rc" >> "$DETENG_LEDGER"
+  fi
+  if [ "$rc" -ne 0 ]; then
+    FAILED+=("$p")
+    [ -n "${GITHUB_ACTIONS:-}" ] && \
+      echo "::error title=${TRR} procedure ${p}::procedure ${p} failed (exit ${rc})"
+  fi
+  return 0
+}
+
 # Build a strategic/merge patch body {"data":{"Corefile": <stdin>}} with correct JSON
 # escaping of the multi-line Corefile.
 _corefile_patch() { python3 -c 'import json,sys; print(json.dumps({"data":{"Corefile": sys.stdin.read()}}))'; }
@@ -77,15 +127,22 @@ PART_OF="app.kubernetes.io/part-of=trr9027"
 # Server-side apply of an inert ConfigMap ($1 name, $2 data key, $3 data value), only
 # when no ConfigMap of that name exists. SSA sends a PATCH to the named object, which
 # creates it; the audit policy logs that named write at RequestResponse, with the body.
+# Fail closed: a read that errors (not a clean NotFound) is a failure, never "absent",
+# so a transient error can never lead to a write over a real cluster's ConfigMap.
 _apply_inert_configmap() {
-  local name="$1" key="$2" value="$3"
-  if kubectl -n "$NS" get configmap "$name" >/dev/null 2>&1; then
+  local name="$1" key="$2" value="$3" found
+  if ! found="$(kubectl -n "$NS" get configmap "$name" --ignore-not-found -o name)"; then
+    log "cannot read configmap $NS/$name (see the kubectl error above) -- not touching it"
+    return 1
+  fi
+  if [ -n "$found" ]; then
     log "configmap $NS/$name already exists (a real cluster DNS config?) -- not touching it, skipping"
     return 0
   fi
   python3 -c 'import json,sys; n,k,v,ns=sys.argv[1:5]; print(json.dumps({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":n,"namespace":ns,"labels":{"app.kubernetes.io/part-of":"trr9027"}},"data":{k:v}}))' \
     "$name" "$key" "$value" "$NS" \
-    | kubectl apply --server-side --field-manager=trr9027-emulation -f - >/dev/null 2>&1 || true
+    | apply_stdin apply --server-side --field-manager=trr9027-emulation \
+    || { log "server-side apply of configmap $NS/$name was refused"; return 1; }
 }
 
 cleanup() {
@@ -93,13 +150,20 @@ cleanup() {
   kubectl -n "$NS" delete configmap -l "$PART_OF" --ignore-not-found >/dev/null 2>&1 || true
 }
 
-# The coredns Corefile exactly as stored, trailing line break included ("$(...)" alone
-# strips trailing line breaks, so the caller appends a guard character and removes it).
-# Prints nothing when coredns or its Corefile is absent.
-_get_corefile() {
-  kubectl -n "$NS" get configmap coredns -o json 2>/dev/null \
-    | python3 -c 'import json,sys; sys.stdout.write(json.load(sys.stdin).get("data",{}).get("Corefile",""))' 2>/dev/null \
-    || true
+# The coredns ConfigMap as JSON, or nothing when it does not exist (a clean NotFound).
+# A read that errors returns non-zero (its kubectl error shown), so the caller can tell
+# "absent" (a non-CoreDNS cluster: skip) from "could not read" (a failure).
+_get_coredns_json() {
+  kubectl -n "$NS" get configmap coredns --ignore-not-found -o json
+}
+
+# The Corefile of the coredns JSON on stdin, exactly as stored (trailing line break
+# included; "$(...)" alone strips trailing line breaks, so the caller appends a guard
+# character and removes it). Prints nothing when there is no Corefile.
+_corefile_of() {
+  python3 -c 'import json,sys
+t=sys.stdin.read()
+sys.stdout.write(((json.loads(t).get("data") or {}).get("Corefile","")) if t.strip() else "")'
 }
 
 # True when the coredns ConfigMap exists and its Corefile equals $1 byte for byte.
@@ -115,10 +179,18 @@ _corefile_equals() {
 # place) and verified afterward: the stored Corefile must equal the saved one byte for
 # byte (trailing line break included), or the run stops with an error.
 procedure_a() {
-  local orig
-  orig="$(_get_corefile; printf x)"; orig="${orig%x}"
+  local saved orig rc=0
+  if ! saved="$(_get_coredns_json)"; then
+    log "A: cannot read the coredns ConfigMap (see the kubectl error above) — not touching it"
+    return 1
+  fi
+  if ! orig="$(printf '%s' "$saved" | _corefile_of && printf x)"; then
+    log "A: cannot parse the coredns ConfigMap — not touching it"
+    return 1
+  fi
+  orig="${orig%x}"
   if [ -z "$orig" ]; then
-    log "A: coredns ConfigMap has no Corefile (not a CoreDNS cluster?) — skipping"
+    log "A: no coredns ConfigMap with a Corefile (not a CoreDNS cluster?) — skipping"
     return 0
   fi
   _restore_coredns() {
@@ -127,8 +199,9 @@ procedure_a() {
   }
   trap '_restore_coredns' INT TERM
   log "A: patch coredns Corefile with a sentinel rewrite + forward (trr9027poison.example.invalid -> ${SENTINEL_IP})"
-  kubectl -n "$NS" patch configmap coredns --type=merge \
-    -p "$(printf '%s' "${orig}${SENTINEL_BLOCK}" | _corefile_patch)" >/dev/null 2>&1 || true
+  must kubectl -n "$NS" patch configmap coredns --type=merge \
+    -p "$(printf '%s' "${orig}${SENTINEL_BLOCK}" | _corefile_patch)" \
+    || { log "A: the sentinel poison patch was refused"; rc=1; }
   log "A: restore the original coredns Corefile"
   _restore_coredns
   trap - INT TERM
@@ -140,6 +213,7 @@ procedure_a() {
       exit 1
     fi
   fi
+  return "$rc"
 }
 
 # Procedure D — delete the coredns ConfigMap and create it again (a POST to the
@@ -155,12 +229,18 @@ procedure_a() {
 # stops with an error.
 STUB_BLOCK=$'\ntrr9027stub.example.invalid:53 {\n    errors\n    forward . '"$SENTINEL_IP"$'\n}\n'
 procedure_d() {
-  local saved orig verb
-  saved="$(kubectl -n "$NS" get configmap coredns -o json 2>/dev/null || true)"
-  orig="$(printf '%s' "$saved" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.stdout.write((d.get("data") or {}).get("Corefile",""))' 2>/dev/null; printf x)"
+  local saved orig verb answer rc=0
+  if ! saved="$(_get_coredns_json)"; then
+    log "D: cannot read the coredns ConfigMap (see the kubectl error above) — not deleting it"
+    return 1
+  fi
+  if ! orig="$(printf '%s' "$saved" | _corefile_of && printf x)"; then
+    log "D: cannot parse the coredns ConfigMap — not deleting it"
+    return 1
+  fi
   orig="${orig%x}"
   if [ -z "$orig" ]; then
-    log "D: coredns ConfigMap has no Corefile (not a CoreDNS cluster?) — skipping"
+    log "D: no coredns ConfigMap with a Corefile (not a CoreDNS cluster?) — skipping"
     return 0
   fi
   if printf '%s' "$saved" | python3 -c 'import json,sys
@@ -170,9 +250,15 @@ sys.exit(0 if m.get("ownerReferences") or "addonmanager.kubernetes.io/mode" in l
     return 0
   fi
   for verb in create patch delete; do
-    if [ "$(kubectl auth can-i "$verb" configmaps -n "$NS" 2>/dev/null || true)" != "yes" ]; then
+    # can-i prints "yes" or "no"; an error (no answer) is a failure, not a skip.
+    answer="$(kubectl auth can-i "$verb" configmaps -n "$NS" 2>/dev/null || true)"
+    if [ "$answer" = "no" ]; then
       log "D: this identity may not $verb configmaps in $NS — not deleting coredns, skipping"
       return 0
+    fi
+    if [ "$answer" != "yes" ]; then
+      log "D: kubectl auth can-i $verb configmaps -n $NS gave no answer — not deleting coredns"
+      return 1
     fi
   done
   # The object to create: the saved one without server-set fields, Corefile + stub block;
@@ -194,9 +280,14 @@ print(json.dumps(d))')"
   }
   trap '_recreate_pristine' INT TERM
   log "D: delete coredns, then create it again (POST) with a sentinel stub zone (trr9027stub.example.invalid -> ${SENTINEL_IP})"
-  kubectl -n "$NS" delete configmap coredns >/dev/null 2>&1 || true
-  if ! printf '%s' "$poisoned" | kubectl create -f - >/dev/null 2>&1; then
-    log "D: create failed — putting the saved coredns ConfigMap back"
+  # The recreate (POST) is the gate-matched record; a refused delete or create fails the
+  # procedure. After a refused delete, coredns is still there, so the create is not sent
+  # (it could only fail with AlreadyExists).
+  if ! must kubectl -n "$NS" delete configmap coredns; then
+    log "D: delete of coredns was refused — not sending the create"; rc=1
+  elif ! printf '%s' "$poisoned" | apply_stdin create; then
+    log "D: create (POST) of coredns with the sentinel stub zone was refused — putting the saved ConfigMap back"
+    rc=1
   fi
   log "D: restore the original coredns Corefile"
   _recreate_pristine
@@ -210,6 +301,7 @@ print(json.dumps(d))')"
       exit 1
     fi
   fi
+  return "$rc"
 }
 
 # Procedure B — legacy kube-dns ConfigMap with a stubDomains redirect (JSON). Inert on a
@@ -249,11 +341,7 @@ procedure_gap() {
 
 run_one() {
   case "$1" in
-    a) procedure_a ;;
-    b) procedure_b ;;
-    c) procedure_c ;;
-    d) procedure_d ;;
-    gap) procedure_gap ;;
+    a|b|c|d|gap) run_proc "$1" ;;
     *) log "unknown item: $1 (use a|b|c|d|gap|all)"; exit 2 ;;
   esac
 }
@@ -261,10 +349,14 @@ run_one() {
 main() {
   local which="${1:-all}"
   if [ "$which" = "all" ]; then
-    for p in a b c d gap; do run_one "$p"; done
+    for p in a b c d gap; do run_proc "$p"; done
     cleanup
   else
     run_one "$which"
+  fi
+  if [ "${#FAILED[@]}" -gt 0 ]; then
+    log "emulation FAILED: procedure(s) ${FAILED[*]}"
+    exit 1
   fi
   log "emulation complete: $which"
 }

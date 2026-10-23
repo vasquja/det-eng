@@ -1,0 +1,1727 @@
+{
+ "id": "linux-k8s-node-file-events",
+ "version": 3,
+ "logsource": {
+  "product": "linux",
+  "category": "file_event"
+ },
+ "fidelity": "synthetic",
+ "represents": "About 50 minutes of file open, create, write and rename events on one kubeadm control-plane node (k8s-cp-01, Kubernetes v1.36, containerd, the flannel CNI, kube-vip for the API server address) of a small cluster that also runs workloads (the control-plane taint is removed), as an open-capable node file sensor reports them (Falco, Tetragon, or auditd open/openat with PATH records, mapped to TargetFilename and Image). The node runs 10 pods with a projected service-account token (CoreDNS x2, kube-proxy, flannel, metrics-server, local-path-provisioner, ingress-nginx, and three application pods: a Java, a Python and a Go service). Activity: the kubelet re-lists the static-pod directory and writes and compares the projected token volumes; each workload's client library re-reads its own token; containers start (kubelet etc-hosts, containerd sandbox and bundle files, the flannel CNI plugin and host-local IPAM); containerd checkpoints container status; flannel's install-cni and flanneld write their files; kube-apiserver re-reads its CA bundles; a kubeadm upgrade apply run (its control-plane phase) backs up etcd and replaces the etcd, kube-apiserver, kube-controller-manager and kube-scheduler manifests in turn, with certificate renewal, keeping the old ones under /etc/kubernetes/tmp; Ansible manages kube-apiserver.yaml and kube-vip.yaml (on every run its stat module reads the file for a checksum and its file and lsattr children open it; when it changes one, the copy module reads it again and atomic_move creates a temp file in the manifests directory, copies the new content into it and renames it over the manifest); an operator's cron job backs up /etc/kubernetes with tar. Template weights set which behaviours appear and roughly how often relative to each other, not their production rates: the kubelet re-lists the directory every 20 s and a client re-reads its token at most once a minute (on its next API request after its cached copy expires), while a kubeadm upgrade or a tar backup is rarer than here. Each token re-read is drawn on its own, so two reads of one process can fall closer together than its client's cache allows; only each pod's count of reads stays below that once-a-minute ceiling. A container that (re)starts in the window gets a new process and container id for its start events; its pod's other events keep the long-running ones. Treat hits and rate_per_10k as presence indicators, not production false-positive rates.",
+ "provenance": "synthetic; event shape = the fields the two node file-event rules read (TargetFilename, Image) plus UtcTime, EventType (open = a read-only open, create, write, rename), ProcessId, User and, for a process in a container, ContainerId, PodNamespace and PodName; a rename carries the new path in TargetFilename and the old one in SourceFilename. Paths are spelled as the process passed them, made absolute, with symlinks not resolved (a container process reports its own view, /var/run/secrets/...); Image is the process's executable path. Shapes from the source: Kubernetes v1.36.4 pkg/volume/util/atomic_writer.go (the ..<UTC 2006_01_02_15_04_05.><random> directory from os.MkdirTemp, os.WriteFile of each payload file, shouldWriteFile's os.ReadFile of the current files, ..data_tmp renamed to ..data), pkg/kubelet/config/file.go (Glob of [^.]* and an open of each manifest in sorted order; the dot files are skipped) and the kubelet default fileCheckFrequency of 20 s, pkg/kubelet/token/token_manager.go (refresh at 80% of the TTL), client-go transport/token_source.go NewCachedFileTokenSource (the file is read again only when a request asks for the token after the cached copy's minute, less a 10 s leeway, is over) and rest/config.go InClusterConfig (token and ca.crt), kubernetes-client/python incluster_config.py (token_refresh_period 1 minute, checked before a request) and kubernetes-client/java TokenFileAuthentication (60 s, checked per request), kubeadm phases/upgrade/staticpods.go (NewKubeStaticPodPathManagerUsingTempDirs: one kubeadm-upgraded-manifests<random> directory from constants.CreateTempDir and the kubeadm-backup-manifests-<2006-01-02-15-04-05> and kubeadm-backup-etcd-<time> directories from CreateTimestampDir, once per run; StaticPodControlPlane writes the three control-plane manifests there, performEtcdStaticPodUpgrade runs util.CopyDir (cp -r) of the etcd data directory and writes etcd.yaml, and upgradeComponent, for etcd and then kube-apiserver, kube-controller-manager and kube-scheduler, reads both manifests (ManifestFilesAreEqual), renews the component's certificates (renewCertsByComponent; pkiutil.WriteCertAndKey writes the key, then the certificate) and moves the files with util/copy.go MoveFile (os.Rename)), the kube-proxy DaemonSet (/usr/local/bin/kube-proxy, tokenFile in its kubeconfig), and apiserver pkg/server/dynamiccertificates/dynamic_cafile_content.go (the CA files re-read every minute); Ansible 2.17 plugins/action/__init__.py _execute_remote_stat (the stat module with get_checksum and no get_mime or get_attributes, so both stay at their default true), modules/stat.py (digest_from_file, then file --mime-type --mime-encoding <path>, then module_utils/basic.py get_file_attributes: lsattr -vd <path>), modules/copy.py (module.sha1(dest) before atomic_move) and module_utils/basic.py atomic_move (os.rename first; on EXDEV, EPERM, EACCES, ETXTBSY or EBUSY a tempfile.mkstemp(prefix='.ansible_tmp', suffix=<file name>) in the destination directory, then shutil.move of the source into it with copy_function shutil.copy, then os.rename of it over the destination) and CPython 3.12 Lib/shutil.py (move: os.rename, and on an OSError such as EXDEV the copy function; copyfile opens the destination with open(dst, 'wb')); e2fsprogs 1.47.0 lib/e2p fgetflags.c and fgetversion.c (lsattr -v opens the file once for each); file 5.45 src/magic.c file_or_fd (one open); flannel v0.26.7 kube-flannel.yml (install-cni cp, /opt/bin/flanneld, network cbr0) and flannel-io/cni-plugin (/var/lib/cni/flannel/<container id>, /run/flannel/subnet.env); containerd's CRI sandbox and container directories under /var/lib/containerd/io.containerd.grpc.v1.cri; the images' entrypoints (/coredns, /metrics-server, /nginx-ingress-controller, /usr/bin/local-path-provisioner, the eclipse-temurin and python images' interpreters). Pod names, UIDs, volume names and container IDs are fixed per pod and made up; pod IPs are in flannel's default 10.244.0.0/16.",
+ "adjacent_to": [
+  "T1552.007/linux_k8s_sa_token_read.yml (every workload's client library re-reads its own token: expected to fire, see detections/RULE_DEFECTS.md L16; the kubelet's AtomicWriter writes and compare reads, filtered by Image; ca.crt and namespace reads in the same directory)",
+  "T1543.005/linux_static_pod_manifest_write.yml (the kubelet's re-lists and kubeadm's upgrade, filtered by Image; reads by tar, by Ansible's stat module and its file and lsattr children, and by the copy module: expected to fire, see detections/RULE_DEFECTS.md L15; Ansible's atomic_move writes, the configuration-management noise the rule names; kubeadm's backups under /etc/kubernetes/tmp and opens of the directory itself, which do not match)"
+ ],
+ "count": 600,
+ "vars": {
+  "ts": {
+   "time": {
+    "start": "2026-10-19T10:00:00Z",
+    "step_seconds": [
+     1,
+     9
+    ],
+    "format": "%Y-%m-%d %H:%M:%S.%f"
+   }
+  },
+  "tsdir": {
+   "offset": {
+    "var": "ts",
+    "seconds": 0,
+    "format": "..%Y_%m_%d_%H_%M_%S."
+   }
+  },
+  "bkts_2s": {
+   "offset": {
+    "var": "ts",
+    "seconds": -3,
+    "format": "%Y-%m-%d-%H-%M-%S"
+   }
+  },
+  "bkts_6s": {
+   "offset": {
+    "var": "ts",
+    "seconds": -7,
+    "format": "%Y-%m-%d-%H-%M-%S"
+   }
+  },
+  "bkts_45s": {
+   "offset": {
+    "var": "ts",
+    "seconds": -46,
+    "format": "%Y-%m-%d-%H-%M-%S"
+   }
+  },
+  "bkts_90s": {
+   "offset": {
+    "var": "ts",
+    "seconds": -91,
+    "format": "%Y-%m-%d-%H-%M-%S"
+   }
+  },
+  "bkts_110s": {
+   "offset": {
+    "var": "ts",
+    "seconds": -111,
+    "format": "%Y-%m-%d-%H-%M-%S"
+   }
+  },
+  "bkd": {
+   "offset": {
+    "var": "ts",
+    "seconds": 0,
+    "format": "%Y%m%dT%H%M"
+   }
+  },
+  "mkt": {
+   "int": [
+    100000000,
+    4294967295
+   ]
+  },
+  "pid": {
+   "int": [
+    20000,
+    98000
+   ]
+  },
+  "pid2": {
+   "int": [
+    20000,
+    98000
+   ]
+  },
+  "pid3": {
+   "int": [
+    20000,
+    98000
+   ]
+  },
+  "pid4": {
+   "int": [
+    20000,
+    98000
+   ]
+  },
+  "h8": {
+   "hex": 8
+  },
+  "h12": {
+   "hex": 12
+  },
+  "cid": {
+   "hex": 64
+  },
+  "sbx": {
+   "hex": 64
+  },
+  "ipn": {
+   "int": [
+    2,
+    250
+   ]
+  },
+  "restart": {
+   "weighted": [
+    [
+     3,
+     0
+    ],
+    [
+     1,
+     1
+    ],
+    [
+     1,
+     2
+    ]
+   ]
+  },
+  "pod": [
+   {
+    "name": "coredns-7c65d6cfc9-x4k2p",
+    "ns": "kube-system",
+    "ctr": "coredns",
+    "img": "/coredns",
+    "user": "65532",
+    "uid": "3b6f8e2a-91d4-4c57-a0e8-5f2d7c9b1a64",
+    "vol": "kube-api-access-7x9kz",
+    "pid": 3121,
+    "cid": "a41f0c9e7d22",
+    "old": "..2026_10_19_09_31_06.2093748561"
+   },
+   {
+    "name": "coredns-7c65d6cfc9-tq8wz",
+    "ns": "kube-system",
+    "ctr": "coredns",
+    "img": "/coredns",
+    "user": "65532",
+    "uid": "8d2c4a71-6e3b-4f09-b5d8-2a7e9c1f3b05",
+    "vol": "kube-api-access-p2wq8",
+    "pid": 3188,
+    "cid": "b7e3d51a90c4",
+    "old": "..2026_10_19_09_31_07.817364920"
+   },
+   {
+    "name": "kube-proxy-9wz7d",
+    "ns": "kube-system",
+    "ctr": "kube-proxy",
+    "img": "/usr/local/bin/kube-proxy",
+    "user": "root",
+    "uid": "c19e7b42-0d5a-4e8f-9a63-71b2d4e8f0a9",
+    "vol": "kube-api-access-hd6tn",
+    "pid": 2740,
+    "cid": "0e9b4f2c6a17",
+    "old": "..2026_10_19_09_22_41.3301928475"
+   },
+   {
+    "name": "kube-flannel-ds-4jx8q",
+    "ns": "kube-flannel",
+    "ctr": "kube-flannel",
+    "img": "/opt/bin/flanneld",
+    "user": "root",
+    "uid": "5a0d3f96-b7c1-4e24-8d5f-0c6e1a9b7d32",
+    "vol": "kube-api-access-b4lmx",
+    "pid": 2811,
+    "cid": "6d2a8e0f4b91",
+    "old": "..2026_10_19_09_23_02.1172839405"
+   },
+   {
+    "name": "metrics-server-5f9f776df5-m2rcv",
+    "ns": "kube-system",
+    "ctr": "metrics-server",
+    "img": "/metrics-server",
+    "user": "65534",
+    "uid": "e2b7c045-3a9f-4d61-b0c8-9f4e2d7a5c13",
+    "vol": "kube-api-access-zq7rc",
+    "pid": 4410,
+    "cid": "f35c7a1e2d08",
+    "old": "..2026_10_19_09_48_55.2948571036"
+   },
+   {
+    "name": "local-path-provisioner-7b5d6f8c4d-hb6xn",
+    "ns": "local-path-storage",
+    "ctr": "local-path-provisioner",
+    "img": "/usr/bin/local-path-provisioner",
+    "user": "root",
+    "uid": "71f4a9d2-6c08-4b3e-a5d7-e2c9b0f8a641",
+    "vol": "kube-api-access-n8vfs",
+    "pid": 4502,
+    "cid": "2b8d6f0a9e35",
+    "old": "..2026_10_19_09_40_19.401827365"
+   },
+   {
+    "name": "ingress-nginx-controller-6d9fbc8c7b-wl4ps",
+    "ns": "ingress-nginx",
+    "ctr": "controller",
+    "img": "/nginx-ingress-controller",
+    "user": "101",
+    "uid": "9c3e5b17-8f2d-4a06-b4e9-3d7a1c0f6b58",
+    "vol": "kube-api-access-c5jwd",
+    "pid": 5127,
+    "cid": "d90a3c7e5f14",
+    "old": "..2026_10_19_09_36_44.3819203746"
+   },
+   {
+    "name": "payments-api-8546dc7f9b-zr5kt",
+    "ns": "payments",
+    "ctr": "payments-api",
+    "img": "/opt/java/openjdk/bin/java",
+    "user": "10001",
+    "uid": "4e8a2d90-1b7f-4c35-9e06-a5f3c8d2b740",
+    "vol": "kube-api-access-r9tkg",
+    "pid": 6033,
+    "cid": "47c1e8b2a06d",
+    "old": "..2026_10_19_09_27_13.1938475620"
+   },
+   {
+    "name": "ml-batch-runner-59cd4b8f6c-q7dgh",
+    "ns": "ml-batch",
+    "ctr": "runner",
+    "img": "/usr/local/bin/python3.12",
+    "user": "1000",
+    "uid": "b05f7c3e-9d24-4a81-8c6b-2e0d9f4a7c19",
+    "vol": "kube-api-access-w2x6b",
+    "pid": 6290,
+    "cid": "8a5e0d3f7c62",
+    "old": "..2026_10_19_09_44_30.2759301846"
+   },
+   {
+    "name": "storefront-web-6fb8d9c475-k2vxj",
+    "ns": "storefront",
+    "ctr": "web",
+    "img": "/app/server",
+    "user": "65532",
+    "uid": "6d1c8f4a-2e93-4b07-a6d5-8c3f0b9e2a71",
+    "vol": "kube-api-access-f4hzm",
+    "pid": 6418,
+    "cid": "e6f2b9a4d038",
+    "old": "..2026_10_19_09_33_58.902837461"
+   }
+  ],
+  "proj": {
+   "weighted": [
+    [
+     3,
+     "token"
+    ],
+    [
+     1,
+     "ca.crt"
+    ],
+    [
+     1,
+     "namespace"
+    ]
+   ]
+  },
+  "ca": [
+   "ca.crt",
+   "front-proxy-ca.crt"
+  ],
+  "amf": [
+   "kube-apiserver.yaml",
+   "kube-vip.yaml"
+  ]
+ },
+ "templates": [
+  {
+   "weight": 5,
+   "name": "kubelet re-lists the static-pod directory (file source, every fileCheckFrequency = 20 s): globs the directory, then opens each manifest in sorted order",
+   "events": [
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubelet",
+      "ProcessId": 1187,
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests"
+     }
+    },
+    {
+     "delay_ms": 1,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubelet",
+      "ProcessId": 1187,
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/etcd.yaml"
+     }
+    },
+    {
+     "delay_ms": 1,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubelet",
+      "ProcessId": 1187,
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/kube-apiserver.yaml"
+     }
+    },
+    {
+     "delay_ms": 1,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubelet",
+      "ProcessId": 1187,
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/kube-controller-manager.yaml"
+     }
+    },
+    {
+     "delay_ms": 1,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubelet",
+      "ProcessId": 1187,
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/kube-scheduler.yaml"
+     }
+    },
+    {
+     "delay_ms": 1,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubelet",
+      "ProcessId": 1187,
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/kube-vip.yaml"
+     }
+    }
+   ]
+  },
+  {
+   "weight": 20,
+   "name": "a workload's client library re-reads its mounted service-account token (client-go, the Python and the Java clients keep it for at most a minute and read it again on the next API request after that; each read is drawn on its own, so two reads of one process can fall closer together than that)",
+   "event": {
+    "UtcTime": "{{ts}}",
+    "EventType": "open",
+    "Image": "{{pod.img}}",
+    "ProcessId": "{{pod.pid}}",
+    "User": "{{pod.user}}",
+    "ContainerId": "{{pod.cid}}",
+    "PodNamespace": "{{pod.ns}}",
+    "PodName": "{{pod.name}}",
+    "TargetFilename": "/var/run/secrets/kubernetes.io/serviceaccount/token"
+   }
+  },
+  {
+   "weight": 1,
+   "name": "a container (re)starts, with a new process and container id, and its client library loads the in-cluster config: the token, the CA bundle and the namespace file",
+   "events": [
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "{{pod.img}}",
+      "ProcessId": "{{pid}}",
+      "User": "{{pod.user}}",
+      "ContainerId": "{{h12}}",
+      "PodNamespace": "{{pod.ns}}",
+      "PodName": "{{pod.name}}",
+      "TargetFilename": "/var/run/secrets/kubernetes.io/serviceaccount/token"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "{{pod.img}}",
+      "ProcessId": "{{pid}}",
+      "User": "{{pod.user}}",
+      "ContainerId": "{{h12}}",
+      "PodNamespace": "{{pod.ns}}",
+      "PodName": "{{pod.name}}",
+      "TargetFilename": "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+     }
+    },
+    {
+     "delay_ms": 40,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "{{pod.img}}",
+      "ProcessId": "{{pid}}",
+      "User": "{{pod.user}}",
+      "ContainerId": "{{h12}}",
+      "PodNamespace": "{{pod.ns}}",
+      "PodName": "{{pod.name}}",
+      "TargetFilename": "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+     }
+    }
+   ]
+  },
+  {
+   "weight": 10,
+   "name": "kubelet volume sync: AtomicWriter compares the projected payload with the files on disk (reads the current ..<timestamp> directory)",
+   "event": {
+    "UtcTime": "{{ts}}",
+    "EventType": "open",
+    "Image": "/usr/bin/kubelet",
+    "ProcessId": 1187,
+    "User": "root",
+    "TargetFilename": "/var/lib/kubelet/pods/{{pod.uid}}/volumes/kubernetes.io~projected/{{pod.vol}}/{{pod.old}}/{{proj}}"
+   }
+  },
+  {
+   "weight": 4,
+   "name": "kubelet refreshes a projected token (AtomicWriter: a new ..<timestamp> directory with token, ca.crt and namespace, then ..data_tmp renamed to ..data)",
+   "events": [
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "create",
+      "Image": "/usr/bin/kubelet",
+      "ProcessId": 1187,
+      "User": "root",
+      "TargetFilename": "/var/lib/kubelet/pods/{{pod.uid}}/volumes/kubernetes.io~projected/{{pod.vol}}/{{tsdir}}{{mkt}}/token"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "create",
+      "Image": "/usr/bin/kubelet",
+      "ProcessId": 1187,
+      "User": "root",
+      "TargetFilename": "/var/lib/kubelet/pods/{{pod.uid}}/volumes/kubernetes.io~projected/{{pod.vol}}/{{tsdir}}{{mkt}}/ca.crt"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "create",
+      "Image": "/usr/bin/kubelet",
+      "ProcessId": 1187,
+      "User": "root",
+      "TargetFilename": "/var/lib/kubelet/pods/{{pod.uid}}/volumes/kubernetes.io~projected/{{pod.vol}}/{{tsdir}}{{mkt}}/namespace"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "rename",
+      "Image": "/usr/bin/kubelet",
+      "ProcessId": 1187,
+      "User": "root",
+      "TargetFilename": "/var/lib/kubelet/pods/{{pod.uid}}/volumes/kubernetes.io~projected/{{pod.vol}}/..data",
+      "SourceFilename": "/var/lib/kubelet/pods/{{pod.uid}}/volumes/kubernetes.io~projected/{{pod.vol}}/..data_tmp"
+     }
+    }
+   ]
+  },
+  {
+   "weight": 3,
+   "name": "containerd checkpoints a container's CRI status (continuity.AtomicWriteFile: a temp file in the container directory, renamed to status)",
+   "events": [
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "create",
+      "Image": "/usr/bin/containerd",
+      "ProcessId": 742,
+      "User": "root",
+      "TargetFilename": "/var/lib/containerd/io.containerd.grpc.v1.cri/containers/{{cid}}/.tmp-status{{mkt}}"
+     }
+    },
+    {
+     "delay_ms": 1,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "rename",
+      "Image": "/usr/bin/containerd",
+      "ProcessId": 742,
+      "User": "root",
+      "TargetFilename": "/var/lib/containerd/io.containerd.grpc.v1.cri/containers/{{cid}}/status",
+      "SourceFilename": "/var/lib/containerd/io.containerd.grpc.v1.cri/containers/{{cid}}/.tmp-status{{mkt}}"
+     }
+    }
+   ]
+  },
+  {
+   "weight": 0.8,
+   "name": "containerd creates a container's log file at a (re)start",
+   "event": {
+    "UtcTime": "{{ts}}",
+    "EventType": "create",
+    "Image": "/usr/bin/containerd",
+    "ProcessId": 742,
+    "User": "root",
+    "TargetFilename": "/var/log/pods/{{pod.ns}}_{{pod.name}}_{{pod.uid}}/{{pod.ctr}}/{{restart}}.log"
+   }
+  },
+  {
+   "weight": 1.5,
+   "name": "a pod sandbox (re)starts: kubelet writes etc-hosts, containerd writes the sandbox files and the bundle spec, the flannel CNI plugin saves its delegate config and host-local IPAM reserves the pod IP",
+   "events": [
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "create",
+      "Image": "/usr/bin/kubelet",
+      "ProcessId": 1187,
+      "User": "root",
+      "TargetFilename": "/var/lib/kubelet/pods/{{pod.uid}}/etc-hosts"
+     }
+    },
+    {
+     "delay_ms": 35,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "create",
+      "Image": "/usr/bin/containerd",
+      "ProcessId": 742,
+      "User": "root",
+      "TargetFilename": "/var/lib/containerd/io.containerd.grpc.v1.cri/sandboxes/{{sbx}}/hostname"
+     }
+    },
+    {
+     "delay_ms": 1,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "create",
+      "Image": "/usr/bin/containerd",
+      "ProcessId": 742,
+      "User": "root",
+      "TargetFilename": "/var/lib/containerd/io.containerd.grpc.v1.cri/sandboxes/{{sbx}}/hosts"
+     }
+    },
+    {
+     "delay_ms": 1,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "create",
+      "Image": "/usr/bin/containerd",
+      "ProcessId": 742,
+      "User": "root",
+      "TargetFilename": "/var/lib/containerd/io.containerd.grpc.v1.cri/sandboxes/{{sbx}}/resolv.conf"
+     }
+    },
+    {
+     "delay_ms": 4,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "create",
+      "Image": "/usr/bin/containerd",
+      "ProcessId": 742,
+      "User": "root",
+      "TargetFilename": "/run/containerd/io.containerd.runtime.v2.task/k8s.io/{{sbx}}/config.json"
+     }
+    },
+    {
+     "delay_ms": 60,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "create",
+      "Image": "/opt/cni/bin/flannel",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/var/lib/cni/flannel/{{sbx}}"
+     }
+    },
+    {
+     "delay_ms": 3,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "create",
+      "Image": "/opt/cni/bin/host-local",
+      "ProcessId": "{{pid2}}",
+      "User": "root",
+      "TargetFilename": "/var/lib/cni/networks/cbr0/10.244.0.{{ipn}}"
+     }
+    },
+    {
+     "delay_ms": 1,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "write",
+      "Image": "/opt/cni/bin/host-local",
+      "ProcessId": "{{pid2}}",
+      "User": "root",
+      "TargetFilename": "/var/lib/cni/networks/cbr0/last_reserved_ip.0"
+     }
+    }
+   ]
+  },
+  {
+   "weight": 0.3,
+   "name": "the flannel install-cni init container copies the CNI config onto the host (cp -f /etc/kube-flannel/cni-conf.json /etc/cni/net.d/10-flannel.conflist)",
+   "event": {
+    "UtcTime": "{{ts}}",
+    "EventType": "write",
+    "Image": "/bin/cp",
+    "ProcessId": "{{pid}}",
+    "User": "root",
+    "ContainerId": "{{h12}}",
+    "PodNamespace": "kube-flannel",
+    "PodName": "kube-flannel-ds-4jx8q",
+    "TargetFilename": "/etc/cni/net.d/10-flannel.conflist"
+   }
+  },
+  {
+   "weight": 0.3,
+   "name": "flanneld writes its subnet lease file (/run/flannel/subnet.env)",
+   "event": {
+    "UtcTime": "{{ts}}",
+    "EventType": "write",
+    "Image": "/opt/bin/flanneld",
+    "ProcessId": 2811,
+    "User": "root",
+    "ContainerId": "6d2a8e0f4b91",
+    "PodNamespace": "kube-flannel",
+    "PodName": "kube-flannel-ds-4jx8q",
+    "TargetFilename": "/run/flannel/subnet.env"
+   }
+  },
+  {
+   "weight": 3,
+   "name": "kube-apiserver re-reads its client and front-proxy CA bundles (dynamic file content, checked every minute)",
+   "event": {
+    "UtcTime": "{{ts}}",
+    "EventType": "open",
+    "Image": "/usr/local/bin/kube-apiserver",
+    "ProcessId": 2315,
+    "User": "root",
+    "ContainerId": "5c1e9a7f3b20",
+    "PodNamespace": "kube-system",
+    "PodName": "kube-apiserver-k8s-cp-01",
+    "TargetFilename": "/etc/kubernetes/pki/{{ca}}"
+   }
+  },
+  {
+   "weight": 0.15,
+   "name": "kubeadm upgrade apply, the control-plane phase (one run): the new kube-apiserver, kube-controller-manager and kube-scheduler manifests in one kubeadm-upgraded-manifests<n> directory; cp -r of the etcd data directory into kubeadm-backup-etcd-<time>; then etcd and each component in turn: compare reads, certificate renewal, the current manifest moved to kubeadm-backup-manifests-<time>, the new one moved into place, the kubelet's re-read, and a wait for the new pod",
+   "events": [
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/admin.conf"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "create",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/tmp/kubeadm-upgraded-manifests{{mkt}}/kube-apiserver.yaml"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "create",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/tmp/kubeadm-upgraded-manifests{{mkt}}/kube-controller-manager.yaml"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "create",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/tmp/kubeadm-upgraded-manifests{{mkt}}/kube-scheduler.yaml"
+     }
+    },
+    {
+     "delay_ms": 2000,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "create",
+      "Image": "/usr/bin/cp",
+      "ProcessId": "{{pid2}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/tmp/kubeadm-backup-etcd-{{bkts_2s}}/etcd/member/snap/db"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "create",
+      "Image": "/usr/bin/cp",
+      "ProcessId": "{{pid2}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/tmp/kubeadm-backup-etcd-{{bkts_2s}}/etcd/member/wal/0000000000000000-0000000000000000.wal"
+     }
+    },
+    {
+     "delay_ms": 4000,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/etcd.yaml"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "create",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/tmp/kubeadm-upgraded-manifests{{mkt}}/etcd.yaml"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/kube-apiserver.yaml"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/tmp/kubeadm-upgraded-manifests{{mkt}}/kube-apiserver.yaml"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/etcd.yaml"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/tmp/kubeadm-upgraded-manifests{{mkt}}/etcd.yaml"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "write",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/etcd/server.key"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "write",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/etcd/server.crt"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "write",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/etcd/peer.key"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "write",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/etcd/peer.crt"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "write",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/etcd/healthcheck-client.key"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "write",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/etcd/healthcheck-client.crt"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "rename",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/tmp/kubeadm-backup-manifests-{{bkts_6s}}/etcd.yaml",
+      "SourceFilename": "/etc/kubernetes/manifests/etcd.yaml"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "rename",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/etcd.yaml",
+      "SourceFilename": "/etc/kubernetes/tmp/kubeadm-upgraded-manifests{{mkt}}/etcd.yaml"
+     }
+    },
+    {
+     "delay_ms": 1000,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubelet",
+      "ProcessId": 1187,
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/etcd.yaml"
+     }
+    },
+    {
+     "delay_ms": 38000,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/kube-apiserver.yaml"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/tmp/kubeadm-upgraded-manifests{{mkt}}/kube-apiserver.yaml"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "write",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/apiserver.key"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "write",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/apiserver.crt"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "write",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/apiserver-kubelet-client.key"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "write",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/apiserver-kubelet-client.crt"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "write",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/front-proxy-client.key"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "write",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/front-proxy-client.crt"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "write",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/apiserver-etcd-client.key"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "write",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/apiserver-etcd-client.crt"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "rename",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/tmp/kubeadm-backup-manifests-{{bkts_45s}}/kube-apiserver.yaml",
+      "SourceFilename": "/etc/kubernetes/manifests/kube-apiserver.yaml"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "rename",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/kube-apiserver.yaml",
+      "SourceFilename": "/etc/kubernetes/tmp/kubeadm-upgraded-manifests{{mkt}}/kube-apiserver.yaml"
+     }
+    },
+    {
+     "delay_ms": 1000,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubelet",
+      "ProcessId": 1187,
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/kube-apiserver.yaml"
+     }
+    },
+    {
+     "delay_ms": 44000,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/kube-controller-manager.yaml"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/tmp/kubeadm-upgraded-manifests{{mkt}}/kube-controller-manager.yaml"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "write",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/controller-manager.conf"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "rename",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/tmp/kubeadm-backup-manifests-{{bkts_90s}}/kube-controller-manager.yaml",
+      "SourceFilename": "/etc/kubernetes/manifests/kube-controller-manager.yaml"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "rename",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/kube-controller-manager.yaml",
+      "SourceFilename": "/etc/kubernetes/tmp/kubeadm-upgraded-manifests{{mkt}}/kube-controller-manager.yaml"
+     }
+    },
+    {
+     "delay_ms": 1000,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubelet",
+      "ProcessId": 1187,
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/kube-controller-manager.yaml"
+     }
+    },
+    {
+     "delay_ms": 19000,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/kube-scheduler.yaml"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/tmp/kubeadm-upgraded-manifests{{mkt}}/kube-scheduler.yaml"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "write",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/scheduler.conf"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "rename",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/tmp/kubeadm-backup-manifests-{{bkts_110s}}/kube-scheduler.yaml",
+      "SourceFilename": "/etc/kubernetes/manifests/kube-scheduler.yaml"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "rename",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/kube-scheduler.yaml",
+      "SourceFilename": "/etc/kubernetes/tmp/kubeadm-upgraded-manifests{{mkt}}/kube-scheduler.yaml"
+     }
+    },
+    {
+     "delay_ms": 1000,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubelet",
+      "ProcessId": 1187,
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/kube-scheduler.yaml"
+     }
+    },
+    {
+     "delay_ms": 14000,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "write",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/admin.conf"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "write",
+      "Image": "/usr/bin/kubeadm",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/super-admin.conf"
+     }
+    }
+   ]
+  },
+  {
+   "weight": 0.3,
+   "name": "Ansible (become root, remote tmp on another filesystem) changes a managed manifest: the stat module reads it for its checksum, and its file --mime-type and lsattr -vd children open it; the copy module reads it again for its sha1, then atomic_move gets EXDEV from os.rename, creates a .ansible_tmp<random><name> file in the directory (tempfile.mkstemp), copies the new content into it (shutil.move gets EXDEV too and calls shutil.copy, which opens the temp file for write) and renames it over the manifest; the kubelet's watch re-reads it",
+   "events": [
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/python3.12",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/{{amf}}"
+     }
+    },
+    {
+     "delay_ms": 6,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/file",
+      "ProcessId": "{{pid3}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/{{amf}}"
+     }
+    },
+    {
+     "delay_ms": 9,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/lsattr",
+      "ProcessId": "{{pid4}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/{{amf}}"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/lsattr",
+      "ProcessId": "{{pid4}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/{{amf}}"
+     }
+    },
+    {
+     "delay_ms": 1385,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/python3.12",
+      "ProcessId": "{{pid2}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/{{amf}}"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "create",
+      "Image": "/usr/bin/python3.12",
+      "ProcessId": "{{pid2}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/.ansible_tmp{{h8}}{{amf}}"
+     }
+    },
+    {
+     "delay_ms": 1,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "write",
+      "Image": "/usr/bin/python3.12",
+      "ProcessId": "{{pid2}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/.ansible_tmp{{h8}}{{amf}}"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "rename",
+      "Image": "/usr/bin/python3.12",
+      "ProcessId": "{{pid2}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/{{amf}}",
+      "SourceFilename": "/etc/kubernetes/manifests/.ansible_tmp{{h8}}{{amf}}"
+     }
+    },
+    {
+     "delay_ms": 180,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/kubelet",
+      "ProcessId": 1187,
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/{{amf}}"
+     }
+    }
+   ]
+  },
+  {
+   "weight": 0.6,
+   "name": "Ansible run with no change: the stat module reads a managed manifest for its checksum, and its file --mime-type and lsattr -vd children open it; nothing is written",
+   "events": [
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/python3.12",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/{{amf}}"
+     }
+    },
+    {
+     "delay_ms": 6,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/file",
+      "ProcessId": "{{pid3}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/{{amf}}"
+     }
+    },
+    {
+     "delay_ms": 9,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/lsattr",
+      "ProcessId": "{{pid4}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/{{amf}}"
+     }
+    },
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/lsattr",
+      "ProcessId": "{{pid4}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/{{amf}}"
+     }
+    }
+   ]
+  },
+  {
+   "weight": 0.25,
+   "name": "an operator's cron job backs up /etc/kubernetes with GNU tar (tar czf): creates the archive, then opens every directory and file under it",
+   "events": [
+    {
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "create",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/var/backups/k8s/etc-kubernetes-{{bkd}}.tar.gz"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/admin.conf"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/controller-manager.conf"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/kubelet.conf"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/etcd.yaml"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/kube-apiserver.yaml"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/kube-controller-manager.yaml"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/kube-scheduler.yaml"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/manifests/kube-vip.yaml"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/apiserver-etcd-client.crt"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/apiserver-etcd-client.key"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/apiserver-kubelet-client.crt"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/apiserver-kubelet-client.key"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/apiserver.crt"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/apiserver.key"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/ca.crt"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/ca.key"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/front-proxy-ca.crt"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/front-proxy-ca.key"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/front-proxy-client.crt"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/front-proxy-client.key"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/sa.key"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/sa.pub"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/etcd"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/etcd/ca.crt"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/etcd/ca.key"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/etcd/healthcheck-client.crt"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/etcd/healthcheck-client.key"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/etcd/peer.crt"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/etcd/peer.key"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/etcd/server.crt"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/pki/etcd/server.key"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/scheduler.conf"
+     }
+    },
+    {
+     "delay_ms": 2,
+     "event": {
+      "UtcTime": "{{ts}}",
+      "EventType": "open",
+      "Image": "/usr/bin/tar",
+      "ProcessId": "{{pid}}",
+      "User": "root",
+      "TargetFilename": "/etc/kubernetes/super-admin.conf"
+     }
+    }
+   ]
+  }
+ ]
+}

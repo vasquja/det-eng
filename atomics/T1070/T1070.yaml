@@ -3,10 +3,13 @@ display_name: "Indicator Removal (Kubernetes Events and Workload Records)"
 
 # Behavioral emulation for TRR9010. Each test destroys evidence through the API
 # server, so the delete/deletecollection audit events the paired detections key on
-# exist. Everything happens in a throwaway namespace trr9010 with uniquely named
-# objects, so a validator matches the emulation's own events. A delete is audited
-# even when the object does not exist, so the telemetry exists regardless. These need
-# a reachable cluster and audit logging (see detections/k8s/kind-apiserver-cluster.yaml).
+# exist. Everything happens in throwaway trr9010* namespaces (trr9010; trr9010-ns-f
+# for F; trr9010-dryrun-ns for the dry-run control) with uniquely named objects, so a
+# validator matches the emulation's own events. A delete is audited
+# even when the object does not exist (a 404), but the validator needs each delete to be
+# accepted (200), so each test first creates what it deletes, and a failed create fails
+# the test. These need a reachable cluster and audit logging (see
+# detections/k8s/kind-apiserver-cluster.yaml).
 
 atomic_tests:
   - name: "TRR9010.K8S.A — delete a single Kubernetes Event (core group)"
@@ -135,6 +138,37 @@ atomic_tests:
         bash #{source_dir}/emulate.sh gap
       cleanup_command: |
         true
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1070/src
+
+  - name: "TRR9010.K8S — server-side dry-run deletes (control: must not fire)"
+    auto_generated_guid: 5a959e08-c98f-48b3-aba9-a8374766de81
+    description: |
+      A control, not a procedure. Creates a throwaway namespace trr9010-dryrun-ns with a
+      harmless Event, a pod and a suspended Job, then sends kubectl delete
+      --dry-run=server for the Event (core group, then events.k8s.io), the pod, the Job
+      and the namespace, and a deletecollection of the namespace's Events and of its
+      pods (kubectl delete --raw with a DeleteOptions body that holds dryRun ["All"]).
+      Then it checks that every object is still there and that the pod is not being
+      deleted. A server-side dry run deletes nothing, so the rules below must match none
+      of these records (the validator's must-not-match checks). kubectl sends the dry
+      run in the DeleteOptions body, which the shipped audit policy logs at Request
+      level.
+      Rules: detections/sigma/T1070/k8s_events_deleted.yml,
+      detections/sigma/T1070/k8s_workload_deleted_evidence.yml,
+      detections/sigma/T1070/k8s_namespace_deleted.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh dryrun
+      cleanup_command: |
+        kubectl delete namespace trr9010-dryrun-ns --ignore-not-found
     input_arguments:
       source_dir:
         description: Path to the atomic source directory.

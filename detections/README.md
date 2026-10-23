@@ -213,11 +213,11 @@ it declares. An unrelated event cannot pass as a near-miss.
   so `automerge` turns on auto-merge for them only after a human approves.
 - **R1** has no registered positive in a validator `MANIFEST`, or declares a log
   source other than the one that validator proves it on (auditd: `linux/auditd`;
-  API server and TRR9003: `kubernetes/audit` or `kubernetes/cri`, as the entry
-  says; TRR9002: `kubernetes/audit`; cloud: the entry's provider). The benign
-  corpus scores a rule only on the slices of its log source, so a rule moved to
-  another log would escape its budget. A documented telemetry gap is listed in
-  `COMPILE_ONLY` and still needs a sidecar positive.
+  API server and TRR9003: `kubernetes/audit`, `kubernetes/cri` or, for a `file`
+  entry, `linux/file_event`, as the entry says; TRR9002: `kubernetes/audit`; cloud:
+  the entry's provider). The benign corpus scores a rule only on the slices of its
+  log source, so a rule moved to another log would escape its budget. A documented
+  telemetry gap is listed in `COMPILE_ONLY` and still needs a sidecar positive.
 - **R2** has no **verified** negative that breaks a *discriminating* item or a
   filter. A verified negative is a near-miss or filtered case, from the rule's
   cases or (cloud) its hard benign fixture. A no-op, an unrelated event or a
@@ -276,7 +276,12 @@ and the gate prints the new digest for a human to re-approve. Its `level`,
 It warns (never fails) about *thin* checks (**R5**): rules that exercise fewer than
 half as many of their condition items as the median rule of their platform (over
 the rules that have any verified negative), or whose negatives break only filters
-(or only surface items and filters) and no discriminating selection item.
+(or only surface items and filters) and no discriminating selection item. When the
+hint starts "No near-miss can break", no case can break the items it names (each is
+the only selection item of its branch): add the filtered cases it names, if any, and
+keep the warning. If the rule lacks an item that the technique really has (an event
+type, a provenance field), record that as a rule defect in
+[`RULE_DEFECTS.md`](RULE_DEFECTS.md).
 
 With `--baseline FILE` (the base branch's `--json` report) it also runs the
 **ratchet**. The report records every sidecar case by name, with its kind and a
@@ -494,6 +499,73 @@ probe-confirmed SKIP does not. On a public repository the run is free.
 request, on push to `main`, and weekly: `rule-cases`, `check-sufficiency`,
 `sufficiency-ratchet` (pull requests only), `benign-corpus`
 (`score_benign.py --check --enforce`) and the shadow `benign-linux-live` capture.
+It also runs `schedule-freshness` (not on push), which reads the Actions API; see
+below.
+
+**Weekly scheduled runs.** Each workflow file with a `schedule:` trigger (the
+cron line is in the file) runs once a week, so CI proves a rule again when only
+pySigma, the runner image or the kernel changed. GitHub can start a scheduled run
+late (about 7 hours on 2026-10-19), drop it under high load, or not start it when
+the workflow is disabled, and nothing fails when that happens. The
+`schedule-freshness` job in `detection-quality.yml` checks for this. It finds the
+workflow files with a `schedule:` trigger at run time (so a new scheduled
+workflow is checked with no edit), and `.github/scripts/check_schedule_freshness.py`
+reads the newest scheduled runs of each from the Actions API (the job has
+`actions: read`):
+
+- The scheduled and manual (`workflow_dispatch`) runs warn when the newest
+  successful scheduled run is more than 8 days old, or when one red scheduled run
+  (failure, cancelled, timed out) follows it. They fail at more than 15 days, at
+  two red scheduled runs in a row, or when GitHub reports the workflow as
+  disabled.
+- A pull request only warns, with an annotation, for the same conditions.
+- `detection-quality.yml` holds the check, and its other jobs run again in the
+  same run. So its own red scheduled runs are not counted (two of them can come
+  from this check), only the age of its newest scheduled run, and its scheduled
+  run counts as fresh for itself. A manual run after a fix is not held by the red
+  runs that the old cause made.
+- Phase: all the weekly crons are on Monday morning. The crons of `lint-trr.yml`
+  and the `validate-*.yml` workflows (06:11 to 06:43 UTC) come before the cron of
+  `detection-quality.yml` (06:53 UTC). Their scheduled runs usually end in
+  minutes, before it starts (on 2026-10-19 they ended 6 to 55 minutes before it).
+  So the scheduled run sees ages of about 0, 7, 14 or 21 days. A red run counts as
+  soon as it has ended: one red week warns, and two red weeks in a row fail. A run
+  that GitHub drops (no run at all) shows only by age: one dropped week is not
+  seen (7 days is ok), two in a row warn (a warning on a green run sends no
+  notice), and three in a row fail. For a workflow whose cron is after 06:53 UTC,
+  add 7 days. A pull request or a manual run at another time of the week sees
+  other ages, and warns from day 8.
+- A workflow with no successful scheduled run yet (a new one) only warns, also
+  when its runs are red. It is new while its oldest scheduled run is 15 days old
+  or less. With no scheduled run at all, or when GitHub does not list it as a
+  workflow, it is new while `main` has no such file, or the version on `main` has
+  no schedule trigger, or has had it, unchanged, for 15 days or less. After that,
+  it fails: the schedule never started, or never passed.
+- A schedule must run at least once a week (the day-of-month and month fields of
+  one cron entry are `*`). Another schedule stops the job (exit 2), so that a human
+  picks thresholds for it first.
+- An API error that a re-run can clear (a rate limit, or a 5xx, a 429, a network
+  error or a truncated answer on all its attempts, up to 4; or a request that the
+  time budget below stops) fails the scheduled and manual runs (exit 2), and only
+  warns on a pull request. Any other API error (for example a 403 or a 404, which
+  is a fault in the token or its permissions) or an answer of the wrong shape
+  fails every run, also on a pull request. An error on one workflow does not stop
+  the check of the others. `--self-test` proves the grading on constructed API
+  answers in the same job.
+- A slow API outage ends as API errors, not at the job's `timeout-minutes` (which
+  would end the step with no report). An attempt waits at most 15 seconds. After
+  one request fails on all its attempts, each later request gets one attempt. The
+  reads stop 240 seconds after the first one (`--api-budget`), and a request that
+  this budget stops is an API error that a re-run can clear. Each workflow still
+  gets its own row, written as soon as it is graded. With 8 scheduled workflows
+  and no answer at all, the reads end after about 215 seconds.
+
+In a public repository, GitHub disables the scheduled workflows after 60 days
+without repository activity. That also disables `detection-quality.yml`, so this
+job cannot report it: a pull request then gets no check from these workflows.
+When a human enables the workflows again, the next run names each workflow that
+is still disabled. A failed scheduled run opens no issue; GitHub sends its notice
+to the user who last changed the cron line.
 
 The three Kubernetes workflows (`validate-k8s-detections.yml`,
 `validate-staticpod-detections.yml` and `validate-apiserver-detections.yml`) run their
@@ -501,6 +573,119 @@ loops on a kind cluster. They pin kind, the kindest/node image (by digest) and k
 check the sha256 of both binaries, and fail when the cluster's server version differs
 from the pin. The pin moves every quarter, and before the pinned minor reaches end of
 life; the `env` block of each workflow says how.
+
+`.github/workflows/k8s-version-matrix.yml` runs the three Kubernetes workflows every
+week on the minors beside the pin: v1.35.8 and v1.37.0, the newest kindest/node images
+of those minors that kind v0.33.0 publishes. (v1.34 is not in the matrix: it reaches end
+of life on 2026-10-27.) Each leg dispatches one workflow with the `workflow_dispatch`
+inputs `node_image`, `kubectl_version`, `kubectl_sha256` and `label`, finds its run by
+the label in the run name, and waits for it. The steps stay in one file, and the job and
+check names do not change. A red leg only alerts: the matrix is not a required check,
+and it blocks nothing. It runs on `main` only, because a child run reports its checks on
+the head commit of its ref. Empty inputs, and every push, pull request and schedule run,
+use the pins. On `main`, a red leg shows a red `validate-*` check on main's head commit,
+which gates no pull request. The `validate-apiserver-detections` badge in the top-level
+README shows only the schedule runs (`?event=schedule`: the weekly run on the pin), so
+a leg does not change it. A cancelled leg also cancels its run, when it has found that run.
+
+### Kubernetes version notes
+
+These upstream changes can move the rules' inputs or the emulations when the cluster
+moves from the old pin (v1.32.2, kind v0.27.0) to v1.35, v1.36 (the pin) or v1.37. Each
+item names its source at the tag. Each rule claim was checked with `sigma_eval.py` on
+constructed events.
+
+- **Impersonation (TRR9009).** The audit Event has
+  `authenticationMetadata.impersonationConstraint` from v1.35
+  ([audit/v1/types.go v1.35.8 L93-95, L148-153](https://github.com/kubernetes/kubernetes/blob/v1.35.8/staging/src/k8s.io/apiserver/pkg/apis/audit/v1/types.go#L93-L95)).
+  ConstrainedImpersonation is alpha (off) in v1.35 and beta (on) from v1.36
+  ([apiserver kube_features.go v1.37.0 L367-370](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/apiserver/pkg/features/kube_features.go#L367-L370)),
+  so a refusal on the v1.35 leg has the legacy message. `k8s_impersonation.yml` matches
+  the legacy and the constrained refusal messages. No rule or validator gate reads
+  `authenticationMetadata`, and the TRR9009 gate keys on `impersonatedUser`. The
+  constrained refusal cases are built from source, not recorded live (the emulation
+  runs no probe by a caller without the impersonate verb).
+- **Watch-list reads (TRR9006).** client-go WatchListClient is on from v1.35
+  ([known_features.go v1.37.0 L141-144](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/client-go/features/known_features.go#L141-L144);
+  off at v1.32.2 L76). An informer then opens one watch with `sendInitialEvents=true`
+  instead of a list and a watch
+  ([reflector.go v1.37.0 L361, L475-483](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/client-go/tools/cache/reflector.go#L361)),
+  so controller Secret reads move from `list` to `watch`. `k8s_secret_access.yml`
+  matches get, list and watch.
+- **kubectl debug profile (TRR9002, TRR9007).** From kubectl v1.36, `kubectl debug`
+  uses the `general` profile when `--profile` is not given
+  ([debug.go v1.36.4 L216](https://github.com/kubernetes/kubernetes/blob/v1.36.4/staging/src/k8s.io/kubectl/pkg/cmd/debug/debug.go#L216);
+  `legacy` at v1.35.8 L217). The general profile adds SYS_PTRACE to the debug container
+  in both pod forms: the ephemeral container of `kubectl debug <pod>`, a
+  `pods/ephemeralcontainers` patch
+  ([profiles.go v1.36.4 L214-215, L419-427](https://github.com/kubernetes/kubernetes/blob/v1.36.4/staging/src/k8s.io/kubectl/pkg/cmd/debug/profiles.go#L214-L215)),
+  and the copy of `kubectl debug <pod> --copy-to=<new>`, a `pods` create (same file,
+  L206-212; the copy also shares the process namespace). The legacy profile adds no
+  capability in either form (profiles.go v1.35.8 L181-186). So the pinned kubectl
+  (v1.36.4) already adds SYS_PTRACE. Every default `kubectl debug` of a pod from kubectl
+  v1.36 or later matches `k8s_podspec_host_access.yml` (T1611, level high) where its
+  write is logged at Request: the patch where a policy logs `pods/ephemeralcontainers`
+  at Request, and the copy wherever `pods` creates are logged at Request (the API
+  server lab policy logs both). The TRR9002 lab logs both at Metadata, and no step in
+  the API server lab runs `kubectl debug`, so CI does not see this. Whether a default
+  `kubectl debug` must be a high T1611 alert is an open human decision
+  ([RULE_DEFECTS K34](RULE_DEFECTS.md#k34-k8s_podspec_host_access-a-default-kubectl-debug-from-kubectl-v136-adds-sys_ptrace));
+  the rules do not change here.
+- **Cgroup v1 (all labs).** The kubelet defaults `failCgroupV1` to true from v1.35
+  ([v1beta1/defaults.go v1.35.8 L292-294](https://github.com/kubernetes/kubernetes/blob/v1.35.8/pkg/kubelet/apis/config/v1beta1/defaults.go#L292-L294);
+  false at v1.32.2 L289-291), and kind does not set it. A local lab on a cgroup v1 host
+  does not start. The CI runners start the v1.36.4 cluster, so they are not on cgroup v1.
+- **kubeadm config (all labs).** kind v0.33.0 renders kubeadm v1beta4 for v1.36 and
+  later, and v1beta3 below
+  ([kubeadm/config.go L673-679](https://github.com/kubernetes-sigs/kind/blob/v0.33.0/pkg/cluster/internal/kubeadm/config.go#L673-L679)).
+  The `extraArgs` map in `k8s/kind-*.yaml` is native to v1beta3, and kind converts it to
+  the v1beta4 list because the patch sets no `apiVersion`
+  ([patch/kubeadm_merge.go L96-104](https://github.com/kubernetes-sigs/kind/blob/v0.33.0/pkg/internal/patch/kubeadm_merge.go#L96-L104)).
+  So the audit flags render on every leg (the v1.36.4 run shows all four `--audit-`
+  flags).
+- **Node image (all labs).** The kind v0.33.0 base image is Debian 13 (trixie) with
+  containerd v2.3.4, runc v1.4.3 and crictl v1.36.0; kind v0.27.0 had Debian 12,
+  containerd v2.0.2 and crictl v1.32.0
+  ([images/base/Dockerfile v0.33.0 L23, L127, L145, L160](https://github.com/kubernetes-sigs/kind/blob/v0.33.0/images/base/Dockerfile#L23);
+  v0.27.0 L23, L125, L158).
+  All three legs use images of kind v0.33.0, so the node runtime is not what differs
+  between them.
+- **Exec, attach and port-forward (TRR9002, TRR9026).** kubectl v1.37.0 keeps both
+  transport switches, `KUBECTL_REMOTE_COMMAND_WEBSOCKETS` and
+  `KUBECTL_PORT_FORWARD_WEBSOCKETS`
+  ([cmd/util/helpers.go v1.37.0 L445-446](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/kubectl/pkg/cmd/util/helpers.go#L445-L446)).
+  The server's PortForwardWebsockets is beta and on
+  ([kube_features.go v1.37.0 L2010-2013](https://github.com/kubernetes/kubernetes/blob/v1.37.0/pkg/features/kube_features.go#L2010-L2013)),
+  and AuthorizePodWebsocketUpgradeCreatePermission is on from v1.35 (same file,
+  L1370-1372). `kubectl apply` stays client-side by default (`--server-side` false,
+  helpers.go v1.37.0 L512), so an apply of a new object is still a `create`.
+- **MutatingAdmissionPolicy (TRR9008, TRR9025).** It is GA and on from v1.36, and beta
+  and off in v1.35
+  ([apiserver kube_features.go v1.36.4 L443-447](https://github.com/kubernetes/kubernetes/blob/v1.36.4/staging/src/k8s.io/apiserver/pkg/features/kube_features.go#L443-L447)).
+  The API server lab policy (`k8s/audit-policy-apiserver.yaml`) has no row for
+  `mutatingadmissionpolicies` or `mutatingadmissionpolicybindings`, so their writes fall
+  to its Metadata catch-all. `k8s_admission_webhook_created.yml` (create) and
+  `k8s_admission_webhook_disabled.yml` (delete, deletecollection, update, patch) key on
+  the `admissionregistration.k8s.io` group and the verb, so they match these writes. At
+  Metadata a delete has no DeleteOptions body, so the delete dry-run filter of
+  `k8s_admission_webhook_disabled.yml` cannot see one, and a server-side dry-run delete
+  of a MutatingAdmissionPolicy or its binding also fires
+  ([RULE_DEFECTS K35](RULE_DEFECTS.md#k35-api-server-lab-policy-mutatingadmissionpolicy-deletes-at-metadata-hide-a-dry-run)).
+  No grader reads a policy body, and no emulation creates one.
+- **userAgent.** client-go builds it as `<command>/<version> (<os>/<arch>)
+  kubernetes/<commit>`
+  ([rest/config.go v1.37.0 L527-530](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/client-go/rest/config.go#L527-L530)),
+  so it carries the kubectl and component versions of each leg. No Kubernetes rule and
+  no validator gate keys on `userAgent`.
+- **Bootstrap objects (shadow slice).** Some bootstrap controller roles exist only when a
+  feature gate of that minor is on. For example, the
+  `system:controller:device-taint-eviction-controller` role needs DRADeviceTaints
+  ([bootstrappolicy/controller_policy.go v1.36.4 L227, L251](https://github.com/kubernetes/kubernetes/blob/v1.36.4/plugin/pkg/auth/authorizer/rbac/bootstrappolicy/controller_policy.go#L227)),
+  which is off in v1.35 and on from v1.36
+  ([kube_features.go v1.36.4 L1369-1372](https://github.com/kubernetes/kubernetes/blob/v1.36.4/pkg/features/kube_features.go#L1369-L1372);
+  v1.35.8 L1244-1246). So the role exists on the pin and on the v1.37 leg, but not on
+  the v1.35 leg, and the shadow benign counts of the live slice can differ per leg. Compare a
+  leg only with earlier runs of the same leg.
 
 ## Manual run
 
@@ -523,9 +708,12 @@ The Kubernetes rules (`sigma/T1609/`) key on the API server **audit log**, not
 on syscalls, so they have their own layer stack and validator:
 
 1. **Emulation** (`atomics/T1609/`) — `emulate.sh` runs the benign command `id`
-   through each control path (exec, attach, ephemeral container, node proxy),
-   makes one read-only direct kubelet call, and reads the kubelet pod lists
-   through the node proxy as a temporary service account (Procedure F).
+   through each control path (exec, attach, ephemeral container, and a POST to
+   the kubelet `/run` through the node proxy), makes one read-only direct kubelet
+   call, and reads the kubelet pod lists through the node proxy as a temporary
+   service account (Procedure F). Each procedure's action must succeed or the
+   step fails, naming the procedure; the run appends one ledger line per
+   procedure (`$DETENG_LEDGER`: its time window and exit status).
 2. **Audit policy** (`k8s/audit-policy.yaml`) — makes the telemetry exist. A
    default cluster writes no audit log, so a rule has nothing to match. The
    `k8s/kind-audit-cluster.yaml` config mounts it into a `kind` cluster.
@@ -537,9 +725,10 @@ Validate the loop (emulate -> audit -> rule fires):
 # Compile the rules only — no cluster needed:
 python3 detections/validate_k8s_detections.py --dry-run
 
-# Full run against an audit log you collected from the cluster:
+# Full run against an audit log you collected from the cluster, with the
+# emulation ledger (bind each procedure gate to its window and exit status):
 python3 detections/validate_k8s_detections.py \
-  --audit-log /tmp/kube-apiserver-audit.log
+  --audit-log /tmp/kube-apiserver-audit.log --ledger /tmp/emulation-ledger.jsonl
 
 # Negative control, on a log collected BEFORE the emulation ran:
 python3 detections/validate_k8s_detections.py \
@@ -548,9 +737,23 @@ python3 detections/validate_k8s_detections.py \
 
 The audit log is flattened to the dotted field names the rules use
 (`objectRef.resource`, `user.username`, ...) and each rule runs through the
-same pySigma backend as the auditd rules. A rule passes only on an event from
-the emulation itself (one naming the target pod, or for Procedure F the
-`trr9002-node-reader` service account), not on any event in the log.
+same pySigma backend as the auditd rules. Each MANIFEST entry carries one gate
+per procedure (and per variant), and the entry passes only when every gate
+matches a record of its own: A over WebSocket (`pods/exec`, verb `get`, code
+101) and A over SPDY (`pods/exec`, verb `create`, code 101), B (`pods/attach`,
+`container=app`, code 101), the attach step of C (`pods/attach`,
+`container=trr9002-debug-attach`, code 101), C (`pods/ephemeralcontainers`, code
+200), D (`nodes/proxy`, verb `create`, the `/proxy/run/` path, code 200) and the
+two Procedure F reads (`nodes/proxy` get of `/runningpods/` and `/pods` by the
+`trr9002-node-reader` service account, code 200). With `--ledger`, a gate also
+needs its record inside the procedure's time window and the procedure to have
+exited as expected, which tells apart procedures of the same shape and fails a
+procedure that did not run. Procedure E (the direct kubelet call) is the
+documented gap: with `--ledger` the validator asserts it ran and that no TRR9002
+rule matches any audit event inside E's window. `validate_k8s_detections.py`
+exposes a module-level `PROCEDURES` map — `(TRR id, letter)` to the rule files
+that gate that procedure — which `research/tools/coverage_report.py` reads to
+mark a procedure Proven only with a per-procedure gate.
 
 **The list-as-JSON-text contract.** The API server audit log holds lists as JSON
 arrays (`requestObject.rules`, `requestObject.webhooks`, `requestObject.spec.containers`),
@@ -576,9 +779,28 @@ captures the audit log before the emulation and runs the validator on it with
 `--expect-miss`, so a pass that does not depend on the emulation fails the job.
 `validate_staticpod_detections.py` and
 `.github/workflows/validate-staticpod-detections.yml` do the same for TRR9003
-(T1543.005), where the gate matters most: both rules the validator match-gates
-(the CRI rule and the mirror-pod rule) also match the control-plane static pods
-every node starts, so only the emulation's own pods count.
+(T1543.005), where the gate matters most: the validator match-gates three rules,
+and two of them (the CRI rule and the mirror-pod rule) also match the
+control-plane static pods every node starts, so only the emulation's own pods
+count. Those two rules gate the injected static pod *and* the invalid-namespace
+evasion variant — the CRI rule on both running sandboxes, the mirror-pod rule on
+the stored mirror (code 2xx) and on the refused mirror-create attempt (code 404).
+The third, the file-event rule, is gated on the marked writer's manifest write
+(see [Node file-event sensor](#node-file-event-sensor-trr9003-strategy-3-trr9006-strategy-3)).
+Its emulation writes the same per-procedure ledger (`A`, `GAP`, `B`); with
+`--ledger` a CRI sandbox is bound to its window by `createdAt`, an audit event by
+`requestReceivedTimestamp`, and a node file event by `Timestamp`. It also exposes
+a `PROCEDURES` map for the coverage report. Procedure B runs live when
+`TRR9003_RECONFIGURE=1` (CI, on a worker node): it points the worker kubelet at a
+`staticPodURL` served from the runner on the kind bridge gateway, so the CRI and
+mirror-pod rules gate B too — the CRI rule on the URL static pod's
+`config.source=http` sandbox (`trr9003-url-<worker>` in `default`) and the
+mirror-pod rule on its mirror create by `system:node:<worker>` (the kubelet posts a
+mirror pod for a URL static pod, since `IsStaticPod` is true for any non-API
+source). B writes no manifest file, so the file-event rule does not gate it. The
+worker is `TRR9003_WORKER` (default `trr9003-worker`). Without the flag B stays a
+read-only demonstration with no telemetry: its ledger row says
+`"mode":"read-only"`, and a strict run misses B's gates and names the flag.
 
 ### Node runtime sensor (TRR9003 Strategy 1)
 
@@ -596,18 +818,73 @@ a scheduled pod).
   `annotations.kubernetes.io/config.source`, ...). A runtime security or EDR
   agent with container context reports these when a sandbox starts; map its
   field names to these.
-- **Lab sensor.** `k8s/cri-pod-sensor.sh` polls `crictl pods -o json` on the
-  node and appends one snapshot per line; the validator keeps each sandbox's
+- **Lab sensor.** `k8s/cri-pod-sensor.sh` polls `crictl pods -o json` on each
+  node (the control plane, and the worker where Procedure B runs; CI joins the two
+  logs) and appends one snapshot per line; the validator keeps each sandbox's
   first sighting. It is a stand-in for a real agent, good enough to prove the
   rule on real runtime data.
-- **Validation.** The CRI rule must match both the injected static pod and the
-  invalid-namespace pod, and must match none of the API-scheduled sandboxes in
-  the same log:
+- **Validation.** The CRI rule must match the injected static pod, the
+  invalid-namespace pod and, when Procedure B runs live, the URL static pod
+  (`config.source=http` on the worker), and must match none of the API-scheduled
+  sandboxes in the same log; the file-event rule must match the marked writer and
+  none of `kubeadm`'s control-plane manifest writes:
 
 ```
 python3 detections/validate_staticpod_detections.py \
-  --audit-log /tmp/kube-apiserver-audit.log --cri-log /tmp/cri-pods.jsonl
+  --audit-log /tmp/kube-apiserver-audit.log --cri-log /tmp/cri-pods.jsonl \
+  --file-log /tmp/node-file-events.jsonl --ledger /tmp/emulation-ledger.jsonl
 ```
+
+### Node file-event sensor (TRR9003 Strategy 3, TRR9006 Strategy 3)
+
+Two node rules read Sigma's `linux` / `file_event` log (`TargetFilename`, `Image`,
+`ProcessId`): `sigma/T1543.005/linux_static_pod_manifest_write.yml` (a write in the
+static-pod directory) and `sigma/T1552.007/linux_k8s_sa_token_read.yml` (a read of a
+projected service-account token). The two validators read this log as the `file`
+source (`--file-log`), and each gates its rule on one marked emulation record (C2-7).
+
+- **Lab sensor.** The runner's auditd. A kind node is a container on the runner's
+  kernel, and audit is not namespaced, so the runner's auditd records the node's
+  syscalls. `k8s/auditd_file_events.py` converts the SYSCALL, PATH and CWD records of
+  the watch key `k8s_node_file` to `file_event` JSON lines (with `EventType` and
+  `Timestamp`). The `exe` and the PATH `name` are the paths that the node process
+  saw, so they are the values the rules read. A relative name of a `*at` syscall
+  with a real directory fd cannot be placed; the converter skips it and counts it
+  on stderr.
+- **Static-pod directory (TRR9003).** `k8s/kind-staticpod-cluster.yaml` bind-mounts
+  `.kind/trr9003-manifests` in the checkout (a relative path, which kind resolves
+  against the working directory, as it does the audit policy) at the node's
+  `/etc/kubernetes/manifests`. The bind source is not in `/tmp`: the kubelet runs
+  every manifest in it on a privileged node, so a local user who makes a shared path
+  first controls the node and the host. The workflow makes the directory, then adds
+  a write watch on its absolute path
+  (`-F dir=${GITHUB_WORKSPACE}/.kind/trr9003-manifests -F perm=wa`)
+  before it creates the cluster, so the log holds `kubeadm`'s own control-plane
+  manifest writes as well as the emulation's. Procedure A writes its manifest
+  through a marked copy of tee (`/usr/local/bin/trr9003-tee`; a kind node's `/tmp`
+  is a noexec tmpfs, so a copy there cannot run). The validator gates the rule on
+  that write. A false-positive control requires that the rule matches none of
+  `kubeadm`'s writes, and that the log holds some, so the control is not vacuous.
+- **Projected token (TRR9006).** The token is on a tmpfs that the kubelet mounts
+  inside the node's own mount namespace. A directory-tree watch added from the
+  runner (`-w DIR` and `-F dir=DIR` make the same recursive rule) tags only the
+  mounts that the runner's namespace sees, so it does not record that read. The
+  workflow pins one token file of the node's kube-proxy pod, adds a per-file read
+  watch through `/proc/<node pid>/root`, checks with a canary read of the `ca.crt`
+  beside it that auditd records reads there, and passes the file to Procedure E
+  (`TRR9006_TOKEN_FILE`). E reads it through a marked copy of cat
+  (`/usr/local/bin/trr9006-reader`). The negative control for this gate can fail
+  only on a stray marked-reader event. The validator prints how many file events
+  the log holds (E's marked read, and any read of the watched file by the kubelet or
+  by kube-proxy, when one occurs) and how many the rule matches (the kubelet is
+  filtered). A false-positive control runs in the validate and the negative-control
+  runs: the rule must match none of the kubelet's own token reads (an `Image` whose
+  file name is `kubelet`, in any directory). Live CI has recorded no kubelet read of
+  the watched token in any run so far (3 of 3 runs to 2026-10-23, each watched for
+  about 2 minutes), so this control has had no live input. The kubelet filter is
+  proven by the sidecar filtered case `kubelet-writes-projected-token` (`Image`
+  `/usr/bin/kubelet`). A log with no kubelet read gets a notice, and the control does
+  not fail.
 
 ### Container runtime layer (out of scope)
 
@@ -633,7 +910,7 @@ validator (`validate_apiserver_detections.py`), and one workflow
 | TRR9007 | Dangerous pod spec (T1611) | `sigma/T1611/k8s_podspec_host_access.yml` + a controller rule + a confinement (Unconfined) rule | Request |
 | TRR9008 | Disable admission control (T1685) | `sigma/T1685/k8s_admission_webhook_disabled.yml` + a neuter grader + an enforcer-removal rule (the engines' default namespaces) and its any-namespace anchor | Request (RequestResponse for webhook-configuration update and patch) |
 | TRR9009 | Impersonation (T1134) | `sigma/T1134/k8s_impersonation.yml` + a privileged-target rule | Metadata |
-| TRR9010 | Indicator removal (T1070) | `sigma/T1070/k8s_events_deleted.yml` + a workload-deletion rule + a namespace-delete hunting rule | Metadata |
+| TRR9010 | Indicator removal (T1070) | `sigma/T1070/k8s_events_deleted.yml` + a workload-deletion rule + a namespace-delete hunting rule | Metadata to fire; deletes at Request, so a dry run's DeleteOptions body is in the record |
 | TRR9025 | Malicious admission webhook (T1546) | `sigma/T1546/k8s_admission_webhook_created.yml` + a create grader and a repoint grader | Request (RequestResponse for update/patch) |
 | TRR9026 | Pod port-forward (T1572) | `sigma/T1572/k8s_pod_portforward.yml` (verb-agnostic subresource) + a nodes/proxy `/portForward/` rule | Metadata |
 | TRR9027 | Cluster DNS poisoning (T1565.001) | `sigma/T1565.001/k8s_coredns_configmap_modified.yml` + a Corefile grader | Metadata + RequestResponse (the three DNS ConfigMaps) + Request (kube-system ConfigMap creates; drop that rule where Helm stores releases in kube-system ConfigMaps) |
@@ -641,7 +918,11 @@ validator (`validate_apiserver_detections.py`), and one workflow
 The audit **level** is per technique: pods, workload controllers, RBAC, and
 admission-webhook creates are logged at `Request` so `requestObject` carries the
 privileged/hostPath fields, the bound role, the group subject, and the webhook
-`clientConfig`. An update or patch of a webhook configuration is at `RequestResponse`,
+`clientConfig`. Every delete and deletecollection of pods, Events (core and
+events.k8s.io), namespaces and the workload controllers is at `Request` too, so a
+`kubectl delete --dry-run=server` (its DeleteOptions body holds `dryRun: ["All"]`) is in
+the record and the rules' dry-run filters can read it; a delete's body is DeleteOptions
+only, with no object body and no secret data. An update or patch of a webhook configuration is at `RequestResponse`,
 so the stored webhooks are graded whatever the patch type. An update, patch or delete
 of the three `kube-system` DNS ConfigMaps (`coredns`, `kube-dns`, `coredns-custom`) is
 at `RequestResponse`, so the stored Corefile is graded whatever the patch type; every
@@ -678,20 +959,109 @@ with the sentinel, then restores the saved object and fails the step unless the 
 Corefile matches byte for byte; each is proven separately). The negative control
 proves a pass depends on the emulation, not the baseline.
 
+**Per-procedure gates and the emulation ledger.** A `MANIFEST` entry's gate is either
+one callable (any marked record passes, as before) or a list of `(procedure, gate)`
+pairs. With a list, the entry passes only when **every** procedure has a matching record
+of its own, so one procedure that fails silently — or whose write the API server refused
+— fails the entry; in `--expect-miss` mode the entry fails if **any** one procedure
+matches. Most gates are built with `rec(verb, resource, sub, name|prefix, ns, user,
+also, code, window)`; a gate that needs a precise helper (a body sentinel, a JSON-patch
+operation list, a marker in the `requestURI`) is bound to its procedure with
+`win(gate, window, code)`. Both, by default, require an accepted response (a 2xx, or 101
+for a streaming upgrade), so a cleanup `DELETE` that hit a 404, or a refused create, can
+no longer stand in for a procedure. Two procedures are refused by design, and their
+gates say so. TRR9009's denied impersonation probes (A, the group probe, C, D and the
+gap) pass only on a `403`, and a `200` there fails the gate, because it would mean a
+throwaway identity had gained rights; only the `system:masters` list is expected to be
+`200`. TRR9026 Procedure C sends an un-upgraded `nodes/proxy` GET that the kubelet
+refuses: its gate takes any response code (`code=None`), because the audit record is
+the proof and no live record has pinned the kubelet's refusal code yet. The atomic
+passes on the kubelet's upgrade refusal (or on an unexpected success, which the API
+server audits too) and fails on any other error.
+
+The `--ledger` flag binds each procedure gate to its own time window and exit status.
+Each emulation appends one JSON line per procedure to `$DETENG_LEDGER`
+(`{"trr","procedure","start","end","exit","expect"}`, UTC to the microsecond); with a
+ledger, a gate also requires the record's time (`requestReceivedTimestamp` for an audit
+event, `Timestamp` for a node file event) to fall inside that procedure's `[start, end]` and the procedure to have exited as expected, and a missing
+row is reported as "did not run". This tells apart two procedures that send the same
+request shape, and fails a procedure that did not run or failed. Without `--ledger` the
+gates fall back to fields only, so a local run and an old log still work (the CI negative
+control runs without a ledger, on field gates only). The CI job sets `DETENG_LEDGER`,
+passes `--ledger`, and uploads the ledger with the logs so a reviewer can re-run the
+validator offline (`--ledger` is refused with `--expect-miss`, so the negative control
+can never be narrowed to a window). A documented gap is asserted with an **absence
+check**: with a ledger, TRR9006 Procedure E (an on-disk token read) must leave no
+`k8s_secret_access` or `k8s_secret_token_request` event by a non-system caller (in any
+namespace) in E's window. Controller and kubelet reads (`system:*`) are left out so that
+background traffic cannot flake the check. The check also fails when E did not run or
+failed, and when a matching event has no `requestReceivedTimestamp` to place it in time.
+A ledger line that does not parse, or is not a row with `trr` and `procedure`, fails
+the run, because a corrupt ledger proves nothing. The TRR9002 and TRR9003 validators
+do the same.
+
+**Must-not-match checks.** With a ledger, `MISS_MANIFEST` asserts that a rule stays
+quiet on the emulation's own server-side dry runs, which persist nothing. The `dryrun`
+control of the TRR9008, TRR9010 and TRR9025 atomics creates objects named
+`trr9008-dryrun-`, `trr9010-dryrun-` and `trr9025-dryrun-`, sends each write with
+`--dry-run=server` (Event, pod, Job and namespace deletes, and a deletecollection of
+the Events and of the pods of its namespace; a webhook neuter patch and delete; a
+Deployment patch, both `kubectl scale` shapes, a delete and a deletecollection in
+`gatekeeper-system`, and the delete of that namespace; a webhook repoint patch), and
+checks that nothing changed. kubectl delete never sends a deletecollection, so the
+control sends each one with `kubectl delete --raw` of the collection URL and a
+DeleteOptions body that holds `dryRun: ["All"]`. Each entry is `(folder, rule, label,
+gate)`, and the gate is one callable or a list of `(shape, gate)` pairs built with
+`dry()` (`rec(..., dry_run=True)`). The gate tests the verb, resource, subresource, the
+dry-run object (its name prefix, the control's namespace, or the exact namespace
+`gatekeeper-system`), the window and an accepted response, not the dry-run marker. A
+shape passes only when at least one record passes its gate (so a control that did not
+run, failed or was refused fails the check), the rule matches none of them, and the
+rule matches at least one of them once the dry-run marker is removed (the `dryRun`
+parameter of the query and `requestObject.dryRun`). So a rule that is quiet because
+the record lacks a field it reads (a policy that logs the request at Metadata, or
+another request shape) fails the check too, and a record that does not show the dry
+run fires the rule. The real creates of the control use another verb, and the requests
+that delete its objects are sent from the atomic's cleanup, after the control's window;
+the controller teardown that follows (the namespace controller's sweep, the kubelet's
+final pod delete) can fall in a later procedure's window. No positive gate (`rec()` or
+`win()`) selects a record whose object name or namespace begins with one of these
+prefixes (`DRY_RUN_PREFIXES`), and a MISS explanation's `[gate: ...]` says so. Without
+`--ledger`, and in `--expect-miss` mode, the checks do not run.
+
+Module-level `PROCEDURES` maps `(trr_id, LETTER)` (e.g. `('TRR9004', 'A')`) to the sorted
+rule paths that gate that procedure with a gate of its own. It is the interface for the
+procedure coverage report (`research/tools/coverage_report.py`), so that a procedure
+counts as proven by a gate of its own, not by a file-name substring test.
+
 ```
 python3 detections/validate_apiserver_detections.py --dry-run     # compile only
 python3 detections/validate_apiserver_detections.py \
-  --audit-log /tmp/kube-apiserver-audit.log --cri-log /tmp/cri-pods.jsonl
+  --audit-log /tmp/kube-apiserver-audit.log --cri-log /tmp/cri-pods.jsonl \
+  --file-log /tmp/node-file-events.jsonl --ledger /tmp/emulation-ledger.jsonl
 ```
 
 TRR9006 Procedure E (reading an already-mounted token off disk) bypasses the API
 server, so it leaves no audit event. Its rule
-(`sigma/T1552.007/linux_k8s_sa_token_read.yml`) is compiled but not match-gated here;
-the emulation documents the gap the way TRR9002 Procedure E does. The TRR9007
-static-pod delivery also skips the API server's admission, but the kubelet's mirror
-create is audited as `system:node:<node>`. TRR9003's CRI rule for the static pod is
-not compiled by this validator; `validate_staticpod_detections.py` compiles and
-match-gates it on the TRR9003 emulation.
+(`sigma/T1552.007/linux_k8s_sa_token_read.yml`) reads Sigma's `linux` / `file_event`
+log, which the audit loop does not produce; CI stands in a node file-event sensor
+(C2-7, see [Node file-event sensor](#node-file-event-sensor-trr9003-strategy-3-trr9006-strategy-3)).
+The runner's auditd watches one projected token file of the node's kube-proxy pod for
+reads, through a per-file watch on `/proc/<node pid>/root` (the token's tmpfs is
+mounted inside the node's mount namespace, where a tree watch added from the runner
+cannot see it). Procedure E reads that file through a marked copy of cat
+(`/usr/local/bin/trr9006-reader`), `k8s/auditd_file_events.py` converts the records,
+and the validator gates the rule on that read (`--file-log`, the `file` source). The
+audit-log gap is proven at the same time:
+with a ledger, the absence check asserts no secret-read or token-request event by a
+non-system caller in E's window.
+The TRR9007 static-pod delivery also skips the API server's admission, but the kubelet's
+mirror create is audited as `system:node:<node>` and carries the spec at `Request` level,
+so the `9007 static` entry match-gates the pod-spec chokepoint on it (`create pods`, a
+`trr9007-escape-static-` name, a `system:node:` caller, in the gap procedure's window);
+the emulation polls up to 60 s for that mirror pod and fails if it never registers.
+TRR9003's CRI rule for the static pod is not compiled by this validator;
+`validate_staticpod_detections.py` compiles and match-gates it on the TRR9003 emulation.
 
 ## External cloud detections (AWS, Azure, GCP)
 

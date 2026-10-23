@@ -1,5 +1,5 @@
 {
-  "_doc": "Per-rule false-positive budgets for detections/score_benign.py. A rule not listed uses `default`: enforce at 0 hits, so a new rule must stay silent on the benign corpus or a human approves a budget for it. mode `enforce`: an overrun fails CI (score_benign.py --enforce). mode `shadow`: an overrun is only a CI warning (for a rule a human accepts while its corpus is not yet trusted; no entry uses it today). `max_hits` is the most benign hits the rule may raise over the whole committed corpus for its logsource: set it to the most hits over the committed seed and ten reseeds of every synthetic slice (`score_benign.py --reseeds 10`, the 'most' column), not one seed's count, so a routine version bump of a slice does not trip it. Optional `max_rate_per_10k` caps the rate. Every entry needs a `why` that starts 'documented noise:' (a deliberately generic or hunting rule, or a falsepositives class the rule names) or 'rule defect, tracked in detections/RULE_DEFECTS.md <ID>:' (an entry of that tracker); score_benign.py fails any other. Raising a budget, or moving a rule to shadow, is a human decision: this file is a protected path that needs a human approval before merge. `unscored` maps a rule that no benign slice reads (no slice with its product and service) to the reason; --check/--enforce fail for an unscored rule not listed there, and for a listed rule that is scored now.",
+  "_doc": "Per-rule false-positive budgets for detections/score_benign.py. A rule not listed uses `default`: enforce at 0 hits, so a new rule must stay silent on the benign corpus or a human approves a budget for it. mode `enforce`: an overrun fails CI (score_benign.py --enforce). mode `shadow`: an overrun is only a CI warning (for a rule a human accepts while its corpus is not yet trusted; no entry uses it today). `max_hits` is the most benign hits the rule may raise over the whole committed corpus for its logsource: set it to the most hits over the committed seed and ten reseeds of every synthetic slice (`score_benign.py --reseeds 10`, the 'most' column), not one seed's count, so a routine version bump of a slice does not trip it. Optional `max_rate_per_10k` caps the rate. Every entry needs a `why` that starts 'documented noise:' (a deliberately generic or hunting rule, or a falsepositives class the rule names) or 'rule defect, tracked in detections/RULE_DEFECTS.md <ID>:' (an entry of that tracker); score_benign.py fails any other. Raising a budget, or moving a rule to shadow, is a human decision: this file is a protected path that needs a human approval before merge. `unscored` maps a rule that no benign slice reads (no slice with its product and service, or with its product and category when neither names a service) to the reason; --check/--enforce fail for an unscored rule not listed there, and for a listed rule that is scored now.",
   "default": {
     "mode": "enforce",
     "max_hits": 0
@@ -135,6 +135,11 @@
       "max_hits": 4,
       "why": "documented noise: a control-plane kubelet re-registering its mirror pod after a restart, documented."
     },
+    "T1543.005/linux_static_pod_manifest_write.yml": {
+      "mode": "enforce",
+      "max_hits": 118,
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md L15: on an open-capable sensor every read of a manifest by a process outside filter_install fires (an operator's tar backup; Ansible's stat module, its file and lsattr children and the copy module's checksum read), because selection_dir has no event-type item; Ansible's atomic_move writes are the configuration-management noise that the rule's falsepositives names."
+    },
     "T1546/k8s_admission_webhook_created.yml": {
       "mode": "enforce",
       "max_hits": 11,
@@ -154,6 +159,11 @@
       "mode": "enforce",
       "max_hits": 23,
       "why": "documented noise: external-secrets minting tokens for Vault auth service accounts, documented."
+    },
+    "T1552.007/linux_k8s_sa_token_read.yml": {
+      "mode": "enforce",
+      "max_hits": 266,
+      "why": "rule defect, tracked in detections/RULE_DEFECTS.md L16: every workload's client library re-reads its own mounted token, at most once a minute on its next API request after its cached copy expires (client-go, the Python and Java clients), and the in-container selection has no reader constraint, so this high rule fires on each of them (9 images on the node slice)."
     },
     "T1565.001/k8s_coredns_configmap_modified.yml": {
       "mode": "enforce",
@@ -211,8 +221,5 @@
       "why": "documented noise: GitOps prunes and a downscaler scaling workloads, documented anchor."
     }
   },
-  "unscored": {
-    "T1543.005/linux_static_pod_manifest_write.yml": "no benign slice for its logsource (linux / file_event: node file-integrity or EDR file events). The Linux slice is auditd SYSCALL records, which this rule does not read; score it once a recorded node file-event slice exists.",
-    "T1552.007/linux_k8s_sa_token_read.yml": "no benign slice for its logsource (linux / file_event: node file-integrity or EDR file events with container context). The Linux slice is auditd SYSCALL records, which this rule does not read; score it once a recorded node file-event slice exists."
-  }
+  "unscored": {}
 }

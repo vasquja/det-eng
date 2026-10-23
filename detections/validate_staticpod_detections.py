@@ -3,7 +3,7 @@
 Validate the TRR9003 (static pod, T1543.005) detection loop on the telemetry the
 emulation produced. Sibling of validate_k8s_detections.py.
 
-Two rules are match-gated, one per sensor:
+Three rules are match-gated, one per sensor:
 
   * Strategy 1, the chokepoint — node runtime sensor (CRI pod sandboxes):
         drop a static pod manifest on a node -> the kubelet starts the pod with
@@ -11,14 +11,25 @@ Two rules are match-gated, one per sensor:
     It must match the emulation's injected static pod AND the invalid-namespace
     variant (`trr9003-ghost`), the pod that runs on the node while the API
     server stores no object for it. That second match is the gap this rule
-    closes.
+    closes. It must also match Procedure B's URL static pod on the worker node
+    (`trr9003-url-<worker>` in namespace default, `config.source: http`).
 
   * Strategy 2, the fallback — API server audit log:
         the kubelet registers a mirror pod -> the API server writes a
         `create pods` event by a node identity -> the audit rule matches it.
+    It must match the injected pod's stored mirror pod (code 2xx) AND the
+    invalid-namespace pod's mirror-create attempt, which the API server
+    refuses with 404 (namespace not found) but still audits. It must also
+    match Procedure B's stored mirror pod `trr9003-url-<worker>` (namespace
+    default), created by `system:node:<worker>`.
 
-Both rules also match the control-plane static pods every kubeadm node starts,
-by design (a documented false positive). So a match alone proves nothing about
+The worker node name is TRR9003_WORKER (default trr9003-worker), as in
+atomics/T1543.005/src/emulate.sh. The B gates need the LIVE Procedure B
+(TRR9003_RECONFIGURE=1, which CI sets, on a cluster with a worker node): a
+read-only B makes no telemetry, so a strict run misses B, and the MISS says so.
+
+The CRI and audit rules also match the control-plane static pods every kubeadm
+node starts, by design (a documented false positive). So a match alone proves nothing about
 the emulation: a rule PASSES only if it matches the emulation's own pods. The
 validator reports the baseline separately. For the CRI rule it also runs a
 false-positive control: the rule must not match any sandbox the API server
@@ -28,38 +39,77 @@ control is not vacuous.
 Each log is flattened to dotted field names and each rule runs through its
 pySigma-compiled query (see sigma_eval.py).
 
+The third rule, Strategy 3, reads the node file-event sensor (C2-7):
+
+  * the kubelet static-pod directory is watched for writes (auditd `-p wa`):
+        the emulation drops its manifest through a marked copy of tee
+        (/usr/local/bin/trr9003-tee) -> a linux/file_event record -> the
+        file-event rule matches it. CI adds the watch before the cluster is
+        created, so the file log also holds kubeadm's own control-plane manifest
+        writes. A false-positive control runs on them: the file-event rule must
+        match none of kubeadm's writes (its filter_install excludes them by full
+        path), and there must be some in the log, so the control is not vacuous.
+
 Logs:
     --audit-log PATH   API server audit log (JSON lines).
     --cri-log PATH     node runtime sensor log: one `crictl pods -o json`
                        snapshot per line, as detections/k8s/cri-pod-sensor.sh
                        writes it. Each sandbox counts once, at first sighting.
+    --file-log PATH    node file-event sensor log: linux/file_event JSON lines
+                       (TargetFilename, Image, ProcessId, EventType, Timestamp),
+                       as detections/k8s/auditd_file_events.py writes them from
+                       the runner's auditd records.
 
 Modes:
     python3 detections/validate_staticpod_detections.py --dry-run
         Compile the rules only. No cluster or log needed.
 
-    python3 detections/validate_staticpod_detections.py --audit-log A --cri-log C
+    python3 detections/validate_staticpod_detections.py --audit-log A --cri-log C \
+            --file-log F
         Full validation. Default strict: a rule that misses a required
         emulation pod, or a failed control, fails the run (exit 1). A rule whose
         log is not given is skipped.
 
+    ... --ledger PATH
+        The emulation ledger (atomics/T1543.005/src/emulate.sh appends one JSON
+        line per procedure to $DETENG_LEDGER: trr, procedure, start, end, exit,
+        expect, and "mode": "read-only" for a read-only Procedure B; the
+        invalid-namespace variant is procedure GAP). With it, a gate also needs
+        its record inside its procedure's [start, end] (an audit event by
+        requestReceivedTimestamp, a CRI sandbox by createdAt, a node file event
+        by Timestamp), and the
+        procedure's exit to equal its expect; a procedure with no row did not
+        run, and its gates fail, as do the gates of a read-only row. Without
+        --ledger the gates use the record fields only (local runs, old logs).
+
     ... --expect-miss
         Negative control, for logs captured BEFORE the emulation ran: exit 1 if
-        any rule passes. Proves the baseline alone cannot pass.
+        any one gate of any rule matches. Proves the baseline alone cannot pass.
+        It uses the field gates only (--ledger is ignored).
 
     ... --report
         Report misses in the summary instead of failing on them.
 
     ... --json PATH
         Also write a machine-readable report (status, detail, explanation lines,
-        and the CRI control's result) to PATH.
+        and the CRI and file controls' results) to PATH.
 
 A MISS is explained beneath its line (sigma_explain.py), per missed emulation
 pod: what the gate requires, how many events carry the marker, and the one that
 came closest to the rule, item by item; or, when none does, that the emulation
 may not have run. A failed CRI control shows the API-scheduled sandbox(es) the
 rule matched and why, or which config.source values the sensor recorded. A
-failed --expect-miss shows the emulation event(s) the rule matched and why.
+failed file control shows the kubeadm write(s) the rule matched and why, or which
+Image values the sensor recorded. A failed --expect-miss shows the emulation
+event(s) the rule matched and why.
+
+The module-level PROCEDURES map gives, per (TRR, procedure letter), the rule
+files whose MANIFEST entry gates that procedure with a gate of its own
+(research/tools/coverage_report.py reads it). Procedure B is a read-only
+demonstration by default; with TRR9003_RECONFIGURE=1 (CI, on a worker node) it
+runs live, pointing the worker kubelet at a staticPodURL, so both rules also gate
+B: the CRI rule on the config.source=http sandbox trr9003-url-<worker> and the
+mirror-create rule on that pod's mirror create by system:node:<worker>.
 """
 
 import argparse
@@ -67,6 +117,7 @@ import glob
 import json
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sigma_eval  # noqa: E402
@@ -83,8 +134,33 @@ RULES_DIR = os.path.join(REPO, "detections", "sigma", "T1543.005")
 # The emulation's own static pod (Procedure A) and its evasion variant (the gap).
 INJECTED_PREFIX = "trr9003-static"
 GHOST_NAME = "trr9003-ghost"
+# Procedure B's live URL static pod (TRR9003_RECONFIGURE=1): the WORKER kubelet
+# fetches it from a staticPodURL, so its CRI sandbox carries config.source=http and
+# the kubelet names it (and its mirror pod) trr9003-url-<worker>, in namespace
+# default. The worker is the kind node container (TRR9003_WORKER, as emulate.sh).
+URL_PREFIX = "trr9003-url"
+WORKER = os.environ.get("TRR9003_WORKER") or "trr9003-worker"
+URL_POD = f"{URL_PREFIX}-{WORKER}"
+B_LIVE_HINT = ("Procedure B's gates need the LIVE run (TRR9003_RECONFIGURE=1 on a kind "
+               "cluster with a worker node, detections/k8s/kind-staticpod-cluster.yaml) on "
+               f"the worker that TRR9003_WORKER names (here {WORKER!r}); a read-only B "
+               "makes no telemetry")
+
+# Node file sensor (C2-7): Procedure A writes the manifest through a marked copy of
+# tee, so the Strategy 3 file-event rule has a live gate. The copy is in an
+# exec-capable node directory (a kind node's /tmp is a noexec tmpfs). The gate is
+# the marked writer creating the injected manifest; kubeadm's own writes are
+# filtered by the rule itself, and the file control below checks that on the log.
+TEE_IMAGE = "/usr/local/bin/trr9003-tee"
+INJECTED_MANIFEST = "/etc/kubernetes/manifests/trr9003-static"
+# kubeadm as a kind node runs it (kind installs it at /usr/bin/kubeadm in the node
+# image, pkg/build/nodeimage/buildcontext.go). kubeadm init writes the control-plane
+# manifests with os.WriteFile (cmd/kubeadm/app/util/staticpod/utils.go).
+KUBEADM_IMAGE = "/usr/bin/kubeadm"
+MANIFESTS_DIR = "/etc/kubernetes/manifests/"
 
 CONFIG_SOURCE = "annotations.kubernetes.io/config.source"
+TRR = "TRR9003"
 
 
 def _starts(field, prefix):
@@ -94,21 +170,104 @@ def _starts(field, prefix):
     return gate
 
 
+def _eq(field, value):
+    def gate(e):
+        return e.get(field) == value
+    gate.describe = f"{field} == {value!r}"
+    return gate
+
+
+def _code_in(*codes):
+    def gate(e):
+        try:
+            return int(e.get("responseStatus.code")) in codes
+        except (TypeError, ValueError):
+            return False
+    gate.describe = f"responseStatus.code in {list(codes)}"
+    return gate
+
+
+def _field_is(field, value):
+    def gate(e):
+        return e.get(field) == value
+    gate.describe = f"{field} == {value!r}"
+    return gate
+
+
+def mark(*preds, window=None, procedure=None, time="requestReceivedTimestamp", hint=None):
+    """A gate for one procedure's own record: every predicate holds. `window` is
+    the (TRR, procedure) key of its ledger row, `time` the record field the window
+    reads, and `procedure` the (TRR, letter) the gate proves (default: window).
+    `hint` is printed under a MISS when no event carries the marker."""
+    def gate(e):
+        return all(p(e) for p in preds)
+    gate.describe = " and ".join(p.describe for p in preds)
+    gate.window = window
+    gate.procedure = procedure or window
+    gate.time_field = time
+    gate.hint = hint
+    return gate
+
+
+STORED = tuple(range(200, 300))  # a mirror pod the API server stored
+
 # Each match-gated rule: the log it reads, the procedures it covers, a note, and
-# the emulation events it must match (all of them). The Strategy 3 file-event
-# rule in the same folder needs node file telemetry; it is compiled, not gated.
+# the emulation records it must match (all of them, one gate each). The
+# invalid-namespace variant of Procedure A runs as its own ledger procedure (GAP).
+# The Strategy 3 file-event rule is gated on the node file-event sensor ('file').
 MANIFEST = [
-    ("k8s_cri_static_pod_start.yml", "cri", "A",
-     "kubelet starts a pod from a non-API source (Strategy 1 chokepoint; B is a "
-     "read-only demo with no telemetry)",
-     [("injected static pod", _starts("metadata.name", INJECTED_PREFIX)),
+    ("k8s_cri_static_pod_start.yml", "cri", "A/B",
+     "kubelet starts a pod from a non-API source (Strategy 1 chokepoint); A from a "
+     "file, B from a staticPodURL (config.source=http) when TRR9003_RECONFIGURE=1",
+     [("injected static pod", mark(_starts("metadata.name", INJECTED_PREFIX),
+                                   window=(TRR, "A"), time="createdAt")),
       ("invalid-namespace static pod (the audit-log gap)",
-       _starts("metadata.name", GHOST_NAME))]),
-    ("k8s_static_pod_mirror_create.yml", "audit", "A",
-     "mirror pod create by a node identity (Strategy 2 fallback; B is a read-only "
-     "demo with no telemetry)",
-     [("injected static pod", _starts("objectRef.name", INJECTED_PREFIX))]),
+       mark(_starts("metadata.name", GHOST_NAME), window=(TRR, "GAP"),
+            procedure=(TRR, "A"), time="createdAt")),
+      ("URL static pod, config.source=http (Procedure B)",
+       mark(_field_is("metadata.name", URL_POD), _field_is("metadata.namespace", "default"),
+            _field_is(CONFIG_SOURCE, "http"), window=(TRR, "B"), time="createdAt",
+            hint=B_LIVE_HINT))]),
+    ("k8s_static_pod_mirror_create.yml", "audit", "A/B",
+     "mirror pod create by a node identity (Strategy 2 fallback); the kubelet posts "
+     "a mirror pod for a URL static pod too (IsStaticPod is true for any non-API source)",
+     [("injected static pod", mark(_starts("objectRef.name", INJECTED_PREFIX),
+                                   _code_in(*STORED), window=(TRR, "A"))),
+      ("invalid-namespace mirror-create attempt (refused, 404)",
+       mark(_starts("objectRef.name", GHOST_NAME), _code_in(404), window=(TRR, "GAP"),
+            procedure=(TRR, "A"))),
+      ("URL static pod mirror create (Procedure B)",
+       mark(_field_is("objectRef.name", URL_POD), _field_is("objectRef.namespace", "default"),
+            _field_is("user.username", f"system:node:{WORKER}"), _code_in(*STORED),
+            window=(TRR, "B"), hint=B_LIVE_HINT))]),
+    # Strategy 3, the node file sensor (C2-7): auditd watches the kubelet static-pod
+    # directory with write permission; Procedure A drops its manifest through the
+    # marked copy TEE_IMAGE, so the file-event rule fires on that write and the gate
+    # tells it apart from kubeadm's own control-plane writes (which the rule's
+    # filter_install excludes; the file control checks that). The window field is
+    # the event's audit time (auditd_file_events.py emits `Timestamp`, UTC).
+    ("linux_static_pod_manifest_write.yml", "file", "A",
+     "static-pod manifest write on the node (Strategy 3 file-event rule; Procedure B "
+     "serves its manifest over HTTP and writes no manifest file)",
+     [("marked writer drops the injected manifest",
+       mark(_eq("Image", TEE_IMAGE), _starts("TargetFilename", INJECTED_MANIFEST),
+            window=(TRR, "A"), time="Timestamp"))]),
 ]
+
+
+def _procedures(manifest, folder):
+    """{(TRR, letter): sorted rule paths}: the rules whose MANIFEST entry gates that
+    procedure with a gate of its own."""
+    out = {}
+    for fname, _source, _proc, _note, required in manifest:
+        for _label, gate in required:
+            key = getattr(gate, "procedure", None)
+            if key:
+                out.setdefault(key, set()).add(f"{folder}/{fname}")
+    return {key: sorted(paths) for key, paths in sorted(out.items())}
+
+
+PROCEDURES = _procedures(MANIFEST, os.path.basename(RULES_DIR))
 
 # Control-plane static pods a kubeadm/kind node starts — the baseline both rules
 # also match, by design.
@@ -191,6 +350,8 @@ def classify(name):
         return "injected"
     if name.startswith(GHOST_NAME):
         return "ghost"
+    if name.startswith(URL_PREFIX):
+        return "url"
     if name.startswith(CONTROL_PLANE_PREFIXES):
         return "baseline"
     return "other"
@@ -200,7 +361,7 @@ def report_audit(events):
     """Separate the emulation's mirror-pod creates from the control-plane baseline."""
     created = node_created_pods(events)
     kinds = {k: [p for p in created if classify(p[0]) == k]
-             for k in ("baseline", "injected", "ghost", "other")}
+             for k in ("baseline", "injected", "ghost", "url", "other")}
     print(f"\nAudit log — node-created pods (mirror-pod creates) seen: {len(created)}")
     if kinds["baseline"]:
         print(f"  baseline (control-plane static pods): "
@@ -209,6 +370,8 @@ def report_audit(events):
         print(f"  INJECTED (Procedure A): {name} in ns={ns} by {user} (code={code})")
     if not kinds["injected"]:
         print("  note: no 'trr9003-static-*' mirror pod seen.")
+    for name, ns, user, code in kinds["url"]:
+        print(f"  URL static pod (Procedure B): {name} in ns={ns} by {user} (code={code})")
     if kinds["other"]:
         print(f"  other node-created pods (triage): "
               f"{', '.join(sorted(p[0] or '?' for p in kinds['other']))}")
@@ -236,6 +399,7 @@ def report_cri(sandboxes, cri_hits):
     for kind, label in (("baseline", "baseline (control-plane static pods)"),
                         ("injected", "INJECTED (Procedure A)"),
                         ("ghost", "EVASION (invalid namespace, no API object)"),
+                        ("url", "URL static pod (Procedure B, config.source=http)"),
                         ("other", "other static pods (triage)")):
         names = sorted({f"{s.get('metadata.name')} in ns={s.get('metadata.namespace')}"
                         for s in static if classify(s.get("metadata.name")) == kind})
@@ -260,6 +424,47 @@ def report_cri(sandboxes, cri_hits):
     return failures
 
 
+def _kubeadm_writes(events):
+    """kubeadm's control-plane manifest writes in a file log (Image, TargetFilename)."""
+    return [e for e in events if e.get("Image") == KUBEADM_IMAGE
+            and str(e.get("TargetFilename") or "").startswith(MANIFESTS_DIR)]
+
+
+def report_file(events, file_hits):
+    """The file-event rule's false-positive control on kubeadm's own writes.
+
+    CI adds the static-pod directory watch before `kind create cluster`, so kubeadm
+    init's manifest writes (etcd, kube-apiserver, ...) are in the file log. The rule
+    must match none of them (filter_install), and there must be some, so the control
+    tests the rule on real bootstrap writes and the sensor's exe spelling. Returns a
+    list of control failures (empty when the control holds).
+    """
+    boot = _kubeadm_writes(events)
+    print(f"\nNode file-event sensor — file events seen: {len(events)} "
+          f"({len(boot)} kubeadm control-plane manifest write(s))")
+    names = sorted({str(e.get("TargetFilename")) for e in boot})
+    if names:
+        print(f"  baseline (kubeadm): {', '.join(names)}")
+    failures = []
+    boot_ids = {id(e) for e in boot}
+    boot_hits = [e for e in file_hits if id(e) in boot_ids]
+    if not boot:
+        failures.append(f"no {KUBEADM_IMAGE} write under {MANIFESTS_DIR} in the file log, so "
+                        "the false-positive control proves nothing; was the watch added "
+                        "before the cluster was created?")
+    if boot_hits:
+        failures.append("the file-event rule matched kubeadm's control-plane manifest "
+                        "write(s): " + ", ".join(sorted(str(e.get("TargetFilename"))
+                                                        for e in boot_hits)))
+    if failures:
+        for f in failures:
+            print(f"  CONTROL FAILED: {f}")
+    else:
+        print(f"  control held: the file-event rule matched none of the {len(boot)} "
+              "kubeadm control-plane manifest write(s).")
+    return failures
+
+
 # ---- failure explanations (sigma_explain) --------------------------------
 # The same helpers as validate_apiserver_detections.py; each validator stays standalone.
 
@@ -267,7 +472,10 @@ TAG = "trr9003"  # every emulation pod name carries it; used when no event passe
 
 
 def summary(e):
-    """One line naming an audit event or a CRI pod sandbox."""
+    """One line naming an audit event, a CRI pod sandbox, or a node file event."""
+    if "verb" not in e and "TargetFilename" in e:
+        return (f"Image={e.get('Image')} TargetFilename={e.get('TargetFilename')} "
+                f"EventType={e.get('EventType')} pid={e.get('ProcessId')}")
     if "verb" not in e and "metadata.name" in e:
         return (f"pod={e.get('metadata.name')} ns={e.get('metadata.namespace')} "
                 f"config.source={e.get(CONFIG_SOURCE)}")
@@ -304,6 +512,8 @@ def explain_gated_miss(rule_path, events, gate, matched):
     else:
         lines.append("NO event carries the marker: the emulation may not have run (or not "
                      "on the node the sensor watches), or it named the pod differently")
+        if getattr(gate, "hint", None):
+            lines.append(gate.hint)
         candidates = [i for i, e in enumerate(events) if any(TAG in str(v) for v in e.values())]
         where = f"the event(s) mentioning {TAG!r}"
         hit = {id(e) for e in matched}
@@ -334,7 +544,7 @@ def explain_unexpected(rule_path, events, ours):
     rule = sigma_explain.load(rule_path)
     label = labeller(events)
     lines = [f"the pre-emulation log already holds {len(ours)} emulation match(es); a log "
-             f"captured before the emulation should hold no {TAG!r} pod (captured late, or "
+             f"captured before the emulation should hold no {TAG!r} record (captured late, or "
              "a manifest left on the node by an earlier run?):"]
     for e in ours[:3]:
         lines.append(f"  {label(e)}")
@@ -368,6 +578,32 @@ def explain_cri_control(rule_path, sandboxes, cri_hits):
     return lines
 
 
+def explain_file_control(rule_path, events, file_hits):
+    """Why the file-event false-positive control failed."""
+    lines = []
+    boot = _kubeadm_writes(events)
+    if not boot:
+        seen = {}
+        for e in events:
+            value = str(e.get("Image", "<absent>"))
+            seen[value] = seen.get(value, 0) + 1
+        lines.append(f"Image values across the {len(events)} file event(s): "
+                     + (", ".join(f"{v} x{n}" for v, n in sorted(seen.items())) or "none"))
+    boot_ids = {id(e) for e in boot}
+    boot_hits = [e for e in file_hits if id(e) in boot_ids]
+    if boot_hits:
+        rule = sigma_explain.load(rule_path)
+        label = labeller(events)
+        lines.append("kubeadm's own bootstrap write must never look like a dropped manifest; "
+                     "the rule matched:")
+        for e in boot_hits[:3]:
+            lines.append(f"  {label(e)}")
+            lines.extend("  " + ln for ln in sigma_explain.explain_hit(rule, e))
+        if len(boot_hits) > 3:
+            lines.append(f"  ... and {len(boot_hits) - 3} more")
+    return lines
+
+
 def explained(fn, *args):
     """Run an explanation helper; an explanation must never break the gate."""
     try:
@@ -382,12 +618,141 @@ def write_json(path, report):
         fh.write("\n")
 
 
+# ---- the emulation ledger (procedure windows) ------------------------------
+# The same contract as validate_apiserver_detections.py and
+# validate_k8s_detections.py; each validator stays standalone. Each emulation run
+# appends one JSON line per procedure:
+#   {"trr": "TRR9003", "procedure": "A", "start": "...Z", "end": "...Z",
+#    "exit": 0, "expect": 0}
+# plus "mode": "read-only" on a read-only Procedure B row (its gates then fail).
+# start and end are UTC ISO 8601 with microseconds. The kind node is a container
+# on the runner, so the audit timestamps, the CRI createdAt and the ledger read
+# the same kernel clock.
+
+
+def _ts(value):
+    """A UTC datetime from an ISO 8601 timestamp (any number of fraction digits,
+    'Z' or an offset) or from a CRI createdAt (nanoseconds since the epoch, an
+    integer or a digit string); None when it does not parse."""
+    if value is None or value == "" or isinstance(value, bool):
+        return None
+    text = str(value).strip()
+    if text.isdigit():
+        sec, nsec = divmod(int(text), 10**9)
+        return datetime.fromtimestamp(sec, tz=timezone.utc) + timedelta(microseconds=nsec // 1000)
+    if text[-1:] in ("Z", "z"):
+        text = text[:-1] + "+00:00"
+    head, dot, rest = text.partition(".")
+    if dot:  # fromisoformat takes at most 6 fraction digits on older Pythons
+        digits = ""
+        for ch in rest:
+            if not ch.isdigit():
+                break
+            digits += ch
+        text = f"{head}.{digits[:6].ljust(6, '0')}{rest[len(digits):]}"
+    try:
+        t = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return t.astimezone(timezone.utc)
+
+
+def _iso(t):
+    return t.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _ledger_key(trr, procedure):
+    """('TRR9003', 'A') from 'TRR9003'/'9003' and 'A'/'a'."""
+    t = str(trr or "").strip().upper()
+    if t.isdigit():
+        t = "TRR" + t
+    return (t, str(procedure or "").strip().upper())
+
+
+def load_ledger(path):
+    """({(TRR, PROCEDURE): row}, [problem, ...]); a later row for the same procedure wins
+    (a re-run). A line that is not a JSON object with trr and procedure is a problem, and
+    the caller fails the run on any problem, as validate_apiserver_detections.py does: a
+    truncated or corrupt ledger must not pass quietly."""
+    rows, problems = {}, []
+    with open(path, encoding="utf-8") as fh:
+        for n, line in enumerate(fh, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as e:
+                problems.append(f"line {n}: not valid JSON ({e.msg}): {line[:80]!r}")
+                continue
+            if not isinstance(row, dict) or not row.get("trr") or not row.get("procedure"):
+                problems.append(f"line {n}: not a ledger row (needs trr and procedure): "
+                                f"{line[:80]!r}")
+                continue
+            rows[_ledger_key(row.get("trr"), row.get("procedure"))] = {
+                "start": _ts(row.get("start")), "end": _ts(row.get("end")),
+                "exit": row.get("exit"), "expect": row.get("expect", 0),
+                "mode": row.get("mode")}
+    return rows, problems
+
+
+def _same_int(a, b):
+    try:
+        return int(a) == int(b)
+    except (TypeError, ValueError):
+        return False
+
+
+def ledger_state(ledger, key):
+    """(ok, text): whether the procedure's row lets a record count, and why not."""
+    row = ledger.get(key)
+    if row is None:
+        return False, "no ledger row: the procedure did not run"
+    if row["start"] is None or row["end"] is None:
+        return False, "the ledger row has no readable start or end"
+    if not _same_int(row["exit"], row["expect"]):
+        return False, f"the procedure exited {row['exit']}, expected {row['expect']}"
+    if row.get("mode") == "read-only":
+        return False, ("the procedure ran read-only (TRR9003_RECONFIGURE unset), so it made "
+                       "no telemetry; a strict run needs the live B: TRR9003_RECONFIGURE=1 "
+                       "on a kind cluster with a worker node")
+    return True, f"window [{_iso(row['start'])}, {_iso(row['end'])}]"
+
+
+def windowed(gate, ledger):
+    """The gate, also bound to its procedure's ledger row when a ledger is given."""
+    key = getattr(gate, "window", None)
+    if ledger is None or key is None:
+        return gate
+    ok, state = ledger_state(ledger, key)
+    row = ledger.get(key)
+    field = getattr(gate, "time_field", "requestReceivedTimestamp")
+
+    def bound(e):
+        if not ok:
+            return False
+        t = _ts(e.get(field))
+        return t is not None and row["start"] <= t <= row["end"] and gate(e)
+    bound.describe = (f"{gate.describe}; ledger {key[0]}.{key[1]}: "
+                      + (f"{field} in the {state}" if ok else state))
+    bound.window = key
+    bound.procedure = getattr(gate, "procedure", key)
+    bound.ledger = state
+    bound.hint = getattr(gate, "hint", None)
+    return bound
+
+
 def main():
     ap = argparse.ArgumentParser(description="Validate TRR9003 static-pod detections.")
     ap.add_argument("--audit-log", default="/tmp/kube-apiserver-audit.log",
                     help="Path to the API server audit log (JSON lines).")
     ap.add_argument("--cri-log",
                     help="Path to the node runtime sensor log (crictl pods snapshots).")
+    ap.add_argument("--file-log",
+                    help="Path to the node file-event sensor log (linux/file_event JSON "
+                         "lines, as detections/k8s/auditd_file_events.py writes them).")
     ap.add_argument("--dry-run", action="store_true",
                     help="Compile rules only; no cluster or log needed.")
     ap.add_argument("--expect-miss", action="store_true",
@@ -396,11 +761,14 @@ def main():
                     help="Report misses instead of failing on them.")
     ap.add_argument("--json", metavar="PATH",
                     help="Also write a machine-readable report (results + explanations).")
+    ap.add_argument("--ledger", metavar="PATH",
+                    help="Emulation ledger (JSON lines, one per procedure): bind each gate "
+                         "to its procedure's window and exit status.")
     args = ap.parse_args()
     report = {"validator": "staticpod",
               "mode": "dry-run" if args.dry_run else
               "expect-miss" if args.expect_miss else "validate",
-              "results": [], "controls": []}
+              "results": [], "procedures": {}, "controls": []}
     code = validate(args, report)
     if args.json:
         report["exit"] = code
@@ -423,12 +791,13 @@ def validate(args, report):
             print(f"ERROR compile {fname}: {e}")
             results.append({"rule": fname, "source": source, "status": "ERROR",
                             "detail": f"compile: {e}", "explanation": []})
-    # Compile any other rule in the folder too (e.g. the Strategy 3 node rule).
+    # Compile any other rule in the folder too (none today: all three T1543.005
+    # rules are match-gated above, one per sensor).
     for path in sorted(glob.glob(os.path.join(RULES_DIR, "*.yml"))):
         if os.path.basename(path) not in queries:
             try:
                 sigma_eval.compile_rule(path)
-                print(f"OK (compile)  {os.path.basename(path)}  [node file sensor] "
+                print(f"OK (compile)  {os.path.basename(path)}  "
                       f"not match-gated here")
             except Exception as e:  # noqa: BLE001
                 parse_errors += 1
@@ -458,9 +827,32 @@ def validate(args, report):
             return 1
         logs["cri"] = load_cri(args.cri_log)
         print(f"Loaded {len(logs['cri'])} pod sandbox(es) from {args.cri_log}")
+    if args.file_log:
+        if not os.path.exists(args.file_log):
+            print(f"ERROR: node file-event log not found: {args.file_log}")
+            return 1
+        logs["file"] = load_events(args.file_log)
+        print(f"Loaded {len(logs['file'])} file event(s) from {args.file_log}")
     if not logs:
         print("SKIP: no log to validate against (exit 0).")
         return 0 if not parse_errors else 1
+    ledger = None
+    if args.ledger and args.expect_miss:
+        print("--ledger is ignored with --expect-miss: the negative control uses the field "
+              "gates only.")
+    elif args.ledger:
+        if not os.path.exists(args.ledger):
+            print(f"ERROR: ledger not found: {args.ledger} (the emulation wrote no ledger "
+                  "row; did it run, with DETENG_LEDGER set?)")
+            return 1
+        ledger, problems = load_ledger(args.ledger)
+        if problems:
+            for p in problems:
+                print(f"ERROR: ledger {args.ledger} {p}")
+            return 1
+        mine = sorted(k for k in ledger if k[0] == TRR)
+        print(f"Loaded {len(ledger)} ledger row(s) from {args.ledger}; {TRR}: "
+              + (", ".join(f"{k[1]} exit {ledger[k]['exit']}" for k in mine) or "none"))
     print()
 
     passes = misses = skipped = 0
@@ -478,24 +870,39 @@ def validate(args, report):
         if source == "audit":
             matched = dedup_by_audit_id(matched)
         hits_by_source[source] = matched
-        found = [(label, [e for e in matched if pred(e)]) for label, pred in required]
-        ours = sum(len(events) for _, events in found)
+        preds = [(label, windowed(pred, ledger)) for label, pred in required]
+        found = [(label, [e for e in matched if pred(e)]) for label, pred in preds]
+        ours = len({id(e) for _, events in found for e in events})
         other = len(matched) - ours
         rule_path = os.path.join(RULES_DIR, fname)
-        passed = all(events for _, events in found)
+        every, some = all(events for _, events in found), any(events for _, events in found)
+        passed = some if args.expect_miss else every
         explanation = []
+        # A file event is a record of the emulation's write, not a pod.
+        what, base = (("emulation record", "") if source == "file"
+                      else ("emulation pod", ", e.g. control-plane baseline"))
         if passed:
             passes += 1
-            detail = f"matched every emulation pod (+{other} other, e.g. control-plane baseline)"
+            detail = (f"matched every {what} (+{other} other{base})"
+                      if every else f"matched an {what} (+{other} other)")
             print(f"PASS  [{proc}] {fname}: {detail}")
         else:
             misses += 1
-            detail = ("missed an emulation pod"
+            detail = (f"missed an {what}"
                       + (f" ({other} baseline/unrelated match(es) ignored)" if other else ""))
             print(f"MISS  [{proc}] {fname}: {detail}")
-        for (label, events), (_, pred) in zip(found, required):
-            mark = "ok  " if events else "MISS"
-            print(f"        {mark} {label}: {len(events)} match(es)")
+        for (label, events), (_, pred) in zip(found, preds):
+            mark_ = "ok  " if events else "MISS"
+            state = getattr(pred, "ledger", None)
+            print(f"        {mark_} {label}: {len(events)} match(es)"
+                  + (f" [ledger: {state}]" if state and not events else ""))
+            key = getattr(pred, "procedure", None)
+            if key:
+                entry = report["procedures"].setdefault(f"{key[0]}.{key[1]}",
+                                                        {"status": "ok", "gates": {}})
+                entry["gates"][f"{fname}: {label}"] = len(events)
+                if not events:
+                    entry["status"] = "MISS"
             if not events and not args.expect_miss:
                 lines = [f"{label}:"] + ["  " + ln for ln in explained(
                     explain_gated_miss, rule_path, logs[source], pred, matched)]
@@ -507,12 +914,18 @@ def validate(args, report):
                                     [e for _, events in found for e in events])
             for line in explanation:
                 print("        " + line)
+        if source == "file" and args.expect_miss:
+            # Say what the file gate saw: the gate selects the marked writer only, so
+            # the file control (below) is what tests the rule on kubeadm's writes.
+            print(f"        file log: {len(logs[source])} file event(s), the rule matches "
+                  f"{len(matched)}")
         results.append({"rule": fname, "source": source, "status": "PASS" if passed else "MISS",
                         "detail": detail,
                         "pods": {label: len(events) for label, events in found},
                         "explanation": explanation})
 
     controls = []
+    file_controls = []
     if "audit" in logs:
         report_audit(logs["audit"])
     if "cri" in logs:
@@ -526,6 +939,19 @@ def validate(args, report):
         report["controls"].append({"control": "the CRI rule matches no API-scheduled sandbox",
                                    "status": "FAILED" if controls else "held",
                                    "detail": "; ".join(controls), "explanation": lines})
+    if "file" in logs:
+        file_rule = next((os.path.join(RULES_DIR, m[0]) for m in MANIFEST if m[1] == "file"),
+                         None)
+        file_controls = report_file(logs["file"], hits_by_source.get("file", []))
+        lines = explained(explain_file_control, file_rule, logs["file"],
+                          hits_by_source.get("file", [])) if file_controls else []
+        for line in lines:
+            print("    " + line)
+        report["controls"].append({"control": "the file-event rule matches no kubeadm "
+                                              "control-plane manifest write",
+                                   "status": "FAILED" if file_controls else "held",
+                                   "detail": "; ".join(file_controls), "explanation": lines})
+    controls = controls + file_controls
 
     print()
     if parse_errors:
@@ -537,7 +963,7 @@ def validate(args, report):
     if args.expect_miss:
         if passes:
             print(f"NEGATIVE CONTROL FAILED: {passes} rule(s) passed on logs "
-                  "captured before the emulation ran.")
+                  "captured before the emulation ran (a gate matched).")
             return 1
         print("Negative control held: the baseline alone does not pass any rule.")
         return 0
@@ -553,7 +979,9 @@ def validate(args, report):
               "rule(s) skipped for lack of a log.")
         return 0
     print("All TRR9003 match-gated detections fired on the emulated telemetry, "
-          "including the invalid-namespace pod the audit log cannot see running.")
+          "including the invalid-namespace pod the audit log cannot see running"
+          + (", every record inside its procedure's ledger window." if ledger is not None
+             else " (field gates only, no ledger)."))
     return 0
 
 

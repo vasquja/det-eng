@@ -272,10 +272,17 @@ falsepositives:
     Baseline the install identity (Helm, Argo CD, Flux) and its change window.
   - A scheduler that scales every Deployment to 0 off hours (kube-downscaler, an
     off-hours GitOps overlay) and does not exclude these namespaces.
-  - A server-side dry run of a deletecollection or of the namespace delete. The
-    shipped lab policy logs those at Metadata, which holds no DeleteOptions body, so
-    the dry run still fires; a single apps delete (Request level) and every update
-    or patch dry run are filtered.
+  - A server-side dry run of a delete, a deletecollection or the namespace delete
+    under an audit policy that logs it at Metadata, which holds no DeleteOptions body,
+    so there the dry run still fires. The shipped lab policy logs the apps deletes and
+    deletecollections and the namespace delete at Request, so there they are
+    filtered, as is every update or patch dry run (the ?dryRun=All query). A delete
+    with no body whose query holds ?dryRun=All is a dry run too, and fires, because the
+    delete filter reads only the body. The official Python client
+    (kubernetes-client/python) sends that shape for dry_run="All" with no body, and so
+    does kubectl delete --raw with a ?dryRun=All URI and no -f; kubectl delete
+    --dry-run=server and client-go send the dry run in the body
+    (detections/RULE_DEFECTS.md K36).
   - A patch of an enforcer's scale subresource that changes no count (a label of the
     Scale), or a JSON patch of it that sets a count above 0 in another shape than one
     op, path, value op. Both are rare.

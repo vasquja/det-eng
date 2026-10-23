@@ -89,5 +89,10 @@ falsepositives:
   - A server-side dry run under an audit policy that logs these deletes at Metadata
     only. The update and patch form is filtered at any level (the option is in the
     query); the delete form needs the DeleteOptions body, which the shipped lab policy
-    records (Request level).
+    records (Request level). A delete with no body whose query holds ?dryRun=All is a
+    dry run too, and fires, because the delete filter reads only the body. The official
+    Python client (kubernetes-client/python) sends that shape for dry_run="All" with no
+    body, and so does kubectl delete --raw with a ?dryRun=All URI and no -f; kubectl
+    delete --dry-run=server and client-go send the dry run in the body
+    (detections/RULE_DEFECTS.md K36).
 level: medium

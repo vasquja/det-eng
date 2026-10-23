@@ -43,13 +43,24 @@ name: detection-quality
 #                      (detections/score_benign.py): the snapshot scores.json must be
 #                      current, and a rule in `enforce` mode (every per-rule entry
 #                      today) must stay within its budget. Shadow-mode overruns only
-#                      warn.
+#                      warn. A smoke test also checks the live capture split
+#                      (--extra-split-at) on a constructed audit capture.
 #   benign-linux-live  SHADOW. A real Ubuntu runner runs ordinary admin, developer
 #                      and service activity under the det-eng audit rules
 #                      (detections/benign/linux/), and every Linux rule is scored on
 #                      the capture. What a rule matches never fails this job; the
 #                      capture is uploaded so a human can promote a sanitized copy
 #                      into a recorded slice.
+#   schedule-freshness every workflow file with a schedule trigger must have a
+#                      successful scheduled run in the last 15 days and no two red
+#                      scheduled runs in a row after it; a new schedule (no success
+#                      yet, 15 days or less) only warns
+#                      (.github/scripts/check_schedule_freshness.py, which reads the
+#                      Actions API with this job's actions: read token). On a pull
+#                      request a stale or red schedule only warns (after 8 days or
+#                      one red run); the scheduled and manual runs fail. A fault in
+#                      the check itself (exit 2) fails a pull request too. Not run
+#                      on push.
 #
 # No paths: filter on pull_request, so these checks ALWAYS report on a PR. None of
 # them is a required check in the main ruleset yet, and GitHub's native auto-merge
@@ -64,6 +75,7 @@ name: detection-quality
 # manual merge".
 # The weekly schedule re-proves every rule even when nothing in the repo changed
 # (pySigma, the runner image and the kernel drift underneath the rules).
+# schedule-freshness checks that each weekly schedule still runs and passes.
 
 on:
   push:
@@ -302,6 +314,17 @@ jobs:
           python3 detections/score_benign.py --check --enforce \
             --markdown "$GITHUB_STEP_SUMMARY" | tee /tmp/benign.out
 
+      - name: Smoke-test the live capture split (score_benign.py --extra-split-at)
+        # Only validate-apiserver splits a real capture, and it runs only when its paths
+        # change, weekly, or by hand. This offline check runs on every change, on a
+        # constructed audit capture (see the script's docstring): the window of each
+        # event, no hit lost, only a workload row over its corpus budget flagged and
+        # annotated (text, JSON, markdown) and never a bootstrap row, the empty-window
+        # warning and its cause, and the exit 2 of an invalid split point. It writes no
+        # file in the repository.
+        shell: bash
+        run: python3 .github/scripts/smoke_live_split.py
+
       - name: Publish the full log to job summary
         if: always()
         shell: bash
@@ -421,3 +444,82 @@ jobs:
             /tmp/linux-score.out
           if-no-files-found: warn
           retention-days: 30
+
+  schedule-freshness:
+    # GitHub can start a scheduled run hours late (about 7 h on 2026-10-19), drop
+    # it, or not start it (a disabled workflow), and a stopped schedule fails
+    # nothing. For each workflow FILE with a schedule trigger (found at run time, so
+    # a new scheduled workflow is checked with no edit here), read its newest
+    # scheduled runs from the Actions API. A warning: the newest successful one is
+    # more than 8 days old, or one red scheduled run follows it. A failure: more
+    # than 15 days, two red scheduled runs in a row, or a workflow that is not
+    # `active`. Each schedule must run at least weekly (else exit 2).
+    # Phase: the weekly crons are all on Monday morning, and the crons of lint-trr
+    # and the validate-* workflows (06:11-06:43) come before this workflow's cron
+    # (06:53). Their scheduled runs usually end in minutes, before this one starts
+    # (on 2026-10-19 they ended 6 to 55 min before it), so the scheduled run sees
+    # ages of about 0, 7, 14 or 21 days. A red run counts as soon as it has ended:
+    # one red week warns, two in a row fail. A run that GitHub drops (no run at all)
+    # shows only by age: one dropped week is not seen (7 days is ok), two in a row
+    # warn (a warning on a green run notifies nobody), three in a row fail. For a
+    # cron after 06:53, add 7 days. A manual run grades like the scheduled run, at
+    # its own time of the week.
+    # A workflow with no successful scheduled run yet (a new one) only warns, also
+    # when its runs are red, while its oldest scheduled run is 15 days old or less.
+    # With no scheduled run at all (or a file GitHub does not list), it is new while
+    # main has no such file, or main's version has no schedule trigger, or has had
+    # it, unchanged, for 15 days or less. After that, it fails.
+    # This workflow holds the check, and its other jobs run again in the same run:
+    # --self-workflow does not count its red scheduled runs (two of them can come
+    # from this job), only the age of its newest scheduled run; --scheduled-run-of
+    # grades it ok, as this run proves that its schedule runs.
+    # On a pull request, a stale or red schedule and an API error that a re-run can
+    # clear (a rate limit, or a 5xx, 429 or network error on all its attempts, up
+    # to 4; or a request that the time budget below stops) only warn. Any other
+    # API error (a 403 or 404 is a token or permission fault), an answer of the
+    # wrong shape, a workflow file it cannot read or a schedule that is not weekly
+    # fails the pull request too (exit 2). An API error on one workflow does not
+    # stop the check of the others.
+    # Time budget, so that a slow API outage ends as API errors (a warning here),
+    # not at timeout-minutes: an attempt waits at most 15 s; after one request
+    # fails on all its attempts, each later request gets one attempt; and the reads
+    # stop 240 s after the first one (--api-budget). Each row is written as soon
+    # as it is graded. The self-test checks that 240 s + 15 s fits in half of
+    # this job's timeout-minutes.
+    # This job cannot report GitHub's 60-day inactivity disable by itself: that also
+    # disables this workflow (it has a schedule), so nothing here runs until a human
+    # enables it again; the next run then names every workflow still disabled.
+    name: schedule-freshness
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install requirements
+        run: pip install --quiet -r detections/requirements.txt
+
+      - name: Self-test the grading on constructed API answers
+        run: python3 .github/scripts/check_schedule_freshness.py --self-test
+
+      - name: Check the newest scheduled runs of every scheduled workflow
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          args=(--warn-days 8 --fail-days 15 --markdown "$GITHUB_STEP_SUMMARY")
+          case "$EVENT_NAME" in
+            pull_request) args+=(--warn-only --self-workflow "$WORKFLOW_REF") ;;
+            schedule) args+=(--scheduled-run-of "$WORKFLOW_REF") ;;
+            *) args+=(--self-workflow "$WORKFLOW_REF") ;;
+          esac
+          python3 .github/scripts/check_schedule_freshness.py "${args[@]}"

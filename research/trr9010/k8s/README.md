@@ -73,13 +73,15 @@ kube-system controllers create Events but do not delete them.
 
 ### What the audit log records, and what it cannot
 
-A delete or deletecollection on Events is fully described at Metadata level: the verb,
-the resource, the namespace, the name (a deletecollection has no single name), the
-identity, and the result. A delete is audited even when the object does not exist —
-the request is recorded with its objectRef and a 404 — so the telemetry exists
-whether or not the Event was still there. The one thing the audit log cannot record
-is a node-local operation: truncating the audit log file or disabling the audit sink
-is a filesystem action, not an API call, so it leaves no audit event at all.
+A delete or deletecollection on Events is described at Metadata level well enough to
+fire the rule: the verb, the resource, the namespace, the name (a deletecollection has
+no single name), the identity, and the result. Only `Request` level records the
+DeleteOptions body, where `kubectl delete --dry-run=server` puts its dry run, so the
+shared lab policy logs these deletes at `Request`. A delete is audited even when the
+object does not exist — the request is recorded with its objectRef and a 404 — so the
+telemetry exists whether or not the Event was still there. The one thing the audit log
+cannot record is a node-local operation: truncating the audit log file or disabling the
+audit sink is a filesystem action, not an API call, so it leaves no audit event at all.
 
 ### Why the technique works
 
@@ -237,9 +239,13 @@ Events through the namespace controller, so its only actor record is the namespa
 delete, which a low-level hunting rule matches.
 
 **Telemetry requirement.** The audit policy must record delete and deletecollection
-on `events` at Metadata level. The shared policy's catch-all Metadata rule already
-does, and the `events` None rule is scoped to reads only, so deletes are not
-dropped. No policy change is needed.
+on `events` at Metadata level or higher; Metadata is enough for the rules to fire. The
+dry-run filters need the DeleteOptions body, which only `Request` level records, so
+the shared policy logs delete and deletecollection of pods, Events (core and
+events.k8s.io), namespaces and the workload controllers at `Request`. A delete's
+`requestObject` is DeleteOptions only (propagationPolicy, gracePeriodSeconds,
+preconditions, dryRun), with no object body and no secret data. The `events` None rule
+is scoped to reads only, so deletes are not dropped.
 
 **Strategy 1 — chokepoint (covers A, B, C).**
 Match audit events where `objectRef.resource` is `events` and `verb` is `delete` or
@@ -249,7 +255,9 @@ request: the namespace controller's `deletecollection` of the Events of a namesp
 being deleted (`system:serviceaccount:kube-system:namespace-controller`), which every
 namespace teardown makes. Filter a server-side dry run when the record holds the
 DeleteOptions body (`dryRun: ["All"]`, Request level); the query form is not trusted for
-a delete, because with a body the API server ignores the query. Baseline the other
+a delete, because with a body the API server ignores the query. A delete or
+deletecollection with no body whose query holds `?dryRun=All` is a dry run too, but it
+still fires ([RULE_DEFECTS K36](../../../detections/RULE_DEFECTS.md#k36-delete-dry-run-filters-read-only-the-body-a-query-only-dry-run-fires)). Baseline the other
 system identities and any event-exporter service accounts by `user.username`.
 
 - Sensor: API server audit log.
@@ -258,7 +266,8 @@ system identities and any event-exporter service accounts by `user.username`.
 **Strategy 2 — workload-record fallback (covers D).**
 Match a delete or deletecollection of Pods or Jobs (the namespace controller's
 teardown sweep is filtered, and so is a server-side dry run whose DeleteOptions body
-the record holds). This is low fidelity; use it for correlation only
+the record holds; a delete with no body whose query holds `?dryRun=All` still fires,
+[RULE_DEFECTS K36](../../../detections/RULE_DEFECTS.md#k36-delete-dry-run-filters-read-only-the-body-a-query-only-dry-run-fires)). This is low fidelity; use it for correlation only
 — the same identity that also deleted Events, a deletion in a sensitive namespace,
 or a Job whose creation the identity made.
 
@@ -285,14 +294,16 @@ query; RULE_DEFECTS K14). The first `?` starts the query and Go `net/url` splits
 run, and the query form counts only when the URI holds at most 100 `&` (Go `net/url`
 reads no parameter of a query that has more than 10,000). `kubectl delete
 --dry-run=server` sends the body form, which only a `Request`-level record holds, so
-at `Metadata` that dry run still fires. The namespace controller does not make this
+at `Metadata` that dry run still fires; the shared lab policy logs namespace deletes
+at `Request`, so there it is filtered. The namespace controller does not make this
 request: it finalizes a namespace with an update of `namespaces/finalize`. A
 namespace delete is routine, so
 baseline the identities that delete namespaces by design (CI deployers, GitOps
 controllers, tenant operators), and correlate a hit with the same actor's other
 writes.
 
-- Sensor: API server audit log (Metadata is enough).
+- Sensor: API server audit log (Metadata is enough to fire; `Request` to filter a
+  kubectl dry run).
 - Rule: `detections/sigma/T1070/k8s_namespace_deleted.yml` (built, level low).
 
 **Demonstrated gap.**
@@ -346,6 +357,15 @@ Red Team wrappers in [`atomics/T1070/T1070.yaml`](../../../atomics/T1070/T1070.y
 | TRR9010.K8S.E | `emulate.sh gap` — show the audit log path on the node (read-only). | **built** |
 | TRR9010.K8S.F | `emulate.sh f` — create namespace `trr9010-ns-f` with an Event, then delete the namespace. | **built** |
 
+`emulate.sh dryrun` is a control, not a procedure. It creates namespace
+`trr9010-dryrun-ns` with an Event, a pod and a suspended Job, sends `kubectl delete
+--dry-run=server` for the Event (core group, then events.k8s.io), the pod, the Job and
+the namespace, and a deletecollection of the namespace's Events and of its pods
+(`kubectl delete --raw` of the collection URL with a DeleteOptions body that holds
+`dryRun: ["All"]`). Then it checks that every object is still there and that the pod
+is not being deleted. A server-side dry run deletes nothing, so the three rules must
+match none of these records.
+
 ## Detections
 
 | Strategy | Covers | Sigma rule | Sensor |
@@ -358,9 +378,18 @@ Red Team wrappers in [`atomics/T1070/T1070.yaml`](../../../atomics/T1070/T1070.y
 The validator
 [`detections/validate_apiserver_detections.py`](../../../detections/validate_apiserver_detections.py)
 reads the API server audit log the emulation produced and asserts Strategies 1, 2 and
-4 match an event the emulation produced (a `trr9010-` named delete, which includes the
-delete of namespace `trr9010-ns-f`, or the bulk deletecollection in the `trr9010`
-namespace). The workflow
+4 match a record of each procedure's own: the accepted (200) delete of Event
+`trr9010-evt-a` (A, core group) and `trr9010-evt-c` (C, events.k8s.io), the bulk
+deletecollection in the `trr9010` namespace (B), the pod delete (D) and the delete of
+namespace `trr9010-ns-f` (F). A 404 delete does not count, so the emulation creates each
+Event first; each Event names an `involvedObject` (or `regarding`) in its own namespace,
+because the API server's Event validation refuses one outside `default` that does not.
+With the emulation ledger, its must-not-match checks (`MISS_MANIFEST`) also assert that
+none of the three rules matches a dry-run delete of the `dryrun` control, that each
+dry-run shape has a record, so a skipped control fails too, and that each rule fires on
+the same record once its dry-run marker is removed, so the quiet comes from the dry-run
+filter.
+The workflow
 [`validate-apiserver-detections.yml`](../../../.github/workflows/validate-apiserver-detections.yml)
 runs the loop on a `kind` cluster, with a negative control on the pre-emulation log.
 
