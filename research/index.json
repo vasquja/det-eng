@@ -168,7 +168,7 @@
           "url": "../atomics/T1098.006/src/emulate.sh"
         },
         "B": {
-          "text": "det-eng namespaced RoleBinding behavioral emulation",
+          "text": "det-eng namespaced RoleBinding behavioral emulation (plus an inert edit RoleBinding to a nonexistent user in a throwaway namespace, deleted at once)",
           "url": "../atomics/T1098.006/src/emulate.sh"
         },
         "C": {
@@ -176,11 +176,11 @@
           "url": "../atomics/T1098.006/src/emulate.sh"
         },
         "D": {
-          "text": "det-eng group-subject binding behavioral emulation (throwaway group)",
+          "text": "det-eng group-subject binding behavioral emulation (throwaway group; plus an inert binding of an empty role to an empty service-account group, deleted at once)",
           "url": "../atomics/T1098.006/src/emulate.sh"
         },
         "E": {
-          "text": "det-eng role patch behavioral emulation",
+          "text": "det-eng role patch behavioral emulation (plus an inert impersonate patch to an unbound role, deleted at once)",
           "url": "../atomics/T1098.006/src/emulate.sh"
         },
         "F": {
@@ -261,7 +261,7 @@
         "E": "Read a mounted token off disk (the gap)"
       },
       "pub_date": "2026-10-12",
-      "last_update": "2026-10-21",
+      "last_update": "2026-10-23",
       "path": "trr9006/k8s/README.md",
       "tests": {
         "A": {
@@ -281,7 +281,7 @@
           "url": "../atomics/T1552.007/src/emulate.sh"
         },
         "E": {
-          "text": "det-eng mounted-token file read (detection-gap demonstration)",
+          "text": "det-eng mounted-token file read through a marked reader (node file-event gate; audit-log gap asserted)",
           "url": "../atomics/T1552.007/src/emulate.sh"
         }
       }
@@ -1048,7 +1048,7 @@
         "D": "Recreate the coredns ConfigMap"
       },
       "pub_date": "2026-10-14",
-      "last_update": "2026-10-16",
+      "last_update": "2026-10-21",
       "path": "trr9027/k8s/README.md",
       "tests": {
         "A": {

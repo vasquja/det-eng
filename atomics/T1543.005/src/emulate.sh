@@ -141,7 +141,7 @@ ensure_node() {
 procedure_a() {
   local dst="$MANIFEST_DIR/${STATIC_NAME}.yaml"
   local mirror="${STATIC_NAME}-${NODE}"
-  local rc=0 i
+  local rc=0
   log "A: write static pod manifest to the node ($dst)"
   if ! node_put_manifest "$SCRIPT_DIR/static-pod.yaml" "$dst"; then
     log "A: could not write the manifest to the node"
@@ -149,7 +149,7 @@ procedure_a() {
   fi
 
   log "A: wait for the kubelet to register the mirror pod ($mirror)"
-  for i in $(seq 1 30); do
+  for _ in $(seq 1 30); do
     if kubectl -n default get pod "$mirror" >/dev/null 2>&1; then
       break
     fi
@@ -369,7 +369,7 @@ b_live_interrupted() {
 procedure_b_live() {
   local worker="$TRR9003_WORKER" port="$TRR9003_URL_PORT"
   local mirror="${URL_NAME}-${TRR9003_WORKER}"
-  local gw="" url="" rc=0 seen=0 src="" i
+  local gw="" url="" rc=0 seen=0 src=""
 
   if [ -n "${TRR9003_NODE_EXEC:-}" ] || ! command -v docker >/dev/null 2>&1; then
     log "B-live: the live reconfiguration needs docker and the kind network (it serves the"
@@ -415,7 +415,7 @@ print(next((c["Gateway"] for c in cfgs if c.get("Gateway") and ":" not in c["Gat
 
   # Confirm that the worker can fetch the manifest (up to 10 s for the listener to start).
   local served=0
-  for i in $(seq 1 10); do
+  for _ in $(seq 1 10); do
     if ! kill -0 "$B_LIVE_HTTPPID" 2>/dev/null; then
       break
     fi
@@ -456,7 +456,7 @@ print(next((c["Gateway"] for c in cfgs if c.get("Gateway") and ":" not in c["Gat
 
   # Poll crictl up to 90 s for the URL static pod sandbox with config.source=http.
   log "B-live: poll the worker runtime (crictl) for the $URL_NAME sandbox (config.source=http)"
-  for i in $(seq 1 45); do
+  for _ in $(seq 1 45); do
     if docker exec "$worker" crictl pods --name "$URL_NAME" --namespace default --state ready -q \
          2>/dev/null | grep -q . ; then
       if docker exec "$worker" crictl pods --name "$URL_NAME" --namespace default --state ready \
@@ -480,7 +480,7 @@ print(next((c["Gateway"] for c in cfgs if c.get("Gateway") and ":" not in c["Gat
   # registration and informer sync, pkg/kubelet/kubelet.go). config.source must be http.
   if [ "$seen" -eq 1 ]; then
     log "B-live: wait for the kubelet to register the mirror pod ($mirror)"
-    for i in $(seq 1 30); do
+    for _ in $(seq 1 30); do
       src="$(kubectl -n default get pod "$mirror" \
         -o jsonpath='{.metadata.annotations.kubernetes\.io/config\.source}' 2>/dev/null || true)"
       [ -n "$src" ] && break

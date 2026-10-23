@@ -255,7 +255,9 @@ request: the namespace controller's `deletecollection` of the Events of a namesp
 being deleted (`system:serviceaccount:kube-system:namespace-controller`), which every
 namespace teardown makes. Filter a server-side dry run when the record holds the
 DeleteOptions body (`dryRun: ["All"]`, Request level); the query form is not trusted for
-a delete, because with a body the API server ignores the query. Baseline the other
+a delete, because with a body the API server ignores the query. A delete or
+deletecollection with no body whose query holds `?dryRun=All` is a dry run too, but it
+still fires ([RULE_DEFECTS K36](../../../detections/RULE_DEFECTS.md#k36-delete-dry-run-filters-read-only-the-body-a-query-only-dry-run-fires)). Baseline the other
 system identities and any event-exporter service accounts by `user.username`.
 
 - Sensor: API server audit log.

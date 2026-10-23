@@ -348,7 +348,9 @@ Request level). The query counts only when `dryRun=All` is a whole parameter of 
 (the first `?` starts the query, and Go `net/url` splits it at `&`), so a value of
 another parameter, such as `?fieldManager=?dryRun=All`, is not a dry run. It also
 counts only when the URI holds at most 100 `&`: Go `net/url` reads no parameter of a
-query that has more than 10,000, and the API server then stores the write. Baseline the policy engine's own controller, GitOps/Helm,
+query that has more than 10,000, and the API server then stores the write. A delete or
+deletecollection with no body whose query holds `?dryRun=All` is a dry run too, but it
+still fires ([RULE_DEFECTS K36](../../../detections/RULE_DEFECTS.md#k36-delete-dry-run-filters-read-only-the-body-a-query-only-dry-run-fires)). Baseline the policy engine's own controller, GitOps/Helm,
 and cluster-upgrade tooling by `user.username`.
 
 - Sensor: API server audit log.

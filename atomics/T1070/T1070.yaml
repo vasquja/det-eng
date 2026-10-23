@@ -3,8 +3,9 @@ display_name: "Indicator Removal (Kubernetes Events and Workload Records)"
 
 # Behavioral emulation for TRR9010. Each test destroys evidence through the API
 # server, so the delete/deletecollection audit events the paired detections key on
-# exist. Everything happens in a throwaway namespace trr9010 with uniquely named
-# objects, so a validator matches the emulation's own events. A delete is audited
+# exist. Everything happens in throwaway trr9010* namespaces (trr9010; trr9010-ns-f
+# for F; trr9010-dryrun-ns for the dry-run control) with uniquely named objects, so a
+# validator matches the emulation's own events. A delete is audited
 # even when the object does not exist (a 404), but the validator needs each delete to be
 # accepted (200), so each test first creates what it deletes, and a failed create fails
 # the test. These need a reachable cluster and audit logging (see

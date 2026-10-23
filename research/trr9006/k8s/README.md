@@ -399,10 +399,12 @@ the non-system test identity), for each procedure on its own: A's list, B's get 
 `file` log source: Procedure E reads the watched node token through a marked copy
 of cat (`/usr/local/bin/trr9006-reader`), the node file-event sensor records the
 open, and the validator gates the rule on that read in E's window. A false-positive
-control requires that the rule matches none of the kubelet's own resync reads of
-that token (when the log holds some), so the rule's kubelet filter is tested on live
-data. The audit-log gap is proven at
-the same time: with the emulation ledger, an absence check asserts that no event
+control requires that the rule matches none of the kubelet's own reads of that token
+(when the log holds some). Live CI has recorded no kubelet read of the watched token
+in any run so far (3 of 3 runs to 2026-10-23, each watched for about 2 minutes), so
+this control has had no live input. The kubelet filter is proven by the sidecar
+filtered case `kubelet-writes-projected-token`. The audit-log gap is proven at the
+same time: with the emulation ledger, an absence check asserts that no event
 Strategy 1 or 2 matches, from a non-system caller, falls in E's time window, and E
 must have run and read the token (`read-ok`). The workflow
 [`validate-apiserver-detections.yml`](../../../.github/workflows/validate-apiserver-detections.yml)

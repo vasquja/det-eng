@@ -115,8 +115,9 @@ occur proves nothing.
 - A rule with no registered positive in any validator `MANIFEST`. A documented
   telemetry gap goes in `COMPILE_ONLY` with a reason (human-approved) and still needs
   a sidecar positive. A registered rule must also declare the log source its
-  validator proves it on (`linux/auditd`, `kubernetes/audit` or `kubernetes/cri`, the
-  cloud provider): the benign corpus scores a rule only on its log source.
+  validator proves it on (`linux/auditd`, `kubernetes/audit` or `kubernetes/cri`,
+  `linux/file_event` for a `file` entry, the cloud provider): the benign corpus scores
+  a rule only on its log source.
 - A rule with no verified negative that breaks a **discriminating** item or a
   filter. Trivial and distant negatives don't count: no-op runs, unrelated events, a
   pre-emulation baseline, or a record where *no* positive item holds (an `{"x": 1}`
@@ -336,12 +337,14 @@ PascalCase — match `subjectFromWebIdentityToken`, not `SubjectFromWebIdentityT
   The `marker()` gate checks that at least one named flattened field of a firing attack
   record contains the substring.
 - The Kubernetes API-server validator (`detections/validate_apiserver_detections.py`)
-  registers `(folder, rulefile, source, label, note, gate)`, where `source` is `audit`
-  or `cri`. Its `gate` is either one callable (any marked record passes, as in the cloud
-  validator) or a **list of `(procedure, gate)` pairs**: then the entry passes only when
-  every procedure has a matching record of its own, so a procedure that fails silently —
-  or whose write the API server refused — fails the entry (`--expect-miss` inverts this:
-  any one procedure matching fails the negative control). Build each gate with
+  registers `(folder, rulefile, source, label, note, gate)`, where `source` is `audit`,
+  `cri` or `file` (a node file event, `linux/file_event`; its gate is built with
+  `file_read(image, endswith, window)`). Its `gate` is either one callable (any marked
+  record passes, as in the cloud validator) or a **list of `(procedure, gate)` pairs**:
+  then the entry passes only when every procedure has a matching record of its own, so
+  a procedure that fails silently — or whose write the API server refused — fails the
+  entry (`--expect-miss` inverts this: any one procedure matching fails the negative
+  control). Build each gate with
   `rec(verb, resource, sub, name|prefix, ns, user, also, code, window)`, or bind a precise
   helper gate (a body sentinel, a JSON-patch operation list) with `win(gate, window, code)`.
   Both require an accepted response (2xx, or 101 for a streaming upgrade) by default. A
@@ -351,7 +354,8 @@ PascalCase — match `subjectFromWebIdentityToken`, not `SubjectFromWebIdentityT
   `window=(trr, procedure)` keys the emulation ledger: run the validator with
   `--ledger $DETENG_LEDGER`, and each atomic must append one JSON line per procedure
   (`{"trr","procedure","start","end","exit","expect"}`, UTC microseconds) so a record is
-  attributed to the procedure whose window brackets its `requestReceivedTimestamp`.
+  attributed to the procedure whose window brackets its `requestReceivedTimestamp` (an
+  audit event) or its `Timestamp` (a node file event).
   Module-level `PROCEDURES` ({`(trr_id, LETTER)` → sorted rule paths}) is derived from
   these labels; it is the interface for the procedure coverage report. A documented gap is
   asserted with an `ABSENCE` entry (a rule that must match nothing from the gate's callers

@@ -213,11 +213,11 @@ it declares. An unrelated event cannot pass as a near-miss.
   so `automerge` turns on auto-merge for them only after a human approves.
 - **R1** has no registered positive in a validator `MANIFEST`, or declares a log
   source other than the one that validator proves it on (auditd: `linux/auditd`;
-  API server and TRR9003: `kubernetes/audit` or `kubernetes/cri`, as the entry
-  says; TRR9002: `kubernetes/audit`; cloud: the entry's provider). The benign
-  corpus scores a rule only on the slices of its log source, so a rule moved to
-  another log would escape its budget. A documented telemetry gap is listed in
-  `COMPILE_ONLY` and still needs a sidecar positive.
+  API server and TRR9003: `kubernetes/audit`, `kubernetes/cri` or, for a `file`
+  entry, `linux/file_event`, as the entry says; TRR9002: `kubernetes/audit`; cloud:
+  the entry's provider). The benign corpus scores a rule only on the slices of its
+  log source, so a rule moved to another log would escape its budget. A documented
+  telemetry gap is listed in `COMPILE_ONLY` and still needs a sidecar positive.
 - **R2** has no **verified** negative that breaks a *discriminating* item or a
   filter. A verified negative is a near-miss or filtered case, from the rule's
   cases or (cloud) its hard benign fixture. A no-op, an unrelated event or a
@@ -875,14 +875,16 @@ source (`--file-log`), and each gates its rule on one marked emulation record (C
   (`TRR9006_TOKEN_FILE`). E reads it through a marked copy of cat
   (`/usr/local/bin/trr9006-reader`). The negative control for this gate can fail
   only on a stray marked-reader event. The validator prints how many file events
-  the log holds (the kubelet's resync reads and kube-proxy's own reads of the
-  watched file, when they occur) and how many the rule matches (kube-proxy's reads;
-  the kubelet is filtered). A false-positive control runs in the validate and the
-  negative-control runs: the rule must match none of the kubelet's own token reads
-  (an `Image` whose file name is `kubelet`, in any directory), so the rule's kubelet
-  filter is tested on live data. The kubelet re-reads the token at its pod resync,
-  about once a minute, so a log can hold no such read; then the validator prints a
-  notice, and the control does not fail.
+  the log holds (E's marked read, and any read of the watched file by the kubelet or
+  by kube-proxy, when one occurs) and how many the rule matches (the kubelet is
+  filtered). A false-positive control runs in the validate and the negative-control
+  runs: the rule must match none of the kubelet's own token reads (an `Image` whose
+  file name is `kubelet`, in any directory). Live CI has recorded no kubelet read of
+  the watched token in any run so far (3 of 3 runs to 2026-10-23, each watched for
+  about 2 minutes), so this control has had no live input. The kubelet filter is
+  proven by the sidecar filtered case `kubelet-writes-projected-token` (`Image`
+  `/usr/bin/kubelet`). A log with no kubelet read gets a notice, and the control does
+  not fail.
 
 ### Container runtime layer (out of scope)
 

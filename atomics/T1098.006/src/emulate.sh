@@ -17,10 +17,14 @@
 #
 # Each of A, B, D and E ALSO makes one inert "graded" object, so the severity rule
 # k8s_rbac_privileged_grant is proven live, not only by its sidecar cases. Each
-# graded binding and graded role is created and then DELETED AT ONCE, by the next
-# kubectl call, with a checked delete: a failed delete fails the procedure and is
-# logged (cleanup deletes them again). So each exists for about one kubectl call
-# (well under a second in CI). What is bound, to whom, and why it is inert:
+# graded write (the A, B and D binding create, the E patch) is followed by a checked
+# delete of that object in the NEXT kubectl call: a failed delete fails the procedure
+# and is logged (cleanup deletes them again). So each object is in its graded state
+# for about one kubectl call (well under a second in CI). Two roles live a little
+# longer. D's empty role trr9004-cr-empty (no rules, so not graded) is created before
+# its binding and deleted right after the binding. E's role trr9004-cr-esc is created
+# with a read rule only (not graded), becomes graded at the patch, and is deleted by
+# the next call. What is bound, to whom, and why it is inert:
 #   A-sev: ClusterRoleBinding trr9004-crb-admin: the built-in `edit` ClusterRole,
 #          cluster-wide, to the user `trr9004-nouser`. No credential for that user
 #          exists on kind, so no principal authenticates as it; a principal that

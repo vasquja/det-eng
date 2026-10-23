@@ -105,9 +105,11 @@ The records are linux/file_event JSON lines from detections/k8s/auditd_file_even
 a file gate places a record in its ledger window by its Timestamp field. A
 false-positive control runs on the file log in strict and --expect-miss runs: the
 token rule must match none of the kubelet's own reads of the watched token (an Image
-whose file name is kubelet, in any directory). The kubelet re-reads the token at its
-pod resync, about once a minute; a log with no kubelet read gets a notice, not a
-failure.
+whose file name is kubelet, in any directory). A log with no kubelet read gets a
+notice, not a failure. Live CI has recorded no kubelet read of the watched token in
+any run so far (3 of 3 runs to 2026-10-23, each watched for about 2 minutes), so this
+control has had no live input; the kubelet filter is proven by the sidecar filtered
+case kubelet-writes-projected-token.
 
 Rules in each technique folder that are NOT match-gated here are still COMPILED, so a
 broken rule fails the run.
@@ -455,10 +457,11 @@ def file_read(image, endswith="/token", window=None, time="Timestamp"):
     return gate
 
 
-# The file control (C2-7) tests the token rule's kubelet filter on live data. The
-# kubelet re-reads each projected file at its pod resync, before it decides to write a
-# new version (kubernetes v1.36.4 pkg/volume/util/atomic_writer.go, shouldWriteFile:
-# os.ReadFile of ..<timestamp>/token), so the watched token's log holds those reads.
+# The file control (C2-7) tests the token rule's kubelet filter on live data when the
+# file log holds a kubelet read. The kubelet reads each projected file before it
+# decides to write a new version (kubernetes v1.36.4 pkg/volume/util/atomic_writer.go,
+# shouldWriteFile: os.ReadFile of ..<timestamp>/token), so such a read can occur; live
+# CI has recorded none so far (see report_file).
 # kind installs the kubelet at /usr/bin/kubelet (kind v0.33.0
 # pkg/build/nodeimage/buildcontext.go). A kubelet read is selected by the file name of
 # its Image, in any directory, so a read with another exe spelling is still tested.
@@ -477,9 +480,11 @@ def report_file(events, file_hits):
     """The token rule's false-positive control on the kubelet's own token reads.
 
     The rule must match none of them (filter_expected names the kubelet by its full
-    path). The kubelet resyncs a pod about once a minute, so a short capture can hold
-    no such read: then the control prints a notice and does not fail. Returns a list
-    of control failures (empty when the control holds or has nothing to test).
+    path). A log can hold no such read: live CI has recorded none in any run so far (3
+    of 3 runs to 2026-10-23, each watched for about 2 minutes). Then the control prints
+    a notice and does not fail; the sidecar filtered case kubelet-writes-projected-token
+    proves the filter offline. Returns a list of control failures (empty when the
+    control holds or has nothing to test).
     """
     reads = _kubelet_token_reads(events)
     images = sorted({str(e.get("Image")) for e in reads})
@@ -487,9 +492,9 @@ def report_file(events, file_hits):
           f"({len(reads)} kubelet token read(s)"
           + (f", Image {', '.join(images)}" if images else "") + ")")
     if not reads:
-        print("  notice: no kubelet token read in this log (the kubelet re-reads the token "
-              "at its pod resync, about once a minute), so the kubelet filter is not tested "
-              "on live data in this run")
+        print("  notice: no kubelet token read in this log, so the kubelet filter is not "
+              "tested on live data in this run (the sidecar filtered case "
+              "kubelet-writes-projected-token proves it offline)")
         return []
     read_ids = {id(e) for e in reads}
     hits = [e for e in file_hits if id(e) in read_ids]
