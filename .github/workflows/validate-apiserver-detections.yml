@@ -21,12 +21,13 @@ run-name: ${{ inputs.label && format('{0} [{1}]', github.workflow, inputs.label)
 #   - TRR9027 (cluster DNS poisoning, T1565.001): kube-system DNS ConfigMap write + Corefile grade
 #
 # A kind cluster runs on the ubuntu-latest runner with API server audit logging on
-# (pod creates, updates and patches; controller and RBAC writes and deletes, except
-# deletecollection, with the deployments, statefulsets and replicasets scale
-# subresources; admission-config creates and deletes at Request level;
+# (pod creates, updates and patches; controller writes, deletes and deletecollections
+# and RBAC writes and deletes, with the deployments, statefulsets and replicasets scale
+# subresources; pod, Event and namespace deletes and deletecollections, so a dry run's
+# DeleteOptions body is logged; admission-config creates and deletes at Request level;
 # admission-config updates and patches, the three cluster DNS ConfigMaps, and the
 # kube-system/aws-auth ConfigMap update/patch/delete at RequestResponse; kube-system
-# ConfigMap creates at Request; pods/portforward and nodes/proxy, pod and Event deletes,
+# ConfigMap creates at Request; pods/portforward and nodes/proxy,
 # Secrets and tokens at Metadata; see detections/k8s/audit-policy-apiserver.yaml), and a small CRI poller on the node stands in for a runtime security
 # agent (detections/k8s/cri-pod-sensor.sh), and the runner's auditd stands in for a
 # node file sensor (a read watch on one projected token, detections/k8s/auditd_file_events.py).

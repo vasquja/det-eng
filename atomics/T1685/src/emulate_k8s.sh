@@ -12,7 +12,14 @@
 # absent, labels it trr9008-created=true, and deletes it only when it created it. Its
 # records carry no trr9008 marker, so the validator gates the namespace delete by the
 # exact write (rows 9008 D2 ns and 9008 D ns), which rests on the kind cluster having
-# no kyverno namespace before d2 runs. The webhooks are no-ops
+# no kyverno namespace before d2 runs. The dry-run control does the same with the
+# gatekeeper-system namespace. No positive gate selects its records. Its must-not-match
+# gates select the dry-run Deployment by its trr9008-dryrun- name and, for the enforcer
+# rule, by the enforcer namespace, and the namespace delete by its exact name, so
+# DRY_NS must stay one of the engines' default namespaces. The control runs, and
+# cleanup deletes the namespace, only when the label shows that the atomic created it;
+# when the namespace existed before the test, the control fails before its first write.
+# The webhooks are no-ops
 # (failurePolicy Ignore, rules scoped to a bogus apiGroup) that cannot affect any
 # real admission request.
 #
@@ -29,6 +36,12 @@
 #                           shapes (an update of deployments/scale, then a patch), then deleted;
 #                           the kyverno namespace is created (labelled trr9008-created=true) and
 #                           deleted only when it is absent
+#   ./emulate_k8s.sh dryrun server-side dry runs that must NOT fire the rules (control): a
+#                           neuter patch and a delete of a webhook config; a patch, two
+#                           kubectl scale shapes, a delete and a deletecollection of a stand-in
+#                           Deployment in the gatekeeper-system namespace (created and labelled
+#                           as d2 does); and a delete of that namespace. Fails, with no write,
+#                           when gatekeeper-system existed before the test
 #   ./emulate_k8s.sh gap    node-local bypass demonstration (read-only)
 #   ./emulate_k8s.sh all    every item, in order, then clean up
 #
@@ -47,6 +60,9 @@ NODE="${TRR9008_NODE:-apiserver-control-plane}"
 # Procedure D2's namespace: Kyverno's default install namespace. Fixed, because the
 # precise rule and the validator gate list only the engines' default namespaces.
 ENFORCER_NS="kyverno"
+# The dry-run control's namespace: Gatekeeper's default install namespace, so that d2's
+# kyverno namespace and this one never share a lifecycle.
+DRY_NS="gatekeeper-system"
 
 log() { printf '[trr9008] %s\n' "$*" >&2; }
 
@@ -88,9 +104,11 @@ run_proc() {
 cleanup() {
   log "cleanup: removing every trr9008- object"
   kubectl delete validatingwebhookconfiguration trr9008-vwc trr9008-neuter trr9008-neuter-merge \
-    trr9008-neuter-json trr9008-neuter-const trr9008-neuter-nssel --ignore-not-found >/dev/null 2>&1 || true
+    trr9008-neuter-json trr9008-neuter-const trr9008-neuter-nssel trr9008-dryrun-vwc \
+    --ignore-not-found >/dev/null 2>&1 || true
   kubectl delete mutatingwebhookconfiguration trr9008-mwc --ignore-not-found >/dev/null 2>&1 || true
   kubectl -n "$ENFORCER_NS" delete deployment trr9008-enforcer-standin --ignore-not-found >/dev/null 2>&1 || true
+  kubectl -n "$DRY_NS" delete deployment trr9008-dryrun-standin --ignore-not-found >/dev/null 2>&1 || true
   # Only a namespace that d2 created carries this label; a kyverno namespace that
   # existed before the test has no such label and is kept.
   kubectl delete namespace -l trr9008-created=true --ignore-not-found >/dev/null 2>&1 || true
@@ -251,6 +269,101 @@ EOF
   fi
 }
 
+# Dry run — a control, not a procedure: server-side dry runs persist nothing, so the
+# rules must NOT fire on them (the validator's MISS_MANIFEST). The step installs a
+# harmless enforcing webhook config trr9008-dryrun-vwc (the Procedure C copy) and a
+# pause Deployment trr9008-dryrun-standin in gatekeeper-system, then sends each write
+# with --dry-run=server: a merge patch that neuters the webhook (failurePolicy Ignore,
+# rules []) and its delete; a patch of spec.replicas 0, kubectl scale --replicas=0 (a
+# patch of deployments/scale), kubectl scale --current-replicas=1 --replicas=0 (a PUT of
+# deployments/scale), the delete of the Deployment, and a deletecollection of the
+# Deployments that carry its label (kubectl delete --raw of the collection URL with a
+# DeleteOptions body, as kubectl delete sends one); then the delete of gatekeeper-system
+# (only when this step created it). kubectl sends an update or patch dry run as the
+# ?dryRun=All query and a delete dry run in the DeleteOptions body (cli-runtime
+# resource.Helper and client-go scale, v1.36.4; kubectl delete --raw -f sends the file
+# as the body, kubectl rawhttp, v1.36.4). Then the step checks that the webhook still
+# fails closed, the Deployment still asks for 1 replica and the namespace is still
+# Active, so a dry run that persisted fails the step. gatekeeper-system is created only
+# when it is absent (labelled trr9008-created=true, as d2 does with kyverno). When the
+# namespace has no such label (it existed before the test, e.g. a real Gatekeeper
+# install), the step fails before its first write: it creates nothing and sends no
+# request, not even a dry run, to that namespace. Cleanup deletes the objects (and the
+# namespace the step created) after this step's ledger window. Every object name starts
+# with trr9008-dryrun-, which no positive gate selects, and no positive gate selects
+# gatekeeper-system.
+procedure_dryrun() {
+  local phase fp replicas owned
+  phase="$(kubectl get namespace "$DRY_NS" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+  if [ "$phase" = "Terminating" ]; then
+    log "dryrun: namespace $DRY_NS is terminating; wait for it to go"
+    kubectl wait --for=delete "namespace/$DRY_NS" --timeout=120s >/dev/null 2>&1 || true
+  fi
+  if ! kubectl get namespace "$DRY_NS" >/dev/null 2>&1; then
+    must kubectl create -f - <<EOF || true
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: $DRY_NS
+  labels:
+    trr9008-created: "true"
+EOF
+  fi
+  phase="$(kubectl get namespace "$DRY_NS" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+  if [ "$phase" != "Active" ]; then
+    log "dryrun: namespace $DRY_NS is not active (phase '${phase:-absent}'); the dry runs cannot run"
+    return 1
+  fi
+  # Only a namespace that this step created carries the label. A namespace that existed
+  # before the test is never a target: the step stops here, before its first write.
+  owned="$(kubectl get namespace -l trr9008-created=true -o name 2>/dev/null || true)"
+  if ! grep -qx "namespace/${DRY_NS}" <<<"$owned"; then
+    log "dryrun: $DRY_NS existed before the test (no trr9008-created label); the control does not run in it"
+    return 1
+  fi
+  log "dryrun: install trr9008-dryrun-vwc and deployment trr9008-dryrun-standin in $DRY_NS"
+  _apply_neuter_copy trr9008-dryrun-vwc || return
+  must kubectl -n "$DRY_NS" create deployment trr9008-dryrun-standin \
+    --image=registry.k8s.io/pause:3.9 --replicas=1 || return
+  log "dryrun: neuter patch, then delete, of trr9008-dryrun-vwc (--dry-run=server)"
+  must kubectl patch validatingwebhookconfiguration trr9008-dryrun-vwc --dry-run=server --type=merge \
+    -p '{"webhooks":[{"name":"w.trr9008.example.com","admissionReviewVersions":["v1"],"sideEffects":"None","failurePolicy":"Ignore","clientConfig":{"service":{"namespace":"trr9008","name":"trr9008-nosvc","path":"/nope","port":443}},"rules":[]}]}' \
+    || return
+  must kubectl delete validatingwebhookconfiguration trr9008-dryrun-vwc --dry-run=server || return
+  log "dryrun: patch replicas 0, kubectl scale (PUT, then patch), then delete, of trr9008-dryrun-standin (--dry-run=server)"
+  must kubectl -n "$DRY_NS" patch deployment trr9008-dryrun-standin --dry-run=server \
+    -p '{"spec":{"replicas":0}}' || return
+  must kubectl -n "$DRY_NS" scale deployment trr9008-dryrun-standin --dry-run=server \
+    --current-replicas=1 --replicas=0 || return
+  must kubectl -n "$DRY_NS" scale deployment trr9008-dryrun-standin --dry-run=server \
+    --replicas=0 || return
+  must kubectl -n "$DRY_NS" delete deployment trr9008-dryrun-standin --dry-run=server || return
+  # The same removal as a deletecollection. The label selector limits it to the stand-in
+  # (kubectl create deployment labels it app=<name>), so even a request that lost its
+  # dry run could remove nothing else.
+  log "dryrun: deletecollection of the deployments labelled app=trr9008-dryrun-standin in $DRY_NS (DeleteOptions body dryRun [All])"
+  must kubectl delete --raw \
+    "/apis/apps/v1/namespaces/${DRY_NS}/deployments?labelSelector=app%3Dtrr9008-dryrun-standin" \
+    -f - <<'EOF' || return
+{"kind":"DeleteOptions","apiVersion":"v1","dryRun":["All"]}
+EOF
+  # The enforcer-namespace branch of both workload rules (the step created this
+  # namespace; see the label check above).
+  log "dryrun: delete namespace $DRY_NS (--dry-run=server)"
+  must kubectl delete namespace "$DRY_NS" --dry-run=server || return
+  # A server-side dry run persists nothing: the webhook still fails closed, the
+  # Deployment still exists with 1 replica, and the namespace is still Active.
+  fp="$(kubectl get validatingwebhookconfiguration trr9008-dryrun-vwc \
+    -o jsonpath='{.webhooks[0].failurePolicy}' 2>/dev/null || true)"
+  replicas="$(kubectl -n "$DRY_NS" get deployment trr9008-dryrun-standin \
+    -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
+  phase="$(kubectl get namespace "$DRY_NS" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+  if [ "$fp" != "Fail" ] || [ "$replicas" != "1" ] || [ "$phase" != "Active" ]; then
+    log "dryrun: a dry run persisted (failurePolicy '${fp:-absent}', replicas '${replicas:-absent}', namespace phase '${phase:-absent}')"
+    return 1
+  fi
+}
+
 # Gap — the node-local bypass. An attacker with control-plane node access can disable
 # admission WITHOUT an admissionregistration write (edit the kube-apiserver static
 # manifest --disable-admission-plugins, or tamper with the webhook TLS material). None
@@ -271,15 +384,15 @@ procedure_gap() {
 
 run_one() {
   case "$1" in
-    a|b|c|d|d2|gap) run_proc "$1" ;;
-    *) log "unknown item: $1 (use a|b|c|d|d2|gap|all)"; exit 2 ;;
+    a|b|c|d|d2|dryrun|gap) run_proc "$1" ;;
+    *) log "unknown item: $1 (use a|b|c|d|d2|dryrun|gap|all)"; exit 2 ;;
   esac
 }
 
 main() {
   local which="${1:-all}"
   if [ "$which" = "all" ]; then
-    for p in a b c d d2 gap; do run_proc "$p"; done
+    for p in a b c d d2 dryrun gap; do run_proc "$p"; done
     cleanup
   else
     run_one "$which"

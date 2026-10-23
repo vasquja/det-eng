@@ -356,7 +356,7 @@
         "D": "Remove the enforcer's workload"
       },
       "pub_date": "2026-10-12",
-      "last_update": "2026-10-20",
+      "last_update": "2026-10-23",
       "path": "trr9008/k8s/README.md",
       "tests": {
         "A": {
@@ -446,7 +446,7 @@
         "F": "Delete a whole namespace"
       },
       "pub_date": "2026-10-12",
-      "last_update": "2026-10-16",
+      "last_update": "2026-10-23",
       "path": "trr9010/k8s/README.md",
       "tests": {
         "A": {
@@ -962,7 +962,7 @@
         "D": "Repoint an installed webhook to a URL"
       },
       "pub_date": "2026-10-14",
-      "last_update": "2026-10-20",
+      "last_update": "2026-10-23",
       "path": "trr9025/k8s/README.md",
       "tests": {
         "A": {

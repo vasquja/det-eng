@@ -19,7 +19,9 @@ description: |
   deleted Events in a short window, a deletion in a sensitive namespace, or the
   deletion of a Job whose creation the same identity made (the inverse of TRR9005,
   which detects Job creation for execution). Suppress controller and GitOps
-  identities. Metadata level is enough.
+  identities. Metadata level is enough to fire; the dry-run filter needs the
+  DeleteOptions body (Request level), which the shipped lab policy records for pod and
+  Job deletes.
 references:
   - https://attack.mitre.org/techniques/T1070/
   - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
@@ -55,6 +57,12 @@ falsepositives:
     controller and automation identities.
   - A server-side dry run (kubectl delete --dry-run=server). It is filtered only when
     the record holds the DeleteOptions body (Request level or higher). The shipped lab
-    policy logs Job deletes at Request (filtered), but pod deletes and every
-    deletecollection at Metadata, so there a dry run still fires.
+    policy logs pod and Job deletes and deletecollections at Request, so there a dry
+    run is filtered; under a policy that logs them at Metadata a dry run still fires. A
+    delete with no body whose query holds ?dryRun=All is a dry run too, and fires,
+    because the filter reads only the body. The official Python client
+    (kubernetes-client/python) sends that shape for dry_run="All" with no body, and so
+    does kubectl delete --raw with a ?dryRun=All URI and no -f; kubectl delete
+    --dry-run=server and client-go send the dry run in the body
+    (detections/RULE_DEFECTS.md K36).
 level: low

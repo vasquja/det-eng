@@ -17,6 +17,12 @@
 #     the schedule) is present. Metadata would make those rules blind. Request level
 #     also copies literal env[].value strings of every pod and template into the log;
 #     a credential set as a literal env value lands there too.
+#   * Deletes of pods, Events, namespaces and the workload controllers (TRR9010,
+#     TRR9008 D): delete and deletecollection at Request, so a server-side dry run
+#     (kubectl delete --dry-run=server sends dryRun ["All"] in the DeleteOptions body)
+#     is in the record and the rules' dry-run filters can read it. The positive
+#     matches need only Metadata. A delete's requestObject is DeleteOptions only: no
+#     object body and no secret data.
 #   * RBAC (TRR9004): Request level, so requestObject (roleRef / subjects / rules)
 #     is present to grade a dangerous grant.
 #   * Admission-control objects (TRR9008, TRR9025): update and patch at
@@ -63,6 +69,28 @@ rules:
       - group: ""
         resources: ["pods", "pods/ephemeralcontainers"]
 
+  # --- TRR9010 / TRR9008: pod, Event and namespace deletes at Request (dry runs) ---
+  # The rules key on verb, resource, name and identity, which Metadata holds. Request
+  # adds the DeleteOptions body, where kubectl delete --dry-run=server puts its dry run
+  # (cli-runtime resource.Helper DeleteWithOptions, v1.36.4), so the dry-run filters of
+  # k8s_events_deleted, k8s_workload_deleted_evidence, k8s_namespace_deleted and the
+  # T1685 enforcer-namespace branch can see it; at Metadata such a dry run fires them.
+  # What it adds to the log: a DeleteOptions object (kind, apiVersion and the fields
+  # gracePeriodSeconds, preconditions, orphanDependents, propagationPolicy, dryRun,
+  # ignoreStoreReadErrorWithClusterBreakingPotential) on every delete and
+  # deletecollection of these resources, the kubelet's pod deletes and the namespace
+  # controller's teardown sweeps included. It holds no object body and no secret data;
+  # Request level records no responseObject. No rule above sets a level for these
+  # requests, and the None rules below drop reads only, so this rule lowers nothing.
+  # The workload controllers get the same through the rule below (deletecollection).
+  - level: Request
+    verbs: ["delete", "deletecollection"]
+    resources:
+      - group: ""
+        resources: ["pods", "events", "namespaces"]
+      - group: "events.k8s.io"
+        resources: ["events"]
+
   # --- TRR9026: pod port-forward tunnel at Metadata (resource/subresource/verb) ---
   # The pods subresource is not covered by the pods rule above (audit resource matching
   # is exact), and a port-forward is get (WebSocket) or create (SPDY); Metadata carries
@@ -78,7 +106,9 @@ rules:
 
   # --- TRR9005 + TRR9007: workload controllers at Request (embedded templates) ---
   # TRR9005 keys on batch writes; TRR9007 grades the embedded pod template. Keep
-  # delete too, so TRR9005 teardown is visible.
+  # delete and deletecollection too, so TRR9005 teardown is visible and a dry-run
+  # delete's DeleteOptions body (dryRun ["All"]) is in the record (see the rule above;
+  # a delete's body is DeleteOptions only, no pod template and no secret).
   # TRR9008: the scale subresources too. Audit resource matching is exact, so
   # "deployments" does not cover "deployments/scale"; without these entries a
   # `kubectl scale --replicas=0` falls to the Metadata catch-all with no
@@ -87,7 +117,7 @@ rules:
   # secret. (Only update and patch exist on a scale subresource; its get stays at
   # the Metadata catch-all.)
   - level: Request
-    verbs: ["create", "update", "patch", "delete"]
+    verbs: ["create", "update", "patch", "delete", "deletecollection"]
     resources:
       - group: "apps"
         resources: ["deployments", "daemonsets", "statefulsets", "replicasets",

@@ -187,6 +187,16 @@ up inside a correlation window. Keys that differ only by case (`requestId` and
 `RequestID`) cannot share one slice, because SQLite folds column case; split such
 records across slices.
 
+The three synthetic `kubernetes/audit` slices (`k8s-audit-control-plane`,
+`k8s-audit-gitops-ci`, `k8s-audit-human-operators`) say that their levels follow
+[`../k8s/audit-policy-apiserver.yaml`](../k8s/audit-policy-apiserver.yaml), but they
+predate its Request-level rule for pod, Event, namespace and workload deletes: their
+45 deletes and deletecollections of those resources are at Metadata, with no
+DeleteOptions body. Moved to Request with a DeleteOptions body (propagationPolicy, no
+dryRun), they change no rule's hit count. The slice version that gives each actor its
+real body (the kubelet, the garbage collector, kubectl, the namespace controller) is a
+corpus change that a human approves.
+
 ## Tracking it over time
 
 [`scores.json`](scores.json) is the committed snapshot of every rule's score

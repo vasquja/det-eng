@@ -16,8 +16,10 @@ description: |
   objectRef.apiGroup, so it catches both the core group and events.k8s.io, which
   record the same objectRef.resource=events.
 
-  Metadata level is enough (verb, resource, namespace, name, and identity are all
-  present; no requestObject needed). Routine event turnover is not a false positive:
+  Metadata level is enough to fire (verb, resource, namespace, name, and identity are
+  all present; no requestObject needed). The dry-run filter needs the DeleteOptions
+  body, which only Request level (or higher) holds; the shipped lab policy logs Event
+  deletes at Request. Routine event turnover is not a false positive:
   Events expire at the etcd storage layer via the API server event-ttl, which is not
   an API delete and writes no audit event. Namespace deletion is: the namespace
   controller (system:serviceaccount:kube-system:namespace-controller) empties a
@@ -72,5 +74,12 @@ falsepositives:
     other controller that deletes Events through the API.
   - A server-side dry run (kubectl delete --dry-run=server). It is filtered only when
     the record holds the DeleteOptions body (Request level or higher). The shipped lab
-    policy logs Event deletes at Metadata, so there a dry run still fires.
+    policy logs Event deletes and deletecollections at Request, so there a dry run is
+    filtered; under a policy that logs them at Metadata a dry run still fires. A
+    delete with no body whose query holds ?dryRun=All is a dry run too, and fires,
+    because the filter reads only the body. The official Python client
+    (kubernetes-client/python) sends that shape for dry_run="All" with no body, and so
+    does kubectl delete --raw with a ?dryRun=All URI and no -f; kubectl delete
+    --dry-run=server and client-go send the dry run in the body
+    (detections/RULE_DEFECTS.md K36).
 level: medium

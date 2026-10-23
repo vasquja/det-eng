@@ -356,6 +356,14 @@ PascalCase — match `subjectFromWebIdentityToken`, not `SubjectFromWebIdentityT
   these labels; it is the interface for the procedure coverage report. A documented gap is
   asserted with an `ABSENCE` entry (a rule that must match nothing from the gate's callers
   in a procedure's window; it fails when that procedure did not run or failed).
+  A rule's dry-run filter is proven with a `MISS_MANIFEST` entry `(folder, rule, label,
+  gate)`: each shape gate is built with `dry()` (`rec(..., dry_run=True)`) and bound to
+  the `dryrun` control's ledger window; a shape needs at least one record, the rule must
+  match none of them, and it must match at least one of them once the dry-run marker is
+  removed. The name prefixes `trr9008-dryrun-`, `trr9010-dryrun-` and `trr9025-dryrun-`
+  (`DRY_RUN_PREFIXES`) are reserved for dry-run controls: no positive gate selects a
+  record whose object name or namespace begins with one, so never give a procedure's
+  object such a name.
   Emulations are **fail-loud**: a `must`/`run_proc` helper block times each procedure,
   writes its ledger row, and makes `all` exit 1 naming any failed procedure. A skip
   returns 0 only for a lab condition that makes the action unsafe or impossible by design

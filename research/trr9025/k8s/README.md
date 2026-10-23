@@ -441,6 +441,14 @@ Atomic Red Team wrappers in
 | TRR9025.K8S.D | `emulate_k8s.sh d` — repoint four no-op Service-backed webhooks to the URL (strategic merge patch, JSON patch, PUT, server-side apply), and install one URL-mode webhook with `kubectl apply --server-side` (the create-via-patch-201 path). | **built** |
 | TRR9025.K8S (gap) | `emulate_k8s.sh gap` — show the control-plane etcd path on the node (read-only). | **built** |
 
+`emulate_k8s.sh dryrun` is a control, not a procedure. It installs the Service-backed
+webhook `trr9025-dryrun-vwc` and sends Procedure D's strategic merge patch (service to
+url) with `--dry-run=server`, then checks that the stored webhook still calls its
+Service. A server-side dry run persists nothing, so with the emulation ledger the
+validator's must-not-match checks (`MISS_MANIFEST`) assert that the repoint grader and
+the TRR9008 chokepoint match none of these records, and that each fires on the same
+record once its dry-run marker is removed.
+
 ## Detections
 
 | Strategy | Covers | Sigma rule | Sensor |

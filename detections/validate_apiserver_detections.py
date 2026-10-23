@@ -78,6 +78,17 @@ k8s_secret_token_request must match no event by a non-system caller in E's windo
 The check fails when E did not run or failed, when its row has no window, and when a
 matching event cannot be placed in time (no requestReceivedTimestamp).
 
+The MISS_MANIFEST list asserts, with the ledger, that a rule matches none of the
+emulation's own server-side dry runs (R2-d): the `dryrun` control of TRR9008, TRR9010
+and TRR9025 sends each write as a server-side dry run (kubectl --dry-run=server, or a
+deletecollection with a DeleteOptions body that holds dryRun All) on trr90NN-dryrun-
+objects (and on the gatekeeper-system namespace that the TRR9008 control creates).
+Each shape needs at least one record in the control's window (so a control that did
+not run fails), the rule must match none of them, and the rule must match at least
+one of them once the dry-run marker is removed (so a rule that is quiet for another
+reason fails). No positive gate selects a dry-run object (DRY_RUN_PREFIXES, by name or
+namespace). Without --ledger, and with --expect-miss, the checks do not run.
+
 PROCEDURES ({(trr_id, LETTER): sorted rule paths}) is derived from the MANIFEST
 labels; it is the interface for the procedure coverage report.
 
@@ -113,8 +124,8 @@ Modes:
                         explanation lines of every rule) to PATH.
     --ledger PATH       Emulation ledger (JSON lines, one per procedure). Binds each
                         procedure gate to its window and exit status, and runs the
-                        ABSENCE checks. A missing file, or a line that does not parse,
-                        fails the run.
+                        ABSENCE and MISS_MANIFEST checks. A missing file, or a line that
+                        does not parse, fails the run.
 
 A MISS is explained beneath its line (sigma_explain.py): what the gate requires,
 how many events carry the emulation's marker, and the marked event that came
@@ -349,6 +360,22 @@ def coredns_gate_modified(name):
 ANY = object()          # rec(sub=ANY): any subresource; rec(sub=None): none
 OK = "ok"               # 2xx, or 101 Switching Protocols (exec/attach/portforward)
 
+# The dry-run step of TRR9008, TRR9010 and TRR9025 names every object it creates and
+# dry-runs with one of these prefixes (R2-d, MISS_MANIFEST). No positive gate (rec()
+# or win()) selects such an object, so neither a dry-run request nor the real create
+# and cleanup delete of a dry-run object can stand in for a procedure.
+DRY_RUN_PREFIXES = ("trr9008-dryrun-", "trr9010-dryrun-", "trr9025-dryrun-")
+NOT_DRY_RUN = ("not a dry-run control object (name and namespace do not begin with "
+               + ", ".join(repr(p) for p in DRY_RUN_PREFIXES) + ")")
+
+
+def dry_run_object(e):
+    """True for a record of a dry-run control's object: its name, or its namespace (a
+    deletecollection in the control's own namespace names no object), begins with one
+    of DRY_RUN_PREFIXES."""
+    return any(str(e.get(f) or "").startswith(DRY_RUN_PREFIXES)
+               for f in ("objectRef.name", "objectRef.namespace"))
+
 
 def _code_ok(e, code):
     c = e.get("responseStatus.code")
@@ -360,14 +387,18 @@ def _code_ok(e, code):
 
 
 def rec(*, verb=None, resource=None, sub=None, name=None, prefix=None, ns=None,
-        user=None, code=OK, also=None, window=None, desc=None):
+        user=None, code=OK, also=None, window=None, desc=None, dry_run=False):
     """One procedure's own audit record. `verb` is a string or a tuple; `sub` None means
     no subresource and ANY means any; `name` is exact, `prefix` a startswith; `user` and
     `also` are extra predicates (callables); `code` defaults to 2xx/101 (None skips the
-    check); `window` is the (TRR, procedure) key of the emulation ledger (C1-3)."""
+    check); `window` is the (TRR, procedure) key of the emulation ledger (C1-3). A gate
+    never selects a dry-run object (DRY_RUN_PREFIXES, by name or namespace) unless
+    `dry_run` is True, as only the MISS_MANIFEST gates set it; `describe` says so."""
     verbs = (verb,) if isinstance(verb, str) else verb
 
     def gate(e):
+        if not dry_run and dry_run_object(e):
+            return False
         if verbs and e.get("verb") not in verbs:
             return False
         if resource is not None and e.get("objectRef.resource") != resource:
@@ -395,7 +426,8 @@ def rec(*, verb=None, resource=None, sub=None, name=None, prefix=None, ns=None,
              getattr(user, "describe", None) if user is not None else None,
              getattr(also, "describe", None) if also is not None else None,
              ("code 2xx/101" if code == OK else f"code in {code!r}") if code is not None else None]
-    gate.describe = desc or ", ".join(p for p in parts if p)
+    text = desc or ", ".join(p for p in parts if p)
+    gate.describe = text if dry_run else f"{text}, {NOT_DRY_RUN}"
     gate.window = window
     return gate
 
@@ -516,6 +548,13 @@ def field_has(field, sub):
     return gate
 
 
+def field_in(field, values):
+    def gate(e):
+        return e.get(field) in values
+    gate.describe = f"{field} in {', '.join(values)}"
+    return gate
+
+
 def core_group(e):
     return e.get("objectRef.apiGroup") in (None, "")
 
@@ -575,12 +614,14 @@ def win(gate, window, code=OK):
     """`gate` (a helper that already encodes its own precision) bound to its procedure's
     ledger window (C1-3), for a (procedure, gate) MANIFEST list. `code` is checked as in
     rec(): by default an accepted response (2xx, or 101); None skips the check, for a
-    procedure whose refusal is the expected outcome and whose code is not pinned."""
+    procedure whose refusal is the expected outcome and whose code is not pinned. As in
+    rec(), a dry-run object (DRY_RUN_PREFIXES) is never selected."""
     def g(e):
-        return gate(e) and _code_ok(e, code)
+        return not dry_run_object(e) and gate(e) and _code_ok(e, code)
     base = getattr(gate, "describe", "its MANIFEST entry")
     g.describe = (base if code is None else
                   f"{base}, code 2xx/101" if code == OK else f"{base}, code in {code!r}")
+    g.describe += f", {NOT_DRY_RUN}"
     g.window = window
     return g
 
@@ -902,6 +943,131 @@ ABSENCE = [
     ("9006 E gap", "T1552.007",
      ["k8s_secret_access.yml", "k8s_secret_token_request.yml"],
      ("9006", "e"), non_system),
+]
+
+
+# Must-not-match checks (R2-d): with a ledger, each rule here must match NONE of the
+# emulation's own server-side dry runs. A dry run is authorized, admitted and answered
+# 200 like the real write, but persists nothing, and each rule here has a filter for
+# it. Each entry is (folder, rule file, label, gate); the gate is one callable or a list
+# of (shape, gate) pairs, as in MANIFEST. Each gate selects one request of the dry-run
+# step, inside the step's ledger window, by verb, resource and subresource and by a
+# trr90NN-dryrun- object (DRY_RUN_PREFIXES), the control's own namespace, or the exact
+# object (gatekeeper-system, which the TRR9008 control creates), and needs an accepted
+# response. The gate does not test the dry-run marker (the ?dryRun=All query or the
+# DeleteOptions dryRun field). Each shape passes only when all three hold:
+#   * at least one record passes the gate (so a dry-run step that did not run, failed,
+#     or was refused fails the check);
+#   * the rule matches none of them;
+#   * the rule matches at least one of them once the dry-run marker is removed (the
+#     dryRun parameter of the query, and requestObject.dryRun). So the rule is quiet
+#     because of its dry-run filter, not because the record lacks a field the rule
+#     reads (a policy that logs the request at Metadata, or another request shape).
+# The real creates of the step have another verb, and the requests that delete its
+# objects are sent from the atomic's cleanup, after the step's window. The controller
+# teardown that follows (the namespace controller's sweep, the kubelet's final pod
+# delete) can fall in a later procedure's window; no positive gate selects a dry-run
+# object, and each gate here is bound to the step's own window. Without --ledger, and
+# in --expect-miss mode, the checks do not run: no window bounds them, and the
+# pre-emulation log holds no dry run.
+def dry(verb, resource, window, *, prefix=None, name=None, ns=None, sub=None, also=None):
+    gate = rec(verb=verb, resource=resource, sub=sub, name=name, prefix=prefix, ns=ns,
+               also=also, window=window, dry_run=True)
+
+    def near(e):
+        """A record of the same object (for the explanation of an empty shape)."""
+        if e.get("objectRef.resource") != resource:
+            return False
+        return (dry_run_object(e) if prefix is not None else True) and \
+            (name is None or e.get("objectRef.name") == name) and \
+            (ns is None or e.get("objectRef.namespace") == ns)
+    gate.near = near
+    return gate
+
+
+def without_dry_run(e):
+    """A copy of the flattened record `e` without its dry-run marker: the dryRun
+    parameter of the requestURI query and requestObject.dryRun (the DeleteOptions body)
+    are removed, and every other field stays."""
+    c = dict(e)
+    c.pop("requestObject.dryRun", None)
+    uri = c.get("requestURI")
+    if isinstance(uri, str) and "?" in uri:
+        path, _, query = uri.partition("?")
+        params = [p for p in query.split("&") if p.split("=", 1)[0] != "dryRun"]
+        c["requestURI"] = path + ("?" + "&".join(params) if params else "")
+    return c
+
+
+DRY_9008 = ("9008", "dryrun")
+DRY_9010 = ("9010", "dryrun")
+DRY_9025 = ("9025", "dryrun")
+DRY_NS_9008 = "gatekeeper-system"     # the TRR9008 control's namespace (it creates it)
+DRY_NS_9010 = "trr9010-dryrun-ns"     # the TRR9010 control's own namespace
+IN_ENFORCER_NS = field_in("objectRef.namespace", ENFORCER_NAMESPACES)
+# kubectl delete --raw of a collection URL with a DeleteOptions body: the step's dry-run
+# deletecollection names its own objects in the query (a label selector).
+STANDIN_SELECTOR = field_has("requestURI", "trr9008-dryrun-standin")
+MISS_MANIFEST = [
+    # TRR9010: kubectl delete --dry-run=server of an Event (core, and the same Event
+    # through events.k8s.io), a pod, a Job and a namespace, and a deletecollection of
+    # the Events and of the pods of the control's namespace (kubectl delete --raw with a
+    # DeleteOptions body): the dry run is in the DeleteOptions body.
+    ("T1070", "k8s_events_deleted.yml", "9010 dryrun", [
+        ("core", dry("delete", "events", DRY_9010, prefix="trr9010-dryrun-",
+                     also=core_group)),
+        ("events.k8s.io", dry("delete", "events", DRY_9010, prefix="trr9010-dryrun-",
+                              also=apigroup("events.k8s.io"))),
+        ("deletecollection", dry("deletecollection", "events", DRY_9010, ns=DRY_NS_9010,
+                                 also=core_group))]),
+    ("T1070", "k8s_workload_deleted_evidence.yml", "9010 dryrun", [
+        ("pod", dry("delete", "pods", DRY_9010, prefix="trr9010-dryrun-")),
+        ("job", dry("delete", "jobs", DRY_9010, prefix="trr9010-dryrun-")),
+        ("pod deletecollection", dry("deletecollection", "pods", DRY_9010, ns=DRY_NS_9010))]),
+    ("T1070", "k8s_namespace_deleted.yml", "9010 dryrun", [
+        ("namespace", dry("delete", "namespaces", DRY_9010, prefix="trr9010-dryrun-"))]),
+    # TRR9008: a webhook configuration (a neuter merge patch, then a delete), a
+    # Deployment in an enforcer namespace (a patch of replicas 0, kubectl scale as a
+    # patch and as a PUT of deployments/scale, a delete, and a deletecollection that
+    # selects it by label), and that namespace itself, each --dry-run=server.
+    ("T1685", "k8s_admission_webhook_disabled.yml", "9008 dryrun", [
+        ("patch", dry("patch", "validatingwebhookconfigurations", DRY_9008,
+                      prefix="trr9008-dryrun-")),
+        ("delete", dry("delete", "validatingwebhookconfigurations", DRY_9008,
+                       prefix="trr9008-dryrun-"))]),
+    ("T1685", "k8s_admission_webhook_neutered.yml", "9008 dryrun", [
+        ("neuter patch", dry("patch", "validatingwebhookconfigurations", DRY_9008,
+                             prefix="trr9008-dryrun-"))]),
+    ("T1685", "k8s_security_tool_workload_removed.yml", "9008 dryrun", [
+        ("patch", dry("patch", "deployments", DRY_9008, prefix="trr9008-dryrun-")),
+        ("scale patch", dry("patch", "deployments", DRY_9008, prefix="trr9008-dryrun-",
+                            sub="scale")),
+        ("scale put", dry("update", "deployments", DRY_9008, prefix="trr9008-dryrun-",
+                          sub="scale")),
+        ("delete", dry("delete", "deployments", DRY_9008, prefix="trr9008-dryrun-")),
+        ("deletecollection", dry("deletecollection", "deployments", DRY_9008, ns=DRY_NS_9008,
+                                 also=STANDIN_SELECTOR)),
+        ("namespace delete", dry("delete", "namespaces", DRY_9008, name=DRY_NS_9008))]),
+    ("T1685", "k8s_enforcer_workload_removed.yml", "9008 dryrun", [
+        ("patch", dry("patch", "deployments", DRY_9008, prefix="trr9008-dryrun-",
+                      also=IN_ENFORCER_NS)),
+        ("scale patch", dry("patch", "deployments", DRY_9008, prefix="trr9008-dryrun-",
+                            sub="scale", also=IN_ENFORCER_NS)),
+        ("scale put", dry("update", "deployments", DRY_9008, prefix="trr9008-dryrun-",
+                          sub="scale", also=IN_ENFORCER_NS)),
+        ("delete", dry("delete", "deployments", DRY_9008, prefix="trr9008-dryrun-",
+                       also=IN_ENFORCER_NS)),
+        ("deletecollection", dry("deletecollection", "deployments", DRY_9008, ns=DRY_NS_9008,
+                                 also=STANDIN_SELECTOR)),
+        ("namespace delete", dry("delete", "namespaces", DRY_9008, name=DRY_NS_9008))]),
+    # TRR9025: a strategic merge patch --dry-run=server that moves a Service-backed
+    # webhook to a URL (the TRR9008 chokepoint must stay quiet on it too).
+    ("T1546", "k8s_admission_webhook_repointed_to_url.yml", "9025 dryrun", [
+        ("repoint patch", dry("patch", "validatingwebhookconfigurations", DRY_9025,
+                              prefix="trr9025-dryrun-"))]),
+    ("T1685", "k8s_admission_webhook_disabled.yml", "9025 dryrun", [
+        ("repoint patch", dry("patch", "validatingwebhookconfigurations", DRY_9025,
+                              prefix="trr9025-dryrun-"))]),
 ]
 
 
@@ -1253,6 +1419,113 @@ def explained(fn, *args):
         return [f"(no explanation: {type(e).__name__}: {e})"]
 
 
+def must_not_match(args, logs, ledger, queries, results):
+    """Run the MISS_MANIFEST checks (R2-d); return how many failed. Each shape of an
+    entry needs at least one record its windowed gate selects, the rule must match none
+    of them, and the rule must match at least one of them once the dry-run marker is
+    removed (without_dry_run), so a rule that is quiet for another reason fails. The
+    checks need a ledger (the window keeps the dry-run objects' real creates and
+    cleanup deletes out) and do not run in --expect-miss mode."""
+    if not MISS_MANIFEST or "audit" not in logs or args.expect_miss:
+        if MISS_MANIFEST and args.expect_miss:
+            print(f"SKIP  must-not-match: {len(MISS_MANIFEST)} dry-run check(s) do not run "
+                  "in --expect-miss mode (the pre-emulation log holds no dry run)")
+        return 0
+    if ledger is None:
+        print(f"SKIP  must-not-match: {len(MISS_MANIFEST)} dry-run check(s) need --ledger "
+              "(no window bounds the dry-run step without it)")
+        return 0
+    events = logs["audit"]
+    label_of = labeller(events)
+    failed = 0
+    for folder, fname, label, entry_gate in MISS_MANIFEST:
+        q = queries.get((folder, fname))
+        if q is None:
+            continue  # a compile error, already counted
+        rule_path = os.path.join(SIGMA, folder, fname)
+        hit = {id(h[0]) for h in sigma_eval.evaluate(q, events)}
+        shapes = []
+        for shape, gate in procedures(entry_gate):
+            near = getattr(gate, "near", None)
+            gate = windowed(gate, ledger)
+            selected = dedup_by_audit_id([e for e in events if gate(e)])
+            copies = [without_dry_run(e) for e in selected]
+            fires = ({id(h[0]) for h in sigma_eval.evaluate(q, copies)} if copies else set())
+            shapes.append({"shape": shape, "gate": gate, "near": near, "selected": selected,
+                           "matched": [e for e in selected if id(e) in hit],
+                           "copies": copies,
+                           "flipped": [c for c in copies if id(c) in fires]})
+        for s in shapes:
+            s["vacuous"] = bool(s["selected"]) and not s["matched"] and not s["flipped"]
+        empty = [s for s in shapes if not s["selected"]]
+        fired = [s for s in shapes if s["matched"]]
+        vacuous = [s for s in shapes if s["vacuous"]]
+        total = sum(len(s["selected"]) for s in shapes)
+        ok = not empty and not fired and not vacuous
+        explanation, why = [], []
+        if ok:
+            print(f"PASS  [{label}] {fname}: quiet on {total} dry-run record(s); each shape "
+                  "fires once its dry-run marker is removed")
+        else:
+            failed += 1
+            if fired:
+                why.append(f"matched {sum(len(s['matched']) for s in fired)} dry-run record(s)")
+            if empty:
+                why.append(f"{len(empty)} shape(s) have no dry-run record")
+            if vacuous:
+                why.append(f"{len(vacuous)} shape(s) do not fire without the dry run either "
+                           "(the quiet proves nothing about the dry-run filter)")
+            print(f"MISS  [{label}] {fname}: must not match: {'; '.join(why)}")
+        for s in shapes:
+            shape, selected, matched = s["shape"], s["selected"], s["matched"]
+            state = "MISS" if matched or not selected or s["vacuous"] else "ok  "
+            print(f"        {state} {shape}: {len(selected)} dry-run record(s), "
+                  f"{len(matched)} matched, {len(s['flipped'])} fire(s) without the dry run"
+                  + ("" if selected else f"   [gate: {describe_gate(s['gate'])}]"))
+            if matched:
+                lines = [f"{shape}: the rule matched a dry run the emulation sent:"]
+                for e in matched[:2]:
+                    lines.append(f"  {label_of(e)} uri={e.get('requestURI')} "
+                                 f"level={e.get('level')}")
+                    lines += ["  " + ln for ln in explained(
+                        lambda p, ev: sigma_explain.explain_hit(sigma_explain.load(p), ev),
+                        rule_path, e)]
+                explanation += lines
+            elif not selected:
+                near = [e for e in events if s["near"] is not None and s["near"](e)]
+                lines = [f"{shape}: no record passes the gate; the dry-run step did not run, "
+                         "failed, was refused, or sent another request shape"]
+                if near:
+                    lines.append(f"{len(near)} record(s) name that dry-run object or "
+                                 "namespace but fail the gate (verb, code or window), e.g.:")
+                    lines += [f"  {label_of(e)} at {e.get('requestReceivedTimestamp')}"
+                              for e in near[:3]]
+                explanation += lines
+            elif s["vacuous"]:
+                e = selected[0]
+                lines = [f"{shape}: the rule matches none of these records with the dry-run "
+                         "marker removed either, so its quiet does not show that its dry-run "
+                         "filter works (the record lacks a field the rule reads: an audit "
+                         "level too low, or another request shape). First record:",
+                         f"  {label_of(e)} uri={e.get('requestURI')} level={e.get('level')}"]
+                lines += ["  " + ln for ln in explained(
+                    lambda p, evs: sigma_explain.explain_miss(sigma_explain.load(p), evs, k=1),
+                    rule_path, s["copies"][:1])]
+                explanation += lines
+        for line in explanation:
+            print("        " + line)
+        results.append({"rule": f"{folder}/{fname}", "label": label, "source": "audit",
+                        "check": "must-not-match",
+                        "status": "PASS" if ok else "MISS",
+                        "detail": "; ".join(why) or f"quiet on {total} dry-run record(s)",
+                        "shapes": {s["shape"]: {"records": len(s["selected"]),
+                                                "matched": len(s["matched"]),
+                                                "fires_without_dry_run": len(s["flipped"])}
+                                   for s in shapes},
+                        "explanation": explanation})
+    return failed
+
+
 def write_json(path, report):
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=2)
@@ -1304,6 +1577,20 @@ def validate(args, report):
         try:
             queries[key] = sigma_eval.compile_rule(os.path.join(SIGMA, folder, fname))
             print(f"OK (compile)  {folder}/{fname}  [{label}, {source}] {note}")
+        except Exception as e:  # noqa: BLE001
+            parse_errors += 1
+            print(f"ERROR compile {folder}/{fname}: {e}")
+            results.append({"rule": f"{folder}/{fname}", "label": label, "status": "ERROR",
+                            "detail": f"compile: {e}", "explanation": []})
+    # Compile a must-not-match rule that no MANIFEST entry gates (none today).
+    for folder, fname, label, _ in MISS_MANIFEST:
+        key = (folder, fname)
+        if key in gated:
+            continue
+        gated.add(key)
+        try:
+            queries[key] = sigma_eval.compile_rule(os.path.join(SIGMA, folder, fname))
+            print(f"OK (compile)  {folder}/{fname}  [{label}, must-not-match]")
         except Exception as e:  # noqa: BLE001
             parse_errors += 1
             print(f"ERROR compile {folder}/{fname}: {e}")
@@ -1538,6 +1825,8 @@ def validate(args, report):
             "kubelet_reads": len(_kubelet_token_reads(logs["file"])),
             "detail": "; ".join(file_controls), "explanation": lines})
 
+    quiet_fail = must_not_match(args, logs, ledger, queries, results)
+
     print()
     if parse_errors:
         print(f"FAILED: {parse_errors} compile error(s).")
@@ -1562,6 +1851,12 @@ def validate(args, report):
         print(f"FAILED: {absent_fail} absence check(s) did not prove the documented gap "
               "(an API event in the window, an untimed match, or a procedure that did not "
               "run or failed).")
+        return 1
+    if quiet_fail:
+        print(f"FAILED: {quiet_fail} must-not-match check(s) failed: a rule matched the "
+              "emulation's own server-side dry run, a dry-run shape has no record (the "
+              "dry-run step did not run, failed, or was refused), or a rule does not fire "
+              "on a shape without its dry-run marker either.")
         return 1
     if misses and not args.report:
         print(f"FAILED: {misses} rule(s) did not fire. "

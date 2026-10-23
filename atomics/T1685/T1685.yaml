@@ -198,3 +198,43 @@ atomic_tests:
         description: Path to the atomic source directory.
         type: string
         default: PathToAtomicsFolder/T1685/src
+
+  - name: "TRR9008.K8S — server-side dry runs of a disable and a removal (control: must not fire, Kubernetes)"
+    auto_generated_guid: 2c6806c3-5e12-4cdd-a8b2-10ca9bd72f11
+    description: |
+      A control, not a procedure. Installs a harmless enforcing webhook config
+      trr9008-dryrun-vwc (rules on a bogus group) and a pause Deployment
+      trr9008-dryrun-standin in the gatekeeper-system namespace (created only when it is
+      absent, labelled trr9008-created=true). Then sends each write with
+      --dry-run=server: a merge patch that neuters the webhook and its delete; a patch of
+      spec.replicas 0, kubectl scale --current-replicas=1 --replicas=0 (a PUT of
+      deployments/scale), kubectl scale --replicas=0 (a patch) and the delete of the
+      Deployment; a deletecollection of the Deployments labelled
+      app=trr9008-dryrun-standin (kubectl delete --raw with a DeleteOptions body that
+      holds dryRun ["All"]); and the delete of the gatekeeper-system namespace. When
+      gatekeeper-system existed before the test (it has no trr9008-created label), the
+      test fails before its first write and sends nothing to that namespace. It checks
+      that the webhook still fails closed, the Deployment still asks for 1 replica and the
+      namespace is still Active. A server-side dry run persists nothing, so the rules
+      below must match none of these records (the validator's must-not-match checks).
+      Never touches a real Gatekeeper workload or namespace.
+      Rules: detections/sigma/T1685/k8s_admission_webhook_disabled.yml,
+      detections/sigma/T1685/k8s_admission_webhook_neutered.yml,
+      detections/sigma/T1685/k8s_security_tool_workload_removed.yml,
+      detections/sigma/T1685/k8s_enforcer_workload_removed.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_k8s.sh dryrun
+      cleanup_command: |
+        kubectl delete validatingwebhookconfiguration trr9008-dryrun-vwc --ignore-not-found
+        kubectl -n gatekeeper-system delete deployment trr9008-dryrun-standin --ignore-not-found
+        kubectl delete namespace -l trr9008-created=true --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1685/src

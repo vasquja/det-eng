@@ -903,7 +903,7 @@ validator (`validate_apiserver_detections.py`), and one workflow
 | TRR9007 | Dangerous pod spec (T1611) | `sigma/T1611/k8s_podspec_host_access.yml` + a controller rule + a confinement (Unconfined) rule | Request |
 | TRR9008 | Disable admission control (T1685) | `sigma/T1685/k8s_admission_webhook_disabled.yml` + a neuter grader + an enforcer-removal rule (the engines' default namespaces) and its any-namespace anchor | Request (RequestResponse for webhook-configuration update and patch) |
 | TRR9009 | Impersonation (T1134) | `sigma/T1134/k8s_impersonation.yml` + a privileged-target rule | Metadata |
-| TRR9010 | Indicator removal (T1070) | `sigma/T1070/k8s_events_deleted.yml` + a workload-deletion rule + a namespace-delete hunting rule | Metadata |
+| TRR9010 | Indicator removal (T1070) | `sigma/T1070/k8s_events_deleted.yml` + a workload-deletion rule + a namespace-delete hunting rule | Metadata to fire; deletes at Request, so a dry run's DeleteOptions body is in the record |
 | TRR9025 | Malicious admission webhook (T1546) | `sigma/T1546/k8s_admission_webhook_created.yml` + a create grader and a repoint grader | Request (RequestResponse for update/patch) |
 | TRR9026 | Pod port-forward (T1572) | `sigma/T1572/k8s_pod_portforward.yml` (verb-agnostic subresource) + a nodes/proxy `/portForward/` rule | Metadata |
 | TRR9027 | Cluster DNS poisoning (T1565.001) | `sigma/T1565.001/k8s_coredns_configmap_modified.yml` + a Corefile grader | Metadata + RequestResponse (the three DNS ConfigMaps) + Request (kube-system ConfigMap creates; drop that rule where Helm stores releases in kube-system ConfigMaps) |
@@ -911,7 +911,11 @@ validator (`validate_apiserver_detections.py`), and one workflow
 The audit **level** is per technique: pods, workload controllers, RBAC, and
 admission-webhook creates are logged at `Request` so `requestObject` carries the
 privileged/hostPath fields, the bound role, the group subject, and the webhook
-`clientConfig`. An update or patch of a webhook configuration is at `RequestResponse`,
+`clientConfig`. Every delete and deletecollection of pods, Events (core and
+events.k8s.io), namespaces and the workload controllers is at `Request` too, so a
+`kubectl delete --dry-run=server` (its DeleteOptions body holds `dryRun: ["All"]`) is in
+the record and the rules' dry-run filters can read it; a delete's body is DeleteOptions
+only, with no object body and no secret data. An update or patch of a webhook configuration is at `RequestResponse`,
 so the stored webhooks are graded whatever the patch type. An update, patch or delete
 of the three `kube-system` DNS ConfigMaps (`coredns`, `kube-dns`, `coredns-custom`) is
 at `RequestResponse`, so the stored Corefile is graded whatever the patch type; every
@@ -988,6 +992,35 @@ failed, and when a matching event has no `requestReceivedTimestamp` to place it 
 A ledger line that does not parse, or is not a row with `trr` and `procedure`, fails
 the run, because a corrupt ledger proves nothing. The TRR9002 and TRR9003 validators
 do the same.
+
+**Must-not-match checks.** With a ledger, `MISS_MANIFEST` asserts that a rule stays
+quiet on the emulation's own server-side dry runs, which persist nothing. The `dryrun`
+control of the TRR9008, TRR9010 and TRR9025 atomics creates objects named
+`trr9008-dryrun-`, `trr9010-dryrun-` and `trr9025-dryrun-`, sends each write with
+`--dry-run=server` (Event, pod, Job and namespace deletes, and a deletecollection of
+the Events and of the pods of its namespace; a webhook neuter patch and delete; a
+Deployment patch, both `kubectl scale` shapes, a delete and a deletecollection in
+`gatekeeper-system`, and the delete of that namespace; a webhook repoint patch), and
+checks that nothing changed. kubectl delete never sends a deletecollection, so the
+control sends each one with `kubectl delete --raw` of the collection URL and a
+DeleteOptions body that holds `dryRun: ["All"]`. Each entry is `(folder, rule, label,
+gate)`, and the gate is one callable or a list of `(shape, gate)` pairs built with
+`dry()` (`rec(..., dry_run=True)`). The gate tests the verb, resource, subresource, the
+dry-run object (its name prefix, the control's namespace, or the exact namespace
+`gatekeeper-system`), the window and an accepted response, not the dry-run marker. A
+shape passes only when at least one record passes its gate (so a control that did not
+run, failed or was refused fails the check), the rule matches none of them, and the
+rule matches at least one of them once the dry-run marker is removed (the `dryRun`
+parameter of the query and `requestObject.dryRun`). So a rule that is quiet because
+the record lacks a field it reads (a policy that logs the request at Metadata, or
+another request shape) fails the check too, and a record that does not show the dry
+run fires the rule. The real creates of the control use another verb, and the requests
+that delete its objects are sent from the atomic's cleanup, after the control's window;
+the controller teardown that follows (the namespace controller's sweep, the kubelet's
+final pod delete) can fall in a later procedure's window. No positive gate (`rec()` or
+`win()`) selects a record whose object name or namespace begins with one of these
+prefixes (`DRY_RUN_PREFIXES`), and a MISS explanation's `[gate: ...]` says so. Without
+`--ledger`, and in `--expect-miss` mode, the checks do not run.
 
 Module-level `PROCEDURES` maps `(trr_id, LETTER)` (e.g. `('TRR9004', 'A')`) to the sorted
 rule paths that gate that procedure with a gate of its own. It is the interface for the
