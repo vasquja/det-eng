@@ -9,11 +9,12 @@ execution paths (procedures) of each TRR instead, and gives each one status:
   Proven               the procedure's own emulation is built, and a rule that the
                        TRR's Detections table says covers it proves it in CI,
                        passes check_sufficiency.py with a verified negative, and no
-                       open entry in detections/RULE_DEFECTS.md names it. For a TRR
-                       whose validator exposes a per-procedure gate map (PROCEDURES),
-                       "proves it in CI" means the emulation cell is exactly 'built'
-                       and the rule gates this one procedure with a gate of its own;
-                       for every other TRR, the rule runs in a validator
+                       open entry in detections/RULE_DEFECTS.md names it. For a
+                       Kubernetes TRR (its validators expose a per-procedure gate
+                       map, PROCEDURES), "proves it in CI" means the emulation cell
+                       is exactly 'built' and the rule gates this one procedure with
+                       a gate of its own; for every other TRR, the rule runs in a
+                       validator
   Proven, open defect  as Proven, but every proving rule has an open defect
   Claimed              a rule maps to the procedure, but the procedure is not
                        emulated, or (gated TRR) no gate proves this one procedure,
@@ -66,28 +67,31 @@ def sufficiency():
 
 # Validators that expose a per-procedure gate map: each PROCEDURES entry maps
 # (TRR id, procedure letter) to the rule files whose MANIFEST entry gates that one
-# procedure with a gate of its own (C1-1, C1-2). A TRR whose validator exposes such
-# a map is "gated": a procedure of it is Proven only when it has a gate here. A
-# listed validator without the attribute (the API-server validator until item A
-# lands) is skipped, and its TRRs fall back to the rule-level test (the rule runs in
-# some validator), stated in the report; a listed validator that fails to import
-# stops the report. The Linux and cloud validators are not listed: they have no
-# per-procedure gates today, so their TRRs keep the rule-level test.
+# procedure with a gate of its own (C1-1, C1-2). The three validators cover every
+# Kubernetes TRR, so every TRR on GATED_PLATFORM is "gated": a procedure of it is
+# Proven only when it has a gate here, and a gated TRR with no PROCEDURES entry has
+# no Proven procedure. Gating follows the platform, not the map keys, so a TRR
+# whose gates all go away shows Claimed and does not fall back to the rule-level
+# test. A listed validator that fails to import or has no PROCEDURES dict stops the
+# report. The Linux and cloud validators are not listed: they have no
+# per-procedure gates today, so their TRRs keep the rule-level test (the rule runs
+# in some validator).
 GATING_VALIDATORS = ("validate_k8s_detections", "validate_staticpod_detections",
                      "validate_apiserver_detections")
+GATED_PLATFORM = "Kubernetes"
 
 
 def procedure_gates():
-    """({(TRR id, letter): {rule rel path, ...}}, {gated TRR id, ...})."""
+    """{(TRR id, letter): {rule rel path, ...}} from every gating validator."""
     import importlib
     det = str(REPO / "detections")
     if det not in sys.path:
         sys.path.insert(0, det)
-    gates, gated = {}, set()
+    gates = {}
     for name in GATING_VALIDATORS:
-        # Only "imported, but no PROCEDURES map" is the documented fallback. A
-        # validator that fails to import must stop the report: a silent fallback
-        # to the looser rule-level test would raise statuses with no message.
+        # Fail closed: a validator that fails to import or has no PROCEDURES dict
+        # stops the report. A silent fallback to the looser rule-level test would
+        # raise statuses with no message.
         try:
             module = importlib.import_module(name)
         except Exception as e:  # noqa: BLE001
@@ -95,12 +99,11 @@ def procedure_gates():
                      f"({type(e).__name__}: {e}); its per-procedure gate map cannot be read")
         pm = getattr(module, "PROCEDURES", None)
         if not isinstance(pm, dict):
-            continue
+            sys.exit(f"coverage_report: detections/{name}.py has no PROCEDURES dict; "
+                     "its per-procedure gate map cannot be read")
         for key, paths in pm.items():
-            trr, _letter = key
-            gated.add(trr)
             gates.setdefault(key, set()).update(paths)
-    return gates, gated
+    return gates
 
 
 def open_defects(rule_stems):
@@ -139,7 +142,7 @@ def collect():
                         for p in (REPO / "detections" / "sigma").glob("*/*.yml"))
     defects = open_defects({Path(r).stem for r in rule_files})
     validators = "".join(p.read_text() for p in (REPO / "detections").glob("validate_*.py"))
-    gates, gated_trrs = procedure_gates()
+    gates = procedure_gates()
 
     def suff_ok(rel):
         s = suff.get(rel, {})
@@ -171,7 +174,7 @@ def collect():
             strategies.append({"covers": letters(cells[1]), "rules": rels,
                                "grader": bool(re.search(r"sever|grad", cells[0] + cells[1], re.I))})
         procs = []
-        gated = t["id"] in gated_trrs
+        gated = t["platforms"][0] == GATED_PLATFORM
         for letter, name in t["procedures"].items():
             hits = [s for s in strategies if letter in s["covers"]]
             rules = sorted({r for s in hits if not s["grader"] for r in s["rules"]})
@@ -265,11 +268,12 @@ def markdown(trrs, unmapped, nrules):
         "- **Proven**: the procedure's own emulation is built, a rule that the TRR's Detections table "
         "says covers it passes `check_sufficiency.py` with a verified near-miss or filtered negative, "
         "no open entry in [`RULE_DEFECTS.md`](../detections/RULE_DEFECTS.md) names it (in the entry's "
-        "Summary row or its Rules bullet), and the rule proves this procedure in CI. For a TRR whose "
-        "validator exposes a per-procedure gate map (the Kubernetes TRR9002 and TRR9003 validators "
-        "today, each API-server TRR once that validator exposes the map), *proves this procedure* "
-        "means the emulation cell is exactly `built` (not `built (read-only)` or a cross-reference) "
-        "and a covering rule gates this one procedure with a gate of its own. For every other TRR it "
+        "Summary row or its Rules bullet), and the rule proves this procedure in CI. For a Kubernetes "
+        "TRR (its three validators, `validate_k8s_detections.py`, `validate_staticpod_detections.py` "
+        "and `validate_apiserver_detections.py`, expose a per-procedure gate map), *proves this "
+        "procedure* means the emulation cell is exactly `built` (not `built (read-only)` or a "
+        "cross-reference) and a covering rule gates this one procedure with a gate of its own. A "
+        "Kubernetes TRR with no entry in that map has no Proven procedure. For every other TRR it "
         "keeps the rule-level test: the emulation cell starts with `built` and the rule runs in a "
         "validator, which proves the rule against the TRR's emulation but not against each procedure "
         "separately.",
@@ -283,9 +287,9 @@ def markdown(trrs, unmapped, nrules):
         "Limits of this report:",
         "",
         "- Severity and grader rules do not count as coverage. They rank hits that a chokepoint rule already raised.",
-        "- Per-procedure proof is available only where the validator exposes a gate map. The Kubernetes "
-        "TRR9002 and TRR9003 validators do; the API-server validator gains it with plan item C1-1, and "
-        "the Linux (`validate_detections.py`) and cloud (`validate_cloud_detections.py`) validators have "
+        "- Per-procedure proof is available only where the validator exposes a gate map. The three "
+        "Kubernetes validators do, so every Kubernetes TRR uses it. The Linux "
+        "(`validate_detections.py`) and cloud (`validate_cloud_detections.py`) validators have "
         "no per-procedure gates today, so their TRRs keep the rule-level test above (a follow-up can add "
         "maps there). A rule-level Proven means the rule is proven against the TRR's emulation as a "
         "whole, not against the single procedure.",
