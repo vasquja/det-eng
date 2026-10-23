@@ -24,6 +24,9 @@ atomic_tests:
       Chokepoint (Strategy 1): the kubelet starts a pod with config.source=file;
       a node runtime sensor sees it. No audit-log rule can.
       Rule: detections/sigma/T1543.005/k8s_cri_static_pod_start.yml
+      Strategy 3 (node file sensor): the manifest write, made through a marked copy
+      of tee (/usr/local/bin/trr9003-tee, removed after the write).
+      Rule: detections/sigma/T1543.005/linux_static_pod_manifest_write.yml
     supported_platforms:
       - containers
     executor:

@@ -18,8 +18,10 @@ description: |
   container context) sees the read.
 
   This is a NODE sensor rule. It needs host file-event telemetry; it is NOT an API
-  server audit rule, and the TRR9006 audit-log validation loop does not exercise
-  it (the loop demonstrates the gap instead). Pair it with detection-by-absence:
+  server audit rule, and the API server audit log cannot see the read (the TRR9006
+  loop proves that gap with an absence check). CI gates it with a node file-event
+  sensor (validate_apiserver_detections.py, entry 9006 E, log source file). Pair it
+  with detection-by-absence:
   an identity that authenticates to the API server with a token for which no
   preceding get-secret and no TokenRequest create event exists must have obtained
   the token from a file read.
@@ -54,7 +56,7 @@ references:
   - https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
 author: det-eng
 date: 2026/10/12
-modified: 2026/10/16
+modified: 2026/10/23
 tags:
   - attack.credential-access
   - attack.t1552.007

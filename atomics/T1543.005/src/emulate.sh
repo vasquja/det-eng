@@ -70,13 +70,29 @@ node_sh() {
   fi
 }
 
-# Copy a manifest file from the repo onto the node's static-pod directory.
+# Copy a manifest file from the repo onto the node's static-pod directory, through a
+# MARKED copy of tee ($MARKED_TEE). A node file-event sensor (an auditd write watch
+# on the kubelet static-pod directory) records the create with that exe, so the
+# Strategy 3 file-event rule gets a live gate (C2-7) that tells this write apart from
+# kubeadm's own control-plane writes (the rule's filter_install excludes those). tee
+# reads the manifest from stdin ($src); the content never appears on a command line.
+# The copy goes to /usr/local/bin, not /tmp: on a kind node /tmp is a tmpfs that
+# Docker mounts noexec (kind v0.33.0 provision.go "--tmpfs /tmp"; moby gives every
+# --tmpfs mount noexec,nosuid,nodev), so a copy there cannot run (exit 126). The
+# snippet checks that the copy runs (tee to /dev/null, with no input) before it
+# writes, and removes the copy after the write, in every branch.
+MARKED_TEE="/usr/local/bin/trr9003-tee"
 node_put_manifest() {
   local src="$1" dst="$2"
+  local cmd="m='$MARKED_TEE'; cp \"\$(command -v tee)\" \"\$m\" || exit 1
+    if ! \"\$m\" /dev/null </dev/null >/dev/null; then
+      echo \"\$m cannot run on the node (a noexec mount?)\" >&2; rm -f \"\$m\"; exit 126
+    fi
+    \"\$m\" '$dst' >/dev/null; rc=\$?; rm -f \"\$m\"; exit \$rc"
   if [ -n "${TRR9003_NODE_EXEC:-}" ]; then
-    $TRR9003_NODE_EXEC "cat > $dst" < "$src"
+    $TRR9003_NODE_EXEC "$cmd" < "$src"
   else
-    docker exec -i "$NODE" sh -c "cat > $dst" < "$src"
+    docker exec -i "$NODE" sh -c "$cmd" < "$src"
   fi
 }
 

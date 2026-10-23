@@ -3,7 +3,7 @@
 Validate the TRR9003 (static pod, T1543.005) detection loop on the telemetry the
 emulation produced. Sibling of validate_k8s_detections.py.
 
-Two rules are match-gated, one per sensor:
+Three rules are match-gated, one per sensor:
 
   * Strategy 1, the chokepoint — node runtime sensor (CRI pod sandboxes):
         drop a static pod manifest on a node -> the kubelet starts the pod with
@@ -20,8 +20,8 @@ Two rules are match-gated, one per sensor:
     invalid-namespace pod's mirror-create attempt, which the API server
     refuses with 404 (namespace not found) but still audits.
 
-Both rules also match the control-plane static pods every kubeadm node starts,
-by design (a documented false positive). So a match alone proves nothing about
+The CRI and audit rules also match the control-plane static pods every kubeadm
+node starts, by design (a documented false positive). So a match alone proves nothing about
 the emulation: a rule PASSES only if it matches the emulation's own pods. The
 validator reports the baseline separately. For the CRI rule it also runs a
 false-positive control: the rule must not match any sandbox the API server
@@ -31,17 +31,33 @@ control is not vacuous.
 Each log is flattened to dotted field names and each rule runs through its
 pySigma-compiled query (see sigma_eval.py).
 
+The third rule, Strategy 3, reads the node file-event sensor (C2-7):
+
+  * the kubelet static-pod directory is watched for writes (auditd `-p wa`):
+        the emulation drops its manifest through a marked copy of tee
+        (/usr/local/bin/trr9003-tee) -> a linux/file_event record -> the
+        file-event rule matches it. CI adds the watch before the cluster is
+        created, so the file log also holds kubeadm's own control-plane manifest
+        writes. A false-positive control runs on them: the file-event rule must
+        match none of kubeadm's writes (its filter_install excludes them by full
+        path), and there must be some in the log, so the control is not vacuous.
+
 Logs:
     --audit-log PATH   API server audit log (JSON lines).
     --cri-log PATH     node runtime sensor log: one `crictl pods -o json`
                        snapshot per line, as detections/k8s/cri-pod-sensor.sh
                        writes it. Each sandbox counts once, at first sighting.
+    --file-log PATH    node file-event sensor log: linux/file_event JSON lines
+                       (TargetFilename, Image, ProcessId, EventType, Timestamp),
+                       as detections/k8s/auditd_file_events.py writes them from
+                       the runner's auditd records.
 
 Modes:
     python3 detections/validate_staticpod_detections.py --dry-run
         Compile the rules only. No cluster or log needed.
 
-    python3 detections/validate_staticpod_detections.py --audit-log A --cri-log C
+    python3 detections/validate_staticpod_detections.py --audit-log A --cri-log C \
+            --file-log F
         Full validation. Default strict: a rule that misses a required
         emulation pod, or a failed control, fails the run (exit 1). A rule whose
         log is not given is skipped.
@@ -51,7 +67,8 @@ Modes:
         line per procedure to $DETENG_LEDGER: trr, procedure, start, end, exit,
         expect; the invalid-namespace variant is procedure GAP). With it, a gate
         also needs its record inside its procedure's [start, end] (an audit
-        event by requestReceivedTimestamp, a CRI sandbox by createdAt), and the
+        event by requestReceivedTimestamp, a CRI sandbox by createdAt, a node
+        file event by Timestamp), and the
         procedure's exit to equal its expect; a procedure with no row did not
         run, and its gates fail. Without --ledger the gates use the record
         fields only (local runs, old logs).
@@ -66,14 +83,16 @@ Modes:
 
     ... --json PATH
         Also write a machine-readable report (status, detail, explanation lines,
-        and the CRI control's result) to PATH.
+        and the CRI and file controls' results) to PATH.
 
 A MISS is explained beneath its line (sigma_explain.py), per missed emulation
 pod: what the gate requires, how many events carry the marker, and the one that
 came closest to the rule, item by item; or, when none does, that the emulation
 may not have run. A failed CRI control shows the API-scheduled sandbox(es) the
 rule matched and why, or which config.source values the sensor recorded. A
-failed --expect-miss shows the emulation event(s) the rule matched and why.
+failed file control shows the kubeadm write(s) the rule matched and why, or which
+Image values the sensor recorded. A failed --expect-miss shows the emulation
+event(s) the rule matched and why.
 
 The module-level PROCEDURES map gives, per (TRR, procedure letter), the rule
 files whose MANIFEST entry gates that procedure with a gate of its own
@@ -104,6 +123,19 @@ RULES_DIR = os.path.join(REPO, "detections", "sigma", "T1543.005")
 INJECTED_PREFIX = "trr9003-static"
 GHOST_NAME = "trr9003-ghost"
 
+# Node file sensor (C2-7): Procedure A writes the manifest through a marked copy of
+# tee, so the Strategy 3 file-event rule has a live gate. The copy is in an
+# exec-capable node directory (a kind node's /tmp is a noexec tmpfs). The gate is
+# the marked writer creating the injected manifest; kubeadm's own writes are
+# filtered by the rule itself, and the file control below checks that on the log.
+TEE_IMAGE = "/usr/local/bin/trr9003-tee"
+INJECTED_MANIFEST = "/etc/kubernetes/manifests/trr9003-static"
+# kubeadm as a kind node runs it (kind installs it at /usr/bin/kubeadm in the node
+# image, pkg/build/nodeimage/buildcontext.go). kubeadm init writes the control-plane
+# manifests with os.WriteFile (cmd/kubeadm/app/util/staticpod/utils.go).
+KUBEADM_IMAGE = "/usr/bin/kubeadm"
+MANIFESTS_DIR = "/etc/kubernetes/manifests/"
+
 CONFIG_SOURCE = "annotations.kubernetes.io/config.source"
 TRR = "TRR9003"
 
@@ -112,6 +144,13 @@ def _starts(field, prefix):
     def gate(e):
         return (e.get(field) or "").startswith(prefix)
     gate.describe = f"{field} begins with {prefix!r}"  # for the MISS explanation
+    return gate
+
+
+def _eq(field, value):
+    def gate(e):
+        return e.get(field) == value
+    gate.describe = f"{field} == {value!r}"
     return gate
 
 
@@ -143,8 +182,7 @@ STORED = tuple(range(200, 300))  # a mirror pod the API server stored
 # Each match-gated rule: the log it reads, the procedures it covers, a note, and
 # the emulation records it must match (all of them, one gate each). The
 # invalid-namespace variant of Procedure A runs as its own ledger procedure (GAP).
-# The Strategy 3 file-event rule in the same folder needs node file telemetry; it
-# is compiled, not gated.
+# The Strategy 3 file-event rule is gated on the node file-event sensor ('file').
 MANIFEST = [
     ("k8s_cri_static_pod_start.yml", "cri", "A",
      "kubelet starts a pod from a non-API source (Strategy 1 chokepoint; B is a "
@@ -162,6 +200,18 @@ MANIFEST = [
       ("invalid-namespace mirror-create attempt (refused, 404)",
        mark(_starts("objectRef.name", GHOST_NAME), _code_in(404), window=(TRR, "GAP"),
             procedure=(TRR, "A")))]),
+    # Strategy 3, the node file sensor (C2-7): auditd watches the kubelet static-pod
+    # directory with write permission; Procedure A drops its manifest through the
+    # marked copy TEE_IMAGE, so the file-event rule fires on that write and the gate
+    # tells it apart from kubeadm's own control-plane writes (which the rule's
+    # filter_install excludes; the file control checks that). The window field is
+    # the event's audit time (auditd_file_events.py emits `Timestamp`, UTC).
+    ("linux_static_pod_manifest_write.yml", "file", "A",
+     "static-pod manifest write on the node (Strategy 3 file-event rule; B is a "
+     "read-only demo with no telemetry)",
+     [("marked writer drops the injected manifest",
+       mark(_eq("Image", TEE_IMAGE), _starts("TargetFilename", INJECTED_MANIFEST),
+            window=(TRR, "A"), time="Timestamp"))]),
 ]
 
 
@@ -329,6 +379,47 @@ def report_cri(sandboxes, cri_hits):
     return failures
 
 
+def _kubeadm_writes(events):
+    """kubeadm's control-plane manifest writes in a file log (Image, TargetFilename)."""
+    return [e for e in events if e.get("Image") == KUBEADM_IMAGE
+            and str(e.get("TargetFilename") or "").startswith(MANIFESTS_DIR)]
+
+
+def report_file(events, file_hits):
+    """The file-event rule's false-positive control on kubeadm's own writes.
+
+    CI adds the static-pod directory watch before `kind create cluster`, so kubeadm
+    init's manifest writes (etcd, kube-apiserver, ...) are in the file log. The rule
+    must match none of them (filter_install), and there must be some, so the control
+    tests the rule on real bootstrap writes and the sensor's exe spelling. Returns a
+    list of control failures (empty when the control holds).
+    """
+    boot = _kubeadm_writes(events)
+    print(f"\nNode file-event sensor — file events seen: {len(events)} "
+          f"({len(boot)} kubeadm control-plane manifest write(s))")
+    names = sorted({str(e.get("TargetFilename")) for e in boot})
+    if names:
+        print(f"  baseline (kubeadm): {', '.join(names)}")
+    failures = []
+    boot_ids = {id(e) for e in boot}
+    boot_hits = [e for e in file_hits if id(e) in boot_ids]
+    if not boot:
+        failures.append(f"no {KUBEADM_IMAGE} write under {MANIFESTS_DIR} in the file log, so "
+                        "the false-positive control proves nothing; was the watch added "
+                        "before the cluster was created?")
+    if boot_hits:
+        failures.append("the file-event rule matched kubeadm's control-plane manifest "
+                        "write(s): " + ", ".join(sorted(str(e.get("TargetFilename"))
+                                                        for e in boot_hits)))
+    if failures:
+        for f in failures:
+            print(f"  CONTROL FAILED: {f}")
+    else:
+        print(f"  control held: the file-event rule matched none of the {len(boot)} "
+              "kubeadm control-plane manifest write(s).")
+    return failures
+
+
 # ---- failure explanations (sigma_explain) --------------------------------
 # The same helpers as validate_apiserver_detections.py; each validator stays standalone.
 
@@ -336,7 +427,10 @@ TAG = "trr9003"  # every emulation pod name carries it; used when no event passe
 
 
 def summary(e):
-    """One line naming an audit event or a CRI pod sandbox."""
+    """One line naming an audit event, a CRI pod sandbox, or a node file event."""
+    if "verb" not in e and "TargetFilename" in e:
+        return (f"Image={e.get('Image')} TargetFilename={e.get('TargetFilename')} "
+                f"EventType={e.get('EventType')} pid={e.get('ProcessId')}")
     if "verb" not in e and "metadata.name" in e:
         return (f"pod={e.get('metadata.name')} ns={e.get('metadata.namespace')} "
                 f"config.source={e.get(CONFIG_SOURCE)}")
@@ -403,7 +497,7 @@ def explain_unexpected(rule_path, events, ours):
     rule = sigma_explain.load(rule_path)
     label = labeller(events)
     lines = [f"the pre-emulation log already holds {len(ours)} emulation match(es); a log "
-             f"captured before the emulation should hold no {TAG!r} pod (captured late, or "
+             f"captured before the emulation should hold no {TAG!r} record (captured late, or "
              "a manifest left on the node by an earlier run?):"]
     for e in ours[:3]:
         lines.append(f"  {label(e)}")
@@ -434,6 +528,32 @@ def explain_cri_control(rule_path, sandboxes, cri_hits):
             lines.extend("  " + ln for ln in sigma_explain.explain_hit(rule, s))
         if len(api_hits) > 3:
             lines.append(f"  ... and {len(api_hits) - 3} more")
+    return lines
+
+
+def explain_file_control(rule_path, events, file_hits):
+    """Why the file-event false-positive control failed."""
+    lines = []
+    boot = _kubeadm_writes(events)
+    if not boot:
+        seen = {}
+        for e in events:
+            value = str(e.get("Image", "<absent>"))
+            seen[value] = seen.get(value, 0) + 1
+        lines.append(f"Image values across the {len(events)} file event(s): "
+                     + (", ".join(f"{v} x{n}" for v, n in sorted(seen.items())) or "none"))
+    boot_ids = {id(e) for e in boot}
+    boot_hits = [e for e in file_hits if id(e) in boot_ids]
+    if boot_hits:
+        rule = sigma_explain.load(rule_path)
+        label = labeller(events)
+        lines.append("kubeadm's own bootstrap write must never look like a dropped manifest; "
+                     "the rule matched:")
+        for e in boot_hits[:3]:
+            lines.append(f"  {label(e)}")
+            lines.extend("  " + ln for ln in sigma_explain.explain_hit(rule, e))
+        if len(boot_hits) > 3:
+            lines.append(f"  ... and {len(boot_hits) - 3} more")
     return lines
 
 
@@ -576,6 +696,9 @@ def main():
                     help="Path to the API server audit log (JSON lines).")
     ap.add_argument("--cri-log",
                     help="Path to the node runtime sensor log (crictl pods snapshots).")
+    ap.add_argument("--file-log",
+                    help="Path to the node file-event sensor log (linux/file_event JSON "
+                         "lines, as detections/k8s/auditd_file_events.py writes them).")
     ap.add_argument("--dry-run", action="store_true",
                     help="Compile rules only; no cluster or log needed.")
     ap.add_argument("--expect-miss", action="store_true",
@@ -614,12 +737,13 @@ def validate(args, report):
             print(f"ERROR compile {fname}: {e}")
             results.append({"rule": fname, "source": source, "status": "ERROR",
                             "detail": f"compile: {e}", "explanation": []})
-    # Compile any other rule in the folder too (e.g. the Strategy 3 node rule).
+    # Compile any other rule in the folder too (none today: all three T1543.005
+    # rules are match-gated above, one per sensor).
     for path in sorted(glob.glob(os.path.join(RULES_DIR, "*.yml"))):
         if os.path.basename(path) not in queries:
             try:
                 sigma_eval.compile_rule(path)
-                print(f"OK (compile)  {os.path.basename(path)}  [node file sensor] "
+                print(f"OK (compile)  {os.path.basename(path)}  "
                       f"not match-gated here")
             except Exception as e:  # noqa: BLE001
                 parse_errors += 1
@@ -649,6 +773,12 @@ def validate(args, report):
             return 1
         logs["cri"] = load_cri(args.cri_log)
         print(f"Loaded {len(logs['cri'])} pod sandbox(es) from {args.cri_log}")
+    if args.file_log:
+        if not os.path.exists(args.file_log):
+            print(f"ERROR: node file-event log not found: {args.file_log}")
+            return 1
+        logs["file"] = load_events(args.file_log)
+        print(f"Loaded {len(logs['file'])} file event(s) from {args.file_log}")
     if not logs:
         print("SKIP: no log to validate against (exit 0).")
         return 0 if not parse_errors else 1
@@ -694,14 +824,17 @@ def validate(args, report):
         every, some = all(events for _, events in found), any(events for _, events in found)
         passed = some if args.expect_miss else every
         explanation = []
+        # A file event is a record of the emulation's write, not a pod.
+        what, base = (("emulation record", "") if source == "file"
+                      else ("emulation pod", ", e.g. control-plane baseline"))
         if passed:
             passes += 1
-            detail = (f"matched every emulation pod (+{other} other, e.g. control-plane baseline)"
-                      if every else f"matched an emulation pod (+{other} other)")
+            detail = (f"matched every {what} (+{other} other{base})"
+                      if every else f"matched an {what} (+{other} other)")
             print(f"PASS  [{proc}] {fname}: {detail}")
         else:
             misses += 1
-            detail = ("missed an emulation pod"
+            detail = (f"missed an {what}"
                       + (f" ({other} baseline/unrelated match(es) ignored)" if other else ""))
             print(f"MISS  [{proc}] {fname}: {detail}")
         for (label, events), (_, pred) in zip(found, preds):
@@ -727,12 +860,18 @@ def validate(args, report):
                                     [e for _, events in found for e in events])
             for line in explanation:
                 print("        " + line)
+        if source == "file" and args.expect_miss:
+            # Say what the file gate saw: the gate selects the marked writer only, so
+            # the file control (below) is what tests the rule on kubeadm's writes.
+            print(f"        file log: {len(logs[source])} file event(s), the rule matches "
+                  f"{len(matched)}")
         results.append({"rule": fname, "source": source, "status": "PASS" if passed else "MISS",
                         "detail": detail,
                         "pods": {label: len(events) for label, events in found},
                         "explanation": explanation})
 
     controls = []
+    file_controls = []
     if "audit" in logs:
         report_audit(logs["audit"])
     if "cri" in logs:
@@ -746,6 +885,19 @@ def validate(args, report):
         report["controls"].append({"control": "the CRI rule matches no API-scheduled sandbox",
                                    "status": "FAILED" if controls else "held",
                                    "detail": "; ".join(controls), "explanation": lines})
+    if "file" in logs:
+        file_rule = next((os.path.join(RULES_DIR, m[0]) for m in MANIFEST if m[1] == "file"),
+                         None)
+        file_controls = report_file(logs["file"], hits_by_source.get("file", []))
+        lines = explained(explain_file_control, file_rule, logs["file"],
+                          hits_by_source.get("file", [])) if file_controls else []
+        for line in lines:
+            print("    " + line)
+        report["controls"].append({"control": "the file-event rule matches no kubeadm "
+                                              "control-plane manifest write",
+                                   "status": "FAILED" if file_controls else "held",
+                                   "detail": "; ".join(file_controls), "explanation": lines})
+    controls = controls + file_controls
 
     print()
     if parse_errors:

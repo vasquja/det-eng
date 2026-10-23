@@ -10,15 +10,19 @@ run-name: ${{ inputs.label && format('{0} [{1}]', github.workflow, inputs.label)
 #     config.source=file -> CRI pod sandbox record -> the CRI Sigma rule fires.
 #   - Strategy 2 (fallback), API server audit log: the kubelet registers a
 #     mirror pod -> `create pods` by a node identity -> the audit rule fires.
+#   - Strategy 3, node file sensor (the runner's auditd, a write watch on the
+#     static-pod directory): Procedure A writes its manifest through a marked copy
+#     of tee -> a linux/file_event record -> the file-event rule fires; the rule
+#     must match none of kubeadm's own control-plane manifest writes.
 # The evasion variant (an invalid-namespace static pod) runs on the node with no
 # pod object in the API; the CRI rule must catch it, which closes that gap.
 #
 # A kind cluster (Kubernetes in Docker) runs on the ubuntu-latest runner with API
 # server audit logging on, and a small CRI poller on the node stands in for a
 # runtime security agent (detections/k8s/cri-pod-sensor.sh). The job runs the
-# benign emulation (a harmless busybox static pod), collects both logs, and
-# asserts each rule matches the emulation's own pods. Both rules also match the
-# control-plane static pods by design, so as a negative control the job runs the
+# benign emulation (a harmless busybox static pod), collects the three logs, and
+# asserts each rule matches the emulation's own records. The CRI and audit rules also
+# match the control-plane static pods by design, so as a negative control the job runs the
 # validator on logs captured BEFORE the emulation, where no rule may pass. On a
 # public repo the run is free.
 
@@ -29,6 +33,7 @@ on:
       - 'detections/k8s/audit-policy-staticpod.yaml'
       - 'detections/k8s/kind-staticpod-cluster.yaml'
       - 'detections/k8s/cri-pod-sensor.sh'
+      - 'detections/k8s/auditd_file_events.py'
       - 'detections/sigma/T1543.005/**'
       - 'detections/validate_staticpod_detections.py'
       - 'detections/sigma_eval.py'
@@ -126,6 +131,7 @@ jobs:
             'detections/k8s/audit-policy-staticpod.yaml' \
             'detections/k8s/kind-staticpod-cluster.yaml' \
             'detections/k8s/cri-pod-sensor.sh' \
+            'detections/k8s/auditd_file_events.py' \
             'detections/sigma/T1543.005/' \
             'detections/validate_staticpod_detections.py' \
             'detections/sigma_eval.py' \
@@ -209,10 +215,41 @@ jobs:
           kind version
           kubectl version --client
 
+      - name: Start the node file-event sensor (auditd, Strategy 3)
+        # Before the cluster exists, so the file log also holds kubeadm's own
+        # control-plane manifest writes, which the file control tests the rule on. A
+        # failure here must not stop the other sensors' gates: the file gate and the
+        # file control fail closed without this sensor (no event -> MISS / FAILED).
+        id: filesensor
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Stand-in for a node file-integrity / EDR sensor: the runner's auditd (the
+          # kind node is a container on the runner's kernel, and audit is not
+          # namespaced, so the host auditd records the node's syscalls). Install it the
+          # same way validate-detections.yml does on this runner image.
+          sudo apt-get update
+          sudo apt-get install -y auditd
+          sudo systemctl start auditd || sudo service auditd start
+          # The kubelet static-pod directory is bind-mounted from this host path
+          # (kind-staticpod-cluster.yaml extraMount). Watch it for writes and attribute
+          # changes. -F dir= is a recursive tree watch (auditctl makes the same rule
+          # from -w on a directory); -F dir= makes that explicit. A bind mount shares
+          # the directory's inodes, so writes made through the node's mount are seen.
+          mkdir -p /tmp/trr9003-manifests
+          sudo auditctl -a always,exit -F dir=/tmp/trr9003-manifests -F perm=wa -F key=k8s_node_file
+          rules="$(sudo auditctl -l)"
+          grep -qF k8s_node_file <<<"${rules}" || { echo "::error::auditd watch not set"; exit 1; }
+
       - name: Create kind cluster with audit logging
         id: cluster
         shell: bash
         run: |
+          # The node file-event sensor (C2-7) bind-mounts the kubelet static-pod
+          # directory to this host path (kind-staticpod-cluster.yaml extraMount), so the
+          # runner's auditd can watch it. Create it first so the bind source exists.
+          mkdir -p /tmp/trr9003-manifests
           # Run from the repo root so the relative extraMounts path resolves.
           kind create cluster \
             --name "${CLUSTER_NAME}" \
@@ -296,6 +333,24 @@ jobs:
             || { echo "::error::the CRI sensor wrote nothing"; exit 1; }
           echo "Sensor live; pre-emulation snapshot is $(wc -c < /tmp/pre-emulation-cri.jsonl) bytes."
 
+      - name: Capture the node file events before the emulation (negative control)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        env:
+          FILESENSOR_OUTCOME: ${{ steps.filesensor.outcome }}
+        run: |
+          # The watch was added before the cluster was created, so this capture holds
+          # kubeadm's control-plane manifest writes (the file control checks that the
+          # rule matches none of them) and no marked writer yet (the A gate must stay
+          # quiet here).
+          if [ "${FILESENSOR_OUTCOME}" != "success" ]; then
+            echo "::error title=file sensor::the node file-event sensor did not start; the file gate and the file control will fail"
+          fi
+          sudo cat /var/log/audit/audit.log 2>/dev/null | sudo tee /tmp/pre-audit-raw.log >/dev/null || true
+          python3 detections/k8s/auditd_file_events.py /tmp/pre-audit-raw.log \
+            --key k8s_node_file > /tmp/pre-emulation-file.jsonl || true
+          echo "Captured $(wc -l < /tmp/pre-emulation-file.jsonl) pre-emulation file event(s)."
+
       - name: Emulate T1543.005 static pods (benign busybox)
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
@@ -334,6 +389,17 @@ jobs:
           docker exec "${CLUSTER_NAME}-control-plane" \
             cat /var/log/cri-pods.jsonl > /tmp/cri-pods.jsonl
           echo "Collected $(wc -l < /tmp/cri-pods.jsonl) CRI sensor snapshots."
+          # Node file events: poll (max 30 s) for the marked writer's record, then
+          # convert the auditd records to linux/file_event JSON lines. The validator
+          # fails closed if the record never appears (gate MISS).
+          for _ in $(seq 1 30); do
+            sudo cat /var/log/audit/audit.log 2>/dev/null | sudo tee /tmp/node-audit-raw.log >/dev/null || true
+            grep -q 'exe="/usr/local/bin/trr9003-tee"' /tmp/node-audit-raw.log && break
+            sleep 1
+          done
+          python3 detections/k8s/auditd_file_events.py /tmp/node-audit-raw.log \
+            --key k8s_node_file > /tmp/node-file-events.jsonl || true
+          echo "Collected $(wc -l < /tmp/node-file-events.jsonl) file event(s)."
 
       - name: Validate detections (static pod -> audit log + node sensor -> Sigma)
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
@@ -343,6 +409,7 @@ jobs:
           python3 detections/validate_staticpod_detections.py \
             --audit-log /tmp/kube-apiserver-audit.log \
             --cri-log /tmp/cri-pods.jsonl \
+            --file-log /tmp/node-file-events.jsonl \
             --ledger "${DETENG_LEDGER}" | tee /tmp/spval.out
 
       - name: Negative control (the baseline alone may not pass)
@@ -351,7 +418,8 @@ jobs:
         run: |
           python3 detections/validate_staticpod_detections.py \
             --audit-log /tmp/pre-emulation-audit.log \
-            --cri-log /tmp/pre-emulation-cri.jsonl --expect-miss | tee /tmp/spneg.out
+            --cri-log /tmp/pre-emulation-cri.jsonl \
+            --file-log /tmp/pre-emulation-file.jsonl --expect-miss | tee /tmp/spneg.out
 
       - name: Publish results to job summary
         if: always()
@@ -381,6 +449,8 @@ jobs:
             /tmp/pre-emulation-audit.log
             /tmp/cri-pods.jsonl
             /tmp/pre-emulation-cri.jsonl
+            /tmp/node-file-events.jsonl
+            /tmp/pre-emulation-file.jsonl
             /tmp/emulation-ledger.jsonl
           if-no-files-found: ignore
 

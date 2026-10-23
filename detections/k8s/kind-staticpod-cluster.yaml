@@ -53,3 +53,11 @@ nodes:
       - hostPath: ./detections/k8s/audit-policy-staticpod.yaml
         containerPath: /etc/kubernetes/policies/audit-policy.yaml
         readOnly: true
+      # Node file-event sensor (C2-7): bind the kubelet static-pod directory to a
+      # known host path so the runner's auditd can watch it for writes. kubeadm still
+      # writes the control-plane static pods here (a plain directory on the host). The
+      # validate-staticpod workflow creates /tmp/trr9003-manifests and adds the auditd
+      # watch before cluster create, so kubeadm's writes are recorded too.
+      - hostPath: /tmp/trr9003-manifests
+        containerPath: /etc/kubernetes/manifests
+        readOnly: false

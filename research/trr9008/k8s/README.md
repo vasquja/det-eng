@@ -414,7 +414,11 @@ the webhook cert paths covers it, and the CRI sensor sees the enforcer pods vani
 This repository already ships the manifest half:
 [`detections/sigma/T1543.005/linux_static_pod_manifest_write.yml`](../../../detections/sigma/T1543.005/linux_static_pod_manifest_write.yml)
 (TRR9003, level high) matches a write under `/etc/kubernetes/manifests/`, which holds
-`kube-apiserver.yaml`; it is compile-only in CI (no node file telemetry), and it
+`kube-apiserver.yaml`. CI gates it on TRR9003 Procedure A with the node file-event
+sensor (an auditd write watch on the static-pod directory). No CI emulation edits
+`kube-apiserver.yaml` (the sensor records kubeadm's bootstrap write of it, and the
+staticpod file control checks that the rule stays quiet on that write), so this TRR's
+control-plane edit is not exercised live. It
 filters writes by kubeadm, the kubelet and the package managers, each by its full
 install path. On a sensor that also reports reads, it also fires when a process
 outside its install filter reads a manifest

@@ -348,17 +348,15 @@ Waiver = namedtuple("Waiver", "why digest keep", defaults=((),))
 # Rules no validator can match-gate, because CI does not collect their telemetry.
 # Each still needs a passing positive in its sidecar. Adding an entry is a waiver
 # of R1: a human decides it, with the reason, and approves the change.
+#
+# The two node file-event rules (T1552.007/linux_k8s_sa_token_read and
+# T1543.005/linux_static_pod_manifest_write) were waived here while CI collected no
+# node file telemetry. The kind CI jobs now run an auditd node file-event sensor
+# (C2-7): validate_apiserver_detections.py gates the token read on TRR9006 Procedure
+# E, and validate_staticpod_detections.py gates the manifest write on TRR9003
+# Procedure A, both with a 'file' log source. The gate the waiver excused is met, so
+# the waivers are removed (a human decision, taken with that sensor in the same PR).
 COMPILE_ONLY = {
-    "T1552.007/linux_k8s_sa_token_read.yml": Waiver(
-        "node file-access telemetry (open of the projected service-account token) is not "
-        "collected on the kind CI cluster; validate_apiserver_detections.py compiles the rule "
-        "but cannot match-gate it",
-        "6f804a1c8803da991d9e40ab979849b1b861a50c69d4ad0f22affa72dde2de8c"),
-    "T1543.005/linux_static_pod_manifest_write.yml": Waiver(
-        "node file-write telemetry (a manifest dropped in the kubelet's staticPodPath) is not "
-        "collected on the kind CI cluster; validate_staticpod_detections.py compiles the rule "
-        "but cannot match-gate it",
-        "92bcf921011c78b176ffff52be16597931125706c5468bd6ee120f3ecaadd40d"),
 }
 
 # Pure-surface rules: every positive item is a SURFACE_FIELDS field, so the rule
@@ -647,9 +645,14 @@ def _proven_on(label, entry):
         return {"product": "kubernetes", "service": "audit"}
     if label in ("apiserver", "trr9003"):
         source = entry[2] if label == "apiserver" else entry[1]
+        # The node file-event sensor (C2-7): a 'file' source proves a rule on the
+        # Linux file_event log (the node file-integrity / EDR / auditd open+write
+        # telemetry the two node rules read), not the Kubernetes audit log.
+        if source == "file":
+            return {"product": "linux", "category": "file_event"}
         if source not in ("audit", "cri"):
             raise ValueError(f"MANIFEST entry {entry!r:.120} names log source {source!r}, "
-                             "not 'audit' or 'cri'")
+                             "not 'audit', 'cri' or 'file'")
         return {"product": "kubernetes", "service": source}
     if label == "cloud":
         provider = str(entry[5]).lower()

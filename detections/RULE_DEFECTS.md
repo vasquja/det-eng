@@ -116,6 +116,16 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 ### L15. linux_static_pod_manifest_write: fires on reads of the manifests
 
 - **Rule**: [`sigma/T1543.005/linux_static_pod_manifest_write.yml`](sigma/T1543.005/linux_static_pod_manifest_write.yml) (level high).
+- **Live gate (C2-7)**: the validate-staticpod job runs an auditd node file-event
+  sensor (a `-p wa` watch on the static-pod directory, added before the cluster is
+  created), so this rule is match-gated live. `validate_staticpod_detections.py` gates
+  it on TRR9003 Procedure A (`/usr/local/bin/trr9003-tee` writing the injected
+  manifest) with a `file` log source, and a control requires that it matches none of
+  `kubeadm`'s control-plane manifest writes. Its `COMPILE_ONLY` waiver is removed. A
+  `-p wa` watch records no reads, so the live log cannot show this defect; it records
+  the emulation's cleanup deletes (`rm`, `EventType: delete`), and the rule matches
+  them too, from the same missing event-type item (the validator counts them as other
+  matches). This defect still stands; the event-type fix below is a human decision.
 - **Kind**: false positive, description. **Severity**: medium (routine noise where a
   backup job or configuration management reads the control-plane manifests).
 - **Problem**: the description says "a file create or write", and the logsource is
@@ -199,14 +209,23 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
   run of that variant with that case passes `rule_cases.py` and the sufficiency
   ratchet, and clears this rule's R5 "thin" warning. This also closes the
   `linux_static_pod_manifest_write` item under [Checks to add](#checks-to-add); remove
-  it in the same pull request. The rule edit changes the rule's
-  `COMPILE_ONLY` digest in `check_sufficiency.py`, which a human re-approves. With the
-  item in the pipeline, a case cannot name it in `breaks` (R3 fails a `breaks` that
-  names no condition atom), so prove that fix with a pipeline test instead.
+  it in the same pull request. The rule edit is checked by the sufficiency ratchet and
+  by the TRR9003 A file gate and its `kubeadm` control (no waiver digest covers this
+  rule). With the item in the pipeline, a case cannot name it in `breaks` (R3 fails a
+  `breaks` that names no condition atom), so prove that fix with a pipeline test
+  instead.
 
 ### L16. linux_k8s_sa_token_read: fires on every workload that reads its own token
 
 - **Rule**: [`sigma/T1552.007/linux_k8s_sa_token_read.yml`](sigma/T1552.007/linux_k8s_sa_token_read.yml) (level high).
+- **Live gate (C2-7)**: the validate-apiserver job runs an auditd node file-event
+  sensor (a per-file read watch on one projected token file of the node's kube-proxy
+  pod, added through `/proc/<node pid>/root`), so this rule is match-gated live.
+  `validate_apiserver_detections.py` gates it on TRR9006 Procedure E
+  (`/usr/local/bin/trr9006-reader` reading that token file off the node) with a `file`
+  log source, so its `COMPILE_ONLY` waiver is removed and the coverage report marks E
+  "Proven, open defect" (this defect). This defect (the in-container selection has no
+  reader constraint) still stands; the split-rule fix below is a human decision.
 - **Kind**: false positive, description. **Severity**: high (a high-level rule fires on
   routine activity of most clusters).
 - **Problem**: `selection_container` matches an open of any
@@ -276,14 +295,14 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
   this rule as the low hunting rule. That keeps every sidecar case, so the gates
   accept it:
   - Keep `linux_k8s_sa_token_read.yml` with both branches and all its cases, and
-    lower its level to low, with the per-image baseline as its documented noise. The
-    level is not part of `detection_digest`, so its `COMPILE_ONLY` waiver stays
-    valid. Correct its description and falsepositives: a workload's client re-reads
-    the token while it runs, not only at start.
+    lower its level to low, with the per-image baseline as its documented noise.
+    Correct its description and falsepositives: a workload's client re-reads the
+    token while it runs, not only at start.
   - Add a new high rule with only the node-path branch
-    (`selection_node and not filter_expected`), with its own sidecar, a
-    `COMPILE_ONLY` waiver that a human approves, and an entry in TRR9006 Strategy 3
-    and its Detections table.
+    (`selection_node and not filter_expected`), with its own sidecar, and gate it by
+    adding it to the `9006 E` file entry of `validate_apiserver_detections.py`
+    (Procedure E's marked read is a node-path read), not by a waiver. Add an entry in
+    TRR9006 Strategy 3 and its Detections table.
   - An in-container rule with a reader list (level medium) is optional. Its list must
     hold shells, file readers, interpreters and network tools (the probe's list):
     without the file readers it misses `head` and `cat`. Any binary outside the list
@@ -301,10 +320,11 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
   (near-miss, `breaks: [selection_node.TargetFilename|endswith]`), and a new
   near-miss: `/coredns` opening `/var/run/secrets/kubernetes.io/serviceaccount/token`,
   `breaks: [selection_node.TargetFilename|contains]`. A scratch run of this plan
-  passes `rule_cases.py`, the sufficiency ratchet and the benign budgets; the new rule
-  fails only R1 and R4 until a human adds its `COMPILE_ONLY` waiver (R4 asks a
-  validator-registered rule for an emulation identity, and does not apply to a
-  compile-only rule). The low rule keeps its cases and its budget (266), and its
+  passes `rule_cases.py`, the sufficiency ratchet and the benign budgets; that run
+  predates the node file-event sensor, and its new rule failed only R1 and R4. Now
+  register it in the `9006 E` file entry (R1) and give it a positive with the
+  emulation identity, the marked reader's node-path read (R4). The low rule keeps its
+  cases and its budget (266), and its
   budget's `why` becomes `documented noise:` once this entry closes. An in-container
   reader rule, if added, keeps copies of `shell-reads-incontainer-token`,
   `run-secrets-spelling-known-miss` and `incontainer-resolved-timestamp-token-known-miss`

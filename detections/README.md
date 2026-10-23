@@ -778,15 +778,17 @@ captures the audit log before the emulation and runs the validator on it with
 `--expect-miss`, so a pass that does not depend on the emulation fails the job.
 `validate_staticpod_detections.py` and
 `.github/workflows/validate-staticpod-detections.yml` do the same for TRR9003
-(T1543.005), where the gate matters most: both rules the validator match-gates
-(the CRI rule and the mirror-pod rule) also match the control-plane static pods
-every node starts, so only the emulation's own pods count. Each rule gates the
-injected static pod *and* the invalid-namespace evasion variant — the CRI rule
-on both running sandboxes, the mirror-pod rule on the stored mirror (code 2xx)
-and on the refused mirror-create attempt (code 404). Its emulation writes the
-same per-procedure ledger (`A`, `GAP`, `B`); with `--ledger` a CRI sandbox is
-bound to its window by `createdAt` and an audit event by
-`requestReceivedTimestamp`. It also exposes a `PROCEDURES` map for the coverage
+(T1543.005), where the gate matters most: the validator match-gates three rules,
+and two of them (the CRI rule and the mirror-pod rule) also match the
+control-plane static pods every node starts, so only the emulation's own pods
+count. Those two rules gate the injected static pod *and* the invalid-namespace
+evasion variant — the CRI rule on both running sandboxes, the mirror-pod rule on
+the stored mirror (code 2xx) and on the refused mirror-create attempt (code 404).
+The third, the file-event rule, is gated on the marked writer's manifest write
+(see [Node file-event sensor](#node-file-event-sensor-trr9003-strategy-3-trr9006-strategy-3)).
+Its emulation writes the same per-procedure ledger (`A`, `GAP`, `B`); with
+`--ledger` a CRI sandbox is bound to its window by `createdAt`, an audit event by
+`requestReceivedTimestamp`, and a node file event by `Timestamp`. It also exposes a `PROCEDURES` map for the coverage
 report. Procedure B stays a read-only demonstration with no telemetry, so it has
 no gate.
 
@@ -812,13 +814,58 @@ a scheduled pod).
   rule on real runtime data.
 - **Validation.** The CRI rule must match both the injected static pod and the
   invalid-namespace pod, and must match none of the API-scheduled sandboxes in
-  the same log:
+  the same log; the file-event rule must match the marked writer and none of
+  `kubeadm`'s control-plane manifest writes:
 
 ```
 python3 detections/validate_staticpod_detections.py \
   --audit-log /tmp/kube-apiserver-audit.log --cri-log /tmp/cri-pods.jsonl \
-  --ledger /tmp/emulation-ledger.jsonl
+  --file-log /tmp/node-file-events.jsonl --ledger /tmp/emulation-ledger.jsonl
 ```
+
+### Node file-event sensor (TRR9003 Strategy 3, TRR9006 Strategy 3)
+
+Two node rules read Sigma's `linux` / `file_event` log (`TargetFilename`, `Image`,
+`ProcessId`): `sigma/T1543.005/linux_static_pod_manifest_write.yml` (a write in the
+static-pod directory) and `sigma/T1552.007/linux_k8s_sa_token_read.yml` (a read of a
+projected service-account token). The two validators read this log as the `file`
+source (`--file-log`), and each gates its rule on one marked emulation record (C2-7).
+
+- **Lab sensor.** The runner's auditd. A kind node is a container on the runner's
+  kernel, and audit is not namespaced, so the runner's auditd records the node's
+  syscalls. `k8s/auditd_file_events.py` converts the SYSCALL, PATH and CWD records of
+  the watch key `k8s_node_file` to `file_event` JSON lines (with `EventType` and
+  `Timestamp`). The `exe` and the PATH `name` are the paths that the node process
+  saw, so they are the values the rules read. A relative name of a `*at` syscall
+  with a real directory fd cannot be placed; the converter skips it and counts it
+  on stderr.
+- **Static-pod directory (TRR9003).** `k8s/kind-staticpod-cluster.yaml` bind-mounts
+  `/tmp/trr9003-manifests` on the runner at the node's `/etc/kubernetes/manifests`.
+  The workflow adds a write watch on that host directory (`-F dir=... -F perm=wa`)
+  before it creates the cluster, so the log holds `kubeadm`'s own control-plane
+  manifest writes as well as the emulation's. Procedure A writes its manifest
+  through a marked copy of tee (`/usr/local/bin/trr9003-tee`; a kind node's `/tmp`
+  is a noexec tmpfs, so a copy there cannot run). The validator gates the rule on
+  that write. A false-positive control requires that the rule matches none of
+  `kubeadm`'s writes, and that the log holds some, so the control is not vacuous.
+- **Projected token (TRR9006).** The token is on a tmpfs that the kubelet mounts
+  inside the node's own mount namespace. A directory-tree watch added from the
+  runner (`-w DIR` and `-F dir=DIR` make the same recursive rule) tags only the
+  mounts that the runner's namespace sees, so it does not record that read. The
+  workflow pins one token file of the node's kube-proxy pod, adds a per-file read
+  watch through `/proc/<node pid>/root`, checks with a canary read of the `ca.crt`
+  beside it that auditd records reads there, and passes the file to Procedure E
+  (`TRR9006_TOKEN_FILE`). E reads it through a marked copy of cat
+  (`/usr/local/bin/trr9006-reader`). The negative control for this gate can fail
+  only on a stray marked-reader event. The validator prints how many file events
+  the log holds (the kubelet's resync reads and kube-proxy's own reads of the
+  watched file, when they occur) and how many the rule matches (kube-proxy's reads;
+  the kubelet is filtered). A false-positive control runs in the validate and the
+  negative-control runs: the rule must match none of the kubelet's own token reads
+  (an `Image` whose file name is `kubelet`, in any directory), so the rule's kubelet
+  filter is tested on live data. The kubelet re-reads the token at its pod resync,
+  about once a minute, so a log can hold no such read; then the validator prints a
+  notice, and the control does not fail.
 
 ### Container runtime layer (out of scope)
 
@@ -939,15 +986,23 @@ counts as proven by a gate of its own, not by a file-name substring test.
 python3 detections/validate_apiserver_detections.py --dry-run     # compile only
 python3 detections/validate_apiserver_detections.py \
   --audit-log /tmp/kube-apiserver-audit.log --cri-log /tmp/cri-pods.jsonl \
-  --ledger /tmp/emulation-ledger.jsonl
+  --file-log /tmp/node-file-events.jsonl --ledger /tmp/emulation-ledger.jsonl
 ```
 
 TRR9006 Procedure E (reading an already-mounted token off disk) bypasses the API
 server, so it leaves no audit event. Its rule
-(`sigma/T1552.007/linux_k8s_sa_token_read.yml`) is compiled but not match-gated here;
-the emulation documents the gap the way TRR9002 Procedure E does, and (with a ledger)
-the absence check asserts it: no secret-read or token-request event by a non-system
-caller in E's window.
+(`sigma/T1552.007/linux_k8s_sa_token_read.yml`) reads Sigma's `linux` / `file_event`
+log, which the audit loop does not produce; CI stands in a node file-event sensor
+(C2-7, see [Node file-event sensor](#node-file-event-sensor-trr9003-strategy-3-trr9006-strategy-3)).
+The runner's auditd watches one projected token file of the node's kube-proxy pod for
+reads, through a per-file watch on `/proc/<node pid>/root` (the token's tmpfs is
+mounted inside the node's mount namespace, where a tree watch added from the runner
+cannot see it). Procedure E reads that file through a marked copy of cat
+(`/usr/local/bin/trr9006-reader`), `k8s/auditd_file_events.py` converts the records,
+and the validator gates the rule on that read (`--file-log`, the `file` source). The
+audit-log gap is proven at the same time:
+with a ledger, the absence check asserts no secret-read or token-request event by a
+non-system caller in E's window.
 The TRR9007 static-pod delivery also skips the API server's admission, but the kubelet's
 mirror create is audited as `system:node:<node>` and carries the spec at `Request` level,
 so the `9007 static` entry match-gates the pod-spec chokepoint on it (`create pods`, a

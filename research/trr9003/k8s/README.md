@@ -355,8 +355,11 @@ Alert on a file create or write in a `staticPodPath` directory
 manager or `kubeadm`. A node file integrity monitor or an EDR agent sees it. This
 is specific, because almost nothing writes to this directory after install.
 
-- Sensor: node file integrity monitor / EDR (file event telemetry).
-- Rule: [`detections/sigma/T1543.005/linux_static_pod_manifest_write.yml`](../../../detections/sigma/T1543.005/linux_static_pod_manifest_write.yml) (built; node sensor, not validated by the audit-log loop).
+- Sensor: node file integrity monitor / EDR (file event telemetry). In CI the kind
+  job runs the runner's auditd with a write watch on the kubelet static-pod
+  directory (a host bind mount), and `detections/k8s/auditd_file_events.py`
+  converts the records to `file_event` JSON lines.
+- Rule: [`detections/sigma/T1543.005/linux_static_pod_manifest_write.yml`](../../../detections/sigma/T1543.005/linux_static_pod_manifest_write.yml) (built; node sensor, gated live on a `file` log source).
 - Known defect: on a sensor that also reports reads, the rule also fires when a process
   outside its install filter reads a manifest (a backup, configuration management)
   ([`RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) L15).
@@ -446,20 +449,27 @@ which checks one rule per sensor on the telemetry the emulation produced:
   server refuses with 404 (namespace not found) but still audits — the one
   audit-log trace of the evasion variant.
 
-Both rules also match the control-plane static pods by design, so a baseline
-match alone does not pass; the validator reports the baseline separately. The
-emulation writes a ledger (one JSON line per procedure — `A`, `GAP`, `B` — with
-its time window and exit status); with `--ledger` the validator also requires
-each matched record to fall inside its procedure's window (an audit event by
-`requestReceivedTimestamp`, a CRI sandbox by `createdAt`) and the procedure to
+The Strategy 1 and 2 rules also match the control-plane static pods by design, so
+a baseline match alone does not pass; the validator reports the baseline
+separately. The emulation writes a ledger (one JSON line per procedure — `A`,
+`GAP`, `B` — with its time window and exit status); with `--ledger` the validator
+also requires each matched record to fall inside its procedure's window (an audit
+event by `requestReceivedTimestamp`, a CRI sandbox by `createdAt`, a node file
+event by `Timestamp`) and the procedure to
 have exited as expected, and it fails a procedure that did not run. The workflow
 [`validate-staticpod-detections.yml`](../../../.github/workflows/validate-staticpod-detections.yml)
 runs the whole loop on a `kind` cluster for every change to these files, and
 runs the validator as a negative control on the logs captured before the
 emulation (no gate may match there).
 
-Strategy 3's rule is a node file-event rule; it compiles in the validator but
-the lab does not exercise it, because it needs node file telemetry.
+Strategy 3's rule is a node file-event rule. The lab exercises it: the kind job
+runs the runner's auditd with a write watch on the kubelet static-pod directory
+(bound to a host path), added before the cluster is created. Procedure A drops its
+manifest through a marked copy of tee (`/usr/local/bin/trr9003-tee`; the node's
+`/tmp` is a noexec tmpfs), and the validator gates the rule on that write with a
+`file` log source. Because the watch is older than the cluster, the log also holds
+`kubeadm`'s own control-plane manifest writes; a false-positive control requires
+that the rule matches none of them, and that there are some.
 
 This technique is not covered by `tired-labs/techniques` (no Kubernetes TRR
 exists there), by the SigmaHQ Kubernetes audit rules (there is no static-pod or

@@ -14,8 +14,9 @@
 #
 # SAFETY: the Secret holds a benign literal, not a real credential. The minted
 # token (Procedure D) is for a throwaway service account that holds no RBAC, so it
-# grants nothing, and it expires on its own. Procedure E only reads the first few
-# bytes of a token file, read-only, and discards them.
+# grants nothing, and it expires on its own. Procedure E reads one projected token
+# file read-only through a marked copy of cat and discards the bytes to /dev/null;
+# the token never reaches a command line or a log line.
 #
 # Run ONE procedure:
 #   ./emulate.sh a      list Secrets in the namespace
@@ -27,7 +28,8 @@
 #
 # Prerequisites: a reachable cluster (kubectl works) with rights to read Secrets
 # and mint tokens. Procedure E needs node access (docker exec into the kind node),
-# the same approach as TRR9002 Procedure E; set TRR9006_NODE for a non-kind lab.
+# the same approach as TRR9002 Procedure E; set TRR9006_NODE for a non-kind lab, and
+# TRR9006_TOKEN_FILE to choose the token file E reads.
 set -euo pipefail
 
 NS="${TRR9006_NAMESPACE:-trr9006}"
@@ -131,20 +133,56 @@ procedure_d() {
 }
 
 # Procedure E — the gap. Read an already-mounted token off the node filesystem; it makes
-# NO API call, so the audit log gains no event (C2-4's absence check proves it). The read
-# must actually happen: E FAILS unless the node read printed 'read-ok' (a 'no-token-file'
-# result, or no node access, is a failure, not a silent pass).
+# NO API call, so the API server audit log gains no event (C2-4's absence check proves
+# it). The read goes through a MARKED copy of cat ($READER): a node file-event sensor
+# (in CI, an auditd read watch on the token file) records the open with that exe, so
+# the Strategy 3 file-event rule gets a live gate (C2-7). The marked reader is told
+# apart from the node's own workloads, which re-read their tokens. The copy goes to
+# /usr/local/bin, not /tmp: on a kind node /tmp is a tmpfs that Docker mounts noexec
+# (kind v0.33.0 provision.go "--tmpfs /tmp"), so a copy there cannot run.
+# TRR9006_TOKEN_FILE (optional) names the token file to read, as the node sees it
+# (CI sets it to the file its sensor watches); without it, E reads the first projected
+# token that `find` lists. The token's bytes go to /dev/null and never reach a command
+# line or a log line. The read must actually happen: E FAILS unless the node read
+# printed 'read-ok' (a 'no-token-file', 'no-reader', 'reader-cannot-run', or no node
+# access is a failure, not a silent pass).
+READER="/usr/local/bin/trr9006-reader"
 procedure_e() {
-  local out
+  local out pick
+  if [ -n "${TRR9006_TOKEN_FILE:-}" ]; then
+    # A path, not a credential. Accept only a projected token path with no quote or
+    # space, so it can go into the node snippet in single quotes.
+    case "$TRR9006_TOKEN_FILE" in
+      *\'*|*' '*|*'"'*)
+        log "E: TRR9006_TOKEN_FILE has a quote or a space; refusing it"; return 1 ;;
+      /var/lib/kubelet/pods/*/volumes/kubernetes.io~projected/*/token) ;;
+      *)
+        log "E: TRR9006_TOKEN_FILE is not a projected token under /var/lib/kubelet/pods"
+        return 1 ;;
+    esac
+    pick="f='$TRR9006_TOKEN_FILE'"
+  else
+    pick='f=$(find /var/lib/kubelet/pods -path "*kubernetes.io~projected*/token" 2>/dev/null | head -1)'
+  fi
+  # The node snippet: pick the token file, copy cat to the marked path, check that the
+  # copy runs (it reads /dev/null), read the token through it (output discarded), then
+  # remove the marked copy.
+  local read_snippet="$pick
+    r='$READER'"'
+    [ -n "$f" ] && [ -e "$f" ] || { echo no-token-file; exit 0; }
+    cp "$(command -v cat)" "$r" 2>/dev/null || { echo no-reader; exit 0; }
+    if ! "$r" /dev/null >/dev/null 2>&1; then
+      echo reader-cannot-run; rm -f "$r" 2>/dev/null; exit 0
+    fi
+    "$r" "$f" >/dev/null 2>&1 && echo read-ok || echo read-failed
+    rm -f "$r" 2>/dev/null
+  '
   if [ -n "${TRR9006_NODE_EXEC:-}" ]; then
-    log "E: reading a projected token file on the node (custom exec)"
-    out="$($TRR9006_NODE_EXEC 'f=$(find /var/lib/kubelet/pods -path "*kubernetes.io~projected*/token" 2>/dev/null | head -1); [ -n "$f" ] && head -c 20 "$f" >/dev/null && echo read-ok || echo no-token-file' 2>/dev/null || true)"
+    log "E: reading a projected token file on the node through $READER (custom exec)"
+    out="$($TRR9006_NODE_EXEC "$read_snippet" 2>/dev/null || true)"
   elif command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -qx "$NODE"; then
-    log "E: reading a projected token file on node $NODE (read-only)"
-    out="$(docker exec "$NODE" sh -c '
-      f=$(find /var/lib/kubelet/pods -path "*kubernetes.io~projected*/token" 2>/dev/null | head -1)
-      [ -n "$f" ] && head -c 20 "$f" >/dev/null 2>&1 && echo read-ok || echo no-token-file
-    ' 2>/dev/null || true)"
+    log "E: reading a projected token file on node $NODE through $READER (read-only)"
+    out="$(docker exec "$NODE" sh -c "$read_snippet" 2>/dev/null || true)"
   else
     log "E: no node access (docker/TRR9006_NODE_EXEC) — cannot read a token off disk"
     return 1
@@ -154,7 +192,9 @@ procedure_e() {
     log "E: the on-disk token read did not return 'read-ok' (got: ${out:-<empty>})"
     return 1
   fi
-  log "E: done — expect NO secrets/serviceaccounts audit event for this read"
+  log "E: done — expect NO secrets/serviceaccounts audit event for this read; a node"
+  log "E: file-event sensor, if one runs, should record an open by $READER (the"
+  log "E: validator's 9006 E file gate checks it)"
 }
 
 run_one() {

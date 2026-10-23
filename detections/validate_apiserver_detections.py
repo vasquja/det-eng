@@ -67,7 +67,8 @@ procedure's own request:
     'trr9005-' (one gate; the node sensor has no per-procedure record).
 
 With --ledger (C1-3), every gate that carries a window=(TRR, procedure) also needs
-the record's requestReceivedTimestamp inside that procedure's [start, end] in the
+the record's time (requestReceivedTimestamp for an audit event, Timestamp for a node
+file event) inside that procedure's [start, end] in the
 emulation ledger, and the procedure's exit to equal its expected exit; a missing row
 reports 'did not run'. Without --ledger the gates fall back to fields only.
 
@@ -80,13 +81,32 @@ matching event cannot be placed in time (no requestReceivedTimestamp).
 PROCEDURES ({(trr_id, LETTER): sorted rule paths}) is derived from the MANIFEST
 labels; it is the interface for the procedure coverage report.
 
-Rules in each technique folder that are NOT match-gated here (the Linux file-event
-token-read rule, for example) are still COMPILED, so a broken rule fails the run.
+A node file-event source (C2-7) gates one rule that the API server cannot see:
+T1552.007/linux_k8s_sa_token_read.yml. TRR9006 Procedure E reads an already-mounted
+service-account token off the node and makes no API call, so no audit rule matches
+it (the "9006 E gap" ABSENCE check proves that on the audit log). In CI the runner's
+auditd watches one projected token file for reads: the workflow resolves the file in
+the node and adds a per-file watch through /proc/<node pid>/root, because the token
+is on a tmpfs that the kubelet mounts inside the node's own mount namespace, which a
+host-side directory-tree watch cannot see. E reads that same file through a marked
+copy of cat (/usr/local/bin/trr9006-reader), so the file-event rule has a live gate.
+The records are linux/file_event JSON lines from detections/k8s/auditd_file_events.py;
+a file gate places a record in its ledger window by its Timestamp field. A
+false-positive control runs on the file log in strict and --expect-miss runs: the
+token rule must match none of the kubelet's own reads of the watched token (an Image
+whose file name is kubelet, in any directory). The kubelet re-reads the token at its
+pod resync, about once a minute; a log with no kubelet read gets a notice, not a
+failure.
+
+Rules in each technique folder that are NOT match-gated here are still COMPILED, so a
+broken rule fails the run.
 
 Modes:
     --dry-run           Compile every rule; no cluster or log needed.
     --audit-log PATH    API server audit log (JSON lines). Default strict.
     --cri-log PATH      node runtime sensor log (crictl pods snapshots), optional.
+    --file-log PATH     node file-event sensor log (linux/file_event JSON lines:
+                        TargetFilename, Image, ProcessId, EventType, Timestamp), optional.
     --expect-miss       Negative control: fail if any gated rule passes.
     --report            Report misses instead of failing on them.
     --json PATH         Also write a machine-readable report (status, detail and the
@@ -380,6 +400,94 @@ def rec(*, verb=None, resource=None, sub=None, name=None, prefix=None, ns=None,
     return gate
 
 
+# The marked reader TRR9006 Procedure E reads the token through: a copy of cat in an
+# exec-capable node directory (a kind node's /tmp is a noexec tmpfs).
+READER_IMAGE = "/usr/local/bin/trr9006-reader"
+
+
+def file_read(image, endswith="/token", window=None, time="Timestamp"):
+    """TRR9006 Procedure E, node file sensor (C2-7): the marked reader
+    (READER_IMAGE, a copy of cat the atomic uses) opens the projected
+    service-account token off the node. The event is a linux/file_event record from
+    auditd_file_events.py (Image, TargetFilename, Timestamp), not an audit event, so
+    the gate reads Image and TargetFilename and the window reads `Timestamp`. Among
+    the token rule's matches (which include the node's own workloads re-reading their
+    tokens), Image tells the emulation's read apart; the kubelet is excluded by the
+    rule's own filter."""
+    def gate(e):
+        return (e.get("Image") == image
+                and str(e.get("TargetFilename") or "").endswith(endswith))
+    gate.describe = f"Image == {image!r} and TargetFilename ends with {endswith!r}"
+    gate.window = window
+    gate.time_field = time
+    return gate
+
+
+# The file control (C2-7) tests the token rule's kubelet filter on live data. The
+# kubelet re-reads each projected file at its pod resync, before it decides to write a
+# new version (kubernetes v1.36.4 pkg/volume/util/atomic_writer.go, shouldWriteFile:
+# os.ReadFile of ..<timestamp>/token), so the watched token's log holds those reads.
+# kind installs the kubelet at /usr/bin/kubelet (kind v0.33.0
+# pkg/build/nodeimage/buildcontext.go). A kubelet read is selected by the file name of
+# its Image, in any directory, so a read with another exe spelling is still tested.
+TOKEN_RULE = ("T1552.007", "linux_k8s_sa_token_read.yml")
+KUBELET_NAME = "kubelet"
+
+
+def _kubelet_token_reads(events):
+    """The kubelet's reads of a token in a file log (Image file name, TargetFilename)."""
+    return [e for e in events
+            if os.path.basename(str(e.get("Image") or "")) == KUBELET_NAME
+            and str(e.get("TargetFilename") or "").endswith("/token")]
+
+
+def report_file(events, file_hits):
+    """The token rule's false-positive control on the kubelet's own token reads.
+
+    The rule must match none of them (filter_expected names the kubelet by its full
+    path). The kubelet resyncs a pod about once a minute, so a short capture can hold
+    no such read: then the control prints a notice and does not fail. Returns a list
+    of control failures (empty when the control holds or has nothing to test).
+    """
+    reads = _kubelet_token_reads(events)
+    images = sorted({str(e.get("Image")) for e in reads})
+    print(f"\nNode file-event sensor — file events seen: {len(events)} "
+          f"({len(reads)} kubelet token read(s)"
+          + (f", Image {', '.join(images)}" if images else "") + ")")
+    if not reads:
+        print("  notice: no kubelet token read in this log (the kubelet re-reads the token "
+              "at its pod resync, about once a minute), so the kubelet filter is not tested "
+              "on live data in this run")
+        return []
+    read_ids = {id(e) for e in reads}
+    hits = [e for e in file_hits if id(e) in read_ids]
+    if hits:
+        failure = (f"the token rule matched {len(hits)} of the {len(reads)} kubelet token "
+                   f"read(s) (Image {', '.join(sorted({str(e.get('Image')) for e in hits}))}): "
+                   "its filter_expected does not hold on this sensor's exe spelling")
+        print(f"  CONTROL FAILED: {failure}")
+        return [failure]
+    print(f"  control held: the token rule matched none of the {len(reads)} kubelet token "
+          "read(s).")
+    return []
+
+
+def explain_file_control(rule_path, events, file_hits):
+    """Why the file control failed: the kubelet read(s) the token rule matched."""
+    rule = sigma_explain.load(rule_path)
+    label = labeller(events)
+    read_ids = {id(e) for e in _kubelet_token_reads(events)}
+    hits = [e for e in file_hits if id(e) in read_ids]
+    lines = ["the kubelet's own token read must never look like a credential read; the "
+             "rule matched:"]
+    for e in hits[:3]:
+        lines.append(f"  {label(e)}")
+        lines.extend("  " + ln for ln in sigma_explain.explain_hit(rule, e))
+    if len(hits) > 3:
+        lines.append(f"  ... and {len(hits) - 3} more")
+    return lines
+
+
 def non_system(e):
     return not str(e.get("user.username") or "").startswith("system:")
 
@@ -531,6 +639,16 @@ MANIFEST = [
     ("T1552.007", "k8s_secret_token_request.yml", "audit", "9006 D", "TokenRequest fallback", [
         ("D", rec(verb="create", resource="serviceaccounts", sub="token", name="trr9006-sa",
                   ns=SECRET_NS, user=non_system, window=("9006", "d")))]),
+    # Strategy 3, the node file sensor (C2-7): Procedure E reads an already-mounted
+    # token off the node and makes no API call, so no audit rule can see it (the
+    # "9006 E gap" ABSENCE check below proves that gap on the audit log). An auditd
+    # per-file read watch on the token file E reads does see the read; E reads
+    # through a marked copy of cat (READER_IMAGE), so the file-event rule has a live
+    # gate for the detection gap it was written to close.
+    ("T1552.007", "linux_k8s_sa_token_read.yml", "file", "9006 E",
+     "projected SA token read off the node (Strategy 3 file-event rule; the audit-log "
+     "gap E demonstrates is proven by the 9006 E absence check)",
+     [("E", file_read(READER_IMAGE, window=("9006", "e")))]),
     ("T1611", "k8s_podspec_host_access.yml", "audit", "9007 A-D",
      "pod-spec host-access chokepoint (Request)", [
         ("A", rec(verb="create", resource="pods", name="trr9007-priv", window=("9007", "a"))),
@@ -916,9 +1034,11 @@ def ledger_state(win):
     return None
 
 
-def in_window(e, win):
-    """True when the event's requestReceivedTimestamp is inside [start, end] of `win`."""
-    t = _ts(e.get("requestReceivedTimestamp"))
+def in_window(e, win, field="requestReceivedTimestamp"):
+    """True when the event's time field is inside [start, end] of `win`. The field is
+    requestReceivedTimestamp for an audit event; a node file-event source (C2-7) names
+    its own time field (Timestamp) through the gate's time_field attribute."""
+    t = _ts(e.get(field))
     return t is not None and win[0] <= t <= win[1]
 
 
@@ -931,10 +1051,11 @@ def windowed(gate, ledger):
         return gate
     win = ledger.get((key[0], str(key[1]).lower()))
     usable = ledger_state(win) is None
+    field = getattr(gate, "time_field", "requestReceivedTimestamp")
 
     def bound(e):
-        return usable and in_window(e, win) and gate(e)
-    text = (f"requestReceivedTimestamp in [{win[0].isoformat()}, {win[1].isoformat()}]"
+        return usable and in_window(e, win, field) and gate(e)
+    text = (f"{field} in [{win[0].isoformat()}, {win[1].isoformat()}]"
             if usable else ledger_state(win))
     bound.describe = f"{describe_gate(gate)}; ledger {key[0]}.{key[1]}: {text}"
     bound.window = key
@@ -996,7 +1117,11 @@ def dedup_by_audit_id(matches):
 
 
 def summary(e):
-    """One line naming an audit event (verb, resource, name, namespace, user) or a sandbox."""
+    """One line naming an audit event (verb, resource, name, namespace, user), a sandbox,
+    or a node file event (Image, TargetFilename, EventType, pid)."""
+    if "verb" not in e and "TargetFilename" in e:
+        return (f"Image={e.get('Image')} TargetFilename={e.get('TargetFilename')} "
+                f"EventType={e.get('EventType')} pid={e.get('ProcessId')}")
     if "verb" not in e and "metadata.name" in e:
         return (f"pod={e.get('metadata.name')} ns={e.get('metadata.namespace')} "
                 f"config.source={e.get('annotations.kubernetes.io/config.source')} "
@@ -1127,6 +1252,9 @@ def main():
                     help="Path to the API server audit log (JSON lines).")
     ap.add_argument("--cri-log",
                     help="Path to the node runtime sensor log (crictl pods snapshots).")
+    ap.add_argument("--file-log",
+                    help="Path to the node file-event sensor log (linux/file_event JSON "
+                         "lines, as detections/k8s/auditd_file_events.py writes them).")
     ap.add_argument("--dry-run", action="store_true",
                     help="Compile rules only; no cluster or log needed.")
     ap.add_argument("--expect-miss", action="store_true",
@@ -1207,6 +1335,12 @@ def validate(args, report):
             return 1
         logs["cri"] = load_cri(args.cri_log)
         print(f"Loaded {len(logs['cri'])} pod sandbox(es) from {args.cri_log}")
+    if args.file_log:
+        if not os.path.exists(args.file_log):
+            print(f"ERROR: node file-event log not found: {args.file_log}")
+            return 1
+        logs["file"] = load_events(args.file_log)
+        print(f"Loaded {len(logs['file'])} file event(s) from {args.file_log}")
     if not logs:
         print("SKIP: no log to validate against (exit 0).")
         return 0 if not parse_errors else 1
@@ -1292,6 +1426,10 @@ def validate(args, report):
                       + f" name={sample.get('objectRef.name')} "
                       f"ns={sample.get('objectRef.namespace')} "
                       f"user={sample.get('user.username')}")
+            elif source == "file":
+                print(f"        e.g. Image={sample.get('Image')} "
+                      f"TargetFilename={sample.get('TargetFilename')} "
+                      f"EventType={sample.get('EventType')}")
             else:
                 print(f"        e.g. pod={sample.get('metadata.name')} "
                       f"job={sample.get('labels.batch.kubernetes.io/job-name')}")
@@ -1306,6 +1444,14 @@ def validate(args, report):
                 explanation += ([f"{proc}:"] + ["  " + ln for ln in lines]) if proc else lines
         for line in explanation:
             print("        " + line)
+        if source == "file" and args.expect_miss:
+            # Say what the file log holds, so that an empty log is not read as
+            # selectivity evidence: the gate selects the marked reader only (the file
+            # control below tests the rule on the kubelet's reads).
+            n = len(logs[source])
+            print(f"        file log: {n} file event(s), the rule matches {len(matched)}"
+                  + ("; the log is empty, so this negative control can only fail on a "
+                     "stray marked-reader event" if n == 0 else ""))
         results.append({"rule": f"{folder}/{fname}", "label": label, "source": source,
                         "status": "PASS" if passed else "MISS", "detail": detail,
                         "emulation_matches": len(ours_ids), "other_matches": other,
@@ -1363,9 +1509,29 @@ def validate(args, report):
             results.append({"rule": f"{folder} absence", "label": label, "source": "audit",
                             "status": "MISS", "detail": detail, "explanation": expl})
 
+    # Node file-event control (C2-7), in strict and --expect-miss runs: the token rule
+    # must match none of the kubelet's own token reads in the file log.
+    file_controls = []
+    if "file" in logs and TOKEN_RULE in queries:
+        file_hits = [hit[0] for hit in sigma_eval.evaluate(queries[TOKEN_RULE], logs["file"])]
+        file_controls = report_file(logs["file"], file_hits)
+        lines = (explained(explain_file_control, os.path.join(SIGMA, *TOKEN_RULE),
+                           logs["file"], file_hits) if file_controls else [])
+        for line in lines:
+            print("    " + line)
+        report.setdefault("controls", []).append({
+            "control": "the token rule matches no kubelet token read",
+            "status": "FAILED" if file_controls else "held",
+            "kubelet_reads": len(_kubelet_token_reads(logs["file"])),
+            "detail": "; ".join(file_controls), "explanation": lines})
+
     print()
     if parse_errors:
         print(f"FAILED: {parse_errors} compile error(s).")
+        return 1
+    if file_controls:
+        print(f"FAILED: {len(file_controls)} file control(s) failed (see CONTROL FAILED "
+              "above).")
         return 1
     if args.expect_miss:
         if passes:
