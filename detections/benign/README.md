@@ -237,9 +237,19 @@ python3 detections/score_benign.py --reseeds 10 # most hits over 10 reseeds: the
 python3 detections/score_benign.py --baseline-scores base-scores.json  # fail on any rule noisier than that snapshot
 python3 detections/score_benign.py --extra-slice capture.jsonl \
     --extra-logsource linux/auditd --extra-label my-host   # score a live capture (shadow)
+python3 detections/score_benign.py --extra-slice node-file-events.jsonl \
+    --extra-logsource linux/file_event --extra-label my-node  # node file events, read by category
 python3 detections/score_benign.py --extra-slice audit.log --extra-label kind-live \
     --extra-split-at 2026-10-20T18:01:25.454000Z  # Kubernetes audit: bootstrap and workload apart
 ```
+
+Write `--extra-logsource` as the slice listing prints a slice: `product/service`, or
+`product/category` for a logsource with no service. The scorer reads the second part
+as a service, unless no rule reads it as a service and some rule reads it as a
+category (`linux/file_event`). `product/category=NAME` is always a category. When no
+scored rule reads the logsource, the capture scores nothing, so the scorer prints a
+`WARNING`, annotates it as a warning and writes it to the markdown report. A wrong
+logsource cannot quietly score nothing.
 
 ## Maintaining the corpus
 

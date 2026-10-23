@@ -53,7 +53,13 @@ the snapshot is stale; --update rewrites it.
 
 A live capture (the kind cluster's pre-emulation audit log, a recorded Linux
 benign workload) can be scored with --extra-slice. Extra slices are reported in
-shadow mode only and never enter the snapshot. --extra-split-at T splits a
+shadow mode only and never enter the snapshot. --extra-logsource names the
+capture's logsource as the slice listing prints it: product/service
+(kubernetes/audit, the default; linux/auditd), or product/category for a
+logsource with no service (linux/file_event, read by category);
+product/category=NAME is always a category. When no scored rule reads that
+logsource, a warning says so, because the capture then scores nothing and lists
+no row. --extra-split-at T splits a
 Kubernetes audit capture by requestReceivedTimestamp: <label>-bootstrap (before T,
 the cluster's own install traffic) and <label>-workload (at or after T). Each row
 shows the rule's corpus budget; only a workload row over it is flagged and warned
@@ -344,9 +350,28 @@ def grown_actors(old, new):
             for a, n in new["actors"].items() if n > was.get(a, 0)]
 
 
+def extra_logsource(text, rules):
+    """The logsource that --extra-logsource names, as a slice logsource.
+
+    PRODUCT/NAME is written as the slice listing prints a slice: its service, else
+    its category. NAME is a service (kubernetes/audit, linux/auditd), unless no rule
+    in rules reads it as a service of PRODUCT and some rule reads it as a category
+    (linux/file_event: the node file-event rules name no service).
+    PRODUCT/category=NAME is always a category.
+    """
+    product, _, name = text.partition("/")
+    if name.startswith("category="):
+        return {"product": product, "category": name[len("category="):]}
+    as_service = {"product": product, "service": name}
+    as_category = {"product": product, "category": name}
+    if not any(reads(as_service, r["logsource"]) for r in rules) \
+            and any(reads(as_category, r["logsource"]) for r in rules):
+        return as_category
+    return as_service
+
+
 def load_extra(path, logsource, label):
-    """A live capture as a slice: JSONL raw events (or one JSON array)."""
-    product, _, service = logsource.partition("/")
+    """A live capture as a slice with this logsource: JSONL raw events (or one JSON array)."""
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
     try:
@@ -361,8 +386,7 @@ def load_extra(path, logsource, label):
                     raw.append(json.loads(line))
                 except json.JSONDecodeError:
                     continue
-    spec = {"id": label, "version": 0, "logsource": {"product": product, "service": service},
-            "fidelity": "recorded"}
+    spec = {"id": label, "version": 0, "logsource": dict(logsource), "fidelity": "recorded"}
     return benign_corpus.Slice(spec, path, raw)
 
 
@@ -454,7 +478,11 @@ def main():
                     help="fail when a rule in enforce mode exceeds its budget")
     ap.add_argument("--extra-slice", help="also score a live capture (JSONL), shadow only")
     ap.add_argument("--extra-logsource", default="kubernetes/audit",
-                    help="product/service of --extra-slice (default kubernetes/audit)")
+                    help="logsource of --extra-slice as the slice listing prints it: "
+                         "product/service, or product/category for a logsource with no "
+                         "service (linux/file_event); product/category=NAME is always a "
+                         "category (default kubernetes/audit). If no rule reads it, a "
+                         "warning says so")
     ap.add_argument("--extra-label", default="live-capture", help="name for --extra-slice")
     ap.add_argument("--extra-split-at", type=split_time, metavar="RFC3339",
                     help="split a kubernetes/audit --extra-slice at this RFC 3339 time (with "
@@ -491,9 +519,10 @@ def main():
             return 1
 
     rules = load_rules(args.rules or None)
+    every = load_rules() if args.rules else rules
     slices = benign_corpus.load_corpus()
     default, budgets, exempt = load_budgets()
-    unknown = sorted((set(budgets) | set(exempt)) - {r["key"] for r in load_rules()})
+    unknown = sorted((set(budgets) | set(exempt)) - {r["key"] for r in every})
     if unknown:
         print(f"ERROR: budgets.json names rule(s) that do not exist: {', '.join(unknown)}")
         return 1
@@ -575,8 +604,21 @@ def main():
     extra_parts = []  # [(part, compared, [(rule key, score, corpus budget, over it)])]
     split, untimed, empty, timed = args.extra_split_at, 0, {}, {}  # empty: {part: why}
     cut = "" if split is None else stamp(split)
+    unread = None  # why no scored rule reads the live capture
     if args.extra_slice:
-        extra = load_extra(args.extra_slice, args.extra_logsource, args.extra_label)
+        extra = load_extra(args.extra_slice, extra_logsource(args.extra_logsource, every),
+                           args.extra_label)
+        # A logsource that no rule reads scores nothing and lists no row, which looks
+        # like a clean capture. Say so, with the logsources that the rules do read.
+        if not any(reads(extra.logsource, r["logsource"]) for r in rules):
+            known = sorted({f"{r['logsource'].get('product')}/"
+                            f"{r['logsource'].get('service') or r['logsource'].get('category')}"
+                            for r in rules})
+            unread = (f"no scored rule reads --extra-logsource {args.extra_logsource}, so the "
+                      f"live capture {extra.id} scores nothing. The scored rules read: "
+                      f"{', '.join(known) or 'nothing'} (shadow)")
+            print(f"\nWARNING: {unread}")
+            annotate("warning", unread)
         parts = [(extra, False)]
         if split is not None:
             boot, work, untimed = split_extra(extra, split)
@@ -674,6 +716,8 @@ def main():
                          f"{', '.join(f'`{k}`' + ('' if k in exempt else ' (NOT EXEMPT)') for k in unscored)}\n")
             for part, compared, prows in extra_parts:
                 fh.write(f"\n### Live capture `{part.id}` (shadow)\n\n")
+                if unread:  # the same text as the log
+                    fh.write(f"**WARNING:** {unread}.\n\n")
                 if part.id in empty:  # the same cause and times as the text log
                     fh.write(f"**WARNING:** {empty[part.id]}.\n\n")
                 if split is not None and not compared:
