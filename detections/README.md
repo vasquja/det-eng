@@ -741,9 +741,10 @@ same pySigma backend as the auditd rules. Each MANIFEST entry carries one gate
 per procedure (and per variant), and the entry passes only when every gate
 matches a record of its own: A over WebSocket (`pods/exec`, verb `get`, code
 101) and A over SPDY (`pods/exec`, verb `create`, code 101), B (`pods/attach`,
-`container=app`, code 101), C (`pods/ephemeralcontainers`, code 200), D
-(`nodes/proxy`, verb `create`, the `/proxy/run/` path, code 200) and the two
-Procedure F reads (`nodes/proxy` get of `/runningpods/` and `/pods` by the
+`container=app`, code 101), the attach step of C (`pods/attach`,
+`container=trr9002-debug-attach`, code 101), C (`pods/ephemeralcontainers`, code
+200), D (`nodes/proxy`, verb `create`, the `/proxy/run/` path, code 200) and the
+two Procedure F reads (`nodes/proxy` get of `/runningpods/` and `/pods` by the
 `trr9002-node-reader` service account, code 200). With `--ledger`, a gate also
 needs its record inside the procedure's time window and the procedure to have
 exited as expected, which tells apart procedures of the same shape and fails a
@@ -788,9 +789,18 @@ The third, the file-event rule, is gated on the marked writer's manifest write
 (see [Node file-event sensor](#node-file-event-sensor-trr9003-strategy-3-trr9006-strategy-3)).
 Its emulation writes the same per-procedure ledger (`A`, `GAP`, `B`); with
 `--ledger` a CRI sandbox is bound to its window by `createdAt`, an audit event by
-`requestReceivedTimestamp`, and a node file event by `Timestamp`. It also exposes a `PROCEDURES` map for the coverage
-report. Procedure B stays a read-only demonstration with no telemetry, so it has
-no gate.
+`requestReceivedTimestamp`, and a node file event by `Timestamp`. It also exposes
+a `PROCEDURES` map for the coverage report. Procedure B runs live when
+`TRR9003_RECONFIGURE=1` (CI, on a worker node): it points the worker kubelet at a
+`staticPodURL` served from the runner on the kind bridge gateway, so the CRI and
+mirror-pod rules gate B too — the CRI rule on the URL static pod's
+`config.source=http` sandbox (`trr9003-url-<worker>` in `default`) and the
+mirror-pod rule on its mirror create by `system:node:<worker>` (the kubelet posts a
+mirror pod for a URL static pod, since `IsStaticPod` is true for any non-API
+source). B writes no manifest file, so the file-event rule does not gate it. The
+worker is `TRR9003_WORKER` (default `trr9003-worker`). Without the flag B stays a
+read-only demonstration with no telemetry: its ledger row says
+`"mode":"read-only"`, and a strict run misses B's gates and names the flag.
 
 ### Node runtime sensor (TRR9003 Strategy 1)
 
@@ -808,14 +818,16 @@ a scheduled pod).
   `annotations.kubernetes.io/config.source`, ...). A runtime security or EDR
   agent with container context reports these when a sandbox starts; map its
   field names to these.
-- **Lab sensor.** `k8s/cri-pod-sensor.sh` polls `crictl pods -o json` on the
-  node and appends one snapshot per line; the validator keeps each sandbox's
+- **Lab sensor.** `k8s/cri-pod-sensor.sh` polls `crictl pods -o json` on each
+  node (the control plane, and the worker where Procedure B runs; CI joins the two
+  logs) and appends one snapshot per line; the validator keeps each sandbox's
   first sighting. It is a stand-in for a real agent, good enough to prove the
   rule on real runtime data.
-- **Validation.** The CRI rule must match both the injected static pod and the
-  invalid-namespace pod, and must match none of the API-scheduled sandboxes in
-  the same log; the file-event rule must match the marked writer and none of
-  `kubeadm`'s control-plane manifest writes:
+- **Validation.** The CRI rule must match the injected static pod, the
+  invalid-namespace pod and, when Procedure B runs live, the URL static pod
+  (`config.source=http` on the worker), and must match none of the API-scheduled
+  sandboxes in the same log; the file-event rule must match the marked writer and
+  none of `kubeadm`'s control-plane manifest writes:
 
 ```
 python3 detections/validate_staticpod_detections.py \

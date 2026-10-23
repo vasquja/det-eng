@@ -11,14 +11,22 @@ Three rules are match-gated, one per sensor:
     It must match the emulation's injected static pod AND the invalid-namespace
     variant (`trr9003-ghost`), the pod that runs on the node while the API
     server stores no object for it. That second match is the gap this rule
-    closes.
+    closes. It must also match Procedure B's URL static pod on the worker node
+    (`trr9003-url-<worker>` in namespace default, `config.source: http`).
 
   * Strategy 2, the fallback — API server audit log:
         the kubelet registers a mirror pod -> the API server writes a
         `create pods` event by a node identity -> the audit rule matches it.
     It must match the injected pod's stored mirror pod (code 2xx) AND the
     invalid-namespace pod's mirror-create attempt, which the API server
-    refuses with 404 (namespace not found) but still audits.
+    refuses with 404 (namespace not found) but still audits. It must also
+    match Procedure B's stored mirror pod `trr9003-url-<worker>` (namespace
+    default), created by `system:node:<worker>`.
+
+The worker node name is TRR9003_WORKER (default trr9003-worker), as in
+atomics/T1543.005/src/emulate.sh. The B gates need the LIVE Procedure B
+(TRR9003_RECONFIGURE=1, which CI sets, on a cluster with a worker node): a
+read-only B makes no telemetry, so a strict run misses B, and the MISS says so.
 
 The CRI and audit rules also match the control-plane static pods every kubeadm
 node starts, by design (a documented false positive). So a match alone proves nothing about
@@ -65,13 +73,14 @@ Modes:
     ... --ledger PATH
         The emulation ledger (atomics/T1543.005/src/emulate.sh appends one JSON
         line per procedure to $DETENG_LEDGER: trr, procedure, start, end, exit,
-        expect; the invalid-namespace variant is procedure GAP). With it, a gate
-        also needs its record inside its procedure's [start, end] (an audit
-        event by requestReceivedTimestamp, a CRI sandbox by createdAt, a node
-        file event by Timestamp), and the
+        expect, and "mode": "read-only" for a read-only Procedure B; the
+        invalid-namespace variant is procedure GAP). With it, a gate also needs
+        its record inside its procedure's [start, end] (an audit event by
+        requestReceivedTimestamp, a CRI sandbox by createdAt, a node file event
+        by Timestamp), and the
         procedure's exit to equal its expect; a procedure with no row did not
-        run, and its gates fail. Without --ledger the gates use the record
-        fields only (local runs, old logs).
+        run, and its gates fail, as do the gates of a read-only row. Without
+        --ledger the gates use the record fields only (local runs, old logs).
 
     ... --expect-miss
         Negative control, for logs captured BEFORE the emulation ran: exit 1 if
@@ -97,7 +106,10 @@ event(s) the rule matched and why.
 The module-level PROCEDURES map gives, per (TRR, procedure letter), the rule
 files whose MANIFEST entry gates that procedure with a gate of its own
 (research/tools/coverage_report.py reads it). Procedure B is a read-only
-demonstration with no telemetry, so no gate and no PROCEDURES key names it.
+demonstration by default; with TRR9003_RECONFIGURE=1 (CI, on a worker node) it
+runs live, pointing the worker kubelet at a staticPodURL, so both rules also gate
+B: the CRI rule on the config.source=http sandbox trr9003-url-<worker> and the
+mirror-create rule on that pod's mirror create by system:node:<worker>.
 """
 
 import argparse
@@ -122,6 +134,17 @@ RULES_DIR = os.path.join(REPO, "detections", "sigma", "T1543.005")
 # The emulation's own static pod (Procedure A) and its evasion variant (the gap).
 INJECTED_PREFIX = "trr9003-static"
 GHOST_NAME = "trr9003-ghost"
+# Procedure B's live URL static pod (TRR9003_RECONFIGURE=1): the WORKER kubelet
+# fetches it from a staticPodURL, so its CRI sandbox carries config.source=http and
+# the kubelet names it (and its mirror pod) trr9003-url-<worker>, in namespace
+# default. The worker is the kind node container (TRR9003_WORKER, as emulate.sh).
+URL_PREFIX = "trr9003-url"
+WORKER = os.environ.get("TRR9003_WORKER") or "trr9003-worker"
+URL_POD = f"{URL_PREFIX}-{WORKER}"
+B_LIVE_HINT = ("Procedure B's gates need the LIVE run (TRR9003_RECONFIGURE=1 on a kind "
+               "cluster with a worker node, detections/k8s/kind-staticpod-cluster.yaml) on "
+               f"the worker that TRR9003_WORKER names (here {WORKER!r}); a read-only B "
+               "makes no telemetry")
 
 # Node file sensor (C2-7): Procedure A writes the manifest through a marked copy of
 # tee, so the Strategy 3 file-event rule has a live gate. The copy is in an
@@ -164,16 +187,25 @@ def _code_in(*codes):
     return gate
 
 
-def mark(*preds, window=None, procedure=None, time="requestReceivedTimestamp"):
+def _field_is(field, value):
+    def gate(e):
+        return e.get(field) == value
+    gate.describe = f"{field} == {value!r}"
+    return gate
+
+
+def mark(*preds, window=None, procedure=None, time="requestReceivedTimestamp", hint=None):
     """A gate for one procedure's own record: every predicate holds. `window` is
     the (TRR, procedure) key of its ledger row, `time` the record field the window
-    reads, and `procedure` the (TRR, letter) the gate proves (default: window)."""
+    reads, and `procedure` the (TRR, letter) the gate proves (default: window).
+    `hint` is printed under a MISS when no event carries the marker."""
     def gate(e):
         return all(p(e) for p in preds)
     gate.describe = " and ".join(p.describe for p in preds)
     gate.window = window
     gate.procedure = procedure or window
     gate.time_field = time
+    gate.hint = hint
     return gate
 
 
@@ -184,22 +216,30 @@ STORED = tuple(range(200, 300))  # a mirror pod the API server stored
 # invalid-namespace variant of Procedure A runs as its own ledger procedure (GAP).
 # The Strategy 3 file-event rule is gated on the node file-event sensor ('file').
 MANIFEST = [
-    ("k8s_cri_static_pod_start.yml", "cri", "A",
-     "kubelet starts a pod from a non-API source (Strategy 1 chokepoint; B is a "
-     "read-only demo with no telemetry)",
+    ("k8s_cri_static_pod_start.yml", "cri", "A/B",
+     "kubelet starts a pod from a non-API source (Strategy 1 chokepoint); A from a "
+     "file, B from a staticPodURL (config.source=http) when TRR9003_RECONFIGURE=1",
      [("injected static pod", mark(_starts("metadata.name", INJECTED_PREFIX),
                                    window=(TRR, "A"), time="createdAt")),
       ("invalid-namespace static pod (the audit-log gap)",
        mark(_starts("metadata.name", GHOST_NAME), window=(TRR, "GAP"),
-            procedure=(TRR, "A"), time="createdAt"))]),
-    ("k8s_static_pod_mirror_create.yml", "audit", "A",
-     "mirror pod create by a node identity (Strategy 2 fallback; B is a read-only "
-     "demo with no telemetry)",
+            procedure=(TRR, "A"), time="createdAt")),
+      ("URL static pod, config.source=http (Procedure B)",
+       mark(_field_is("metadata.name", URL_POD), _field_is("metadata.namespace", "default"),
+            _field_is(CONFIG_SOURCE, "http"), window=(TRR, "B"), time="createdAt",
+            hint=B_LIVE_HINT))]),
+    ("k8s_static_pod_mirror_create.yml", "audit", "A/B",
+     "mirror pod create by a node identity (Strategy 2 fallback); the kubelet posts "
+     "a mirror pod for a URL static pod too (IsStaticPod is true for any non-API source)",
      [("injected static pod", mark(_starts("objectRef.name", INJECTED_PREFIX),
                                    _code_in(*STORED), window=(TRR, "A"))),
       ("invalid-namespace mirror-create attempt (refused, 404)",
        mark(_starts("objectRef.name", GHOST_NAME), _code_in(404), window=(TRR, "GAP"),
-            procedure=(TRR, "A")))]),
+            procedure=(TRR, "A"))),
+      ("URL static pod mirror create (Procedure B)",
+       mark(_field_is("objectRef.name", URL_POD), _field_is("objectRef.namespace", "default"),
+            _field_is("user.username", f"system:node:{WORKER}"), _code_in(*STORED),
+            window=(TRR, "B"), hint=B_LIVE_HINT))]),
     # Strategy 3, the node file sensor (C2-7): auditd watches the kubelet static-pod
     # directory with write permission; Procedure A drops its manifest through the
     # marked copy TEE_IMAGE, so the file-event rule fires on that write and the gate
@@ -207,8 +247,8 @@ MANIFEST = [
     # filter_install excludes; the file control checks that). The window field is
     # the event's audit time (auditd_file_events.py emits `Timestamp`, UTC).
     ("linux_static_pod_manifest_write.yml", "file", "A",
-     "static-pod manifest write on the node (Strategy 3 file-event rule; B is a "
-     "read-only demo with no telemetry)",
+     "static-pod manifest write on the node (Strategy 3 file-event rule; Procedure B "
+     "serves its manifest over HTTP and writes no manifest file)",
      [("marked writer drops the injected manifest",
        mark(_eq("Image", TEE_IMAGE), _starts("TargetFilename", INJECTED_MANIFEST),
             window=(TRR, "A"), time="Timestamp"))]),
@@ -310,6 +350,8 @@ def classify(name):
         return "injected"
     if name.startswith(GHOST_NAME):
         return "ghost"
+    if name.startswith(URL_PREFIX):
+        return "url"
     if name.startswith(CONTROL_PLANE_PREFIXES):
         return "baseline"
     return "other"
@@ -319,7 +361,7 @@ def report_audit(events):
     """Separate the emulation's mirror-pod creates from the control-plane baseline."""
     created = node_created_pods(events)
     kinds = {k: [p for p in created if classify(p[0]) == k]
-             for k in ("baseline", "injected", "ghost", "other")}
+             for k in ("baseline", "injected", "ghost", "url", "other")}
     print(f"\nAudit log — node-created pods (mirror-pod creates) seen: {len(created)}")
     if kinds["baseline"]:
         print(f"  baseline (control-plane static pods): "
@@ -328,6 +370,8 @@ def report_audit(events):
         print(f"  INJECTED (Procedure A): {name} in ns={ns} by {user} (code={code})")
     if not kinds["injected"]:
         print("  note: no 'trr9003-static-*' mirror pod seen.")
+    for name, ns, user, code in kinds["url"]:
+        print(f"  URL static pod (Procedure B): {name} in ns={ns} by {user} (code={code})")
     if kinds["other"]:
         print(f"  other node-created pods (triage): "
               f"{', '.join(sorted(p[0] or '?' for p in kinds['other']))}")
@@ -355,6 +399,7 @@ def report_cri(sandboxes, cri_hits):
     for kind, label in (("baseline", "baseline (control-plane static pods)"),
                         ("injected", "INJECTED (Procedure A)"),
                         ("ghost", "EVASION (invalid namespace, no API object)"),
+                        ("url", "URL static pod (Procedure B, config.source=http)"),
                         ("other", "other static pods (triage)")):
         names = sorted({f"{s.get('metadata.name')} in ns={s.get('metadata.namespace')}"
                         for s in static if classify(s.get("metadata.name")) == kind})
@@ -467,6 +512,8 @@ def explain_gated_miss(rule_path, events, gate, matched):
     else:
         lines.append("NO event carries the marker: the emulation may not have run (or not "
                      "on the node the sensor watches), or it named the pod differently")
+        if getattr(gate, "hint", None):
+            lines.append(gate.hint)
         candidates = [i for i, e in enumerate(events) if any(TAG in str(v) for v in e.values())]
         where = f"the event(s) mentioning {TAG!r}"
         hit = {id(e) for e in matched}
@@ -577,6 +624,7 @@ def write_json(path, report):
 # appends one JSON line per procedure:
 #   {"trr": "TRR9003", "procedure": "A", "start": "...Z", "end": "...Z",
 #    "exit": 0, "expect": 0}
+# plus "mode": "read-only" on a read-only Procedure B row (its gates then fail).
 # start and end are UTC ISO 8601 with microseconds. The kind node is a container
 # on the runner, so the audit timestamps, the CRI createdAt and the ledger read
 # the same kernel clock.
@@ -645,7 +693,8 @@ def load_ledger(path):
                 continue
             rows[_ledger_key(row.get("trr"), row.get("procedure"))] = {
                 "start": _ts(row.get("start")), "end": _ts(row.get("end")),
-                "exit": row.get("exit"), "expect": row.get("expect", 0)}
+                "exit": row.get("exit"), "expect": row.get("expect", 0),
+                "mode": row.get("mode")}
     return rows, problems
 
 
@@ -665,6 +714,10 @@ def ledger_state(ledger, key):
         return False, "the ledger row has no readable start or end"
     if not _same_int(row["exit"], row["expect"]):
         return False, f"the procedure exited {row['exit']}, expected {row['expect']}"
+    if row.get("mode") == "read-only":
+        return False, ("the procedure ran read-only (TRR9003_RECONFIGURE unset), so it made "
+                       "no telemetry; a strict run needs the live B: TRR9003_RECONFIGURE=1 "
+                       "on a kind cluster with a worker node")
     return True, f"window [{_iso(row['start'])}, {_iso(row['end'])}]"
 
 
@@ -687,6 +740,7 @@ def windowed(gate, ledger):
     bound.window = key
     bound.procedure = getattr(gate, "procedure", key)
     bound.ledger = state
+    bound.hint = getattr(gate, "hint", None)
     return bound
 
 

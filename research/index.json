@@ -71,7 +71,7 @@
         "F": "Kubelet pod read or checkpoint through the node proxy"
       },
       "pub_date": "2026-10-06",
-      "last_update": "2026-10-21",
+      "last_update": "2026-10-23",
       "path": "trr9002/k8s/README.md",
       "tests": {
         "A": {
@@ -121,7 +121,7 @@
         "B": "Reconfigure the kubelet static source"
       },
       "pub_date": "2026-10-08",
-      "last_update": "2026-10-08",
+      "last_update": "2026-10-23",
       "path": "trr9003/k8s/README.md",
       "tests": {
         "A": {
@@ -129,7 +129,7 @@
           "url": "../atomics/T1543.005/src/emulate.sh"
         },
         "B": {
-          "text": "det-eng kubelet static-source reconfiguration (read-only demonstration)",
+          "text": "det-eng kubelet staticPodURL reconfiguration on a worker node (live in CI with TRR9003_RECONFIGURE=1; read-only by default)",
           "url": "../atomics/T1543.005/src/emulate.sh"
         }
       }
@@ -160,11 +160,11 @@
         "G": "Write a sensitive (non-wildcard) role: exec, token, cluster-wide secret reads"
       },
       "pub_date": "2026-10-12",
-      "last_update": "2026-10-20",
+      "last_update": "2026-10-23",
       "path": "trr9004/k8s/README.md",
       "tests": {
         "A": {
-          "text": "det-eng ClusterRoleBinding behavioral emulation (binds read-only view)",
+          "text": "det-eng ClusterRoleBinding behavioral emulation (binds read-only view; plus an inert edit binding to a nonexistent user, deleted at once)",
           "url": "../atomics/T1098.006/src/emulate.sh"
         },
         "B": {

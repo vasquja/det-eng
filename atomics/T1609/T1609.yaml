@@ -65,10 +65,17 @@ atomic_tests:
     description: |
       Adds an ephemeral debug container to the running target pod with
       `kubectl debug`, then runs `id` in it. Produces an audit event with
-      objectRef.subresource=ephemeralcontainers (verb patch/update).
+      objectRef.subresource=ephemeralcontainers (verb patch/update). Then adds a
+      second debug container (`trr9002-debug-attach`) with `--attach=true`, which
+      opens pods/attach to it (the attach step of Strategy 1). The attach keeps
+      the container alive with `id; sleep 15` so it connects before the container
+      exits, and the test fails when kubectl did not attach (kubectl debug then
+      reads the container log and still exits 0).
 
-      Detection: objectRef.resource=pods, subresource=ephemeralcontainers.
-      Rule: detections/sigma/T1609/k8s_pod_ephemeral_container.yml
+      Detection: the first write is objectRef.resource=pods,
+      subresource=ephemeralcontainers; the attach is subresource=attach (code
+      101). Rules: detections/sigma/T1609/k8s_pod_ephemeral_container.yml and
+      detections/sigma/T1609/k8s_pod_exec_attach.yml.
     supported_platforms:
       - containers
     executor:

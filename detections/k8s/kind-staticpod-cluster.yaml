@@ -5,10 +5,12 @@
 # (https://kind.sigs.k8s.io/docs/user/auditing/): it mounts the audit policy into
 # the control-plane node and passes the two audit flags to the API server.
 #
-# A single control-plane node is both control plane and worker here. It is enough:
-# the node already runs its control plane as static pods (kubeadm writes them to
-# /etc/kubernetes/manifests), so the static-pod mechanism is present, and the
-# emulation writes one more manifest to the same directory.
+# The control-plane node runs its control plane as static pods (kubeadm writes
+# them to /etc/kubernetes/manifests), so the static-pod mechanism is present:
+# Procedure A writes one more manifest to that directory on the control-plane node.
+# A worker node is added for Procedure B's LIVE path (TRR9003_RECONFIGURE=1): B
+# reconfigures the kubelet static source (staticPodURL) and restarts the kubelet,
+# which would wedge the control plane if it ran there, so B runs on the worker.
 #
 # Create it (from the repo root, so the relative extraMounts path resolves):
 #
@@ -61,3 +63,7 @@ nodes:
       - hostPath: /tmp/trr9003-manifests
         containerPath: /etc/kubernetes/manifests
         readOnly: false
+  # A worker node for Procedure B's live staticPodURL reconfiguration (the kubelet
+  # restart stays off the control plane). B runs on it only when CI sets
+  # TRR9003_RECONFIGURE=1; otherwise the worker is idle.
+  - role: worker

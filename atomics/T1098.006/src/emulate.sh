@@ -8,11 +8,40 @@
 # emulation's OWN events and a pre-emulation baseline (the many bootstrap/reconcile
 # RBAC writes a kubeadm cluster makes) cannot.
 #
-# SAFETY: every binding points at the READ-ONLY built-in `view` ClusterRole, so
-# nothing gains write power. The one wildcard role (Procedure C, trr9004-cr-wild)
-# is NEVER bound to any subject, so it grants nothing -- it exists only to emit
-# the "dangerous rule" telemetry. The group binding (Procedure D) uses a throwaway
-# group `trr9004-nogroup` that no principal belongs to, not system:authenticated.
+# SAFETY: the main binding of each procedure points at the READ-ONLY built-in
+# `view` ClusterRole, so nothing gains write power. The one wildcard role
+# (Procedure C, trr9004-cr-wild) is NEVER bound to any subject, so it grants
+# nothing -- it exists only to emit the "dangerous rule" telemetry. The group
+# binding (Procedure D) uses a throwaway group `trr9004-nogroup` that no principal
+# belongs to, not system:authenticated.
+#
+# Each of A, B, D and E ALSO makes one inert "graded" object, so the severity rule
+# k8s_rbac_privileged_grant is proven live, not only by its sidecar cases. Each
+# graded binding and graded role is created and then DELETED AT ONCE, by the next
+# kubectl call, with a checked delete: a failed delete fails the procedure and is
+# logged (cleanup deletes them again). So each exists for about one kubectl call
+# (well under a second in CI). What is bound, to whom, and why it is inert:
+#   A-sev: ClusterRoleBinding trr9004-crb-admin: the built-in `edit` ClusterRole,
+#          cluster-wide, to the user `trr9004-nouser`. No credential for that user
+#          exists on kind, so no principal authenticates as it; a principal that
+#          may impersonate users (cluster-admin on kind) could act as it only while
+#          the binding exists.
+#   B-sev: RoleBinding trr9004-rb-edit: `edit` to `trr9004-nouser`, only in the
+#          throwaway namespace `trr9004-sev`, which holds nothing else (the
+#          namespace is created here and removed in cleanup).
+#   D-sev: ClusterRoleBinding trr9004-crb-sev-grp: an EMPTY ClusterRole
+#          (trr9004-cr-empty, no rules) to the group
+#          `system:serviceaccounts:trr9004-none`. No namespace trr9004-none exists,
+#          so no service account is in that group, and an empty role grants nothing
+#          even to a member. The binding, then the empty role, are deleted at once.
+#   E-sev: a JSON patch that adds `impersonate` on users to the ClusterRole
+#          trr9004-cr-esc. That role is never bound to any subject, so the rule it
+#          carries grants nothing; the role is deleted at once.
+# `edit` (not cluster-admin) is the least privileged role the grader grades, so
+# A-sev and B-sev use it. The atomic runs against whatever cluster kubectl points
+# at, not only kind: run it only where `trr9004-nouser`, `trr9004-sev` and
+# `trr9004-none` are throwaway names.
+#
 # The sensitive-grant roles (Procedure G) are NEVER bound either. The aws-auth
 # procedure (F) FAILS CLOSED: it writes only after it reads kube-system/aws-auth and
 # sees that it is absent (or a leftover that is exactly what this emulation writes).
@@ -132,11 +161,18 @@ aws_auth_delete_own() {
   return 1
 }
 
+# A throwaway namespace for B-sev's RoleBinding (created on demand, removed in cleanup).
+SEV_NS="trr9004-sev"
+
 cleanup() {
   log "cleanup: removing every trr9004- RBAC object and the service account"
-  kubectl delete clusterrolebinding trr9004-crb-view trr9004-crb-grp --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete clusterrolebinding trr9004-crb-view trr9004-crb-grp \
+    trr9004-crb-admin trr9004-crb-sev-grp --ignore-not-found >/dev/null 2>&1 || true
   kubectl -n "$NS" delete rolebinding trr9004-rb-view --ignore-not-found >/dev/null 2>&1 || true
-  kubectl delete clusterrole trr9004-cr-benign trr9004-cr-wild trr9004-cr-secrets --ignore-not-found >/dev/null 2>&1 || true
+  kubectl -n "$SEV_NS" delete rolebinding trr9004-rb-edit --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete namespace "$SEV_NS" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete clusterrole trr9004-cr-benign trr9004-cr-wild trr9004-cr-secrets \
+    trr9004-cr-empty trr9004-cr-esc --ignore-not-found >/dev/null 2>&1 || true
   kubectl -n "$NS" delete role trr9004-role-exec trr9004-role-token --ignore-not-found >/dev/null 2>&1 || true
   kubectl -n "$NS" delete serviceaccount "$SA" --ignore-not-found >/dev/null 2>&1 || true
   # The aws-auth ConfigMap, but ONLY while it is exactly this emulation's own object
@@ -151,11 +187,18 @@ ensure_sa() {
 
 # Procedure A — ClusterRoleBinding to a built-in ClusterRole (cluster-wide grant).
 # Binds the READ-ONLY `view` role (an attacker would name cluster-admin here).
+# A-sev then makes one inert graded binding so k8s_rbac_privileged_grant is proven
+# live (see the SAFETY header): `edit` (the least privileged graded role) to the
+# nonexistent user trr9004-nouser, removed at once.
 procedure_a() {
   ensure_sa || return
   log "A: create clusterrolebinding trr9004-crb-view -> ClusterRole/view (read-only)"
   must kubectl create clusterrolebinding trr9004-crb-view \
-    --clusterrole=view --serviceaccount="${NS}:${SA}"
+    --clusterrole=view --serviceaccount="${NS}:${SA}" || return
+  log "A-sev: create clusterrolebinding trr9004-crb-admin -> ClusterRole/edit, user trr9004-nouser (inert, deleted at once)"
+  must kubectl create clusterrolebinding trr9004-crb-admin \
+    --clusterrole=edit --user=trr9004-nouser || return
+  must kubectl delete clusterrolebinding trr9004-crb-admin || return
 }
 
 # Procedure B — namespaced RoleBinding whose roleRef is a ClusterRole.
@@ -165,7 +208,14 @@ procedure_b() {
   ensure_sa || return
   log "B: create rolebinding trr9004-rb-view -n ${NS} -> ClusterRole/view"
   must kubectl -n "$NS" create rolebinding trr9004-rb-view \
-    --clusterrole=view --serviceaccount="${NS}:${SA}"
+    --clusterrole=view --serviceaccount="${NS}:${SA}" || return
+  # B-sev: an inert namespaced binding of `edit` to the nonexistent user, in a
+  # throwaway namespace, removed at once (the namespace is removed in cleanup).
+  log "B-sev: create namespace ${SEV_NS} and rolebinding trr9004-rb-edit -> ClusterRole/edit, user trr9004-nouser (inert, deleted at once)"
+  kubectl get namespace "$SEV_NS" >/dev/null 2>&1 || must kubectl create namespace "$SEV_NS" || return
+  must kubectl -n "$SEV_NS" create rolebinding trr9004-rb-edit \
+    --clusterrole=edit --user=trr9004-nouser || return
+  must kubectl -n "$SEV_NS" delete rolebinding trr9004-rb-edit || return
 }
 
 # Procedure C — write roles. A benign read-only role (used by Procedure E's patch)
@@ -187,7 +237,25 @@ procedure_c() {
 procedure_d() {
   log "D: create clusterrolebinding trr9004-crb-grp -> view, group=trr9004-nogroup"
   must kubectl create clusterrolebinding trr9004-crb-grp \
-    --clusterrole=view --group=trr9004-nogroup
+    --clusterrole=view --group=trr9004-nogroup || return
+  # D-sev: the mass-grant SHAPE, made inert. An EMPTY ClusterRole (no rules) bound
+  # to the group system:serviceaccounts:trr9004-none (a namespace with no service
+  # accounts). The grader fires on the group subject of the binding create; the
+  # empty role grants nothing. Both are deleted at once (the binding, then the role)
+  # and again in cleanup.
+  log "D-sev: create empty ClusterRole trr9004-cr-empty (no rules)"
+  must kubectl create -f - <<'EOF' || return
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: trr9004-cr-empty
+rules: []
+EOF
+  log "D-sev: bind trr9004-cr-empty to group system:serviceaccounts:trr9004-none (inert, deleted at once)"
+  must kubectl create clusterrolebinding trr9004-crb-sev-grp \
+    --clusterrole=trr9004-cr-empty --group=system:serviceaccounts:trr9004-none || return
+  must kubectl delete clusterrolebinding trr9004-crb-sev-grp || return
+  must kubectl delete clusterrole trr9004-cr-empty || return
 }
 
 # Procedure E — patch an existing role to add a rule (verb=patch, not create).
@@ -197,7 +265,18 @@ procedure_e() {
   kubectl get clusterrole trr9004-cr-benign >/dev/null 2>&1 || procedure_c || return
   log "E: patch clusterrole trr9004-cr-benign to append a read rule (verb=patch)"
   must kubectl patch clusterrole trr9004-cr-benign --type=json \
-    -p='[{"op":"add","path":"/rules/-","value":{"apiGroups":[""],"resources":["configmaps"],"verbs":["get"]}}]'
+    -p='[{"op":"add","path":"/rules/-","value":{"apiGroups":[""],"resources":["configmaps"],"verbs":["get"]}}]' || return
+  # E-sev: the escalation-via-patch SHAPE, made inert. Create an UNBOUND benign
+  # ClusterRole, then a JSON patch adds `impersonate` on users to it. The grader
+  # fires on the patch (its JSON-patch /rules branch sees "impersonate"); the role
+  # is never bound, so it grants nothing. Removed at once (and again in cleanup).
+  log "E-sev: create unbound ClusterRole trr9004-cr-esc (benign read rule)"
+  must kubectl create clusterrole trr9004-cr-esc \
+    --verb=get --resource=configmaps || return
+  log "E-sev: JSON-patch trr9004-cr-esc to add impersonate on users (inert; role is unbound, deleted at once)"
+  must kubectl patch clusterrole trr9004-cr-esc --type=json \
+    -p='[{"op":"add","path":"/rules/-","value":{"apiGroups":[""],"resources":["users"],"verbs":["impersonate"]}}]' || return
+  must kubectl delete clusterrole trr9004-cr-esc || return
 }
 
 # Procedure F — write the EKS aws-auth ConfigMap (create, patch, delete).

@@ -270,6 +270,8 @@ jobs:
 
       - name: Emulate T1609 procedures (benign)
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        # A bound for a hung kubectl (emulate.sh also bounds its kubectl debug --attach).
+        timeout-minutes: 15
         shell: bash
         env:
           # Procedure E runs its kubelet call inside this node container.

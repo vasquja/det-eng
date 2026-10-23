@@ -578,17 +578,30 @@ with an Atomic Red Team wrapper in
 
 | Procedure | Test | Status |
 |-----------|------|--------|
-| TRR9004.K8S.A | `emulate.sh a` — bind a throwaway service account to the read-only `view` ClusterRole. | **built** |
-| TRR9004.K8S.B | `emulate.sh b` — a namespaced RoleBinding whose `roleRef` is the `view` ClusterRole. | **built** |
+| TRR9004.K8S.A | `emulate.sh a` — bind a throwaway service account to the read-only `view` ClusterRole; then A-sev: an inert `edit` binding to the nonexistent user `trr9004-nouser`, deleted at once, so the high-severity grader is proven live. | **built** |
+| TRR9004.K8S.B | `emulate.sh b` — a namespaced RoleBinding whose `roleRef` is the `view` ClusterRole; then B-sev: an inert `edit` RoleBinding to `trr9004-nouser` in a throwaway namespace `trr9004-sev`; the binding is deleted at once, the namespace in cleanup. | **built** |
 | TRR9004.K8S.C | `emulate.sh c` — create a read-only role and a wildcard role that is never bound. | **built** |
-| TRR9004.K8S.D | `emulate.sh d` — bind the `view` role to a throwaway group (the mass-grant shape). | **built** |
-| TRR9004.K8S.E | `emulate.sh e` — patch the benign role to add a rule (`verb: patch`). | **built** |
+| TRR9004.K8S.D | `emulate.sh d` — bind the `view` role to a throwaway group (the mass-grant shape); then D-sev: an empty ClusterRole bound to the group `system:serviceaccounts:trr9004-none` (no such namespace, no rules); the binding, then the role, are deleted at once. | **built** |
+| TRR9004.K8S.E | `emulate.sh e` — patch the benign role to add a rule (`verb: patch`); then E-sev: a JSON patch that adds `impersonate` on users to an unbound ClusterRole `trr9004-cr-esc`, deleted at once. | **built** |
 | TRR9004.K8S.F | `emulate.sh f` — create, patch and delete the EKS aws-auth ConfigMap with a `trr9004` sentinel; it touches only an aws-auth it wrote (it skips when the object exists without being exactly its own, fails without a write when it cannot read the object, and removes only a leftover that is exactly what it writes); a refused create, patch or delete fails it. | **built** |
 | TRR9004.K8S.G | `emulate.sh g` — create `trr9004-cr-secrets` (secrets get/list), `trr9004-role-exec` (create pods/exec) and `trr9004-role-token` (create serviceaccounts/token), none bound. | **built** |
 
-Every binding points at the read-only `view` role, the wildcard role is never
-bound, the group binding uses a throwaway group `trr9004-nogroup` that no
-principal belongs to, the sensitive roles (Procedure G) are never bound, and the
+The main binding of each procedure points at the read-only `view` role, the
+wildcard role is never bound, the group binding uses a throwaway group
+`trr9004-nogroup` that no principal belongs to. Procedures A, B, D and E each also
+make ONE inert graded object so the high-severity grader is proven live, not only
+by its sidecar cases: a binding of the least privileged graded role `edit` (never
+`cluster-admin`) to the nonexistent user `trr9004-nouser` (A-sev, B-sev), an empty
+ClusterRole bound to the group `system:serviceaccounts:trr9004-none` (D-sev), and
+a JSON patch adding `impersonate` to an unbound role (E-sev). Each graded binding
+and graded role is deleted at once by the next `kubectl` call (a failed delete fails
+the procedure) and again in cleanup; the throwaway namespace `trr9004-sev` is
+removed in cleanup. No credential exists for the user `trr9004-nouser`, no
+namespace `trr9004-none` exists (so no service account is in its group), and the
+roles are empty or unbound. So no principal that authenticates gains anything; a
+principal that may impersonate users (cluster-admin on kind) could act as
+`trr9004-nouser` only while its binding exists. The sensitive roles (Procedure G) are
+never bound, and the
 aws-auth procedure (F) touches only an aws-auth it wrote: it skips when the object
 exists without being exactly its own, fails without a write when it cannot read the
 object, and removes only a leftover that is exactly what it writes. Its patch carries the create's
@@ -618,6 +631,12 @@ sentinel the emulation writes into the body). The workflow
 runs the whole loop on a `kind` cluster for every change to these files, and runs
 the validator as a negative control on the audit log captured *before* the
 emulation (where the many bootstrap RBAC writes must not make any rule pass).
+The high-severity rule (Strategy 2) has five gates, each inside its procedure's
+ledger window: the wildcard role (C), the two `edit` bindings to `trr9004-nouser`
+(A-sev, B-sev), the group-subject binding (D-sev) and the JSON patch that adds
+`impersonate` (E-sev). Its other branches (a `nodes/proxy` rule, a JSON patch of
+`/subjects`, a write to a built-in cluster-admin binding) and its
+aggregation-controller filter are proven by its sidecar cases only.
 
 Upstream: the SigmaHQ rule `kubernetes_audit_rolebinding_modification.yml`
 matches bindings only (not role writes, procedure C), does not inspect

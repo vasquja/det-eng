@@ -636,7 +636,7 @@ double alert is intended, because such a request is itself anomalous.
 |-----------|-----------|-----|
 | A | Strategy 1 (chokepoint) | `pods/exec` audit event, any verb |
 | B | Strategy 1 (chokepoint) | `pods/attach` audit event, any verb |
-| C | Strategy 2 (fallback); Strategy 1 if it attaches | `pods/ephemeralcontainers` audit event |
+| C | Strategy 2 (fallback); Strategy 1 (attach step) | `pods/ephemeralcontainers` audit event; `pods/attach` when it attaches |
 | D | Strategy 3 (fallback); Strategy 4 confirms | `nodes/proxy` audit event with an exec path |
 | E | Strategy 4 (fallback); network fallback | node runtime event with no audit event |
 | F | Strategy 5 (fallback) | `nodes/proxy` audit event with a `/pods`, `/runningpods`, or `/checkpoint` path |
@@ -662,7 +662,7 @@ Atomic Red Team wrapper in
 |----|------|--------|
 | TRR9002.K8S.A | `emulate.sh a` — `kubectl exec` with `id`, once over WebSocket and once over SPDY. Confirms the audit log shows `verb: get` and `verb: create`. | **built** |
 | TRR9002.K8S.B | `emulate.sh b` — attach to the target pod with `kubectl attach` (no `-i`), hold the stream for 2 s, then stop it. The target container has `tty: false`: the kubelet takes the attach TTY setting from the container spec, and the runtime refuses a TTY attach that also asks for stderr. | **built** |
-| TRR9002.K8S.C | `emulate.sh c` — add an ephemeral container with `kubectl debug`. | **built** |
+| TRR9002.K8S.C | `emulate.sh c` — add an ephemeral container with `kubectl debug` (no attach), then add a second debug container (`trr9002-debug-attach`) with `--attach=true`, which opens `pods/attach` to it. The attach container runs `id; sleep 15` so it stays up until the attach connects; the test fails when kubectl did not attach (kubectl debug then reads the container log instead and still exits 0). | **built** |
 | TRR9002.K8S.D | `emulate.sh d` — run `id` through `nodes/proxy` with a POST to the kubelet `/run` endpoint (`kubectl create --raw`); checks the output holds `uid=`. | **built** |
 | TRR9002.K8S.E | `emulate.sh e` — call the kubelet directly (read-only), from inside the control-plane node. The call checks the kubelet's self-signed serving certificate against its own CA (`/var/lib/kubelet/pki/kubelet.crt`) by the node name, and fails on a TLS error or a non-2xx answer. Shows the API server records no event. | **built** |
 | TRR9002.K8S.F | `emulate.sh f` — read the kubelet `/runningpods/` and `/pods` endpoints through `nodes/proxy` as a service account (`trr9002-node-reader`) that holds only `get` on `nodes/proxy`. Does not call `/checkpoint` live. | **built** |
@@ -685,9 +685,10 @@ rule above fires on the emulation's own records. Each procedure has its own gate
 and a rule's entry passes only when every procedure it serves has a record of its
 own: A over WebSocket (`pods/exec`, verb `get`, code 101) and A over SPDY
 (`pods/exec`, verb `create`, code 101), B (`pods/attach` on the target,
-`container=app`, code 101), C (`pods/ephemeralcontainers` on the target, code
-200), D (`nodes/proxy`, verb `create`, the `/proxy/run/<ns>/<pod>/` path, code
-200) and the two Procedure F reads (`nodes/proxy` get of the kubelet
+`container=app`, code 101), the attach step of C (`pods/attach` on the target,
+`container=trr9002-debug-attach`, code 101), C (`pods/ephemeralcontainers` on the
+target, code 200), D (`nodes/proxy`, verb `create`, the `/proxy/run/<ns>/<pod>/`
+path, code 200) and the two Procedure F reads (`nodes/proxy` get of the kubelet
 `/runningpods/` and `/pods` by the `trr9002-node-reader` service account, code
 200). The two exec gates make the TRR's key finding — exec recorded as both
 `verb: get` (WebSocket) and `verb: create` (SPDY) — a pass/fail check, not just a

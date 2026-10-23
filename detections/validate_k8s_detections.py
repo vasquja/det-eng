@@ -19,6 +19,8 @@ record of its own:
     A websocket   pods/exec on the target pod, verb get, code 101
     A spdy        pods/exec on the target pod, verb create, code 101
     B attach      pods/attach on the target pod, container=app, code 101
+    C attach      pods/attach on the target pod, container=trr9002-debug-attach
+                  (the attach step of kubectl debug --attach=true), code 101
     C             pods/ephemeralcontainers on the target pod, code 200
     D             nodes/proxy, verb create (POST), requestURI holds
                   /proxy/run/<namespace>/<target pod>/, code 200
@@ -31,7 +33,10 @@ stamps 101 when it hijacks the connection for the protocol switch, even when
 the kubelet then refuses the stream (apiserver endpoints/filters/audit.go,
 Hijack; apimachinery util/proxy/upgradeaware.go forwards a kubelet error after
 the hijack). So the code shows that the API server authorized and proxied the
-request; the emulation ledger (--ledger) shows that the client got its answer.
+request; the emulation ledger (--ledger) shows that the client got its answer:
+emulate.sh b holds the attach stream and fails when kubectl exits before the
+hold, and emulate.sh c fails when kubectl debug did not attach (it prints no
+"If you don't see a command prompt" line, or it falls back to streaming logs).
 
 Modes:
     python3 detections/validate_k8s_detections.py --dry-run
@@ -163,14 +168,17 @@ def rec(resource, sub, verb=None, name=None, uri=None, user=None, code=(200,), w
 # per procedure (label, gate): EVERY gate needs a record of its own. Order is the
 # report order. A streaming request (exec, attach) is recorded with code 101.
 MANIFEST = [
-    ("k8s_pod_exec_attach.yml", "A/B",
+    ("k8s_pod_exec_attach.yml", "A/B/C",
      "exec or attach through the API server (chokepoint)", [
          ("A websocket", rec("pods", "exec", verb="get", name=TARGET_POD, code=(101,),
                              window=(TRR, "A"))),
          ("A spdy", rec("pods", "exec", verb="create", name=TARGET_POD, code=(101,),
                         window=(TRR, "A"))),
          ("B attach", rec("pods", "attach", name=TARGET_POD, uri=f"container={CONTAINER}",
-                          code=(101,), window=(TRR, "B")))]),
+                          code=(101,), window=(TRR, "B"))),
+         ("C attach", rec("pods", "attach", name=TARGET_POD,
+                          uri="container=trr9002-debug-attach", code=(101,),
+                          window=(TRR, "C")))]),
     ("k8s_pod_ephemeral_container.yml", "C",
      "ephemeral debug container", [
          ("C", rec("pods", "ephemeralcontainers", name=TARGET_POD, code=(200,),

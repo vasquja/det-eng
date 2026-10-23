@@ -7,6 +7,8 @@ display_name: "Create or Modify System Process: Container Service (Kubernetes St
 # Each test runs a HARMLESS busybox pod (it only sleeps) and removes the manifest
 # it wrote. These need a reachable kind cluster whose node runs as a Docker
 # container, with audit logging on (see detections/k8s/kind-staticpod-cluster.yaml).
+# Test B's live mode (reconfigure=1) also needs the worker node that config adds,
+# and restores the worker kubelet config it changes.
 
 atomic_tests:
   - name: "TRR9003.K8S.A — drop a static pod manifest on a node"
@@ -72,30 +74,51 @@ atomic_tests:
         type: string
         default: PathToAtomicsFolder/T1543.005/src
 
-  - name: "TRR9003.K8S.B — reconfigure the kubelet static source (read-only)"
+  - name: "TRR9003.K8S.B — reconfigure the kubelet static source (read-only by default)"
     auto_generated_guid: 2af0d8ba-efcf-46fb-bc62-b0855dea9a04
     description: |
-      Read-only demonstration of the kubelet static-source configuration
-      (staticPodPath / staticPodURL) and the watched manifest directory. An
-      attacker with write access to the kubelet config would point it at an
-      attacker directory or URL and restart the kubelet. This test does NOT
-      restart the kubelet, to keep the single-node lab stable — the same
-      safe-demonstration approach as TRR9002 Procedure E. The resulting pod start
-      is the same chokepoint as Procedure A (config.source file/http).
+      Two modes. By default (reconfigure=0) a read-only demonstration: it shows
+      the kubelet static-source configuration (staticPodPath / staticPodURL) and
+      the watched manifest directory, and does NOT restart the kubelet -- the same
+      safe-demonstration approach as TRR9002 Procedure E. It makes no telemetry,
+      and its ledger row says "mode":"read-only".
 
-      Detection: node config + flow telemetry; see TRR9003 Detection Strategy 4.
-      Rule: none (audit-log layer).
+      With reconfigure=1 (CI sets TRR9003_RECONFIGURE=1) it runs live on a kind
+      cluster with a worker node (detections/k8s/kind-staticpod-cluster.yaml). It
+      serves static-pod-url.yaml (a sleep-only busybox pod, trr9003-url) from this
+      machine with python3 http.server, bound to the kind bridge gateway; backs up
+      /var/lib/kubelet/config.yaml on the WORKER; adds staticPodURL; restarts the
+      worker kubelet (never the control plane); waits for the URL static pod
+      (config.source=http) and its mirror pod trr9003-url-<worker>; then restores
+      the config, restarts the kubelet, and fails unless the pod and the mirror pod
+      go away. It needs docker and python3 on this machine.
+
+      Detection (live mode): the kubelet starts a pod with config.source=http
+      (Strategy 1, node runtime sensor) and registers its mirror pod (Strategy 2,
+      create pods by system:node:<worker>).
+      Rules: detections/sigma/T1543.005/k8s_cri_static_pod_start.yml and
+      detections/sigma/T1543.005/k8s_static_pod_mirror_create.yml
+      The config edit itself is node config telemetry; see TRR9003 Detection
+      Strategy 4.
     supported_platforms:
       - containers
     executor:
       name: bash
       elevation_required: false
       command: |
-        bash #{source_dir}/emulate.sh b
+        TRR9003_RECONFIGURE=#{reconfigure} TRR9003_WORKER=#{worker} bash #{source_dir}/emulate.sh b
       cleanup_command: |
-        true
+        docker exec #{worker} sh -c 'if [ -f /var/lib/kubelet/config.yaml.trr9003.bak ]; then mv -f /var/lib/kubelet/config.yaml.trr9003.bak /var/lib/kubelet/config.yaml && systemctl restart kubelet; fi' 2>/dev/null || true
     input_arguments:
       source_dir:
         description: Path to the atomic source directory.
         type: string
         default: PathToAtomicsFolder/T1543.005/src
+      reconfigure:
+        description: 1 runs the live staticPodURL path on the worker node; 0 is read-only.
+        type: string
+        default: "0"
+      worker:
+        description: The kind worker node container that the live path reconfigures.
+        type: string
+        default: trr9003-worker

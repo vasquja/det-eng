@@ -5,12 +5,14 @@ description: |
   Detects a request to run a command in a container (pods/exec) or to attach to
   a running container (pods/attach) through the Kubernetes API server. This is
   the TRR9002 Strategy 1 chokepoint: it covers Procedure A (exec) and Procedure
-  B (attach). It also sees the optional attach step of Procedure C: kubectl debug
-  with -i or --attach opens pods/attach to the new ephemeral container. The
-  attach step is optional (the adversary can read the container log instead),
-  and the repository's Procedure C emulation runs kubectl debug without -i or
-  --attach, so it makes no attach request: CI proves this rule on A and B only,
-  and k8s_pod_ephemeral_container.yml covers Procedure C itself.
+  B (attach). It also sees the attach step of Procedure C: kubectl debug with -i
+  or --attach opens pods/attach to the new ephemeral container. The attach step
+  is optional (the adversary can read the container log instead), so the
+  Procedure C emulation runs kubectl debug twice: once without --attach (the
+  ephemeral-container write that k8s_pod_ephemeral_container.yml gates, with no
+  attach request) and once with --attach=true on a second debug container, which
+  opens pods/attach. CI proves this rule on A (exec), B (attach) and the attach of
+  C; k8s_pod_ephemeral_container.yml covers the ephemeral-container write of C.
 
   The rule does NOT filter on verb. An exec over the SPDY protocol is recorded
   with verb=create; an exec over the WebSocket protocol is recorded with

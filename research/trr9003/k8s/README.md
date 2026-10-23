@@ -270,6 +270,16 @@ the manifest from the new directory or fetches it from the URL.
 - **Tools on this path:** any file edit of the kubelet config, plus a
   `systemctl restart kubelet` (or equivalent). For the URL source, any HTTP
   server.
+- **Emulation (live):** `emulate.sh b` with `TRR9003_RECONFIGURE=1` runs this
+  path on a worker node in CI. It serves `static-pod-url.yaml` from the runner on
+  the kind bridge gateway (the node image has no `python3`, so the server runs on
+  the runner, not in the node), sets `staticPodURL` in the worker's
+  `/var/lib/kubelet/config.yaml`, restarts the kubelet, and waits for the URL static
+  pod's CRI sandbox (`config.source=http`) and its mirror pod `trr9003-url-<worker>`
+  (`config.source=http`). It then restores the config, restarts the kubelet, and
+  fails unless the config no longer sets `staticPodURL`, the worker is Ready, no
+  ready `trr9003-url` sandbox is left and the mirror pod is deleted. The kubelet
+  polls the URL every `http-check-frequency` (20 s by default at v1.36.4).
 
 #### Detection Data Model — `TRR9003.K8S.B`
 
@@ -407,8 +417,9 @@ the upstream file and configuration changes.
 
 ## Available Emulation Tests
 
-The tests run in a lab cluster. The lab is a `kind` cluster whose single node is
-both control plane and worker, with an audit policy that records `pods` create;
+The tests run in a lab cluster. The lab is a `kind` cluster with a control-plane
+node and a worker node (the worker lets Procedure B restart a kubelet without
+touching the control plane), with an audit policy that records `pods` create;
 its config and audit policy are in
 [`detections/k8s/`](../../../detections/k8s/). One script drives the procedures:
 [`atomics/T1543.005/src/emulate.sh`](../../../atomics/T1543.005/src/emulate.sh),
@@ -421,7 +432,7 @@ up the manifest it wrote.
 |----|------|--------|
 | TRR9003.K8S.A | `emulate.sh a` — write a benign static pod manifest to `/etc/kubernetes/manifests` on the node; confirm the kubelet starts it and registers a mirror pod (`create pods` by `system:node:...`). | **built** |
 | TRR9003.K8S.A (evasion) | `emulate.sh gap` — write a manifest with a namespace that does not exist; show the pod runs on the node (`crictl`) and never appears as an object in `kubectl get pods -A`. The kubelet's mirror-pod attempt is audited as a *failed* create, while the running pod itself is not — only the node sensor sees it, and the Strategy 1 rule fires on it. | **built** |
-| TRR9003.K8S.B | `emulate.sh b` — read-only demonstration of the kubelet static-source configuration (`staticPodPath` / `staticPodURL`); shows the reconfiguration point without restarting the kubelet, to keep the lab stable. | **built (read-only)** |
+| TRR9003.K8S.B | `emulate.sh b` — by default a read-only demonstration of the kubelet static-source configuration (`staticPodPath` / `staticPodURL`). With `TRR9003_RECONFIGURE=1` (CI) it runs live on a dedicated worker node: it serves `static-pod-url.yaml` from the runner on the kind bridge gateway, sets `staticPodURL` in the worker kubelet config, restarts the kubelet, waits for the URL static pod (`config.source=http`) and its mirror pod `trr9003-url-<worker>`, then restores the config and fails unless the pod and the mirror pod go away. The restart stays off the control plane. | **built** |
 
 ## Detections
 
@@ -436,18 +447,23 @@ The Kubernetes loop has its own validator,
 [`detections/validate_staticpod_detections.py`](../../../detections/validate_staticpod_detections.py),
 which checks one rule per sensor on the telemetry the emulation produced:
 
-- **Strategy 1, node runtime sensor.** In the lab a small CRI poller on the node,
+- **Strategy 1, node runtime sensor.** In the lab a small CRI poller on each node
+  (the control plane and the worker),
   [`detections/k8s/cri-pod-sensor.sh`](../../../detections/k8s/cri-pod-sensor.sh),
   stands in for a runtime security agent: it records every pod sandbox the
   container runtime reports, with its annotations. The CRI rule must match both
   the injected static pod *and* the invalid-namespace pod, the one the API
-  server never stores. It must also match none of the sandboxes the API server
-  scheduled (`config.source: api`), which the lab always has.
+  server never stores, and Procedure B's URL static pod on the worker
+  (`trr9003-url-<worker>` in `default`, `config.source: http`) inside B's ledger
+  window. It must also match none of the sandboxes the API server scheduled
+  (`config.source: api`), which the lab always has.
 - **Strategy 2, API server audit log.** The audit rule must match the injected
   static pod's stored mirror pod (a `create pods` by `system:node:...`, code
   2xx) *and* the invalid-namespace pod's mirror-create attempt, which the API
   server refuses with 404 (namespace not found) but still audits — the one
-  audit-log trace of the evasion variant.
+  audit-log trace of the evasion variant. It must also match Procedure B's
+  stored mirror pod `trr9003-url-<worker>`, created by `system:node:<worker>`
+  inside B's ledger window.
 
 The Strategy 1 and 2 rules also match the control-plane static pods by design, so
 a baseline match alone does not pass; the validator reports the baseline

@@ -1,0 +1,41 @@
+# Benign static pod manifest served over HTTP for the TRR9003 emulation
+# (Procedure B live, TRR9003_RECONFIGURE=1).
+#
+# emulate.sh serves this file from the CI runner with `python3 -m http.server`
+# bound to the kind network gateway, points the WORKER node's kubelet at it with
+# `staticPodURL: http://<gateway>:<port>/static-pod-url.yaml`, and restarts the
+# kubelet. The kubelet fetches the manifest over HTTP and runs the pod directly
+# through the container runtime, with NO API server scheduling — the pod's CRI
+# sandbox carries `kubernetes.io/config.source: http` (pkg/kubelet/config/http.go,
+# kubetypes.HTTPSource), and the kubelet registers a read-only mirror pod named
+# trr9003-url-<nodeName> (the one audit-log trace). emulate.sh then restores the
+# kubelet config, restarts the kubelet, and confirms the pod goes away.
+#
+# Harmless: one busybox container that sleeps, no host mounts, no privilege. The
+# manifest lives only on the runner's HTTP listener for the duration of B; it is
+# never written to the node filesystem.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: trr9003-url
+  namespace: default
+  labels:
+    app: trr9003-url
+spec:
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: pause
+      image: busybox:1.36
+      command: ["sh", "-c", "sleep 3600"]
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "16Mi"
+        limits:
+          cpu: "100m"
+          memory: "64Mi"
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: false
+        capabilities:
+          drop: ["ALL"]

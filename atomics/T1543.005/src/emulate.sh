@@ -8,20 +8,39 @@
 # a HARMLESS busybox pod (it only sleeps) through that path, so the node
 # telemetry and the one API-server trace (the mirror-pod create) exist for the
 # paired detections. No exploit, no host mounts, no privilege. Each test removes
-# the manifest it wrote, which makes the kubelet stop the pod. The cluster is a
-# throwaway kind cluster and is deleted after the run.
+# the manifest it wrote, which makes the kubelet stop the pod. The live Procedure B
+# (TRR9003_RECONFIGURE=1 only) also changes the worker node's kubelet config: it
+# runs an HTTP listener on the runner's kind bridge for the run of B, sets
+# staticPodURL, restarts the worker kubelet, then restores the config and restarts
+# the kubelet again. The cluster is a throwaway kind cluster and is deleted after
+# the run.
 #
 # Run ONE procedure:
 #   ./emulate.sh a      Procedure A: drop a manifest in the static-pod directory
 #   ./emulate.sh gap    Procedure A, evasion: invalid namespace -> no API trace
-#   ./emulate.sh b      Procedure B: show the kubelet static source (read-only)
+#   ./emulate.sh b      Procedure B: kubelet static source (read-only; live on a
+#                       worker node with TRR9003_RECONFIGURE=1)
 #   ./emulate.sh all    every test, in order
 #
 # Prerequisites: a kind cluster whose node runs as a Docker container (the
 # default), with kubectl working. Writing a static pod manifest is inherently a
 # node-local action, so the lab reaches the node with `docker exec`, the same way
-# TRR9002 Procedure E does. On a non-kind cluster, set NODE_EXEC to a command
-# that runs a shell on the node.
+# TRR9002 Procedure E does. On a non-kind cluster, set TRR9003_NODE_EXEC to a
+# command that runs a shell on the node.
+#
+# Environment:
+#   TRR9003_NODE         control-plane node container (default trr9003-control-plane)
+#   TRR9003_NODE_EXEC    a command that runs a shell on the node (non-kind labs; A, gap
+#                        and the read-only B only)
+#   TRR9003_RECONFIGURE  1 = run Procedure B LIVE: set staticPodURL on the worker kubelet,
+#                        restart it, prove the URL static pod, then restore the config.
+#                        Needs a kind cluster with a worker node, docker and python3 on
+#                        the machine that runs this script (CI sets it). Unset = B is a
+#                        read-only demonstration, and its ledger row says
+#                        "mode":"read-only" (the strict validator then misses B).
+#   TRR9003_WORKER       worker node container for the live B (default trr9003-worker)
+#   TRR9003_URL_PORT     port of the live B's HTTP listener (default 18090)
+#   DETENG_LEDGER        append one JSON line per procedure (CI sets it)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -41,15 +60,20 @@ log() { printf '[trr9003] %s\n' "$*" >&2; }
 # first failure, and readiness comes from polling the node, not from a re-drop.
 TRR="TRR9003"
 FAILED=()
+# A procedure that ran in a reduced mode sets PROC_MODE (Procedure B: "read-only"); the
+# ledger row then carries "mode", so the validator can say why that procedure's gates miss.
+PROC_MODE=""
 now() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }
 run_proc() {
-  local p="$1" start end rc=0
+  local p="$1" start end rc=0 mode=""
+  PROC_MODE=""
   start="$(now)"
   "procedure_$p" || rc=$?
   end="$(now)"
+  [ -n "$PROC_MODE" ] && mode=",\"mode\":\"${PROC_MODE}\""
   if [ -n "${DETENG_LEDGER:-}" ]; then
-    printf '{"trr":"%s","procedure":"%s","start":"%s","end":"%s","exit":%d,"expect":0}\n' \
-      "$TRR" "$(printf '%s' "$p" | tr '[:lower:]' '[:upper:]')" "$start" "$end" "$rc" \
+    printf '{"trr":"%s","procedure":"%s","start":"%s","end":"%s","exit":%d,"expect":0%s}\n' \
+      "$TRR" "$(printf '%s' "$p" | tr '[:lower:]' '[:upper:]')" "$start" "$end" "$rc" "$mode" \
       >> "$DETENG_LEDGER"
   fi
   if [ "$rc" -ne 0 ]; then
@@ -209,12 +233,24 @@ procedure_gap() {
   return "$rc"
 }
 
-# Procedure B — reconfigure the kubelet static source (read-only demonstration).
-# Changing staticPodPath/staticPodURL and restarting the kubelet mid-run could
-# wedge the single-node lab, so this test does NOT restart the kubelet. It shows
-# WHERE the reconfiguration happens — the same safe-demonstration approach as
-# TRR9002 Procedure E. The chokepoint telemetry for B is identical to A.
+# Procedure B — reconfigure the kubelet static source.
+# Two modes. By default (read-only demonstration), changing the static source and
+# restarting the kubelet is only described, never done, so a local or single-node
+# lab stays stable — the same safe-demonstration approach as TRR9002 Procedure E.
+# The ledger row then says "mode":"read-only": B makes no telemetry, so a strict
+# validator run misses B's gates and names this mode as the reason.
+# When TRR9003_RECONFIGURE=1 (CI sets it, with a dedicated worker node), the LIVE
+# path runs: it points the WORKER kubelet at a staticPodURL, restarts the kubelet,
+# proves the URL static pod starts (config.source=http) and its mirror pod is
+# registered, then restores the config and proves the pod and the mirror pod go away.
+# Either way the chokepoint telemetry for B is the same as A (config.source
+# file/http, plus the kubelet's mirror-pod create).
 procedure_b() {
+  if [ "${TRR9003_RECONFIGURE:-}" = "1" ]; then
+    procedure_b_live
+    return
+  fi
+  PROC_MODE="read-only"
   log "B: current kubelet static source configuration (read-only):"
   node_sh "grep -E 'staticPod(Path|URL)' /var/lib/kubelet/config.yaml 2>/dev/null \
             || echo '(no staticPod* in /var/lib/kubelet/config.yaml; default path applies)'" || true
@@ -224,6 +260,243 @@ procedure_b() {
   log "B:   staticPodPath: <attacker dir>   or   staticPodURL: http://<attacker>/pod.yaml"
   log "B: then restart the kubelet. This test does NOT restart it (keeps the lab stable)."
   log "B: the resulting pod start is the SAME chokepoint as Procedure A (config.source file/http)."
+  log "B: read-only mode makes no telemetry; set TRR9003_RECONFIGURE=1 (kind, with a worker"
+  log "B: node) to run B live."
+}
+
+# Procedure B, live (TRR9003_RECONFIGURE=1) — reconfigure the WORKER kubelet's
+# static source to a staticPodURL and prove the URL static pod runs.
+#
+# The worker node means the kubelet restart never touches the control plane. The
+# kind node image (Debian trixie) has no python3, so the manifest is served from
+# the runner, on the kind bridge gateway, reachable from the worker container. The
+# kubelet fetches it every http-check-frequency (20 s default at v1.36.4,
+# pkg/kubelet/apis/config/v1beta1/defaults.go), starts the pod with
+# config.source=http, and registers a mirror pod named trr9003-url-<worker> (the
+# same CreateMirrorPod path as a file static pod, since IsStaticPod is true for any
+# non-API source: pkg/kubelet/kubelet.go tryReconcileMirrorPods). The atomic waits
+# for that mirror pod, because the validator gates B on its create.
+#
+# Once the config is edited, it is always restored and the kubelet restarted, also
+# on a failure and on SIGINT/SIGTERM/SIGHUP (finalize_b_live). The restore is
+# checked: B fails when the restored config still sets staticPodURL, when the
+# kubelet does not restart or the worker does not come back Ready, when a Ready
+# trr9003-url sandbox is still on the worker, or when the mirror pod is not deleted.
+# (After the restart the kubelet kills the runtime pod no config source names and
+# deletes the orphaned mirror pod: pkg/kubelet/kubelet_pods.go HandlePodCleanups.)
+TRR9003_WORKER="${TRR9003_WORKER:-trr9003-worker}"
+TRR9003_URL_PORT="${TRR9003_URL_PORT:-18090}"
+URL_NAME="trr9003-url"
+KUBELET_CFG=/var/lib/kubelet/config.yaml
+KUBELET_CFG_BAK=/var/lib/kubelet/config.yaml.trr9003.bak
+# State for finalize_b_live (globals, so the signal trap sees them too).
+B_LIVE_EDITED=0     # 1 once the worker's kubelet config may hold staticPodURL
+B_LIVE_HTTPPID=""
+B_LIVE_SERVEDIR=""
+
+worker_sh() { docker exec "$TRR9003_WORKER" sh -c "$*"; }
+
+# Stop the listener, restore the worker kubelet, and check that the URL static pod
+# and its mirror pod are gone. Returns 0 only when the worker is back as it was.
+finalize_b_live() {
+  local worker="$TRR9003_WORKER" mirror="${URL_NAME}-${TRR9003_WORKER}"
+  local frc=0 edited="$B_LIVE_EDITED" out gone=0
+  trap - INT TERM HUP
+  if [ "$edited" = 1 ]; then
+    log "B-live: restore the kubelet config and restart the kubelet on $worker"
+    if ! worker_sh "[ -f '$KUBELET_CFG_BAK' ] && mv -f '$KUBELET_CFG_BAK' '$KUBELET_CFG'"; then
+      log "B-live: FAILED — could not restore $KUBELET_CFG from $KUBELET_CFG_BAK on $worker"
+      frc=1
+    fi
+    if worker_sh "grep -q '^staticPodURL:' '$KUBELET_CFG'"; then
+      log "B-live: FAILED — $KUBELET_CFG on $worker still sets staticPodURL after the restore"
+      frc=1
+    fi
+    if ! docker exec "$worker" systemctl restart kubelet; then
+      log "B-live: FAILED — systemctl restart kubelet failed on $worker"
+      frc=1
+    fi
+    B_LIVE_EDITED=0
+  fi
+  if [ -n "$B_LIVE_HTTPPID" ]; then
+    kill "$B_LIVE_HTTPPID" 2>/dev/null || true
+    wait "$B_LIVE_HTTPPID" 2>/dev/null || true
+    B_LIVE_HTTPPID=""
+  fi
+  if [ -n "$B_LIVE_SERVEDIR" ]; then
+    rm -rf "$B_LIVE_SERVEDIR"
+    B_LIVE_SERVEDIR=""
+  fi
+  [ "$edited" = 1 ] || return "$frc"
+
+  if ! kubectl wait --for=condition=Ready "node/$worker" --timeout=120s >/dev/null; then
+    log "B-live: FAILED — node $worker is not Ready within 120 s after the restore"
+    frc=1
+  fi
+  # The pod is gone when the runtime holds no READY trr9003-url sandbox (a stopped
+  # sandbox stays NotReady until container GC removes it). A crictl error is "not
+  # confirmed", never "gone".
+  for _ in $(seq 1 30); do
+    if out="$(docker exec "$worker" crictl pods --name "$URL_NAME" --state ready -q 2>/dev/null)" \
+       && [ -z "$out" ]; then
+      gone=1
+      break
+    fi
+    sleep 2
+  done
+  if [ "$gone" -eq 1 ]; then
+    log "B-live: confirmed — no ready $URL_NAME sandbox is left on $worker"
+  else
+    log "B-live: FAILED — a ready $URL_NAME sandbox is still on $worker 60 s after the restore," \
+        "or crictl failed (last output: '${out:-}')"
+    frc=1
+  fi
+  if kubectl -n default wait --for=delete "pod/$mirror" --timeout=90s >/dev/null; then
+    log "B-live: confirmed — the mirror pod $mirror is gone"
+  else
+    log "B-live: FAILED — the mirror pod $mirror was not deleted within 90 s after the restore"
+    frc=1
+  fi
+  return "$frc"
+}
+
+b_live_interrupted() {
+  log "B-live: interrupted — restore the worker kubelet before exit"
+  finalize_b_live || true
+  exit 1
+}
+
+procedure_b_live() {
+  local worker="$TRR9003_WORKER" port="$TRR9003_URL_PORT"
+  local mirror="${URL_NAME}-${TRR9003_WORKER}"
+  local gw="" url="" rc=0 seen=0 src="" i
+
+  if [ -n "${TRR9003_NODE_EXEC:-}" ] || ! command -v docker >/dev/null 2>&1; then
+    log "B-live: the live reconfiguration needs docker and the kind network (it serves the"
+    log "B-live: manifest on the kind bridge gateway) — set TRR9003_RECONFIGURE only on kind."
+    return 1
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    log "B-live: python3 is not on this machine (it serves the manifest and reads the gateway)"
+    return 1
+  fi
+  if ! docker ps --format '{{.Names}}' | grep -qx "$worker"; then
+    log "B-live: worker node container '$worker' not found (set TRR9003_WORKER)"
+    return 1
+  fi
+  # Refuse to touch a kubelet config that already sets staticPodURL: that is a
+  # leftover (restore it from $KUBELET_CFG_BAK first) or a setting this lab does not own.
+  if worker_sh "grep -q '^staticPodURL:' '$KUBELET_CFG'"; then
+    log "B-live: FAILED — $KUBELET_CFG on $worker already sets staticPodURL; restore it"
+    log "B-live: (e.g. from $KUBELET_CFG_BAK) before a live run"
+    return 1
+  fi
+
+  # Find the kind bridge IPv4 gateway (the runner's address the worker can reach).
+  gw="$(docker network inspect kind 2>/dev/null \
+        | python3 -c 'import json,sys
+cfgs=(json.load(sys.stdin)[0].get("IPAM") or {}).get("Config") or []
+print(next((c["Gateway"] for c in cfgs if c.get("Gateway") and ":" not in c["Gateway"]), ""))' 2>/dev/null || true)"
+  if [ -z "$gw" ]; then
+    log "B-live: could not find the kind network IPv4 gateway (docker network inspect kind)"
+    return 1
+  fi
+  url="http://${gw}:${port}/static-pod-url.yaml"
+
+  # From here on, every exit path runs finalize_b_live (also on a signal).
+  trap b_live_interrupted INT TERM HUP
+
+  # Serve ONLY the one manifest, from a temp dir, bound to the gateway (not 0.0.0.0).
+  B_LIVE_SERVEDIR="$(mktemp -d)"
+  cp "$SCRIPT_DIR/static-pod-url.yaml" "$B_LIVE_SERVEDIR/static-pod-url.yaml"
+  log "B-live: serve the manifest at ${url} (python3 http.server on the runner, bound to the kind gateway)"
+  python3 -m http.server "$port" --bind "$gw" --directory "$B_LIVE_SERVEDIR" >/dev/null 2>&1 &
+  B_LIVE_HTTPPID=$!
+
+  # Confirm that the worker can fetch the manifest (up to 10 s for the listener to start).
+  local served=0
+  for i in $(seq 1 10); do
+    if ! kill -0 "$B_LIVE_HTTPPID" 2>/dev/null; then
+      break
+    fi
+    if worker_sh "command -v curl >/dev/null 2>&1 && curl -fsS --max-time 5 '$url' >/dev/null" \
+         2>/dev/null; then
+      served=1
+      break
+    fi
+    sleep 1
+  done
+  if [ "$served" -ne 1 ]; then
+    log "B-live: FAILED — the worker cannot fetch ${url} (the listener exited, or it is not"
+    log "B-live: reachable on the kind bridge)"
+    finalize_b_live || true
+    return 1
+  fi
+
+  # Back up the (clean) kubelet config, then add staticPodURL and restart the kubelet.
+  # The backup always copies the current, clean config: a stale backup from an
+  # earlier run is overwritten, never restored.
+  if ! worker_sh "cp -f '$KUBELET_CFG' '$KUBELET_CFG_BAK'"; then
+    log "B-live: FAILED — could not back up $KUBELET_CFG on $worker"
+    finalize_b_live || true
+    return 1
+  fi
+  B_LIVE_EDITED=1
+  if ! worker_sh "printf '\nstaticPodURL: %s\n' '$url' >> '$KUBELET_CFG'"; then
+    log "B-live: FAILED — could not edit $KUBELET_CFG on $worker"
+    finalize_b_live || true
+    return 1
+  fi
+  log "B-live: set staticPodURL and restart the kubelet on $worker"
+  if ! docker exec "$worker" systemctl restart kubelet; then
+    log "B-live: FAILED — systemctl restart kubelet failed on $worker"
+    finalize_b_live || true
+    return 1
+  fi
+
+  # Poll crictl up to 90 s for the URL static pod sandbox with config.source=http.
+  log "B-live: poll the worker runtime (crictl) for the $URL_NAME sandbox (config.source=http)"
+  for i in $(seq 1 45); do
+    if docker exec "$worker" crictl pods --name "$URL_NAME" --namespace default --state ready -q \
+         2>/dev/null | grep -q . ; then
+      if docker exec "$worker" crictl pods --name "$URL_NAME" --namespace default --state ready \
+           -o json 2>/dev/null | grep -q '"kubernetes.io/config.source": *"http"'; then
+        seen=1
+        break
+      fi
+    fi
+    sleep 2
+  done
+  if [ "$seen" -eq 1 ]; then
+    log "B-live: the worker runtime SEES the URL static pod with config.source=http:"
+    docker exec "$worker" crictl pods --name "$URL_NAME" 2>/dev/null || true
+  else
+    log "B-live: FAILED — the $URL_NAME static pod (config.source=http) did not appear on $worker within 90 s"
+    rc=1
+  fi
+
+  # The validator gates B on the mirror-pod create, so wait for the mirror pod (up
+  # to 60 s): mirror creation can lag the pod start after a kubelet restart (node
+  # registration and informer sync, pkg/kubelet/kubelet.go). config.source must be http.
+  if [ "$seen" -eq 1 ]; then
+    log "B-live: wait for the kubelet to register the mirror pod ($mirror)"
+    for i in $(seq 1 30); do
+      src="$(kubectl -n default get pod "$mirror" \
+        -o jsonpath='{.metadata.annotations.kubernetes\.io/config\.source}' 2>/dev/null || true)"
+      [ -n "$src" ] && break
+      sleep 2
+    done
+    if [ "$src" = "http" ]; then
+      log "B-live: mirror pod present — config.source='http'; the audit log has its 'create pods'"
+      log "B-live: by system:node:${worker}"
+    else
+      log "B-live: FAILED — mirror pod $mirror: config.source='${src:-<no mirror pod after 60 s>}', not 'http'"
+      rc=1
+    fi
+  fi
+
+  finalize_b_live || rc=1
+  return "$rc"
 }
 
 run_one() {

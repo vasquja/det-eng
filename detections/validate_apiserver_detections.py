@@ -607,10 +607,23 @@ MANIFEST = [
                   window=("9004", "e"))),
         ("G", rec(verb="create", resource="clusterroles", name="trr9004-cr-secrets",
                   window=("9004", "g")))]),
+    # Five of the grader's branches are proven live, each by an inert graded object
+    # (C2-6) in its procedure's window: C-wild (a wildcard rule), A-sev (roleRef edit,
+    # cluster-wide), B-sev (roleRef edit, namespaced), D-sev (a mass-grant group
+    # subject) and E-sev (a JSON patch of /rules that adds impersonate). The other
+    # branches (nodes/proxy rules, a JSON patch of /subjects, a built-in admin
+    # binding) and the aggregation-controller filter are proven by sidecar cases only.
     ("T1098.006", "k8s_rbac_privileged_grant.yml", "audit", "9004 sev",
      "RBAC dangerous-grant severity (Request)", [
         ("C wild", rec(verb="create", resource="clusterroles", name="trr9004-cr-wild",
-                       window=("9004", "c")))]),
+                       window=("9004", "c"))),
+        ("A sev", rec(verb="create", resource="clusterrolebindings", name="trr9004-crb-admin",
+                      window=("9004", "a"))),
+        ("B sev", rec(verb="create", resource="rolebindings", name="trr9004-rb-edit",
+                      ns="trr9004-sev", window=("9004", "b"))),
+        ("D sev", rec(verb="create", resource="clusterrolebindings", name="trr9004-crb-sev-grp",
+                      window=("9004", "d"))),
+        ("E sev", win(jsonpatch_gate("trr9004-cr-esc", "clusterroles"), ("9004", "e")))]),
     ("T1098.006", "k8s_rbac_sensitive_permission_grant.yml", "audit", "9004 sens",
      "RBAC sensitive-grant severity: exec / token / cluster-wide secrets (Request)", [
         ("G secrets", rec(verb="create", resource="clusterroles", name="trr9004-cr-secrets",

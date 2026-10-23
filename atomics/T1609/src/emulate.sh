@@ -13,7 +13,7 @@
 # Run ONE procedure:
 #   ./emulate.sh a    exec through the API server (WebSocket, then SPDY)
 #   ./emulate.sh b    attach through the API server
-#   ./emulate.sh c    ephemeral debug container
+#   ./emulate.sh c    ephemeral debug container, then a second one with --attach
 #   ./emulate.sh d    exec through the API server node proxy
 #   ./emulate.sh e    direct kubelet access (detection-gap demonstration)
 #   ./emulate.sh f    kubelet pod read through the API server node proxy
@@ -121,11 +121,52 @@ procedure_b() {
 }
 
 # Procedure C — add an ephemeral debug container to the running pod.
+# Two calls. The first adds a debug container and runs the benign command (no
+# attach): the pods/ephemeralcontainers write is the chokepoint k8s_pod_exec_attach
+# does NOT see (there is no exec/attach request), and k8s_pod_ephemeral_container
+# gates it. The second adds a SECOND debug container with --attach=true, so kubectl
+# opens pods/attach to it: that proves the attach step Strategy 1 claims for C, and
+# k8s_pod_exec_attach gates it (code 101).
+# kubectl debug --attach exits 0 also when it did NOT attach (kubectl v1.36.4,
+# pkg/cmd/debug/debug.go handleAttachPod): when the container has already
+# terminated when kubectl sees it, kubectl reads its log and sends no attach
+# request; when the attach fails, kubectl prints "falling back to streaming logs"
+# and reads the log. So the call is checked: kubectl prints "If you don't see a
+# command prompt" just before it attaches (pkg/cmd/attach/attach.go Run), and the
+# fallback warning when the attach fails. The command `id; sleep 15` keeps the
+# container running long enough for kubectl to see it Running and attach; kubectl
+# returns when the container exits. `timeout` bounds the call: kubectl debug waits
+# for the container with no timeout of its own. The ephemeral containers stay on
+# the pod (they cannot be removed); the pod is deleted at cluster teardown.
+C_ATTACH_TIMEOUT="${TRR9002_ATTACH_TIMEOUT:-120}"
 procedure_c() {
-  log "C: add an ephemeral debug container (kubectl debug)"
+  log "C: add an ephemeral debug container (kubectl debug, no attach)"
   must kubectl -n "$NS" debug "$POD" \
     --image=busybox:1.36 --container=trr9002-debug \
     -- "${CMD[@]}" || return 1
+  log "C: add a second debug container and attach to it (--attach=true) -> pods/attach"
+  local err rc=0
+  err="$(timeout "$C_ATTACH_TIMEOUT" kubectl -n "$NS" debug "$POD" \
+    --image=busybox:1.36 --container=trr9002-debug-attach --attach=true \
+    -- sh -c 'id; sleep 15' 2>&1 >/dev/null)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    if [ "$rc" -eq 124 ]; then
+      log "C: FAILED — kubectl debug --attach=true did not end within ${C_ATTACH_TIMEOUT} s"
+    else
+      log "C: FAILED (exit $rc): kubectl debug --attach=true"
+    fi
+  elif grep -q 'falling back to streaming logs' <<<"$err"; then
+    log "C: FAILED — kubectl could not attach and read the container log instead"
+    rc=1
+  elif ! grep -q "If you don't see a command prompt" <<<"$err"; then
+    log "C: FAILED — kubectl did not attach: the container ended before kubectl saw it"
+    log "C: running, so kubectl read its log and sent no pods/attach request"
+    rc=1
+  else
+    return 0
+  fi
+  [ -n "$err" ] && printf '%s\n' "$err" | sed 's/^/    /' >&2
+  return "$rc"
 }
 
 # Procedure D — exec through the API server node proxy.
