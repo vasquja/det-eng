@@ -221,7 +221,7 @@ procedure_e() {
 # cases for k8s_node_proxy_kubelet_api.yml instead. See TRR9002 Procedure F.
 procedure_f() {
   local node sa="trr9002-node-reader" token server ca_file p rc=0
-  local tls_args
+  local tls_line tok_file kc
   node="$(kubectl -n "$NS" get pod "$POD" -o jsonpath='{.spec.nodeName}')" || return 1
   log "F: create ServiceAccount, ClusterRole (nodes/proxy get) and binding for $sa"
   must kubectl -n "$NS" create serviceaccount "$sa" || rc=1
@@ -238,23 +238,48 @@ procedure_f() {
     -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' 2>/dev/null \
     | base64 -d > "$ca_file" 2>/dev/null || true
   if [ -s "$ca_file" ]; then
-    tls_args="--certificate-authority=$ca_file"
+    tls_line="certificate-authority: $ca_file"
   else
-    tls_args="--insecure-skip-tls-verify=true"
+    tls_line="insecure-skip-tls-verify: true"
   fi
 
   # Read as the service account only when the setup held and a token was minted;
-  # otherwise the reads would fail for the wrong reason.
+  # otherwise the reads would fail for the wrong reason. The token is never on a
+  # command line or in a log line: a 0600 kubeconfig reads it from a 0600 tokenFile,
+  # so `must` (which logs the failed command) and `ps` show only the file paths.
   if [ "$rc" -eq 0 ] && [ -n "$token" ]; then
+    tok_file="$(umask 077; mktemp)"
+    kc="$(umask 077; mktemp)"
+    printf '%s' "$token" > "$tok_file"
+    cat > "$kc" <<KUBECONFIG
+apiVersion: v1
+kind: Config
+clusters:
+- name: lab
+  cluster:
+    server: $server
+    $tls_line
+users:
+- name: $sa
+  user:
+    tokenFile: $tok_file
+contexts:
+- name: lab
+  context:
+    cluster: lab
+    user: $sa
+current-context: lab
+KUBECONFIG
     for p in "/api/v1/nodes/${node}/proxy/runningpods/" \
              "/api/v1/nodes/${node}/proxy/pods"; do
       log "F: read kubelet ${p##*/proxy/} via nodes/proxy as $sa"
-      must kubectl --kubeconfig=/dev/null --server="$server" "$tls_args" \
-        --token="$token" --request-timeout=30s get --raw "$p" || rc=1
+      must kubectl --kubeconfig="$kc" --request-timeout=30s get --raw "$p" || rc=1
     done
+    rm -f "$kc" "$tok_file"
   else
-    log "F: setup did not complete (rc=$rc, token ${token:+set}${token:-empty}); skipping the reads"
+    log "F: setup did not complete (rc=$rc, token $([ -n "$token" ] && echo set || echo empty)); skipping the reads"
   fi
+  token=""
 
   log "F: delete the RBAC objects"
   kubectl delete clusterrolebinding "$sa" >/dev/null 2>&1 || true

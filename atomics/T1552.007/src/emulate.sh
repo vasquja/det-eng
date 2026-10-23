@@ -58,7 +58,10 @@ must() {
 create_ok() {
   local out rc=0
   out="$("$@" 2>&1 >/dev/null)" || rc=$?
-  if [ "$rc" -eq 0 ] || printf '%s' "$out" | grep -qi 'AlreadyExists'; then
+  # The server's reason token (AlreadyExists) is in kubectl's message for a namespace,
+  # but `create secret generic` and `create serviceaccount` print only the text
+  # ("... already exists"), so match both.
+  if [ "$rc" -eq 0 ] || printf '%s' "$out" | grep -qiE 'AlreadyExists|already exists'; then
     return 0
   fi
   log "FAILED (exit $rc): $*"
