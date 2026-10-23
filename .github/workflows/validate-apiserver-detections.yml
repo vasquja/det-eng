@@ -341,6 +341,10 @@ jobs:
           kubectl -n default wait --for=create serviceaccount/default --timeout=60s
 
       - name: Start the node runtime sensor (CRI pod sandboxes)
+        # Guarded like every other step that needs the cluster: an earlier failure
+        # (a pre-pull, a Confirm step) must not skip it, or the collect step and the
+        # negative control have no CRI log and print no gate result.
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: |
           # Stand-in for a runtime security agent on the node: record every pod
@@ -602,8 +606,12 @@ jobs:
             cat /var/log/kubernetes/kube-apiserver-audit.log \
             > /tmp/kube-apiserver-audit.log
           echo "Collected $(wc -l < /tmp/kube-apiserver-audit.log) audit lines."
+          # Not fatal, as in validate-staticpod: a missing sensor log must not stop the
+          # file-event collection below. The redirect leaves an empty file, and the CRI
+          # gates fail closed on it (no record -> MISS).
           docker exec "${CLUSTER_NAME}-control-plane" \
-            cat /var/log/cri-pods.jsonl > /tmp/cri-pods.jsonl
+            cat /var/log/cri-pods.jsonl > /tmp/cri-pods.jsonl \
+            || echo "::warning title=CRI sensor::no CRI sensor log on the node; the CRI gates fail closed on the empty log"
           echo "Collected $(wc -l < /tmp/cri-pods.jsonl) CRI sensor snapshots."
           # Node file events: poll (max 30 s) for the marked reader's record (TRR9006
           # Procedure E reads the watched token through /usr/local/bin/trr9006-reader),

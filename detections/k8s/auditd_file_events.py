@@ -13,8 +13,8 @@ node file-event rules the kind CI node sensor gates (C2-7):
     tags only the mounts that the auditctl caller's namespace can see.
   * T1543.005/linux_static_pod_manifest_write.yml (TRR9003 Procedure A) -- a
     write in the kubelet static-pod directory, caught by a write/attribute tree
-    watch on the host directory that is bind-mounted there
-    (`-F dir=/tmp/trr9003-manifests -F perm=wa`).
+    watch on the host directory that is bind-mounted there, in the checkout
+    (`-F dir=${GITHUB_WORKSPACE}/.kind/trr9003-manifests -F perm=wa`).
 Both use the key k8s_node_file.
 
 A kind node is a Docker container on the runner's kernel, and the audit

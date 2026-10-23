@@ -12,11 +12,20 @@
 # reconfigures the kubelet static source (staticPodURL) and restarts the kubelet,
 # which would wedge the control plane if it ran there, so B runs on the worker.
 #
-# Create it (from the repo root, so the relative extraMounts path resolves):
+# Create it (from the repo root, so the relative extraMounts paths resolve). Make
+# the static-pod bind source (.kind/trr9003-manifests, see the extraMount below)
+# yourself first, so it is a directory that you own; if it is missing, Docker makes
+# it, owned by root:
 #
+#   mkdir -p .kind/trr9003-manifests
 #   kind create cluster --name trr9003 \
 #     --image kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed \
 #     --config detections/k8s/kind-staticpod-cluster.yaml
+#
+# After `kind delete cluster --name trr9003`, remove that directory
+# (rm -rf .kind/trr9003-manifests; use sudo if Docker made it). Its files stay on
+# the host, and the kubelet of the next cluster made from this config starts any
+# manifest that an interrupted run left in it.
 #
 # (--image is the node image CI pins: KIND_NODE_IMAGE in the validate-*-detections
 # workflows. Update it here when that pin moves.)
@@ -58,9 +67,14 @@ nodes:
       # Node file-event sensor (C2-7): bind the kubelet static-pod directory to a
       # known host path so the runner's auditd can watch it for writes. kubeadm still
       # writes the control-plane static pods here (a plain directory on the host). The
-      # validate-staticpod workflow creates /tmp/trr9003-manifests and adds the auditd
-      # watch before cluster create, so kubeadm's writes are recorded too.
-      - hostPath: /tmp/trr9003-manifests
+      # path is relative, like the audit policy above: kind resolves it against the
+      # working directory, so it is in the checkout. Do not move it to a shared
+      # directory such as /tmp: the kubelet runs every manifest in it on a privileged
+      # node, so a local user who makes that path first controls the node and the
+      # host. The validate-staticpod workflow creates .kind/trr9003-manifests and adds
+      # the auditd watch on its absolute path before cluster create, so kubeadm's
+      # writes are recorded too.
+      - hostPath: ./.kind/trr9003-manifests
         containerPath: /etc/kubernetes/manifests
         readOnly: false
   # A worker node for Procedure B's live staticPodURL reconfiguration (the kubelet

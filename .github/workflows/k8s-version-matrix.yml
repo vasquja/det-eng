@@ -32,7 +32,7 @@ name: k8s-version-matrix
 
 on:
   schedule:
-    - cron: '17 7 * * 1'   # Monday, after the Monday validator runs (06:11-06:53)
+    - cron: '17 7 * * 1'   # Monday, after every other Monday cron (lint-trr, the validators and detection-quality, 06:11-06:53)
   workflow_dispatch:
 
 permissions:

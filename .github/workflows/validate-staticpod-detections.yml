@@ -244,12 +244,16 @@ jobs:
           sudo apt-get install -y auditd
           sudo systemctl start auditd || sudo service auditd start
           # The kubelet static-pod directory is bind-mounted from this host path
-          # (kind-staticpod-cluster.yaml extraMount). Watch it for writes and attribute
-          # changes. -F dir= is a recursive tree watch (auditctl makes the same rule
-          # from -w on a directory); -F dir= makes that explicit. A bind mount shares
-          # the directory's inodes, so writes made through the node's mount are seen.
-          mkdir -p /tmp/trr9003-manifests
-          sudo auditctl -a always,exit -F dir=/tmp/trr9003-manifests -F perm=wa -F key=k8s_node_file
+          # (kind-staticpod-cluster.yaml extraMount: the relative ./.kind/trr9003-manifests,
+          # which kind resolves against the checkout, the working directory of the
+          # create step). It is in the checkout, not in world-writable /tmp, because the
+          # kubelet runs every manifest in it on a privileged node. Watch it for writes
+          # and attribute changes. auditctl needs the absolute path. -F dir= is a
+          # recursive tree watch (auditctl makes the same rule from -w on a directory);
+          # -F dir= makes that explicit. A bind mount shares the directory's inodes, so
+          # writes made through the node's mount are seen.
+          mkdir -p "${GITHUB_WORKSPACE}/.kind/trr9003-manifests"
+          sudo auditctl -a always,exit -F dir="${GITHUB_WORKSPACE}/.kind/trr9003-manifests" -F perm=wa -F key=k8s_node_file
           rules="$(sudo auditctl -l)"
           grep -qF k8s_node_file <<<"${rules}" || { echo "::error::auditd watch not set"; exit 1; }
 
@@ -258,10 +262,11 @@ jobs:
         shell: bash
         run: |
           # The node file-event sensor (C2-7) bind-mounts the kubelet static-pod
-          # directory to this host path (kind-staticpod-cluster.yaml extraMount), so the
-          # runner's auditd can watch it. Create it first so the bind source exists.
-          mkdir -p /tmp/trr9003-manifests
-          # Run from the repo root so the relative extraMounts path resolves.
+          # directory to this host path in the checkout (kind-staticpod-cluster.yaml
+          # extraMount), so the runner's auditd can watch it. Create it first so the
+          # bind source exists and the runner user owns it (else Docker makes it as root).
+          mkdir -p .kind/trr9003-manifests
+          # Run from the repo root so the relative extraMounts paths resolve.
           kind create cluster \
             --name "${CLUSTER_NAME}" \
             --image "${KIND_NODE_IMAGE}" \

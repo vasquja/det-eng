@@ -852,8 +852,13 @@ source (`--file-log`), and each gates its rule on one marked emulation record (C
   with a real directory fd cannot be placed; the converter skips it and counts it
   on stderr.
 - **Static-pod directory (TRR9003).** `k8s/kind-staticpod-cluster.yaml` bind-mounts
-  `/tmp/trr9003-manifests` on the runner at the node's `/etc/kubernetes/manifests`.
-  The workflow adds a write watch on that host directory (`-F dir=... -F perm=wa`)
+  `.kind/trr9003-manifests` in the checkout (a relative path, which kind resolves
+  against the working directory, as it does the audit policy) at the node's
+  `/etc/kubernetes/manifests`. The bind source is not in `/tmp`: the kubelet runs
+  every manifest in it on a privileged node, so a local user who makes a shared path
+  first controls the node and the host. The workflow makes the directory, then adds
+  a write watch on its absolute path
+  (`-F dir=${GITHUB_WORKSPACE}/.kind/trr9003-manifests -F perm=wa`)
   before it creates the cluster, so the log holds `kubeadm`'s own control-plane
   manifest writes as well as the emulation's. Procedure A writes its manifest
   through a marked copy of tee (`/usr/local/bin/trr9003-tee`; a kind node's `/tmp`

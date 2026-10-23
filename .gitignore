@@ -1,2 +1,4 @@
 __pycache__/
 *.pyc
+# Local kind bind sources (the TRR9003 static-pod directory), made at run time.
+/.kind/
