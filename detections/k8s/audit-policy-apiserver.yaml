@@ -35,7 +35,10 @@
 #     also logs the body of every other ConfigMap created in kube-system, which can
 #     hold secrets (Helm release payloads; see the rule), and a Corefile can hold
 #     credentials (route53, azure, tsig). Read the two TRR9027 rules below before you
-#     deploy this policy.
+#     deploy this policy. For OpenShift's DNS Operator (TRR9027 E and F): writes to
+#     openshift-dns/dns-default at RequestResponse, ConfigMap creates in openshift-dns
+#     at Request, and the dnses.operator.openshift.io object (update and patch at
+#     RequestResponse, create, delete and deletecollection at Request).
 #   * EKS aws-auth ConfigMap (TRR9004 Procedure F): update, patch and delete of
 #     kube-system/aws-auth at RequestResponse. An update or patch records the stored
 #     mapRoles/mapUsers after the write; a delete records only DeleteOptions and a
@@ -245,6 +248,57 @@ rules:
     resources:
       - group: ""
         resources: ["configmaps"]
+
+  # --- TRR9027 E: OpenShift's rendered DNS ConfigMap at RequestResponse ---
+  # On OpenShift the DNS Operator renders the Corefile into openshift-dns/dns-default.
+  # The lab (kind) has no operator: Procedure E creates an inert namespace and ConfigMap
+  # of that shape and patches it. Updates, patches and deletes of that one ConfigMap are
+  # logged with the request body and the stored object, as the kube-system rule above
+  # does for coredns, so the grader and the validator's sentinel gate see the Corefile.
+  # What it copies into the log: the Corefile of dns-default, twice per write (the
+  # operator renders no credential into it; a DNS-over-TLS upstream is a CA bundle
+  # path). A create names no object when the policy is evaluated; the rule below logs it.
+  - level: RequestResponse
+    namespaces: ["openshift-dns"]
+    verbs: ["update", "patch", "delete"]
+    resources:
+      - group: ""
+        resources: ["configmaps"]
+        resourceNames: ["dns-default"]
+
+  # --- TRR9027 E: ConfigMap creates in openshift-dns at Request ---
+  # So a create (a POST) of dns-default carries its Corefile. What it adds: the body of
+  # every ConfigMap created in openshift-dns. On OpenShift those are dns-default and the
+  # operator's CA bundle copies (ca-<name>, public CA certificates) and the CA bundles
+  # that the platform publishes in every namespace (kube-root-ca.crt,
+  # openshift-service-ca.crt). On the lab: the emulation's dns-default and the
+  # kube-root-ca.crt that kube-controller-manager publishes in every namespace (a public
+  # CA certificate).
+  - level: Request
+    namespaces: ["openshift-dns"]
+    verbs: ["create"]
+    resources:
+      - group: ""
+        resources: ["configmaps"]
+
+  # --- TRR9027 F: OpenShift DNS Operator object writes ---
+  # The cluster-scoped dnses.operator.openshift.io object (the lab installs the CRD,
+  # vendored in atomics/T1565.001/src/). Update and patch at RequestResponse, so the
+  # stored object after the write shows spec.servers, spec.upstreamResolvers and
+  # spec.managementState whatever the patch type; create, delete and deletecollection at
+  # Request. The object holds DNS configuration only (a TLS CA bundle is a ConfigMap
+  # name). Audit resource matching is exact, so dnses/status stays at the Metadata
+  # catch-all.
+  - level: RequestResponse
+    verbs: ["update", "patch"]
+    resources:
+      - group: "operator.openshift.io"
+        resources: ["dnses"]
+  - level: Request
+    verbs: ["create", "delete", "deletecollection"]
+    resources:
+      - group: "operator.openshift.io"
+        resources: ["dnses"]
 
   # --- TRR9006: Secret reads at Metadata (NEVER Request/RequestResponse) ---
   # Above every None rule, so a secret read is always recorded. Metadata carries

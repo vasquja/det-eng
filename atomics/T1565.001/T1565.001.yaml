@@ -1,10 +1,12 @@
 attack_technique: T1565.001
 display_name: "Stored Data Manipulation (Kubernetes Cluster DNS Poisoning)"
 
-# Behavioral emulation for TRR9027. Each test writes a cluster DNS ConfigMap in
-# kube-system, so the API server writes the configmaps audit event the paired detections
-# key on. The poison carries the sentinel token 'trr9027' so a validator matches the
-# emulation's own events. SAFETY: Procedure A captures the real coredns Corefile, appends
+# Behavioral emulation for TRR9027. Tests A-D write a cluster DNS ConfigMap in
+# kube-system; tests E and F write the OpenShift DNS objects (the ConfigMap
+# openshift-dns/dns-default and the DNS Operator object dnses.operator.openshift.io/default,
+# which kind does not have, so they create inert copies first). So the API server writes
+# the audit event the paired detections key on. The poison carries the sentinel token
+# 'trr9027' so a validator matches the emulation's own events. SAFETY: Procedure A captures the real coredns Corefile, appends
 # an INERT sentinel server block (a forward of a .invalid zone no workload resolves to a
 # TEST-NET IP), and RESTORES the original at once; Procedures B and C write ConfigMaps a
 # CoreDNS kind cluster does not read (kube-dns, coredns-custom), only when no ConfigMap of
@@ -14,7 +16,9 @@ display_name: "Stored Data Manipulation (Kubernetes Cluster DNS Poisoning)"
 # audit policy logs each with its body. These need a reachable cluster (Kubernetes 1.22+)
 # with rights on kube-system ConfigMaps, audit logging at RequestResponse for the three DNS
 # ConfigMaps and at Request for kube-system ConfigMap creates (see
-# detections/k8s/audit-policy-apiserver.yaml), and python3.
+# detections/k8s/audit-policy-apiserver.yaml), and python3. Tests E and F also need rights
+# to create namespaces and ConfigMaps in openshift-dns, CustomResourceDefinitions, and
+# dnses.operator.openshift.io objects, and the policy's openshift-dns and dnses rules.
 
 atomic_tests:
   - name: "TRR9027.K8S.A — repoint the coredns Corefile, then restore"
@@ -119,6 +123,79 @@ atomic_tests:
         bash #{source_dir}/emulate.sh d
       cleanup_command: |
         true
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1565.001/src
+
+  - name: "TRR9027.K8S.E — edit the OpenShift DNS Operator ConfigMap openshift-dns/dns-default (inert)"
+    auto_generated_guid: 2d9f8c17-0a4b-4e6d-9c3f-71b5e0a9027e
+    description: |
+      OpenShift renders the cluster DNS Corefile into the ConfigMap openshift-dns/dns-default
+      (the DNS Operator, openshift/cluster-dns-operator). kind has no DNS Operator, so this
+      creates an inert openshift-dns namespace and a dns-default ConfigMap of the operator's
+      default Corefile shape (no redirect), then patches it with an inert sentinel server block
+      (a rewrite plus a forward of trr9027poison.example.invalid to a TEST-NET IP). Nothing on the
+      cluster reads it. Skipped, before any write, when the cluster has an openshift-dns namespace
+      or a dnses.operator.openshift.io CRD that the emulation did not create (no
+      app.kubernetes.io/part-of=trr9027 label: a real OpenShift, OKD or MicroShift cluster), and
+      when a dns-default ConfigMap already exists; so it never writes into a real OpenShift DNS
+      namespace. The namespace and ConfigMap it creates are labelled
+      app.kubernetes.io/part-of=trr9027 and cleanup deletes only those. The audit policy logs openshift-dns/dns-default at RequestResponse, so the patch
+      reaches the log with its body; the chokepoint keys on objectRef.namespace=openshift-dns,
+      objectRef.name=dns-default, and the grader keys on the injected rewrite and the public
+      (TEST-NET) forward.
+      Rule: detections/sigma/T1565.001/k8s_coredns_configmap_modified.yml
+      Grader: detections/sigma/T1565.001/k8s_coredns_corefile_poisoned.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh e
+      cleanup_command: |
+        kubectl -n openshift-dns delete configmap -l app.kubernetes.io/part-of=trr9027 --ignore-not-found
+        kubectl delete namespace -l app.kubernetes.io/part-of=trr9027 --field-selector metadata.name=openshift-dns --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1565.001/src
+
+  - name: "TRR9027.K8S.F — edit the OpenShift DNS Operator object dnses.operator.openshift.io (inert)"
+    auto_generated_guid: 3e0a9d28-1b5c-4f7e-8d42-62c6f1b9027f
+    description: |
+      On OpenShift the sanctioned way to change cluster DNS is the cluster-scoped DNS Operator
+      object dnses.operator.openshift.io/default (openshift/api). kind has no such object or CRD,
+      so this installs the vendored CRD (src/openshift-dnses.crd.yaml, Apache-2.0; see
+      src/SOURCES.md) only when absent, creates an inert dnses/default object with an empty spec,
+      then patches spec.servers with a sentinel zone forwarded to a TEST-NET IP. Nothing renders a
+      Corefile from it on kind, so it is inert. Skipped, before any write, when the cluster has a
+      dnses.operator.openshift.io CRD or an openshift-dns namespace that the emulation did not
+      create (no app.kubernetes.io/part-of=trr9027 label: a real OpenShift, OKD or MicroShift
+      cluster), and when a dnses/default object already exists; so it never creates or deletes
+      a dnses object under a real DNS Operator CRD (deleting dnses/default makes a real operator
+      delete the cluster DNS DaemonSet). The CRD copy
+      that this test installs carries the label app.kubernetes.io/part-of=trr9027 (added to the
+      copy it sends; the vendored file is not changed), so cleanup deletes the labelled object
+      and then the CRD only when it carries that label: a CRD that this test did not install
+      is never deleted. The audit policy logs
+      operator.openshift.io/dnses writes (update/patch at RequestResponse, create, delete and
+      deletecollection at Request), so the patch reaches the log with its body; the chokepoint keys on
+      objectRef.apiGroup=operator.openshift.io and objectRef.resource=dnses.
+      Rule: detections/sigma/T1565.001/k8s_coredns_configmap_modified.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh f
+      cleanup_command: |
+        if kubectl get crd dnses.operator.openshift.io >/dev/null 2>&1; then kubectl delete dnses.operator.openshift.io -l app.kubernetes.io/part-of=trr9027 --ignore-not-found; fi
+        kubectl delete crd -l app.kubernetes.io/part-of=trr9027 --field-selector metadata.name=dnses.operator.openshift.io --ignore-not-found
     input_arguments:
       source_dir:
         description: Path to the atomic source directory.

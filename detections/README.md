@@ -1076,7 +1076,7 @@ validator (`validate_apiserver_detections.py`), and one workflow
 | TRR9010 | Indicator removal (T1070) | `sigma/T1070/k8s_events_deleted.yml` + a workload-deletion rule + a namespace-delete hunting rule | Metadata to fire; deletes at Request, so a dry run's DeleteOptions body is in the record |
 | TRR9025 | Malicious admission webhook (T1546) | `sigma/T1546/k8s_admission_webhook_created.yml` + a create grader and a repoint grader | Request (RequestResponse for update/patch) |
 | TRR9026 | Pod port-forward (T1572) | `sigma/T1572/k8s_pod_portforward.yml` (verb-agnostic subresource) + a nodes/proxy `/portForward/` rule | Metadata |
-| TRR9027 | Cluster DNS poisoning (T1565.001) | `sigma/T1565.001/k8s_coredns_configmap_modified.yml` + a Corefile grader | Metadata + RequestResponse (the three DNS ConfigMaps) + Request (kube-system ConfigMap creates; drop that rule where Helm stores releases in kube-system ConfigMaps) |
+| TRR9027 | Cluster DNS poisoning (T1565.001) | `sigma/T1565.001/k8s_coredns_configmap_modified.yml` + a Corefile grader | Metadata + RequestResponse (the three DNS ConfigMaps) + Request (kube-system ConfigMap creates; drop that rule where Helm stores releases in kube-system ConfigMaps); OpenShift (E, F): RequestResponse for `openshift-dns/dns-default` update/patch/delete and `dnses.operator.openshift.io` update/patch, Request for `openshift-dns` ConfigMap creates and `dnses` create/delete/deletecollection |
 
 The audit **level** is per technique: pods, workload controllers, RBAC, and
 admission-webhook creates are logged at `Request` so `requestObject` carries the
@@ -1091,7 +1091,14 @@ of the three `kube-system` DNS ConfigMaps (`coredns`, `kube-dns`, `coredns-custo
 at `RequestResponse`, so the stored Corefile is graded whatever the patch type; every
 ConfigMap create in `kube-system` is at `Request` (a create names no object when the
 policy is evaluated, so the rule cannot name the three), so a delete-and-recreate
-(TRR9027 Procedure D) is graded. An update, patch or delete of the EKS
+(TRR9027 Procedure D) is graded. For OpenShift (TRR9027 E and F) an update, patch or
+delete of `openshift-dns/dns-default` is at `RequestResponse` (by `resourceNames`),
+every ConfigMap create in `openshift-dns` is at `Request` (on OpenShift those are
+`dns-default` and CA bundles, public certificates; on `kind` the emulation's
+`dns-default` and the `kube-root-ca.crt` that kube-controller-manager publishes in
+every namespace), and the DNS Operator object `dnses.operator.openshift.io` is at
+`RequestResponse` for update and patch and at `Request` for create, delete and
+deletecollection (it holds DNS configuration only). An update, patch or delete of the EKS
 `kube-system/aws-auth` ConfigMap (TRR9004 Procedure F) is likewise at `RequestResponse`,
 as EKS logs it, so the stored `mapRoles` after an update or patch are kept for triage
 (its create falls to the kube-system ConfigMap create rule at `Request`); the
@@ -1119,8 +1126,16 @@ object name cannot be prefixed), or the `trr9027` sentinel in each procedure's D
 `coredns`; B and C create `kube-dns` and `coredns-custom` by server-side apply, a
 patch by name that the policy logs with its body; D deletes `coredns` and recreates it
 with the sentinel, then restores the saved object and fails the step unless the restored
-Corefile matches byte for byte; each is proven separately). The negative control
-proves a pass depends on the emulation, not the baseline.
+Corefile matches byte for byte; each is proven separately), or, for the OpenShift
+procedures, a patch or update whose request body holds the `trr9027poison` sentinel
+zone: E patches `openshift-dns/dns-default` and F patches `dnses.operator.openshift.io/default`.
+`kind` has neither object, so E and F first create inert ones (an `openshift-dns`
+namespace and a `dns-default` ConfigMap, and the vendored DNS Operator CRD and a
+`dnses/default` object), all labelled `app.kubernetes.io/part-of=trr9027`; that label
+is why these two gates read only the request body and need a patch or update, so the
+setup creates cannot pass them. The cleanup deletes only the labelled objects, the CRD
+included. The negative control proves a pass depends on the emulation, not the
+baseline.
 
 **Per-procedure gates and the emulation ledger.** A `MANIFEST` entry's gate is either
 one callable (any marked record passes, as before) or a list of `(procedure, gate)`

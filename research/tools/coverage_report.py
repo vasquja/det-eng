@@ -9,7 +9,9 @@ execution paths (procedures) of each TRR instead, and gives each one status:
   Proven               the procedure's own emulation is built, and a rule that the
                        TRR's Detections table says covers it proves it in CI,
                        passes check_sufficiency.py with a verified negative, and no
-                       open entry in detections/RULE_DEFECTS.md names it. For a
+                       open entry in detections/RULE_DEFECTS.md names it (an entry
+                       with a Procedures bullet names only the procedures it
+                       lists). For a
                        Kubernetes TRR (its validators expose a per-procedure gate
                        map, PROCEDURES), "proves it in CI" means the emulation cell
                        is exactly 'built' and the rule gates this one procedure with
@@ -107,11 +109,14 @@ def procedure_gates():
 
 
 def open_defects(rule_stems):
-    """{defect ID: set of rule stems} from the Summary table of RULE_DEFECTS.md."""
+    """({defect ID: set of rule stems}, {defect ID: set of procedure IDs}) from the
+    Summary table of RULE_DEFECTS.md. The second map holds only the entries with a
+    Procedures bullet (a defect in one branch of a rule): such an entry marks only the
+    procedures it lists, and every other entry marks each procedure its rules prove."""
     text = (REPO / "detections" / "RULE_DEFECTS.md").read_text()
     summary = text.split("## Summary", 1)[1].split("\n## ", 1)[0]
     sections = re.split(r"\n### ", text)
-    out = {}
+    out, scopes = {}, {}
     for line in summary.splitlines():
         m = re.match(r"\|\s*\[(\w+)\]", line)
         if not m:
@@ -121,7 +126,14 @@ def open_defects(rule_stems):
         rules = re.search(r"^- \*\*Rules?\*\*:(.*?)(?=^- \*\*)", body, re.M | re.S)
         named = (rules.group(1) if rules else "") + line.split("|")[2]
         out[did] = set(re.findall(r"(\w+)(?:\.yml|`|\])", named)) & rule_stems
-    return out
+        procs = re.search(r"^- \*\*Procedures\*\*:(.*?)(?=^- \*\*|\Z)", body, re.M | re.S)
+        if procs:
+            # Fail closed: a Procedures bullet that names no procedure would mark none.
+            scopes[did] = set(re.findall(r"\bTRR\d+\.[A-Z0-9]+\.[A-H]\b", procs.group(1)))
+            if not scopes[did]:
+                sys.exit(f"coverage_report: RULE_DEFECTS.md {did}: its Procedures bullet names "
+                         "no procedure ID (TRRnnnn.PLATFORM.LETTER)")
+    return out, scopes
 
 
 def letters(covers):
@@ -140,7 +152,7 @@ def collect():
     suff = sufficiency()
     rule_files = sorted(p.relative_to(REPO / "detections" / "sigma").as_posix()
                         for p in (REPO / "detections" / "sigma").glob("*/*.yml"))
-    defects = open_defects({Path(r).stem for r in rule_files})
+    defects, scopes = open_defects({Path(r).stem for r in rule_files})
     validators = "".join(p.read_text() for p in (REPO / "detections").glob("validate_*.py"))
     gates = procedure_gates()
 
@@ -155,8 +167,9 @@ def collect():
         # per procedure.
         return Path(rel).name in validators and suff_ok(rel)
 
-    def rule_defects(rel):
-        return sorted(d for d, stems in defects.items() if Path(rel).stem in stems)
+    def rule_defects(rel, pid):
+        return sorted(d for d, stems in defects.items()
+                      if Path(rel).stem in stems and pid in scopes.get(d, {pid}))
 
     index = json.loads((REPO / "research" / "index.json").read_text())["trrs"]
     trrs, mapped = [], set()
@@ -189,7 +202,8 @@ def collect():
             else:
                 emulated = cell.startswith("built")
                 proving = [r for r in rules if sound(r)]
-            if emulated and any(not rule_defects(r) for r in proving):
+            pid = f"{t['id']}.{PLATFORM_CODE[t['platforms'][0]]}.{letter}"
+            if emulated and any(not rule_defects(r, pid) for r in proving):
                 status = "Proven"
             elif emulated and proving:
                 status = "Proven, open defect"
@@ -199,11 +213,16 @@ def collect():
                 status = "Sensor only"
             else:
                 status = "Gap"
-            procs.append({"id": f"{t['id']}.{PLATFORM_CODE[t['platforms'][0]]}.{letter}", "letter": letter,
+            procs.append({"id": pid, "letter": letter,
                           "name": name, "status": status, "emulation": emulation.get(letter, "not listed"),
-                          "rules": rules, "defects": sorted({d for r in proving for d in rule_defects(r)})})
+                          "rules": rules, "defects": sorted({d for r in proving for d in rule_defects(r, pid)})})
         trrs.append({"id": t["id"], "name": t["name"], "platform": t["platforms"][0], "attack": t["external_ids"],
                      "path": t["path"], "procedures": procs})
+    known = {p["id"] for t in trrs for p in t["procedures"]}
+    for did, ids in sorted(scopes.items()):
+        if ids - known:
+            sys.exit(f"coverage_report: RULE_DEFECTS.md {did}: its Procedures bullet names "
+                     f"{', '.join(sorted(ids - known))}, which no TRR in research/index.json has")
     return trrs, [r for r in rule_files if r not in mapped], len(rule_files)
 
 
@@ -268,7 +287,8 @@ def markdown(trrs, unmapped, nrules):
         "- **Proven**: the procedure's own emulation is built, a rule that the TRR's Detections table "
         "says covers it passes `check_sufficiency.py` with a verified near-miss or filtered negative, "
         "no open entry in [`RULE_DEFECTS.md`](../detections/RULE_DEFECTS.md) names it (in the entry's "
-        "Summary row or its Rules bullet), and the rule proves this procedure in CI. For a Kubernetes "
+        "Summary row or its Rules bullet; an entry with a Procedures bullet names only the procedures "
+        "it lists), and the rule proves this procedure in CI. For a Kubernetes "
         "TRR (each is gated by one of the three Kubernetes validators, `validate_k8s_detections.py`, "
         "`validate_staticpod_detections.py` or `validate_apiserver_detections.py`, and each of "
         "them exposes a per-procedure gate map), *proves this "

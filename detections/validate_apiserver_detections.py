@@ -18,7 +18,8 @@ key on the same API server audit log (plus one node runtime sensor rule):
                                            + grade, and repoint grade
   * TRR9026 (T1572, pod port-forward)    - pods/portforward subresource (verb-agnostic)
                                            + nodes/proxy /portForward/ path
-  * TRR9027 (T1565.001, cluster DNS poison) - kube-system DNS ConfigMap write + Corefile grade
+  * TRR9027 (T1565.001, cluster DNS poison) - kube-system and OpenShift DNS config writes
+                                           + Corefile grade
 
 The loop this proves, for each match-gated rule:
 
@@ -51,8 +52,11 @@ procedure's own request:
     Deployment in a policy engine's default namespace and the kyverno namespace delete
     (9008 D2 rows; that record carries no marker, and kind has no kyverno namespace
     before d2 runs), the accepted repoint and the SSA install (9025 D), the trr9026
-    marker in a nodes/proxy requestURI (9026 C; objectRef.name is the node), and the
-    trr9027 sentinel in each DNS ConfigMap write (9027 A-D).
+    marker in a nodes/proxy requestURI (9026 C; objectRef.name is the node), the
+    trr9027 sentinel in each DNS ConfigMap write (9027 A-D), and the sentinel zone in
+    the request body of the openshift-dns/dns-default patch (9027 E) and of the
+    dnses.operator.openshift.io/default patch (9027 F); the objects that E and F create
+    carry the trr9027 label, so these two gates read only the request body.
   * The response code is part of the procedure. By default (rec and win alike) a gate
     needs an accepted response, a 2xx or 101 for a streaming upgrade, so a cleanup
     DELETE that hit a 404, or a write the API server refused, cannot stand in for a
@@ -345,6 +349,67 @@ def coredns_gate_modified(name):
     gate.describe = (f"verb in ('patch', 'update'), objectRef.namespace == 'kube-system', "
                      f"objectRef.name == {name!r}, and some field contains 'trr9027'")
     return gate
+
+
+# The sentinel ZONE of the TRR9027 E and F poisoning writes (trr9027poison.example.invalid).
+# The E and F gates look for it in the request body only: every object that E and F create
+# carries the label value 'trr9027' (app.kubernetes.io/part-of), so 'trr9027' alone is in
+# the setup creates and in the stored object (responseObject) of every later write too.
+OCP_SENTINEL_ZONE = "trr9027poison"
+
+
+def _sentinel_in_request(e, token=OCP_SENTINEL_ZONE):
+    """True when a requestObject field (the body the client sent) holds `token`."""
+    return any(token in str(v) for k, v in e.items() if k.startswith("requestObject"))
+
+
+def openshift_dns_configmap_gate(e):
+    """TRR9027 E: the emulation's own poisoning write of the OpenShift DNS ConfigMap
+    openshift-dns/dns-default. On kind there is no DNS Operator, so the emulation creates
+    an inert dns-default of the operator's shape (labelled trr9027, no sentinel zone) and
+    then patches it with the sentinel server block. The gate needs a patch or update whose
+    request body holds the sentinel zone: the verb test keeps out the setup create, and the
+    request-body test keeps out a patch that does not poison (the stored object of every
+    patch carries the trr9027 label). The audit policy's RequestResponse rule for
+    dns-default is scoped by resourceNames."""
+    if e.get("objectRef.namespace") != "openshift-dns":
+        return False
+    if (e.get("objectRef.name") or "") != "dns-default":
+        return False
+    if e.get("verb") not in ("patch", "update"):
+        return False
+    return _sentinel_in_request(e)
+
+
+openshift_dns_configmap_gate.describe = (
+    "verb in ('patch', 'update'), objectRef.namespace == 'openshift-dns', objectRef.name == "
+    f"'dns-default', and a requestObject field contains {OCP_SENTINEL_ZONE!r}")
+
+
+def openshift_dnses_gate(e):
+    """TRR9027 F: the emulation's own poisoning write of the DNS Operator object
+    dnses.operator.openshift.io/default. The emulation creates the object (labelled
+    trr9027, empty spec) and then patches spec.servers with the sentinel zone. The gate
+    needs a patch or update of dnses/default (no subresource) whose request body holds the
+    sentinel zone: the verb test keeps out the setup create and the cleanup delete, and the
+    request-body test keeps out a write whose only trr9027 text is the label."""
+    if e.get("objectRef.apiGroup") != "operator.openshift.io":
+        return False
+    if e.get("objectRef.resource") != "dnses":
+        return False
+    if e.get("objectRef.subresource"):
+        return False
+    if (e.get("objectRef.name") or "") != "default":
+        return False
+    if e.get("verb") not in ("patch", "update"):
+        return False
+    return _sentinel_in_request(e)
+
+
+openshift_dnses_gate.describe = (
+    "verb in ('patch', 'update'), objectRef.apiGroup == 'operator.openshift.io', "
+    "objectRef.resource == 'dnses', objectRef.name == 'default', no subresource, and a "
+    f"requestObject field contains {OCP_SENTINEL_ZONE!r}")
 
 
 # ---- per-procedure gates (C1-1) ---------------------------------------------
@@ -941,6 +1006,24 @@ MANIFEST = [
     ("T1565.001", "k8s_coredns_corefile_poisoned.yml", "audit", "9027 D create",
      "Corefile grader on a recreated coredns (create body at Request; stub-zone forward to a "
      "public IP)", [("D create", win(coredns_gate_created("coredns"), ("9027", "d")))]),
+    # OpenShift (E, F): kind has no DNS Operator, so the emulation creates inert objects of
+    # the operator's shape and patches them. E proves the chokepoint and the grader on
+    # openshift-dns/dns-default; F proves the chokepoint on the dnses.operator.openshift.io
+    # object. Each gate needs a patch or update whose request body holds the sentinel zone,
+    # so the setup creates (labelled trr9027, no sentinel zone) cannot pass it. The grader
+    # is not gated for F: a dnses write is not a Corefile (a real cluster's operator
+    # renders it, which kind cannot do; the grader's operator-rendered positives are in
+    # the sidecar).
+    ("T1565.001", "k8s_coredns_configmap_modified.yml", "audit", "9027 E",
+     "OpenShift DNS ConfigMap write chokepoint: openshift-dns/dns-default patch",
+     [("E", win(openshift_dns_configmap_gate, ("9027", "e")))]),
+    ("T1565.001", "k8s_coredns_corefile_poisoned.yml", "audit", "9027 E sev",
+     "CoreDNS Corefile poison grader on Procedure E's dns-default patch (RequestResponse)",
+     [("E", win(openshift_dns_configmap_gate, ("9027", "e")))]),
+    ("T1565.001", "k8s_coredns_configmap_modified.yml", "audit", "9027 F",
+     "OpenShift DNS Operator object write chokepoint: dnses.operator.openshift.io/default "
+     "spec.servers patch",
+     [("F", win(openshift_dnses_gate, ("9027", "f")))]),
 ]
 
 
