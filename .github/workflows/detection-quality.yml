@@ -7,6 +7,12 @@ name: detection-quality
 #                      runs through the same pySigma backend as the validators, and
 #                      each declared `breaks` must really be the single flip that
 #                      would fire the rule (detections/rule_cases.py). Hard gate.
+#   null-safety        every rule gives the same hits in two-valued logic (the
+#                      validators' SQLite backend, NOT COALESCE(<test>, 0)) and in
+#                      three-valued logic (ES|QL and other SQL backends: a test on a
+#                      missing field is NULL, NOT NULL is NULL), on every sidecar
+#                      case and cloud fixture (detections/check_null_safety.py, after
+#                      its self-test). Hard gate, for every rule.
 #   check-sufficiency  every rule must ship a positive and at least one VERIFIED
 #                      near-miss or filtered negative (a near-miss shares the
 #                      chokepoint and fails one required argument, for a correlation
@@ -39,12 +45,35 @@ name: detection-quality
 #                      Any other error, or an unreadable base scores.json, fails it.
 #   coverage-report    research/COVERAGE.md and the README coverage chart must match
 #                      what research/tools/coverage_report.py generates now. Hard gate.
+#   platform-coverage  which Kubernetes audit rule still fires under which audit
+#                      policy (the lab policies and the published EKS, GCE kube-up,
+#                      AKS, OpenShift and k3s policies in detections/k8s/
+#                      provider-policies/): detections/k8s_policy_coverage.py
+#                      --self-test --check. It fails when the evaluator's unit cases
+#                      fail, a vendored policy changed, the committed
+#                      detections/k8s/policy_coverage.json is stale, or a rule loses a
+#                      positive (or a negative fires) under its own lab policy (the
+#                      home check). On a pull request
+#                      it runs only when the PR changes a file the result depends on
+#                      (the step lists them); push, schedule and dispatch always run
+#                      it. Not a required check.
 #   benign-corpus      every rule scored against the committed benign corpus
 #                      (detections/score_benign.py): the snapshot scores.json must be
 #                      current, and a rule in `enforce` mode (every per-rule entry
 #                      today) must stay within its budget. Shadow-mode overruns only
 #                      warn. A smoke test also checks the live capture split
 #                      (--extra-split-at) on a constructed audit capture.
+#   provider-mappings  NOT REQUIRED. Each managed-cluster field mapping (AKS, GKE:
+#                      detections/pipelines/) must keep every Kubernetes audit rule's
+#                      verdict and block truth on every sidecar case after the case is
+#                      transformed to the provider's record shape, or the difference must
+#                      be a human-approved EXPECTED_LOSS / NOT_PORTABLE entry
+#                      (detections/check_provider_mappings.py --check, which also fails
+#                      when detections/pipelines/mapping_results.json is stale), plus the
+#                      harness and converter self-tests. On a pull request it runs only
+#                      when a rule or sidecar (detections/sigma/), the pipelines, the
+#                      harness or its imports (sigma_eval, rule_cases, sigma_explain) or
+#                      their requirements change; a renamed file counts by both paths.
 #   benign-linux-live  SHADOW. A real Ubuntu runner runs ordinary admin, developer
 #                      and service activity under the det-eng audit rules
 #                      (detections/benign/linux/), and every Linux rule is scored on
@@ -68,7 +97,8 @@ name: detection-quality
 # it sees one of these failed on the head commit, but it sees that only if the
 # failure comes before the required checks finish (this workflow's completion
 # re-runs automerge); if the required checks finish first, GitHub merges. Making
-# rule-cases, check-sufficiency and benign-corpus required closes that race.
+# rule-cases, check-sufficiency and benign-corpus required closes that race
+# (null-safety too, if the maintainer makes it required).
 # sufficiency-ratchet stays non-required: with no bypass actors, a required ratchet
 # would block for everyone a PR it fails by design (a corrected case, an accepted
 # rise in hits). See detections/benign/README.md, "Branch protection: what binds a
@@ -124,6 +154,48 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+  null-safety:
+    # A rule whose `not <filter>` reads a field that a record can lack loses that
+    # record on a three-valued backend, and no validator can see it: they all run
+    # the two-valued SQLite query. The rules and the sidecars are the inputs, and
+    # this workflow has no paths filter, so the job runs on every change to them.
+    name: null-safety
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install requirements
+        run: pip install --quiet -r detections/requirements.txt
+
+      - name: Self-test the check on constructed rules
+        run: python3 detections/check_null_safety.py --self-test
+
+      - name: Check every rule in two- and three-valued logic
+        shell: bash
+        run: |
+          # shell: bash enables pipefail, so tee does not mask the exit code.
+          python3 detections/check_null_safety.py --markdown "$GITHUB_STEP_SUMMARY" \
+            | tee /tmp/null-safety.out
+
+      - name: Publish the full log to job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo ''
+            echo '<details><summary>check_null_safety.py output</summary>'
+            echo ''
+            echo '```'
+            cat /tmp/null-safety.out 2>/dev/null || echo '(no output captured)'
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   check-sufficiency:
     name: check-sufficiency
     runs-on: ubuntu-latest
@@ -177,6 +249,111 @@ jobs:
 
       - name: Check that the coverage report is current
         run: python3 research/tools/coverage_report.py --check
+
+  platform-coverage:
+    # Which Kubernetes audit rule still fires under which audit policy: the script
+    # replays every sidecar case of every Kubernetes audit rule through the rule as
+    # each policy would record it (offline; see the script's docstring). Fails when
+    # detections/k8s/policy_coverage.json is stale; regenerate it with --update.
+    name: platform-coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: f
+        name: Decide whether the pull request changes an input of the result
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_SHA:-}" ]; then
+            echo "Not a pull request; running the check."
+            echo "relevant=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # Exact file paths, or directory prefixes ending in '/'. Every rule
+          # directory counts: the script picks the Kubernetes audit rules by
+          # logsource, so a rule anywhere can join or leave the set. The validators
+          # say which lab policy is each rule's home.
+          patterns=$(printf '%s\n' \
+            'detections/sigma/' \
+            'detections/k8s/' \
+            'detections/k8s_policy_coverage.py' \
+            'detections/sigma_eval.py' \
+            'detections/sigma_explain.py' \
+            'detections/rule_cases.py' \
+            'detections/requirements.txt' \
+            'detections/validate_apiserver_detections.py' \
+            'detections/validate_k8s_detections.py' \
+            'detections/validate_staticpod_detections.py' \
+            '.github/workflows/detection-quality.yml')
+          # Fail safe: if the diff cannot be computed, run the check.
+          # --no-renames: a rename lists both its old and its new path, so a file
+          # moved out of the listed prefixes still counts.
+          if ! changed="$(git diff --no-renames --name-only "${BASE_SHA}...${HEAD_SHA}" 2>/dev/null)"; then
+            echo "git diff failed; running the check to be safe."
+            echo "relevant=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          relevant=false
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            while IFS= read -r pat; do
+              [ -n "$pat" ] || continue
+              if [ "${pat%/}" != "$pat" ]; then
+                case "$file" in "$pat"*) relevant=true; break 2 ;; esac
+              else
+                [ "$file" = "$pat" ] && { relevant=true; break 2; }
+              fi
+            done <<< "$patterns"
+          done <<< "$changed"
+          echo "relevant=$relevant"
+          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        if: steps.f.outputs.relevant == 'true'
+        with:
+          python-version: '3.x'
+
+      - name: Install requirements
+        if: steps.f.outputs.relevant == 'true'
+        run: pip install --quiet -r detections/requirements.txt
+
+      - name: Self-test the policy evaluator and check that the result is current
+        if: steps.f.outputs.relevant == 'true'
+        shell: bash
+        run: |
+          # shell: bash enables pipefail, so tee does not mask the exit code.
+          python3 detections/k8s_policy_coverage.py --self-test --check \
+            | tee /tmp/platform-coverage.out
+
+      - name: Publish the platform table to job summary
+        if: ${{ always() && steps.f.outputs.relevant == 'true' }}
+        shell: bash
+        run: |
+          # The script prints the table and exits 1 when the home check fails, so a
+          # non-zero exit with output is not "no table".
+          rc=0
+          table="$(python3 detections/k8s_policy_coverage.py 2>&1)" || rc=$?
+          {
+            echo '## Kubernetes rules under each audit policy (offline simulation)'
+            echo ''
+            echo '```'
+            cat /tmp/platform-coverage.out 2>/dev/null || echo '(no check output captured)'
+            echo ''
+            if [ -n "$table" ]; then printf '%s\n' "$table"; fi
+            if [ "$rc" -ne 0 ] && [ -z "$table" ]; then
+              echo "(the table could not be computed: exit code $rc, no output)"
+            elif [ "$rc" -ne 0 ]; then
+              echo "(exit code $rc: a check failed; read the FAIL or ERROR lines above)"
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   sufficiency-ratchet:
     # PR only: compare the head with the base branch. The sufficiency report of each
@@ -335,6 +512,111 @@ jobs:
             echo ''
             echo '```'
             cat /tmp/benign.out 2>/dev/null || echo '(no output captured)'
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  provider-mappings:
+    # Offline: no cloud account. A pull request that touches none of the patterns below
+    # skips the steps (the job still reports success); push, schedule and dispatch runs
+    # always run them.
+    name: provider-mappings
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether the mappings need a check
+        id: f
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_SHA:-}" ]; then
+            echo "Non-PR event; running the check."
+            echo "relevant=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # Shell patterns ('*' also matches '/'), matched against each changed path.
+          # Every rule path counts: the harness picks the Kubernetes audit rules by their
+          # logsource, not by their file name.
+          patterns=$(printf '%s\n' \
+            'detections/sigma/*' \
+            'detections/pipelines/*' \
+            'detections/check_provider_mappings.py' \
+            'detections/sigma_eval.py' \
+            'detections/rule_cases.py' \
+            'detections/sigma_explain.py' \
+            'detections/requirements.txt' \
+            'detections/requirements-convert.txt' \
+            '.github/scripts/check_sigma_regex.py' \
+            '.github/workflows/detection-quality.yml')
+          # --no-renames: a renamed rule lists its old path too (an approval keyed on it).
+          if ! changed="$(git diff --name-only --no-renames "${BASE_SHA}...${HEAD_SHA}" 2>/dev/null)"; then
+            echo "git diff failed; running the check to be safe."
+            echo "relevant=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          relevant=false
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            while IFS= read -r pat; do
+              [ -n "$pat" ] || continue
+              # shellcheck disable=SC2254  # the pattern is a glob on purpose
+              case "$file" in $pat) relevant=true; break 2 ;; esac
+            done <<< "$patterns"
+          done <<< "$changed"
+          echo "relevant=$relevant"
+          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        if: steps.f.outputs.relevant == 'true'
+        with:
+          # google-re2 ships wheels up to cp314 (see validate-detections, sigma-lint).
+          python-version: '3.14'
+
+      - name: Install requirements (validators + conversion checks)
+        if: steps.f.outputs.relevant == 'true'
+        run: |
+          pip install --quiet -r detections/requirements.txt -r detections/requirements-convert.txt
+          # RE2 for the lint of every regular expression a pipeline writes.
+          pip install --quiet google-re2==1.1.20251105
+
+      - name: Check every mapping on every case (and that mapping_results.json is current)
+        if: steps.f.outputs.relevant == 'true'
+        shell: bash
+        run: |
+          # shell: bash enables pipefail, so tee does not mask the exit code.
+          python3 detections/check_provider_mappings.py --check --require-re2 \
+            | tee /tmp/provider-mappings.out
+
+      - name: Self-test the harness (planted mapping errors must be caught)
+        if: steps.f.outputs.relevant == 'true'
+        run: python3 detections/check_provider_mappings.py --self-test
+
+      - name: Self-test the converter (the Kusto quoting workaround)
+        if: steps.f.outputs.relevant == 'true'
+        run: python3 detections/pipelines/convert_k8s.py --self-test
+
+      - name: Publish results to job summary
+        if: always() && steps.f.outputs.relevant == 'true'
+        shell: bash
+        run: |
+          {
+            echo '## Provider field mappings (AKS, GKE; exploded arrays as a warning)'
+            echo ''
+            echo '```'
+            tail -n 3 /tmp/provider-mappings.out 2>/dev/null || echo '(no output captured)'
+            echo '```'
+            echo ''
+            echo '<details><summary>check_provider_mappings.py output</summary>'
+            echo ''
+            echo '```'
+            cat /tmp/provider-mappings.out 2>/dev/null || echo '(no output captured)'
             echo '```'
             echo '</details>'
           } >> "$GITHUB_STEP_SUMMARY"

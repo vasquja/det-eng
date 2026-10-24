@@ -326,6 +326,7 @@ request, and never weaken the case.
 python3 detections/rule_cases.py --atoms detections/sigma/T1040/afinet_raw_socket.yml  # the items `breaks` can name
 python3 detections/rule_cases.py                     # every rule's cases
 python3 detections/check_sufficiency.py              # the gate (CI: detection-quality / check-sufficiency)
+python3 detections/check_null_safety.py              # same hits in two- and three-valued logic (CI: null-safety)
 ```
 
 ## Portable regular expressions
@@ -394,9 +395,20 @@ pySigma 1.5.1 (`pySigma-backend-elasticsearch` 2.1.1) and Lucene 10.1 found thes
   `kubernetes.io/config.source`) and strategic-merge directive keys
   (`$deleteFromPrimitiveList/<name>`). The rules: `T1611/k8s_podspec_confinement_disabled.yml`,
   `T1685/k8s_enforcer_workload_removed.yml`, `T1685/k8s_security_tool_workload_removed.yml`,
-  `T1053.007/k8s_cri_job_pod.yml` and `T1543.005/k8s_cri_static_pod_start.yml`. KQL
+  `T1053.007/k8s_cri_job_pod.yml`, `T1543.005/k8s_cri_static_pod_start.yml` and
+  `T1070/k8s_namespace_deleted.yml` (the audit annotation key
+  `annotations.audit.k8s.io/truncated`). KQL
   needs bracket access (`requestObject.spec['$deleteFromPrimitiveList/replicas']`) for a
   key with `.`, `/` or `$`.
+- **A `:` in a field name.** pySigma's Lucene backend does not escape `:` in a field
+  name either, and `query_string` reads it as the end of the field name, so the query
+  does not parse. Escape it as `\:`. The keys are IAM condition keys in a field name
+  (`requestParameters.bucketPolicy.Statement.Condition.StringEquals.aws:PrincipalOrgID`).
+  The rule: `T1537/aws_resource_policy_made_public.yml`. A check that converted every
+  rule with the Lucene backend and parsed each query with Lucene 10.1.0's classic
+  `QueryParser` (leading wildcards allowed) found these two notes complete: 65 queries
+  parse, and the 7 that do not are the rules these two notes name (the 4 correlation
+  rules do not convert to Lucene).
 - **`|exists` on EQL.** pySigma's EQL backend cannot convert `|exists` ("Field exists
   expressions are not supported"). Write `<field> != null` there. It affects
   `sel_smp_directive` in both T1685 workload rules, and `T1053.007/k8s_cri_job_pod.yml`.
@@ -406,26 +418,131 @@ pySigma 1.5.1 (`pySigma-backend-elasticsearch` 2.1.1) and Lucene 10.1 found thes
   that the validators use wraps each negation as `NOT COALESCE(<test>, 0)`, which keeps
   that meaning. ES|QL and other SQL-semantics backends use three-valued logic: a test on
   a missing field is NULL, `NOT NULL` is NULL, and `WHERE` keeps only true. So
-  `and not <filter>` drops every record that lacks the filter's field, and CI cannot
-  see it. A deployment there must make each negation null-safe:
-  `(<field> is null or not <filter>)`, or a Sigma `field: null` selection ORed with the
-  `not`. The three T1611 pod-spec rules and both T1685 workload rules
-  (`k8s_enforcer_workload_removed.yml` and the anchor
-  `k8s_security_tool_workload_removed.yml`) use the second form for each filter on a
-  field that a record can lack (`objectRef.subresource`, `requestObject.dryRun`,
-  `requestObject.spec.replicas`, and the `requestObject` text of a JSON patch), and
-  lose no positive. A probe that removed the `COALESCE` wrappers, and made a regular
-  expression on a missing field NULL, found 16 rules that still lose positives, all of
-  them on `main` too: the three T1070 delete rules, the seven T1537 public-policy rules,
-  `T1550.001/aws_eks_irsa_web_identity_assumed_off_cluster.yml`,
-  `T1098.001/aws_github_oidc_role_trust_abuse.yml` (4 of 8),
-  `T1098.001/aws_github_oidc_role_trust_ref_wildcard.yml` (5 of 5),
-  `T1098.001/gcp_workload_identity_pool_provider_created.yml` (4 of 5),
-  `T1199/gcp_workforce_pool_provider_no_attribute_condition.yml` (1 of 3) and
-  `T1685/k8s_admission_webhook_disabled.yml` (5 of 8: its delete-body dry-run filter
-  drops every delete without a body, Procedures A and B included). Wave 4 of the
-  Kubernetes coverage plan (item 4.2, the backend mapping proof harness) measures and
-  fixes these.
+  `and not <filter>` drops every record that lacks the filter's field, and no validator
+  sees it. [`check_null_safety.py`](check_null_safety.py) (CI: `detection-quality` /
+  `null-safety`, for every rule, with no exemption list) runs each rule in both logics
+  over every sidecar case and every cloud fixture, and fails when any hit differs. A
+  failure names the rule, the case or fixture, the record, and each negation whose
+  operand is NULL (a `not`, or a `|neq` item), with the items and the fields that make
+  it NULL. The three-valued run is `sigma_eval.compile_rule(path, three_valued=True)`
+  (`NOT (<test>)` with no `COALESCE`) on `sigma_eval.EventTable(events,
+  three_valued=True)`, where a regular expression on a missing field is NULL too. Two
+  null-safe forms keep the two-valued verdict of the plain `not`
+  (`sigma_explain.py`, `PlainRule.null_helpers()`, defines them):
+  - **Guard.** A filter whose every map reads the field that a record can lack: OR it
+    with a block that the field is absent,
+    `(sel_no_dry_run_body or not filter_dry_run_delete_body)`. The `not` can also take an
+    OR of such filters (`not (filter_a or filter_b)`, `not 1 of filter_*`) or an AND
+    with one of them. For a `not` over blocks on different fields, apply De Morgan's laws
+    until each `not` takes blocks that one guard covers, then guard each one (both
+    `T1098.001/aws_github_oidc_role_trust_*` rules). A `|neq` item is a `not` inside the
+    item, which no guard can reach: write it as a filter block with a guard. A guard
+    covers only the fields it names: any other field that the filter reads (`verb` in
+    the dry-run and namespace-teardown filters) must be one that the log source writes
+    on every record the rule matches (`--absent`, below, probes this on the cases). A
+    guard on several fields holds only where all of them are absent, so where one is
+    present and another is absent the negation can stay NULL. The check accepts it only
+    when each map of the filter is one item that holds on any value of one of its fields
+    (`field: '*'` or `field|exists: true`: the S3 single-statement and Lambda scope
+    filters); for any other filter, use one guard per field.
+  - **Copy.** A filter whose maps read different fields (a policy in one of six fields, a
+    query or a body dry run): repeat each map as a block of its own, and read each one
+    only where its field is present,
+    `not (filter_scoped and ((filter_scoped_condition_key and not sel_no_condition_key) or
+    (filter_scoped_policy and not sel_no_policy)))`. Each term reads its copy only where
+    every field that the copy tests is present, with one guard per field
+    (`filter_x_a and not sel_no_a and not sel_no_kind` for a map on two fields), so the OR
+    holds exactly where the filter holds, and it is never NULL. The filter stays, so the
+    cases' `breaks` still name its items. Do not write the copy with `|exists: true`
+    items: the EQL backend cannot convert them (above), and the graders do not see such a
+    copy as one.
+
+  A positive block that no `not` holds needs no guard: `WHERE` drops a NULL there, as it
+  drops false. The check also fails, whatever the records hold: a guard on a near
+  spelling of a field that its filter reads (one that differs only in letter case, or by
+  a typo, is true on every record, so on Lucene, Splunk and ES|QL the filter never
+  applies); a guard on a field that only some maps of its filter read (it holds where a
+  map on another field holds, so it changes the rule); a guard on several fields whose
+  filter it does not keep from NULL; a copy that does not repeat its filter's maps
+  exactly, or that tests a field that no guard of its term covers; and a rule field that
+  a case's records carry only in another letter case (SQLite matches column names
+  without regard to case, so there every offline gate reads the record's field). A
+  `field: null` block ORed with a `not` on other fields is an ordinary selection
+  (`sel_no_mfa or not filter_sso`), and so are `<block> and not <null block>` terms
+  when no block ANDed with them has maps with the same keys. If the check reads a real
+  selection as a broken guard, write `sel_no_x or not filter` as
+  `not (filter and not sel_no_x)`, which means the same and is not read as a guard; if
+  it reads selections as a broken copy, write each `sel_x and not sel_no_x` as
+  `not (sel_no_x or not sel_x)`. The
+  graders do not count a guard or a copy as an item of the rule: `check_sufficiency.py`
+  and `rule_cases.py` grade each rule without them (`PlainRule.stripped()`), so a guard
+  is no discriminating item, no R5 count and no hint target, and a case whose `breaks`
+  names one fails. The validators' miss explanations and the benign grading of
+  `validate_cloud_detections.py` read the same view, so no explanation names a guard
+  as the item to flip.
+
+  The guard is in the three T1611 pod-spec rules, both T1685 workload rules,
+  `T1685/k8s_admission_webhook_disabled.yml`, `T1070/k8s_events_deleted.yml`,
+  `T1070/k8s_workload_deleted_evidence.yml`, both GCP attribute-condition rules, both
+  `T1098.001/aws_github_oidc_role_trust_*` rules, the S3 single-statement and Lambda
+  scope filters of `T1537/aws_resource_policy_made_public.yml`, on `errorCode` (written
+  only when a call returns an error) in the eight T1537 rules and
+  `T1550.001/aws_eks_irsa_web_identity_assumed_off_cluster.yml`, and on `user.username`
+  in `T1053.007/k8s_job_create.yml`, `T1070/k8s_events_deleted.yml`,
+  `T1070/k8s_workload_deleted_evidence.yml`, `T1098.006/k8s_rbac_write.yml` and
+  `T1552.007/k8s_secret_token_request.yml`. The copy is in
+  `T1537/aws_resource_policy_made_public.yml`, `T1537/aws_eventbridge_bus_made_public.yml`
+  and `T1070/k8s_namespace_deleted.yml`.
+
+  On the Wave 3 `main` (`861f97b`) the check found 17 rules that lost positives: the
+  three T1070 delete rules, the eight T1537 public-exposure rules (the seven with
+  sidecars and `aws_ssm_document_shared_publicly.yml`, through its attack fixture),
+  `T1550.001/aws_eks_irsa_web_identity_assumed_off_cluster.yml`, both
+  `T1098.001/aws_github_oidc_role_trust_*` rules,
+  `T1098.001/gcp_workload_identity_pool_provider_created.yml`,
+  `T1199/gcp_workforce_pool_provider_no_attribute_condition.yml` and
+  `T1685/k8s_admission_webhook_disabled.yml` (its delete-body dry-run filter dropped
+  every delete without a body, Procedures A and B included). The record of a request
+  that fails authentication has no `user.username` (a 401 at stage `ResponseStarted`
+  with no request body; apiserver v1.36.4 `WithFailedAuthenticationAudit` and
+  `audit.LogRequestMetadata`), and five rules fire on that attempt in two-valued logic
+  only: `T1053.007/k8s_job_create.yml`, `T1552.007/k8s_secret_token_request.yml`, and,
+  for a `deletecollection`, `T1098.006/k8s_rbac_write.yml`,
+  `T1070/k8s_events_deleted.yml` and `T1070/k8s_workload_deleted_evidence.yml` (the last
+  two are among the 17). Each of these five sidecars now holds that record as a
+  positive, and with them the check fails 20 rules of that `main`. All 20 now have a
+  null-safe form, with every earlier case verdict and benign score the same as before.
+  The OpenShift branches that wave 4 adds to `T1565.001/k8s_coredns_configmap_modified.yml`
+  have no 2xx selection either, so their DNS Operator filter carries the same guard, and
+  the sidecar holds a 401 positive for each branch.
+  **Limit:** the check proves null safety on the records that the cases and fixtures
+  hold. A filter on a field that every positive carries is never tested absent;
+  `check_null_safety.py --absent` lists those fields (information only). It lists these
+  today, and no record that the rule can match lacks the field:
+  - `requestURI`: a field of the Kubernetes audit event with no `omitempty`, which
+    `audit.LogRequestMetadata` sets on every record (apiserver v1.36.4
+    `pkg/apis/audit/v1/types.go`, `pkg/audit/request.go`).
+  - `user.username` in `T1070/k8s_namespace_deleted.yml`, both T1685 workload rules,
+    `T1685/k8s_admission_webhook_neutered.yml`, `T1098.006/k8s_rbac_privileged_grant.yml`
+    and `T1098.006/k8s_rbac_sensitive_permission_grant.yml`: absent only on the record of
+    a request that fails authentication, whose `responseStatus.code` 401 the 2xx
+    selection of the first three rejects, and which holds no request body for the body
+    selections of the others.
+  - `responseStatus.code` in `T1685/k8s_admission_webhook_neutered.yml`: absent only on
+    a `RequestReceived`-stage record, which holds no request body for its selections.
+  - `objectRef.name` in the aggregation-controller filter of
+    `T1098.006/k8s_rbac_sensitive_permission_grant.yml`: absent only on a create, and the
+    controller's bootstrap role (`escalate`, `get`, `list`, `watch`, `update` and `patch`
+    on clusterroles, Kubernetes v1.36.4
+    `plugin/pkg/auth/authorizer/rbac/bootstrappolicy/controller_policy.go`) cannot create,
+    so the API server refuses such a create before it reads the body.
+  - CloudTrail's `sourceIPAddress` ("Optional: False" in the CloudTrail record
+    contents), the Azure Activity Log's `resultType` (the event's `status.value`, MS
+    Learn "Azure Activity Log event schema"), auditd's `comm`, `exe`, `euid` and `a1`,
+    and the file sensor's `Image`.
+
+  For a field that a record can lack, add a positive case without it and guard the
+  filter.
 - **`.` and a line break.** In Python, RE2 and PCRE `.` does not match a line break
   unless `|re|s` is set; in Lucene it always does.
 - **`\s`.** `\s` is `[\t\n\r ]` in Lucene (no vertical tab or form feed), ASCII
@@ -437,7 +554,8 @@ pySigma 1.5.1 (`pySigma-backend-elasticsearch` 2.1.1) and Lucene 10.1 found thes
   tab or form feed alone.
 - **Determinization budget.** A long pattern can exceed Lucene's default determinization
   budget (`max_determinized_states`, 10,000). A check with Lucene 10.1's `RegExp`
-  found that every `|re` value (321 at this writing) parses and fits the budget. With
+  found that every `|re` value (321 at this writing; the 32 that the null-safe filter
+  copies added later are YAML aliases of values in that set) parses and fits the budget. With
   case folding (`ASCII_CASE_INSENSITIVE`, as the `case_insensitive` flag uses), the
   largest is the JSON-patch capability grammar of
   `T1611/k8s_podspec_controller_host_access.yml` (8,094 states); without it, the
@@ -445,6 +563,45 @@ pySigma 1.5.1 (`pySigma-backend-elasticsearch` 2.1.1) and Lucene 10.1 found thes
   states). Each value, wrapped in `.*` (no `.*` before a leading `^` or after a
   trailing `$`), gives the same verdict as Python and RE2 on every case, fixture and
   benign-corpus value of its field.
+
+## Provider field mappings (AKS, GKE, EKS)
+
+The Kubernetes audit rules read the `audit.k8s.io/v1` Event, the shape the CI clusters
+write and EKS sends to CloudWatch Logs. AKS (`AKSAudit` / `AKSAuditAdmin`) and GKE
+(Cloud Audit Logs) store the event in other shapes, so
+[`pipelines/`](pipelines/README.md) holds a pySigma pipeline for each
+(`kubernetes_aks_auditlogs.yml`, `k8s_gke.py`) and a converter (`convert_k8s.py`, with
+a workaround for the Kusto backend's quoting of dotted field names and five related
+defects).
+[`check_provider_mappings.py`](check_provider_mappings.py) proves each mapping offline:
+it transforms every event of every sidecar case into the provider's record, and the
+rule's verdict and the events each block holds on must be the same in both shapes, in
+each variant of a JSON list's text (key order kept, and keys sorted). A rule the
+provider cannot express fails conversion and is NOT PORTABLE, with the reason; an
+accepted difference is a human-approved `EXPECTED_LOSS` entry. Anchors
+(`pipelines/anchors/`) check the transforms against records or column references from
+Google- and Microsoft-authored sources.
+
+```
+python3 detections/check_provider_mappings.py --check   # CI job provider-mappings (not required)
+python3 detections/check_provider_mappings.py --self-test
+python3 detections/check_provider_mappings.py --propose # after a Kubernetes rule or case change; then --write
+python3 detections/pipelines/convert_k8s.py aks detections/sigma/T1609/k8s_pod_exec_attach.yml
+#   (convert_k8s.py aks needs: pip install -r detections/requirements-convert.txt)
+```
+
+At this commit, on the `AKSAudit` table AKS keeps 28 of the 31 rules exactly, 1 with an
+approved loss
+([RULE_DEFECTS.md K43](RULE_DEFECTS.md#k43-k8s_rbac_privileged_grant-the-aggregation-clause-needs-the-api-servers-key-order))
+and 2 not portable (no `ImpersonatedUser` column); GKE keeps 13, 5 with approved losses
+(JSON-patch bodies, whose GKE form no public record shows, and the K43 key order)
+and 13 not portable (no request URI, no HTTP status, no audit level, no impersonated
+groups). On `AKSAuditAdmin` (no `get` and `list`) and on GKE without Data Access logs,
+8 rules also lose positive cases. 16 rules match a JSON list as its text,
+which a backend that explodes arrays cannot do; [`pipelines/README.md`](pipelines/README.md#rules-that-read-a-list-as-its-json-text)
+lists them and says what a backend pipeline must map. The machine-readable result is
+[`pipelines/mapping_results.json`](pipelines/mapping_results.json). No query has run on
+a live AKS or GKE log yet (backlog issue #55).
 
 ## The benign corpus (false-positive scores)
 
@@ -496,11 +653,20 @@ detection FAIL, a broken control or a vacuous control fails the job; only a
 probe-confirmed SKIP does not. On a public repository the run is free.
 
 `.github/workflows/detection-quality.yml` runs the offline layers on every pull
-request, on push to `main`, and weekly: `rule-cases`, `check-sufficiency`,
+request, on push to `main`, and weekly: `rule-cases`, `null-safety`
+(`check_null_safety.py`), `check-sufficiency`,
 `sufficiency-ratchet` (pull requests only), `benign-corpus`
 (`score_benign.py --check --enforce`) and the shadow `benign-linux-live` capture.
 It also runs `schedule-freshness` (not on push), which reads the Actions API; see
-below.
+below. It also runs `provider-mappings` (not a required check; on a pull request only
+when a rule, a sidecar, the pipelines or the harness change), which proves the
+managed-cluster field mappings ([Provider field mappings](#provider-field-mappings-aks-gke-eks)).
+
+The `platform-coverage` job of the same workflow runs
+`python3 detections/k8s_policy_coverage.py --self-test --check` (see
+[Managed platforms: the audit-policy simulator](#managed-platforms-the-audit-policy-simulator)).
+On a pull request it runs only when the pull request changes one of its inputs; it is
+not a required check.
 
 **Weekly scheduled runs.** Each workflow file with a `schedule:` trigger (the
 cron line is in the file) runs once a week, so CI proves a rule again when only
@@ -913,7 +1079,7 @@ validator (`validate_apiserver_detections.py`), and one workflow
 | TRR9010 | Indicator removal (T1070) | `sigma/T1070/k8s_events_deleted.yml` + a workload-deletion rule + a namespace-delete hunting rule | Metadata to fire; deletes at Request, so a dry run's DeleteOptions body is in the record |
 | TRR9025 | Malicious admission webhook (T1546) | `sigma/T1546/k8s_admission_webhook_created.yml` + a create grader and a repoint grader | Request (RequestResponse for update/patch) |
 | TRR9026 | Pod port-forward (T1572) | `sigma/T1572/k8s_pod_portforward.yml` (verb-agnostic subresource) + a nodes/proxy `/portForward/` rule | Metadata |
-| TRR9027 | Cluster DNS poisoning (T1565.001) | `sigma/T1565.001/k8s_coredns_configmap_modified.yml` + a Corefile grader | Metadata + RequestResponse (the three DNS ConfigMaps) + Request (kube-system ConfigMap creates; drop that rule where Helm stores releases in kube-system ConfigMaps) |
+| TRR9027 | Cluster DNS poisoning (T1565.001) | `sigma/T1565.001/k8s_coredns_configmap_modified.yml` + a Corefile grader | Metadata + RequestResponse (the three DNS ConfigMaps) + Request (kube-system ConfigMap creates; drop that rule where Helm stores releases in kube-system ConfigMaps); OpenShift (E, F): RequestResponse for `openshift-dns/dns-default` update/patch/delete and `dnses.operator.openshift.io` update/patch, Request for `openshift-dns` ConfigMap creates and `dnses` create/delete/deletecollection |
 
 The audit **level** is per technique: pods, workload controllers, RBAC, and
 admission-webhook creates are logged at `Request` so `requestObject` carries the
@@ -928,7 +1094,14 @@ of the three `kube-system` DNS ConfigMaps (`coredns`, `kube-dns`, `coredns-custo
 at `RequestResponse`, so the stored Corefile is graded whatever the patch type; every
 ConfigMap create in `kube-system` is at `Request` (a create names no object when the
 policy is evaluated, so the rule cannot name the three), so a delete-and-recreate
-(TRR9027 Procedure D) is graded. An update, patch or delete of the EKS
+(TRR9027 Procedure D) is graded. For OpenShift (TRR9027 E and F) an update, patch or
+delete of `openshift-dns/dns-default` is at `RequestResponse` (by `resourceNames`),
+every ConfigMap create in `openshift-dns` is at `Request` (on OpenShift those are
+`dns-default` and CA bundles, public certificates; on `kind` the emulation's
+`dns-default` and the `kube-root-ca.crt` that kube-controller-manager publishes in
+every namespace), and the DNS Operator object `dnses.operator.openshift.io` is at
+`RequestResponse` for update and patch and at `Request` for create, delete and
+deletecollection (it holds DNS configuration only). An update, patch or delete of the EKS
 `kube-system/aws-auth` ConfigMap (TRR9004 Procedure F) is likewise at `RequestResponse`,
 as EKS logs it, so the stored `mapRoles` after an update or patch are kept for triage
 (its create falls to the kube-system ConfigMap create rule at `Request`); the
@@ -956,8 +1129,16 @@ object name cannot be prefixed), or the `trr9027` sentinel in each procedure's D
 `coredns`; B and C create `kube-dns` and `coredns-custom` by server-side apply, a
 patch by name that the policy logs with its body; D deletes `coredns` and recreates it
 with the sentinel, then restores the saved object and fails the step unless the restored
-Corefile matches byte for byte; each is proven separately). The negative control
-proves a pass depends on the emulation, not the baseline.
+Corefile matches byte for byte; each is proven separately), or, for the OpenShift
+procedures, a patch or update whose request body holds the `trr9027poison` sentinel
+zone: E patches `openshift-dns/dns-default` and F patches `dnses.operator.openshift.io/default`.
+`kind` has neither object, so E and F first create inert ones (an `openshift-dns`
+namespace and a `dns-default` ConfigMap, and the vendored DNS Operator CRD and a
+`dnses/default` object), all labelled `app.kubernetes.io/part-of=trr9027`; that label
+is why these two gates read only the request body and need a patch or update, so the
+setup creates cannot pass them. The cleanup deletes only the labelled objects, the CRD
+included. The negative control proves a pass depends on the emulation, not the
+baseline.
 
 **Per-procedure gates and the emulation ledger.** A `MANIFEST` entry's gate is either
 one callable (any marked record passes, as before) or a list of `(procedure, gate)`
@@ -1005,7 +1186,7 @@ quiet on the emulation's own server-side dry runs, which persist nothing. The `d
 control of the TRR9008, TRR9010 and TRR9025 atomics creates objects named
 `trr9008-dryrun-`, `trr9010-dryrun-` and `trr9025-dryrun-`, sends each write with
 `--dry-run=server` (Event, pod, Job and namespace deletes, and a deletecollection of
-the Events and of the pods of its namespace; a webhook neuter patch and delete; a
+the Events (both groups) and pods of its namespace; a webhook neuter patch and delete; a
 Deployment patch, both `kubectl scale` shapes, a delete and a deletecollection in
 `gatekeeper-system`, and the delete of that namespace; a webhook repoint patch), and
 checks that nothing changed. kubectl delete never sends a deletecollection, so the
@@ -1062,6 +1243,55 @@ so the `9007 static` entry match-gates the pod-spec chokepoint on it (`create po
 the emulation polls up to 60 s for that mirror pod and fails if it never registers.
 TRR9003's CRI rule for the static pod is not compiled by this validator;
 `validate_staticpod_detections.py` compiles and match-gates it on the TRR9003 emulation.
+
+## Managed platforms: the audit-policy simulator
+
+Every Kubernetes audit rule (TRR9002, TRR9003 and the API server TRRs) is proven under
+the lab policies in [`k8s/`](k8s/). A managed cluster runs its own audit policy, and
+on a managed platform (EKS, GKE, AKS) the user cannot change it.
+[`k8s_policy_coverage.py`](k8s_policy_coverage.py) evaluates an audit policy the way
+the API server does (kubernetes v1.36.4 `pkg/audit/policy/checker.go`: first matching
+rule wins, users, groups, verbs, namespaces, resources with subresources and
+wildcards, resourceNames, non-resource URLs, omitStages), builds the records that each
+sidecar case's request leaves under that policy (no record at None, no `requestObject`
+below Request, no `responseObject` below RequestResponse, plus a RequestReceived
+record where that stage is not omitted), and runs the real rule on them. It reports,
+per rule and policy, the positives that still fire, the near-misses that stay quiet
+and the negatives that start to fire (for example a dry-run filter that lost its
+body). A record never gains a body: where a policy logs more than a case record holds,
+the table marks the cell `~` when the rule reads that missing body, so that case is
+not proven on that platform. Where a policy keeps the RequestReceived stage (the k3s
+starter policy; some AKS and EKS rules), one request writes two records, and a rule
+alerts twice for it. The policies are the three lab policies and the published EKS,
+GCE kube-up, AKS (kube-audit and kube-audit-admin), OpenShift (Default and
+WriteRequestBodies, 4.17 and 4.18 and later) and k3s starter policies, vendored with
+their sources, licenses and digests in
+[`k8s/provider-policies/SOURCES.md`](k8s/provider-policies/SOURCES.md). It models the
+policy only, not a provider's log pipeline, and a published policy is not a capture.
+
+```bash
+python3 detections/k8s_policy_coverage.py            # the table
+python3 detections/k8s_policy_coverage.py --detail   # and every lost positive
+python3 detections/k8s_policy_coverage.py --update   # rewrite k8s/policy_coverage.json
+python3 detections/k8s_policy_coverage.py --self-test --check   # what CI runs
+```
+
+The committed result, [`k8s/policy_coverage.json`](k8s/policy_coverage.json), has a
+documented schema (the script's docstring). `--check` fails when a rule, a sidecar, a
+policy file, a validator MANIFEST or the evaluator's output changed and the file was
+not regenerated, so a pull request that changes a Kubernetes rule or its cases also
+runs `--update`. `--check`, `--update` and the table also run a home check: the home
+of a rule is the lab policy of the validator whose MANIFEST registers it, and under
+that policy every positive must fire and no negative may fire, because CI proves that
+live. The platform gaps it found are in [`RULE_DEFECTS.md`](RULE_DEFECTS.md) (the
+platform entries after K36).
+
+**Merge path.** `k8s/policy_coverage.json` is under `detections/k8s/`, which the
+`automerge` workflow's content allowlist (rail 8) does not count as content. So a pull
+request that regenerates it needs a human merge, and one that changes the result
+without regenerating it fails `platform-coverage`. Whether to add the file to that
+allowlist (it is derived, and `--check` recomputes it, as `benign/scores.json` is) or
+to make `platform-coverage` a required check is a decision for the maintainer.
 
 ## External cloud detections (AWS, Azure, GCP)
 

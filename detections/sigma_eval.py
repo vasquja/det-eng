@@ -103,15 +103,38 @@ except ImportError:
 _ROWID = "_rowid"  # INTEGER PRIMARY KEY, so it aliases SQLite's rowid
 
 
-def compile_rule(path):
+class ThreeValuedSqliteBackend(sqliteBackend):
+    """pySigma's SQLite backend with SQL's own three-valued NOT (check_null_safety.py).
+
+    sqliteBackend writes the operand of each NOT as COALESCE(<test>, 0). So a test on
+    a field that the record does not have is false, and `not <filter>` keeps the
+    record: that is Sigma's meaning, and the validators use it. A backend with SQL
+    semantics (ES|QL and other SQL backends) has no such wrapper: a test on a
+    missing field is NULL, NOT NULL is NULL, and WHERE keeps only true. This backend
+    writes NOT (<test>) with no wrapper. Run its query on an
+    EventTable(three_valued=True), where a regular expression on a missing field is
+    NULL too, to get the verdict of such a backend.
+    """
+
+    null_safe_expression = "{expr}"
+
+
+def backend(three_valued=False):
+    """The SQLite backend: two-valued (Sigma's meaning, the default) or three-valued."""
+    return ThreeValuedSqliteBackend() if three_valued else sqliteBackend()
+
+
+def compile_rule(path, three_valued=False):
     """Compile one rule file to its single SQL query.
 
     A file holds either one plain rule or one correlation rule plus the base
     rules it references (the base rules generate no query of their own).
+    three_valued: compile with ThreeValuedSqliteBackend (run the query on an
+    EventTable(three_valued=True)).
     """
     with open(path, encoding="utf-8") as fh:
         collection = SigmaCollection.from_yaml(fh.read())
-    queries = sqliteBackend().convert(collection)
+    queries = backend(three_valued).convert(collection)
     if len(queries) != 1:
         raise ValueError(f"expected one query from {path}, got {len(queries)}")
     return queries[0]
@@ -143,18 +166,27 @@ class EventTable:
 
     Load a large event set (a benign corpus slice, a long audit log) once and run
     many compiled rules over it, instead of rebuilding the table per rule.
+
+    three_valued: a regular expression on a missing field is NULL (as in SQL),
+    not false. Use it with a query from compile_rule(path, three_valued=True).
     """
 
-    def __init__(self, events):
+    def __init__(self, events, three_valued=False):
         self.events = events
         self.db = sqlite3.connect(":memory:")
         # pySigma's SQLite backend compiles a `|re` match to the SQL `REGEXP`
         # operator, which SQLite leaves unimplemented by default. Register it with
         # Python's `re` (full syntax, including look-around) so `|re` rules
         # evaluate. `X REGEXP Y` calls regexp(Y, X), i.e. regexp(pattern, value).
-        self.db.create_function(
-            "regexp", 2,
-            lambda pattern, value: 1 if value is not None and re.search(pattern, str(value)) else 0)
+        if three_valued:
+            self.db.create_function(
+                "regexp", 2,
+                lambda pattern, value: None if value is None
+                else (1 if re.search(pattern, str(value)) else 0))
+        else:
+            self.db.create_function(
+                "regexp", 2,
+                lambda pattern, value: 1 if value is not None and re.search(pattern, str(value)) else 0)
         columns = sorted({k for e in events for k in e} - {_ROWID})
         # SQLite column names are case-insensitive: 'level' and 'Level' would be one
         # column (a cryptic "duplicate column name" error), and a rule field would

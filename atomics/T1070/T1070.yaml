@@ -34,7 +34,7 @@ atomic_tests:
         type: string
         default: PathToAtomicsFolder/T1070/src
 
-  - name: "TRR9010.K8S.B — bulk-wipe Events with deletecollection"
+  - name: "TRR9010.K8S.B — bulk-wipe Events with deletecollection (core group)"
     auto_generated_guid: f229b08f-6503-4be7-a075-6339ed3afad4
     description: |
       Issues a collection DELETE on Events in the throwaway namespace (via kubectl proxy
@@ -69,6 +69,32 @@ atomic_tests:
       elevation_required: false
       command: |
         bash #{source_dir}/emulate.sh c
+      cleanup_command: |
+        kubectl delete namespace trr9010 --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1070/src
+
+  - name: "TRR9010.K8S.G — bulk-wipe Events with deletecollection via events.k8s.io"
+    auto_generated_guid: 9592e4b7-1acc-4af6-ae8c-a13967010ffc
+    description: |
+      Creates a harmless core v1 Event and a harmless events.k8s.io/v1 Event in the
+      throwaway namespace, then issues a collection DELETE on
+      /apis/events.k8s.io/v1/namespaces/trr9010/events (kubectl delete --raw, no body),
+      recorded as verb=deletecollection with objectRef.apiGroup=events.k8s.io, and checks
+      that both Events are gone (the two groups share one store). kubectl delete
+      events.events.k8s.io --all does not send this request: it lists the Events and
+      deletes each one by name (verb=delete, as in test C).
+      Rule: detections/sigma/T1070/k8s_events_deleted.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh g
       cleanup_command: |
         kubectl delete namespace trr9010 --ignore-not-found
     input_arguments:
@@ -150,8 +176,9 @@ atomic_tests:
       A control, not a procedure. Creates a throwaway namespace trr9010-dryrun-ns with a
       harmless Event, a pod and a suspended Job, then sends kubectl delete
       --dry-run=server for the Event (core group, then events.k8s.io), the pod, the Job
-      and the namespace, and a deletecollection of the namespace's Events and of its
-      pods (kubectl delete --raw with a DeleteOptions body that holds dryRun ["All"]).
+      and the namespace, and a deletecollection of the namespace's Events (core group,
+      then events.k8s.io) and of its pods (kubectl delete --raw with a DeleteOptions body
+      that holds dryRun ["All"]).
       Then it checks that every object is still there and that the pod is not being
       deleted. A server-side dry run deletes nothing, so the rules below must match none
       of these records (the validator's must-not-match checks). kubectl sends the dry

@@ -79,7 +79,13 @@ detection:
   filter_failed:
     # A denied / failed call carries an errorCode and changed nothing.
     errorCode: '*'
-  condition: (selection_put_weakened or selection_put_weakened_ignore or selection_put_weakened_policy or selection_put_weakened_restrict or selection_delete) and not filter_failed
+  # Null-safe negation: a backend with three-valued logic (ES|QL and other SQL
+  # backends) reads NOT of a test on a missing field as NULL and drops the record.
+  # CloudTrail writes errorCode only when the call returns an error, so the filter is
+  # ORed with a test that the field is absent.
+  sel_no_error_code:
+    errorCode: null
+  condition: (selection_put_weakened or selection_put_weakened_ignore or selection_put_weakened_policy or selection_put_weakened_restrict or selection_delete) and (sel_no_error_code or not filter_failed)
 falsepositives:
   - Legitimately public static-website or public-dataset buckets whose owners intentionally
     relax BPA; allowlist by bucket/account and pair with a change-management record.

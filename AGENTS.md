@@ -102,6 +102,14 @@ python3 detections/rule_cases.py
 python3 detections/check_sufficiency.py
 python3 detections/score_benign.py --check --enforce
 
+# Null safety: every rule gives the same hits in two- and three-valued logic
+python3 detections/check_null_safety.py
+
+# Kubernetes platforms (offline): audit-policy simulator and provider field mappings.
+# After a Kubernetes rule, case, lab policy or MANIFEST change: --update / --write.
+python3 detections/k8s_policy_coverage.py --check
+python3 detections/check_provider_mappings.py --check
+
 # Procedure coverage report (README chart + research/COVERAGE.md); --check in CI
 python3 research/tools/coverage_report.py
 

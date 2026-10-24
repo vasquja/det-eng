@@ -18,7 +18,9 @@ run-name: ${{ inputs.label && format('{0} [{1}]', github.workflow, inputs.label)
 #   - TRR9010 (indicator removal, T1070): events, pod/job and namespace deletes -> audit -> Sigma
 #   - TRR9025 (malicious admission webhook, T1546): admissionregistration create/SSA install + body grade, repoint grade
 #   - TRR9026 (pod port-forward, T1572): pods/portforward subresource and nodes/proxy /portForward/ -> audit -> Sigma
-#   - TRR9027 (cluster DNS poisoning, T1565.001): kube-system DNS ConfigMap write + Corefile grade
+#   - TRR9027 (cluster DNS poisoning, T1565.001): kube-system DNS ConfigMap write + Corefile grade,
+#                                         and the OpenShift DNS objects (openshift-dns/dns-default,
+#                                         dnses.operator.openshift.io), emulated inert on kind
 #
 # A kind cluster runs on the ubuntu-latest runner with API server audit logging on
 # (pod creates, updates and patches; controller writes, deletes and deletecollections
@@ -27,7 +29,9 @@ run-name: ${{ inputs.label && format('{0} [{1}]', github.workflow, inputs.label)
 # DeleteOptions body is logged; admission-config creates and deletes at Request level;
 # admission-config updates and patches, the three cluster DNS ConfigMaps, and the
 # kube-system/aws-auth ConfigMap update/patch/delete at RequestResponse; kube-system
-# ConfigMap creates at Request; pods/portforward and nodes/proxy,
+# ConfigMap creates at Request; openshift-dns/dns-default update/patch/delete and
+# dnses.operator.openshift.io update/patch at RequestResponse; openshift-dns ConfigMap
+# creates and dnses create/delete/deletecollection at Request; pods/portforward and nodes/proxy,
 # Secrets and tokens at Metadata; see detections/k8s/audit-policy-apiserver.yaml), and a small CRI poller on the node stands in for a runtime security
 # agent (detections/k8s/cri-pod-sensor.sh), and the runner's auditd stands in for a
 # node file sensor (a read watch on one projected token, detections/k8s/auditd_file_events.py).
@@ -529,6 +533,12 @@ jobs:
       - name: Emulate TRR9027 (cluster DNS poisoning, sentinel + restore)
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
+        # Procedures A-D (kube-system CoreDNS) and E-F (OpenShift: an inert openshift-dns
+        # namespace and dns-default ConfigMap, and the vendored dnses.operator.openshift.io
+        # CRD and object). The kind admin credential (a client certificate for
+        # kubernetes-admin, group kubeadm:cluster-admins, bound to cluster-admin) may install
+        # the CRD and write the cluster-scoped dnses object; E and F skip if a real object
+        # already exists, and cleanup deletes only what the emulation created and labelled.
         env:
           TRR9027_NODE: apiserver-control-plane
         run: bash atomics/T1565.001/src/emulate.sh all

@@ -139,14 +139,31 @@ detection:
     requestParameters.policyDocument|re: 'githubusercontent\.com%3A(sub|repository|repository_owner|repository_id|environment|actor|ref|workflow_ref|job_workflow_ref)%22'
   scoping_claim_create:
     requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3A(sub|repository|repository_owner|repository_id|environment|actor|ref|workflow_ref|job_workflow_ref)%22'
+  # Null-safe negations: a backend with three-valued logic (ES|QL and other SQL
+  # backends) reads NOT of a test on a missing field as NULL and drops the record. An
+  # UpdateAssumeRolePolicy record has policyDocument and no assumeRolePolicyDocument,
+  # and a CreateRole record has the reverse. So the condition applies each `not` to one
+  # block (De Morgan's laws), and ORs it with a test that the block's field is absent.
+  sel_no_policy_document:
+    requestParameters.policyDocument: null
+  sel_no_assume_role_policy_document:
+    requestParameters.assumeRolePolicyDocument: null
+  # The condition is, in two-valued logic:
+  #   selection_grant and (oidc_update or oidc_create) and
+  #   ((sub_any_wildcard and not sub_multi and not (sub_pinned and not sub_wildcard))
+  #    or (sub_multi and sub_high) or not scoping_claim)
+  # where each name X stands for (X_update or X_create).
   condition: >
     selection_grant and (oidc_update or oidc_create) and
     (((sub_any_wildcard_update or sub_any_wildcard_create) and
-      not (sub_multi_update or sub_multi_create) and
-      not ((sub_pinned_update or sub_pinned_create)
-           and not (sub_wildcard_update or sub_wildcard_create)))
+      (sel_no_policy_document or not sub_multi_update) and
+      (sel_no_assume_role_policy_document or not sub_multi_create) and
+      (((sel_no_policy_document or not sub_pinned_update) and
+        (sel_no_assume_role_policy_document or not sub_pinned_create))
+       or sub_wildcard_update or sub_wildcard_create))
      or ((sub_multi_update or sub_multi_create) and (sub_high_update or sub_high_create))
-     or not (scoping_claim_update or scoping_claim_create))
+     or ((sel_no_policy_document or not scoping_claim_update) and
+         (sel_no_assume_role_policy_document or not scoping_claim_create)))
 falsepositives:
   - Orgs that deliberately use an org-wide StringLike repo:org/* for shared or
     self-hosted runners or monorepos -- a policy-hygiene finding to review, not

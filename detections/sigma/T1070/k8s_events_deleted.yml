@@ -5,8 +5,10 @@ description: |
   Detects deletion of Kubernetes Events through the API server: an audit event
   whose objectRef.resource is events and whose verb is delete or deletecollection.
   This is the TRR9010 chokepoint, covering Procedure A (delete one Event in the core
-  group), B (bulk-wipe with deletecollection), and C (delete an Event in the
-  events.k8s.io group). Kubernetes Events record what happened in the cluster -- a
+  group), B (bulk-wipe with deletecollection in the core group), C (delete an
+  Event in the events.k8s.io group) and G (bulk-wipe with deletecollection in
+  events.k8s.io).
+  Kubernetes Events record what happened in the cluster -- a
   pod scheduled, an image pulled, a policy denied -- so deleting them destroys
   evidence of an intrusion.
 
@@ -25,7 +27,10 @@ description: |
   controller (system:serviceaccount:kube-system:namespace-controller) empties a
   namespace being deleted with one deletecollection of core Events and one of
   events.k8s.io Events. The rule filters that identity's deletecollection only, so
-  the same identity deleting a single Event still fires. The namespace delete itself
+  the same identity deleting a single Event still fires. The filter reads only the
+  identity and the verb, so a deletecollection sent with a credential of that service
+  account is filtered too, from any client and in a namespace that nobody deletes
+  (detections/RULE_DEFECTS.md K37). The namespace delete itself
   is a separate event, made by the actor (verb delete, objectRef.resource
   namespaces), and this rule does not match it. The low-level hunting rule
   k8s_namespace_deleted.yml matches that accepted namespace delete (TRR9010
@@ -35,6 +40,29 @@ description: |
   namespace was deleted, so that rule is for hunting by actor and namespace, and for
   correlation with this identity's other writes. Baseline the system identities and
   any known event-exporter service accounts by user.username.
+
+  Managed platforms: the rule sees only what the platform's audit policy records.
+  detections/k8s_policy_coverage.py replays the positives of this rule as each
+  published policy records them (detections/k8s/policy_coverage.json has the counts; a
+  published policy is not a capture, so each line is unverified on a live cluster).
+  The EKS policy (EKS Best Practices Guide), the GCE kube-up policy (the EKS user guide
+  links it, and the GKE audit-policy page names it) and OpenShift 4.17 and earlier log
+  no request on core-group Events (level None): a core delete or collection DELETE
+  (Procedures A and B, plain kubectl delete event, and kubectl delete events --all,
+  which sends one DELETE per Event) leaves no record there, and only a request in
+  the events.k8s.io group (Procedures C and G) fires. The AKS policy logs an Events
+  delete at Metadata and drops a collection DELETE in either group: a single delete,
+  and so kubectl delete events --all, fires, but a collection DELETE in either group
+  (Procedures B and G) leaves no record. OpenShift 4.18 and
+  later and the k3s hardening-guide starter policy log Events deletes. On AKS and under
+  the k3s starter policy a delete also writes a RequestReceived record, so one delete
+  fires twice (deduplicate by auditID). No rule change can see a request that is not
+  recorded: copy Events out of the cluster as they happen (an event exporter), so a
+  delete does not remove the only copy. The namespace delete (Procedure F,
+  k8s_namespace_deleted.yml) is logged under every one of these policies; where it is
+  logged at Metadata (OpenShift Default, the k3s starter policy), a real namespace
+  delete that carries ?dryRun=All next to its body is filtered there
+  (detections/RULE_DEFECTS.md K38, K14).
 references:
   - https://attack.mitre.org/techniques/T1070/
   - https://attack.mitre.org/techniques/T1070/004/
@@ -62,7 +90,22 @@ detection:
   # ignores the query.
   filter_dry_run_delete_body:
     requestObject.dryRun|contains: 'All'
-  condition: select_event_delete and not filter_namespace_teardown and not filter_dry_run_delete_body
+  # Null-safe negation: a backend with three-valued logic (ES|QL and other SQL
+  # backends) reads NOT of a test on a missing field as NULL and drops the record. A
+  # delete without a DeleteOptions body, and every Metadata-level record, has no
+  # requestObject.dryRun, so the filter is ORed with a test that the field is absent.
+  sel_no_dry_run_body:
+    requestObject.dryRun: null
+  # Null-safe negation: a backend with three-valued logic (ES|QL and other SQL
+  # backends) reads NOT of a test on a missing field as NULL and drops the record. The
+  # record of a request that fails authentication (401) has no user.username (apiserver
+  # v1.36.4 WithFailedAuthenticationAudit and audit.LogRequestMetadata), so the filter
+  # on the user name is ORed with a test that the field is absent.
+  sel_no_username:
+    user.username: null
+  condition: >-
+    select_event_delete and (sel_no_username or not filter_namespace_teardown)
+    and (sel_no_dry_run_body or not filter_dry_run_delete_body)
 falsepositives:
   - Operators or event-exporter tools that deliberately prune Events. Baseline the
     known identities by user.username.
@@ -82,4 +125,10 @@ falsepositives:
     does kubectl delete --raw with a ?dryRun=All URI and no -f; kubectl delete
     --dry-run=server and client-go send the dry run in the body
     (detections/RULE_DEFECTS.md K36).
+  - A server-side dry run on a managed platform whose published policy logs Event
+    deletes at Metadata, so that the record holds no DeleteOptions body. That is the
+    AKS policy, OpenShift 4.18 and later with the Default profile and the k3s
+    hardening-guide starter policy (both groups), and the events.k8s.io group under
+    the EKS and GCE kube-up policies and on OpenShift 4.17 and earlier with the Default
+    profile (detections/RULE_DEFECTS.md K39).
 level: medium

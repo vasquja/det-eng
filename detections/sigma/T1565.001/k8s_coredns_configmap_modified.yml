@@ -13,13 +13,53 @@ description: |
   name resolution for every pod to an attacker-controlled resolver -- an in-cluster
   adversary-in-the-middle that enables credential capture and traffic redirection.
 
+  On OpenShift the DNS Operator owns cluster DNS, so the rule also matches its two
+  objects (openshift/cluster-dns-operator and openshift/api, release-4.20):
+    - Procedure E: a write (update, patch, delete, create) of the ConfigMap
+      openshift-dns/dns-default. The operator renders the Corefile into it (data key
+      Corefile). While the DNS object is Managed, the operator keeps the Corefile volume
+      of the DNS DaemonSet dns-default on this ConfigMap, so the name is forced too, and
+      it overwrites a changed Corefile. With managementState Unmanaged it does neither
+      (see the limits below).
+    - Procedure F: a write (update, patch, delete, deletecollection, create) of the
+      cluster-scoped DNS Operator object (objectRef.apiGroup operator.openshift.io,
+      objectRef.resource dnses; the operator reconciles only the object named default).
+      Its spec.servers, spec.upstreamResolvers and spec.managementState are the
+      sanctioned way to change cluster DNS there, and the operator renders them into
+      dns-default.
+  On these two objects the rule does not fire for a create or an update (PUT) by the
+  operator's own identity (system:serviceaccount:openshift-dns-operator:dns-operator,
+  the service account of the dns-operator Deployment). Those are the only verbs it
+  sends there (controller-runtime Create, Update and Status().Update): it creates
+  dns-default and updates it when the rendered Corefile differs from the stored one,
+  and it writes the DNS object itself (the default object when none exists, checked
+  once a minute, its finalizer, and dnses/status when the status changes). The write
+  that caused the change is the record to alert on. A patch, delete or deletecollection by that identity fires.
+  What the filter hides (K45 in detections/RULE_DEFECTS.md; TRR9027 states it as
+  a limit): a create or a PUT (kubectl replace) sent with a stolen operator token, from
+  any client and any address. The same token can first set managementState Unmanaged
+  with a PUT, so that the operator no longer reverts a direct dns-default edit. Under
+  OpenShift's Default audit profile (Metadata) no rule sees either write. Under a body
+  profile the companion grader reads a poisoned dns-default with no identity filter.
+  The kube-system branch has no identity filter.
+
+  Limits on OpenShift: with managementState Unmanaged the operator stops reconciling
+  the DNS DaemonSet, so an adversary can point its Corefile volume at another
+  ConfigMap. Neither rule selects that ConfigMap or the DaemonSet write; the
+  chokepoint sees only the write of the DNS object that set Unmanaged. Under
+  OpenShift's WriteRequestBodies or AllRequestBodies profile, which log every write at
+  RequestResponse, an apply patch with a YAML body to dns-default or to the DNS object
+  leaves no audit record (K23 in detections/RULE_DEFECTS.md), so no rule sees it; the
+  Default profile (Metadata) keeps that record, and the chokepoint fires on it.
+
   The marker is load-bearing, not just non-spoofable: the CoreDNS Deployment mounts
   the ConfigMap named coredns in kube-system, so an attacker who wants CoreDNS to read
   their config must write that exact object -- they cannot rename it. objectRef.name,
   objectRef.namespace, objectRef.resource, and verb are all set by the API server.
 
   Metadata level is enough to fire this chokepoint (name, namespace, resource, verb,
-  and identity are all present). The companion grader
+  and identity are all present), so it works under OpenShift's Default audit profile,
+  which logs every request at Metadata. The companion grader
   (k8s_coredns_corefile_poisoned.yml) inspects the submitted Corefile at Request level
   to tell a poisoning edit from a benign one. Elastic ships near-identical rules at
   this layer; this is the provider-agnostic Sigma counterpart. Baseline the ACTOR, not
@@ -33,6 +73,7 @@ references:
   - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
 author: det-eng
 date: 2026/10/14
+modified: 2026/10/24
 tags:
   - attack.impact
   - attack.t1565.001
@@ -52,7 +93,59 @@ detection:
       - 'patch'
       - 'delete'
       - 'create'
-  condition: select_dns_configmap
+  # OpenShift, Procedure E: the DNS Operator renders the Corefile into this ConfigMap
+  # (cluster-dns-operator release-4.20 pkg/operator/controller/names.go DNSConfigMapName:
+  # namespace openshift-dns, name 'dns-' + the DNS object's name; data key Corefile,
+  # controller_dns_configmap.go desiredDNSConfigMap). The operator reconciles only the
+  # DNS object named default (controller.go DefaultDNSController), and while that object
+  # is Managed it sets its DaemonSet's Corefile volume to this ConfigMap by name
+  # (controller_dns_daemonset.go), so the name is forced (Unmanaged: see the limits).
+  select_openshift_dns_configmap:
+    objectRef.resource: 'configmaps'
+    objectRef.namespace: 'openshift-dns'
+    objectRef.name: 'dns-default'
+    verb:
+      - 'update'
+      - 'patch'
+      - 'delete'
+      - 'create'
+  # OpenShift, Procedure F: the cluster-scoped DNS Operator object (openshift/api
+  # release-4.20 operator/v1/types_dns.go: resource dnses, group operator.openshift.io;
+  # spec.servers, spec.upstreamResolvers, spec.managementState). No name item: the
+  # operator reads only 'default', but a delete of every object (deletecollection)
+  # names none. A dnses resource of the config.openshift.io group (the cluster DNS
+  # domain and cloud zone config) is another object.
+  select_openshift_dns_operator_config:
+    objectRef.apiGroup: 'operator.openshift.io'
+    objectRef.resource: 'dnses'
+    verb:
+      - 'update'
+      - 'patch'
+      - 'delete'
+      - 'deletecollection'
+      - 'create'
+  # The DNS Operator's own writes (manifests/0000_70_dns-operator_02-deployment.yaml:
+  # serviceAccountName dns-operator in namespace openshift-dns-operator): the rendered
+  # dns-default when its Corefile differs, the default DNS object when none exists
+  # (operator.go ensureDefaultDNS, once a minute), its finalizer and dnses/status. The operator sends only create
+  # (client.Create) and update (client.Update, Status().Update) to these objects
+  # (controller.go, controller_dns_configmap.go, dns_status.go), so a patch, delete or
+  # deletecollection by that identity is not filtered. Applies to the two OpenShift
+  # selections only. See the description for what it hides.
+  filter_openshift_dns_operator:
+    user.username: 'system:serviceaccount:openshift-dns-operator:dns-operator'
+    verb:
+      - 'create'
+      - 'update'
+  # A request that fails authentication (401) is logged with no user.username, so the
+  # operator filter cannot hold; the guard keeps that verdict on a three-valued backend
+  # (detections/README.md, null safety).
+  sel_no_username:
+    user.username: null
+  condition: >-
+    select_dns_configmap or ((select_openshift_dns_configmap or
+    select_openshift_dns_operator_config) and (sel_no_username or not
+    filter_openshift_dns_operator))
 falsepositives:
   - The cluster's own DNS operators updating the Corefile. The coredns and kube-dns
     service accounts, system:node:*, kube-controller-manager, and the managed
@@ -60,4 +153,14 @@ falsepositives:
     them by user.username and user.groups.
   - GitOps/Helm and cluster upgrades that manage the DNS ConfigMap as config. Baseline
     the automation identities, then grade the content with the companion rule.
+  - On OpenShift, an administrator or GitOps change of the DNS Operator object
+    (dnses.operator.openshift.io/default), and the garbage collector's delete of
+    dns-default after the DNS object is deleted. Baseline those identities; the
+    operator's own creates and updates are filtered.
+  - On MicroShift (no DNS Operator), the MicroShift process itself writes
+    openshift-dns/dns-default as system:admin (group system:masters), the identity an
+    administrator also uses there. It creates the ConfigMap at first start and updates
+    it when it differs from the embedded one (after an upgrade, or to revert an edit at
+    the next service start). Triage by the userAgent (client-go with the suffix
+    '/core-agent') and by the time of the service start, not by the identity.
 level: medium

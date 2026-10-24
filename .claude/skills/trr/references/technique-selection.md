@@ -362,3 +362,24 @@ reasoning survives. Append an entry per vet; keep it short.
   Runtime Monitoring and GKE Container Threat Detection. The bounded first step is a container-context proof of
   the EXISTING auditd syscall rules: run their atomics inside a container, attribute events by the in-container
   exe path, and add no new rules. Revisit only if a runtime sensor (Tetragon) and a new validator are approved.
+
+- **OpenShift DNS Operator object grader — a rule that grades dnses.operator.openshift.io itself
+  (managementState Unmanaged, upstreams to public IPs) — NO-GO (Q2 and Q4; Q3 caveat).** Q1 passes: the
+  TRR9027 chokepoint already matches every write of the object (Procedure F; apiGroup and resource are
+  server-set) at Metadata, so under OpenShift's Default profile. Q3: the object's fields are in the body, so a
+  grader needs the WriteRequestBodies or AllRequestBodies profile. Q4: the redirect fields act only through
+  what the operator renders into openshift-dns/dns-default, and the built Corefile grader reads dns-default with
+  no identity filter. sigma_eval on the operator's own rendering (cluster-dns-operator release-4.20 template):
+  spec.upstreamResolvers to 203.0.113.53 fires the root-block clause, and a spec.servers zone cluster.local to
+  10.9.9.9 fires the cluster-zone clause. Q2: Unmanaged is not a redirect by itself, and OpenShift already
+  signals it. The DNS object's Upgradeable condition becomes False (reason OperatorUnmanaged, dns_status.go
+  computeDNSUpgradeableCondition), the DNS ClusterOperator then reports Upgradeable=False (reason
+  DNSNotUpgradeable, status/controller.go), and the CVO raises the alert ClusterNotUpgradeable (for 60m,
+  severity info). Known limits that stay at the chokepoint: under Unmanaged a DaemonSet repoint to another
+  ConfigMap is not graded, and the operator-identity filter has an evasion (RULE_DEFECTS K45). Prior art
+  (GitHub code search, 2026-10-24: openshift-dns, dns-default, dnses, operator.openshift.io): 0 hits in SigmaHQ,
+  elastic/detection-rules, splunk/security_content, panther-labs/panther-analysis, falcosecurity/rules,
+  DataDog/stratus-red-team and redcanaryco/atomic-red-team; a search for dnses.operator.openshift.io over all of
+  GitHub found no detection repository. Nearest rule: Elastic "Kubernetes CoreDNS or Kube-DNS Configuration
+  Modified" (a643e6b8-ba2a-45f1-8d71-d265bfe2ae43), which pins kube-system and does not match openshift-dns.
+  The chokepoint still records every write of the object. (MP13 of the Wave 4 managed-cluster plan.)

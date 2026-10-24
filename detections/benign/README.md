@@ -374,7 +374,9 @@ Configure the `Main` ruleset for this:
 2. **Require `rule-cases`, `check-sufficiency` and `benign-corpus`** as status checks,
    with the validator checks already required. GitHub's native auto-merge waits only
    for required checks, so without these a content-only pull request could auto-merge
-   before a failing case, gate or budget check finished.
+   before a failing case, gate or budget check finished. `null-safety` (the
+   three-valued logic gate) is a candidate for this list, and the maintainer decides:
+   until it is required, such a pull request can auto-merge with it red.
 3. **Leave `sufficiency-ratchet` not required.** It fails by design on a change the
    maintainer may accept (an edited or relabelled case, a deliberate rise in benign
    hits with a raised budget). Made required, with no bypass actors, it would block

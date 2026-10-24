@@ -35,7 +35,10 @@ Case fields:
            and fails the case unless every declared atom is among them. A case
            where no positive item holds is trivial however few flips away it is,
            and a flip only counts through a branch the event already shares, so
-           an unrelated event cannot be passed off as a near-miss.
+           an unrelated event cannot be passed off as a near-miss. An item of a
+           null guard or a null-safe copy (sigma_explain's null_helpers()) only
+           makes a `not` null-safe, and no record flips it alone, so a case that
+           names one fails: name the filter's item.
            (`rule_cases.py --atoms RULE` lists a rule's atoms.)
   why      one line: what the case proves.
   events   the event set, as the log source writes it (nested JSON is flattened
@@ -109,8 +112,13 @@ class CaseResult:
 
 
 def run_case(rule, case):
-    """Judge one case. Returns a CaseResult."""
+    """Judge one case. Returns a CaseResult.
+
+    The case is graded on the rule without its null guards and null-safe copies
+    (sigma_explain's stripped()): on a real record the verdict is the same, and a
+    helper item is no item a case can break."""
     events = [sigma_eval.flatten(e) for e in case["events"]]
+    helpers, rule = rule.null_helpers(), rule.stripped()
     verdicts = sigma_explain.judge_events(rule, events)
     if rule.is_correlation:
         verdict = verdicts[0]
@@ -134,6 +142,13 @@ def run_case(rule, case):
                           verdict)
     if kind in ("near-miss", "filtered"):
         declared = case["breaks"] if isinstance(case["breaks"], list) else [case["breaks"]]
+        named = [a for a in declared if a in helpers]
+        if named:
+            return CaseResult(case, False, "`breaks` names a null-safety item, which only makes "
+                              "a `not` null-safe and which no record flips alone: "
+                              + "; ".join(_helper_text(a, helpers[a]) for a in named)
+                              + ". Name the filter's item instead (for a record that the filter "
+                              "alone suppresses, as kind filtered)", verdict)
         unknown = [a for a in declared if a not in rule.atoms]
         if unknown:
             ambiguous = {a: [b for b in rule.atoms if b.startswith(a + "|")] for a in unknown}
@@ -169,6 +184,15 @@ def run_case(rule, case):
                           f"positive {'base' if rule.is_correlation else 'item'} holds (trivial); "
                           "call it benign or make it closer", verdict)
     return CaseResult(case, True, f"no match ({verdict.kind})", verdict)
+
+
+def _helper_text(atom, role):
+    kind, instead = role
+    if kind == "guard":
+        return (f"{atom} is a null guard of {', '.join(instead)} (a record without that field "
+                "also fails the filter's item on it)")
+    return (f"{atom} is a null-safe copy of {', '.join(instead)} (it holds exactly where that "
+            "item holds)")
 
 
 def _why_not(rule, verdict):
@@ -210,8 +234,10 @@ def summarize(rule, results):
     covered = sorted({a for r in verified
                       for a in (r.case["breaks"] if isinstance(r.case["breaks"], list)
                                 else [r.case["breaks"]])})
+    # A null guard or null-safe copy is not an item of the rule (check_sufficiency.py
+    # counts the same way).
     return {"positives": positives, "near_misses": len(verified), "covered_atoms": covered,
-            "atoms": list(rule.atoms)}
+            "atoms": list(rule.stripped().atoms)}
 
 
 def main():
@@ -226,10 +252,14 @@ def main():
         for rule_path in args.rules:
             rule = sigma_explain.load(rule_path)
             print(os.path.relpath(rule_path, SIGMA))
+            helpers = rule.null_helpers()
             for atom in rule.atoms:
                 fields = ", ".join(rule.fields(atom)) or "-"
                 negated = not rule.is_correlation and "+" not in rule.polarity[atom]
-                print(f"  {atom:<48} {'filter' if negated else 'select'}  reads: {fields}")
+                role = (f"  ({'null guard' if helpers[atom][0] == 'guard' else 'null-safe copy'}"
+                        f" of {', '.join(helpers[atom][1])}: not for `breaks`)") \
+                    if atom in helpers else ""
+                print(f"  {atom:<48} {'filter' if negated else 'select'}  reads: {fields}{role}")
         return 0
 
     rules = args.rules or sorted(p[:-len(".cases.jsonl")] + ".yml"

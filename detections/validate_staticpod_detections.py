@@ -502,7 +502,7 @@ def absent_hint(rule, events):
 
 def explain_gated_miss(rule_path, events, gate, matched):
     """Why a required emulation pod was not matched: the gate, then its closest event."""
-    rule = sigma_explain.load(rule_path)
+    rule = sigma_explain.load(rule_path).stripped()  # no null guards or copies
     label = labeller(events)
     marked = [i for i, e in enumerate(events) if gate(e)]
     lines = [f"gate: {getattr(gate, 'describe', 'see its MANIFEST entry')}"]

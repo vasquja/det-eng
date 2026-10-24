@@ -157,6 +157,11 @@ An atom (item) is what rule_cases.py calls one: `<block>.<field>`,
 a correlation rule `base:<name>`, `group-by`, `timespan`, `threshold`.
 "Exercised" counts the items a verified negative flips: the declared `breaks` of
 a sidecar case, or every single flip sigma_explain finds for a fixture record.
+The checks grade each rule without its null guards and null-safe copies
+(sigma_explain's PlainRule.stripped(); check_null_safety.py): they only make a
+`not` null-safe and change no two-valued verdict, so they are no item of the rule
+(no discriminating item, no R5 count, no hint target), and rule_cases.py rejects a
+case that names one in `breaks`.
 
 Waivers: COMPILE_ONLY (R1), CHOKEPOINT and PRESENCE (R2), PLATFORM_NAMING (R4);
 nothing else. A human edits those dicts, and a change to this file needs a human
@@ -382,7 +387,7 @@ CHOKEPOINT = {
     "T1053.007/k8s_job_create.yml": Waiver(
         "TRR9005 chokepoint: every Job/CronJob procedure is a batch/v1 write; the "
         "controllers' own writes are filtered",
-        "9aef8a175ef6b85b20a2c68b478d6455a7e279926494c209578a61ca4f9670ed"),
+        "87d2ecca2eef5b4b616b01118fc70203930779e9b26b5232f1bee89d195d3382"),
     "T1068/copyfail_af_alg_authencesn.yml base:copyfail_splice": Waiver(
         "splice(2) is the CopyFail page-cache write itself; the AF_ALG base carries the "
         "argument (a0 = AF_ALG) and the same-pid 5s correlation narrows it",
@@ -406,17 +411,17 @@ CHOKEPOINT = {
         "ada55f947b8af992be5f43d7b7961bfd55b1432904c9918840a2b94fa2368c98"),
     "T1070/k8s_events_deleted.yml": Waiver(
         "TRR9010 chokepoint: deleting Events is the evidence removal",
-        "f472d372d2bf4cc1f5cf43718465623e703b3ff44b079436160bab8a4c3324cd"),
+        "b752f49bb3d0fb27dad9cd7a252e8a8b32a9dc5da3fabd8c9df747048faa6696"),
     "T1070/k8s_workload_deleted_evidence.yml": Waiver(
         "TRR9010 low-fidelity fallback by design: any pod/job delete",
-        "b790033809e1d6a19c1ac867c0ce4e2dbef8f873c8b479ae011635ef670f4af7"),
+        "9b206ed862e7b36a3b17ab82280c043d90e0f4800f54deb377b51db93c2d6d3e"),
     "T1098.001/azure_managed_identity_federated_credential_backdoor.yml": Waiver(
         "the Activity Log carries no issuer/subject, so the FIC write operation is the "
         "whole signal (TRR9013 procedure C)",
         "bc64702280f8f8d1b71ea1f889322e6456424efe71995da8d9cb1589931e2229"),
     "T1098.006/k8s_rbac_write.yml": Waiver(
         "TRR9004 chokepoint: every RBAC-object grant passes through an RBAC write",
-        "3868d4ebbf33980dd6ce221cd128d71fb4f212c4d0f678fd72d643dbee6b4e0b"),
+        "2298ffb181b03dc759985927b5a45d711cde1417342620a9670780fd8eb1c7ce"),
     "T1546/k8s_admission_webhook_created.yml": Waiver(
         "TRR9025 chokepoint: creating an admission controller object (a create, or the "
         "server-side-apply create that is a patch answered 201; K21)",
@@ -426,7 +431,7 @@ CHOKEPOINT = {
         "02c75f50efdcbadbde1687c623b0557c797fd190c8ccc2f0a1b4b8421100d596"),
     "T1552.007/k8s_secret_token_request.yml": Waiver(
         "TRR9006 fallback: the TokenRequest create itself; system minters are filtered",
-        "0f64580b75ec1bb90e066216a47e468a90704cdd41c168c8ba12a910a5c89aa3"),
+        "9d42e65762b82781163a3f7d7c97d3413c450fa861ffa068b01a716898e54dcb"),
     "T1572/k8s_pod_portforward.yml": Waiver(
         "TRR9026 chokepoint: the pods/portforward subresource is the tunnel",
         "b3809fdd4a546ec9227d4ee21a639c67d110cf73ed7b965fbc63b6fa95150e2b"),
@@ -452,7 +457,7 @@ CHOKEPOINT = {
         "b50573eddab59ad45de592ca2f1fe47f1cdcb700f3440aaf8da792129da08357"),
     "T1685/k8s_admission_webhook_disabled.yml": Waiver(
         "TRR9008 chokepoint: any delete/update/patch of an admission control object",
-        "e9fdca67f2beaec55e04446b628c07e78f95f16e5ac638d2087ca1f67bb136bd"),
+        "b4763cb3de364ecf10d4c72b2406d9a2c55323b79f51bc8ec2eb223d173250b8"),
 }
 
 
@@ -737,9 +742,12 @@ def discriminating_atoms(rule):
 
     A correlation has none of its own: base presence, group-by, timespan, order
     and threshold say which events go together. What makes an event the
-    technique lives in its bases (see base_items)."""
+    technique lives in its bases (see base_items). Nor is the item of a null guard
+    or a null-safe copy: it changes no two-valued verdict (the rule is graded
+    stripped of them)."""
     if rule.is_correlation:
         return []
+    rule = rule.stripped()
     surface = set(surface_atoms(rule))
     return [a for a in rule.positive_atoms() if a not in surface]
 
@@ -1375,7 +1383,8 @@ def case_digest(case):
 def check_rule(path, positives, cloud, proven=None, atomics=None):
     r = Report(path)
     try:
-        rule = sigma_explain.load(path)
+        # Graded without its null guards and null-safe copies (see the docstring).
+        rule = sigma_explain.load(path).stripped()
     except Exception as e:  # noqa: BLE001
         r.fail("R0", f"the rule does not load: {type(e).__name__}: {e} (pySigma must compile "
                      "it and every detection item; fix the rule)")
@@ -1425,8 +1434,9 @@ def check_rule(path, positives, cloud, proven=None, atomics=None):
             elif res.verdict.kind in sigma_explain.NON_TRIVIAL and res.verdict.atoms:
                 unverified.append(f"case '{case['name']}' is declared {case['kind']} but "
                                   f"already grades {res.verdict.kind} on "
-                                  f"{', '.join(res.verdict.atoms)}; declare it kind "
-                                  f"{res.verdict.kind} with that `breaks` to count it")
+                                  f"{', '.join(a for a in res.verdict.atoms if a in rule.atoms)}"
+                                  f"; declare it kind {res.verdict.kind} with that `breaks` to "
+                                  "count it")
 
     # Cloud: the hard benign fixture's records, graded the same way.
     fixture_grades = []

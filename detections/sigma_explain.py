@@ -162,6 +162,9 @@ class PlainRule:
         # When one map holds several items on the same field (`exe|startswith`,
         # `exe|endswith`), each is named with its modifiers (`selection.exe|endswith`).
         self.items = {}      # atom -> compiled SQL
+        self.item_detection = {}  # atom -> the one-item detection it compiles
+        self._items3 = {}    # atom -> three-valued SQL (item_sql(three_valued=True))
+        self._nullable = {}  # atom -> item_nullable()
         self.item_expect = {}  # atom -> what the item matches, for explanations
         self.item_field = {}  # atom -> field name (None for keyword atoms)
         self.block_of = {}   # atom -> the detection block it belongs to
@@ -179,6 +182,8 @@ class PlainRule:
         # `|exists: false`): they hold vacuously, so they never make an event close.
         empty_rows, _ = self.truth_table(sigma_eval.EventTable([{}]))
         self.vacuous = {a for a, held in empty_rows[0].items() if held}
+        self._helpers = None  # null_helpers(), computed on first use
+        self._stripped = None
 
     def _compile_item(self, block, atom, field_key, value):
         if atom in self.items:
@@ -186,6 +191,7 @@ class PlainRule:
                              "sigma_explain cannot tell them apart")
         detection = {"_item": {field_key: value}, "condition": "_item"} if field_key is not None \
             else {"_item": value, "condition": "_item"}
+        self.item_detection[atom] = detection
         self.items[atom] = _compile_doc({"title": f"{self.title} [{atom}]",
                                          "logsource": self.logsource, "detection": detection})
         self.block_of[atom] = block
@@ -264,6 +270,426 @@ class PlainRule:
     def block_negated(self, block):
         atoms = [a for a in self.atoms if self.block_of[a] == block]
         return bool(atoms) and all("+" not in self.polarity[a] for a in atoms)
+
+    # ---- null-safety helpers (check_null_safety.py, check_sufficiency.py) -------
+    #
+    # A backend with three-valued logic (ES|QL and other SQL backends) reads `not` of a
+    # test on a missing field as NULL and drops the record. Two forms make a negation
+    # null-safe and change no two-valued verdict:
+    #
+    #   guard  `sel_no_x or not X`: sel_no_x is a block of one map whose every item is
+    #          `field: null` (or `field|exists: false`), and X is false on every record
+    #          that lacks all of the guard's fields: a block each of whose maps has an
+    #          item on one of them that is false when its field is absent, or an OR of
+    #          such parts, or an AND with one such part (`not 1 of filter_*`,
+    #          `not (filter_a or filter_b)`). The guard holds only where X does not.
+    #          A guard covers only the fields it names: any other field that X reads
+    #          must be one that the log source writes on every record the rule matches
+    #          (check_null_safety.py --absent probes this on the cases). A guard on
+    #          several fields holds only where all of them are absent, so it is accepted
+    #          only when each map of X is one item that holds on any value of one of its
+    #          fields (`field: '*'`, `field|exists: true`): then X is true wherever one
+    #          of the fields is present.
+    #   copy   `not (F and ((F_1 and not sel_no_1) or (F_2 and not sel_no_2) ...))`:
+    #          each F_i is a block of one map that repeats one map of the block F
+    #          exactly, every map of F has its F_i, and each term reads its F_i only
+    #          where every field that F_i tests is present: one guard per field
+    #          (`F_i and not sel_no_a and not sel_no_b`), each on a field that F_i reads.
+    #          In two-valued logic the OR holds exactly where F holds; in three-valued
+    #          logic it is never NULL, so the AND is false, not NULL, where F has no true
+    #          map. A filter whose maps read different fields needs this form.
+    #
+    # The items of such guards and copies only make a negation null-safe, so a grader
+    # must not count them as items of the rule (stripped()), and no case can break one
+    # alone (rule_cases.py). A block of `field: null` items that is ORed with a `not` it
+    # does not guard is an ordinary selection, unless its field is a near spelling of a
+    # field that the `not` reads, or one of the maps under the `not` reads it: then it is
+    # reported (null_guard_issues()). An OR of `<block> and not <guard>` terms is read
+    # as a copy only when a block ANDed with it has maps with the same keys as the
+    # terms' blocks.
+
+    def _names(self):
+        return {id(tree): name for name, tree in self.block_tree.items()}
+
+    @staticmethod
+    def _maps(node):
+        return [node] if node[0] in ("and", "id") else list(node[1])
+
+    def _atoms_under(self, node):
+        if node[0] == "id":
+            return [node[1]]
+        kids = [node[1]] if node[0] == "not" else node[1]
+        return [a for c in kids for a in self._atoms_under(c)]
+
+    def _field_items(self, node):
+        """{field: [atoms]} of the items under node that are false on an empty record."""
+        out = {}
+        for a in self._atoms_under(node):
+            if a not in self.vacuous and self.item_field.get(a):
+                out.setdefault(self.item_field[a], []).append(a)
+        return out
+
+    def _guard_fields(self, node, names):
+        """The fields of a null guard block, or None if node is not one."""
+        name = names.get(id(node))
+        if name is None:
+            return None
+        definition = self.definitions.get(name)
+        if isinstance(definition, list) and len(definition) == 1:
+            definition = definition[0]
+        if not isinstance(definition, dict) or not definition:
+            return None
+        fields = set()
+        for key, value in definition.items():
+            field, *mods = str(key).split("|")
+            if not ((not mods and value is None) or (mods == ["exists"] and value is False)):
+                return None
+            fields.add(field)
+        return fields
+
+    def _falsified(self, node, fields, names):
+        """Is node false (two-valued) on every record that lacks all of `fields`?"""
+        if id(node) in names:
+            return all(any(a not in self.vacuous and self.item_field.get(a) in fields
+                           for a in self._atoms_under(m)) for m in self._maps(node))
+        if node[0] == "or":
+            return all(self._falsified(c, fields, names) for c in node[1])
+        if node[0] == "and":
+            return any(self._falsified(c, fields, names) for c in node[1])
+        return False
+
+    def _any_value(self, atom):
+        """Does the item hold on every value of its field (`field: '*'`,
+        `field|exists: true`)?"""
+        item = self.item_detection.get(atom, {}).get("_item")
+        if not isinstance(item, dict) or len(item) != 1:
+            return False
+        (key, value), = item.items()
+        mods = str(key).split("|")[1:]
+        values = value if isinstance(value, list) else [value]
+        return (not mods and values == ["*"]) or (mods == ["exists"] and values == [True])
+
+    def _any_value_maps(self, node, fields, names):
+        """Is node a block, or an OR of blocks, each of whose maps is one item that holds
+        on every value of one of `fields`? Then node is true wherever one is present."""
+        if id(node) in names:
+            for m in self._maps(node):
+                atoms = self._atoms_under(m)
+                if (len(atoms) != 1 or self.item_field.get(atoms[0]) not in fields
+                        or not self._any_value(atoms[0])):
+                    return False
+            return True
+        if node[0] == "or":
+            return all(self._any_value_maps(c, fields, names) for c in node[1])
+        return False
+
+    def item_nullable(self, atom):
+        """Is the item NULL in three-valued logic on a record that has none of its
+        fields? (`field: '*'` and `|re` are; `field: null` and `|exists` are not.)"""
+        if atom not in self._nullable:
+            prefix = "SELECT * FROM logs WHERE "
+            sql = self.item_sql(atom, three_valued=True)
+            if not sql.startswith(prefix):
+                raise ValueError(f"item {atom}: unexpected SQL shape {sql[:60]!r}")
+            table = sigma_eval.EventTable([{}], three_valued=True)
+            value = table._execute(f"SELECT ({sql[len(prefix):]}) FROM logs").fetchone()[0]
+            self._nullable[atom] = value is None
+        return self._nullable[atom]
+
+    @staticmethod
+    def _near(a, b):
+        """Are two different field names one typo apart: equal in another letter case,
+        or at most two edits apart in a name at least four times as long?"""
+        if a == b:
+            return False
+        if a.lower() == b.lower():
+            return True
+        if abs(len(a) - len(b)) > 2:
+            return False
+        row = list(range(len(b) + 1))
+        for i, ca in enumerate(a, 1):
+            prev, row[0] = row[0], i
+            for j, cb in enumerate(b, 1):
+                prev, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, prev + (ca != cb))
+        return row[-1] <= 2 and 4 * row[-1] <= max(len(a), len(b))
+
+    def _copy_term(self, node, names):
+        """(F_i, [(guard node, guard fields)]) when node is `F_i and not sel_no_a ...`:
+        one block of one map and one or more negated null guard blocks."""
+        if node[0] != "and" or id(node) in names or len(node[1]) < 2:
+            return None
+        blocks = [k for k in node[1] if k[0] != "not"]
+        if len(blocks) != 1 or id(blocks[0]) not in names or len(self._maps(blocks[0])) != 1:
+            return None
+        guards = []
+        for neg in node[1]:
+            if neg is blocks[0]:
+                continue
+            fields = self._guard_fields(neg[1], names)
+            if fields is None:
+                return None
+            guards.append((neg[1], fields))
+        return blocks[0], guards
+
+    def _map_defs(self, name):
+        definition = self.definitions.get(name)
+        return list(definition) if isinstance(definition, list) else [definition]
+
+    def null_helpers(self):
+        """{atom: (role, atoms to name instead)} for the items of null guards ("guard")
+        and null-safe copies ("copy"), as the comment above defines them. An item that
+        the condition also reads in any other place is not a helper."""
+        if self._helpers is None:
+            self._analyse_null_helpers()
+        return self._helpers
+
+    def null_guard_issues(self):
+        """Messages for shapes that are a null guard or a null-safe copy but not a
+        correct one (a guard on a near spelling of the filter's field, a guard that only
+        some maps of its filter read, a guard on several fields whose filter can be NULL
+        where one of them is present, a copy that does not repeat its filter's maps or
+        that reads a field no guard of its term covers): such a guard holds on records
+        where the filter holds, or the negation stays NULL, or a copy changes the rule.
+        check_null_safety.py fails each."""
+        if self._helpers is None:
+            self._analyse_null_helpers()
+        return self._issues
+
+    def _analyse_null_helpers(self):
+        names = self._names()
+        drop, roles, issues = set(), {}, []
+        guarded = {}  # guard atom -> the filter atoms it guards
+
+        def text(n):
+            return render(self, n)
+
+        def walk(node):
+            if id(node) in names or node[0] == "id":
+                return
+            if node[0] == "not":
+                walk(node[1])
+                return
+            kids = node[1]
+            if node[0] == "or":
+                nots = [k for k in kids if k[0] == "not"]
+                for i, g in enumerate(kids):
+                    fields = self._guard_fields(g, names)
+                    if fields is None or not nots:
+                        continue
+                    held = [k for k in nots if self._falsified(k[1], fields, names)]
+                    if not held:
+                        issues.extend(self._misdirected_guard(names[id(g)], fields, nots, text))
+                        continue
+                    drop.add((id(node), i))
+                    targets = []
+                    for k in held:
+                        reads = self._field_items(k[1])
+                        extra = sorted(f for f in fields if f not in reads)
+                        if extra:
+                            issues.append(
+                                f"`{names[id(g)]}` guards `{text(k)}`, but that filter reads no "
+                                f"{', '.join(extra)} (a field name must match exactly, in "
+                                "case too): remove the field from the guard or fix its name")
+                        if len(fields) > 1 and not self._any_value_maps(k[1], fields, names):
+                            issues.append(
+                                f"`{names[id(g)]}` guards several fields at once "
+                                f"({', '.join(sorted(fields))}): it holds only where all of "
+                                f"them are absent, so where one is present and another is "
+                                f"absent `{text(k)}` can still be NULL. Use one guard per "
+                                "field (De Morgan's laws: `(sel_no_a or not filter_a) and "
+                                "(sel_no_b or not filter_b)`, with one filter block per "
+                                "field). A guard on several fields is null-safe only when "
+                                "each map of its filter is one item that holds on any value "
+                                "of one of them (`field: '*'` or `field|exists: true`)")
+                        targets += [a for f in sorted(fields) for a in reads.get(f, [])]
+                    for a in self._atoms_under(g):
+                        guarded.setdefault(a, [])
+                        guarded[a] += [t for t in targets if t not in guarded[a]]
+            else:
+                for i, c in enumerate(kids):
+                    if id(c) in names:
+                        continue
+                    terms = c[1] if c[0] == "or" else [c]
+                    parts = [self._copy_term(t, names) for t in terms]
+                    if not parts or any(p is None for p in parts):
+                        continue
+                    found = self._copy_of(parts, [k for j, k in enumerate(kids) if j != i],
+                                          names)
+                    if found is None:
+                        continue  # no block it copies: ordinary selections
+                    if isinstance(found, str):
+                        issues.append(f"`{text(c)}` has the shape of a null-safe copy "
+                                      f"(`<block> and not <guard>` terms), but {found}")
+                        continue
+                    drop.add((id(node), i))
+                    for blk, guards, originals in found:
+                        for a in self._atoms_under(blk):
+                            role = roles.setdefault(a, ("copy", []))
+                            role[1].extend(o for o in [originals[a]] if o not in role[1])
+                        for g, fields in guards:
+                            targets = [originals[a] for f, atoms in self._field_items(blk).items()
+                                       if f in fields for a in atoms]
+                            for a in self._atoms_under(g):
+                                guarded.setdefault(a, [])
+                                guarded[a] += [t for t in targets if t not in guarded[a]]
+            for c in kids:
+                walk(c)
+
+        walk(self.tree)
+
+        def strip(node):
+            if node[0] == "id" or id(node) in names:
+                return node
+            if node[0] == "not":
+                return ("not", strip(node[1]))
+            kids = [strip(c) for i, c in enumerate(node[1]) if (id(node), i) not in drop]
+            return kids[0] if len(kids) == 1 else (node[0], kids)
+
+        self._stripped_tree = strip(self.tree)
+        kept = set(self._atoms_under(self._stripped_tree))
+        for a, targets in guarded.items():
+            roles.setdefault(a, ("guard", targets))
+        self._helpers = {a: roles[a] for a in self.atoms if a not in kept and a in roles}
+        self._issues = issues
+
+    def _misdirected_guard(self, name, fields, nots, text):
+        """A `field: null` block ORed with `not` operands that it does not guard: an
+        ordinary selection, unless it reads like a broken guard (a near spelling of a
+        field that an operand reads, or a field that only some maps of an operand read).
+        Returns the issue messages."""
+        names = self._names()
+        out = []
+        for k in nots:
+            inner = text(k[1])
+            if id(k[1]) not in names and k[1][0] in ("and", "or"):
+                inner = f"({inner})"
+            rewrite = (f"If `{name}` is a selection and not a null guard, write "
+                       f"`not ({inner} and not {name})`, which means the same and is not "
+                       "read as a guard")
+            reads = self._field_items(k[1])
+            shared = sorted(f for f in fields if f in reads)
+            near = sorted({(f, r) for f in fields for r in reads if self._near(f, r)})
+            if near:
+                out.append(
+                    f"`{name}` ({', '.join(sorted(fields))} absent) is ORed with `{text(k)}`, "
+                    f"which reads {', '.join(sorted({r for _, r in near}))}: the names differ "
+                    "only in letter case or by a typo. As a null guard it is true on every "
+                    "record that lacks the misspelt field, so on Lucene, Splunk and ES|QL "
+                    "(which read field names as written) the filter never applies. Write the "
+                    "field name exactly as the filter reads it. " + rewrite)
+            elif shared:
+                out.append(
+                    f"`{name}` ({', '.join(shared)} absent) is ORed with `{text(k)}`, but not "
+                    "every map of that filter reads "
+                    + ("that field" if len(shared) == 1 else "those fields")
+                    + ": the block holds on records where a map on another field holds, so "
+                    "it changes what the rule matches. Guard a filter whose every map reads "
+                    "the field, or use a null-safe copy for a filter whose maps read "
+                    "different fields. " + rewrite)
+        return out
+
+    def _copy_of(self, parts, siblings, names):
+        """[(F_i, [(guard, fields)], {F_i atom: F atom})] when the terms `parts` copy one
+        of the sibling blocks; a message that says why they do not, when a sibling has
+        maps with the same keys as the terms' blocks; else None (no block to copy: the
+        terms are ordinary selections)."""
+        maps = [self._map_defs(names[id(blk)])[0] for blk, _ in parts]
+        keys = [sorted(map(str, m)) if isinstance(m, dict) else None for m in maps]
+        almost = None
+        for f in siblings:
+            name = names.get(id(f))
+            if name is None:
+                continue
+            fmaps = self._map_defs(name)
+            fkeys = [sorted(map(str, m)) if isinstance(m, dict) else None for m in fmaps]
+            if not all(k is not None and k in fkeys for k in keys):
+                continue
+            almost = almost or name
+            if not (all(m in maps for m in fmaps) and all(m in fmaps for m in maps)):
+                continue
+            out = []
+            for (blk, guards), m in zip(parts, maps):
+                bname = names[id(blk)]
+                reads = self._field_items(blk)
+                for g, fields in guards:
+                    if len(fields) > 1:
+                        return (f"`{names[id(g)]}` guards several fields at once "
+                                f"({', '.join(sorted(fields))}): in a copy term, `not "
+                                f"{names[id(g)]}` holds where any one of them is present, so "
+                                f"`{bname}` is read where another can be absent. Use one "
+                                f"guard per field (`{bname} and not sel_no_a and not "
+                                "sel_no_b`)")
+                    extra = sorted(fd for fd in fields if fd not in reads)
+                    if extra:
+                        return (f"`{names[id(g)]}` guards {', '.join(extra)}, which "
+                                f"`{bname}` does not read (a field name must match exactly, "
+                                "in case too)")
+                covered = {fd for _, fields in guards for fd in fields}
+                bare = sorted({self.item_field[a] or "(a keyword item)"
+                               for a in self._atoms_under(blk)
+                               if self.item_field[a] not in covered and self.item_nullable(a)})
+                if bare:
+                    return (f"`{bname}` also reads {', '.join(bare)}, which no guard of its "
+                            "term covers: where that field is absent the copy is NULL, and "
+                            "so is the negation. Read the copy only where every field it "
+                            f"tests is present: `{bname} and not "
+                            + " and not ".join(names[id(g)] for g, _ in guards)
+                            + " and not sel_no_<field>` (a block `<field>: null` per field)")
+                i = fmaps.index(m)
+                prefix = f"{name}[{i}]" if len(fmaps) > 1 else name
+                originals = {a: prefix + a[len(bname):] for a in self._atoms_under(blk)}
+                if not all(o in self.items for o in originals.values()):
+                    break
+                out.append((blk, guards, originals))
+            else:
+                return out
+        if almost is None:
+            return None
+        return (f"it does not repeat the maps of `{almost}` exactly (its blocks have the "
+                f"keys of maps of `{almost}`, so they are read as a copy of it: each map of "
+                "that block needs one `<block> and not <guard>` term whose block is that "
+                "map, with the same keys and values). If the terms are selections and not "
+                "a copy, write each `<block> and not <guard>` as `not (<guard> or not "
+                "<block>)`, which means the same and is not read as a copy")
+
+    def stripped(self):
+        """This rule with its null guards and null-safe copies left out of the condition
+        (null_helpers()). On a real record the verdict is the same: a guard holds only
+        where its filter does not, and a copy holds exactly where its filter does. The
+        compiled query (sql) stays the full rule's. check_sufficiency.py grades this view,
+        so a helper item does not count as an item of the rule."""
+        if self._stripped is None:
+            helpers = self.null_helpers()
+            if not helpers:
+                self._stripped = self
+            else:
+                clone = copy.copy(self)
+                clone.tree = self._stripped_tree
+                clone.polarity = {}
+                clone._walk_polarity(clone.tree, True)
+                clone.atoms = list(clone.polarity)
+                clone.items = {a: s for a, s in self.items.items() if a in clone.polarity}
+                clone.vacuous = {a for a in self.vacuous if a in clone.polarity}
+                clone._helpers, clone._issues, clone._stripped = {}, [], clone
+                self._stripped = clone
+        return self._stripped
+
+    def item_sql(self, atom, three_valued=False):
+        """One item's SQL alone: two-valued (pySigma's SQLite backend, as compiled at
+        load) or three-valued (sigma_eval.backend(three_valued=True))."""
+        if not three_valued:
+            return self.items[atom]
+        if atom not in self._items3:
+            doc = {"title": f"{self.title} [{atom}]", "logsource": self.logsource,
+                   "detection": self.item_detection[atom]}
+            self._items3[atom] = sigma_eval.backend(True).convert(
+                SigmaCollection.from_dicts([doc]))[0]
+        return self._items3[atom]
+
+    def item_negates(self, atom):
+        """Does the item negate inside itself (`|neq`)? The SQLite backend writes a
+        negation, and only a negation, as NOT COALESCE(<test>, 0)."""
+        return "COALESCE(" in self.items[atom]
 
     def evaluate(self, truth):
         return _eval(self.tree, truth)
@@ -375,6 +801,22 @@ def _eval(node, truth):
     return any(_eval(c, truth) for c in node[1])
 
 
+def render(rule, node):
+    """Condition text of a subtree, with block names where a block is whole."""
+    names = {id(tree): name for name, tree in rule.block_tree.items()}
+
+    def text(n, top=False):
+        if id(n) in names:
+            return names[id(n)]
+        if n[0] == "id":
+            return n[1]
+        if n[0] == "not":
+            return "not " + text(n[1])
+        inner = f" {n[0]} ".join(text(c) for c in n[1])
+        return inner if top else f"({inner})"
+    return text(node, top=True)
+
+
 def _compile_docs(docs):
     queries = sqliteBackend().convert(SigmaCollection.from_dicts(docs))
     if len(queries) != 1:
@@ -466,6 +908,21 @@ class CorrelationRule:
 
     def negated_atoms(self):
         return []
+
+    def null_helpers(self):
+        """A correlation's own atoms are never null-safety helpers (its bases' may be)."""
+        return {}
+
+    def null_guard_issues(self):
+        return [f"base {ref}: {m}" for ref, b in self.bases.items() for m in b.null_guard_issues()]
+
+    def stripped(self):
+        """This correlation with each base stripped (PlainRule.stripped())."""
+        if not any(b.null_helpers() for b in self.bases.values()):
+            return self
+        clone = copy.copy(self)
+        clone.bases = {ref: b.stripped() for ref, b in self.bases.items()}
+        return clone
 
     def fields(self, atom):
         if atom.startswith("base:"):

@@ -81,7 +81,7 @@ detection:
   # that "?" or after an "&", and end at an "&" or at the end. So a value of another
   # parameter ("?note=?dryRun=All", "x%26dryRun=All") is not a dry run.
   filter_dry_run:
-    - requestURI|re: '^[^?]*\?(.*\&)?dryRun=All(\&.*)?$'
+    - requestURI|re: &dry_run_query '^[^?]*\?(.*\&)?dryRun=All(\&.*)?$'
       requestObject.kind: null
       annotations.audit.k8s.io/truncated: null
     - requestObject.dryRun|contains: 'All'
@@ -91,9 +91,36 @@ detection:
   # v1.36.4 builds with Go 1.26.5, and the API server then deletes), or the dry run
   # is in the body.
   filter_dry_run_read:
-    - requestURI|re: '^[^&]*(\&[^&]*){0,100}$'
+    - requestURI|re: &query_parsed '^[^&]*(\&[^&]*){0,100}$'
     - requestObject.dryRun|contains: 'All'
-  condition: select_namespace_delete and sel_accepted and not filter_lifecycle_garbage_collector and not (filter_dry_run and filter_dry_run_read)
+  # Null-safe copies of filter_dry_run and filter_dry_run_read. A backend with
+  # three-valued logic (ES|QL and other SQL backends) reads NOT of a test on a missing
+  # field as NULL and drops the record. A delete without a DeleteOptions body, and
+  # every Metadata-level record, has no requestObject.dryRun, so the second map of each
+  # filter is NULL there, and a field: null selection cannot guard a block whose maps
+  # read different fields. Each map of the two filters is repeated as a block of its
+  # own (filter_dry_run_body is the second map of both), and the condition reads each
+  # one only where its field is present (not sel_no_<field>). In two-valued logic each
+  # copy holds exactly where its filter holds; in three-valued logic it is never NULL.
+  filter_dry_run_query:
+    requestURI|re: *dry_run_query
+    requestObject.kind: null
+    annotations.audit.k8s.io/truncated: null
+  filter_query_parsed:
+    requestURI|re: *query_parsed
+  filter_dry_run_body:
+    requestObject.dryRun|contains: 'All'
+  sel_no_request_uri:
+    requestURI: null
+  sel_no_dry_run_body:
+    requestObject.dryRun: null
+  condition: >-
+    select_namespace_delete and sel_accepted and not filter_lifecycle_garbage_collector
+    and not (filter_dry_run and filter_dry_run_read
+    and ((filter_dry_run_query and not sel_no_request_uri)
+    or (filter_dry_run_body and not sel_no_dry_run_body))
+    and ((filter_query_parsed and not sel_no_request_uri)
+    or (filter_dry_run_body and not sel_no_dry_run_body)))
 falsepositives:
   - CI and preview-environment teardown, tenant offboarding and GitOps pruning delete
     namespaces by design. Baseline those identities (and their namespace name

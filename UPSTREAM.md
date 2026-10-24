@@ -17,6 +17,15 @@ runs, and lists the exact submission steps.
 | The Sigma rule(s) | `detections/sigma/<ATT&CK>/` | [SigmaHQ/sigma](https://github.com/SigmaHQ/sigma) | `rules/...` by log source (below) |
 | The emulation test | `atomics/<ATT&CK>/` | [redcanaryco/atomic-red-team](https://github.com/redcanaryco/atomic-red-team) | `atomics/<ATT&CK>/` |
 
+### Tool issues
+
+A defect found in a third-party tool that the repository uses is staged as issue text under
+`upstream/<project>/` and filed by a human, like the pull requests above.
+
+| Issue | Staged text | Upstream project |
+|-------|-------------|------------------|
+| Kusto (KQL) backend: dotted field names become string literals, and five related defects | [`upstream/pySigma-backend-kusto/ISSUE.md`](upstream/pySigma-backend-kusto/ISSUE.md) | [AttackIQ/pySigma-backend-kusto](https://github.com/AttackIQ/pySigma-backend-kusto) |
+
 ### SigmaHQ rule paths by log source
 
 | Log source (rule `logsource`) | SigmaHQ path |

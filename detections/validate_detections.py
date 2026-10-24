@@ -596,7 +596,7 @@ def explained(fn, rule, *args):
 
 def load_rule(rule_path):
     try:
-        return sigma_explain.load(os.path.join(REPO, rule_path))
+        return sigma_explain.load(os.path.join(REPO, rule_path)).stripped()  # no null guards
     except Exception as e:  # noqa: BLE001
         print(f"[diag] sigma_explain could not load {rule_path}: {e} (no explanations)")
         return None

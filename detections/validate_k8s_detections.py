@@ -298,7 +298,7 @@ def absent_hint(rule, events, scope, where):
 
 def explain_gated_miss(rule_path, events, gate, matched):
     """Why no event the emulation made matched: the gate, then the closest marked event."""
-    rule = sigma_explain.load(rule_path)
+    rule = sigma_explain.load(rule_path).stripped()  # no null guards or copies
     label = labeller(events)
     marked = [i for i, e in enumerate(events) if gate(e)]
     lines = [f"gate: {getattr(gate, 'describe', 'see its MANIFEST entry')}"]

@@ -90,7 +90,7 @@
         "objectRef.resource": "events",
         "verb": "delete",
         "objectRef.name": "trr9010-evt-c",
-        "Chokepoint": "A-C"
+        "Chokepoint": "A-C, G"
       },
       "style": {
         "border-color": "#0062b1",

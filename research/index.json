@@ -439,11 +439,12 @@
       ],
       "procedures": {
         "A": "Delete a single Event (core group)",
-        "B": "Bulk-wipe Events (deletecollection)",
+        "B": "Bulk-wipe Events (deletecollection, core group)",
         "C": "Delete an Event (events.k8s.io group)",
         "D": "Delete a Pod or Job (workload record)",
         "E": "Clear the audit log on the node (the gap)",
-        "F": "Delete a whole namespace"
+        "F": "Delete a whole namespace",
+        "G": "Bulk-wipe Events (deletecollection, events.k8s.io group)"
       },
       "pub_date": "2026-10-12",
       "last_update": "2026-10-23",
@@ -471,6 +472,10 @@
         },
         "F": {
           "text": "det-eng namespace delete behavioral emulation (throwaway namespace with an Event)",
+          "url": "../atomics/T1070/src/emulate.sh"
+        },
+        "G": {
+          "text": "det-eng events.k8s.io Event deletecollection (bulk wipe) behavioral emulation",
           "url": "../atomics/T1070/src/emulate.sh"
         }
       }
@@ -1045,10 +1050,12 @@
         "A": "Repoint the coredns Corefile",
         "B": "Edit the legacy kube-dns ConfigMap",
         "C": "Inject via coredns-custom import",
-        "D": "Recreate the coredns ConfigMap"
+        "D": "Recreate the coredns ConfigMap",
+        "E": "Edit the OpenShift DNS ConfigMap dns-default",
+        "F": "Edit the OpenShift DNS Operator object"
       },
       "pub_date": "2026-10-14",
-      "last_update": "2026-10-21",
+      "last_update": "2026-10-24",
       "path": "trr9027/k8s/README.md",
       "tests": {
         "A": {
@@ -1065,6 +1072,14 @@
         },
         "D": {
           "text": "det-eng coredns delete-and-recreate behavioral emulation (sentinel stub zone, restores original)",
+          "url": "../atomics/T1565.001/src/emulate.sh"
+        },
+        "E": {
+          "text": "det-eng OpenShift dns-default ConfigMap poisoning behavioral emulation (inert namespace + ConfigMap, kind)",
+          "url": "../atomics/T1565.001/src/emulate.sh"
+        },
+        "F": {
+          "text": "det-eng OpenShift DNS Operator object behavioral emulation (vendored CRD + inert dnses/default, kind)",
           "url": "../atomics/T1565.001/src/emulate.sh"
         }
       }

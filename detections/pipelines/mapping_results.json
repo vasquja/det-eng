@@ -1,0 +1,1789 @@
+{
+ "anchors": {
+  "anchors/aks/learn-columns-and-sample-paths.json": "ok",
+  "anchors/gke/khi-pod-create-by-replicaset-controller.json": "ok",
+  "anchors/gke/khi-pod-status-patch-by-kubelet.json": "ok",
+  "anchors/gke/method-and-resource-names.json": "ok"
+ },
+ "generated_by": "python3 detections/check_provider_mappings.py --write",
+ "providers": {
+  "aks": {
+   "gate": true,
+   "pipeline": "detections/pipelines/kubernetes_aks_auditlogs.yml",
+   "title": "AKS resource-specific table AKSAudit (KQL; AKSAuditAdmin holds the same rows without get and list events: see loses_positive_without_reads)",
+   "variants": [
+    "compact",
+    "sorted"
+   ]
+  },
+  "exploded": {
+   "gate": false,
+   "pipeline": null,
+   "title": "native Event on a backend that explodes JSON arrays (no pipeline)",
+   "variants": [
+    "exploded"
+   ]
+  },
+  "gke": {
+   "gate": true,
+   "pipeline": "detections/pipelines/k8s_gke.py:gke_cloud_audit",
+   "title": "GKE Cloud Audit Logs (Cloud Logging LogEntry JSON; reads only with Data Access logs on: see loses_positive_without_reads)",
+   "variants": [
+    "compact",
+    "sorted"
+   ]
+  }
+ },
+ "reads": {
+  "aksauditadmin": "AKSAuditAdmin: AKSAudit without get and list events (Microsoft Learn, tables/aksauditadmin)",
+  "gke_admin_activity": "GKE with Data Access logs off: Admin Activity only, no get, list or watch (gke-mcp k8s_audit_logs.md: Data Access logs hold reads, 'if enabled')"
+ },
+ "rules": {
+  "T1053.007/k8s_job_create.yml": {
+   "list_text_items": [],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "same"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1070/k8s_events_deleted.yml": {
+   "list_text_items": [
+    "filter_dry_run_delete_body.requestObject.dryRun",
+    "sel_no_dry_run_body.requestObject.dryRun"
+   ],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "diverges"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1070/k8s_namespace_deleted.yml": {
+   "list_text_items": [
+    "filter_dry_run[1].requestObject.dryRun",
+    "filter_dry_run_body.requestObject.dryRun",
+    "filter_dry_run_read[1].requestObject.dryRun",
+    "sel_no_dry_run_body.requestObject.dryRun"
+   ],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "diverges"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {
+      "filter_dry_run[0].requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded",
+      "filter_dry_run_query.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded",
+      "filter_dry_run_read[0].requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded",
+      "filter_query_parsed.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded",
+      "sel_accepted.responseStatus.code": "GKE pipeline cannot map this field: the sources conflict on the HTTP status: gke-mcp lists protoPayload.responseStatus.code ('if present'); audit_log.proto and the recorded KHI entries have only protoPayload.status, a google.rpc.Status (code 0 = OK); Falco's converter infers it",
+      "sel_no_request_uri.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded"
+     },
+     "status": "not_portable",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1070/k8s_workload_deleted_evidence.yml": {
+   "list_text_items": [
+    "filter_dry_run_delete_body.requestObject.dryRun",
+    "sel_no_dry_run_body.requestObject.dryRun"
+   ],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "diverges"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1098.006/k8s_eks_aws_auth_configmap_modified.yml": {
+   "list_text_items": [],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "same"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1098.006/k8s_rbac_privileged_grant.yml": {
+   "list_text_items": [
+    "sel_agg_beyond_builtin.requestObject.rules",
+    "sel_dangerous_rules.requestObject.rules",
+    "sel_group_subject.requestObject.subjects",
+    "sel_jsonpatch_group_subject.requestObject",
+    "sel_jsonpatch_node_proxy.requestObject",
+    "sel_jsonpatch_rules_grant.requestObject",
+    "sel_jsonpatch_rules_path.requestObject",
+    "sel_jsonpatch_subjects_path.requestObject",
+    "sel_node_proxy_rule.requestObject.rules"
+   ],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {
+      "aggregation-controller-writes-impersonate-users-into-admin": {
+       "diff": "sorted: native fires, aks quiet; blocks sel_agg_beyond_builtin",
+       "why": "KEY_ORDER"
+      }
+     },
+     "not_portable": {},
+     "status": "expected_loss",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": true,
+     "status": "diverges"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {
+      "aggregation-controller-writes-impersonate-users-into-admin": {
+       "diff": "sorted: native fires, gke quiet; blocks sel_agg_beyond_builtin",
+       "why": "KEY_ORDER"
+      },
+      "clusterrole-json-patch-adds-node-metrics": {
+       "diff": "all: blocks sel_jsonpatch_rules_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "clusterrole-json-patch-adds-node-proxy": {
+       "diff": "all: native fires, gke quiet; blocks sel_jsonpatch_node_proxy, sel_jsonpatch_rules_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "clusterrole-json-patch-impersonate-verb": {
+       "diff": "all: native fires, gke quiet; blocks sel_jsonpatch_rules_grant, sel_jsonpatch_rules_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "clusterrole-json-patch-read-rule-procE": {
+       "diff": "all: blocks sel_jsonpatch_rules_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "clusterrole-json-patch-wildcard-rule": {
+       "diff": "all: native fires, gke quiet; blocks sel_jsonpatch_rules_grant, sel_jsonpatch_rules_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "crb-cluster-admin-json-patch-appends-sa-procE": {
+       "diff": "all: blocks sel_jsonpatch_subjects_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "crb-json-patch-adds-named-user": {
+       "diff": "all: blocks sel_jsonpatch_subjects_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "crb-json-patch-adds-system-authenticated": {
+       "diff": "all: native fires, gke quiet; blocks sel_jsonpatch_group_subject, sel_jsonpatch_subjects_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "crb-json-patch-appends-sa-to-tenant-binding": {
+       "diff": "all: blocks sel_jsonpatch_subjects_path",
+       "why": "GKE_JSON_PATCH"
+      }
+     },
+     "not_portable": {},
+     "status": "expected_loss",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1098.006/k8s_rbac_sensitive_permission_grant.yml": {
+   "list_text_items": [
+    "sel_exec_grant.requestObject.rules",
+    "sel_secret_read.requestObject.rules",
+    "sel_token_grant.requestObject.rules"
+   ],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": true,
+     "status": "diverges"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1098.006/k8s_rbac_write.yml": {
+   "list_text_items": [],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "same"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1134/k8s_impersonation.yml": {
+   "list_text_items": [],
+   "loses_positive_without_reads": {
+    "aksauditadmin": true,
+    "gke_admin_activity": true
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {
+      "select_impersonation.impersonatedUser.username": "AKS pipeline cannot map this field: AKSAudit/AKSAuditAdmin have no ImpersonatedUser column; convert this rule for AzureDiagnostics (parse_json(log_s)) or the Event Hub export instead"
+     },
+     "status": "not_portable",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "same"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {
+      "select_denied_impersonation.responseStatus.code": "GKE pipeline cannot map this field: the sources conflict on the HTTP status: gke-mcp lists protoPayload.responseStatus.code ('if present'); audit_log.proto and the recorded KHI entries have only protoPayload.status, a google.rpc.Status (code 0 = OK); Falco's converter infers it",
+      "select_denied_impersonation.responseStatus.message": "GKE pipeline cannot map this field: the sources conflict on the HTTP status: gke-mcp lists protoPayload.responseStatus.code ('if present'); audit_log.proto and the recorded KHI entries have only protoPayload.status, a google.rpc.Status (code 0 = OK); Falco's converter infers it",
+      "select_headers_without_user.responseStatus.code": "GKE pipeline cannot map this field: the sources conflict on the HTTP status: gke-mcp lists protoPayload.responseStatus.code ('if present'); audit_log.proto and the recorded KHI entries have only protoPayload.status, a google.rpc.Status (code 0 = OK); Falco's converter infers it",
+      "select_headers_without_user.responseStatus.message": "GKE pipeline cannot map this field: the sources conflict on the HTTP status: gke-mcp lists protoPayload.responseStatus.code ('if present'); audit_log.proto and the recorded KHI entries have only protoPayload.status, a google.rpc.Status (code 0 = OK); Falco's converter infers it"
+     },
+     "status": "not_portable",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1134/k8s_impersonation_privileged.yml": {
+   "list_text_items": [
+    "sel_priv_groups.impersonatedUser.groups"
+   ],
+   "loses_positive_without_reads": {
+    "aksauditadmin": true,
+    "gke_admin_activity": true
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {
+      "sel_priv_groups.impersonatedUser.groups": "AKS pipeline cannot map this field: AKSAudit/AKSAuditAdmin have no ImpersonatedUser column; convert this rule for AzureDiagnostics (parse_json(log_s)) or the Event Hub export instead",
+      "sel_priv_sa.impersonatedUser.username": "AKS pipeline cannot map this field: AKSAudit/AKSAuditAdmin have no ImpersonatedUser column; convert this rule for AzureDiagnostics (parse_json(log_s)) or the Event Hub export instead",
+      "sel_priv_users.impersonatedUser.username": "AKS pipeline cannot map this field: AKSAudit/AKSAuditAdmin have no ImpersonatedUser column; convert this rule for AzureDiagnostics (parse_json(log_s)) or the Event Hub export instead",
+      "select_impersonation.impersonatedUser.username": "AKS pipeline cannot map this field: AKSAudit/AKSAuditAdmin have no ImpersonatedUser column; convert this rule for AzureDiagnostics (parse_json(log_s)) or the Event Hub export instead"
+     },
+     "status": "not_portable",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": true,
+     "status": "diverges"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {
+      "sel_priv_groups.impersonatedUser.groups": "GKE pipeline cannot map this field: no public source shows how GKE records impersonated groups, uid or extra"
+     },
+     "status": "not_portable",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1543.005/k8s_static_pod_mirror_create.yml": {
+   "list_text_items": [],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "same"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1546/k8s_admission_webhook_created.yml": {
+   "list_text_items": [],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "same"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {
+      "select_adm_ssa_create.responseStatus.code": "GKE pipeline cannot map this field: the sources conflict on the HTTP status: gke-mcp lists protoPayload.responseStatus.code ('if present'); audit_log.proto and the recorded KHI entries have only protoPayload.status, a google.rpc.Status (code 0 = OK); Falco's converter infers it"
+     },
+     "status": "not_portable",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1546/k8s_admission_webhook_repointed_to_url.yml": {
+   "list_text_items": [
+    "sel_body_url.requestObject.webhooks",
+    "sel_jsonpatch_url.requestObject"
+   ],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": true,
+     "status": "diverges"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {
+      "jsonpatch-add-url-value-first": {
+       "diff": "all: blocks sel_jsonpatch_url",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-clientconfig-unknown-object-before-url": {
+       "diff": "all: blocks sel_jsonpatch_url",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-index-minus-zero": {
+       "diff": "all: blocks sel_jsonpatch_url",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-index-plus-zero": {
+       "diff": "all: blocks sel_jsonpatch_url",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-negative-index": {
+       "diff": "all: blocks sel_jsonpatch_url",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-remove-service-add-url": {
+       "diff": "all: blocks sel_jsonpatch_url",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-replace-clientconfig-value-first": {
+       "diff": "all: blocks sel_jsonpatch_url",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-replace-clientconfig-with-url": {
+       "diff": "all: blocks sel_jsonpatch_url",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-replace-root-with-url": {
+       "diff": "all: blocks sel_jsonpatch_url",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-replace-webhooks-list-with-url": {
+       "diff": "all: blocks sel_jsonpatch_url",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-url-dry-run-query-over-param-limit": {
+       "diff": "all: blocks sel_jsonpatch_url",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-url-fieldmanager-mentions-dry-run": {
+       "diff": "all: blocks sel_jsonpatch_url",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-url-op-extra-object-key": {
+       "diff": "all: blocks sel_jsonpatch_url",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-url-uppercase-scheme": {
+       "diff": "all: blocks sel_jsonpatch_url",
+       "why": "GKE_JSON_PATCH"
+      }
+     },
+     "not_portable": {
+      "filter_dry_run.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded",
+      "sel_query_parsed.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded",
+      "select_accepted.responseStatus.code": "GKE pipeline cannot map this field: the sources conflict on the HTTP status: gke-mcp lists protoPayload.responseStatus.code ('if present'); audit_log.proto and the recorded KHI entries have only protoPayload.status, a google.rpc.Status (code 0 = OK); Falco's converter infers it"
+     },
+     "status": "not_portable",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1546/k8s_malicious_admission_webhook_created.yml": {
+   "list_text_items": [
+    "sel_offcluster_url.requestObject.webhooks"
+   ],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": true,
+     "status": "diverges"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {
+      "select_webhook_ssa_create.responseStatus.code": "GKE pipeline cannot map this field: the sources conflict on the HTTP status: gke-mcp lists protoPayload.responseStatus.code ('if present'); audit_log.proto and the recorded KHI entries have only protoPayload.status, a google.rpc.Status (code 0 = OK); Falco's converter infers it"
+     },
+     "status": "not_portable",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1552.007/k8s_secret_access.yml": {
+   "list_text_items": [],
+   "loses_positive_without_reads": {
+    "aksauditadmin": true,
+    "gke_admin_activity": true
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "same"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1552.007/k8s_secret_token_request.yml": {
+   "list_text_items": [],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "same"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1565.001/k8s_coredns_configmap_modified.yml": {
+   "list_text_items": [],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "same"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1565.001/k8s_coredns_corefile_poisoned.yml": {
+   "list_text_items": [
+    "filter_default_hosts_raw.requestObject",
+    "sel_cluster_zone_forward_raw.requestObject",
+    "sel_env_placeholder_raw.requestObject",
+    "sel_poison_hosts_raw.requestObject",
+    "sel_poison_plugin_raw.requestObject",
+    "sel_public_forward_raw.requestObject",
+    "sel_rogue_forward_raw.requestObject"
+   ],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": true,
+     "status": "diverges"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {
+      "jsonpatch-cluster-zone-stub-to-pod-ip": {
+       "diff": "all: native fires, gke quiet; blocks sel_cluster_zone_forward_raw",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-env-placeholder-splits-forward": {
+       "diff": "all: native fires, gke quiet; blocks sel_env_placeholder_raw",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-restore-k3s-default-corefile": {
+       "diff": "all: blocks filter_default_hosts_raw, sel_poison_hosts_raw",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-rewrite-raw": {
+       "diff": "all: native fires, gke quiet; blocks sel_poison_plugin_raw",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-root-after-stub-block": {
+       "diff": "all: native fires, gke quiet; blocks sel_public_forward_raw, sel_rogue_forward_raw",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-root-brace-next-line": {
+       "diff": "all: native fires, gke quiet; blocks sel_public_forward_raw, sel_rogue_forward_raw",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-root-braceless-block": {
+       "diff": "all: native fires, gke quiet; blocks sel_public_forward_raw, sel_rogue_forward_raw",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-root-comma-key-list": {
+       "diff": "all: native fires, gke quiet; blocks sel_cluster_zone_forward_raw, sel_public_forward_raw, sel_rogue_forward_raw",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-root-forward-to-ip": {
+       "diff": "all: native fires, gke quiet; blocks sel_public_forward_raw, sel_rogue_forward_raw",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-root-tab-separated-keys": {
+       "diff": "all: native fires, gke quiet; blocks sel_rogue_forward_raw",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-stub-zone-forward-public-ip": {
+       "diff": "all: native fires, gke quiet; blocks sel_public_forward_raw",
+       "why": "GKE_JSON_PATCH"
+      }
+     },
+     "not_portable": {},
+     "status": "expected_loss",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1572/k8s_node_proxy_portforward.yml": {
+   "list_text_items": [],
+   "loses_positive_without_reads": {
+    "aksauditadmin": true,
+    "gke_admin_activity": true
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "same"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {
+      "select_portforward_endpoint.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded"
+     },
+     "status": "not_portable",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1572/k8s_pod_portforward.yml": {
+   "list_text_items": [],
+   "loses_positive_without_reads": {
+    "aksauditadmin": true,
+    "gke_admin_activity": true
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "same"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1609/k8s_node_proxy_exec.yml": {
+   "list_text_items": [],
+   "loses_positive_without_reads": {
+    "aksauditadmin": true,
+    "gke_admin_activity": true
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "same"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {
+      "filter_other_kubelet_endpoint.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded",
+      "select_exec_path.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded",
+      "select_path_not_normalized.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded"
+     },
+     "status": "not_portable",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1609/k8s_node_proxy_kubelet_api.yml": {
+   "list_text_items": [],
+   "loses_positive_without_reads": {
+    "aksauditadmin": true,
+    "gke_admin_activity": true
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "same"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {
+      "select_kubelet_endpoint.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded"
+     },
+     "status": "not_portable",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1609/k8s_pod_ephemeral_container.yml": {
+   "list_text_items": [],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "same"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1609/k8s_pod_exec_attach.yml": {
+   "list_text_items": [],
+   "loses_positive_without_reads": {
+    "aksauditadmin": true,
+    "gke_admin_activity": true
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "same"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1611/k8s_podspec_confinement_disabled.yml": {
+   "list_text_items": [
+    "sel_cj_containers.requestObject.spec.jobTemplate.spec.template.spec.containers",
+    "sel_cj_init.requestObject.spec.jobTemplate.spec.template.spec.initContainers",
+    "sel_jp_conf_annotation.requestObject",
+    "sel_jp_conf_copy.requestObject",
+    "sel_jp_conf_leaf.requestObject",
+    "sel_jp_conf_value.requestObject",
+    "sel_jpobj_path.requestObject",
+    "sel_jpobj_value.requestObject",
+    "sel_pod_containers.requestObject.spec.containers",
+    "sel_pod_ephem.requestObject.spec.ephemeralContainers",
+    "sel_pod_init.requestObject.spec.initContainers",
+    "sel_tmpl_containers.requestObject.spec.template.spec.containers",
+    "sel_tmpl_init.requestObject.spec.template.spec.initContainers"
+   ],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": true,
+     "status": "diverges"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {
+      "cronjob-jobtemplate-seccomp-unconfined-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jpobj_path, sel_jpobj_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "cronjob-seccomp-pod-annotation-leaf-value-first-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_conf_annotation",
+       "why": "GKE_JSON_PATCH"
+      },
+      "daemonset-apparmor-type-leaf-extra-string-key-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_conf_leaf",
+       "why": "GKE_JSON_PATCH"
+      },
+      "daemonset-container-apparmor-unconfined-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jpobj_path, sel_jpobj_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "daemonset-copy-into-apparmor-profile-path-first-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_conf_copy, sel_jpobj_path, sel_jpobj_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "deployment-apparmor-annotation-leaf-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_conf_annotation",
+       "why": "GKE_JSON_PATCH"
+      },
+      "deployment-apparmor-annotation-map-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_conf_annotation",
+       "why": "GKE_JSON_PATCH"
+      },
+      "deployment-apparmor-type-unconfined-jsonpatch-leaf": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_conf_leaf",
+       "why": "GKE_JSON_PATCH"
+      },
+      "deployment-copy-into-apparmor-annotation-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_conf_copy",
+       "why": "GKE_JSON_PATCH"
+      },
+      "deployment-labels-map-type-unconfined-jsonpatch": {
+       "diff": "all: blocks sel_jpobj_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "deployment-move-into-seccomp-annotation-path-first-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_conf_copy",
+       "why": "GKE_JSON_PATCH"
+      },
+      "deployment-move-into-seccomp-profile-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_conf_copy, sel_jpobj_path, sel_jpobj_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "deployment-root-replace-seccomp-unconfined-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_conf_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "deployment-seccomp-profile-leaf-extra-brace-string-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jpobj_path, sel_jpobj_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "deployment-seccomp-profile-leaf-extra-object-key-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jpobj_path, sel_jpobj_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "deployment-seccomp-profile-leaf-nested-type-unconfined-own-runtime-default-jsonpatch": {
+       "diff": "all: blocks sel_jpobj_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "deployment-seccomp-profile-leaf-value-first-deep-op-key-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jpobj_path, sel_jpobj_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "deployment-seccomp-profile-leaf-value-first-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jpobj_path, sel_jpobj_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "deployment-seccomp-runtime-default-jsonpatch": {
+       "diff": "all: blocks sel_jpobj_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "deployment-seccomp-type-leaf-extra-object-key-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_conf_leaf",
+       "why": "GKE_JSON_PATCH"
+      },
+      "deployment-securitycontext-seccomp-extra-key-value-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_conf_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "deployment-securitycontext-seccomp-unconfined-value-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_conf_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "deployment-template-seccomp-unconfined-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jpobj_path, sel_jpobj_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-apparmor-profile-leaf-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jpobj_path, sel_jpobj_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-debug-seccomp-unconfined-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_conf_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jp-ephemeral-seccomp-unconfined-procE-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_conf_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "profile-path-and-unrelated-type-unconfined-labels-two-ops-fires": {
+       "diff": "all: native fires, gke quiet; blocks sel_jpobj_path, sel_jpobj_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "remediation-test-op-asserts-unconfined-fires": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_conf_leaf",
+       "why": "GKE_JSON_PATCH"
+      }
+     },
+     "not_portable": {},
+     "status": "expected_loss",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1611/k8s_podspec_controller_host_access.yml": {
+   "list_text_items": [
+    "sel_caps_cj.requestObject.spec.jobTemplate.spec.template.spec.containers",
+    "sel_caps_init_cj.requestObject.spec.jobTemplate.spec.template.spec.initContainers",
+    "sel_caps_init_tmpl.requestObject.spec.template.spec.initContainers",
+    "sel_caps_tmpl.requestObject.spec.template.spec.containers",
+    "sel_hostpath_cj.requestObject.spec.jobTemplate.spec.template.spec.volumes",
+    "sel_hostpath_tmpl.requestObject.spec.template.spec.volumes",
+    "sel_jp_caps_value.requestObject",
+    "sel_jp_hostns_value.requestObject",
+    "sel_jp_hostpath_value.requestObject",
+    "sel_jp_leaf_bool.requestObject",
+    "sel_jp_leaf_caps.requestObject",
+    "sel_jp_leaf_copy.requestObject",
+    "sel_jp_leaf_hostpath.requestObject",
+    "sel_jp_priv_value.requestObject",
+    "sel_jp_tmpl_path.requestObject",
+    "sel_priv_cj.requestObject.spec.jobTemplate.spec.template.spec.containers",
+    "sel_priv_init_cj.requestObject.spec.jobTemplate.spec.template.spec.initContainers",
+    "sel_priv_init_tmpl.requestObject.spec.template.spec.initContainers",
+    "sel_priv_tmpl.requestObject.spec.template.spec.containers"
+   ],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": true,
+     "status": "diverges"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {
+      "patch-cronjob-hostipc-value-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_hostns_value, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-cronjob-syscap-jsonpatch-value": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_caps_value, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-daemonset-hostnetwork-false-value-jsonpatch": {
+       "diff": "all: blocks sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-daemonset-hostnetwork-value-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_hostns_value, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-daemonset-hostpid-jsonpatch-leaf": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_leaf_bool, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-add-securitycontext-privileged-jsonpatch-value": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_priv_value, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-caps-leaf-value-first-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_leaf_caps, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-caps-list-leaf-null-element-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_leaf_caps, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-caps-list-leaf-value-first-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_leaf_caps, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-caps-list-leaf-value-first-null-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_leaf_caps, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-caps-value-after-bracket-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_caps_value, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-copy-container-jsonpatch": {
+       "diff": "all: blocks sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-copy-into-caps-index-minus-zero-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_leaf_copy, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-copy-into-hostpid-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_leaf_copy, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-emptydir-leaf-jsonpatch": {
+       "diff": "all: blocks sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-emptydir-volume-value-jsonpatch": {
+       "diff": "all: blocks sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-hostipc-leaf-value-first-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_leaf_bool, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-hostpath-leaf-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_leaf_hostpath, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-hostpath-leaf-value-first-extra-brace-string-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_leaf_hostpath, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-hostpath-leaf-value-first-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_leaf_hostpath, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-hostpath-volume-jsonpatch-value": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_hostpath_value, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-hostpid-false-and-stdin-true-jsonpatch": {
+       "diff": "all: blocks sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-hostpid-leaf-deep-nested-key-not-graded": {
+       "diff": "all: blocks sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-hostpid-leaf-extra-object-key-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_leaf_bool, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-hostpid-value-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_hostns_value, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-image-bump-jsonpatch": {
+       "diff": "all: blocks sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-move-into-privileged-path-first-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_leaf_copy, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-net-bind-service-cap-jsonpatch-value": {
+       "diff": "all: blocks sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-net-bind-service-leaf-jsonpatch": {
+       "diff": "all: blocks sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-privileged-at-non-template-path-jsonpatch": {
+       "diff": "all: blocks sel_jp_priv_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-privileged-false-jsonpatch-leaf": {
+       "diff": "all: blocks sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-privileged-jsonpatch-leaf": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_leaf_bool, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-privileged-leaf-extra-string-key-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_leaf_bool, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-root-replace-plain-jsonpatch": {
+       "diff": "all: blocks sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-root-replace-privileged-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_priv_value, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-sys-admin-leaf-index-plus-zero-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_leaf_caps, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-sys-admin-leaf-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_leaf_caps, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-deployment-sys-admin-leaf-negative-index-value-first-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_leaf_caps, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "patch-statefulset-caps-list-leaf-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_leaf_caps, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "remediation-test-op-asserts-host-network-fires": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_leaf_bool, sel_jp_tmpl_path",
+       "why": "GKE_JSON_PATCH"
+      }
+     },
+     "not_portable": {},
+     "status": "expected_loss",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1611/k8s_podspec_host_access.yml": {
+   "list_text_items": [
+    "sel_caps.requestObject.spec.containers",
+    "sel_caps_ephem.requestObject.spec.ephemeralContainers",
+    "sel_caps_init.requestObject.spec.initContainers",
+    "sel_hostpath.requestObject.spec.volumes",
+    "sel_jp_caps_value.requestObject",
+    "sel_jp_eph_path.requestObject",
+    "sel_jp_leaf_bool.requestObject",
+    "sel_jp_leaf_caps.requestObject",
+    "sel_jp_leaf_copy.requestObject",
+    "sel_jp_priv_value.requestObject",
+    "sel_privileged.requestObject.spec.containers",
+    "sel_privileged_ephem.requestObject.spec.ephemeralContainers",
+    "sel_privileged_init.requestObject.spec.initContainers"
+   ],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": true,
+     "status": "diverges"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {
+      "ephemeral-caps-leaf-value-first-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_eph_path, sel_jp_leaf_caps",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-caps-list-leaf-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_eph_path, sel_jp_leaf_caps",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-caps-list-leaf-null-element-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_eph_path, sel_jp_leaf_caps",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-caps-list-leaf-value-first-bracket-null-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_eph_path, sel_jp_leaf_caps",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-caps-list-leaf-value-first-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_eph_path, sel_jp_leaf_caps",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-copy-image-jsonpatch": {
+       "diff": "all: blocks sel_jp_eph_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-copy-into-privileged-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_eph_path, sel_jp_leaf_copy",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-move-into-caps-index-plus-zero-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_eph_path, sel_jp_leaf_copy",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-move-into-caps-path-first-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_eph_path, sel_jp_leaf_copy",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-net-bind-service-cap-jsonpatch-value": {
+       "diff": "all: blocks sel_jp_eph_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-net-bind-service-leaf-jsonpatch": {
+       "diff": "all: blocks sel_jp_eph_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-plain-container-jsonpatch": {
+       "diff": "all: blocks sel_jp_eph_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-privileged-false-jsonpatch-leaf": {
+       "diff": "all: blocks sel_jp_eph_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-privileged-jsonpatch-leaf": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_eph_path, sel_jp_leaf_bool",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-privileged-jsonpatch-value": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_eph_path, sel_jp_priv_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-privileged-leaf-deep-nested-key-known-miss": {
+       "diff": "all: blocks sel_jp_eph_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-privileged-leaf-extra-key-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_eph_path, sel_jp_leaf_bool",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-privileged-leaf-value-first-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_eph_path, sel_jp_leaf_bool",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-root-replace-plain-jsonpatch": {
+       "diff": "all: blocks sel_jp_eph_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-root-replace-privileged-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_eph_path, sel_jp_priv_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-sys-admin-caps-value-after-bracket-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_caps_value, sel_jp_eph_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-sys-admin-caps-value-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_caps_value, sel_jp_eph_path",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-sys-admin-leaf-index-plus-zero-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_eph_path, sel_jp_leaf_caps",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-sys-admin-leaf-negative-index-value-first-jsonpatch": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_eph_path, sel_jp_leaf_caps",
+       "why": "GKE_JSON_PATCH"
+      },
+      "ephemeral-sys-ptrace-jsonpatch-leaf": {
+       "diff": "all: native fires, gke quiet; blocks sel_jp_eph_path, sel_jp_leaf_caps",
+       "why": "GKE_JSON_PATCH"
+      },
+      "pod-container-privileged-off-ephemeral-path-jsonpatch": {
+       "diff": "all: blocks sel_jp_priv_value",
+       "why": "GKE_JSON_PATCH"
+      }
+     },
+     "not_portable": {},
+     "status": "expected_loss",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1685/k8s_admission_webhook_disabled.yml": {
+   "list_text_items": [
+    "filter_dry_run_delete_body.requestObject.dryRun",
+    "sel_no_dry_run_body.requestObject.dryRun"
+   ],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "diverges"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {
+      "filter_dry_run_write.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded",
+      "sel_query_parsed.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded"
+     },
+     "status": "not_portable",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1685/k8s_admission_webhook_neutered.yml": {
+   "list_text_items": [
+    "sel_jsonpatch_fail_open.requestObject",
+    "sel_jsonpatch_matchconditions.requestObject",
+    "sel_jsonpatch_neuter_value.requestObject",
+    "sel_jsonpatch_rules_cleared.requestObject",
+    "sel_jsonpatch_rules_kept.requestObject",
+    "sel_jsonpatch_whole_webhook.requestObject",
+    "sel_matchcondition_false.requestObject.webhooks",
+    "sel_neuter.requestObject.webhooks",
+    "sel_response_never_matches.responseObject.webhooks",
+    "sel_response_rules_omitted.responseObject.webhooks",
+    "sel_rules_omitted.requestObject.webhooks",
+    "sel_selector_never_matches.requestObject.webhooks"
+   ],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": true,
+     "status": "diverges"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {
+      "jsonpatch-add-matchcondition-false-index-plus-zero": {
+       "diff": "all: blocks sel_jsonpatch_matchconditions, sel_jsonpatch_neuter_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-add-matchconditions-constant": {
+       "diff": "all: blocks sel_jsonpatch_matchconditions, sel_jsonpatch_neuter_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-add-matchconditions-exclude-leases": {
+       "diff": "all: blocks sel_jsonpatch_matchconditions",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-add-matchconditions-literal-false": {
+       "diff": "all: blocks sel_jsonpatch_matchconditions, sel_jsonpatch_neuter_value",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-fail-open-dry-run-query-over-param-limit": {
+       "diff": "all: blocks sel_jsonpatch_fail_open",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-fail-open-extra-object-key": {
+       "diff": "all: blocks sel_jsonpatch_fail_open",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-fail-open-fieldmanager-mentions-dry-run": {
+       "diff": "all: blocks sel_jsonpatch_fail_open",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-fail-open-index-minus-zero": {
+       "diff": "all: blocks sel_jsonpatch_fail_open",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-fail-open-index-plus-zero": {
+       "diff": "all: blocks sel_jsonpatch_fail_open",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-fail-open-negative-index": {
+       "diff": "all: blocks sel_jsonpatch_fail_open",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-failurepolicy-ignore": {
+       "diff": "all: blocks sel_jsonpatch_fail_open",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-remove-rules-extra-empty-object-key": {
+       "diff": "all: blocks sel_jsonpatch_rules_cleared",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-remove-rules-index-plus-zero": {
+       "diff": "all: blocks sel_jsonpatch_rules_cleared",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-remove-webhook-rules": {
+       "diff": "all: blocks sel_jsonpatch_rules_cleared",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-remove-whole-webhook": {
+       "diff": "all: blocks sel_jsonpatch_whole_webhook",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-replace-list-drops-rules-of-one-webhook": {
+       "diff": "all: blocks sel_jsonpatch_rules_kept, sel_jsonpatch_whole_webhook",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-replace-webhooks-list-without-rules": {
+       "diff": "all: blocks sel_jsonpatch_whole_webhook",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-replace-whole-webhook-fail-open": {
+       "diff": "all: blocks sel_jsonpatch_neuter_value, sel_jsonpatch_rules_kept, sel_jsonpatch_whole_webhook",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-replace-whole-webhook-negative-index-fail-open": {
+       "diff": "all: blocks sel_jsonpatch_neuter_value, sel_jsonpatch_rules_kept, sel_jsonpatch_whole_webhook",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-replace-whole-webhook-rules-kept": {
+       "diff": "all: blocks sel_jsonpatch_rules_kept, sel_jsonpatch_whole_webhook",
+       "why": "GKE_JSON_PATCH"
+      }
+     },
+     "not_portable": {
+      "filter_dry_run_write.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded",
+      "filter_ssa_install.responseStatus.code": "GKE pipeline cannot map this field: the sources conflict on the HTTP status: gke-mcp lists protoPayload.responseStatus.code ('if present'); audit_log.proto and the recorded KHI entries have only protoPayload.status, a google.rpc.Status (code 0 = OK); Falco's converter infers it",
+      "sel_query_parsed.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded"
+     },
+     "status": "not_portable",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1685/k8s_enforcer_workload_removed.yml": {
+   "list_text_items": [
+    "filter_dry_run_delete_body.requestObject.dryRun",
+    "filter_scale_jsonpatch_positive.requestObject",
+    "sel_no_dry_run_body.requestObject.dryRun",
+    "sel_no_jsonpatch_body.requestObject",
+    "sel_scale_zero_jsonpatch.requestObject",
+    "sel_smp_directive[5].requestObject.$deleteFromPrimitiveList/spec.$retainKeys"
+   ],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": true,
+     "status": "diverges"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {
+      "deployment-jsonpatch-replace-spec-replicas-two": {
+       "diff": "all: blocks sel_no_jsonpatch_body",
+       "why": "GKE_JSON_PATCH"
+      },
+      "deployment-jsonpatch-replace-spec-replicas-zero": {
+       "diff": "all: blocks sel_no_jsonpatch_body, sel_scale_zero_jsonpatch",
+       "why": "GKE_JSON_PATCH"
+      },
+      "deployment-jsonpatch-value-minus-zero-raw-text": {
+       "diff": "all: blocks sel_no_jsonpatch_body, sel_scale_zero_jsonpatch",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-scale-gatekeeper-to-one": {
+       "diff": "all: blocks filter_scale_jsonpatch_positive, sel_no_jsonpatch_body",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-scale-zero-gatekeeper": {
+       "diff": "all: blocks sel_no_jsonpatch_body, sel_scale_zero_jsonpatch",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-scale-zero-gatekeeper-brace-string-in-nested-key-known-miss": {
+       "diff": "all: blocks sel_no_jsonpatch_body",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-scale-zero-gatekeeper-deep-nested-key-known-miss": {
+       "diff": "all: blocks sel_no_jsonpatch_body",
+       "why": "GKE_JSON_PATCH"
+      },
+      "scale-jsonpatch-remove-replicas": {
+       "diff": "all: blocks sel_no_jsonpatch_body",
+       "why": "GKE_JSON_PATCH"
+      },
+      "scale-jsonpatch-replace-to-three": {
+       "diff": "all: blocks filter_scale_jsonpatch_positive, sel_no_jsonpatch_body",
+       "why": "GKE_JSON_PATCH"
+      },
+      "scale-jsonpatch-set-count-then-remove": {
+       "diff": "all: blocks sel_no_jsonpatch_body",
+       "why": "GKE_JSON_PATCH"
+      }
+     },
+     "not_portable": {
+      "filter_dry_run_write.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded",
+      "sel_accepted.responseStatus.code": "GKE pipeline cannot map this field: the sources conflict on the HTTP status: gke-mcp lists protoPayload.responseStatus.code ('if present'); audit_log.proto and the recorded KHI entries have only protoPayload.status, a google.rpc.Status (code 0 = OK); Falco's converter infers it",
+      "sel_query_parsed.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded",
+      "sel_scale_patch_body.level": "GKE pipeline cannot map this field: GKE does not record the audit level or stage"
+     },
+     "status": "not_portable",
+     "unexpected": {}
+    }
+   }
+  },
+  "T1685/k8s_security_tool_workload_removed.yml": {
+   "list_text_items": [
+    "filter_dry_run_delete_body.requestObject.dryRun",
+    "filter_scale_jsonpatch_positive.requestObject",
+    "sel_no_dry_run_body.requestObject.dryRun",
+    "sel_no_jsonpatch_body.requestObject",
+    "sel_scale_zero_jsonpatch.requestObject",
+    "sel_smp_directive[5].requestObject.$deleteFromPrimitiveList/spec.$retainKeys"
+   ],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": true,
+     "status": "diverges"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {
+      "anchor-deployment-jsonpatch-replace-spec-replicas-two": {
+       "diff": "all: blocks sel_no_jsonpatch_body",
+       "why": "GKE_JSON_PATCH"
+      },
+      "anchor-deployment-jsonpatch-replace-spec-replicas-zero": {
+       "diff": "all: blocks sel_no_jsonpatch_body, sel_scale_zero_jsonpatch",
+       "why": "GKE_JSON_PATCH"
+      },
+      "anchor-deployment-jsonpatch-value-minus-zero-raw-text": {
+       "diff": "all: blocks sel_no_jsonpatch_body, sel_scale_zero_jsonpatch",
+       "why": "GKE_JSON_PATCH"
+      },
+      "anchor-jsonpatch-scale-zero-brace-string-in-nested-key-known-miss": {
+       "diff": "all: blocks sel_no_jsonpatch_body",
+       "why": "GKE_JSON_PATCH"
+      },
+      "anchor-jsonpatch-scale-zero-deep-nested-key-known-miss": {
+       "diff": "all: blocks sel_no_jsonpatch_body",
+       "why": "GKE_JSON_PATCH"
+      },
+      "anchor-scale-jsonpatch-remove-replicas": {
+       "diff": "all: blocks sel_no_jsonpatch_body",
+       "why": "GKE_JSON_PATCH"
+      },
+      "anchor-scale-jsonpatch-replace-to-three": {
+       "diff": "all: blocks filter_scale_jsonpatch_positive, sel_no_jsonpatch_body",
+       "why": "GKE_JSON_PATCH"
+      },
+      "anchor-scale-jsonpatch-set-count-then-remove": {
+       "diff": "all: blocks sel_no_jsonpatch_body",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-copy-from-replicas": {
+       "diff": "all: blocks sel_no_jsonpatch_body",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-copy-zero-into-replicas": {
+       "diff": "all: blocks sel_no_jsonpatch_body, sel_scale_zero_jsonpatch",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-replicas-three-other-zero": {
+       "diff": "all: blocks sel_no_jsonpatch_body",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-scale-down-to-one": {
+       "diff": "all: blocks filter_scale_jsonpatch_positive, sel_no_jsonpatch_body",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-scale-zero": {
+       "diff": "all: blocks sel_no_jsonpatch_body, sel_scale_zero_jsonpatch",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-scale-zero-extra-object-key": {
+       "diff": "all: blocks sel_no_jsonpatch_body, sel_scale_zero_jsonpatch",
+       "why": "GKE_JSON_PATCH"
+      },
+      "jsonpatch-scale-zero-two-level-object-key": {
+       "diff": "all: blocks sel_no_jsonpatch_body, sel_scale_zero_jsonpatch",
+       "why": "GKE_JSON_PATCH"
+      }
+     },
+     "not_portable": {
+      "filter_dry_run_write.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded",
+      "sel_accepted.responseStatus.code": "GKE pipeline cannot map this field: the sources conflict on the HTTP status: gke-mcp lists protoPayload.responseStatus.code ('if present'); audit_log.proto and the recorded KHI entries have only protoPayload.status, a google.rpc.Status (code 0 = OK); Falco's converter infers it",
+      "sel_query_parsed.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded",
+      "sel_scale_patch_body.level": "GKE pipeline cannot map this field: GKE does not record the audit level or stage"
+     },
+     "status": "not_portable",
+     "unexpected": {}
+    }
+   }
+  }
+ },
+ "schema": 2,
+ "summary": {
+  "aks": {
+   "diverges": 0,
+   "expected_loss": 1,
+   "not_portable": 2,
+   "same": 28
+  },
+  "aksauditadmin": {
+   "rules_losing_a_positive": 8
+  },
+  "exploded": {
+   "diverges": 16,
+   "expected_loss": 0,
+   "not_portable": 0,
+   "same": 15
+  },
+  "gke": {
+   "diverges": 0,
+   "expected_loss": 5,
+   "not_portable": 13,
+   "same": 13
+  },
+  "gke_admin_activity": {
+   "rules_losing_a_positive": 8
+  }
+ }
+}

@@ -1,0 +1,295 @@
+{
+ "provenance": {
+  "source": "https://github.com/GoogleCloudPlatform/khi/blob/ca3cc8829d47ab588d8ba11ba96e750a64a2931a/test/logs/k8s_audit/container_recorder_test_1_2.yaml",
+  "retrieved": "2026-10-23",
+  "license": "Apache-2.0",
+  "notice": "Copyright 2025 Google LLC. Licensed under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0). Modified by det-eng: see changes.",
+  "sha256_of_original": "299225aebd273a50bbf475e61d45db4d80945758b83fb90c9c1441e7e92b9597",
+  "changes": [
+   "YAML converted to JSON",
+   "identifiers rewritten to safe markers: namespace, pod, node, project and cluster names to trr9007- names, the two caller IP addresses to RFC 5737 192.0.2.3 and 192.0.2.7, and the UIDs and insert IDs to 00000000-0000-4000-8000-00000000000N",
+   "'native' (the audit.k8s.io/v1 Event this entry encodes) written by det-eng from the entry and the Kubernetes audit schema; it is not part of the source"
+  ]
+ },
+ "what": "A GKE Kubernetes audit LogEntry: the kubelet patches pods/status (io.k8s.core.v1.pods.status.patch; the subresource is a methodName label and the last resourceName segment). The pod-spec rules filter a status write.",
+ "native": {
+  "kind": "Event",
+  "apiVersion": "audit.k8s.io/v1",
+  "level": "Request",
+  "auditID": "00000000-0000-4000-8000-000000000004",
+  "stage": "ResponseComplete",
+  "requestURI": "/api/v1/namespaces/trr9007-ns/pods/trr9007-web-8655b4b8c5-xf5f4/status",
+  "verb": "patch",
+  "user": {
+   "username": "system:node:gke-trr9007-cluster-default-abcdefgh-abcd"
+  },
+  "sourceIPs": [
+   "192.0.2.7"
+  ],
+  "userAgent": "kubelet/v1.28.14 (linux/amd64) kubernetes/a4ef1a6",
+  "objectRef": {
+   "resource": "pods",
+   "namespace": "trr9007-ns",
+   "name": "trr9007-web-8655b4b8c5-xf5f4",
+   "subresource": "status",
+   "apiVersion": "v1"
+  },
+  "responseStatus": {
+   "metadata": {},
+   "code": 200
+  },
+  "requestObject": {
+   "metadata": {
+    "uid": "00000000-0000-4000-8000-000000000002"
+   },
+   "status": {
+    "$setElementOrder/conditions": [
+     {
+      "type": "Initialized"
+     },
+     {
+      "type": "Ready"
+     },
+     {
+      "type": "ContainersReady"
+     },
+     {
+      "type": "PodScheduled"
+     }
+    ],
+    "conditions": [
+     {
+      "lastProbeTime": null,
+      "lastTransitionTime": "2024-01-01T01:00:00Z",
+      "status": "True",
+      "type": "Initialized"
+     },
+     {
+      "lastProbeTime": null,
+      "lastTransitionTime": "2024-01-01T01:00:00Z",
+      "message": "containers with unready status: [nginx late-startup]",
+      "reason": "ContainersNotReady",
+      "status": "False",
+      "type": "Ready"
+     },
+     {
+      "lastProbeTime": null,
+      "lastTransitionTime": "2024-01-01T01:00:00Z",
+      "message": "containers with unready status: [nginx late-startup]",
+      "reason": "ContainersNotReady",
+      "status": "False",
+      "type": "ContainersReady"
+     }
+    ],
+    "containerStatuses": [
+     {
+      "image": "registry.k8s.io/busybox",
+      "imageID": "",
+      "lastState": {},
+      "name": "late-startup",
+      "ready": false,
+      "restartCount": 0,
+      "started": false,
+      "state": {
+       "waiting": {
+        "reason": "ContainerCreating"
+       }
+      }
+     },
+     {
+      "image": "nginx:1.14.2",
+      "imageID": "",
+      "lastState": {},
+      "name": "nginx",
+      "ready": false,
+      "restartCount": 0,
+      "started": false,
+      "state": {
+       "waiting": {
+        "reason": "ContainerCreating"
+       }
+      }
+     }
+    ]
+   }
+  },
+  "annotations": {
+   "authorization.k8s.io/decision": "allow",
+   "authorization.k8s.io/reason": ""
+  }
+ },
+ "record": {
+  "insertId": "00000000-0000-4000-8000-000000000004",
+  "labels": {
+   "authorization.k8s.io/decision": "allow",
+   "authorization.k8s.io/reason": ""
+  },
+  "logName": "projects/trr9007-project/logs/cloudaudit.googleapis.com%2Factivity",
+  "operation": {
+   "first": true,
+   "id": "00000000-0000-4000-8000-000000000004",
+   "last": true,
+   "producer": "k8s.io"
+  },
+  "protoPayload": {
+   "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+   "authenticationInfo": {
+    "principalEmail": "system:node:gke-trr9007-cluster-default-abcdefgh-abcd"
+   },
+   "authorizationInfo": [
+    {
+     "granted": true,
+     "permission": "io.k8s.core.v1.pods.status.patch",
+     "resource": "core/v1/namespaces/trr9007-ns/pods/trr9007-web-8655b4b8c5-xf5f4/status"
+    }
+   ],
+   "methodName": "io.k8s.core.v1.pods.status.patch",
+   "request": {
+    "@type": "k8s.io/Patch",
+    "metadata": {
+     "uid": "00000000-0000-4000-8000-000000000002"
+    },
+    "status": {
+     "$setElementOrder/conditions": [
+      {
+       "type": "Initialized"
+      },
+      {
+       "type": "Ready"
+      },
+      {
+       "type": "ContainersReady"
+      },
+      {
+       "type": "PodScheduled"
+      }
+     ],
+     "conditions": [
+      {
+       "lastProbeTime": null,
+       "lastTransitionTime": "2024-01-01T01:00:00Z",
+       "status": "True",
+       "type": "Initialized"
+      },
+      {
+       "lastProbeTime": null,
+       "lastTransitionTime": "2024-01-01T01:00:00Z",
+       "message": "containers with unready status: [nginx late-startup]",
+       "reason": "ContainersNotReady",
+       "status": "False",
+       "type": "Ready"
+      },
+      {
+       "lastProbeTime": null,
+       "lastTransitionTime": "2024-01-01T01:00:00Z",
+       "message": "containers with unready status: [nginx late-startup]",
+       "reason": "ContainersNotReady",
+       "status": "False",
+       "type": "ContainersReady"
+      }
+     ],
+     "containerStatuses": [
+      {
+       "image": "registry.k8s.io/busybox",
+       "imageID": "",
+       "lastState": {},
+       "name": "late-startup",
+       "ready": false,
+       "restartCount": 0,
+       "started": false,
+       "state": {
+        "waiting": {
+         "reason": "ContainerCreating"
+        }
+       }
+      },
+      {
+       "image": "nginx:1.14.2",
+       "imageID": "",
+       "lastState": {},
+       "name": "nginx",
+       "ready": false,
+       "restartCount": 0,
+       "started": false,
+       "state": {
+        "waiting": {
+         "reason": "ContainerCreating"
+        }
+       }
+      }
+     ]
+    }
+   },
+   "requestMetadata": {
+    "callerIp": "192.0.2.7",
+    "callerSuppliedUserAgent": "kubelet/v1.28.14 (linux/amd64) kubernetes/a4ef1a6"
+   },
+   "resourceName": "core/v1/namespaces/trr9007-ns/pods/trr9007-web-8655b4b8c5-xf5f4/status",
+   "serviceName": "k8s.io",
+   "status": {
+    "code": 0
+   }
+  },
+  "receiveTimestamp": "2024-01-01T01:00:00Z",
+  "resource": {
+   "labels": {
+    "cluster_name": "trr9007-cluster",
+    "location": "us-central1-a",
+    "project_id": "trr9007-project"
+   },
+   "type": "k8s_cluster"
+  },
+  "timestamp": "2024-01-01T01:00:00Z"
+ },
+ "compare": [
+  [
+   "protoPayload",
+   "@type"
+  ],
+  [
+   "protoPayload",
+   "serviceName"
+  ],
+  [
+   "protoPayload",
+   "methodName"
+  ],
+  [
+   "protoPayload",
+   "resourceName"
+  ],
+  [
+   "protoPayload",
+   "authenticationInfo"
+  ],
+  [
+   "protoPayload",
+   "request"
+  ],
+  [
+   "protoPayload",
+   "requestMetadata"
+  ],
+  [
+   "protoPayload",
+   "status"
+  ],
+  [
+   "labels"
+  ]
+ ],
+ "rules": [
+  {
+   "rule": "T1611/k8s_podspec_host_access.yml",
+   "fires": false,
+   "blocks": {
+    "selection_pod": true,
+    "filter_status": true
+   }
+  },
+  {
+   "rule": "T1609/k8s_pod_exec_attach.yml",
+   "fires": false
+  }
+ ]
+}

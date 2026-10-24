@@ -14,7 +14,10 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
   the technique), *evasion* (a filter or match that an attacker controls), *dead
   filter* (an allowlist entry that matches nothing real), *policy gap* (the audit
   policy does not record what the rule needs), *description* (the rule text claims
-  what the rule does not do).
+  what the rule does not do), *portability* (the rule is proven under the lab
+  policy, but a platform's own audit policy or log category does not record what it
+  needs; the platform's published policy decides, and the user often cannot change
+  it).
 - **Severity**: *high*: the rule misses a common variant of its technique, or a
   high-level rule fires on routine activity of most hosts or clusters. *medium*: a
   narrower miss, or routine noise in a common setup. *low*: a portability caveat, a
@@ -33,11 +36,22 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
   - *probe*: an event (set) that was run through the rule with the real pySigma
     backend (`sigma_eval.py`) on the current rule, with the result shown. Reproduce
     one with the snippet in [Reproducing a probe](#reproducing-a-probe);
+  - *simulator*: [`k8s_policy_coverage.py`](k8s_policy_coverage.py) replayed the
+    rule's sidecar cases as an audit policy records them (the lab policies and the
+    published provider policies in [`k8s/provider-policies/`](k8s/provider-policies/SOURCES.md)),
+    through the same backend. Its result is
+    [`k8s/policy_coverage.json`](k8s/policy_coverage.json); `python3
+    detections/k8s_policy_coverage.py --detail` prints it. A published policy is not a
+    capture, so a simulator result is **unverified** on a live cluster;
   - *source*: the upstream source that shows the real behaviour, as the reviewer read
     it. A *Go reproduction against `<module>@<version>`* is a small program, not kept in
     this repository, that ran that module's code; it is source evidence, not a probe.
     Where nothing in this repository recorded the real telemetry, the entry says
     **unverified**.
+- **Procedures** (optional) lists the TRR procedures that the defect affects, when it
+  is in one branch of a rule. [`coverage_report.py`](../research/tools/coverage_report.py)
+  then marks only those procedures of the named rule as "Proven, open defect"; an entry
+  without it marks every procedure that the rule proves.
 - **Fix** is the proposed change. **Then** says which case or budget changes once the
   fix lands, so the fix is proven, not just claimed.
 
@@ -54,7 +68,7 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [K16](#k16-k8s_impersonation-an-impersonation-request-without-a-user-header) | `T1134/k8s_impersonation` | on v1.34 and earlier, `Impersonate-Group`/`-Uid`/`-Extra` without `Impersonate-User` is a 500 with no trace (unverified live) | false negative | low |
 | [K17](#k17-k8s_rbac_privileged_grant-the-wildcard-clause-fires-on-bootstrap-and-read-only-roles) | `T1098.006/k8s_rbac_privileged_grant` | the `"*"` clause fires on the bootstrap controller roles and on read-only wildcard roles; other bootstrap roles that `system:apiserver` writes fire through `impersonate` or `"*"` | false positive | low |
 | [K22](#k22-k8s_admission_webhook_repointed_to_url-a-service-to-service-repoint-or-a-json-patch-copymove) | `T1546/k8s_admission_webhook_repointed_to_url` | a repoint to another in-cluster Service, or a JSON-patch copy/move, carries no URL | false negative | low |
-| [K23](#k23-apply-patches-with-a-yaml-body-no-audit-record-at-request-level-or-higher) | every Kubernetes rule whose records the shipped audit policy logs at Request or higher (RBAC objects, pods, apps and batch workloads and their scale subresources, admission configuration objects, the kube-system DNS and aws-auth ConfigMaps) | an apply patch with a YAML body is dropped from the audit log at Request level or higher, so no rule sees that write | policy gap | medium |
+| [K23](#k23-apply-patches-with-a-yaml-body-no-audit-record-at-request-level-or-higher) | every Kubernetes rule whose records the shipped audit policy logs at Request or higher (RBAC objects, pods, apps and batch workloads and their scale subresources, admission configuration objects, the kube-system DNS and aws-auth ConfigMaps, the OpenShift DNS ConfigMap and DNS Operator objects) | an apply patch with a YAML body is dropped from the audit log at Request level or higher, so no rule sees that write | policy gap | medium |
 | [K24](#k24-k8s_podspec_confinement_disabled-per-container-annotations-keyed-by-container-name) | `T1611/k8s_podspec_confinement_disabled` | a per-container seccomp/AppArmor annotation in a pod or controller body written outside `kubectl apply` is keyed by container name and not graded (a JSON patch is graded) | false negative | low |
 | [K25](#k25-k8s_podspec_confinement_disabled-selinux-type-outside-the-baseline-list) | `T1611/k8s_podspec_confinement_disabled` | SELinux `seLinuxOptions.type` set to `spc_t` (or another type off the Baseline list) also removes confinement and is not graded | false negative | low |
 | [K26](#k26-k8s_rbac_sensitive_permission_grant-the-bootstrap-roles-fire) | `T1098.006/k8s_rbac_sensitive_permission_grant` | the built-in roles the API server writes at bootstrap (system:aggregate-to-edit, system:node, system:kube-controller-manager) fire | false positive | low |
@@ -66,6 +80,14 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [K34](#k34-k8s_podspec_host_access-a-default-kubectl-debug-from-kubectl-v136-adds-sys_ptrace) | `T1611/k8s_podspec_host_access` | from kubectl v1.36 (the CI pin), a default `kubectl debug` adds SYS_PTRACE to its debug container, in an ephemeral container (a `pods/ephemeralcontainers` patch) and in a `--copy-to` pod copy (a `pods` create), and fires this level-high rule where that write is logged at Request | false positive, description | medium |
 | [K35](#k35-api-server-lab-policy-mutatingadmissionpolicy-deletes-at-metadata-hide-a-dry-run) | the API server lab policy (`k8s/audit-policy-apiserver.yaml`), for the delete dry-run filter of the T1685 webhook-disabled rule | the lab logs MutatingAdmissionPolicy and binding deletes at Metadata, so a server-side dry-run delete of one fires that rule (its delete dry-run filter needs the body) | policy gap | low |
 | [K36](#k36-delete-dry-run-filters-read-only-the-body-a-query-only-dry-run-fires) | `T1070/k8s_events_deleted`, `k8s_workload_deleted_evidence`, `T1685/k8s_admission_webhook_disabled`, `k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed` | a delete or deletecollection with no body whose query holds `?dryRun=All` is a server-side dry run, and these rules fire on it: their delete dry-run filter reads only the DeleteOptions body | false positive | low |
+| [K37](#k37-namespace-teardown-filters-trust-the-namespace-controllers-name) | `T1070/k8s_events_deleted`, `k8s_workload_deleted_evidence`, `T1685/k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed` (the same filter is in two more rules; see the entry) | `filter_namespace_teardown` reads only the identity and the verb, so a deletecollection sent with a token of the namespace controller's service account (for example an Events bulk wipe, TRR9010 B or G) is filtered as teardown in a namespace that nobody deletes | evasion | low |
+| [K38](#k38-kubernetes-events-deletes-leave-no-record-on-eks-gce-kube-up-and-openshift-417-and-no-collection-delete-record-on-aks) | the T1070 Events-deleted chokepoint, on EKS, the GCE kube-up policy, OpenShift 4.17 and earlier, and AKS | the platform policy logs core-group Events at None (and AKS drops every Events collection DELETE), so a core Events delete or collection DELETE leaves no record | portability, policy gap | medium |
+| [K39](#k39-delete-dry-run-body-filters-have-no-input-where-a-platform-logs-deletes-at-metadata) | the six delete rules with a DeleteOptions dry-run filter (T1070, T1685), on AKS, OpenShift with the Default profile, the k3s starter policy, and the events.k8s.io group on EKS and GCE kube-up | the platform logs the delete at Metadata, so a `kubectl delete --dry-run=server` fires | false positive, portability | low |
+| [K40](#k40-body-graders-are-blind-under-the-openshift-default-profile-and-the-k3s-starter-policy) | the request-body graders of TRR9004, TRR9007, TRR9008 and TRR9025, under the OpenShift Default profile and the k3s starter policy | writes are logged at Metadata, so no `requestObject` or `responseObject` exists to grade | portability, policy gap | medium |
+| [K41](#k41-k8s_coredns_corefile_poisoned-blind-under-every-published-managed-policy) | the TRR9027 Corefile grader, on EKS, GCE kube-up, AKS, OpenShift with the Default profile and the k3s starter policy | the kube-system/coredns write is logged at Metadata, so the Corefile is not in the record | portability, policy gap | low |
+| [K42](#k42-aks-kube-audit-admin-the-category-drops-get-and-list-so-read-shaped-procedures-leave-no-record) | the read-shaped Kubernetes rules (TRR9002, TRR9006, TRR9009, TRR9026), on AKS with the kube-audit-admin category | the category drops every get and list record | portability | medium |
+| [K43](#k43-k8s_rbac_privileged_grant-the-aggregation-clause-needs-the-api-servers-key-order) | `T1098.006/k8s_rbac_privileged_grant` | on a store that does not keep the key order of an object (AKS `dynamic` columns, GKE's `Struct` body), the clusterrole-aggregation-controller's write of impersonate on users into admin or edit is filtered: `sel_agg_beyond_builtin` needs the keys of each RBAC rule in Go field order | false negative | low |
+| [K45](#k45-k8s_coredns_configmap_modified-the-dns-operator-filter-trusts-the-operators-name) | `T1565.001/k8s_coredns_configmap_modified` | `filter_openshift_dns_operator` reads only the identity and the verb, so a create or a PUT of `openshift-dns/dns-default` or of the DNS Operator object sent with a stolen token of the DNS Operator's service account is filtered (TRR9027 E and F) | evasion | low |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
@@ -377,14 +399,17 @@ whether `arping` belongs in the allowlist.
 
 - **Rule**: [`sigma/T1565.001/k8s_coredns_corefile_poisoned.yml`](sigma/T1565.001/k8s_coredns_corefile_poisoned.yml) (level high).
 - **Kind**: false negative, false positive. **Severity**: low.
-- **Problem**: the shipped policy now logs the three DNS ConfigMaps at RequestResponse
-  and kube-system ConfigMap creates at Request, so a delete-and-recreate, a JSON patch
+- **Problem**: the shipped policy now logs the three DNS ConfigMaps and
+  `openshift-dns/dns-default` at RequestResponse and kube-system and openshift-dns
+  ConfigMap creates at Request, so a delete-and-recreate, a JSON patch
   (through the stored Corefile), quoted directives, directives on the brace line,
   `{$VAR}` placeholders, NBSP/NEL blanks, IPv4-mapped public targets and forwards of the
   cluster zone are graded. What is left:
   1. a forward of a zone other than the cluster zone to a **private** address, outside
      the root block: its record differs from a corporate stub zone only in the zone name
-     and the address, so it is seen by the chokepoint only;
+     and the address, so it is seen by the chokepoint only. On OpenShift this includes a
+     private stub zone that the DNS Operator renders from `spec.servers` (plain or
+     DNS-over-TLS);
   2. the root-block grammar does not follow `import`; in the JSON-patch text (no
      responseObject) it reads one nested brace level, `#` comments as plain text and no
      quoted `import` path, because the full grammar exceeds Lucene's budget there;
@@ -400,7 +425,8 @@ whether `arping` belongs in the allowlist.
   `lookalike-zone-mycluster-local`, `stub-zone-forward-ipv4-mapped-private`; positives
   `root-after-stub-block`, `jsonpatch-root-after-stub-block`,
   `stub-zone-forward-ipv4-mapped-public`; filtered `k3s-node-controller-nodehosts-update`,
-  `minikube-default-annotation-patch`.
+  `minikube-default-annotation-patch`; for limit 1 on OpenShift, confounders
+  `openshift-private-stub-zone` and `openshift-tls-private-stub-zone`.
 - **Fix**: none planned for 1 to 5.
 
 ### K14. k8s_namespace_deleted: a query dry run at Metadata level
@@ -420,7 +446,12 @@ whether `arping` belongs in the allowlist.
 - **Evidence**: *source* — apiserver `endpoints/handlers/delete.go` (DeleteOptions from
   the body when present). *case* — positive `namespace-delete-query-dry-run-ignored-body`
   (Request level, fires); filtered `namespace-delete-dry-run-query` (Metadata level, the
-  residual).
+  residual). *simulator* — the residual is live under the published OpenShift Default
+  profile (4.17 and 4.18) and the k3s starter policy, which log namespace deletes at
+  Metadata: there `namespace-delete-query-dry-run-ignored-body` is lost (`body-removed`).
+  It fires under the API server lab policy and the EKS, GCE kube-up, AKS and OpenShift
+  WriteRequestBodies policies
+  ([K39](#k39-delete-dry-run-body-filters-have-no-input-where-a-platform-logs-deletes-at-metadata)).
 - **Fix**: trust the query form only on a record that would show a body: add
   `level: ['Request', 'RequestResponse']` to the query branch of `filter_dry_run`, next
   to `requestObject.kind: null`. A Metadata-level `?dryRun=All` delete then fires; a real
@@ -541,6 +572,29 @@ whether `arping` belongs in the allowlist.
   - admission configuration objects (webhook configurations, validating admission
     policies and their bindings);
   - the kube-system ConfigMaps `coredns`, `kube-dns`, `coredns-custom` and `aws-auth`.
+  - the ConfigMap `openshift-dns/dns-default` and the DNS Operator objects
+    (`dnses.operator.openshift.io`), for TRR9027 E and F.
+
+  On OpenShift the gap follows the cluster's audit profile, not this policy: the
+  WriteRequestBodies and AllRequestBodies profiles log every write at RequestResponse
+  (openshift/library-go `pkg/operator/apiserver/audit/manifests`), so there a
+  YAML-bodied apply patch of any resource, `dns-default` and the DNS Operator object
+  included, leaves no record, and the TRR9027 chokepoint misses it too. The Default
+  profile logs writes at Metadata and keeps the record.
+
+  On managed platforms the gap is wider (*simulator*, on the published policies in
+  [`k8s/provider-policies/`](k8s/provider-policies/SOURCES.md); **unverified** on a live
+  cluster). The EKS, GCE kube-up and AKS policies log every write of a known API group
+  at RequestResponse, except the resources they keep at Metadata (Secrets and most
+  ConfigMaps). The OpenShift WriteRequestBodies profile logs every write at
+  RequestResponse, except the resources it keeps at Metadata (Secrets, tokens, routes,
+  OAuth clients, the machineconfiguration group). So on those platforms a YAML-bodied
+  apply patch of nearly any resource leaves no record, and the chokepoints that read
+  only Metadata fields miss it too. Under the OpenShift Default profile (apart from
+  OpenShift identity and OAuth-token writes) and the k3s starter policy, writes are
+  logged at Metadata, so the record survives
+  ([K40](#k40-body-graders-are-blind-under-the-openshift-default-profile-and-the-k3s-starter-policy)
+  applies there instead).
 
   This entry names no rule file in the Summary row or in a Rules bullet, because
   `research/tools/coverage_report.py` maps a listed rule to its procedures, and a gap of
@@ -1050,6 +1104,518 @@ whether `arping` belongs in the allowlist.
   record with a DeleteOptions body that holds no `dryRun`) fire. No existing case
   changes. The entry closes.
 
+### K37. Namespace-teardown filters trust the namespace controller's name
+
+- **Rules**: [`sigma/T1070/k8s_events_deleted.yml`](sigma/T1070/k8s_events_deleted.yml) (level medium),
+  and the same `filter_namespace_teardown` in
+  [`sigma/T1070/k8s_workload_deleted_evidence.yml`](sigma/T1070/k8s_workload_deleted_evidence.yml) (level low),
+  [`sigma/T1685/k8s_enforcer_workload_removed.yml`](sigma/T1685/k8s_enforcer_workload_removed.yml) (level high) and
+  [`sigma/T1685/k8s_security_tool_workload_removed.yml`](sigma/T1685/k8s_security_tool_workload_removed.yml) (level low).
+  These are the rules where a procedure's own path is a deletecollection (TRR9010 B, D
+  and G, TRR9008 D).
+- **Kind**: evasion. **Severity**: low (the attacker needs a credential that
+  authenticates as `system:serviceaccount:kube-system:namespace-controller`: `create` on
+  `serviceaccounts/token` for that service account in `kube-system`; `create` on pods (or
+  on any workload) in `kube-system` with `serviceAccountName: namespace-controller`, because
+  the ServiceAccount admission plugin mounts that account's token into the pod; `create`
+  and `get` on Secrets in `kube-system`, for a `kubernetes.io/service-account-token` Secret
+  of that account, which the token controller fills; or the credentials of
+  kube-controller-manager. Each path already needs `kube-system`-level access, which
+  allows much more than a cover-up).
+- **Problem**: each `filter_namespace_teardown` drops every `deletecollection` whose
+  `user.username` is `system:serviceaccount:kube-system:namespace-controller`. It reads
+  only the identity and the verb. The real namespace controller sends a deletecollection
+  only for a namespace that has a deletion timestamp, so its sweep always follows an
+  accepted delete of that namespace: by the actor, which `k8s_namespace_deleted` matches,
+  or by the garbage collector, which that rule filters (`filter_lifecycle_garbage_collector`).
+  The controller sends its sweep again on each sync until the namespace is empty, so a
+  namespace that stays Terminating (a finalizer, a slow pod shutdown) gets legitimate
+  sweeps long after the delete. A request sent with a token of that service account is
+  filtered too, from any client and any address, in a namespace that nobody deletes: for
+  example the Events bulk wipe of TRR9010 Procedure B or G, sent with `kubectl --token`,
+  or a deletecollection of the
+  pods or of the enforcer's DaemonSets in its namespace. A single delete by that
+  identity still fires (case `namespace-controller-identity-single-event-delete`).
+  Impersonation does not evade the filter: with `--as`, `user.username` holds the real
+  caller, and `impersonatedUser` holds the service account. Two more rules,
+  `T1053.007/k8s_job_create` and `T1098.006/k8s_rbac_write`, have the same filter and the
+  same gap for a deletecollection of Jobs or of RBAC objects. No procedure of TRR9005 or
+  TRR9004 deletes a collection, so the entry does not name them under Rules (the
+  coverage report would then mark every procedure of those two TRRs).
+- **Evidence**: *probe* (`sigma_eval.py`) — the sidecar positives
+  `deletecollection-bulk-procB` and `deletecollection-eventsk8s-procG` with
+  `user.username` set to the namespace controller, the user agent `kubectl/v1.36.4
+  (linux/amd64) kubernetes/0000000` and `sourceIPs` `["10.244.1.17"]` (a pod address)
+  are quiet. With `impersonatedUser` set to that account instead (the real user stays
+  `kubernetes-admin`), they fire. The same change of `user`, user agent and address on the
+  deletecollection positive of each other rule (`user-deletecollection-pods`,
+  `user-deletecollection-jobs`, `user-deletecollection-rolebindings`,
+  `user-deletecollection-falco-daemonsets`, `user-deletecollection-deployments`) is quiet
+  too. *case* — `namespace-controller-token-deletecollection-eventsk8s-known-miss` in the
+  `k8s_events_deleted` sidecar (confounder). *source* — kubernetes v1.36.4
+  `pkg/controller/namespace/deletion/namespaced_resources_deleter.go` L109-111 (`Delete`
+  returns when the namespace has no deletion timestamp), L136 (each sync calls
+  `deleteAllContent`) and L326 (a `DeleteCollection` for each resource);
+  `pkg/controller/namespace/namespace_controller.go` L157-160 (while content remains, the
+  namespace goes back on the queue with `AddAfter`);
+  `plugin/pkg/admission/serviceaccount/admission.go` L160-165 (`Admit` looks up the pod's
+  `serviceAccountName` and mounts that account's token);
+  `pkg/controller/serviceaccount/tokens_controller.go` L381-384 (`generateTokenIfNeeded`
+  fills a service-account-token Secret);
+  `staging/src/k8s.io/controller-manager/pkg/clientbuilder/client_builder_dynamic.go`
+  L235-245 (with service-account credentials, each controller's client adds
+  `/system:serviceaccount:kube-system:<name>` to the kube-controller-manager user agent;
+  `cmd/kube-controller-manager/app/controllermanager.go` L826-828 selects that builder);
+  `staging/src/k8s.io/apimachinery/pkg/util/net/http.go` L309-355 (`SourceIPs`: the
+  `X-Forwarded-For` and `X-Real-Ip` values first, which the client sets, and the peer
+  address last).
+- **Fix**: a human decision. (1) Hunting, with no rule change: a namespace-controller
+  deletecollection in a namespace that has no accepted delete of that namespace, by any
+  identity, since the namespace was created (so the namespace is not Terminating). Search
+  the raw audit records for that delete, not the hits of `k8s_namespace_deleted`, which
+  filters the garbage collector's delete. The controller sends its sweep again until the
+  namespace is empty, so do not limit the look-back to a short window. Also hunt for one
+  whose last `sourceIPs` entry is not a control-plane node, or one whose `userAgent` does
+  not begin with `kube-controller-manager/`. (2) A rule change: add
+  `userAgent|startswith: 'kube-controller-manager/'` to each `filter_namespace_teardown`,
+  so that a request from another client fires. This only raises the bar, because the
+  client sets its user agent. Before that change, check each platform's controller user
+  agent and the benign corpus.
+- **Then**: with fix (2), the confounder
+  `namespace-controller-token-deletecollection-eventsk8s-known-miss` fires; a new positive
+  with the same record proves the fix (relabelling the confounder is a human decision
+  under the sufficiency ratchet), and a new filtered case with the kube-controller-manager
+  user agent keeps the teardown quiet. Each other rule gets the same pair of cases.
+
+### Platform entries (K38 to K42): how they are scoped
+
+The five entries that follow (K38 to K42) are platform gaps: each rule is proven under
+the lab policy, and the gap is in what a managed platform's own published audit policy
+(or log category) records. The evidence is the policy simulator (*simulator* above) on
+the policy texts in [`k8s/provider-policies/`](k8s/provider-policies/SOURCES.md), not
+a capture from a live cluster (backlog issue #55). As K23 and K35, these entries name
+their rules in a **Scope** bullet, not in the Summary row or a Rules bullet, so
+`research/tools/coverage_report.py` does not mark the lab-proven procedures as open
+defects; whether a platform gap must mark them is a human decision. The numbers are
+the simulator output on the branch that added these entries (Kubernetes coverage wave
+4, before its other items merged); `python3 detections/k8s_policy_coverage.py` prints
+the current ones.
+
+### K38. Kubernetes Events deletes leave no record on EKS, GCE kube-up and OpenShift 4.17, and no collection-DELETE record on AKS
+
+- **Scope**: [`sigma/T1070/k8s_events_deleted.yml`](sigma/T1070/k8s_events_deleted.yml)
+  (level medium), TRR9010 Procedures A and B (and on AKS Procedure G).
+  Platforms:
+  Amazon EKS (the Best Practices Guide policy), a cluster that runs the GCE kube-up
+  policy (the GKE audit-policy page names that script; GKE itself is **unverified**),
+  OpenShift 4.17 and earlier (Default and WriteRequestBodies), and Azure AKS (both log
+  categories).
+- **Kind**: portability, policy gap. **Severity**: medium (the indicator removal that
+  the rule exists for leaves no trace on these platforms, and no rule change can
+  help).
+- **Problem**: the EKS, GCE kube-up and OpenShift 4.17 policies log every request on
+  core-group Events at level None. Plain `kubectl delete event` and `kubectl delete
+  events --all` use the core group (client-go's REST mapper puts core `v1` first): the
+  first sends one DELETE (Procedure A), and the second sends a list and then one DELETE
+  per Event, not a collection DELETE. A collection DELETE in the core group (Procedure
+  B: a raw API call, or client-go `DeleteCollection`) is at None too. So on these
+  platforms none of them writes an audit record; only a request in the events.k8s.io
+  group is recorded (Procedures C and G), at
+  Metadata (EKS, GCE kube-up, OpenShift 4.17 Default) or RequestResponse (OpenShift
+  4.17 WriteRequestBodies). The
+  AKS policy logs an Events delete and list at Metadata and drops every other Events
+  request (create, update and patch are kept in `default` and `kube-system`). So on
+  AKS a collection DELETE writes no record in either group (Procedures B and G), but `kubectl
+  delete events --all` sends one DELETE per Event, which AKS logs at Metadata, and the
+  rule fires on each of them. The AKS Events rules do not omit the RequestReceived
+  stage, so there each delete writes two records and the rule alerts twice. OpenShift
+  4.18 and later and the k3s starter policy log Events deletes. The namespace delete of
+  Procedure F is recorded on every one of these platforms (`k8s_namespace_deleted`'s
+  positive `namespace-delete-payments` fires under every policy). But where a platform
+  logs namespace deletes at Metadata (OpenShift Default, 4.17 and 4.18, and the k3s
+  starter policy), a real namespace delete that also carries `?dryRun=All` next to its
+  DeleteOptions body is filtered there: the K14 residual.
+- **Evidence**: *simulator* — positives of `k8s_events_deleted` that fire: lab 8 of 8;
+  `eks` 2 of 8, `gce-kube-up` 2 of 8, `openshift-default-4.17` and
+  `openshift-wrb-4.17` 2 of 8 (the lost six are `no-record`; only the events.k8s.io
+  positives fire: `delete-eventsk8s-procC` and `deletecollection-eventsk8s-procG`);
+  `aks-kube-audit` and `aks-kube-audit-admin` 5 of 8
+  (`deletecollection-bulk-procB`, `deletecollection-eventsk8s-procG` and
+  `deletecollection-events-failed-authentication` are `no-record`; AKS policy rule
+  index 10, 0-based: the "Don't log other events requests" None rule);
+  `openshift-default`, `openshift-wrb` and `k3s-starter` 8 of 8. *source* — EKS
+  Best Practices Guide `latest/bpg/security/detective.adoc` L85-89 ("Do not log events
+  resources", group `""` only); kubernetes v1.36.4
+  `cluster/gce/gci/configure-helper.sh` L1234-1238 ("Don't log events requests
+  because of performance impact."); Microsoft Learn `monitor-aks.md` L239-262 (the
+  three Events rules: Metadata for create/update/patch in `default` and
+  `kube-system`, Metadata for delete and list, None for the rest, both groups);
+  openshift/library-go `release-4.17` `base-policy.yaml` L9-13 (None for core
+  Events; `release-4.18` and later have no such rule); kubernetes v1.36.4
+  `staging/src/k8s.io/client-go/restmapper/discovery.go` L47-49 (core `v1` first in
+  the REST mapper priority); kubernetes v1.36.4
+  `staging/src/k8s.io/kubectl/pkg/cmd/delete/delete.go` L367-411 and L480-484
+  (`DeleteResult` visits each object and calls `DeleteWithOptions` for it; the file has
+  no `DeleteCollection` call). The policy texts are in
+  [`k8s/provider-policies/`](k8s/provider-policies/SOURCES.md). **unverified** on a
+  live cluster.
+- **Fix**: none in the rule: no rule can match a record that is not written, and EKS
+  and AKS do not let the user change the policy. Compensating control: copy Events out
+  of the cluster as they happen (an event exporter to the log store), so that a delete
+  does not remove the only copy. OpenShift: 4.18 and later log core Events (a
+  `customRules` entry cannot help on 4.17, because the base policy's None rule comes
+  first). The events.k8s.io bulk wipe, which EKS and GCE kube-up still record, gets its
+  own emulation step and positive in a parallel Wave 4 item (the plan's MP15).
+- **Then**: no case changes. The entry closes when a live capture (backlog issue #55)
+  shows that a platform logs core Events deletes, or the platform's published policy
+  changes; the simulator column then moves with the vendored policy.
+
+### K39. Delete dry-run body filters have no input where a platform logs deletes at Metadata
+
+- **Scope**: the six rules that filter a server-side dry run by its DeleteOptions body
+  (`requestObject.dryRun` contains `All`):
+  [`sigma/T1070/k8s_events_deleted.yml`](sigma/T1070/k8s_events_deleted.yml),
+  [`sigma/T1070/k8s_namespace_deleted.yml`](sigma/T1070/k8s_namespace_deleted.yml),
+  [`sigma/T1070/k8s_workload_deleted_evidence.yml`](sigma/T1070/k8s_workload_deleted_evidence.yml),
+  [`sigma/T1685/k8s_admission_webhook_disabled.yml`](sigma/T1685/k8s_admission_webhook_disabled.yml),
+  [`sigma/T1685/k8s_enforcer_workload_removed.yml`](sigma/T1685/k8s_enforcer_workload_removed.yml)
+  and [`sigma/T1685/k8s_security_tool_workload_removed.yml`](sigma/T1685/k8s_security_tool_workload_removed.yml).
+  Platforms: OpenShift with the Default profile (4.17 and 4.18), the k3s starter
+  policy, AKS (Events deletes), and the events.k8s.io group on EKS and under the GCE
+  kube-up policy (Events deletes).
+- **Kind**: false positive, portability. **Severity**: low (a dry run changes nothing;
+  the rules' falsepositives text already says that a dry run logged at Metadata fires).
+- **Problem**: `kubectl delete --dry-run=server` sends `dryRun: ["All"]` in the
+  DeleteOptions body, which only a Request-level (or higher) record holds. The lab
+  policy logs these deletes at Request, so there the dry runs are filtered (the
+  validator's must-not-match checks assert it). The OpenShift Default profile and the
+  k3s starter policy log every delete at Metadata, AKS logs an Events delete at
+  Metadata, and the EKS and GCE kube-up policies log an events.k8s.io delete at
+  Metadata (their catch-all), so on those platforms each dry run fires its rule. The
+  EKS, GCE kube-up and AKS policies log the other deletes (core, apps, batch,
+  admissionregistration) at RequestResponse, so there the body filters work. This is
+  not K14 (a query `?dryRun=All` next to a body, at Metadata) and not K36 (a dry run
+  sent only in the query, with no body, at any level): here the client sends the
+  body, and the platform does not record it. The same platforms make the K14 residual
+  live for namespace deletes: OpenShift Default and the k3s starter policy log them at
+  Metadata, so a real namespace delete that carries `?dryRun=All` next to its body is
+  filtered there (K14 has the entry; the evidence below gives the simulator result).
+- **Evidence**: *simulator* — filtered cases that fire: `k8s_events_deleted`
+  `delete-core-event-dry-run-body` under `aks-kube-audit`, `aks-kube-audit-admin`,
+  `openshift-default` and `k3s-starter`, `deletecollection-events-dry-run-body`
+  under `openshift-default` and `k3s-starter`, and
+  `deletecollection-eventsk8s-dry-run-body` under `eks`, `gce-kube-up`,
+  `openshift-default`, `openshift-default-4.17` and `k3s-starter`; `k8s_namespace_deleted`
+  `namespace-delete-dry-run-body`, `k8s_workload_deleted_evidence`
+  `delete-job-dry-run-body` and `deletecollection-pods-dry-run-body`,
+  `k8s_admission_webhook_disabled` `delete-validating-webhook-dry-run-body`,
+  `k8s_enforcer_workload_removed` `delete-falco-daemonset-dry-run-body`,
+  `enforcer-namespace-delete-dry-run-body` and
+  `deletecollection-deployments-dry-run-body`, `k8s_security_tool_workload_removed`
+  `delete-deployment-dry-run-body`, `enforcer-namespace-delete-dry-run-body` and
+  `deletecollection-deployments-dry-run-body`, each under `openshift-default`,
+  `openshift-default-4.17` and `k3s-starter`. No negative fires under `lab-apiserver`,
+  `openshift-wrb` or `openshift-wrb-4.17`. Under `eks` and `gce-kube-up` a dry run
+  fires only when it is an Events delete or deletecollection in the events.k8s.io
+  group, which those policies log at Metadata (`deletecollection-eventsk8s-dry-run-body`
+  and the probe below); they log the other
+  deletes at RequestResponse, so there every other filtered dry run stays quiet.
+  These six rules read
+  only `requestObject`. A sidecar case recorded at Metadata that a platform logs at
+  Request or higher lacks the DeleteOptions body that the platform records, and the
+  simulator cannot add it (`not_modeled_reads`, the `~` cells): for those cases the
+  dry-run filter is not exercised on that platform. The K14 residual: the positive
+  `namespace-delete-query-dry-run-ignored-body` of `k8s_namespace_deleted` is lost
+  (`body-removed`) under `openshift-default`, `openshift-default-4.17` and
+  `k3s-starter`, and fires under every other policy. *probe* — the record of
+  `delete-core-event-dry-run-body` with `objectRef.apiGroup: events.k8s.io`, put
+  through each policy by the simulator's `records_under()`, fires under `eks`,
+  `gce-kube-up` and `openshift-default-4.17` (Metadata) and stays quiet under
+  `openshift-wrb-4.17` (RequestResponse); the record of
+  `deletecollection-events-dry-run-body` in the same group fires under `eks` and
+  `gce-kube-up` too (Metadata), and leaves no record on AKS. **unverified** on a live
+  cluster.
+- **Fix**: where the user writes the policy, log delete and deletecollection of these
+  resources at Request: on OpenShift, the WriteRequestBodies profile (no negative fires
+  under `openshift-wrb`); on k3s and other self-written policies, the delete rows of
+  the lab policy (phase-2 item G's recommended production policy,
+  `detections/k8s/audit-policy-recommended.yaml`, is the place to name them). Where the
+  policy is fixed (AKS, EKS), none: baseline the dry runs by `userAgent` and actor, or
+  accept the noise. A higher level has a cost (K23): at Request or higher, a
+  server-side apply patch with a YAML body leaves no record at all, so a profile or
+  policy change that moves patches to Request trades this gap for K23's on those
+  patches (deletes are not affected).
+- **Then**: no case changes. Each platform column of the simulator stops listing these
+  filtered cases once its policy logs the deletes at Request; the entry closes when no
+  published policy in `k8s/provider-policies/` leaves them at Metadata, or when a human
+  accepts the residual for the fixed policies.
+
+### K40. Body graders are blind under the OpenShift Default profile and the k3s starter policy
+
+- **Scope**: the rules that read `requestObject` or `responseObject` of a write:
+  [`sigma/T1611/k8s_podspec_host_access.yml`](sigma/T1611/k8s_podspec_host_access.yml),
+  [`sigma/T1611/k8s_podspec_controller_host_access.yml`](sigma/T1611/k8s_podspec_controller_host_access.yml),
+  [`sigma/T1611/k8s_podspec_confinement_disabled.yml`](sigma/T1611/k8s_podspec_confinement_disabled.yml),
+  [`sigma/T1098.006/k8s_rbac_privileged_grant.yml`](sigma/T1098.006/k8s_rbac_privileged_grant.yml),
+  [`sigma/T1098.006/k8s_rbac_sensitive_permission_grant.yml`](sigma/T1098.006/k8s_rbac_sensitive_permission_grant.yml),
+  [`sigma/T1685/k8s_admission_webhook_neutered.yml`](sigma/T1685/k8s_admission_webhook_neutered.yml),
+  [`sigma/T1546/k8s_admission_webhook_repointed_to_url.yml`](sigma/T1546/k8s_admission_webhook_repointed_to_url.yml),
+  [`sigma/T1546/k8s_malicious_admission_webhook_created.yml`](sigma/T1546/k8s_malicious_admission_webhook_created.yml),
+  and the scale-to-zero shapes of
+  [`sigma/T1685/k8s_enforcer_workload_removed.yml`](sigma/T1685/k8s_enforcer_workload_removed.yml)
+  and [`sigma/T1685/k8s_security_tool_workload_removed.yml`](sigma/T1685/k8s_security_tool_workload_removed.yml).
+  (The Corefile grader is K41.) Platforms: OpenShift 4.17 and 4.18 with the Default
+  profile (the default), and the k3s hardening-guide starter policy.
+- **Kind**: portability, policy gap. **Severity**: medium (the Default profile is what
+  an OpenShift cluster runs unless an admin changes it; TRR9007 then has no audit-log
+  detection at all, only the node sensor).
+- **Problem**: both policies log every write at Metadata (OpenShift Default: one
+  catch-all Metadata rule after the identity and OAuth-token rules; k3s: a single
+  `level: Metadata` rule), so no pod spec, role rule, binding subject, webhook
+  configuration or scale body is in the record. The chokepoints that read only
+  Metadata fields still fire (`k8s_rbac_write`, `k8s_job_create`,
+  `k8s_admission_webhook_created`, `k8s_admission_webhook_disabled`). The published
+  EKS, GCE kube-up and AKS policies log these writes at RequestResponse ("known APIs"),
+  so there every positive of these graders fires.
+- **Evidence**: *simulator* — positives that fire under `openshift-default`,
+  `openshift-default-4.17` and `k3s-starter` (the same in all three):
+  `k8s_podspec_host_access` 0 of 36, `k8s_podspec_controller_host_access` 0 of 41,
+  `k8s_podspec_confinement_disabled` 0 of 51, `k8s_rbac_privileged_grant` 2 of 20,
+  `k8s_rbac_sensitive_permission_grant` 0 of 10, `k8s_admission_webhook_neutered` 0 of
+  36, `k8s_admission_webhook_repointed_to_url` 0 of 20,
+  `k8s_malicious_admission_webhook_created` 0 of 3, `k8s_enforcer_workload_removed` 5
+  of 26 and `k8s_security_tool_workload_removed` 6 of 31 (every lost positive is
+  `body-removed`). Under `eks`, `gce-kube-up`, `aks-kube-audit`,
+  `aks-kube-audit-admin`, `openshift-wrb` and `openshift-wrb-4.17` all of them fire.
+  `k8s_admission_webhook_neutered` also reads `responseObject`, and its sidecar records
+  are at Request: on the RequestResponse platforms the simulator cannot add the stored
+  object, so there its negatives are not proven (the `~` cells; `not_modeled_reads` 51
+  under each of these policies). `k8s_enforcer_workload_removed` and
+  `k8s_security_tool_workload_removed` read only `requestObject`, but some of their
+  cases are recorded at Metadata, and these policies log the same requests with a
+  `requestObject`: deletes, deletecollections, scale updates and patches, a get, and
+  a namespace label patch (`not_modeled_reads` 6 to 9 per policy; the `~` cells). So
+  on these platforms their dry-run and scale filters are not exercised on those
+  cases, and the cases are not proven there either. The other graders lack no body
+  they read on these platforms (`not_modeled_reads` 0). Under the k3s starter policy (one
+  `level: Metadata` rule, no `omitStages`) every request also writes a RequestReceived
+  record, so each chokepoint that still fires there alerts twice for one request.
+  *source* — openshift/library-go `default-rules.yaml` (both branches) L10-15 (the
+  Metadata catch-all) and `writerequestbodies-rules.yaml` (RequestResponse for every
+  write, after a Metadata rule for the sensitive resources it lists: Secrets, tokens,
+  routes, OAuth clients); k3s-io/docs
+  `docs/security/hardening-guide.md` L544-549. **unverified** on a live cluster.
+- **Fix**: OpenShift: set the WriteRequestBodies (or AllRequestBodies) audit profile
+  (an admin decision; it logs write bodies, so Secrets stay at Metadata and ConfigMap
+  bodies are logged). k3s and other self-written policies: log these writes at Request
+  (RequestResponse for webhook-configuration updates and patches), as the lab policy
+  does, and add `omitStages: [RequestReceived]`; phase-2 item G's recommended
+  production policy (`detections/k8s/audit-policy-recommended.yaml`) is the place to
+  state those lines. TRR9007 on a Metadata-only cluster: the node sensor. Either change
+  has a cost (K23): at Request or higher, a server-side apply patch with a YAML body
+  leaves no record at all, so the body graders and the chokepoints both miss it. Under
+  WriteRequestBodies that is every patch except the resources the profile keeps at
+  Metadata (Secrets, tokens, routes, OAuth clients, the machineconfiguration group);
+  under the EKS, GCE kube-up and AKS policies, every patch of a known API group except
+  the resources they keep at Metadata (Secrets and most ConfigMaps). The profile change
+  trades this blind spot for K23's.
+- **Then**: no case changes. The entry closes for a platform when its default policy
+  records the bodies; the OpenShift Default and k3s starter columns are expected to stay
+  as they are, so a human decides whether the entry stays open as documentation.
+
+### K41. k8s_coredns_corefile_poisoned: blind under every published managed policy
+
+- **Scope**: [`sigma/T1565.001/k8s_coredns_corefile_poisoned.yml`](sigma/T1565.001/k8s_coredns_corefile_poisoned.yml)
+  (level high), the TRR9027 grader. Platforms: EKS, the GCE kube-up policy, AKS (both
+  categories), OpenShift with the Default profile, the k3s starter policy.
+- **Kind**: portability, policy gap. **Severity**: low (the chokepoint
+  [`k8s_coredns_configmap_modified`](sigma/T1565.001/k8s_coredns_configmap_modified.yml)
+  needs only Metadata and fires under every published policy: 16 of 16; the grader only
+  ranks).
+- **Problem**: the grader reads the Corefile in the request or stored ConfigMap, which
+  only a Request or RequestResponse record of the kube-system/coredns write holds. The
+  EKS, GCE kube-up and AKS policies log every ConfigMap request at Metadata by design
+  (ConfigMaps can hold credentials); EKS keeps RequestResponse only for `aws-auth`, and
+  AKS only for `coredns-custom` updates and patches, whose snippets this grader does not
+  read (its description says so). The OpenShift Default profile and the k3s starter
+  policy log every write at Metadata. Under the OpenShift WriteRequestBodies profile the
+  kube-system/coredns write keeps its body, but OpenShift's own DNS ConfigMap is
+  `openshift-dns/dns-default`, which both CoreDNS rules also cover (TRR9027 Procedure
+  E; see K45).
+- **Evidence**: *simulator* — positives that fire: lab 47 of 47; `eks`, `gce-kube-up`,
+  `aks-kube-audit`, `aks-kube-audit-admin`, `openshift-default`,
+  `openshift-default-4.17` and `k3s-starter` 0 of 47 (all `body-removed`);
+  `openshift-wrb` and `openshift-wrb-4.17` 47 of 47. The grader also reads
+  `responseObject`; its sidecar records hold none where the lab and WriteRequestBodies
+  log RequestResponse, so its negatives under those policies are not proven with the
+  stored ConfigMap (the `~` cells). *source* — EKS
+  `detective.adoc` L114-122 (Secrets and ConfigMaps at Metadata); kubernetes v1.36.4
+  `configure-helper.sh` L1265-1274 (the same); Microsoft Learn `monitor-aks.md`
+  L304-322 (`coredns-custom` update and patch at RequestResponse, then Secrets,
+  ConfigMaps and service accounts at Metadata). **unverified** on a live cluster.
+- **Fix**: none where the policy is fixed (EKS, AKS): rely on the chokepoint and
+  triage the write by actor and time; read the stored Corefile out of band. Where the
+  user writes the policy: the lab policy's two TRR9027 rows (read their Helm warning
+  first), which phase-2 item G's recommended policy
+  (`detections/k8s/audit-policy-recommended.yaml`) is to state. OpenShift: the
+  WriteRequestBodies profile. At that level a server-side apply of the ConfigMap with a
+  YAML body leaves no record (K23; TRR9027 B and C are server-side applies), so the
+  chokepoint misses it too.
+- **Then**: no case changes.
+
+### K42. AKS kube-audit-admin: the category drops get and list, so read-shaped procedures leave no record
+
+- **Scope**: on AKS with only the `kube-audit-admin` diagnostic category (the AKSAuditAdmin
+  table):
+  [`sigma/T1609/k8s_pod_exec_attach.yml`](sigma/T1609/k8s_pod_exec_attach.yml),
+  [`sigma/T1609/k8s_node_proxy_exec.yml`](sigma/T1609/k8s_node_proxy_exec.yml),
+  [`sigma/T1609/k8s_node_proxy_kubelet_api.yml`](sigma/T1609/k8s_node_proxy_kubelet_api.yml),
+  [`sigma/T1572/k8s_pod_portforward.yml`](sigma/T1572/k8s_pod_portforward.yml),
+  [`sigma/T1572/k8s_node_proxy_portforward.yml`](sigma/T1572/k8s_node_proxy_portforward.yml),
+  [`sigma/T1552.007/k8s_secret_access.yml`](sigma/T1552.007/k8s_secret_access.yml),
+  [`sigma/T1134/k8s_impersonation.yml`](sigma/T1134/k8s_impersonation.yml) and
+  [`sigma/T1134/k8s_impersonation_privileged.yml`](sigma/T1134/k8s_impersonation_privileged.yml).
+- **Kind**: portability (log category). **Severity**: medium (Microsoft recommends
+  `kube-audit-admin` over `kube-audit` to cut cost, and the WebSocket exec, the Secret
+  read and the node-proxy read are the common shapes).
+- **Problem**: Microsoft Learn says that `kube-audit-admin` "excludes the `get` and
+  `list` audit events". An exec, attach or port-forward over WebSocket is a `get` on
+  the subresource, a node-proxy request sent as an HTTP GET is a `get` on
+  `nodes/proxy`, and a Secret read is a `get` or `list`, so none of them is in that
+  category. The SPDY forms and a node-proxy POST (`create`) and `watch` stay. The impersonation positives are impersonated reads (`get` or
+  `list`); an impersonated write is still recorded. Whether the category also drops
+  `watch` is **unverified** (the page names get and list). The AKSAudit and
+  AKSAuditAdmin tables also lack an impersonated-user column; that schema gap is the
+  provider-mapping harness's (a parallel Wave 4 item), not this entry.
+- **Evidence**: *simulator* (`aks-kube-audit-admin`, which drops `get` and `list` after
+  the AKS policy) — positives that fire: `k8s_pod_exec_attach` 2 of 6,
+  `k8s_node_proxy_exec` 1 of 7, `k8s_node_proxy_kubelet_api` 2 of 6,
+  `k8s_pod_portforward` 1 of 2, `k8s_node_proxy_portforward` 1 of 4,
+  `k8s_secret_access` 1 of 4, `k8s_impersonation` 0 of 11,
+  `k8s_impersonation_privileged` 0 of 3 (each lost positive is `no-record`); under
+  `aks-kube-audit` all of them fire. *source* — Microsoft Learn `monitor-aks.md` L119
+  and L152 (kube-audit-admin and AKSAuditAdmin exclude get and list). **unverified** on
+  a live cluster.
+- **Fix**: collect the `kube-audit` category (the AKSAudit table) for these rules, or
+  at least for the reads they need, and accept its cost; with `kube-audit-admin` only,
+  these procedures are seen by no audit rule.
+- **Then**: no case changes. The entry closes if Microsoft changes what the category
+  keeps.
+
+### K43. k8s_rbac_privileged_grant: the aggregation clause needs the API server's key order
+
+- **Rule**: [`sigma/T1098.006/k8s_rbac_privileged_grant.yml`](sigma/T1098.006/k8s_rbac_privileged_grant.yml) (level high).
+- **Kind**: false negative. **Severity**: low (a portability caveat: the lab and every
+  store that keeps the audit record's JSON text are not affected, and the aggregated
+  ClusterRole that adds the permission fires the rule on its own write).
+- **Problem**: the rule filters the clusterrole-aggregation-controller's writes of the
+  built-in `admin` and `edit` (`filter_aggregation_controller`) unless the written rules
+  carry more than the built-in roles (`sel_agg_beyond_builtin`). The impersonate clause
+  of `sel_agg_beyond_builtin` is a `|re` on the JSON text of `requestObject.rules`:
+  `"impersonate"[^\]]*\],\s*"apiGroups":\s*\[[^\]]*\],\s*"resources":\s*\[[^\]]*"(users|groups|uids|userextras)`.
+  It matches only when the keys of each RBAC rule come in Go field order (`verbs`,
+  `apiGroups`, `resources`), as the API server writes them. A store that does not keep
+  the key order of an object can give the text in another order: Kusto, for the AKS
+  `RequestObject` column ("Kusto doesn't attempt to preserve the order of name-to-value
+  mappings in a property bag",
+  [the dynamic data type](https://learn.microsoft.com/kusto/query/scalar-data-types/dynamic);
+  `dynamic_to_json()` sorts them), and GKE, whose `protoPayload.request` is a
+  `google.protobuf.Struct` (a map). There the clause does not hold, the filter holds,
+  and the controller's write of impersonate on users, groups, uids or userextras into
+  `admin` or `edit` does not fire. The other clauses (`"*"`, `escalate`, `bind`,
+  `nodes/proxy`) do not depend on key order.
+- **Evidence**: *probe* (`sigma_eval.py`) — the positive case
+  `aggregation-controller-writes-impersonate-users-into-admin` fires (1 hit) as
+  recorded; the same event with the keys of each object in `requestObject.rules` sorted
+  (`apiGroups`, `resources`, `verbs`) gives 0 hits. A create of a ClusterRole labelled
+  `rbac.authorization.k8s.io/aggregate-to-admin` with impersonate on users, by a user
+  other than the controller, fires in both key orders (1 hit each). *check* —
+  `python3 detections/check_provider_mappings.py -v --provider aks detections/sigma/T1098.006/k8s_rbac_privileged_grant.yml`
+  reports `sorted: native fires, aks quiet; blocks sel_agg_beyond_builtin` (and the same
+  for GKE); the AKS and GKE `EXPECTED_LOSS` entries for that case (reason `KEY_ORDER`)
+  point here. Which key order a KQL query or a GKE log store really gives: **unverified**
+  (backlog issue #55).
+- **Fix**: make the impersonate clause independent of the key order: add an alternative
+  for each other order of `verbs`, `apiGroups` and `resources` (the `[^\]]*` skips stay
+  inside one list, so each order is one more alternative of the same form). A rule change,
+  so a later pull request.
+- **Then**: a new positive case with the rule objects' keys sorted fires; the two
+  `KEY_ORDER` entries in `check_provider_mappings.py` become stale and are removed; the
+  entry closes.
+
+### K45. k8s_coredns_configmap_modified: the DNS Operator filter trusts the operator's name
+
+- **Rule**: [`sigma/T1565.001/k8s_coredns_configmap_modified.yml`](sigma/T1565.001/k8s_coredns_configmap_modified.yml) (level medium).
+  The filter applies to its two OpenShift selections only (TRR9027 E and F); the
+  kube-system branch (A to D) has no identity filter.
+- **Procedures**: `TRR9027.K8S.E`, `TRR9027.K8S.F` (A to D are not affected).
+- **Kind**: evasion. **Severity**: low (the attacker needs a credential that
+  authenticates as `system:serviceaccount:openshift-dns-operator:dns-operator`: `create` on
+  `serviceaccounts/token` for that account in `openshift-dns-operator`; `create` on pods in
+  `openshift-dns-operator` with `serviceAccountName: dns-operator`, because the
+  ServiceAccount admission plugin mounts that account's token into the pod; `create` on
+  `pods/exec` of the operator pod; or access to its node. Each path already needs rights in
+  the operator's namespace or on a control-plane node). On HyperShift-based platforms (for
+  example ROSA and ARO with hosted control planes) the operator runs in the hosted
+  control-plane namespace on the management cluster, and its credential is a client
+  certificate with the same username (CN), in the Secret
+  `dns-operator-service-account-kubeconfig` of that namespace. So in the guest cluster no
+  operator pod or node path applies; only a credential minted for a guest ServiceAccount of
+  that name does (`serviceaccounts/token`, or a pod with `serviceAccountName:
+  dns-operator`), and only where the guest has that ServiceAccount (**unverified**).
+- **Problem**: `filter_openshift_dns_operator` drops every `create` and `update` (PUT) of
+  `openshift-dns/dns-default` and of the DNS Operator object whose `user.username` is the
+  operator's service account. It reads only the identity and the verb. The real operator
+  sends only those two verbs to these objects, so a `patch`, `delete` or `deletecollection`
+  with that identity fires (positives `openshift-dns-operator-identity-patch-dns-default`,
+  `openshift-dns-operator-identity-patch-dnses-unmanaged`,
+  `openshift-dns-operator-identity-delete-dnses`). A PUT (`kubectl replace`) or a create
+  sent with a token of that account is filtered, from any client and any address. With
+  such a token an adversary can first set the DNS object to `managementState: Unmanaged`
+  with a PUT, so that the operator no longer reverts a direct edit, and then PUT a
+  poisoned `dns-default`. Under OpenShift's Default audit profile (Metadata) no rule sees
+  either write. Under the WriteRequestBodies or AllRequestBodies profile the grader
+  (`k8s_coredns_corefile_poisoned`, no identity filter) fires on the poisoned
+  `dns-default`; no rule grades the DNS object. Impersonation does not evade the filter:
+  with `--as`, `user.username` holds the real caller.
+- **Evidence**: *probe* (`sigma_eval.py`, the rules of this change) — with the operator's
+  identity, a Metadata-level `update` of `dnses/default` and of `dns-default` from
+  `192.0.2.10` are quiet in both rules; a `patch` or `delete` of either fires the
+  chokepoint; a RequestResponse-level `update` of a poisoned `dns-default` fires the
+  grader. *case* — confounders `openshift-dns-operator-token-put-unmanaged-known-miss` and
+  `openshift-dns-operator-token-put-dns-default-known-miss` (chokepoint sidecar); positive
+  `openshift-dns-operator-token-put-poisoned-dns-default` (grader sidecar). *source* —
+  openshift/cluster-dns-operator `82578923164636746e0d74d594ab32d83a660c0b` (release-4.20):
+  `pkg/operator/controller/controller_dns_configmap.go` L135 (`client.Create` of
+  `dns-default`) and L326-334 (`updateDNSConfigMap`: `client.Update`, only when
+  `corefileChanged`); `pkg/operator/controller/controller.go` L256 and L336
+  (`client.Update` of the DNS object, the finalizer); `pkg/operator/controller/dns_status.go`
+  L33-34 (`Status().Update`, only when the status differs); `pkg/operator/operator.go` L206
+  (`client.Create` of the default DNS object). No `Patch` or `Delete` of either object (the
+  `client.Delete` calls, `controller.go` L325 and `controller_dns_daemonset.go` L73, are of
+  a Service and of the DaemonSet). `manifests/0000_70_dns-operator_00-cluster-role.yaml`
+  grants `*` on `dnses` and on `configmaps`.
+- **Fix**: a human decision. (1) Hunting, with no rule change: a write of these two
+  objects by the operator's identity whose last `sourceIPs` entry is not in the network
+  that the real operator connects from, or whose `userAgent` does not begin with
+  `dns-operator/` (client-go's default user agent names the binary, which is
+  `dns-operator` in the operator's Deployment; check the value on a live cluster first).
+  On a self-managed cluster that network is the cluster's pod network. On HyperShift the
+  operator connects from the hosted control-plane namespace on the management cluster, so
+  every legitimate write comes from outside the guest pod network: baseline the real
+  source range there (the management cluster's pod network) before you use the
+  `sourceIPs` clause, or use only the `userAgent` clause. Under a body profile, also a PUT
+  of the DNS object by that identity whose `requestObject.spec` differs from the stored
+  object (the operator's own update of the DNS object changes only its finalizers).
+  (2) A rule change: add `userAgent|startswith: 'dns-operator/'` to
+  `filter_openshift_dns_operator`, so that a request from another client fires. This only
+  raises the bar, because the client sets its user agent. Before that change, read the
+  operator's user agent from a live OpenShift record (backlog #55).
+- **Then**: with fix (2), the two KNOWN MISS confounders fire; new positives with the same
+  records prove the fix (relabelling a confounder is a human decision under the
+  sufficiency ratchet), and a new filtered case with the operator's user agent keeps its
+  own writes quiet.
+
 ## Cloud (AWS, Azure, GCP)
 
 ### C6. gcp_workforce_principalset_privileged_binding: where the privileged-role tier ends
@@ -1157,6 +1723,7 @@ points here.
 | K21 | both TRR9025 create rules (`k8s_admission_webhook_created`, `k8s_malicious_admission_webhook_created`) match `verb: create` OR (`verb: patch` AND `responseStatus.code: 201`), so a server-side-apply install (a patch answered 201) fires both. A 201 patch is a patch, so it also fires the TRR9008 chokepoint (an expected double alert), and the TRR9008 neuter grader filters it (`filter_ssa_install`); a refused server-side-apply install (a patch answered 4xx) fires only the TRR9008 chokepoint. The chokepoint's CHOKEPOINT waiver digest was re-approved. `check_sufficiency.py` now reports that waiver as stale (an R2 warning), because the SSA branch has a discriminating item (`select_adm_ssa_create.responseStatus.code`); removing the waiver is a maintainer decision | positives `ssa-create-webhook-patch-201` (chokepoint) and `ssa-create-offcluster-url-patch-201` (grader); near-misses `ssa-create-patch-answered-200-not-create` and `repoint-offcluster-url-patch-answered-200` (a patch answered 200 is a modify, not a create); filtered `ssa-install-fail-open-webhook-201` (neuter grader); proven live by validate-apiserver run 39448010277 at commit `c9d2074` (MANIFEST rows `9025 ssa-create` and `9025 sev ssa-create`) |
 | K30 | `T1685/k8s_security_tool_workload_removed` (and the new `T1685/k8s_enforcer_workload_removed`) match the scale-to-zero shapes that the anchor missed: an update (PUT) of deployments/scale whose re-encoded autoscaling/v1 Scale omits `spec.replicas` 0 (`kubectl scale --current-replicas`/`--resource-version`); a patch of the scale subresource that sets no count above 0 (a merge or strategic `null`, a JSON-patch `remove`, a replace of `/spec`); a JSON-patch value `-0`; a JSON patch that replaces `/spec` with a spec that holds replicas 0; a strategic merge patch whose count is outside the int32 range (the merge truncates 2^32 to 0); a strategic merge directive that drops or sets the count (`"$patch": "delete"` in spec, a non-null `$deleteFromPrimitiveList/replicas` in spec or `$deleteFromPrimitiveList/spec` at the root; the null form is K32) | positives `deployment-smp-replicas-two-to-the-32`, `scale-smp-replicas-two-to-the-32`, `deployment-smp-replicas-minus-two-to-the-32`, `scale-smp-spec-patch-delete-with-count`, `deployment-smp-delete-from-primitive-list-replicas`, `deployment-smp-delete-from-primitive-list-spec`, `deployment-smp-nested-delete-from-primitive-list-alias`, `scale-smp-delete-from-primitive-list-replicas-with-count`, `scale-smp-root-alias-patch-delete-with-count`, `scale-smp-root-alias-retain-keys-with-count` (high rule) and their `anchor-` twins; near-misses `deployment-smp-replicas-three`, `deployment-smp-replicas-two-to-the-32-forbidden`, `deployment-smp-replicas-two-to-the-32-monitoring`, `scale-smp-spec-patch-replace-with-count`, `deployment-smp-delete-from-primitive-list-finalizers`; filtered `deployment-smp-delete-from-primitive-list-replicas-dry-run`; positives `kubectl-scale-zero-update-omitted-replicas`, `anchor-scale-merge-patch-replicas-null`, `anchor-scale-jsonpatch-remove-replicas`, `anchor-scale-jsonpatch-set-count-then-remove`, `anchor-deployment-jsonpatch-replace-spec-replicas-zero`, `anchor-deployment-jsonpatch-value-minus-zero-raw-text`; near-misses `hpa-scale-update-to-three`, `scale-update-metadata-level-no-body`, `anchor-scale-patch-metadata-level-no-body`, `anchor-deployment-merge-patch-replicas-null-defaults-to-one`, `anchor-deployment-jsonpatch-replace-spec-replicas-two`; filtered `kubectl-scale-zero-update-dry-run`, `anchor-kubectl-scale-to-two`, `anchor-scale-jsonpatch-replace-to-three`; proven live by validate-apiserver run 39448010277 at commit `c9d2074` (MANIFEST rows `9008 D2 put` and `9008 D put`) |
 | K31 | `T1685/k8s_security_tool_workload_removed` (and `T1685/k8s_enforcer_workload_removed`) filter a write of a status subresource: the deployment controller's update of deployments/status carries the whole Deployment, with `spec.replicas` 0 after a scale to zero, and fired the rule under a policy that logs every apps subresource at Request | filtered `anchor-deployment-controller-status-update-zero-replicas` (anchor), `deployment-controller-status-update-zero-replicas` (high rule) |
+| K44 | both TRR9027 rules missed OpenShift, whose DNS Operator owns cluster DNS: they pinned `kube-system` and the names `coredns`, `kube-dns` and `coredns-custom`, so a write of `openshift-dns/dns-default` or of the DNS Operator object (`dnses.operator.openshift.io`) fired neither (probe: the rules at `861f97b` match none of the fifteen OpenShift positives below, nine of the chokepoint and six of the grader, and the rules of this change match all fifteen). `T1565.001/k8s_coredns_configmap_modified` now matches writes of both objects (the DNS Operator's own creates and updates filtered; what that hides is open entry K45), and `k8s_coredns_corefile_poisoned` grades writes of `dns-default` (no identity filter) | chokepoint: positives `openshift-dns-default-patch-procE` and `openshift-dns-operator-config-patch-procF` (recorded on a kube-apiserver v1.36.4 lab), `openshift-dns-default-edit-default-profile`, `openshift-dns-operator-unmanaged-default-profile`, `openshift-dns-operator-config-delete`, `openshift-dns-operator-config-deletecollection`, and the operator-identity patch and delete positives; a near-miss for every item of the two OpenShift selections; filtered `openshift-dns-operator-renders-dns-default`, `openshift-dns-operator-status-update`, `openshift-dns-operator-adds-finalizer`, `openshift-dns-operator-creates-default-dns`, `openshift-dns-operator-creates-dns-default-configmap`. Grader: positives `openshift-dns-default-patch-procE` (recorded), `openshift-dns-default-direct-edit-port-5353`, `openshift-operator-renders-public-stub-zone`, `openshift-operator-renders-root-upstream-after-stub`, `openshift-operator-renders-root-upstream-first`, `openshift-dns-operator-token-put-poisoned-dns-default`; near-misses `openshift-rewrite-in-wrong-namespace`, `openshift-dns-staging-copy-poisoned`, `openshift-dns-default-get-allrequestbodies`; confounders on the operator's rendered default, private, DNS-over-TLS and DNSNameResolver Corefiles. Live: an emulated `openshift-dns` namespace and the vendored DNS Operator CRD; MANIFEST rows `9027 E`, `9027 E sev` and `9027 F` pass on a local kube-apiserver v1.36.4 lab with this policy, and are to be proven by the pull request's validate-apiserver run on kind |
 | C13 | `entra_app_federated_credential_backdoor` reads only `newValue`, in any key order | near-misses `fic-with-unapproved-issuer-removed`, `fic-repointed-away-new-value-first` and the other reordered cases |
 | C14 | `aws_resource_policy_made_public` reads a `Statement` that is one object | positives `s3-single-statement-object-public-read`, `sqs-single-statement-object-public-send`, `efs-single-statement-object-public-mount` |
 | C16 | `aws_github_oidc_role_trust_abuse` grades each `sub` value | near-miss `two-subs-pinned-ref-wildcards-grade-high`; positive `two-subs-pinned-ref-wildcards-go-to-high-rule` of the low rule |

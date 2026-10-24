@@ -18,7 +18,8 @@ key on the same API server audit log (plus one node runtime sensor rule):
                                            + grade, and repoint grade
   * TRR9026 (T1572, pod port-forward)    - pods/portforward subresource (verb-agnostic)
                                            + nodes/proxy /portForward/ path
-  * TRR9027 (T1565.001, cluster DNS poison) - kube-system DNS ConfigMap write + Corefile grade
+  * TRR9027 (T1565.001, cluster DNS poison) - kube-system and OpenShift DNS config writes
+                                           + Corefile grade
 
 The loop this proves, for each match-gated rule:
 
@@ -43,15 +44,19 @@ procedure's own request:
     prefix), the namespace, the caller (`user`) and any extra field test (`also`). For
     example TRR9004 A is `create clusterrolebindings trr9004-crb-view`, TRR9006 A-D are
     the list / get / watch / token create in the fixed namespace by a non-system caller,
-    and TRR9010 B is the `deletecollection` of events in trr9010 (it names no object).
+    and TRR9010 B and G are the `deletecollection` of events in trr9010 by a non-system
+    caller (they name no object), B in the core group and G in events.k8s.io.
   * win(gate, window) binds a helper that already encodes its own precision to the
     procedure's window: the trr9004 sentinel in kube-system/aws-auth (9004 F; the object
     name is fixed), the JSON-patch operation list (9007 K18 and E jp), the stand-in
     Deployment in a policy engine's default namespace and the kyverno namespace delete
     (9008 D2 rows; that record carries no marker, and kind has no kyverno namespace
     before d2 runs), the accepted repoint and the SSA install (9025 D), the trr9026
-    marker in a nodes/proxy requestURI (9026 C; objectRef.name is the node), and the
-    trr9027 sentinel in each DNS ConfigMap write (9027 A-D).
+    marker in a nodes/proxy requestURI (9026 C; objectRef.name is the node), the
+    trr9027 sentinel in each DNS ConfigMap write (9027 A-D), and the sentinel zone in
+    the request body of the openshift-dns/dns-default patch (9027 E) and of the
+    dnses.operator.openshift.io/default patch (9027 F); the objects that E and F create
+    carry the trr9027 label, so these two gates read only the request body.
   * The response code is part of the procedure. By default (rec and win alike) a gate
     needs an accepted response, a 2xx or 101 for a streaming upgrade, so a cleanup
     DELETE that hit a 404, or a write the API server refused, cannot stand in for a
@@ -344,6 +349,67 @@ def coredns_gate_modified(name):
     gate.describe = (f"verb in ('patch', 'update'), objectRef.namespace == 'kube-system', "
                      f"objectRef.name == {name!r}, and some field contains 'trr9027'")
     return gate
+
+
+# The sentinel ZONE of the TRR9027 E and F poisoning writes (trr9027poison.example.invalid).
+# The E and F gates look for it in the request body only: every object that E and F create
+# carries the label value 'trr9027' (app.kubernetes.io/part-of), so 'trr9027' alone is in
+# the setup creates and in the stored object (responseObject) of every later write too.
+OCP_SENTINEL_ZONE = "trr9027poison"
+
+
+def _sentinel_in_request(e, token=OCP_SENTINEL_ZONE):
+    """True when a requestObject field (the body the client sent) holds `token`."""
+    return any(token in str(v) for k, v in e.items() if k.startswith("requestObject"))
+
+
+def openshift_dns_configmap_gate(e):
+    """TRR9027 E: the emulation's own poisoning write of the OpenShift DNS ConfigMap
+    openshift-dns/dns-default. On kind there is no DNS Operator, so the emulation creates
+    an inert dns-default of the operator's shape (labelled trr9027, no sentinel zone) and
+    then patches it with the sentinel server block. The gate needs a patch or update whose
+    request body holds the sentinel zone: the verb test keeps out the setup create, and the
+    request-body test keeps out a patch that does not poison (the stored object of every
+    patch carries the trr9027 label). The audit policy's RequestResponse rule for
+    dns-default is scoped by resourceNames."""
+    if e.get("objectRef.namespace") != "openshift-dns":
+        return False
+    if (e.get("objectRef.name") or "") != "dns-default":
+        return False
+    if e.get("verb") not in ("patch", "update"):
+        return False
+    return _sentinel_in_request(e)
+
+
+openshift_dns_configmap_gate.describe = (
+    "verb in ('patch', 'update'), objectRef.namespace == 'openshift-dns', objectRef.name == "
+    f"'dns-default', and a requestObject field contains {OCP_SENTINEL_ZONE!r}")
+
+
+def openshift_dnses_gate(e):
+    """TRR9027 F: the emulation's own poisoning write of the DNS Operator object
+    dnses.operator.openshift.io/default. The emulation creates the object (labelled
+    trr9027, empty spec) and then patches spec.servers with the sentinel zone. The gate
+    needs a patch or update of dnses/default (no subresource) whose request body holds the
+    sentinel zone: the verb test keeps out the setup create and the cleanup delete, and the
+    request-body test keeps out a write whose only trr9027 text is the label."""
+    if e.get("objectRef.apiGroup") != "operator.openshift.io":
+        return False
+    if e.get("objectRef.resource") != "dnses":
+        return False
+    if e.get("objectRef.subresource"):
+        return False
+    if (e.get("objectRef.name") or "") != "default":
+        return False
+    if e.get("verb") not in ("patch", "update"):
+        return False
+    return _sentinel_in_request(e)
+
+
+openshift_dnses_gate.describe = (
+    "verb in ('patch', 'update'), objectRef.apiGroup == 'operator.openshift.io', "
+    "objectRef.resource == 'dnses', objectRef.name == 'default', no subresource, and a "
+    f"requestObject field contains {OCP_SENTINEL_ZONE!r}")
 
 
 # ---- per-procedure gates (C1-1) ---------------------------------------------
@@ -838,15 +904,23 @@ MANIFEST = [
                           window=("9009", "b")))]),
     # A and C delete an Event the procedure created first, so each delete must be
     # accepted (200, the rec() default): a 404 delete of an Event whose create failed
-    # does not prove the procedure.
-    ("T1070", "k8s_events_deleted.yml", "audit", "9010 A-C",
+    # does not prove the procedure. B and G are the two collection DELETEs, one per API
+    # group, so each gate names its group. Each also needs a caller that is not a
+    # system: identity, so without a ledger a sweep of trr9010 by a system identity
+    # that the rule does not filter (kube-controller-manager without per-controller
+    # credentials) cannot stand in for it. The rule's filter_namespace_teardown already
+    # removes the namespace controller's own sweep, and a gate sees only rule matches.
+    ("T1070", "k8s_events_deleted.yml", "audit", "9010 A-C,G",
      "events-deletion chokepoint (delete + deletecollection)", [
         ("A", rec(verb="delete", resource="events", name="trr9010-evt-a", ns="trr9010",
                   also=core_group, window=("9010", "a"))),
         ("B", rec(verb="deletecollection", resource="events", ns="trr9010",
-                  window=("9010", "b"))),
+                  user=non_system, also=core_group, window=("9010", "b"))),
         ("C", rec(verb="delete", resource="events", name="trr9010-evt-c", ns="trr9010",
-                  also=apigroup("events.k8s.io"), window=("9010", "c")))]),
+                  also=apigroup("events.k8s.io"), window=("9010", "c"))),
+        ("G", rec(verb="deletecollection", resource="events", ns="trr9010",
+                  user=non_system, also=apigroup("events.k8s.io"),
+                  window=("9010", "g")))]),
     ("T1070", "k8s_workload_deleted_evidence.yml", "audit", "9010 D",
      "workload-record deletion fallback", [
         ("D", rec(verb="delete", resource="pods", name="trr9010-workload", ns="trr9010",
@@ -932,6 +1006,24 @@ MANIFEST = [
     ("T1565.001", "k8s_coredns_corefile_poisoned.yml", "audit", "9027 D create",
      "Corefile grader on a recreated coredns (create body at Request; stub-zone forward to a "
      "public IP)", [("D create", win(coredns_gate_created("coredns"), ("9027", "d")))]),
+    # OpenShift (E, F): kind has no DNS Operator, so the emulation creates inert objects of
+    # the operator's shape and patches them. E proves the chokepoint and the grader on
+    # openshift-dns/dns-default; F proves the chokepoint on the dnses.operator.openshift.io
+    # object. Each gate needs a patch or update whose request body holds the sentinel zone,
+    # so the setup creates (labelled trr9027, no sentinel zone) cannot pass it. The grader
+    # is not gated for F: a dnses write is not a Corefile (a real cluster's operator
+    # renders it, which kind cannot do; the grader's operator-rendered positives are in
+    # the sidecar).
+    ("T1565.001", "k8s_coredns_configmap_modified.yml", "audit", "9027 E",
+     "OpenShift DNS ConfigMap write chokepoint: openshift-dns/dns-default patch",
+     [("E", win(openshift_dns_configmap_gate, ("9027", "e")))]),
+    ("T1565.001", "k8s_coredns_corefile_poisoned.yml", "audit", "9027 E sev",
+     "CoreDNS Corefile poison grader on Procedure E's dns-default patch (RequestResponse)",
+     [("E", win(openshift_dns_configmap_gate, ("9027", "e")))]),
+    ("T1565.001", "k8s_coredns_configmap_modified.yml", "audit", "9027 F",
+     "OpenShift DNS Operator object write chokepoint: dnses.operator.openshift.io/default "
+     "spec.servers patch",
+     [("F", win(openshift_dnses_gate, ("9027", "f")))]),
 ]
 
 
@@ -1016,15 +1108,19 @@ STANDIN_SELECTOR = field_has("requestURI", "trr9008-dryrun-standin")
 MISS_MANIFEST = [
     # TRR9010: kubectl delete --dry-run=server of an Event (core, and the same Event
     # through events.k8s.io), a pod, a Job and a namespace, and a deletecollection of
-    # the Events and of the pods of the control's namespace (kubectl delete --raw with a
-    # DeleteOptions body): the dry run is in the DeleteOptions body.
+    # the Events (core, then events.k8s.io) and of the pods of the control's namespace
+    # (kubectl delete --raw with a DeleteOptions body): the dry run is in the
+    # DeleteOptions body.
     ("T1070", "k8s_events_deleted.yml", "9010 dryrun", [
         ("core", dry("delete", "events", DRY_9010, prefix="trr9010-dryrun-",
                      also=core_group)),
         ("events.k8s.io", dry("delete", "events", DRY_9010, prefix="trr9010-dryrun-",
                               also=apigroup("events.k8s.io"))),
         ("deletecollection", dry("deletecollection", "events", DRY_9010, ns=DRY_NS_9010,
-                                 also=core_group))]),
+                                 also=core_group)),
+        ("events.k8s.io deletecollection", dry("deletecollection", "events", DRY_9010,
+                                               ns=DRY_NS_9010,
+                                               also=apigroup("events.k8s.io")))]),
     ("T1070", "k8s_workload_deleted_evidence.yml", "9010 dryrun", [
         ("pod", dry("delete", "pods", DRY_9010, prefix="trr9010-dryrun-")),
         ("job", dry("delete", "jobs", DRY_9010, prefix="trr9010-dryrun-")),
@@ -1354,7 +1450,7 @@ def absent_hint(fields, scope, where):
 
 def explain_gated_miss(rule_path, events, gate, tag, matched):
     """Why no event the emulation made matched: the gate, then the closest marked event."""
-    rule = sigma_explain.load(rule_path)
+    rule = sigma_explain.load(rule_path).stripped()  # no null guards or copies
     label = labeller(events)
     marked = [i for i, e in enumerate(events) if gate(e)]
     lines = [f"gate: {describe_gate(gate)}"]
@@ -1514,7 +1610,8 @@ def must_not_match(args, logs, ledger, queries, results):
                          "level too low, or another request shape). First record:",
                          f"  {label_of(e)} uri={e.get('requestURI')} level={e.get('level')}"]
                 lines += ["  " + ln for ln in explained(
-                    lambda p, evs: sigma_explain.explain_miss(sigma_explain.load(p), evs, k=1),
+                    lambda p, evs: sigma_explain.explain_miss(
+                        sigma_explain.load(p).stripped(), evs, k=1),
                     rule_path, s["copies"][:1])]
                 explanation += lines
         for line in explanation:

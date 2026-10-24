@@ -85,9 +85,26 @@ admitted.
 
 The detection telemetry is the API server audit log. The submitted pod
 specification appears in the audit event as the `requestObject` field **only at
-audit level `Request` or `RequestResponse`**. At `Metadata` level — the common
-default, and the cap on several managed providers — `requestObject` is absent, so
-a rule that keys on spec fields has nothing to match. `Request` level is
+audit level `Request` or `RequestResponse`**. At `Metadata` level — the level of
+the OpenShift Default audit profile and of the k3s hardening-guide starter policy
+— `requestObject` is absent, so a rule that keys on spec fields has nothing to
+match. The audit policies that EKS (its Best Practices Guide), AKS (Microsoft
+Learn) and the GCE kube-up script (which the EKS user guide links) publish log pod
+and workload writes at `RequestResponse`, so there the body is in the record. One
+exception: at `Request` or higher a server-side apply patch with a YAML body leaves
+no record at all, so neither a grader nor a chokepoint sees it
+([RULE_DEFECTS K23](../../../detections/RULE_DEFECTS.md#k23-apply-patches-with-a-yaml-body-no-audit-record-at-request-level-or-higher)).
+The offline policy simulator shows the levels on the sidecar cases: every positive of
+`k8s_podspec_host_access` fires under those three policies and under the OpenShift
+WriteRequestBodies profile, and none fires under the OpenShift Default profile or
+the k3s starter policy
+([`detections/k8s/policy_coverage.json`](../../../detections/k8s/policy_coverage.json),
+from [`detections/k8s_policy_coverage.py`](../../../detections/k8s_policy_coverage.py);
+the policy texts and their sources are in
+[`detections/k8s/provider-policies/`](../../../detections/k8s/provider-policies/SOURCES.md);
+[RULE_DEFECTS K40](../../../detections/RULE_DEFECTS.md#k40-body-graders-are-blind-under-the-openshift-default-profile-and-the-k3s-starter-policy)).
+A published policy is not a capture: whether each provider runs it unchanged is
+unverified. `Request` level is
 sufficient: `requestObject` is the client-submitted body, which already contains
 every adversary-set field. Because it is the request body, it is logged **even
 when admission rejects the pod** (a 403), so the chokepoint also catches blocked
@@ -413,7 +430,9 @@ gap procedure's ledger window), so a `system:node` create is now isolated and pr
 
 **Demonstrated gap — the Request-level dependency.**
 The real blind spot is the audit level, not the delivery. Under a `Metadata`-only
-policy — the default cap on several managed providers — the `pods` create event is
+policy — the OpenShift Default audit profile, the k3s hardening-guide starter policy
+(see "Why the audit level matters"; the published EKS, AKS and GCE kube-up policies
+log pod writes at `RequestResponse`) — the `pods` create event is
 present but `requestObject` is absent, so the chokepoint and the controller
 fallback cannot see the dangerous fields at all, even for an ordinary
 API-created privileged pod. The node sensor is then the only thing that sees the

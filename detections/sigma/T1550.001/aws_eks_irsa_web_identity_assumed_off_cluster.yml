@@ -69,7 +69,13 @@ detection:
       - '2001:db8::/32'
   filter_failed:
     errorCode: '*'
-  condition: selection_exchange and selection_eks_irsa and selection_k8s_sa and not filter_cluster_owned_source and not filter_failed
+  # Null-safe negation: a backend with three-valued logic (ES|QL and other SQL
+  # backends) reads NOT of a test on a missing field as NULL and drops the record.
+  # CloudTrail writes errorCode only when the call returns an error, so the filter is
+  # ORed with a test that the field is absent.
+  sel_no_error_code:
+    errorCode: null
+  condition: selection_exchange and selection_eks_irsa and selection_k8s_sa and not filter_cluster_owned_source and (sel_no_error_code or not filter_failed)
 falsepositives:
   - Worker nodes that egress to the global STS endpoint through a NAT gateway / Elastic IP, or reach
     STS over a com.amazonaws.<region>.sts VPC interface endpoint -- allowlist those CIDRs (the

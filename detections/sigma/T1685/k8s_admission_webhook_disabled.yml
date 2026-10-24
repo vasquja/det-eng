@@ -79,7 +79,13 @@ detection:
       - 'delete'
       - 'deletecollection'
     requestObject.dryRun|contains: 'All'
-  condition: select_adm_write and not (filter_dry_run_write and sel_query_parsed) and not filter_dry_run_delete_body
+  # Null-safe negation: a backend with three-valued logic (ES|QL and other SQL
+  # backends) reads NOT of a test on a missing field as NULL and drops the record. A
+  # delete without a DeleteOptions body, and every Metadata-level record, has no
+  # requestObject.dryRun, so the filter is ORed with a test that the field is absent.
+  sel_no_dry_run_body:
+    requestObject.dryRun: null
+  condition: select_adm_write and not (filter_dry_run_write and sel_query_parsed) and (sel_no_dry_run_body or not filter_dry_run_delete_body)
 falsepositives:
   - The policy engine's own controller reconciling its webhook configuration
     (Gatekeeper, Kyverno), and GitOps or Helm upgrades that replace a webhook

@@ -76,7 +76,7 @@ description: |
     which a line break is the two characters backslash-n -- the rule matches that raw
     form too (plugin, environment placeholder, root block, public forward, cluster
     zone). At RequestResponse level, which the shipped policy sets for the three DNS
-    ConfigMaps, responseObject.data.Corefile is the stored Corefile as a plain string
+    ConfigMaps and openshift-dns/dns-default, responseObject.data.Corefile is the stored Corefile as a plain string
     whatever the patch type, and the same Corefile-string clauses read it; a later
     write to a ConfigMap whose stored Corefile is already poisoned fires again. This
     grades Procedure A (poison the base coredns Corefile) and Procedure D (delete
@@ -92,6 +92,34 @@ description: |
     Metadata level cannot feed this rule: without the Corefile a poisoning edit and a
     benign change are indistinguishable. See the policy file for what these levels
     record besides the Corefile (Helm release payloads, Corefile credentials).
+
+    OpenShift (Procedures E and F): the rule also grades writes (update, patch, create)
+    of openshift-dns/dns-default, the ConfigMap into which the DNS Operator renders
+    its Corefile (cluster-dns-operator release-4.20, controller_dns_configmap.go). That
+    Corefile listens on port 5353 ('.:5353 {' is the root block, after one block for each
+    entry of the DNS object's spec.servers, each with a '# <name>' comment line), forwards
+    the root to /etc/resolv.conf by default, and holds a 'hostname.bind:5353' chaos
+    block; none of that fires. A direct edit of dns-default (Procedure E) is graded
+    like a coredns edit. A change of the DNS Operator object (Procedure F) is graded when
+    the operator renders it: a spec.servers forward to a public IP fires the
+    public-forward clause, and a spec.upstreamResolvers upstream of type Network fires
+    the root-block clause ('forward . <IP>:53'), on the operator's own write. This
+    selection has no identity filter, because the operator writes the Corefile that the
+    DNS object asks for. The grader needs the request or stored body: OpenShift's
+    Default audit profile logs Metadata only, so on OpenShift it needs the
+    WriteRequestBodies or AllRequestBodies profile (both log writes at
+    RequestResponse). Those two profiles also open the K23 gap on these objects: an
+    apply patch with a YAML body to dns-default or to the DNS object then leaves no
+    audit record, so no rule sees it (detections/RULE_DEFECTS.md K23; watch
+    apiserver_audit_error_total). Under the Default profile that record is kept, and
+    the chokepoint fires on it. AllRequestBodies also logs reads at RequestResponse:
+    a get of a poisoned dns-default carries the Corefile in responseObject, and the
+    verb item keeps it quiet. It does not grade the DNS Operator object itself (a
+    managementState of Unmanaged, upstreams that the operator does not render while
+    Unmanaged); the chokepoint sees every write of it. With managementState Unmanaged
+    the operator also stops reconciling the DNS DaemonSet, so an adversary can point
+    its Corefile volume at another ConfigMap in openshift-dns; this rule reads only
+    dns-default and does not grade that ConfigMap.
 
     Limits (seen by the chokepoint only):
       - The root-block grammar does not follow an 'import': a snippet's name would have
@@ -140,7 +168,7 @@ references:
   - https://coredns.io/plugins/forward/
 author: det-eng
 date: 2026/10/14
-modified: 2026/10/16
+modified: 2026/10/24
 tags:
   - attack.impact
   - attack.t1565.001
@@ -155,6 +183,18 @@ detection:
       - 'coredns'
       - 'kube-dns'
       - 'coredns-custom'
+    verb:
+      - 'update'
+      - 'patch'
+      - 'create'
+  # OpenShift: the DNS Operator's rendered Corefile in openshift-dns/dns-default (see
+  # k8s_coredns_configmap_modified.yml and the description). No identity filter: the
+  # operator writes the Corefile that the DNS object asks for, so its write carries the
+  # redirect.
+  select_openshift_dns_configmap_write:
+    objectRef.resource: 'configmaps'
+    objectRef.namespace: 'openshift-dns'
+    objectRef.name: 'dns-default'
     verb:
       - 'update'
       - 'patch'
@@ -322,7 +362,7 @@ detection:
       - '^\"?([a-z0-9]+://)?([^\s{}#,\"]*\.)?cluster\.local\.?(:[0-9]+)?\"?((,\s*| +)[^\s{}#,]+)*\s*\{(([^{}]|\{[^{}]*\})*[^\S ])?\s*\"?forward\"?\s+\"?([a-z0-9]+://)?[^\s#{}\"]+\"?(\s+\"?[^\s#{}/\"]*/[^\s#{}]*)*\s+\"?([a-z0-9]+://)?\[?([0-9]+(\.[0-9]+){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
       - '[\s,\"/\.]cluster\.local\.?(:[0-9]+)?\"?((,\s*| +)[^\s{}#,]+)*\s*\{(([^{}]|\{[^{}]*\})*[^\S ])?\s*\"?forward\"?\s+\"?([a-z0-9]+://)?[^\s#{}\"]+\"?(\s+\"?[^\s#{}/\"]*/[^\s#{}]*)*\s+\"?([a-z0-9]+://)?\[?([0-9]+(\.[0-9]+){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
       - '([^\S ]|\{)\s*\"?forward\"?\s+\"?([a-z0-9]+://)?([^\s#{}\"]*\.)?cluster\.local\.?(:[0-9]+)?\"?(\s+\"?[^\s#{}/\"]*/[^\s#{}]*)*\s+\"?([a-z0-9]+://)?\[?([0-9]+(\.[0-9]+){3}|[0-9A-Fa-f]{0,4}:[0-9A-Fa-f]{0,4}:)'
-  condition: select_dns_configmap_write and (sel_poison_plugin or (sel_poison_hosts and not filter_default_hosts) or sel_env_placeholder or sel_rogue_forward or sel_public_forward or sel_cluster_zone_forward or sel_poison_plugin_raw or (sel_poison_hosts_raw and not filter_default_hosts_raw) or sel_env_placeholder_raw or sel_rogue_forward_raw or sel_public_forward_raw or sel_cluster_zone_forward_raw or sel_response_poison_plugin or (sel_response_poison_hosts and not filter_response_default_hosts) or sel_response_env_placeholder or sel_response_rogue_forward or sel_response_cluster_zone_forward)
+  condition: (select_dns_configmap_write or select_openshift_dns_configmap_write) and (sel_poison_plugin or (sel_poison_hosts and not filter_default_hosts) or sel_env_placeholder or sel_rogue_forward or sel_public_forward or sel_cluster_zone_forward or sel_poison_plugin_raw or (sel_poison_hosts_raw and not filter_default_hosts_raw) or sel_env_placeholder_raw or sel_rogue_forward_raw or sel_public_forward_raw or sel_cluster_zone_forward_raw or sel_response_poison_plugin or (sel_response_poison_hosts and not filter_response_default_hosts) or sel_response_env_placeholder or sel_response_rogue_forward or sel_response_cluster_zone_forward)
 falsepositives:
   - A commented-out rewrite, template or hosts line written as '#<TAB>directive'
     in the Corefile string fires the plugin clause (see the description).
@@ -338,4 +378,9 @@ falsepositives:
     minikube ones excluded here. Triage against the actor and the injected target.
   - A deliberate forward of the cluster zone (or a zone under it) to an IP, for
     example to a multi-cluster DNS service.
+  - On OpenShift, a DNS Operator object whose spec.upstreamResolvers names an upstream
+    of type Network (a VPC or corporate resolver). The operator renders it as a
+    root-block 'forward . <IP>:53' in dns-default, and its write fires the root-block
+    clause each time it renders the Corefile again. Baseline the DNS object's own
+    upstreams.
 level: high

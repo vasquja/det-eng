@@ -2,10 +2,13 @@
 # TRR9027 — behavioral emulation for T1565.001 (Stored Data Manipulation), Kubernetes
 # cluster DNS poisoning via the CoreDNS ConfigMap.
 #
-# Each procedure writes a cluster DNS ConfigMap in kube-system, so the API server writes
-# the configmaps audit event the paired Sigma rules key on. Every write carries the
-# sentinel token 'trr9027' (a forward to a sentinel .invalid zone that no workload
-# resolves). A, B and C write by name (a PATCH): procedure A patches coredns, and B and C
+# Procedures A-D write a cluster DNS ConfigMap in kube-system. E writes the OpenShift DNS
+# ConfigMap openshift-dns/dns-default, and F writes the cluster-scoped OpenShift DNS
+# Operator object dnses.operator.openshift.io/default. So the API server writes the audit
+# event the paired Sigma rules key on. Every poisoning write carries the sentinel token
+# 'trr9027' (a forward to a sentinel .invalid zone that no workload resolves; E and F
+# write the zone trr9027poison.example.invalid). A, B and C write by name (a PATCH):
+# procedure A patches coredns, and B and C
 # create kube-dns and coredns-custom with server-side apply (kubectl apply
 # --server-side), which is a PATCH to the named object even when it does not exist yet.
 # The audit policy logs a named write to these three ConfigMaps at RequestResponse, so
@@ -36,24 +39,49 @@
 #     does not exist yet (a GKE cluster's real kube-dns, an AKS cluster's real
 #     coredns-custom is never touched), and labels what it creates
 #     app.kubernetes.io/part-of=trr9027; cleanup deletes only ConfigMaps with that label.
+#   * Procedures E and F emulate OpenShift, whose DNS Operator owns cluster DNS. kind has
+#     no DNS Operator, so E creates an INERT openshift-dns namespace and dns-default
+#     ConfigMap (the operator's default Corefile shape) and PATCHES it with the sentinel
+#     block; F installs the vendored DNS Operator CRD (src/openshift-dnses.crd.yaml) only
+#     when absent, creates an INERT dnses/default object and PATCHES its spec.servers with
+#     the sentinel zone. Nothing on the cluster reads either object. Each SKIPS, before
+#     any write, when the cluster has an openshift-dns namespace or a
+#     dnses.operator.openshift.io CRD that this emulation did not create (no
+#     app.kubernetes.io/part-of=trr9027 label: a real OpenShift, OKD or MicroShift
+#     cluster), and also when its own object already exists (a dns-default ConfigMap, or
+#     a dnses/default). So E and F never write into a real OpenShift DNS namespace or
+#     under a real DNS Operator CRD, and cleanup cannot delete an object that a real DNS
+#     Operator adopted or depends on. Everything they create carries
+#     app.kubernetes.io/part-of=trr9027: the namespace, the ConfigMap, the dnses object, and
+#     the CRD (F adds the label to the copy it sends; the vendored file is not changed).
+#     Cleanup (the `all` run, or the Atomic Red Team cleanup_command) deletes only
+#     labelled objects. This proves the audit record and the rule on kind, not the
+#     operator's reconcile behaviour (a real capture is backlog #55).
 #
 # Run ONE procedure:
 #   ./emulate.sh a      repoint the coredns Corefile (sentinel forward), then restore
 #   ./emulate.sh b      create a kube-dns ConfigMap with a stubDomains redirect (inert, SSA)
 #   ./emulate.sh c      create a coredns-custom ConfigMap with a forward snippet (inert, SSA)
 #   ./emulate.sh d      delete coredns and create it again (POST) with a sentinel stub zone, then restore
+#   ./emulate.sh e      OpenShift: create + patch the inert openshift-dns/dns-default ConfigMap
+#   ./emulate.sh f      OpenShift: install the DNS Operator CRD, create + patch an inert dnses/default
 #   ./emulate.sh gap    node-local etcd/disk bypass demonstration (read-only)
 #   ./emulate.sh all    every item, in order, then clean up
 #
 # Prerequisites: a reachable cluster (kubectl works, server-side apply: Kubernetes
-# 1.22+) with rights on kube-system ConfigMaps, the audit policy in
-# detections/k8s/audit-policy-apiserver.yaml (it logs named writes to the coredns,
-# kube-dns and coredns-custom ConfigMaps at RequestResponse by resourceNames, and every
-# kube-system ConfigMap create at Request), and python3 (to
-# build the merge patch and the applied objects).
+# 1.22+) with rights on kube-system ConfigMaps (and, for E and F, on the openshift-dns
+# namespace, cluster-scoped CRDs and dnses.operator.openshift.io objects), the audit
+# policy in detections/k8s/audit-policy-apiserver.yaml (it logs named writes to the
+# coredns, kube-dns and coredns-custom ConfigMaps and to openshift-dns/dns-default at
+# RequestResponse by resourceNames, every kube-system and openshift-dns ConfigMap create
+# at Request, and operator.openshift.io/dnses writes), and python3 (to build the merge
+# patch and the applied objects).
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NS="kube-system"
+OCP_NS="openshift-dns"        # the OpenShift DNS operand namespace (E, F)
+OCP_CRD_FILE="${SCRIPT_DIR}/openshift-dnses.crd.yaml"  # vendored, see SOURCES.md
 NODE="${TRR9027_NODE:-apiserver-control-plane}"
 SENTINEL_IP="198.51.100.53"   # RFC 5737 TEST-NET-2, non-routable
 # An inert sentinel zone block: a rewrite (exercises the grader's plugin clause) and a
@@ -63,6 +91,16 @@ SENTINEL_IP="198.51.100.53"   # RFC 5737 TEST-NET-2, non-routable
 # block's forward, which the emulation never changes (that would redirect real cluster
 # DNS); the sidecar cases prove that clause instead.
 SENTINEL_BLOCK=$'\ntrr9027poison.example.invalid:53 {\n    errors\n    rewrite name trr9027poison.example.invalid sink.trr9027.example.invalid\n    forward . '"$SENTINEL_IP"$'\n}\n'
+
+# OpenShift (E): the DNS Operator's rendered default Corefile for a DNS object with an
+# empty spec (cluster-dns-operator release-4.20 controller_dns_configmap.go, rendered
+# with Go text/template; equal to the root + hostname.bind blocks of that commit's
+# testdata/without_upstreamresolvers; see src/SOURCES.md for the SHA-256). It listens on
+# port 5353 and forwards upstream to /etc/resolv.conf -- no plugin or literal IP fires
+# the grader. kind has no DNS Operator, so Procedure E creates an inert ConfigMap of this
+# shape in an inert openshift-dns namespace and patches it; nothing on the cluster reads
+# it. The attack write (E) prepends the SENTINEL_BLOCK, as a direct edit of dns-default.
+OCP_DEFAULT_COREFILE=$'.:5353 {\n    bufsize 1232\n    errors\n    log . {\n        class error\n    }\n    health {\n        lameduck 20s\n    }\n    ready\n    kubernetes cluster.local in-addr.arpa ip6.arpa {\n        pods insecure\n        fallthrough in-addr.arpa ip6.arpa\n    }\n    prometheus 127.0.0.1:9153\n    forward . /etc/resolv.conf {\n        policy sequential\n    }\n    cache 900 {\n        denial 9984 30\n    }\n    reload\n}\nhostname.bind:5353 {\n    chaos\n}\n'
 
 log() { printf '[trr9027] %s\n' "$*" >&2; }
 
@@ -148,6 +186,21 @@ _apply_inert_configmap() {
 cleanup() {
   log "cleanup: deleting the trr9027-labelled inert ConfigMaps (coredns is restored in procedure a)"
   kubectl -n "$NS" delete configmap -l "$PART_OF" --ignore-not-found >/dev/null 2>&1 || true
+  # OpenShift E/F: delete only what the emulation created and labelled: the ConfigMap,
+  # the dnses object, the inert namespace, and the CRD that procedure_f installed (it
+  # labels the copy it sends; this run or an earlier `emulate.sh f`). A real OpenShift
+  # cluster's objects are never labelled by this emulation, because E and F skip before
+  # any write when an unlabelled openshift-dns namespace or dnses CRD exists
+  # (_ocp_platform_clear).
+  kubectl -n "$OCP_NS" delete configmap -l "$PART_OF" --ignore-not-found >/dev/null 2>&1 || true
+  if kubectl get crd dnses.operator.openshift.io >/dev/null 2>&1; then
+    kubectl delete dnses.operator.openshift.io -l "$PART_OF" --ignore-not-found >/dev/null 2>&1 || true
+  fi
+  kubectl delete namespace -l "$PART_OF" --field-selector "metadata.name=${OCP_NS}" \
+    --ignore-not-found >/dev/null 2>&1 || true
+  log "cleanup: deleting the dnses.operator.openshift.io CRD if procedure f installed it (label $PART_OF)"
+  kubectl delete crd -l "$PART_OF" --field-selector metadata.name=dnses.operator.openshift.io \
+    --ignore-not-found >/dev/null 2>&1 || true
 }
 
 # The coredns ConfigMap as JSON, or nothing when it does not exist (a clean NotFound).
@@ -322,6 +375,163 @@ procedure_c() {
     $'trr9027poison.example.invalid:53 {\n    forward . '"$SENTINEL_IP"$'\n}\n'
 }
 
+# Who owns a cluster-scoped object ($1 resource, $2 name): sets the variable named by $3
+# to "absent" when the object does not exist, "ours" when it carries the trr9027 label,
+# and "foreign" when it exists without that label. Fail closed: a read that errors (not
+# a clean NotFound, which --ignore-not-found prints as nothing) returns non-zero.
+_ocp_owner() {
+  local json owner
+  json="$(kubectl get "$1" "$2" --ignore-not-found -o json)" || return 1
+  if [ -z "${json//[[:space:]]/}" ]; then
+    owner="absent"
+  else
+    owner="$(printf '%s' "$json" | python3 -c 'import json,sys
+labels=(json.load(sys.stdin).get("metadata") or {}).get("labels") or {}
+print("ours" if labels.get("app.kubernetes.io/part-of") == "trr9027" else "foreign")')" || return 1
+  fi
+  printf -v "$3" '%s' "$owner"
+}
+
+# Platform guard for E and F ($1 the procedure letter, for the log). A real OpenShift,
+# OKD or MicroShift cluster has its own openshift-dns namespace, and OpenShift and OKD
+# also have the dnses.operator.openshift.io CRD; this emulation creates both only with
+# the trr9027 label. Returns 0 when each is absent or ours (sets OCP_NS_OWNER and
+# OCP_CRD_OWNER), 2 when either is foreign (the caller skips: nothing is written, so
+# cleanup cannot delete an object that a real DNS Operator adopts or depends on), and 1
+# when a read errors.
+OCP_NS_OWNER=""
+OCP_CRD_OWNER=""
+_ocp_platform_clear() {
+  local who="$1"
+  if ! _ocp_owner namespace "$OCP_NS" OCP_NS_OWNER; then
+    log "$who: cannot read namespace $OCP_NS (see the kubectl error above) -- not touching it"
+    return 1
+  fi
+  if ! _ocp_owner crd dnses.operator.openshift.io OCP_CRD_OWNER; then
+    log "$who: cannot read crd dnses.operator.openshift.io (see the kubectl error above) -- not touching it"
+    return 1
+  fi
+  if [ "$OCP_NS_OWNER" = "foreign" ] || [ "$OCP_CRD_OWNER" = "foreign" ]; then
+    log "$who: a real OpenShift DNS platform is present (namespace $OCP_NS: $OCP_NS_OWNER, crd dnses.operator.openshift.io: $OCP_CRD_OWNER; foreign = no $PART_OF label) -- not touching it, skipping"
+    return 2
+  fi
+  return 0
+}
+
+# Create the inert openshift-dns namespace (labelled app.kubernetes.io/part-of=trr9027),
+# only when it does not exist. procedure_e calls this only after _ocp_platform_clear,
+# which skips when a real (unlabelled) namespace exists, so a real namespace is never
+# labelled, never written into and never deleted by cleanup. Fail closed: a read that
+# errors (not a clean NotFound) is a failure, never "absent".
+_ensure_ocp_namespace() {
+  local found
+  if ! found="$(kubectl get namespace "$OCP_NS" --ignore-not-found -o name)"; then
+    log "cannot read namespace $OCP_NS (see the kubectl error above) -- not touching it"
+    return 1
+  fi
+  if [ -n "$found" ]; then
+    return 0
+  fi
+  log "creating the inert namespace $OCP_NS (labelled $PART_OF)"
+  python3 -c 'import json,sys; n=sys.argv[1]; print(json.dumps({"apiVersion":"v1","kind":"Namespace","metadata":{"name":n,"labels":{"app.kubernetes.io/part-of":"trr9027"}}}))' \
+    "$OCP_NS" | apply_stdin create || { log "create of namespace $OCP_NS was refused"; return 1; }
+}
+
+# Procedure E — OpenShift: edit the DNS Operator's rendered Corefile ConfigMap
+# openshift-dns/dns-default. kind has no DNS Operator, so this creates an inert
+# dns-default ConfigMap of the operator's shape (the default Corefile, no redirect) and
+# then PATCHES it with the sentinel server block prepended -- the gated poisoning write.
+# The audit policy logs openshift-dns/dns-default at RequestResponse, so the patch
+# reaches the log with its body and sentinel. SAFETY: skips before any write when an
+# unlabelled openshift-dns namespace or dnses CRD exists (a real OpenShift platform,
+# _ocp_platform_clear) or when a dns-default ConfigMap already exists, creates and
+# labels its own otherwise, and cleanup deletes only the labelled ConfigMap and namespace.
+procedure_e() {
+  local found rc=0 guard=0
+  _ocp_platform_clear E || guard=$?
+  case "$guard" in
+    0) ;;
+    2) return 0 ;;
+    *) return 1 ;;
+  esac
+  # Fail closed: a read that errors (not a clean NotFound) is a failure, never "absent".
+  # A GET of a ConfigMap in a namespace that does not exist is a clean NotFound, which
+  # --ignore-not-found prints as nothing, so a clean kind cluster reads as "absent".
+  if ! found="$(kubectl -n "$OCP_NS" get configmap dns-default --ignore-not-found -o name)"; then
+    log "E: cannot read configmap $OCP_NS/dns-default (see the kubectl error above) -- not touching it"
+    return 1
+  fi
+  if [ -n "$found" ]; then
+    log "E: $OCP_NS/dns-default already exists (an earlier run's object?) -- not touching it, skipping"
+    return 0
+  fi
+  _ensure_ocp_namespace || return 1
+  log "E: create the inert dns-default ConfigMap (the operator's default Corefile, no redirect)"
+  python3 -c 'import json,sys; ns,cf=sys.argv[1:3]; print(json.dumps({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"dns-default","namespace":ns,"labels":{"app.kubernetes.io/part-of":"trr9027","dns.operator.openshift.io/owning-dns":"default"}},"data":{"Corefile":cf}}))' \
+    "$OCP_NS" "$OCP_DEFAULT_COREFILE" \
+    | apply_stdin create || { log "E: create of $OCP_NS/dns-default was refused"; return 1; }
+  log "E: patch dns-default Corefile with a sentinel rewrite + forward (trr9027poison.example.invalid -> ${SENTINEL_IP})"
+  must kubectl -n "$OCP_NS" patch configmap dns-default --type=merge \
+    -p "$(printf '%s' "${SENTINEL_BLOCK}${OCP_DEFAULT_COREFILE}" | _corefile_patch)" \
+    || { log "E: the sentinel poison patch was refused"; rc=1; }
+  return "$rc"
+}
+
+# Procedure F — OpenShift: edit the DNS Operator object dnses.operator.openshift.io.
+# Installs the vendored CRD (src/openshift-dnses.crd.yaml) when absent, creates an inert
+# dnses/default object, then PATCHES spec.servers with a sentinel zone forwarded to a
+# TEST-NET IP -- the gated write. The audit policy logs operator.openshift.io/dnses
+# writes (update/patch at RequestResponse, create/delete/deletecollection at Request).
+# kind has no DNS Operator, so the object does not render a Corefile and nothing
+# resolves through it.
+# SAFETY: skips before any write when an unlabelled dnses CRD or openshift-dns namespace
+# exists (a real OpenShift platform, _ocp_platform_clear: a real CRD is never written
+# under, so a dnses/default that a real DNS Operator would adopt is never created or
+# deleted) or when a dnses/default object already exists. It installs the CRD only when
+# absent, with the label app.kubernetes.io/part-of=trr9027 added to the copy it sends
+# (kubectl label --local reads the vendored file and changes nothing else). Cleanup
+# deletes the labelled object and the labelled CRD, so it never deletes a CRD that this
+# emulation did not install.
+procedure_f() {
+  local found rc=0 guard=0
+  _ocp_platform_clear F || guard=$?
+  case "$guard" in
+    0) ;;
+    2) return 0 ;;
+    *) return 1 ;;
+  esac
+  if [ "$OCP_CRD_OWNER" = "ours" ]; then
+    # The CRD of an earlier run (labelled): fail closed on the object read, as for E.
+    if ! found="$(kubectl get dnses.operator.openshift.io default --ignore-not-found -o name)"; then
+      log "F: cannot read dnses.operator.openshift.io/default (see the kubectl error above) -- not touching it"
+      return 1
+    fi
+    if [ -n "$found" ]; then
+      log "F: dnses.operator.openshift.io/default already exists (an earlier run's object?) -- not touching it, skipping"
+      return 0
+    fi
+  else
+    log "F: installing the vendored dnses.operator.openshift.io CRD (labelled $PART_OF)"
+    # A JSON create (POST): the label is added offline (--local), so one write installs the
+    # CRD already labelled and the cleanup can find it.
+    if ! kubectl label --local -f "$OCP_CRD_FILE" "$PART_OF" -o json | apply_stdin create; then
+      log "F: the CRD install was refused -- cannot emulate the DNS Operator object"
+      return 1
+    fi
+    kubectl wait --for=condition=Established --timeout=30s \
+      crd/dnses.operator.openshift.io >/dev/null 2>&1 \
+      || { log "F: the CRD did not become Established in time"; return 1; }
+  fi
+  log "F: create the inert dnses/default object (empty spec)"
+  python3 -c 'import json; print(json.dumps({"apiVersion":"operator.openshift.io/v1","kind":"DNS","metadata":{"name":"default","labels":{"app.kubernetes.io/part-of":"trr9027"}},"spec":{}}))' \
+    | apply_stdin create || { log "F: create of dnses/default was refused"; return 1; }
+  log "F: patch dnses/default spec.servers with a sentinel zone forwarded to ${SENTINEL_IP}"
+  must kubectl patch dnses.operator.openshift.io default --type=merge \
+    -p '{"spec":{"servers":[{"name":"trr9027-poison","zones":["trr9027poison.example.invalid"],"forwardPlugin":{"upstreams":["'"$SENTINEL_IP"'"]}}]}}' \
+    || { log "F: the sentinel spec.servers patch was refused"; rc=1; }
+  return "$rc"
+}
+
 # Gap — the node-local bypass. An adversary with control-plane node access can edit
 # CoreDNS's mounted config on disk or in etcd with NO API write and NO audit event.
 # Read-only demonstration.
@@ -341,15 +551,15 @@ procedure_gap() {
 
 run_one() {
   case "$1" in
-    a|b|c|d|gap) run_proc "$1" ;;
-    *) log "unknown item: $1 (use a|b|c|d|gap|all)"; exit 2 ;;
+    a|b|c|d|e|f|gap) run_proc "$1" ;;
+    *) log "unknown item: $1 (use a|b|c|d|e|f|gap|all)"; exit 2 ;;
   esac
 }
 
 main() {
   local which="${1:-all}"
   if [ "$which" = "all" ]; then
-    for p in a b c d gap; do run_proc "$p"; done
+    for p in a b c d e f gap; do run_proc "$p"; done
     cleanup
   else
     run_one "$which"

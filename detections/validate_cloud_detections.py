@@ -301,7 +301,7 @@ def explained(fn, *args):
 def explain_attack_miss(rule, attack):
     lines = [f"why it did not fire on the {len(attack)} attack record(s) "
              "(per block: how many records hold it; then the closest records, item by item):"]
-    return lines + sigma_explain.explain_miss(rule, attack, k=2,
+    return lines + sigma_explain.explain_miss(rule.stripped(), attack, k=2,
                                               label=record_label(attack, "attack"))
 
 
@@ -336,6 +336,7 @@ def explain_benign_hits(rule, benign, hit_idx):
 
 def grade_benign(rule, benign):
     """Grade every benign record against the rule: (one-line summary, details)."""
+    rule = rule.stripped()  # without null guards and copies: no items of the rule
     verdicts = sigma_explain.judge_events(rule, benign)
     kinds = {}
     for v in verdicts:

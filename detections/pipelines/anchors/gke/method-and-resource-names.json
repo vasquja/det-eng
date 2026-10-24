@@ -1,0 +1,520 @@
+{
+ "provenance": {
+  "source": "GoogleCloudPlatform/gke-mcp (Apache-2.0), GoogleCloudPlatform/khi (Apache-2.0), elastic/detection-rules (Elastic License 2.0): method and resource names cited as facts, no text copied; each pair names its source",
+  "retrieved": "2026-10-23"
+ },
+ "what": "methodName / resourceName pairs that Google- and Elastic-authored GKE sources show, and probes of the regex grammar. The transform must produce each pair from the native objectRef, verb and response status; the pipeline's objectRef/verb regexes must hold on it, except the pair's 'lost' items, which must not hold (GKE does not record them). Each 'must_hold' probe must be true and each 'must_not_hold' probe false on the native Event and on its GKE transform. Each 'known_differences' probe is a documented loss of the GKE encoding: it must give its stated, different truth on each shape. Probe names are det-eng's (trr9007- markers); the probes that read kube-system keep that built-in namespace name because the CoreDNS rules key on objectRef.namespace: kube-system, and cluster-admin is the built-in binding that the Elastic rule names.",
+ "pairs": [
+  {
+   "source": "https://github.com/GoogleCloudPlatform/gke-mcp/blob/e34795c03284ff31ec871c6ff53a4e0882cdd02d/pkg/tools/logging/schemas/k8s_audit_logs.md (line 29-30; the namespace foo and the name my-configmap rewritten to trr9007- markers)",
+   "native": {
+    "verb": "get",
+    "objectRef": {
+     "resource": "configmaps",
+     "apiVersion": "v1",
+     "namespace": "trr9007-ns",
+     "name": "trr9007-cm"
+    }
+   },
+   "methodName": "io.k8s.core.v1.configmaps.get",
+   "resourceName": "core/v1/namespaces/trr9007-ns/configmaps/trr9007-cm"
+  },
+  {
+   "source": "https://github.com/GoogleCloudPlatform/khi/blob/ca3cc8829d47ab588d8ba11ba96e750a64a2931a/pkg/task/inspection/googlecloud/k8saudit/extractor_test.go (simple case; node name rewritten)",
+   "native": {
+    "verb": "patch",
+    "objectRef": {
+     "resource": "nodes",
+     "apiVersion": "v1",
+     "subresource": "status",
+     "name": "gke-trr9002-node-1"
+    }
+   },
+   "methodName": "io.k8s.core.v1.nodes.status.patch",
+   "resourceName": "core/v1/nodes/gke-trr9002-node-1/status"
+  },
+  {
+   "source": "https://github.com/GoogleCloudPlatform/khi/blob/ca3cc8829d47ab588d8ba11ba96e750a64a2931a/pkg/task/inspection/googlecloud/k8saudit/extractor_test.go (namespaced resource; the pod name nginx rewritten; default is the built-in namespace)",
+   "native": {
+    "verb": "create",
+    "objectRef": {
+     "resource": "pods",
+     "apiVersion": "v1",
+     "namespace": "default",
+     "name": "trr9007-nginx"
+    }
+   },
+   "methodName": "io.k8s.core.v1.pods.create",
+   "resourceName": "core/v1/namespaces/default/pods/trr9007-nginx"
+  },
+  {
+   "source": "https://github.com/GoogleCloudPlatform/khi/blob/ca3cc8829d47ab588d8ba11ba96e750a64a2931a/pkg/task/inspection/googlecloud/k8saudit/extractor_test.go (cluster scoped resource; the namespace name test-ns rewritten)",
+   "native": {
+    "verb": "delete",
+    "objectRef": {
+     "resource": "namespaces",
+     "apiVersion": "v1",
+     "namespace": "trr9007-ns",
+     "name": "trr9007-ns"
+    }
+   },
+   "methodName": "io.k8s.core.v1.namespaces.delete",
+   "resourceName": "core/v1/namespaces/trr9007-ns"
+  },
+  {
+   "source": "https://github.com/GoogleCloudPlatform/khi/blob/ca3cc8829d47ab588d8ba11ba96e750a64a2931a/pkg/task/inspection/googlecloud/k8saudit/extractor_test.go (namespaced resource with subresource; the namespace kube-system and the name coredns rewritten: the pair needs no real system name)",
+   "native": {
+    "verb": "update",
+    "objectRef": {
+     "resource": "deployments",
+     "apiVersion": "v1",
+     "subresource": "scale",
+     "namespace": "trr9007-ns",
+     "name": "trr9007-web",
+     "apiGroup": "apps"
+    }
+   },
+   "methodName": "io.k8s.apps.v1.deployments.scale.update",
+   "resourceName": "apps/v1/namespaces/trr9007-ns/deployments/trr9007-web/scale"
+  },
+  {
+   "source": "https://github.com/elastic/detection-rules/blob/8049d3ba7624c18b8d5a84cc395ee8f3d85f71da/rules/integrations/gcp/persistence_gcp_gke_cluster_admin_role_binding.toml (line 67: the resourceName of the built-in binding cluster-admin, kept as the rule names it)",
+   "native": {
+    "verb": "update",
+    "objectRef": {
+     "resource": "clusterrolebindings",
+     "apiVersion": "v1",
+     "name": "cluster-admin",
+     "apiGroup": "rbac.authorization.k8s.io"
+    }
+   },
+   "methodName": "io.k8s.authorization.rbac.v1.clusterrolebindings.update",
+   "resourceName": "rbac.authorization.k8s.io/v1/clusterrolebindings/cluster-admin"
+  },
+  {
+   "source": "https://github.com/elastic/detection-rules/blob/8049d3ba7624c18b8d5a84cc395ee8f3d85f71da/rules/integrations/gcp/execution_gcp_gke_user_exec_into_pod.toml (methodName only: the rule names no resourceName; the object name is det-eng's trr9007- marker)",
+   "native": {
+    "verb": "create",
+    "objectRef": {
+     "resource": "pods",
+     "apiVersion": "v1",
+     "subresource": "exec",
+     "namespace": "default",
+     "name": "trr9007-web"
+    }
+   },
+   "methodName": "io.k8s.core.v1.pods.exec.create",
+   "resourceName": null
+  },
+  {
+   "source": "https://github.com/elastic/detection-rules/blob/8049d3ba7624c18b8d5a84cc395ee8f3d85f71da/rules/integrations/gcp/execution_gcp_gke_user_exec_into_pod.toml (methodName only: the rule names no resourceName; the object name is det-eng's trr9007- marker)",
+   "native": {
+    "verb": "get",
+    "objectRef": {
+     "resource": "pods",
+     "apiVersion": "v1",
+     "subresource": "exec",
+     "namespace": "default",
+     "name": "trr9007-web"
+    }
+   },
+   "methodName": "io.k8s.core.v1.pods.exec.get",
+   "resourceName": null
+  },
+  {
+   "source": "https://github.com/elastic/detection-rules/blob/8049d3ba7624c18b8d5a84cc395ee8f3d85f71da/rules/integrations/gcp/privilege_escalation_gcp_gke_api_proxy_to_node.toml (methodName only: the rule names no resourceName)",
+   "native": {
+    "verb": "get",
+    "objectRef": {
+     "resource": "nodes",
+     "apiVersion": "v1",
+     "subresource": "proxy",
+     "name": "gke-trr9002-node-1"
+    }
+   },
+   "methodName": "io.k8s.core.v1.nodes.proxy.get",
+   "resourceName": null
+  },
+  {
+   "source": "https://github.com/elastic/detection-rules/blob/8049d3ba7624c18b8d5a84cc395ee8f3d85f71da/rules/integrations/gcp/privilege_escalation_gcp_gke_ephemeral_container_added_to_pod.toml (methodName only: the rule names no resourceName; the object name is det-eng's trr9007- marker)",
+   "native": {
+    "verb": "patch",
+    "objectRef": {
+     "resource": "pods",
+     "apiVersion": "v1",
+     "subresource": "ephemeralcontainers",
+     "namespace": "default",
+     "name": "trr9007-web"
+    }
+   },
+   "methodName": "io.k8s.core.v1.pods.ephemeralcontainers.patch",
+   "resourceName": null
+  },
+  {
+   "source": "https://github.com/elastic/detection-rules/blob/8049d3ba7624c18b8d5a84cc395ee8f3d85f71da/rules/integrations/gcp/persistence_gcp_gke_certificate_signing_request_self_approved.toml (methodName only: the rule names no resourceName; the object name is det-eng's trr9007- marker)",
+   "native": {
+    "verb": "update",
+    "objectRef": {
+     "resource": "certificatesigningrequests",
+     "apiVersion": "v1",
+     "subresource": "approval",
+     "name": "trr9007-csr",
+     "apiGroup": "certificates.k8s.io"
+    }
+   },
+   "methodName": "io.k8s.certificates.v1.certificatesigningrequests.approval.update",
+   "resourceName": null
+  },
+  {
+   "source": "https://github.com/elastic/detection-rules/blob/8049d3ba7624c18b8d5a84cc395ee8f3d85f71da/rules/integrations/gcp/persistence_gcp_gke_admission_webhook_created_or_modified.toml (methodName only: the rule names no resourceName)",
+   "native": {
+    "verb": "patch",
+    "objectRef": {
+     "resource": "validatingwebhookconfigurations",
+     "apiVersion": "v1",
+     "name": "trr9008-webhook",
+     "apiGroup": "admissionregistration.k8s.io"
+    }
+   },
+   "methodName": "io.k8s.admissionregistration.v1.validatingwebhookconfigurations.patch",
+   "resourceName": null
+  },
+  {
+   "source": "https://github.com/elastic/detection-rules/blob/8049d3ba7624c18b8d5a84cc395ee8f3d85f71da/rules/integrations/gcp/discovery_gcp_gke_suspicious_self_subject_review.toml (methodName only: the rule names no resourceName)",
+   "native": {
+    "verb": "create",
+    "objectRef": {
+     "resource": "selfsubjectaccessreviews",
+     "apiVersion": "v1",
+     "apiGroup": "authorization.k8s.io"
+    }
+   },
+   "methodName": "io.k8s.authorization.v1.selfsubjectaccessreviews.create",
+   "resourceName": null
+  },
+  {
+   "source": "https://github.com/elastic/detection-rules/blob/8049d3ba7624c18b8d5a84cc395ee8f3d85f71da/rules/integrations/gcp/persistence_gcp_gke_sensitive_role_created_or_modified.toml (methodName only: the rule names no resourceName)",
+   "native": {
+    "verb": "patch",
+    "objectRef": {
+     "resource": "clusterroles",
+     "apiVersion": "v1",
+     "name": "trr9004-role",
+     "apiGroup": "rbac.authorization.k8s.io"
+    }
+   },
+   "methodName": "io.k8s.authorization.rbac.v1.clusterroles.patch",
+   "resourceName": null
+  },
+  {
+   "source": "https://github.com/GoogleCloudPlatform/khi/blob/ca3cc8829d47ab588d8ba11ba96e750a64a2931a/pkg/task/inspection/googlecloud/k8saudit/extractor_test.go (error log with explicit metadata.name in request; pod name rewritten)",
+   "native": {
+    "verb": "create",
+    "objectRef": {
+     "resource": "pods",
+     "apiVersion": "v1",
+     "namespace": "default",
+     "name": "trr9007-nginx-pod"
+    },
+    "responseStatus": {
+     "code": 422
+    }
+   },
+   "methodName": "io.k8s.core.v1.pods.create",
+   "resourceName": "core/v1/namespaces/default/pods",
+   "lost": [
+    "objectRef.name"
+   ]
+  },
+  {
+   "source": "https://github.com/GoogleCloudPlatform/khi/blob/ca3cc8829d47ab588d8ba11ba96e750a64a2931a/pkg/task/inspection/googlecloud/k8saudit/extractor_test.go (error log with generateName in request)",
+   "native": {
+    "verb": "create",
+    "objectRef": {
+     "resource": "pods",
+     "apiVersion": "v1",
+     "namespace": "default"
+    },
+    "responseStatus": {
+     "code": 403
+    }
+   },
+   "methodName": "io.k8s.core.v1.pods.create",
+   "resourceName": "core/v1/namespaces/default/pods"
+  }
+ ],
+ "field_map": {
+  "user.username": "protoPayload.authenticationInfo.principalEmail",
+  "sourceIPs": "protoPayload.requestMetadata.callerIp",
+  "userAgent": "protoPayload.requestMetadata.callerSuppliedUserAgent",
+  "annotations.authorization.k8s.io/decision": "labels.authorization.k8s.io/decision",
+  "requestObject.spec.signerName": "protoPayload.request.spec.signerName",
+  "impersonatedUser.username": "protoPayload.authenticationInfo.authoritySelector",
+  "requestObject": "protoPayload.request",
+  "requestObject.metadata.name": "protoPayload.request.metadata.name",
+  "responseObject": "protoPayload.response",
+  "responseObject.metadata.name": "protoPayload.response.metadata.name"
+ },
+ "field_map_sources": {
+  "user.username": "https://github.com/GoogleCloudPlatform/gke-mcp/blob/e34795c03284ff31ec871c6ff53a4e0882cdd02d/pkg/tools/logging/schemas/k8s_audit_logs.md (line 31: authenticationInfo.principalEmail)",
+  "sourceIPs": "https://github.com/GoogleCloudPlatform/gke-mcp/blob/e34795c03284ff31ec871c6ff53a4e0882cdd02d/pkg/tools/logging/schemas/k8s_audit_logs.md (line 33: requestMetadata.callerIp)",
+  "userAgent": "khi container_recorder_test_1_1.yaml (requestMetadata.callerSuppliedUserAgent)",
+  "annotations.authorization.k8s.io/decision": "https://github.com/elastic/detection-rules/blob/8049d3ba7624c18b8d5a84cc395ee8f3d85f71da/rules/integrations/gcp/impact_gcp_gke_coredns_or_kube_dns_configuration_modified.toml (gcp.audit.labels.authorization.k8s.io/decision)",
+  "requestObject.spec.signerName": "https://github.com/elastic/detection-rules/blob/8049d3ba7624c18b8d5a84cc395ee8f3d85f71da/rules/integrations/gcp/privilege_escalation_gcp_gke_certificate_signing_request_api_client_signer_requested.toml (gcp.audit.request.spec.signerName)",
+  "impersonatedUser.username": "https://github.com/elastic/detection-rules/blob/8049d3ba7624c18b8d5a84cc395ee8f3d85f71da/rules/integrations/gcp/privilege_escalation_gcp_gke_api_request_impersonating_privileged_identity.toml (setup: impersonation maps to authenticationInfo.authoritySelector; no record shows it)",
+  "requestObject": "https://github.com/GoogleCloudPlatform/khi/blob/ca3cc8829d47ab588d8ba11ba96e750a64a2931a/test/logs/k8s_audit/container_recorder_test_1_1.yaml (protoPayload.request: the pod object)",
+  "requestObject.metadata.name": "https://github.com/GoogleCloudPlatform/khi/blob/ca3cc8829d47ab588d8ba11ba96e750a64a2931a/pkg/task/inspection/googlecloud/k8saudit/extractor_test.go (protoPayload.request.metadata.name)",
+  "responseObject": "https://github.com/GoogleCloudPlatform/khi/blob/ca3cc8829d47ab588d8ba11ba96e750a64a2931a/test/logs/k8s_audit/container_recorder_test_1_1.yaml (protoPayload.response: the created pod)",
+  "responseObject.metadata.name": "https://github.com/GoogleCloudPlatform/khi/blob/ca3cc8829d47ab588d8ba11ba96e750a64a2931a/test/logs/k8s_audit/container_recorder_test_1_1.yaml (protoPayload.response.metadata.name)"
+ },
+ "must_hold": [
+  {
+   "why": "the core group: objectRef.apiGroup is null (omitempty in audit.k8s.io/v1)",
+   "selection": {
+    "objectRef.apiGroup": null
+   },
+   "native": {
+    "verb": "get",
+    "objectRef": {
+     "resource": "configmaps",
+     "apiVersion": "v1",
+     "namespace": "trr9007-ns",
+     "name": "trr9007-cm"
+    }
+   }
+  },
+  {
+   "why": "a namespace object is named by its own path",
+   "selection": {
+    "objectRef.name": "trr9007-ns",
+    "objectRef.resource": "namespaces"
+   },
+   "native": {
+    "verb": "get",
+    "objectRef": {
+     "resource": "namespaces",
+     "apiVersion": "v1",
+     "namespace": "trr9007-ns",
+     "name": "trr9007-ns"
+    }
+   }
+  },
+  {
+   "why": "a namespace's finalize subresource names the namespace",
+   "selection": {
+    "objectRef.name": "trr9007-ns",
+    "objectRef.subresource": "finalize"
+   },
+   "native": {
+    "verb": "update",
+    "objectRef": {
+     "resource": "namespaces",
+     "apiVersion": "v1",
+     "namespace": "trr9007-ns",
+     "name": "trr9007-ns",
+     "subresource": "finalize"
+    }
+   }
+  },
+  {
+   "why": "a successful create names the created object",
+   "selection": {
+    "objectRef.name": "trr9007-cm",
+    "objectRef.namespace": "kube-system"
+   },
+   "native": {
+    "verb": "create",
+    "objectRef": {
+     "resource": "configmaps",
+     "apiVersion": "v1",
+     "namespace": "kube-system",
+     "name": "trr9007-cm"
+    },
+    "responseStatus": {
+     "code": 201
+    }
+   }
+  }
+ ],
+ "must_not_hold": [
+  {
+   "why": "a create in namespace kube-system is not an object named kube-system",
+   "selection": {
+    "objectRef.name": "kube-system"
+   },
+   "native": {
+    "verb": "create",
+    "objectRef": {
+     "resource": "configmaps",
+     "apiVersion": "v1",
+     "namespace": "kube-system",
+     "name": "trr9007-cm"
+    },
+    "responseStatus": {
+     "code": 201
+    }
+   }
+  },
+  {
+   "why": "a read of a configmap in namespace kube-system is not an object named kube-system",
+   "selection": {
+    "objectRef.name": "kube-system"
+   },
+   "native": {
+    "verb": "list",
+    "objectRef": {
+     "resource": "configmaps",
+     "apiVersion": "v1",
+     "namespace": "kube-system"
+    }
+   }
+  },
+  {
+   "why": "namespace kube-system is not namespace kube-system-trr9007 (no prefix match)",
+   "selection": {
+    "objectRef.namespace": "kube-system"
+   },
+   "native": {
+    "verb": "get",
+    "objectRef": {
+     "resource": "pods",
+     "apiVersion": "v1",
+     "namespace": "kube-system-trr9007",
+     "name": "trr9007-pod"
+    }
+   }
+  },
+  {
+   "why": "verb delete is not deletecollection (the verb is the last methodName label)",
+   "selection": {
+    "verb": "delete"
+   },
+   "native": {
+    "verb": "deletecollection",
+    "objectRef": {
+     "resource": "pods",
+     "apiVersion": "v1",
+     "namespace": "trr9007-ns"
+    }
+   }
+  },
+  {
+   "why": "the resource of a pods/status patch is pods, not status",
+   "selection": {
+    "objectRef.resource": "status"
+   },
+   "native": {
+    "verb": "patch",
+    "objectRef": {
+     "resource": "pods",
+     "apiVersion": "v1",
+     "namespace": "trr9007-ns",
+     "name": "trr9007-pod",
+     "subresource": "status"
+    }
+   }
+  },
+  {
+   "why": "a group label (rbac) is not a subresource",
+   "selection": {
+    "objectRef.subresource": "rbac"
+   },
+   "native": {
+    "verb": "get",
+    "objectRef": {
+     "resource": "clusterroles",
+     "apiVersion": "v1",
+     "apiGroup": "rbac.authorization.k8s.io",
+     "name": "trr9007-role"
+    }
+   }
+  },
+  {
+   "why": "group apps is not group apps.trr9007.example.com (no prefix match)",
+   "selection": {
+    "objectRef.apiGroup": "apps"
+   },
+   "native": {
+    "verb": "get",
+    "objectRef": {
+     "resource": "widgets",
+     "apiVersion": "v1",
+     "apiGroup": "apps.trr9007.example.com",
+     "namespace": "trr9007-ns",
+     "name": "trr9007-widget"
+    }
+   }
+  },
+  {
+   "why": "objectRef.apiGroup null is the core group only",
+   "selection": {
+    "objectRef.apiGroup": null
+   },
+   "native": {
+    "verb": "get",
+    "objectRef": {
+     "resource": "deployments",
+     "apiVersion": "v1",
+     "apiGroup": "apps",
+     "namespace": "trr9007-ns",
+     "name": "trr9007-web"
+    }
+   }
+  }
+ ],
+ "field_map_complete": true,
+ "known_differences": [
+  {
+   "why": "objectRef.namespace: X holds on GKE on the create of namespace X: resourceName core/v1/namespaces/<name> is both the namespace object and the namespace prefix, and a successful create names the created object. The native Event has no namespace there: kube-apiserver v1.36.4 requestinfo.go lines 194-196 set the namespace only from a path part after 'namespaces' (POST /api/v1/namespaces has none), and audit/request.go lines 130-131 fill it from the object's metadata.namespace, which a Namespace does not have",
+   "selection": {
+    "objectRef.namespace": "trr9007-ns"
+   },
+   "native": {
+    "verb": "create",
+    "objectRef": {
+     "resource": "namespaces",
+     "apiVersion": "v1",
+     "name": "trr9007-ns"
+    },
+    "responseStatus": {
+     "code": 201
+    },
+    "responseObject": {
+     "kind": "Namespace",
+     "apiVersion": "v1",
+     "metadata": {
+      "name": "trr9007-ns"
+     }
+    }
+   },
+   "holds_native": false,
+   "holds_provider": true
+  },
+  {
+   "why": "the same with a prefix: objectRef.namespace|startswith: trr9007 holds on GKE on the create of namespace trr9007-ns, not natively",
+   "selection": {
+    "objectRef.namespace|startswith": "trr9007"
+   },
+   "native": {
+    "verb": "create",
+    "objectRef": {
+     "resource": "namespaces",
+     "apiVersion": "v1",
+     "name": "trr9007-ns"
+    },
+    "responseStatus": {
+     "code": 201
+    },
+    "responseObject": {
+     "kind": "Namespace",
+     "apiVersion": "v1",
+     "metadata": {
+      "name": "trr9007-ns"
+     }
+    }
+   },
+   "holds_native": false,
+   "holds_provider": true
+  }
+ ]
+}

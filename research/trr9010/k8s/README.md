@@ -83,6 +83,61 @@ telemetry exists whether or not the Event was still there. The one thing the aud
 cannot record is a node-local operation: truncating the audit log file or disabling the
 audit sink is a filesystem action, not an API call, so it leaves no audit event at all.
 
+**Managed platforms.** All of the above is true only where the audit policy logs
+Events requests. Several published policies do not log core-group Events at all
+(level None), and plain `kubectl delete event` uses the core group (client-go's REST
+mapper puts core `v1` first: `staging/src/k8s.io/client-go/restmapper/discovery.go`
+L47-49, v1.36.4). `kubectl delete events --all` uses the core group too, and it sends
+a list and then one DELETE per Event, not a collection DELETE
+(`staging/src/k8s.io/kubectl/pkg/cmd/delete/delete.go` L367-411 and L480-484). The
+offline policy simulator
+([`detections/k8s_policy_coverage.py`](../../../detections/k8s_policy_coverage.py))
+replays the positives of `k8s_events_deleted` as each policy records them; its result,
+with the counts per policy, is
+[`detections/k8s/policy_coverage.json`](../../../detections/k8s/policy_coverage.json),
+and the policy texts and their sources are in
+[`detections/k8s/provider-policies/`](../../../detections/k8s/provider-policies/SOURCES.md).
+
+| Policy | Core Events delete and deletecollection | events.k8s.io Events delete and deletecollection | Events deletes the rule sees |
+|--------|------------------------------------------|---------------------------------------------------|------------------------------|
+| Lab policy (`detections/k8s/audit-policy-apiserver.yaml`) | Request | Request | all |
+| EKS (Best Practices Guide policy, `detective.adoc` L85-89) | None | Metadata (catch-all) | events.k8s.io only |
+| GCE kube-up (`configure-helper.sh` L1234-1238; the EKS user guide links this policy and the GKE audit-policy page names this script; EKS and GKE themselves unverified) | None | Metadata (catch-all) | events.k8s.io only |
+| AKS, kube-audit and kube-audit-admin (`monitor-aks.md` L239-262) | delete at Metadata; deletecollection None | delete at Metadata; deletecollection None | single deletes in both groups, so also `kubectl delete events --all`; no collection DELETE |
+| OpenShift 4.17 and earlier, Default or WriteRequestBodies (library-go `release-4.17` `base-policy.yaml` L9-13) | None | Metadata (Default) or RequestResponse (WriteRequestBodies) | events.k8s.io only |
+| OpenShift 4.18 and later, Default | Metadata | Metadata | all |
+| OpenShift 4.18 and later, WriteRequestBodies | RequestResponse | RequestResponse | all |
+| k3s hardening-guide starter policy (k3s writes no audit log by default) | Metadata | Metadata | all |
+
+So on EKS, on a cluster that runs the GCE kube-up policy and on OpenShift 4.17 and
+earlier, Procedures A and B (and `kubectl delete events --all`) leave no record, and
+only a request in the events.k8s.io group is in the log (Procedures C and G). On AKS a single delete is logged in either group, so
+`kubectl delete events --all` is seen (one record per Event), but a collection DELETE
+in either group (Procedures B and G) is not: the policy
+drops every Events request except
+delete and list (and create, update and patch in `default` and `kube-system`). No rule
+change can see a request that the platform does not record. The compensating control
+is to copy Events out of the cluster as they happen (an event exporter to the log
+store), so a delete does not remove the only copy. The namespace delete of Procedure F
+is logged on every platform in the table. But where a platform logs namespace deletes
+at Metadata (OpenShift with the Default profile, and the k3s starter policy), a real
+namespace delete that also carries `?dryRun=All` next to its DeleteOptions body is
+filtered as a dry run
+([RULE_DEFECTS K14](../../../detections/RULE_DEFECTS.md#k14-k8s_namespace_deleted-a-query-dry-run-at-metadata-level)).
+Where an Events delete is logged at Metadata (the events.k8s.io group on EKS, under
+the GCE kube-up policy and on OpenShift 4.17 and earlier with the Default profile;
+both groups on AKS, on OpenShift 4.18 and later with the Default profile and under the
+k3s starter policy), the record holds no DeleteOptions body, so a `kubectl delete
+--dry-run=server` of an Event fires the rule. The simulator shows it for the core group
+(the filtered case `delete-core-event-dry-run-body` fires under AKS, OpenShift 4.18
+Default and k3s), and a probe of the same record in the events.k8s.io group fires under
+every policy that logs it at Metadata. The AKS Events rules and the k3s starter policy
+do not omit the RequestReceived stage, so there one delete writes two records and the
+rule alerts twice (deduplicate by `auditID`). A published policy is not a capture:
+whether each provider runs it unchanged is unverified. The gaps are tracked in
+[RULE_DEFECTS K38](../../../detections/RULE_DEFECTS.md#k38-kubernetes-events-deletes-leave-no-record-on-eks-gce-kube-up-and-openshift-417-and-no-collection-delete-record-on-aks)
+and [K39](../../../detections/RULE_DEFECTS.md#k39-delete-dry-run-body-filters-have-no-input-where-a-platform-logs-deletes-at-metadata).
+
 ### Why the technique works
 
 The records are ordinary Kubernetes objects and a local log file. An identity that
@@ -95,11 +150,12 @@ sensor and a continuity check on the audit pipeline.
 | Procedure | ID | Name | Entry point |
 |-----------|----|------|-------------|
 | A | TRR9010.K8S.A | Delete a single Event (core group) | `delete events` |
-| B | TRR9010.K8S.B | Bulk-wipe Events (deletecollection) | `deletecollection events` |
+| B | TRR9010.K8S.B | Bulk-wipe Events (deletecollection, core group) | `deletecollection events` |
 | C | TRR9010.K8S.C | Delete an Event (events.k8s.io group) | `delete events` (events.k8s.io) |
 | D | TRR9010.K8S.D | Delete a Pod or Job (workload record) | `delete pods`/`jobs` |
 | E | TRR9010.K8S.E | Clear the audit log on the node | node filesystem (no API call) |
 | F | TRR9010.K8S.F | Delete a whole namespace | `delete namespaces` |
+| G | TRR9010.K8S.G | Bulk-wipe Events (deletecollection, events.k8s.io group) | `deletecollection events` (events.k8s.io) |
 
 > A tool is not a procedure. `kubectl delete`, a client library, and a raw HTTP
 > client all produce the same audit shape.
@@ -117,7 +173,9 @@ The adversary deletes one Event that mentions their activity.
 - **Prerequisites:** `delete` on `events` in the namespace.
 - **Mechanics:** a single DELETE.
 - **Impact:** one record of activity is gone.
-- **Tools on this path:** `kubectl delete event`, any client.
+- **Tools on this path:** `kubectl delete event`, any client. `kubectl delete events
+  --all` is this path once per Event: it lists the Events, then deletes each one by
+  name (kubectl v1.36.4 `delete.go`, `DeleteResult`).
 
 #### Detection Data Model — `TRR9010.K8S.A`
 
@@ -126,16 +184,20 @@ The adversary deletes one Event that mentions their activity.
 Source: [`ddms/trr9010_k8s_a.json`](ddms/trr9010_k8s_a.json) (Arrows app format).
 
 **DDM summary.** The shaded node is the API server's authorize-and-audit of the
-delete (`objectRef.resource: events`, verb `delete`), the chokepoint for A, B, and C.
+delete (`objectRef.resource: events`, verb `delete` or `deletecollection`), the chokepoint
+for A, B, C and G.
 
-### Procedure B: Bulk-wipe Events — deletecollection  (`TRR9010.K8S.B`)
+### Procedure B: Bulk-wipe Events — deletecollection, core group  (`TRR9010.K8S.B`)
 
 The adversary wipes a whole namespace's Events in one request.
 
-- **Prerequisites:** `deletecollection` on `events`.
+- **Prerequisites:** `deletecollection` on `events` in the core group.
 - **Mechanics:** a collection DELETE; no single objectRef.name.
 - **Impact:** the mass cover-up — every Event in the namespace is gone.
-- **Tools on this path:** a collection DELETE, `kubectl delete events --all`.
+- **Tools on this path:** a collection DELETE on `/api/v1/namespaces/<ns>/events`
+  (a raw HTTP client, `kubectl delete --raw`, client-go `DeleteCollection`). `kubectl
+  delete events --all` does not send it: it sends a list and one delete per Event
+  (Procedure A).
 
 #### Detection Data Model — `TRR9010.K8S.B`
 
@@ -155,6 +217,8 @@ The adversary deletes an Event in the second API group.
 - **Mechanics:** the same object, a different group.
 - **Impact:** one record gone; a rule that pins the core group would miss it.
 - **Tools on this path:** `kubectl delete events.events.k8s.io`, any client.
+  `kubectl delete events.events.k8s.io --all` is this path once per Event (a list,
+  then one delete per Event).
 
 #### Detection Data Model — `TRR9010.K8S.C`
 
@@ -229,10 +293,42 @@ follows is filtered by the Events chokepoint as teardown, because every namespac
 deletion makes it. A namespace delete is routine (CI preview environments, tenant
 teardown), so this is a hunting signal (Strategy 4), not an alert.
 
+### Procedure G: Bulk-wipe Events — deletecollection, events.k8s.io group  (`TRR9010.K8S.G`)
+
+The adversary wipes a whole namespace's Events in one request through the second API
+group.
+
+- **Prerequisites:** `deletecollection` on `events` in events.k8s.io. RBAC checks the
+  API group: a rule that grants it in the core group only (`apiGroups: [""]`) does not
+  grant G, and a rule for events.k8s.io only does not grant B.
+- **Mechanics:** a collection DELETE on
+  `/apis/events.k8s.io/v1/namespaces/<ns>/events`; no single objectRef.name. The two
+  groups serve the same Event objects from one store, so the wipe removes every Event
+  in the namespace, whichever group created it.
+- **Impact:** the mass cover-up of B, through the group that a rule or an audit policy
+  rule that names only the core group does not see.
+- **Tools on this path:** a collection DELETE (a raw HTTP client, `kubectl delete
+  --raw`, client-go `DeleteCollection` on the events.k8s.io/v1 client). `kubectl delete
+  events.events.k8s.io --all` does not send it: it sends a list and one delete per Event
+  (Procedure C).
+
+#### Detection Data Model — `TRR9010.K8S.G`
+
+![DDM - Bulk-wipe Events (events.k8s.io)](ddms/trr9010_k8s_g.png)
+
+Source: [`ddms/trr9010_k8s_g.json`](ddms/trr9010_k8s_g.json) (Arrows app format).
+
+**DDM summary.** Same chokepoint as B: verb `deletecollection` and no
+`objectRef.name`, with `objectRef.apiGroup` `events.k8s.io`. G is to B what C is to
+A: the same request through the second group. It is a procedure of its own because the
+group changes the RBAC rule that permits the request and the audit policy rule that
+sets its level (a policy rule names its group). The rule matches the verb and does not
+pin the apiGroup, so it covers G.
+
 ## Detection Strategy
 
-Compare the six DDMs. Procedures A, B, and C all delete Events, so each leaves the
-same kind of audit event — one chokepoint rule covers all three. Procedure D is a
+Compare the seven DDMs. Procedures A, B, C and G all delete Events, so each leaves the
+same kind of audit event — one chokepoint rule covers all four. Procedure D is a
 different resource and a low-fidelity fallback. Procedure E never reaches the API
 server, so no audit rule can see it; a node sensor covers it. Procedure F deletes the
 Events through the namespace controller, so its only actor record is the namespace
@@ -245,15 +341,20 @@ the shared policy logs delete and deletecollection of pods, Events (core and
 events.k8s.io), namespaces and the workload controllers at `Request`. A delete's
 `requestObject` is DeleteOptions only (propagationPolicy, gracePeriodSeconds,
 preconditions, dryRun), with no object body and no secret data. The `events` None rule
-is scoped to reads only, so deletes are not dropped.
+is scoped to reads only, so deletes are not dropped. The published EKS and GCE kube-up
+policies and OpenShift 4.17 and earlier drop core-group Events requests, and AKS drops
+an Events collection DELETE: see "Managed platforms" under Technical Background.
 
-**Strategy 1 — chokepoint (covers A, B, C).**
+**Strategy 1 — chokepoint (covers A, B, C, G).**
 Match audit events where `objectRef.resource` is `events` and `verb` is `delete` or
 `deletecollection`. Do not pin the apiGroup (so events.k8s.io is covered) and do not
 match `delete` only (so the bulk `deletecollection` wipe is covered). Filter one
 request: the namespace controller's `deletecollection` of the Events of a namespace
 being deleted (`system:serviceaccount:kube-system:namespace-controller`), which every
-namespace teardown makes. Filter a server-side dry run when the record holds the
+namespace teardown makes. The filter reads only the identity and the verb, so a
+deletecollection sent with a token of that service account is filtered too
+([RULE_DEFECTS K37](../../../detections/RULE_DEFECTS.md#k37-namespace-teardown-filters-trust-the-namespace-controllers-name)).
+Filter a server-side dry run when the record holds the
 DeleteOptions body (`dryRun: ["All"]`, Request level); the query form is not trusted for
 a delete, because with a body the API server ignores the query. A delete or
 deletecollection with no body whose query holds `?dryRun=All` is a dry run too, but it
@@ -326,13 +427,16 @@ hunting and correlation, not an alert.
 | Procedure | Covered by | How |
 |-----------|-----------|-----|
 | A | Strategy 1 (chokepoint) | `delete events` (core) |
-| B | Strategy 1 (chokepoint) | `deletecollection events` (bulk wipe) |
+| B | Strategy 1 (chokepoint) | `deletecollection events` (core-group bulk wipe) |
 | C | Strategy 1 (chokepoint) | `delete events` (events.k8s.io) |
 | D | Strategy 2 (fallback) | `delete pods`/`jobs` |
 | E | Strategy 3 (node sensor); the gap | audit-log file cleared; no audit event |
 | F | Strategy 4 (hunting) | accepted `delete namespaces` |
+| G | Strategy 1 (chokepoint) | `deletecollection events` (events.k8s.io bulk wipe) |
 
-One chokepoint rule covers every API-level event deletion that the actor makes; an
+One chokepoint rule covers every API-level event deletion that the actor makes, except
+a deletecollection sent with a namespace-controller credential
+([RULE_DEFECTS K37](../../../detections/RULE_DEFECTS.md#k37-namespace-teardown-filters-trust-the-namespace-controllers-name)); an
 Events wipe through a namespace delete is matched by the hunting rule on the actor's
 namespace delete. A low-fidelity fallback
 covers workload-record deletion. A hunting rule covers the actor's namespace delete
@@ -351,16 +455,18 @@ Red Team wrappers in [`atomics/T1070/T1070.yaml`](../../../atomics/T1070/T1070.y
 | Procedure | Test | Status |
 |-----------|------|--------|
 | TRR9010.K8S.A | `emulate.sh a` — create and delete a core v1 Event. | **built** |
-| TRR9010.K8S.B | `emulate.sh b` — bulk-wipe Events with a collection DELETE. | **built** |
+| TRR9010.K8S.B | `emulate.sh b` — bulk-wipe Events with a collection DELETE on `/api/v1` (core group). | **built** |
 | TRR9010.K8S.C | `emulate.sh c` — create and delete an events.k8s.io Event. | **built** |
 | TRR9010.K8S.D | `emulate.sh d` — create and delete a busybox pod. | **built** |
 | TRR9010.K8S.E | `emulate.sh gap` — show the audit log path on the node (read-only). | **built** |
 | TRR9010.K8S.F | `emulate.sh f` — create namespace `trr9010-ns-f` with an Event, then delete the namespace. | **built** |
+| TRR9010.K8S.G | `emulate.sh g` — create a core Event and an events.k8s.io Event, bulk-wipe the Events with a collection DELETE through events.k8s.io (`kubectl delete --raw`), then check that both Events are gone. | **built** |
 
 `emulate.sh dryrun` is a control, not a procedure. It creates namespace
 `trr9010-dryrun-ns` with an Event, a pod and a suspended Job, sends `kubectl delete
 --dry-run=server` for the Event (core group, then events.k8s.io), the pod, the Job and
-the namespace, and a deletecollection of the namespace's Events and of its pods
+the namespace, and a deletecollection of the namespace's Events (core group, then
+events.k8s.io) and of its pods
 (`kubectl delete --raw` of the collection URL with a DeleteOptions body that holds
 `dryRun: ["All"]`). Then it checks that every object is still there and that the pod
 is not being deleted. A server-side dry run deletes nothing, so the three rules must
@@ -370,7 +476,7 @@ match none of these records.
 
 | Strategy | Covers | Sigma rule | Sensor |
 |----------|--------|------------|--------|
-| 1 (chokepoint) | A, B, C | [`detections/sigma/T1070/k8s_events_deleted.yml`](../../../detections/sigma/T1070/k8s_events_deleted.yml) | API server audit log |
+| 1 (chokepoint) | A, B, C, G | [`detections/sigma/T1070/k8s_events_deleted.yml`](../../../detections/sigma/T1070/k8s_events_deleted.yml) | API server audit log |
 | 2 (fallback) | D | [`detections/sigma/T1070/k8s_workload_deleted_evidence.yml`](../../../detections/sigma/T1070/k8s_workload_deleted_evidence.yml) | API server audit log |
 | 3 (node sensor) | E; the gap | none at the audit-log layer, by design | node file-integrity sensor |
 | 4 (hunting) | F | [`detections/sigma/T1070/k8s_namespace_deleted.yml`](../../../detections/sigma/T1070/k8s_namespace_deleted.yml) | API server audit log |
@@ -380,7 +486,8 @@ The validator
 reads the API server audit log the emulation produced and asserts Strategies 1, 2 and
 4 match a record of each procedure's own: the accepted (200) delete of Event
 `trr9010-evt-a` (A, core group) and `trr9010-evt-c` (C, events.k8s.io), the bulk
-deletecollection in the `trr9010` namespace (B), the pod delete (D) and the delete of
+deletecollection in the `trr9010` namespace by a caller that is not a `system:`
+identity, in the core group (B) and in events.k8s.io (G), the pod delete (D) and the delete of
 namespace `trr9010-ns-f` (F). A 404 delete does not count, so the emulation creates each
 Event first; each Event names an `involvedObject` (or `regarding`) in its own namespace,
 because the API server's Event validation refuses one outside `default` that does not.

@@ -129,8 +129,14 @@ detection:
     requestParameters.policy|re|i: 'aws:PrincipalOrgID|aws:SourceArn|aws:SourceAccount|aws:SourceVpc|aws:SourceOwner'
   filter_failed:
     errorCode: '*'
+  # Null-safe negation: a backend with three-valued logic (ES|QL and other SQL
+  # backends) reads NOT of a test on a missing field as NULL and drops the record.
+  # CloudTrail writes errorCode only when the call returns an error, so the filter is
+  # ORed with a test that the field is absent.
+  sel_no_error_code:
+    errorCode: null
   condition: >
-    selection_efs_policy and selection_allow and selection_public_principal and not filter_failed and
+    selection_efs_policy and selection_allow and selection_public_principal and (sel_no_error_code or not filter_failed) and
     ((public_allow_statement and not (filter_scoped or filter_mount_target)) or
      (public_allow_statement_2 and not (filter_scoped_2 or filter_mount_target_2)) or
      (public_allow_statement_3 and not (filter_scoped_3 or filter_mount_target_3)) or

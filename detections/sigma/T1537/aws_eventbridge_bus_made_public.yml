@@ -38,13 +38,39 @@ detection:
     - requestParameters.policy|re: '\"(Principal|AWS)\"\s*:\s*\[?\s*\"\*\"'
   filter_scoped:
     - requestParameters.condition.key: '*'
-    - requestParameters.policy|contains:
+    - requestParameters.policy|contains: &scoping_keys
         - 'aws:PrincipalOrgID'
         - 'aws:SourceArn'
         - 'aws:SourceAccount'
+  # Null-safe copy of filter_scoped (see sel_no_error_code below for why). PutPermission
+  # takes either Policy or Principal with an optional Condition, so a record lacks the
+  # field of one map of filter_scoped, and a field: null selection cannot guard a block
+  # whose maps read different fields. Each map of filter_scoped is repeated as a block
+  # of its own, and the condition reads each one only where its field is present (not
+  # sel_no_<field>). In two-valued logic the copy holds exactly where filter_scoped
+  # holds; in three-valued logic it is never NULL.
+  filter_scoped_condition_key:
+    requestParameters.condition.key: '*'
+  filter_scoped_policy:
+    requestParameters.policy|contains: *scoping_keys
+  sel_no_condition_key:
+    requestParameters.condition.key: null
+  sel_no_policy:
+    requestParameters.policy: null
   filter_failed:
     errorCode: '*'
-  condition: selection_putpermission and selection_public_principal and not filter_scoped and not filter_failed
+  # Null-safe negation: a backend with three-valued logic (ES|QL and other SQL
+  # backends) reads NOT of a test on a missing field as NULL and drops the record.
+  # CloudTrail writes errorCode only when the call returns an error, so the filter is
+  # ORed with a test that the field is absent.
+  sel_no_error_code:
+    errorCode: null
+  condition: >-
+    selection_putpermission and selection_public_principal and
+    not (filter_scoped and
+         ((filter_scoped_condition_key and not sel_no_condition_key) or
+          (filter_scoped_policy and not sel_no_policy))) and
+    (sel_no_error_code or not filter_failed)
 falsepositives:
   - An organisation-wide event bus intentionally shared to all accounts in the org via an
     aws:PrincipalOrgID condition is not public and is excluded.
