@@ -489,6 +489,16 @@ approval that lands after they have passed leaves the merge to a human (see
   - `null-safety` runs every rule in two- and three-valued logic
     (`check_null_safety.py`).
   - `check-sufficiency` is the gate above.
+  - `platform-coverage` (not required) replays every Kubernetes audit rule's cases as
+    each lab and provider audit policy records them (`k8s_policy_coverage.py
+    --self-test` and `--check`). After a change to a Kubernetes rule's detection,
+    title or level, a sidecar, a lab policy, a kind config or a validator MANIFEST,
+    run `--update` and commit `detections/k8s/policy_coverage.json`.
+  - `provider-mappings` (not required) proves the AKS and GKE pipelines on every
+    Kubernetes case (`check_provider_mappings.py --check --require-re2` and both
+    self-tests). After a Kubernetes rule or case change, run `--propose`, review each
+    difference, then `--write`; a new difference needs an `EXPECTED_LOSS` or
+    `NOT_PORTABLE` entry, which is a human approval.
   - `sufficiency-ratchet` (pull requests only) compares every rule with the base
     branch: its sufficiency report (cases, negatives, positives, logsource) and its
     benign-corpus hits.
@@ -504,6 +514,8 @@ Run locally before pushing:
 python3 detections/rule_cases.py detections/sigma/<T...>/<rule>.yml   # sidecar cases hold
 python3 detections/check_null_safety.py detections/sigma/<T...>/<rule>.yml  # null-safe `not`
 python3 detections/check_sufficiency.py --rule detections/sigma/<T...>/<rule>.yml
+python3 detections/k8s_policy_coverage.py --check          # Kubernetes: --update, then commit the JSON
+python3 detections/check_provider_mappings.py --check      # Kubernetes: --propose, review, --write
 python3 detections/validate_cloud_detections.py            # attack fires + benign clean
 python3 detections/score_benign.py --check --enforce       # FP snapshot current, budgets held
 sigma check -x attacktag -x d3_fendtag -x cartag -x detection_tag detections/sigma/<T...>/
