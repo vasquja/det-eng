@@ -502,6 +502,12 @@ request, on push to `main`, and weekly: `rule-cases`, `check-sufficiency`,
 It also runs `schedule-freshness` (not on push), which reads the Actions API; see
 below.
 
+The `platform-coverage` job of the same workflow runs
+`python3 detections/k8s_policy_coverage.py --self-test --check` (see
+[Managed platforms: the audit-policy simulator](#managed-platforms-the-audit-policy-simulator)).
+On a pull request it runs only when the pull request changes one of its inputs; it is
+not a required check.
+
 **Weekly scheduled runs.** Each workflow file with a `schedule:` trigger (the
 cron line is in the file) runs once a week, so CI proves a rule again when only
 pySigma, the runner image or the kernel changed. GitHub can start a scheduled run
@@ -1062,6 +1068,55 @@ so the `9007 static` entry match-gates the pod-spec chokepoint on it (`create po
 the emulation polls up to 60 s for that mirror pod and fails if it never registers.
 TRR9003's CRI rule for the static pod is not compiled by this validator;
 `validate_staticpod_detections.py` compiles and match-gates it on the TRR9003 emulation.
+
+## Managed platforms: the audit-policy simulator
+
+Every Kubernetes audit rule (TRR9002, TRR9003 and the API server TRRs) is proven under
+the lab policies in [`k8s/`](k8s/). A managed cluster runs its own audit policy, and
+on a managed platform (EKS, GKE, AKS) the user cannot change it.
+[`k8s_policy_coverage.py`](k8s_policy_coverage.py) evaluates an audit policy the way
+the API server does (kubernetes v1.36.4 `pkg/audit/policy/checker.go`: first matching
+rule wins, users, groups, verbs, namespaces, resources with subresources and
+wildcards, resourceNames, non-resource URLs, omitStages), builds the records that each
+sidecar case's request leaves under that policy (no record at None, no `requestObject`
+below Request, no `responseObject` below RequestResponse, plus a RequestReceived
+record where that stage is not omitted), and runs the real rule on them. It reports,
+per rule and policy, the positives that still fire, the near-misses that stay quiet
+and the negatives that start to fire (for example a dry-run filter that lost its
+body). A record never gains a body: where a policy logs more than a case record holds,
+the table marks the cell `~` when the rule reads that missing body, so that case is
+not proven on that platform. Where a policy keeps the RequestReceived stage (the k3s
+starter policy; some AKS and EKS rules), one request writes two records, and a rule
+alerts twice for it. The policies are the three lab policies and the published EKS,
+GCE kube-up, AKS (kube-audit and kube-audit-admin), OpenShift (Default and
+WriteRequestBodies, 4.17 and 4.18 and later) and k3s starter policies, vendored with
+their sources, licenses and digests in
+[`k8s/provider-policies/SOURCES.md`](k8s/provider-policies/SOURCES.md). It models the
+policy only, not a provider's log pipeline, and a published policy is not a capture.
+
+```bash
+python3 detections/k8s_policy_coverage.py            # the table
+python3 detections/k8s_policy_coverage.py --detail   # and every lost positive
+python3 detections/k8s_policy_coverage.py --update   # rewrite k8s/policy_coverage.json
+python3 detections/k8s_policy_coverage.py --self-test --check   # what CI runs
+```
+
+The committed result, [`k8s/policy_coverage.json`](k8s/policy_coverage.json), has a
+documented schema (the script's docstring). `--check` fails when a rule, a sidecar, a
+policy file, a validator MANIFEST or the evaluator's output changed and the file was
+not regenerated, so a pull request that changes a Kubernetes rule or its cases also
+runs `--update`. `--check`, `--update` and the table also run a home check: the home
+of a rule is the lab policy of the validator whose MANIFEST registers it, and under
+that policy every positive must fire and no negative may fire, because CI proves that
+live. The platform gaps it found are in [`RULE_DEFECTS.md`](RULE_DEFECTS.md) (the
+platform entries after K36).
+
+**Merge path.** `k8s/policy_coverage.json` is under `detections/k8s/`, which the
+`automerge` workflow's content allowlist (rail 8) does not count as content. So a pull
+request that regenerates it needs a human merge, and one that changes the result
+without regenerating it fails `platform-coverage`. Whether to add the file to that
+allowlist (it is derived, and `--check` recomputes it, as `benign/scores.json` is) or
+to make `platform-coverage` a required check is a decision for the maintainer.
 
 ## External cloud detections (AWS, Azure, GCP)
 

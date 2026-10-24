@@ -39,6 +39,18 @@ name: detection-quality
 #                      Any other error, or an unreadable base scores.json, fails it.
 #   coverage-report    research/COVERAGE.md and the README coverage chart must match
 #                      what research/tools/coverage_report.py generates now. Hard gate.
+#   platform-coverage  which Kubernetes audit rule still fires under which audit
+#                      policy (the lab policies and the published EKS, GCE kube-up,
+#                      AKS, OpenShift and k3s policies in detections/k8s/
+#                      provider-policies/): detections/k8s_policy_coverage.py
+#                      --self-test --check. It fails when the evaluator's unit cases
+#                      fail, a vendored policy changed, the committed
+#                      detections/k8s/policy_coverage.json is stale, or a rule loses a
+#                      positive (or a negative fires) under its own lab policy (the
+#                      home check). On a pull request
+#                      it runs only when the PR changes a file the result depends on
+#                      (the step lists them); push, schedule and dispatch always run
+#                      it. Not a required check.
 #   benign-corpus      every rule scored against the committed benign corpus
 #                      (detections/score_benign.py): the snapshot scores.json must be
 #                      current, and a rule in `enforce` mode (every per-rule entry
@@ -177,6 +189,111 @@ jobs:
 
       - name: Check that the coverage report is current
         run: python3 research/tools/coverage_report.py --check
+
+  platform-coverage:
+    # Which Kubernetes audit rule still fires under which audit policy: the script
+    # replays every sidecar case of every Kubernetes audit rule through the rule as
+    # each policy would record it (offline; see the script's docstring). Fails when
+    # detections/k8s/policy_coverage.json is stale; regenerate it with --update.
+    name: platform-coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: f
+        name: Decide whether the pull request changes an input of the result
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_SHA:-}" ]; then
+            echo "Not a pull request; running the check."
+            echo "relevant=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # Exact file paths, or directory prefixes ending in '/'. Every rule
+          # directory counts: the script picks the Kubernetes audit rules by
+          # logsource, so a rule anywhere can join or leave the set. The validators
+          # say which lab policy is each rule's home.
+          patterns=$(printf '%s\n' \
+            'detections/sigma/' \
+            'detections/k8s/' \
+            'detections/k8s_policy_coverage.py' \
+            'detections/sigma_eval.py' \
+            'detections/sigma_explain.py' \
+            'detections/rule_cases.py' \
+            'detections/requirements.txt' \
+            'detections/validate_apiserver_detections.py' \
+            'detections/validate_k8s_detections.py' \
+            'detections/validate_staticpod_detections.py' \
+            '.github/workflows/detection-quality.yml')
+          # Fail safe: if the diff cannot be computed, run the check.
+          # --no-renames: a rename lists both its old and its new path, so a file
+          # moved out of the listed prefixes still counts.
+          if ! changed="$(git diff --no-renames --name-only "${BASE_SHA}...${HEAD_SHA}" 2>/dev/null)"; then
+            echo "git diff failed; running the check to be safe."
+            echo "relevant=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          relevant=false
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            while IFS= read -r pat; do
+              [ -n "$pat" ] || continue
+              if [ "${pat%/}" != "$pat" ]; then
+                case "$file" in "$pat"*) relevant=true; break 2 ;; esac
+              else
+                [ "$file" = "$pat" ] && { relevant=true; break 2; }
+              fi
+            done <<< "$patterns"
+          done <<< "$changed"
+          echo "relevant=$relevant"
+          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        if: steps.f.outputs.relevant == 'true'
+        with:
+          python-version: '3.x'
+
+      - name: Install requirements
+        if: steps.f.outputs.relevant == 'true'
+        run: pip install --quiet -r detections/requirements.txt
+
+      - name: Self-test the policy evaluator and check that the result is current
+        if: steps.f.outputs.relevant == 'true'
+        shell: bash
+        run: |
+          # shell: bash enables pipefail, so tee does not mask the exit code.
+          python3 detections/k8s_policy_coverage.py --self-test --check \
+            | tee /tmp/platform-coverage.out
+
+      - name: Publish the platform table to job summary
+        if: ${{ always() && steps.f.outputs.relevant == 'true' }}
+        shell: bash
+        run: |
+          # The script prints the table and exits 1 when the home check fails, so a
+          # non-zero exit with output is not "no table".
+          rc=0
+          table="$(python3 detections/k8s_policy_coverage.py 2>&1)" || rc=$?
+          {
+            echo '## Kubernetes rules under each audit policy (offline simulation)'
+            echo ''
+            echo '```'
+            cat /tmp/platform-coverage.out 2>/dev/null || echo '(no check output captured)'
+            echo ''
+            if [ -n "$table" ]; then printf '%s\n' "$table"; fi
+            if [ "$rc" -ne 0 ] && [ -z "$table" ]; then
+              echo "(the table could not be computed: exit code $rc, no output)"
+            elif [ "$rc" -ne 0 ]; then
+              echo "(exit code $rc: a check failed; read the FAIL or ERROR lines above)"
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   sufficiency-ratchet:
     # PR only: compare the head with the base branch. The sufficiency report of each

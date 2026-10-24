@@ -83,6 +83,63 @@ telemetry exists whether or not the Event was still there. The one thing the aud
 cannot record is a node-local operation: truncating the audit log file or disabling the
 audit sink is a filesystem action, not an API call, so it leaves no audit event at all.
 
+**Managed platforms.** All of the above is true only where the audit policy logs
+Events requests. Several published policies do not log core-group Events at all
+(level None), and plain `kubectl delete event` uses the core group (client-go's REST
+mapper puts core `v1` first: `staging/src/k8s.io/client-go/restmapper/discovery.go`
+L47-49, v1.36.4). `kubectl delete events --all` uses the core group too, and it sends
+a list and then one DELETE per Event, not a collection DELETE
+(`staging/src/k8s.io/kubectl/pkg/cmd/delete/delete.go` L367-411 and L480-484). The
+offline policy simulator
+([`detections/k8s_policy_coverage.py`](../../../detections/k8s_policy_coverage.py))
+replays the positives of `k8s_events_deleted` as each policy records them; its result,
+with the counts per policy, is
+[`detections/k8s/policy_coverage.json`](../../../detections/k8s/policy_coverage.json),
+and the policy texts and their sources are in
+[`detections/k8s/provider-policies/`](../../../detections/k8s/provider-policies/SOURCES.md).
+
+| Policy | Core Events delete and deletecollection | events.k8s.io Events delete and deletecollection | Events deletes the rule sees |
+|--------|------------------------------------------|---------------------------------------------------|------------------------------|
+| Lab policy (`detections/k8s/audit-policy-apiserver.yaml`) | Request | Request | all |
+| EKS (Best Practices Guide policy, `detective.adoc` L85-89) | None | Metadata (catch-all) | events.k8s.io only |
+| GCE kube-up (`configure-helper.sh` L1234-1238; the EKS user guide links this policy and the GKE audit-policy page names this script; EKS and GKE themselves unverified) | None | Metadata (catch-all) | events.k8s.io only |
+| AKS, kube-audit and kube-audit-admin (`monitor-aks.md` L239-262) | delete at Metadata; deletecollection None | delete at Metadata; deletecollection None | single deletes in both groups, so also `kubectl delete events --all`; no collection DELETE |
+| OpenShift 4.17 and earlier, Default or WriteRequestBodies (library-go `release-4.17` `base-policy.yaml` L9-13) | None | Metadata (Default) or RequestResponse (WriteRequestBodies) | events.k8s.io only |
+| OpenShift 4.18 and later, Default | Metadata | Metadata | all |
+| OpenShift 4.18 and later, WriteRequestBodies | RequestResponse | RequestResponse | all |
+| k3s hardening-guide starter policy (k3s writes no audit log by default) | Metadata | Metadata | all |
+
+So on EKS, on a cluster that runs the GCE kube-up policy and on OpenShift 4.17 and
+earlier, Procedures A and B (and `kubectl delete events --all`) leave no record, and
+only a request in the events.k8s.io group is in the log: a delete (Procedure C) or a
+collection DELETE in that group. On AKS a single delete is logged in either group, so
+`kubectl delete events --all` is seen (one record per Event), but a collection DELETE
+in either group (Procedure B in the core group: a raw API call, or client-go
+`DeleteCollection`; the same request in the events.k8s.io group) is not: the policy
+drops every Events request except
+delete and list (and create, update and patch in `default` and `kube-system`). No rule
+change can see a request that the platform does not record. The compensating control
+is to copy Events out of the cluster as they happen (an event exporter to the log
+store), so a delete does not remove the only copy. The namespace delete of Procedure F
+is logged on every platform in the table. But where a platform logs namespace deletes
+at Metadata (OpenShift with the Default profile, and the k3s starter policy), a real
+namespace delete that also carries `?dryRun=All` next to its DeleteOptions body is
+filtered as a dry run
+([RULE_DEFECTS K14](../../../detections/RULE_DEFECTS.md#k14-k8s_namespace_deleted-a-query-dry-run-at-metadata-level)).
+Where an Events delete is logged at Metadata (the events.k8s.io group on EKS, under
+the GCE kube-up policy and on OpenShift 4.17 and earlier with the Default profile;
+both groups on AKS, on OpenShift 4.18 and later with the Default profile and under the
+k3s starter policy), the record holds no DeleteOptions body, so a `kubectl delete
+--dry-run=server` of an Event fires the rule. The simulator shows it for the core group
+(the filtered case `delete-core-event-dry-run-body` fires under AKS, OpenShift 4.18
+Default and k3s), and a probe of the same record in the events.k8s.io group fires under
+every policy that logs it at Metadata. The AKS Events rules and the k3s starter policy
+do not omit the RequestReceived stage, so there one delete writes two records and the
+rule alerts twice (deduplicate by `auditID`). A published policy is not a capture:
+whether each provider runs it unchanged is unverified. The gaps are tracked in
+[RULE_DEFECTS KTBD-A1](../../../detections/RULE_DEFECTS.md#ktbd-a1-kubernetes-events-deletes-leave-no-record-on-eks-gce-kube-up-and-openshift-417-and-no-collection-delete-record-on-aks)
+and [KTBD-A2](../../../detections/RULE_DEFECTS.md#ktbd-a2-delete-dry-run-body-filters-have-no-input-where-a-platform-logs-deletes-at-metadata).
+
 ### Why the technique works
 
 The records are ordinary Kubernetes objects and a local log file. An identity that
@@ -286,7 +343,9 @@ the shared policy logs delete and deletecollection of pods, Events (core and
 events.k8s.io), namespaces and the workload controllers at `Request`. A delete's
 `requestObject` is DeleteOptions only (propagationPolicy, gracePeriodSeconds,
 preconditions, dryRun), with no object body and no secret data. The `events` None rule
-is scoped to reads only, so deletes are not dropped.
+is scoped to reads only, so deletes are not dropped. The published EKS and GCE kube-up
+policies and OpenShift 4.17 and earlier drop core-group Events requests, and AKS drops
+an Events collection DELETE: see "Managed platforms" under Technical Background.
 
 **Strategy 1 — chokepoint (covers A, B, C, G).**
 Match audit events where `objectRef.resource` is `events` and `verb` is `delete` or

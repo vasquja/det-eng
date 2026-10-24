@@ -40,6 +40,30 @@ description: |
   namespace was deleted, so that rule is for hunting by actor and namespace, and for
   correlation with this identity's other writes. Baseline the system identities and
   any known event-exporter service accounts by user.username.
+
+  Managed platforms: the rule sees only what the platform's audit policy records.
+  detections/k8s_policy_coverage.py replays the positives of this rule as each
+  published policy records them (detections/k8s/policy_coverage.json has the counts; a
+  published policy is not a capture, so each line is unverified on a live cluster).
+  The EKS policy (EKS Best Practices Guide), the GCE kube-up policy (the EKS user guide
+  links it, and the GKE audit-policy page names it) and OpenShift 4.17 and earlier log
+  no request on core-group Events (level None): a core delete or collection DELETE
+  (Procedures A and B, plain kubectl delete event, and kubectl delete events --all,
+  which sends one DELETE per Event) leaves no record there, and only a delete or
+  deletecollection in the events.k8s.io group fires. The AKS policy logs an Events
+  delete at Metadata and drops a collection DELETE in either group: a single delete,
+  and so kubectl delete events --all, fires, but a collection DELETE in either group
+  (Procedure B in the core group: a raw API call or client-go DeleteCollection)
+  leaves no record. OpenShift 4.18 and
+  later and the k3s hardening-guide starter policy log Events deletes. On AKS and under
+  the k3s starter policy a delete also writes a RequestReceived record, so one delete
+  fires twice (deduplicate by auditID). No rule change can see a request that is not
+  recorded: copy Events out of the cluster as they happen (an event exporter), so a
+  delete does not remove the only copy. The namespace delete (Procedure F,
+  k8s_namespace_deleted.yml) is logged under every one of these policies; where it is
+  logged at Metadata (OpenShift Default, the k3s starter policy), a real namespace
+  delete that carries ?dryRun=All next to its body is filtered there
+  (detections/RULE_DEFECTS.md KTBD-A1, K14).
 references:
   - https://attack.mitre.org/techniques/T1070/
   - https://attack.mitre.org/techniques/T1070/004/
@@ -87,4 +111,10 @@ falsepositives:
     does kubectl delete --raw with a ?dryRun=All URI and no -f; kubectl delete
     --dry-run=server and client-go send the dry run in the body
     (detections/RULE_DEFECTS.md K36).
+  - A server-side dry run on a managed platform whose published policy logs Event
+    deletes at Metadata, so that the record holds no DeleteOptions body. That is the
+    AKS policy, OpenShift 4.18 and later with the Default profile and the k3s
+    hardening-guide starter policy (both groups), and the events.k8s.io group under
+    the EKS and GCE kube-up policies and on OpenShift 4.17 and earlier with the Default
+    profile (detections/RULE_DEFECTS.md KTBD-A2).
 level: medium
