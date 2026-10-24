@@ -95,11 +95,12 @@ sensor and a continuity check on the audit pipeline.
 | Procedure | ID | Name | Entry point |
 |-----------|----|------|-------------|
 | A | TRR9010.K8S.A | Delete a single Event (core group) | `delete events` |
-| B | TRR9010.K8S.B | Bulk-wipe Events (deletecollection) | `deletecollection events` |
+| B | TRR9010.K8S.B | Bulk-wipe Events (deletecollection, core group) | `deletecollection events` |
 | C | TRR9010.K8S.C | Delete an Event (events.k8s.io group) | `delete events` (events.k8s.io) |
 | D | TRR9010.K8S.D | Delete a Pod or Job (workload record) | `delete pods`/`jobs` |
 | E | TRR9010.K8S.E | Clear the audit log on the node | node filesystem (no API call) |
 | F | TRR9010.K8S.F | Delete a whole namespace | `delete namespaces` |
+| G | TRR9010.K8S.G | Bulk-wipe Events (deletecollection, events.k8s.io group) | `deletecollection events` (events.k8s.io) |
 
 > A tool is not a procedure. `kubectl delete`, a client library, and a raw HTTP
 > client all produce the same audit shape.
@@ -117,7 +118,9 @@ The adversary deletes one Event that mentions their activity.
 - **Prerequisites:** `delete` on `events` in the namespace.
 - **Mechanics:** a single DELETE.
 - **Impact:** one record of activity is gone.
-- **Tools on this path:** `kubectl delete event`, any client.
+- **Tools on this path:** `kubectl delete event`, any client. `kubectl delete events
+  --all` is this path once per Event: it lists the Events, then deletes each one by
+  name (kubectl v1.36.4 `delete.go`, `DeleteResult`).
 
 #### Detection Data Model — `TRR9010.K8S.A`
 
@@ -126,16 +129,20 @@ The adversary deletes one Event that mentions their activity.
 Source: [`ddms/trr9010_k8s_a.json`](ddms/trr9010_k8s_a.json) (Arrows app format).
 
 **DDM summary.** The shaded node is the API server's authorize-and-audit of the
-delete (`objectRef.resource: events`, verb `delete`), the chokepoint for A, B, and C.
+delete (`objectRef.resource: events`, verb `delete` or `deletecollection`), the chokepoint
+for A, B, C and G.
 
-### Procedure B: Bulk-wipe Events — deletecollection  (`TRR9010.K8S.B`)
+### Procedure B: Bulk-wipe Events — deletecollection, core group  (`TRR9010.K8S.B`)
 
 The adversary wipes a whole namespace's Events in one request.
 
-- **Prerequisites:** `deletecollection` on `events`.
+- **Prerequisites:** `deletecollection` on `events` in the core group.
 - **Mechanics:** a collection DELETE; no single objectRef.name.
 - **Impact:** the mass cover-up — every Event in the namespace is gone.
-- **Tools on this path:** a collection DELETE, `kubectl delete events --all`.
+- **Tools on this path:** a collection DELETE on `/api/v1/namespaces/<ns>/events`
+  (a raw HTTP client, `kubectl delete --raw`, client-go `DeleteCollection`). `kubectl
+  delete events --all` does not send it: it sends a list and one delete per Event
+  (Procedure A).
 
 #### Detection Data Model — `TRR9010.K8S.B`
 
@@ -155,6 +162,8 @@ The adversary deletes an Event in the second API group.
 - **Mechanics:** the same object, a different group.
 - **Impact:** one record gone; a rule that pins the core group would miss it.
 - **Tools on this path:** `kubectl delete events.events.k8s.io`, any client.
+  `kubectl delete events.events.k8s.io --all` is this path once per Event (a list,
+  then one delete per Event).
 
 #### Detection Data Model — `TRR9010.K8S.C`
 
@@ -229,10 +238,42 @@ follows is filtered by the Events chokepoint as teardown, because every namespac
 deletion makes it. A namespace delete is routine (CI preview environments, tenant
 teardown), so this is a hunting signal (Strategy 4), not an alert.
 
+### Procedure G: Bulk-wipe Events — deletecollection, events.k8s.io group  (`TRR9010.K8S.G`)
+
+The adversary wipes a whole namespace's Events in one request through the second API
+group.
+
+- **Prerequisites:** `deletecollection` on `events` in events.k8s.io. RBAC checks the
+  API group: a rule that grants it in the core group only (`apiGroups: [""]`) does not
+  grant G, and a rule for events.k8s.io only does not grant B.
+- **Mechanics:** a collection DELETE on
+  `/apis/events.k8s.io/v1/namespaces/<ns>/events`; no single objectRef.name. The two
+  groups serve the same Event objects from one store, so the wipe removes every Event
+  in the namespace, whichever group created it.
+- **Impact:** the mass cover-up of B, through the group that a rule or an audit policy
+  rule that names only the core group does not see.
+- **Tools on this path:** a collection DELETE (a raw HTTP client, `kubectl delete
+  --raw`, client-go `DeleteCollection` on the events.k8s.io/v1 client). `kubectl delete
+  events.events.k8s.io --all` does not send it: it sends a list and one delete per Event
+  (Procedure C).
+
+#### Detection Data Model — `TRR9010.K8S.G`
+
+![DDM - Bulk-wipe Events (events.k8s.io)](ddms/trr9010_k8s_g.png)
+
+Source: [`ddms/trr9010_k8s_g.json`](ddms/trr9010_k8s_g.json) (Arrows app format).
+
+**DDM summary.** Same chokepoint as B: verb `deletecollection` and no
+`objectRef.name`, with `objectRef.apiGroup` `events.k8s.io`. G is to B what C is to
+A: the same request through the second group. It is a procedure of its own because the
+group changes the RBAC rule that permits the request and the audit policy rule that
+sets its level (a policy rule names its group). The rule matches the verb and does not
+pin the apiGroup, so it covers G.
+
 ## Detection Strategy
 
-Compare the six DDMs. Procedures A, B, and C all delete Events, so each leaves the
-same kind of audit event — one chokepoint rule covers all three. Procedure D is a
+Compare the seven DDMs. Procedures A, B, C and G all delete Events, so each leaves the
+same kind of audit event — one chokepoint rule covers all four. Procedure D is a
 different resource and a low-fidelity fallback. Procedure E never reaches the API
 server, so no audit rule can see it; a node sensor covers it. Procedure F deletes the
 Events through the namespace controller, so its only actor record is the namespace
@@ -247,13 +288,16 @@ events.k8s.io), namespaces and the workload controllers at `Request`. A delete's
 preconditions, dryRun), with no object body and no secret data. The `events` None rule
 is scoped to reads only, so deletes are not dropped.
 
-**Strategy 1 — chokepoint (covers A, B, C).**
+**Strategy 1 — chokepoint (covers A, B, C, G).**
 Match audit events where `objectRef.resource` is `events` and `verb` is `delete` or
 `deletecollection`. Do not pin the apiGroup (so events.k8s.io is covered) and do not
 match `delete` only (so the bulk `deletecollection` wipe is covered). Filter one
 request: the namespace controller's `deletecollection` of the Events of a namespace
 being deleted (`system:serviceaccount:kube-system:namespace-controller`), which every
-namespace teardown makes. Filter a server-side dry run when the record holds the
+namespace teardown makes. The filter reads only the identity and the verb, so a
+deletecollection sent with a token of that service account is filtered too
+([RULE_DEFECTS KTBD-E1](../../../detections/RULE_DEFECTS.md#ktbd-e1-namespace-teardown-filters-trust-the-namespace-controllers-name)).
+Filter a server-side dry run when the record holds the
 DeleteOptions body (`dryRun: ["All"]`, Request level); the query form is not trusted for
 a delete, because with a body the API server ignores the query. A delete or
 deletecollection with no body whose query holds `?dryRun=All` is a dry run too, but it
@@ -326,13 +370,16 @@ hunting and correlation, not an alert.
 | Procedure | Covered by | How |
 |-----------|-----------|-----|
 | A | Strategy 1 (chokepoint) | `delete events` (core) |
-| B | Strategy 1 (chokepoint) | `deletecollection events` (bulk wipe) |
+| B | Strategy 1 (chokepoint) | `deletecollection events` (core-group bulk wipe) |
 | C | Strategy 1 (chokepoint) | `delete events` (events.k8s.io) |
 | D | Strategy 2 (fallback) | `delete pods`/`jobs` |
 | E | Strategy 3 (node sensor); the gap | audit-log file cleared; no audit event |
 | F | Strategy 4 (hunting) | accepted `delete namespaces` |
+| G | Strategy 1 (chokepoint) | `deletecollection events` (events.k8s.io bulk wipe) |
 
-One chokepoint rule covers every API-level event deletion that the actor makes; an
+One chokepoint rule covers every API-level event deletion that the actor makes, except
+a deletecollection sent with a namespace-controller credential
+([RULE_DEFECTS KTBD-E1](../../../detections/RULE_DEFECTS.md#ktbd-e1-namespace-teardown-filters-trust-the-namespace-controllers-name)); an
 Events wipe through a namespace delete is matched by the hunting rule on the actor's
 namespace delete. A low-fidelity fallback
 covers workload-record deletion. A hunting rule covers the actor's namespace delete
@@ -351,16 +398,18 @@ Red Team wrappers in [`atomics/T1070/T1070.yaml`](../../../atomics/T1070/T1070.y
 | Procedure | Test | Status |
 |-----------|------|--------|
 | TRR9010.K8S.A | `emulate.sh a` — create and delete a core v1 Event. | **built** |
-| TRR9010.K8S.B | `emulate.sh b` — bulk-wipe Events with a collection DELETE. | **built** |
+| TRR9010.K8S.B | `emulate.sh b` — bulk-wipe Events with a collection DELETE on `/api/v1` (core group). | **built** |
 | TRR9010.K8S.C | `emulate.sh c` — create and delete an events.k8s.io Event. | **built** |
 | TRR9010.K8S.D | `emulate.sh d` — create and delete a busybox pod. | **built** |
 | TRR9010.K8S.E | `emulate.sh gap` — show the audit log path on the node (read-only). | **built** |
 | TRR9010.K8S.F | `emulate.sh f` — create namespace `trr9010-ns-f` with an Event, then delete the namespace. | **built** |
+| TRR9010.K8S.G | `emulate.sh g` — create a core Event and an events.k8s.io Event, bulk-wipe the Events with a collection DELETE through events.k8s.io (`kubectl delete --raw`), then check that both Events are gone. | **built** |
 
 `emulate.sh dryrun` is a control, not a procedure. It creates namespace
 `trr9010-dryrun-ns` with an Event, a pod and a suspended Job, sends `kubectl delete
 --dry-run=server` for the Event (core group, then events.k8s.io), the pod, the Job and
-the namespace, and a deletecollection of the namespace's Events and of its pods
+the namespace, and a deletecollection of the namespace's Events (core group, then
+events.k8s.io) and of its pods
 (`kubectl delete --raw` of the collection URL with a DeleteOptions body that holds
 `dryRun: ["All"]`). Then it checks that every object is still there and that the pod
 is not being deleted. A server-side dry run deletes nothing, so the three rules must
@@ -370,7 +419,7 @@ match none of these records.
 
 | Strategy | Covers | Sigma rule | Sensor |
 |----------|--------|------------|--------|
-| 1 (chokepoint) | A, B, C | [`detections/sigma/T1070/k8s_events_deleted.yml`](../../../detections/sigma/T1070/k8s_events_deleted.yml) | API server audit log |
+| 1 (chokepoint) | A, B, C, G | [`detections/sigma/T1070/k8s_events_deleted.yml`](../../../detections/sigma/T1070/k8s_events_deleted.yml) | API server audit log |
 | 2 (fallback) | D | [`detections/sigma/T1070/k8s_workload_deleted_evidence.yml`](../../../detections/sigma/T1070/k8s_workload_deleted_evidence.yml) | API server audit log |
 | 3 (node sensor) | E; the gap | none at the audit-log layer, by design | node file-integrity sensor |
 | 4 (hunting) | F | [`detections/sigma/T1070/k8s_namespace_deleted.yml`](../../../detections/sigma/T1070/k8s_namespace_deleted.yml) | API server audit log |
@@ -380,7 +429,8 @@ The validator
 reads the API server audit log the emulation produced and asserts Strategies 1, 2 and
 4 match a record of each procedure's own: the accepted (200) delete of Event
 `trr9010-evt-a` (A, core group) and `trr9010-evt-c` (C, events.k8s.io), the bulk
-deletecollection in the `trr9010` namespace (B), the pod delete (D) and the delete of
+deletecollection in the `trr9010` namespace by a caller that is not a `system:`
+identity, in the core group (B) and in events.k8s.io (G), the pod delete (D) and the delete of
 namespace `trr9010-ns-f` (F). A 404 delete does not count, so the emulation creates each
 Event first; each Event names an `involvedObject` (or `regarding`) in its own namespace,
 because the API server's Event validation refuses one outside `default` that does not.

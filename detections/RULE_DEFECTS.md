@@ -66,6 +66,7 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [K34](#k34-k8s_podspec_host_access-a-default-kubectl-debug-from-kubectl-v136-adds-sys_ptrace) | `T1611/k8s_podspec_host_access` | from kubectl v1.36 (the CI pin), a default `kubectl debug` adds SYS_PTRACE to its debug container, in an ephemeral container (a `pods/ephemeralcontainers` patch) and in a `--copy-to` pod copy (a `pods` create), and fires this level-high rule where that write is logged at Request | false positive, description | medium |
 | [K35](#k35-api-server-lab-policy-mutatingadmissionpolicy-deletes-at-metadata-hide-a-dry-run) | the API server lab policy (`k8s/audit-policy-apiserver.yaml`), for the delete dry-run filter of the T1685 webhook-disabled rule | the lab logs MutatingAdmissionPolicy and binding deletes at Metadata, so a server-side dry-run delete of one fires that rule (its delete dry-run filter needs the body) | policy gap | low |
 | [K36](#k36-delete-dry-run-filters-read-only-the-body-a-query-only-dry-run-fires) | `T1070/k8s_events_deleted`, `k8s_workload_deleted_evidence`, `T1685/k8s_admission_webhook_disabled`, `k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed` | a delete or deletecollection with no body whose query holds `?dryRun=All` is a server-side dry run, and these rules fire on it: their delete dry-run filter reads only the DeleteOptions body | false positive | low |
+| [KTBD-E1](#ktbd-e1-namespace-teardown-filters-trust-the-namespace-controllers-name) | `T1070/k8s_events_deleted`, `k8s_workload_deleted_evidence`, `T1685/k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed` (the same filter is in two more rules; see the entry) | `filter_namespace_teardown` reads only the identity and the verb, so a deletecollection sent with a token of the namespace controller's service account (for example an Events bulk wipe, TRR9010 B or G) is filtered as teardown in a namespace that nobody deletes | evasion | low |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
@@ -1049,6 +1050,89 @@ whether `arping` belongs in the allowlist.
   the five rules, and new near-miss cases (the same record at Metadata level; the same
   record with a DeleteOptions body that holds no `dryRun`) fire. No existing case
   changes. The entry closes.
+
+### KTBD-E1. Namespace-teardown filters trust the namespace controller's name
+
+- **Rules**: [`sigma/T1070/k8s_events_deleted.yml`](sigma/T1070/k8s_events_deleted.yml) (level medium),
+  and the same `filter_namespace_teardown` in
+  [`sigma/T1070/k8s_workload_deleted_evidence.yml`](sigma/T1070/k8s_workload_deleted_evidence.yml) (level low),
+  [`sigma/T1685/k8s_enforcer_workload_removed.yml`](sigma/T1685/k8s_enforcer_workload_removed.yml) (level high) and
+  [`sigma/T1685/k8s_security_tool_workload_removed.yml`](sigma/T1685/k8s_security_tool_workload_removed.yml) (level low).
+  These are the rules where a procedure's own path is a deletecollection (TRR9010 B, D
+  and G, TRR9008 D).
+- **Kind**: evasion. **Severity**: low (the attacker needs a credential that
+  authenticates as `system:serviceaccount:kube-system:namespace-controller`: `create` on
+  `serviceaccounts/token` for that service account in `kube-system`; `create` on pods (or
+  on any workload) in `kube-system` with `serviceAccountName: namespace-controller`, because
+  the ServiceAccount admission plugin mounts that account's token into the pod; `create`
+  and `get` on Secrets in `kube-system`, for a `kubernetes.io/service-account-token` Secret
+  of that account, which the token controller fills; or the credentials of
+  kube-controller-manager. Each path already needs `kube-system`-level access, which
+  allows much more than a cover-up).
+- **Problem**: each `filter_namespace_teardown` drops every `deletecollection` whose
+  `user.username` is `system:serviceaccount:kube-system:namespace-controller`. It reads
+  only the identity and the verb. The real namespace controller sends a deletecollection
+  only for a namespace that has a deletion timestamp, so its sweep always follows an
+  accepted delete of that namespace: by the actor, which `k8s_namespace_deleted` matches,
+  or by the garbage collector, which that rule filters (`filter_lifecycle_garbage_collector`).
+  The controller sends its sweep again on each sync until the namespace is empty, so a
+  namespace that stays Terminating (a finalizer, a slow pod shutdown) gets legitimate
+  sweeps long after the delete. A request sent with a token of that service account is
+  filtered too, from any client and any address, in a namespace that nobody deletes: for
+  example the Events bulk wipe of TRR9010 Procedure B or G, sent with `kubectl --token`,
+  or a deletecollection of the
+  pods or of the enforcer's DaemonSets in its namespace. A single delete by that
+  identity still fires (case `namespace-controller-identity-single-event-delete`).
+  Impersonation does not evade the filter: with `--as`, `user.username` holds the real
+  caller, and `impersonatedUser` holds the service account. Two more rules,
+  `T1053.007/k8s_job_create` and `T1098.006/k8s_rbac_write`, have the same filter and the
+  same gap for a deletecollection of Jobs or of RBAC objects. No procedure of TRR9005 or
+  TRR9004 deletes a collection, so the entry does not name them under Rules (the
+  coverage report would then mark every procedure of those two TRRs).
+- **Evidence**: *probe* (`sigma_eval.py`) — the sidecar positives
+  `deletecollection-bulk-procB` and `deletecollection-eventsk8s-procG` with
+  `user.username` set to the namespace controller, the user agent `kubectl/v1.36.4
+  (linux/amd64) kubernetes/0000000` and `sourceIPs` `["10.244.1.17"]` (a pod address)
+  are quiet. With `impersonatedUser` set to that account instead (the real user stays
+  `kubernetes-admin`), they fire. The same change of `user`, user agent and address on the
+  deletecollection positive of each other rule (`user-deletecollection-pods`,
+  `user-deletecollection-jobs`, `user-deletecollection-rolebindings`,
+  `user-deletecollection-falco-daemonsets`, `user-deletecollection-deployments`) is quiet
+  too. *case* — `namespace-controller-token-deletecollection-eventsk8s-known-miss` in the
+  `k8s_events_deleted` sidecar (confounder). *source* — kubernetes v1.36.4
+  `pkg/controller/namespace/deletion/namespaced_resources_deleter.go` L109-111 (`Delete`
+  returns when the namespace has no deletion timestamp), L136 (each sync calls
+  `deleteAllContent`) and L326 (a `DeleteCollection` for each resource);
+  `pkg/controller/namespace/namespace_controller.go` L157-160 (while content remains, the
+  namespace goes back on the queue with `AddAfter`);
+  `plugin/pkg/admission/serviceaccount/admission.go` L160-165 (`Admit` looks up the pod's
+  `serviceAccountName` and mounts that account's token);
+  `pkg/controller/serviceaccount/tokens_controller.go` L381-384 (`generateTokenIfNeeded`
+  fills a service-account-token Secret);
+  `staging/src/k8s.io/controller-manager/pkg/clientbuilder/client_builder_dynamic.go`
+  L235-245 (with service-account credentials, each controller's client adds
+  `/system:serviceaccount:kube-system:<name>` to the kube-controller-manager user agent;
+  `cmd/kube-controller-manager/app/controllermanager.go` L826-828 selects that builder);
+  `staging/src/k8s.io/apimachinery/pkg/util/net/http.go` L309-355 (`SourceIPs`: the
+  `X-Forwarded-For` and `X-Real-Ip` values first, which the client sets, and the peer
+  address last).
+- **Fix**: a human decision. (1) Hunting, with no rule change: a namespace-controller
+  deletecollection in a namespace that has no accepted delete of that namespace, by any
+  identity, since the namespace was created (so the namespace is not Terminating). Search
+  the raw audit records for that delete, not the hits of `k8s_namespace_deleted`, which
+  filters the garbage collector's delete. The controller sends its sweep again until the
+  namespace is empty, so do not limit the look-back to a short window. Also hunt for one
+  whose last `sourceIPs` entry is not a control-plane node, or one whose `userAgent` does
+  not begin with `kube-controller-manager/`. (2) A rule change: add
+  `userAgent|startswith: 'kube-controller-manager/'` to each `filter_namespace_teardown`,
+  so that a request from another client fires. This only raises the bar, because the
+  client sets its user agent. Before that change, check each platform's controller user
+  agent and the benign corpus.
+- **Then**: with fix (2), the confounder
+  `namespace-controller-token-deletecollection-eventsk8s-known-miss` fires; a new positive
+  with the same record proves the fix (relabelling the confounder is a human decision
+  under the sufficiency ratchet), and a new filtered case with the kube-controller-manager
+  user agent keeps the teardown quiet. Each other rule gets the same pair of cases.
 
 ## Cloud (AWS, Azure, GCP)
 

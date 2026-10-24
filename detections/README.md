@@ -1005,7 +1005,7 @@ quiet on the emulation's own server-side dry runs, which persist nothing. The `d
 control of the TRR9008, TRR9010 and TRR9025 atomics creates objects named
 `trr9008-dryrun-`, `trr9010-dryrun-` and `trr9025-dryrun-`, sends each write with
 `--dry-run=server` (Event, pod, Job and namespace deletes, and a deletecollection of
-the Events and of the pods of its namespace; a webhook neuter patch and delete; a
+the Events (both groups) and pods of its namespace; a webhook neuter patch and delete; a
 Deployment patch, both `kubectl scale` shapes, a delete and a deletecollection in
 `gatekeeper-system`, and the delete of that namespace; a webhook repoint patch), and
 checks that nothing changed. kubectl delete never sends a deletecollection, so the

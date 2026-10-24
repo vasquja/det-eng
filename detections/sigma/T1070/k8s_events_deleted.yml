@@ -5,8 +5,10 @@ description: |
   Detects deletion of Kubernetes Events through the API server: an audit event
   whose objectRef.resource is events and whose verb is delete or deletecollection.
   This is the TRR9010 chokepoint, covering Procedure A (delete one Event in the core
-  group), B (bulk-wipe with deletecollection), and C (delete an Event in the
-  events.k8s.io group). Kubernetes Events record what happened in the cluster -- a
+  group), B (bulk-wipe with deletecollection in the core group), C (delete an
+  Event in the events.k8s.io group) and G (bulk-wipe with deletecollection in
+  events.k8s.io).
+  Kubernetes Events record what happened in the cluster -- a
   pod scheduled, an image pulled, a policy denied -- so deleting them destroys
   evidence of an intrusion.
 
@@ -25,7 +27,10 @@ description: |
   controller (system:serviceaccount:kube-system:namespace-controller) empties a
   namespace being deleted with one deletecollection of core Events and one of
   events.k8s.io Events. The rule filters that identity's deletecollection only, so
-  the same identity deleting a single Event still fires. The namespace delete itself
+  the same identity deleting a single Event still fires. The filter reads only the
+  identity and the verb, so a deletecollection sent with a credential of that service
+  account is filtered too, from any client and in a namespace that nobody deletes
+  (detections/RULE_DEFECTS.md KTBD-E1). The namespace delete itself
   is a separate event, made by the actor (verb delete, objectRef.resource
   namespaces), and this rule does not match it. The low-level hunting rule
   k8s_namespace_deleted.yml matches that accepted namespace delete (TRR9010

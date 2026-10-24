@@ -43,7 +43,8 @@ procedure's own request:
     prefix), the namespace, the caller (`user`) and any extra field test (`also`). For
     example TRR9004 A is `create clusterrolebindings trr9004-crb-view`, TRR9006 A-D are
     the list / get / watch / token create in the fixed namespace by a non-system caller,
-    and TRR9010 B is the `deletecollection` of events in trr9010 (it names no object).
+    and TRR9010 B and G are the `deletecollection` of events in trr9010 by a non-system
+    caller (they name no object), B in the core group and G in events.k8s.io.
   * win(gate, window) binds a helper that already encodes its own precision to the
     procedure's window: the trr9004 sentinel in kube-system/aws-auth (9004 F; the object
     name is fixed), the JSON-patch operation list (9007 K18 and E jp), the stand-in
@@ -838,15 +839,23 @@ MANIFEST = [
                           window=("9009", "b")))]),
     # A and C delete an Event the procedure created first, so each delete must be
     # accepted (200, the rec() default): a 404 delete of an Event whose create failed
-    # does not prove the procedure.
-    ("T1070", "k8s_events_deleted.yml", "audit", "9010 A-C",
+    # does not prove the procedure. B and G are the two collection DELETEs, one per API
+    # group, so each gate names its group. Each also needs a caller that is not a
+    # system: identity, so without a ledger a sweep of trr9010 by a system identity
+    # that the rule does not filter (kube-controller-manager without per-controller
+    # credentials) cannot stand in for it. The rule's filter_namespace_teardown already
+    # removes the namespace controller's own sweep, and a gate sees only rule matches.
+    ("T1070", "k8s_events_deleted.yml", "audit", "9010 A-C,G",
      "events-deletion chokepoint (delete + deletecollection)", [
         ("A", rec(verb="delete", resource="events", name="trr9010-evt-a", ns="trr9010",
                   also=core_group, window=("9010", "a"))),
         ("B", rec(verb="deletecollection", resource="events", ns="trr9010",
-                  window=("9010", "b"))),
+                  user=non_system, also=core_group, window=("9010", "b"))),
         ("C", rec(verb="delete", resource="events", name="trr9010-evt-c", ns="trr9010",
-                  also=apigroup("events.k8s.io"), window=("9010", "c")))]),
+                  also=apigroup("events.k8s.io"), window=("9010", "c"))),
+        ("G", rec(verb="deletecollection", resource="events", ns="trr9010",
+                  user=non_system, also=apigroup("events.k8s.io"),
+                  window=("9010", "g")))]),
     ("T1070", "k8s_workload_deleted_evidence.yml", "audit", "9010 D",
      "workload-record deletion fallback", [
         ("D", rec(verb="delete", resource="pods", name="trr9010-workload", ns="trr9010",
@@ -1016,15 +1025,19 @@ STANDIN_SELECTOR = field_has("requestURI", "trr9008-dryrun-standin")
 MISS_MANIFEST = [
     # TRR9010: kubectl delete --dry-run=server of an Event (core, and the same Event
     # through events.k8s.io), a pod, a Job and a namespace, and a deletecollection of
-    # the Events and of the pods of the control's namespace (kubectl delete --raw with a
-    # DeleteOptions body): the dry run is in the DeleteOptions body.
+    # the Events (core, then events.k8s.io) and of the pods of the control's namespace
+    # (kubectl delete --raw with a DeleteOptions body): the dry run is in the
+    # DeleteOptions body.
     ("T1070", "k8s_events_deleted.yml", "9010 dryrun", [
         ("core", dry("delete", "events", DRY_9010, prefix="trr9010-dryrun-",
                      also=core_group)),
         ("events.k8s.io", dry("delete", "events", DRY_9010, prefix="trr9010-dryrun-",
                               also=apigroup("events.k8s.io"))),
         ("deletecollection", dry("deletecollection", "events", DRY_9010, ns=DRY_NS_9010,
-                                 also=core_group))]),
+                                 also=core_group)),
+        ("events.k8s.io deletecollection", dry("deletecollection", "events", DRY_9010,
+                                               ns=DRY_NS_9010,
+                                               also=apigroup("events.k8s.io")))]),
     ("T1070", "k8s_workload_deleted_evidence.yml", "9010 dryrun", [
         ("pod", dry("delete", "pods", DRY_9010, prefix="trr9010-dryrun-")),
         ("job", dry("delete", "jobs", DRY_9010, prefix="trr9010-dryrun-")),

@@ -5,8 +5,8 @@
 # the delete/deletecollection audit events the paired Sigma rules key on. Everything
 # happens in a throwaway namespace trr9010 with uniquely named objects, so a
 # validator matches the emulation's own events. The deleted Events and the deleted
-# pod are ones the emulation itself created; the bulk deletecollection is on the
-# throwaway namespace only. Procedure F deletes a whole namespace, so it uses its own
+# pod are ones the emulation itself created; the bulk deletecollections (B, G) are on
+# the throwaway namespace only. Procedure F deletes a whole namespace, so it uses its own
 # throwaway namespace trr9010-ns-f, never trr9010 or any other; the dry-run control
 # uses its own namespace trr9010-dryrun-ns.
 #
@@ -19,8 +19,9 @@
 #
 # Run ONE procedure:
 #   ./emulate.sh a      delete a single Event (core group)
-#   ./emulate.sh b      bulk-wipe Events with deletecollection
+#   ./emulate.sh b      bulk-wipe Events with deletecollection (core group)
 #   ./emulate.sh c      delete an Event via the events.k8s.io group
+#   ./emulate.sh g      bulk-wipe Events with deletecollection via the events.k8s.io group
 #   ./emulate.sh d      delete a Pod (destroy the running-workload record)
 #   ./emulate.sh f      delete a whole namespace (trr9010-ns-f) with an Event in it
 #   ./emulate.sh dryrun server-side dry-run deletes and deletecollections that must NOT
@@ -117,6 +118,79 @@ procedure_c() {
   must kubectl -n "$NS" delete events.events.k8s.io trr9010-evt-c
 }
 
+# Procedure G — bulk-wipe Events with a collection DELETE through the events.k8s.io
+# group. The API server records the DELETE on /apis/events.k8s.io/v1/namespaces/<ns>/events
+# as verb deletecollection with objectRef.apiGroup events.k8s.io. The two groups serve
+# the same Event objects from one store (kubernetes v1.36.4
+# pkg/registry/events/rest/storage_events.go uses the core eventstore.NewREST, and
+# pkg/kubeapiserver/default_storage_factory_builder.go makes the two resources
+# cohabit), so the wipe removes every Event of the namespace, whichever group created
+# it. kubectl delete events.events.k8s.io --all does not send this request: it lists
+# the Events and then deletes each one by name (verb delete, Procedure C again; kubectl
+# v1.36.4 delete.go DeleteResult). So the step sends the collection DELETE with kubectl
+# delete --raw and no body (kubectl rawhttp, v1.36.4). The step first creates the core
+# v1 Event trr9010-evt-g-core and the events.k8s.io Event trr9010-evt-g (each create
+# must succeed), and after the wipe it checks that both are gone, so a wipe that
+# deleted nothing, or only the Events of its own group, fails the step.
+procedure_g() {
+  local left ref
+  ensure_ns || return
+  must kubectl create -f - <<EOF || return
+apiVersion: v1
+kind: Event
+metadata:
+  name: trr9010-evt-g-core
+  namespace: ${NS}
+involvedObject:
+  apiVersion: v1
+  kind: ConfigMap
+  name: trr9010-anchor
+  namespace: ${NS}
+reason: Trr9010Benign
+message: benign TRR9010 events.k8s.io bulk-wipe emulation (core Event)
+type: Normal
+source:
+  component: trr9010-emulation
+firstTimestamp: "2026-10-23T00:00:00Z"
+lastTimestamp: "2026-10-23T00:00:00Z"
+count: 1
+EOF
+  must kubectl create -f - <<EOF || return
+apiVersion: events.k8s.io/v1
+kind: Event
+metadata:
+  name: trr9010-evt-g
+  namespace: ${NS}
+eventTime: "2026-10-23T00:00:00.000000Z"
+reportingController: trr9010-emulation
+reportingInstance: trr9010
+action: Benign
+reason: Trr9010Benign
+regarding:
+  apiVersion: v1
+  kind: ConfigMap
+  name: trr9010-anchor
+  namespace: ${NS}
+note: benign TRR9010 events.k8s.io bulk-wipe emulation
+type: Normal
+EOF
+  log "G: deletecollection on events.k8s.io Events in $NS (bulk cover-up through the second group)"
+  must kubectl delete --raw "/apis/events.k8s.io/v1/namespaces/${NS}/events" || return
+  # Only stdout is read (kubectl's errors and warnings stay on stderr): with
+  # --ignore-not-found, a gone Event prints nothing and exits 0. The core Event is read
+  # through the core group, the other one through events.k8s.io.
+  for ref in event/trr9010-evt-g-core events.events.k8s.io/trr9010-evt-g; do
+    if ! left="$(kubectl -n "$NS" get "$ref" --ignore-not-found -o name)"; then
+      log "G: cannot check that ${ref} is gone (kubectl get failed)"
+      return 1
+    fi
+    if [ -n "$left" ]; then
+      log "G: ${ref} is still there after the wipe (${left})"
+      return 1
+    fi
+  done
+}
+
 # Procedure D — delete a Pod to destroy the running-workload record.
 procedure_d() {
   ensure_ns || return
@@ -167,9 +241,9 @@ EOF
 # kubectl sends the dry run in the DeleteOptions body (dryRun ["All"]; cli-runtime
 # resource.Helper DeleteWithOptions, v1.36.4) and does not wait for a dry-run delete;
 # the lab policy logs these deletes at Request, so the body is in the record. kubectl
-# delete never sends a deletecollection, so the step sends one for the Events and one
-# for the pods of its namespace with kubectl delete --raw of the collection URL and the
-# same DeleteOptions body (-f sends the file as the body; kubectl rawhttp, v1.36.4).
+# delete never sends a deletecollection, so the step sends one for the Events (core
+# group, then events.k8s.io) and one for the pods of its namespace with kubectl delete
+# --raw of the collection URL and the same DeleteOptions body (-f sends the file as the body; kubectl rawhttp, v1.36.4).
 # Then the step checks that every object is still there, so a dry run that deleted
 # something fails the step. Every name starts with trr9010-dryrun-, and so does the
 # namespace; no positive gate selects such a record. The requests that delete them are
@@ -243,8 +317,11 @@ EOF
   must kubectl -n "$NS_DRY" delete pod trr9010-dryrun-pod --dry-run=server || return
   must kubectl -n "$NS_DRY" delete job trr9010-dryrun-job --dry-run=server || return
   must kubectl delete namespace "$NS_DRY" --dry-run=server || return
-  log "dryrun: deletecollection of the Events, then of the pods, of $NS_DRY (DeleteOptions body dryRun [All])"
+  log "dryrun: deletecollection of the Events (core, events.k8s.io), then of the pods, of $NS_DRY (DeleteOptions body dryRun [All])"
   must kubectl delete --raw "/api/v1/namespaces/${NS_DRY}/events" -f - <<'EOF' || return
+{"kind":"DeleteOptions","apiVersion":"v1","dryRun":["All"]}
+EOF
+  must kubectl delete --raw "/apis/events.k8s.io/v1/namespaces/${NS_DRY}/events" -f - <<'EOF' || return
 {"kind":"DeleteOptions","apiVersion":"v1","dryRun":["All"]}
 EOF
   must kubectl delete --raw "/api/v1/namespaces/${NS_DRY}/pods" -f - <<'EOF' || return
@@ -290,15 +367,15 @@ procedure_gap() {
 
 run_one() {
   case "$1" in
-    a|b|c|d|f|dryrun|gap) run_proc "$1" ;;
-    *) log "unknown item: $1 (use a|b|c|d|f|dryrun|gap|all)"; exit 2 ;;
+    a|b|c|d|f|g|dryrun|gap) run_proc "$1" ;;
+    *) log "unknown item: $1 (use a|b|c|d|f|g|dryrun|gap|all)"; exit 2 ;;
   esac
 }
 
 main() {
   local which="${1:-all}"
   if [ "$which" = "all" ]; then
-    for p in a b c d f dryrun gap; do run_proc "$p"; done
+    for p in a b c g d f dryrun gap; do run_proc "$p"; done
     cleanup
   else
     run_one "$which"

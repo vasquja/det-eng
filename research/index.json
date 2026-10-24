@@ -439,11 +439,12 @@
       ],
       "procedures": {
         "A": "Delete a single Event (core group)",
-        "B": "Bulk-wipe Events (deletecollection)",
+        "B": "Bulk-wipe Events (deletecollection, core group)",
         "C": "Delete an Event (events.k8s.io group)",
         "D": "Delete a Pod or Job (workload record)",
         "E": "Clear the audit log on the node (the gap)",
-        "F": "Delete a whole namespace"
+        "F": "Delete a whole namespace",
+        "G": "Bulk-wipe Events (deletecollection, events.k8s.io group)"
       },
       "pub_date": "2026-10-12",
       "last_update": "2026-10-23",
@@ -471,6 +472,10 @@
         },
         "F": {
           "text": "det-eng namespace delete behavioral emulation (throwaway namespace with an Event)",
+          "url": "../atomics/T1070/src/emulate.sh"
+        },
+        "G": {
+          "text": "det-eng events.k8s.io Event deletecollection (bulk wipe) behavioral emulation",
           "url": "../atomics/T1070/src/emulate.sh"
         }
       }
