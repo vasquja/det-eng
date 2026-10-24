@@ -124,7 +124,7 @@ The pipeline renames each top-level field to its column (`verb` -> `Verb`, `requ
   ([the dynamic data type](https://learn.microsoft.com/kusto/query/scalar-data-types/dynamic)),
   and `dynamic_to_json()` sorts the keys. The harness checks each case with the keys in
   the original order and sorted. One block needs the API server's key order:
-  [RULE_DEFECTS.md KTBD-B1](../RULE_DEFECTS.md#ktbd-b1-k8s_rbac_privileged_grant-the-aggregation-clause-needs-the-api-servers-key-order).
+  [RULE_DEFECTS.md K43](../RULE_DEFECTS.md#k43-k8s_rbac_privileged_grant-the-aggregation-clause-needs-the-api-servers-key-order).
 - **The AKS anchor is a column reference, not a recorded row.** No public AKSAudit row
   was found. [`anchors/aks/`](anchors/aks/) lists the columns (with each type and what
   the Learn description says it holds) and the paths of Microsoft's sample queries; the

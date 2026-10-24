@@ -30,7 +30,7 @@ description: |
   the same identity deleting a single Event still fires. The filter reads only the
   identity and the verb, so a deletecollection sent with a credential of that service
   account is filtered too, from any client and in a namespace that nobody deletes
-  (detections/RULE_DEFECTS.md KTBD-E1). The namespace delete itself
+  (detections/RULE_DEFECTS.md K37). The namespace delete itself
   is a separate event, made by the actor (verb delete, objectRef.resource
   namespaces), and this rule does not match it. The low-level hunting rule
   k8s_namespace_deleted.yml matches that accepted namespace delete (TRR9010
@@ -49,12 +49,11 @@ description: |
   links it, and the GKE audit-policy page names it) and OpenShift 4.17 and earlier log
   no request on core-group Events (level None): a core delete or collection DELETE
   (Procedures A and B, plain kubectl delete event, and kubectl delete events --all,
-  which sends one DELETE per Event) leaves no record there, and only a delete or
-  deletecollection in the events.k8s.io group fires. The AKS policy logs an Events
+  which sends one DELETE per Event) leaves no record there, and only a request in
+  the events.k8s.io group (Procedures C and G) fires. The AKS policy logs an Events
   delete at Metadata and drops a collection DELETE in either group: a single delete,
   and so kubectl delete events --all, fires, but a collection DELETE in either group
-  (Procedure B in the core group: a raw API call or client-go DeleteCollection)
-  leaves no record. OpenShift 4.18 and
+  (Procedures B and G) leaves no record. OpenShift 4.18 and
   later and the k3s hardening-guide starter policy log Events deletes. On AKS and under
   the k3s starter policy a delete also writes a RequestReceived record, so one delete
   fires twice (deduplicate by auditID). No rule change can see a request that is not
@@ -63,7 +62,7 @@ description: |
   k8s_namespace_deleted.yml) is logged under every one of these policies; where it is
   logged at Metadata (OpenShift Default, the k3s starter policy), a real namespace
   delete that carries ?dryRun=All next to its body is filtered there
-  (detections/RULE_DEFECTS.md KTBD-A1, K14).
+  (detections/RULE_DEFECTS.md K38, K14).
 references:
   - https://attack.mitre.org/techniques/T1070/
   - https://attack.mitre.org/techniques/T1070/004/
@@ -131,5 +130,5 @@ falsepositives:
     AKS policy, OpenShift 4.18 and later with the Default profile and the k3s
     hardening-guide starter policy (both groups), and the events.k8s.io group under
     the EKS and GCE kube-up policies and on OpenShift 4.17 and earlier with the Default
-    profile (detections/RULE_DEFECTS.md KTBD-A2).
+    profile (detections/RULE_DEFECTS.md K39).
 level: medium

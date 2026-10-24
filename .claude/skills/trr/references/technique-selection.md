@@ -376,7 +376,7 @@ reasoning survives. Append an entry per vet; keep it short.
   computeDNSUpgradeableCondition), the DNS ClusterOperator then reports Upgradeable=False (reason
   DNSNotUpgradeable, status/controller.go), and the CVO raises the alert ClusterNotUpgradeable (for 60m,
   severity info). Known limits that stay at the chokepoint: under Unmanaged a DaemonSet repoint to another
-  ConfigMap is not graded, and the operator-identity filter has an evasion (RULE_DEFECTS KTBD-D2). Prior art
+  ConfigMap is not graded, and the operator-identity filter has an evasion (RULE_DEFECTS K45). Prior art
   (GitHub code search, 2026-10-24: openshift-dns, dns-default, dnses, operator.openshift.io): 0 hits in SigmaHQ,
   elastic/detection-rules, splunk/security_content, panther-labs/panther-analysis, falcosecurity/rules,
   DataDog/stratus-red-team and redcanaryco/atomic-red-team; a search for dnses.operator.openshift.io over all of

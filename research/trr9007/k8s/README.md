@@ -102,7 +102,7 @@ the k3s starter policy
 from [`detections/k8s_policy_coverage.py`](../../../detections/k8s_policy_coverage.py);
 the policy texts and their sources are in
 [`detections/k8s/provider-policies/`](../../../detections/k8s/provider-policies/SOURCES.md);
-[RULE_DEFECTS KTBD-A3](../../../detections/RULE_DEFECTS.md#ktbd-a3-body-graders-are-blind-under-the-openshift-default-profile-and-the-k3s-starter-policy)).
+[RULE_DEFECTS K40](../../../detections/RULE_DEFECTS.md#k40-body-graders-are-blind-under-the-openshift-default-profile-and-the-k3s-starter-policy)).
 A published policy is not a capture: whether each provider runs it unchanged is
 unverified. `Request` level is
 sufficient: `requestObject` is the client-submitted body, which already contains

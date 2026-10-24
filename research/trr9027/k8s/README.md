@@ -435,7 +435,7 @@ sent with a stolen token of that service account is filtered too, and with it an
 adversary can set `Unmanaged` and then replace `dns-default`. Under OpenShift's
 Default audit profile no rule sees those two writes; under a body profile the grader
 fires on the poisoned `dns-default`. Tracked as
-[RULE_DEFECTS KTBD-D2](../../../detections/RULE_DEFECTS.md#ktbd-d2-k8s_coredns_configmap_modified-the-dns-operator-filter-trusts-the-operators-name).
+[RULE_DEFECTS K45](../../../detections/RULE_DEFECTS.md#k45-k8s_coredns_configmap_modified-the-dns-operator-filter-trusts-the-operators-name).
 Elastic ships near-identical rules for the upstream objects at this layer; the nearest
 does not match the OpenShift objects (see Upstream). This is the provider-agnostic
 Sigma counterpart, stated as a backstop.
@@ -507,7 +507,7 @@ kube-apiserver line `Error in audit plugin` and the metric
 One chokepoint rule covers every write to the cluster DNS configuration. One content
 grader separates a Corefile poisoning from a benign edit. Availability deletion, the
 node bypass and a YAML apply body (K23) are stated gaps. On OpenShift two more limits
-apply: a create or PUT sent with a stolen DNS Operator token (KTBD-D2), and, under
+apply: a create or PUT sent with a stolen DNS Operator token (K45), and, under
 `Unmanaged`, a repoint of the DNS DaemonSet to another ConfigMap (seen only as the
 write that set `Unmanaged`).
 

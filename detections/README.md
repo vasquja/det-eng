@@ -589,9 +589,9 @@ python3 detections/pipelines/convert_k8s.py aks detections/sigma/T1609/k8s_pod_e
 
 At this commit, on the `AKSAudit` table AKS keeps 28 of the 31 rules exactly, 1 with an
 approved loss
-([RULE_DEFECTS.md KTBD-B1](RULE_DEFECTS.md#ktbd-b1-k8s_rbac_privileged_grant-the-aggregation-clause-needs-the-api-servers-key-order))
+([RULE_DEFECTS.md K43](RULE_DEFECTS.md#k43-k8s_rbac_privileged_grant-the-aggregation-clause-needs-the-api-servers-key-order))
 and 2 not portable (no `ImpersonatedUser` column); GKE keeps 13, 5 with approved losses
-(JSON-patch bodies, whose GKE form no public record shows, and the KTBD-B1 key order)
+(JSON-patch bodies, whose GKE form no public record shows, and the K43 key order)
 and 13 not portable (no request URI, no HTTP status, no audit level, no impersonated
 groups). On `AKSAuditAdmin` (no `get` and `list`) and on GKE without Data Access logs,
 8 rules also lose positive cases. 16 rules match a JSON list as its text,

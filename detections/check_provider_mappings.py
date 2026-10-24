@@ -164,7 +164,7 @@ KEY_ORDER = (
     "key order (Go field order), and the provider does not keep the key order of an object "
     "(Kusto: learn.microsoft.com/kusto/query/scalar-data-types/dynamic; Cloud Logging: a "
     "google.protobuf.Struct is a map). The 'sorted' variant shows the miss: "
-    "detections/RULE_DEFECTS.md KTBD-B1")
+    "detections/RULE_DEFECTS.md K43")
 GKE_CREATE_NAME = (
     "GKE's resourceName for a create (no subresource) has no name when the create failed, "
     "and names the created object when it succeeded (GoogleCloudPlatform/khi: a recorded "
@@ -556,8 +556,11 @@ EXPECTED_LOSS = {
 NOT_PORTABLE = {
     ("gke", "T1070/k8s_namespace_deleted.yml"): (
         "filter_dry_run[0].requestURI",
+        "filter_dry_run_query.requestURI",
         "filter_dry_run_read[0].requestURI",
+        "filter_query_parsed.requestURI",
         "sel_accepted.responseStatus.code",
+        "sel_no_request_uri.requestURI",
     ),
     ("aks", "T1134/k8s_impersonation.yml"): (
         "select_impersonation.impersonatedUser.username",

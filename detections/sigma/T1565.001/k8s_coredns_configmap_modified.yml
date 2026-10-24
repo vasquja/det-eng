@@ -35,7 +35,7 @@ description: |
   and it writes the DNS object itself (the default object when none exists, checked
   once a minute, its finalizer, and dnses/status when the status changes). The write
   that caused the change is the record to alert on. A patch, delete or deletecollection by that identity fires.
-  What the filter hides (KTBD-D2 in detections/RULE_DEFECTS.md; TRR9027 states it as
+  What the filter hides (K45 in detections/RULE_DEFECTS.md; TRR9027 states it as
   a limit): a create or a PUT (kubectl replace) sent with a stolen operator token, from
   any client and any address. The same token can first set managementState Unmanaged
   with a PUT, so that the operator no longer reverts a direct dns-default edit. Under

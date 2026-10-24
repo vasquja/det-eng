@@ -111,11 +111,9 @@ and the policy texts and their sources are in
 
 So on EKS, on a cluster that runs the GCE kube-up policy and on OpenShift 4.17 and
 earlier, Procedures A and B (and `kubectl delete events --all`) leave no record, and
-only a request in the events.k8s.io group is in the log: a delete (Procedure C) or a
-collection DELETE in that group. On AKS a single delete is logged in either group, so
+only a request in the events.k8s.io group is in the log (Procedures C and G). On AKS a single delete is logged in either group, so
 `kubectl delete events --all` is seen (one record per Event), but a collection DELETE
-in either group (Procedure B in the core group: a raw API call, or client-go
-`DeleteCollection`; the same request in the events.k8s.io group) is not: the policy
+in either group (Procedures B and G) is not: the policy
 drops every Events request except
 delete and list (and create, update and patch in `default` and `kube-system`). No rule
 change can see a request that the platform does not record. The compensating control
@@ -137,8 +135,8 @@ every policy that logs it at Metadata. The AKS Events rules and the k3s starter 
 do not omit the RequestReceived stage, so there one delete writes two records and the
 rule alerts twice (deduplicate by `auditID`). A published policy is not a capture:
 whether each provider runs it unchanged is unverified. The gaps are tracked in
-[RULE_DEFECTS KTBD-A1](../../../detections/RULE_DEFECTS.md#ktbd-a1-kubernetes-events-deletes-leave-no-record-on-eks-gce-kube-up-and-openshift-417-and-no-collection-delete-record-on-aks)
-and [KTBD-A2](../../../detections/RULE_DEFECTS.md#ktbd-a2-delete-dry-run-body-filters-have-no-input-where-a-platform-logs-deletes-at-metadata).
+[RULE_DEFECTS K38](../../../detections/RULE_DEFECTS.md#k38-kubernetes-events-deletes-leave-no-record-on-eks-gce-kube-up-and-openshift-417-and-no-collection-delete-record-on-aks)
+and [K39](../../../detections/RULE_DEFECTS.md#k39-delete-dry-run-body-filters-have-no-input-where-a-platform-logs-deletes-at-metadata).
 
 ### Why the technique works
 
@@ -355,7 +353,7 @@ request: the namespace controller's `deletecollection` of the Events of a namesp
 being deleted (`system:serviceaccount:kube-system:namespace-controller`), which every
 namespace teardown makes. The filter reads only the identity and the verb, so a
 deletecollection sent with a token of that service account is filtered too
-([RULE_DEFECTS KTBD-E1](../../../detections/RULE_DEFECTS.md#ktbd-e1-namespace-teardown-filters-trust-the-namespace-controllers-name)).
+([RULE_DEFECTS K37](../../../detections/RULE_DEFECTS.md#k37-namespace-teardown-filters-trust-the-namespace-controllers-name)).
 Filter a server-side dry run when the record holds the
 DeleteOptions body (`dryRun: ["All"]`, Request level); the query form is not trusted for
 a delete, because with a body the API server ignores the query. A delete or
@@ -438,7 +436,7 @@ hunting and correlation, not an alert.
 
 One chokepoint rule covers every API-level event deletion that the actor makes, except
 a deletecollection sent with a namespace-controller credential
-([RULE_DEFECTS KTBD-E1](../../../detections/RULE_DEFECTS.md#ktbd-e1-namespace-teardown-filters-trust-the-namespace-controllers-name)); an
+([RULE_DEFECTS K37](../../../detections/RULE_DEFECTS.md#k37-namespace-teardown-filters-trust-the-namespace-controllers-name)); an
 Events wipe through a namespace delete is matched by the hunting rule on the actor's
 namespace delete. A low-fidelity fallback
 covers workload-record deletion. A hunting rule covers the actor's namespace delete

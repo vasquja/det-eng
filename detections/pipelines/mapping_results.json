@@ -68,7 +68,8 @@
   },
   "T1070/k8s_events_deleted.yml": {
    "list_text_items": [
-    "filter_dry_run_delete_body.requestObject.dryRun"
+    "filter_dry_run_delete_body.requestObject.dryRun",
+    "sel_no_dry_run_body.requestObject.dryRun"
    ],
    "loses_positive_without_reads": {
     "aksauditadmin": false,
@@ -98,7 +99,9 @@
   "T1070/k8s_namespace_deleted.yml": {
    "list_text_items": [
     "filter_dry_run[1].requestObject.dryRun",
-    "filter_dry_run_read[1].requestObject.dryRun"
+    "filter_dry_run_body.requestObject.dryRun",
+    "filter_dry_run_read[1].requestObject.dryRun",
+    "sel_no_dry_run_body.requestObject.dryRun"
    ],
    "loses_positive_without_reads": {
     "aksauditadmin": false,
@@ -121,8 +124,11 @@
      "expected_loss": {},
      "not_portable": {
       "filter_dry_run[0].requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded",
+      "filter_dry_run_query.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded",
       "filter_dry_run_read[0].requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded",
-      "sel_accepted.responseStatus.code": "GKE pipeline cannot map this field: the sources conflict on the HTTP status: gke-mcp lists protoPayload.responseStatus.code ('if present'); audit_log.proto and the recorded KHI entries have only protoPayload.status, a google.rpc.Status (code 0 = OK); Falco's converter infers it"
+      "filter_query_parsed.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded",
+      "sel_accepted.responseStatus.code": "GKE pipeline cannot map this field: the sources conflict on the HTTP status: gke-mcp lists protoPayload.responseStatus.code ('if present'); audit_log.proto and the recorded KHI entries have only protoPayload.status, a google.rpc.Status (code 0 = OK); Falco's converter infers it",
+      "sel_no_request_uri.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded"
      },
      "status": "not_portable",
      "unexpected": {}
@@ -131,7 +137,8 @@
   },
   "T1070/k8s_workload_deleted_evidence.yml": {
    "list_text_items": [
-    "filter_dry_run_delete_body.requestObject.dryRun"
+    "filter_dry_run_delete_body.requestObject.dryRun",
+    "sel_no_dry_run_body.requestObject.dryRun"
    ],
    "loses_positive_without_reads": {
     "aksauditadmin": false,
@@ -1415,7 +1422,8 @@
   },
   "T1685/k8s_admission_webhook_disabled.yml": {
    "list_text_items": [
-    "filter_dry_run_delete_body.requestObject.dryRun"
+    "filter_dry_run_delete_body.requestObject.dryRun",
+    "sel_no_dry_run_body.requestObject.dryRun"
    ],
    "loses_positive_without_reads": {
     "aksauditadmin": false,
