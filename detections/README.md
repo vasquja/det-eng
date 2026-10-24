@@ -326,6 +326,7 @@ request, and never weaken the case.
 python3 detections/rule_cases.py --atoms detections/sigma/T1040/afinet_raw_socket.yml  # the items `breaks` can name
 python3 detections/rule_cases.py                     # every rule's cases
 python3 detections/check_sufficiency.py              # the gate (CI: detection-quality / check-sufficiency)
+python3 detections/check_null_safety.py              # same hits in two- and three-valued logic (CI: null-safety)
 ```
 
 ## Portable regular expressions
@@ -394,9 +395,20 @@ pySigma 1.5.1 (`pySigma-backend-elasticsearch` 2.1.1) and Lucene 10.1 found thes
   `kubernetes.io/config.source`) and strategic-merge directive keys
   (`$deleteFromPrimitiveList/<name>`). The rules: `T1611/k8s_podspec_confinement_disabled.yml`,
   `T1685/k8s_enforcer_workload_removed.yml`, `T1685/k8s_security_tool_workload_removed.yml`,
-  `T1053.007/k8s_cri_job_pod.yml` and `T1543.005/k8s_cri_static_pod_start.yml`. KQL
+  `T1053.007/k8s_cri_job_pod.yml`, `T1543.005/k8s_cri_static_pod_start.yml` and
+  `T1070/k8s_namespace_deleted.yml` (the audit annotation key
+  `annotations.audit.k8s.io/truncated`). KQL
   needs bracket access (`requestObject.spec['$deleteFromPrimitiveList/replicas']`) for a
   key with `.`, `/` or `$`.
+- **A `:` in a field name.** pySigma's Lucene backend does not escape `:` in a field
+  name either, and `query_string` reads it as the end of the field name, so the query
+  does not parse. Escape it as `\:`. The keys are IAM condition keys in a field name
+  (`requestParameters.bucketPolicy.Statement.Condition.StringEquals.aws:PrincipalOrgID`).
+  The rule: `T1537/aws_resource_policy_made_public.yml`. A check that converted every
+  rule with the Lucene backend and parsed each query with Lucene 10.1.0's classic
+  `QueryParser` (leading wildcards allowed) found these two notes complete: 65 queries
+  parse, and the 7 that do not are the rules these two notes name (the 4 correlation
+  rules do not convert to Lucene).
 - **`|exists` on EQL.** pySigma's EQL backend cannot convert `|exists` ("Field exists
   expressions are not supported"). Write `<field> != null` there. It affects
   `sel_smp_directive` in both T1685 workload rules, and `T1053.007/k8s_cri_job_pod.yml`.
@@ -406,26 +418,128 @@ pySigma 1.5.1 (`pySigma-backend-elasticsearch` 2.1.1) and Lucene 10.1 found thes
   that the validators use wraps each negation as `NOT COALESCE(<test>, 0)`, which keeps
   that meaning. ES|QL and other SQL-semantics backends use three-valued logic: a test on
   a missing field is NULL, `NOT NULL` is NULL, and `WHERE` keeps only true. So
-  `and not <filter>` drops every record that lacks the filter's field, and CI cannot
-  see it. A deployment there must make each negation null-safe:
-  `(<field> is null or not <filter>)`, or a Sigma `field: null` selection ORed with the
-  `not`. The three T1611 pod-spec rules and both T1685 workload rules
-  (`k8s_enforcer_workload_removed.yml` and the anchor
-  `k8s_security_tool_workload_removed.yml`) use the second form for each filter on a
-  field that a record can lack (`objectRef.subresource`, `requestObject.dryRun`,
-  `requestObject.spec.replicas`, and the `requestObject` text of a JSON patch), and
-  lose no positive. A probe that removed the `COALESCE` wrappers, and made a regular
-  expression on a missing field NULL, found 16 rules that still lose positives, all of
-  them on `main` too: the three T1070 delete rules, the seven T1537 public-policy rules,
-  `T1550.001/aws_eks_irsa_web_identity_assumed_off_cluster.yml`,
-  `T1098.001/aws_github_oidc_role_trust_abuse.yml` (4 of 8),
-  `T1098.001/aws_github_oidc_role_trust_ref_wildcard.yml` (5 of 5),
-  `T1098.001/gcp_workload_identity_pool_provider_created.yml` (4 of 5),
-  `T1199/gcp_workforce_pool_provider_no_attribute_condition.yml` (1 of 3) and
-  `T1685/k8s_admission_webhook_disabled.yml` (5 of 8: its delete-body dry-run filter
-  drops every delete without a body, Procedures A and B included). Wave 4 of the
-  Kubernetes coverage plan (item 4.2, the backend mapping proof harness) measures and
-  fixes these.
+  `and not <filter>` drops every record that lacks the filter's field, and no validator
+  sees it. [`check_null_safety.py`](check_null_safety.py) (CI: `detection-quality` /
+  `null-safety`, for every rule, with no exemption list) runs each rule in both logics
+  over every sidecar case and every cloud fixture, and fails when any hit differs. A
+  failure names the rule, the case or fixture, the record, and each negation whose
+  operand is NULL (a `not`, or a `|neq` item), with the items and the fields that make
+  it NULL. The three-valued run is `sigma_eval.compile_rule(path, three_valued=True)`
+  (`NOT (<test>)` with no `COALESCE`) on `sigma_eval.EventTable(events,
+  three_valued=True)`, where a regular expression on a missing field is NULL too. Two
+  null-safe forms keep the two-valued verdict of the plain `not`
+  (`sigma_explain.py`, `PlainRule.null_helpers()`, defines them):
+  - **Guard.** A filter whose every map reads the field that a record can lack: OR it
+    with a block that the field is absent,
+    `(sel_no_dry_run_body or not filter_dry_run_delete_body)`. The `not` can also take an
+    OR of such filters (`not (filter_a or filter_b)`, `not 1 of filter_*`) or an AND
+    with one of them. For a `not` over blocks on different fields, apply De Morgan's laws
+    until each `not` takes blocks that one guard covers, then guard each one (both
+    `T1098.001/aws_github_oidc_role_trust_*` rules). A `|neq` item is a `not` inside the
+    item, which no guard can reach: write it as a filter block with a guard. A guard
+    covers only the fields it names: any other field that the filter reads (`verb` in
+    the dry-run and namespace-teardown filters) must be one that the log source writes
+    on every record the rule matches (`--absent`, below, probes this on the cases). A
+    guard on several fields holds only where all of them are absent, so where one is
+    present and another is absent the negation can stay NULL. The check accepts it only
+    when each map of the filter is one item that holds on any value of one of its fields
+    (`field: '*'` or `field|exists: true`: the S3 single-statement and Lambda scope
+    filters); for any other filter, use one guard per field.
+  - **Copy.** A filter whose maps read different fields (a policy in one of six fields, a
+    query or a body dry run): repeat each map as a block of its own, and read each one
+    only where its field is present,
+    `not (filter_scoped and ((filter_scoped_condition_key and not sel_no_condition_key) or
+    (filter_scoped_policy and not sel_no_policy)))`. Each term reads its copy only where
+    every field that the copy tests is present, with one guard per field
+    (`filter_x_a and not sel_no_a and not sel_no_kind` for a map on two fields), so the OR
+    holds exactly where the filter holds, and it is never NULL. The filter stays, so the
+    cases' `breaks` still name its items. Do not write the copy with `|exists: true`
+    items: the EQL backend cannot convert them (above), and the graders do not see such a
+    copy as one.
+
+  A positive block that no `not` holds needs no guard: `WHERE` drops a NULL there, as it
+  drops false. The check also fails, whatever the records hold: a guard on a near
+  spelling of a field that its filter reads (one that differs only in letter case, or by
+  a typo, is true on every record, so on Lucene, Splunk and ES|QL the filter never
+  applies); a guard on a field that only some maps of its filter read (it holds where a
+  map on another field holds, so it changes the rule); a guard on several fields whose
+  filter it does not keep from NULL; a copy that does not repeat its filter's maps
+  exactly, or that tests a field that no guard of its term covers; and a rule field that
+  a case's records carry only in another letter case (SQLite matches column names
+  without regard to case, so there every offline gate reads the record's field). A
+  `field: null` block ORed with a `not` on other fields is an ordinary selection
+  (`sel_no_mfa or not filter_sso`), and so are `<block> and not <null block>` terms
+  when no block ANDed with them has maps with the same keys. If the check reads a real
+  selection as a broken guard, write `sel_no_x or not filter` as
+  `not (filter and not sel_no_x)`, which means the same and is not read as a guard; if
+  it reads selections as a broken copy, write each `sel_x and not sel_no_x` as
+  `not (sel_no_x or not sel_x)`. The
+  graders do not count a guard or a copy as an item of the rule: `check_sufficiency.py`
+  and `rule_cases.py` grade each rule without them (`PlainRule.stripped()`), so a guard
+  is no discriminating item, no R5 count and no hint target, and a case whose `breaks`
+  names one fails. The validators' miss explanations and the benign grading of
+  `validate_cloud_detections.py` read the same view, so no explanation names a guard
+  as the item to flip.
+
+  The guard is in the three T1611 pod-spec rules, both T1685 workload rules,
+  `T1685/k8s_admission_webhook_disabled.yml`, `T1070/k8s_events_deleted.yml`,
+  `T1070/k8s_workload_deleted_evidence.yml`, both GCP attribute-condition rules, both
+  `T1098.001/aws_github_oidc_role_trust_*` rules, the S3 single-statement and Lambda
+  scope filters of `T1537/aws_resource_policy_made_public.yml`, on `errorCode` (written
+  only when a call returns an error) in the eight T1537 rules and
+  `T1550.001/aws_eks_irsa_web_identity_assumed_off_cluster.yml`, and on `user.username`
+  in `T1053.007/k8s_job_create.yml`, `T1070/k8s_events_deleted.yml`,
+  `T1070/k8s_workload_deleted_evidence.yml`, `T1098.006/k8s_rbac_write.yml` and
+  `T1552.007/k8s_secret_token_request.yml`. The copy is in
+  `T1537/aws_resource_policy_made_public.yml`, `T1537/aws_eventbridge_bus_made_public.yml`
+  and `T1070/k8s_namespace_deleted.yml`.
+
+  On the Wave 3 `main` (`861f97b`) the check found 17 rules that lost positives: the
+  three T1070 delete rules, the eight T1537 public-exposure rules (the seven with
+  sidecars and `aws_ssm_document_shared_publicly.yml`, through its attack fixture),
+  `T1550.001/aws_eks_irsa_web_identity_assumed_off_cluster.yml`, both
+  `T1098.001/aws_github_oidc_role_trust_*` rules,
+  `T1098.001/gcp_workload_identity_pool_provider_created.yml`,
+  `T1199/gcp_workforce_pool_provider_no_attribute_condition.yml` and
+  `T1685/k8s_admission_webhook_disabled.yml` (its delete-body dry-run filter dropped
+  every delete without a body, Procedures A and B included). The record of a request
+  that fails authentication has no `user.username` (a 401 at stage `ResponseStarted`
+  with no request body; apiserver v1.36.4 `WithFailedAuthenticationAudit` and
+  `audit.LogRequestMetadata`), and five rules fire on that attempt in two-valued logic
+  only: `T1053.007/k8s_job_create.yml`, `T1552.007/k8s_secret_token_request.yml`, and,
+  for a `deletecollection`, `T1098.006/k8s_rbac_write.yml`,
+  `T1070/k8s_events_deleted.yml` and `T1070/k8s_workload_deleted_evidence.yml` (the last
+  two are among the 17). Each of these five sidecars now holds that record as a
+  positive, and with them the check fails 20 rules of that `main`. All 20 now have a
+  null-safe form, with every earlier case verdict and benign score the same as before.
+  **Limit:** the check proves null safety on the records that the cases and fixtures
+  hold. A filter on a field that every positive carries is never tested absent;
+  `check_null_safety.py --absent` lists those fields (information only). It lists these
+  today, and no record that the rule can match lacks the field:
+  - `requestURI`: a field of the Kubernetes audit event with no `omitempty`, which
+    `audit.LogRequestMetadata` sets on every record (apiserver v1.36.4
+    `pkg/apis/audit/v1/types.go`, `pkg/audit/request.go`).
+  - `user.username` in `T1070/k8s_namespace_deleted.yml`, both T1685 workload rules,
+    `T1685/k8s_admission_webhook_neutered.yml`, `T1098.006/k8s_rbac_privileged_grant.yml`
+    and `T1098.006/k8s_rbac_sensitive_permission_grant.yml`: absent only on the record of
+    a request that fails authentication, whose `responseStatus.code` 401 the 2xx
+    selection of the first three rejects, and which holds no request body for the body
+    selections of the others.
+  - `responseStatus.code` in `T1685/k8s_admission_webhook_neutered.yml`: absent only on
+    a `RequestReceived`-stage record, which holds no request body for its selections.
+  - `objectRef.name` in the aggregation-controller filter of
+    `T1098.006/k8s_rbac_sensitive_permission_grant.yml`: absent only on a create, and the
+    controller's bootstrap role (`escalate`, `get`, `list`, `watch`, `update` and `patch`
+    on clusterroles, Kubernetes v1.36.4
+    `plugin/pkg/auth/authorizer/rbac/bootstrappolicy/controller_policy.go`) cannot create,
+    so the API server refuses such a create before it reads the body.
+  - CloudTrail's `sourceIPAddress` ("Optional: False" in the CloudTrail record
+    contents), the Azure Activity Log's `resultType` (the event's `status.value`, MS
+    Learn "Azure Activity Log event schema"), auditd's `comm`, `exe`, `euid` and `a1`,
+    and the file sensor's `Image`.
+
+  For a field that a record can lack, add a positive case without it and guard the
+  filter.
 - **`.` and a line break.** In Python, RE2 and PCRE `.` does not match a line break
   unless `|re|s` is set; in Lucene it always does.
 - **`\s`.** `\s` is `[\t\n\r ]` in Lucene (no vertical tab or form feed), ASCII
@@ -437,7 +551,8 @@ pySigma 1.5.1 (`pySigma-backend-elasticsearch` 2.1.1) and Lucene 10.1 found thes
   tab or form feed alone.
 - **Determinization budget.** A long pattern can exceed Lucene's default determinization
   budget (`max_determinized_states`, 10,000). A check with Lucene 10.1's `RegExp`
-  found that every `|re` value (321 at this writing) parses and fits the budget. With
+  found that every `|re` value (321 at this writing; the 32 that the null-safe filter
+  copies added later are YAML aliases of values in that set) parses and fits the budget. With
   case folding (`ASCII_CASE_INSENSITIVE`, as the `case_insensitive` flag uses), the
   largest is the JSON-patch capability grammar of
   `T1611/k8s_podspec_controller_host_access.yml` (8,094 states); without it, the
@@ -535,7 +650,8 @@ detection FAIL, a broken control or a vacuous control fails the job; only a
 probe-confirmed SKIP does not. On a public repository the run is free.
 
 `.github/workflows/detection-quality.yml` runs the offline layers on every pull
-request, on push to `main`, and weekly: `rule-cases`, `check-sufficiency`,
+request, on push to `main`, and weekly: `rule-cases`, `null-safety`
+(`check_null_safety.py`), `check-sufficiency`,
 `sufficiency-ratchet` (pull requests only), `benign-corpus`
 (`score_benign.py --check --enforce`) and the shadow `benign-linux-live` capture.
 It also runs `schedule-freshness` (not on push), which reads the Actions API; see

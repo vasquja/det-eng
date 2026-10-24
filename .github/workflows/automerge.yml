@@ -193,7 +193,7 @@ name: automerge
 # the diff whether the heavy job runs, and an unrelated PR skips it (a skipped required
 # check counts as success). They are branch-protection required checks, so GitHub's
 # merge sees a real, per-validator signal instead of "only the checks that happened to
-# run". The `detection-quality` checks (rule-cases, check-sufficiency,
+# run". The `detection-quality` checks (rule-cases, null-safety, check-sufficiency,
 # sufficiency-ratchet (pull requests only), benign-corpus and the shadow
 # benign-linux-live capture) also run on every PR, with no path filter.
 #

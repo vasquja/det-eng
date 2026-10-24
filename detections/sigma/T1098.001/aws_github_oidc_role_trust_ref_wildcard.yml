@@ -93,13 +93,30 @@ detection:
     requestParameters.policyDocument|re: 'githubusercontent\.com%3Asub%22%3A(%5B(%22([^%]|%([^2%]|2[^2%]))*%22%2C)*)?%22((([^r%]|%([^23%]|2[^2A%]|3[^A%])|r([^e%]|e([^p%]|p([^o%]|o([^s%]|s([^i%]|i([^t%]|t([^o%]|o([^r%]|r([^y%]|y([^_%]|_([^i%]|i(d([^%]|%([^23%]|2[^2A%]|3[^A%]))|[^d%])))))))))))))([^%]|%([^23%]|2[^2A%]|3[^A%]))*|(r(e(p(os(i(t(o(r(y(_(i)?)?)?)?)?)?)?)?)?)?)?)%3A|repo(sitory_id)?%3A%3A)*(repo(sitory_id)?%3A)?([^%]|%([^23%]|2[^2A%]|3[^A%]))*%2A'
   sub_high_create:
     requestParameters.assumeRolePolicyDocument|re: 'githubusercontent\.com%3Asub%22%3A(%5B(%22([^%]|%([^2%]|2[^2%]))*%22%2C)*)?%22((([^r%]|%([^23%]|2[^2A%]|3[^A%])|r([^e%]|e([^p%]|p([^o%]|o([^s%]|s([^i%]|i([^t%]|t([^o%]|o([^r%]|r([^y%]|y([^_%]|_([^i%]|i(d([^%]|%([^23%]|2[^2A%]|3[^A%]))|[^d%])))))))))))))([^%]|%([^23%]|2[^2A%]|3[^A%]))*|(r(e(p(os(i(t(o(r(y(_(i)?)?)?)?)?)?)?)?)?)?)?)%3A|repo(sitory_id)?%3A%3A)*(repo(sitory_id)?%3A)?([^%]|%([^23%]|2[^2A%]|3[^A%]))*%2A'
+  # Null-safe negations: a backend with three-valued logic (ES|QL and other SQL
+  # backends) reads NOT of a test on a missing field as NULL and drops the record. An
+  # UpdateAssumeRolePolicy record has policyDocument and no assumeRolePolicyDocument,
+  # and a CreateRole record has the reverse. So the condition applies each `not` to one
+  # block (De Morgan's laws), and ORs it with a test that the block's field is absent.
+  sel_no_policy_document:
+    requestParameters.policyDocument: null
+  sel_no_assume_role_policy_document:
+    requestParameters.assumeRolePolicyDocument: null
+  # The condition is, in two-valued logic:
+  #   selection_grant and (oidc_update or oidc_create) and sub_wildcard and
+  #   not ((owner_repo_wildcard and not sub_pinned and not sub_multi)
+  #        or (sub_multi and sub_high))
+  # where each name X stands for (X_update or X_create).
   condition: >
     selection_grant and (oidc_update or oidc_create) and
     (sub_wildcard_update or sub_wildcard_create) and
-    not (((owner_repo_wildcard_update or owner_repo_wildcard_create) and
-          not (sub_pinned_update or sub_pinned_create) and
-          not (sub_multi_update or sub_multi_create))
-         or ((sub_multi_update or sub_multi_create) and (sub_high_update or sub_high_create)))
+    (((sel_no_policy_document or not owner_repo_wildcard_update) and
+      (sel_no_assume_role_policy_document or not owner_repo_wildcard_create))
+     or sub_pinned_update or sub_pinned_create or sub_multi_update or sub_multi_create) and
+    (((sel_no_policy_document or not sub_multi_update) and
+      (sel_no_assume_role_policy_document or not sub_multi_create))
+     or ((sel_no_policy_document or not sub_high_update) and
+         (sel_no_assume_role_policy_document or not sub_high_create)))
 falsepositives:
   - Release workflows that trust every tag of one repository (repo:org/app:ref:refs/tags/v*)
     and roles shared by every workflow of one repository (repo:org/app:*) are common and

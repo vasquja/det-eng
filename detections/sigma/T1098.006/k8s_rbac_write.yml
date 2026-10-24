@@ -68,7 +68,14 @@ detection:
   filter_namespace_teardown:
     user.username: 'system:serviceaccount:kube-system:namespace-controller'
     verb: 'deletecollection'
-  condition: select_rbac_write and not filter_namespace_teardown
+  # Null-safe negation: a backend with three-valued logic (ES|QL and other SQL
+  # backends) reads NOT of a test on a missing field as NULL and drops the record. The
+  # record of a request that fails authentication (401) has no user.username (apiserver
+  # v1.36.4 WithFailedAuthenticationAudit and audit.LogRequestMetadata), so each filter
+  # on the user name is ORed with a test that the field is absent.
+  sel_no_username:
+    user.username: null
+  condition: select_rbac_write and (sel_no_username or not filter_namespace_teardown)
 falsepositives:
   - Cluster bootstrap and reconcile. kubeadm and the API server create and
     reconcile the default roles and bindings at start; kube-controller-manager

@@ -7,6 +7,12 @@ name: detection-quality
 #                      runs through the same pySigma backend as the validators, and
 #                      each declared `breaks` must really be the single flip that
 #                      would fire the rule (detections/rule_cases.py). Hard gate.
+#   null-safety        every rule gives the same hits in two-valued logic (the
+#                      validators' SQLite backend, NOT COALESCE(<test>, 0)) and in
+#                      three-valued logic (ES|QL and other SQL backends: a test on a
+#                      missing field is NULL, NOT NULL is NULL), on every sidecar
+#                      case and cloud fixture (detections/check_null_safety.py, after
+#                      its self-test). Hard gate, for every rule.
 #   check-sufficiency  every rule must ship a positive and at least one VERIFIED
 #                      near-miss or filtered negative (a near-miss shares the
 #                      chokepoint and fails one required argument, for a correlation
@@ -91,7 +97,8 @@ name: detection-quality
 # it sees one of these failed on the head commit, but it sees that only if the
 # failure comes before the required checks finish (this workflow's completion
 # re-runs automerge); if the required checks finish first, GitHub merges. Making
-# rule-cases, check-sufficiency and benign-corpus required closes that race.
+# rule-cases, check-sufficiency and benign-corpus required closes that race
+# (null-safety too, if the maintainer makes it required).
 # sufficiency-ratchet stays non-required: with no bypass actors, a required ratchet
 # would block for everyone a PR it fails by design (a corrected case, an accepted
 # rise in hits). See detections/benign/README.md, "Branch protection: what binds a
@@ -145,6 +152,48 @@ jobs:
             echo '```'
             cat /tmp/rule-cases.out 2>/dev/null || echo '(no output captured)'
             echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  null-safety:
+    # A rule whose `not <filter>` reads a field that a record can lack loses that
+    # record on a three-valued backend, and no validator can see it: they all run
+    # the two-valued SQLite query. The rules and the sidecars are the inputs, and
+    # this workflow has no paths filter, so the job runs on every change to them.
+    name: null-safety
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install requirements
+        run: pip install --quiet -r detections/requirements.txt
+
+      - name: Self-test the check on constructed rules
+        run: python3 detections/check_null_safety.py --self-test
+
+      - name: Check every rule in two- and three-valued logic
+        shell: bash
+        run: |
+          # shell: bash enables pipefail, so tee does not mask the exit code.
+          python3 detections/check_null_safety.py --markdown "$GITHUB_STEP_SUMMARY" \
+            | tee /tmp/null-safety.out
+
+      - name: Publish the full log to job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo ''
+            echo '<details><summary>check_null_safety.py output</summary>'
+            echo ''
+            echo '```'
+            cat /tmp/null-safety.out 2>/dev/null || echo '(no output captured)'
+            echo '```'
+            echo '</details>'
           } >> "$GITHUB_STEP_SUMMARY"
 
   check-sufficiency:

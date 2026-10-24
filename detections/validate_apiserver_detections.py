@@ -1367,7 +1367,7 @@ def absent_hint(fields, scope, where):
 
 def explain_gated_miss(rule_path, events, gate, tag, matched):
     """Why no event the emulation made matched: the gate, then the closest marked event."""
-    rule = sigma_explain.load(rule_path)
+    rule = sigma_explain.load(rule_path).stripped()  # no null guards or copies
     label = labeller(events)
     marked = [i for i, e in enumerate(events) if gate(e)]
     lines = [f"gate: {describe_gate(gate)}"]
@@ -1527,7 +1527,8 @@ def must_not_match(args, logs, ledger, queries, results):
                          "level too low, or another request shape). First record:",
                          f"  {label_of(e)} uri={e.get('requestURI')} level={e.get('level')}"]
                 lines += ["  " + ln for ln in explained(
-                    lambda p, evs: sigma_explain.explain_miss(sigma_explain.load(p), evs, k=1),
+                    lambda p, evs: sigma_explain.explain_miss(
+                        sigma_explain.load(p).stripped(), evs, k=1),
                     rule_path, s["copies"][:1])]
                 explanation += lines
         for line in explanation:

@@ -72,6 +72,9 @@ false. List a rule's atoms with `python3 detections/rule_cases.py --atoms <rule>
    the filter alone suppresses. This proves each filter does work and is not dead code.
    Model a real allowlisted process doing the real call; a filtered case for a process
    that never makes the call proves nothing (and the filter entry is then an evasion).
+   When a real record can lack the filter's field (a delete with no body, a call with
+   no `errorCode`), make the negation null-safe (below) and add a positive without the
+   field: `check_null_safety.py` tests null safety only on the records the cases hold.
 4. **`confounder` cases** for realistic legitimate look-alikes, which must share the
    rule's surface (the runner rejects a trivial confounder).
 
@@ -287,6 +290,58 @@ print(bool(sigma_eval.evaluate(q, [ev])))
   exact; IPv6 only matches the canonical compressed lowercase form on a nibble boundary —
   document that in any IPv6 allowlist.
 - **`|re`** works (a `REGEXP` function is registered, full Python `re`, look-around OK).
+- **`not` is two-valued here and three-valued on SQL backends.** The SQLite backend
+  writes each negation as `NOT COALESCE(<test>, 0)`, so `not filter` keeps a record
+  that lacks the filter's field (Sigma's meaning). ES|QL and other SQL backends read a
+  test on a missing field as NULL and `NOT NULL` as NULL, so `and not filter` drops
+  that record, and no validator sees it. Write every negation null-safe:
+  - **guard**: a filter whose every map reads a field that a record can lack: OR it
+    with a block of `field: null` items on that field,
+    `(sel_no_dry_run_body or not filter_dry_run_delete_body)`. One guard can cover
+    `not (filter_a or filter_b)` or `not 1 of filter_*` when every map of each filter
+    reads its field (`T1552.007/k8s_secret_token_request.yml`). Name the field exactly
+    as the filter does, in case too: a guard on another field is true on every record
+    without it, so the filter never applies on a real backend. A guard covers only its
+    own fields: any other field that the filter reads (`verb`) must be one the log
+    source writes on every record the rule matches. Use one guard per field. A guard on
+    several fields holds only where all are absent, so the check accepts it only when
+    each map of the filter is one `field: '*'` item on one of them (the Lambda scope
+    filter of `T1537/aws_resource_policy_made_public.yml`); for other filters, split the
+    filter into one block per field and guard each one (De Morgan's laws).
+  - **copy**: a filter whose maps read different fields: keep the filter, repeat each
+    map as a block of its own, and read each copy only where every field it tests is
+    present, with one guard per field:
+    `not (filter_x and ((filter_x_a and not sel_no_a) or (filter_x_b and not sel_no_b)))`
+    (`T1537/aws_eventbridge_bus_made_public.yml`); a map on two fields takes
+    `(filter_x_a and not sel_no_a and not sel_no_kind)`. Each copy repeats its map
+    exactly (YAML aliases help). Not `|exists: true`: the EQL backend cannot convert it.
+  - a `not` over blocks on different fields: apply De Morgan's laws until each `not`
+    takes blocks that one guard covers, then guard each one (the
+    `T1098.001/aws_github_oidc_role_trust_*` rules).
+  - no `|neq` on a field that a record can lack: it is a `not` inside the item, which
+    a guard cannot reach. Write it as a filter block with a guard.
+  - for a real record shape that lacks the field (a delete with no body, a call with no
+    `errorCode`, the 401 record of a request that fails authentication, which has no
+    `user.username`), add a positive case of that shape.
+
+  Guards and copies are no items of the rule: the graders (`rule_cases.py`,
+  `check_sufficiency.py`) grade the rule without them, so never name one in `breaks`
+  (the case fails); name the filter's item. `python3 detections/check_null_safety.py`
+  (CI: `null-safety`, fatal for every rule) runs each rule in both logics on every case
+  and cloud fixture and names the negation whose operand is NULL. It also fails a guard
+  on a near spelling of the filter's field (letter case or a typo), a guard on a field
+  that only some maps of its filter read, a guard on several fields that the filter
+  can leave NULL, a copy that does not repeat its filter's maps or that tests a field
+  no guard of its term covers, and a rule field that the records carry only in another
+  letter case (SQLite matches column names without regard to case; Lucene, Splunk and
+  ES|QL do not). A `field: null` block that is a real selection, not a guard, needs no
+  rewrite unless the check reads it as a broken guard; then write
+  `sel and (sel_no_x or not filter)` as `sel and not (filter and not sel_no_x)`. For
+  terms it reads as a broken copy, write each `sel_x and not sel_no_x` as
+  `not (sel_no_x or not sel_x)`.
+  `--absent` lists filter fields that no case drops. In Python,
+  `sigma_eval.compile_rule(path, three_valued=True)` on
+  `sigma_eval.EventTable(events, three_valued=True)` gives the three-valued hits.
 
 **The Sigma-wildcard trap (has bitten this repo twice).** In a plain value or `|contains`,
 `*` is a Sigma WILDCARD. `|contains: '"AWS":"*"'` compiles to `LIKE '%"AWS":"%"%'` and
@@ -319,8 +374,11 @@ PascalCase — match `subjectFromWebIdentityToken`, not `SubjectFromWebIdentityT
     sourceIPAddress: 'AWS Internal'
   ```
   It can never suppress a true positive — a real attacker always presents a client IP.
-- **`not filter_failed` (`errorCode: '*'`)** to drop failed attempts where a successful
-  action is the signal.
+- **`(sel_no_error_code or not filter_failed)`** (`filter_failed: errorCode: '*'`,
+  `sel_no_error_code: errorCode: null`) to drop failed attempts where a successful
+  action is the signal. CloudTrail writes `errorCode` only when a call returns an
+  error, so a bare `not filter_failed` drops every successful call on a three-valued
+  backend.
 - **Provenance is not a detection.** Fields true of ~100% of benign activity (an
   `AssumedRole` type, a provider ARN) scope the rule; the discriminator is what fires it.
   Say which is which in the description.
@@ -428,6 +486,8 @@ approval that lands after they have passed leaves the merge to a human (see
 - `lint-trr.yml`.
 - `detection-quality.yml`, on every PR:
   - `rule-cases` runs every sidecar.
+  - `null-safety` runs every rule in two- and three-valued logic
+    (`check_null_safety.py`).
   - `check-sufficiency` is the gate above.
   - `sufficiency-ratchet` (pull requests only) compares every rule with the base
     branch: its sufficiency report (cases, negatives, positives, logsource) and its
@@ -442,6 +502,7 @@ unrelated changes (pySigma, runner image, kernel).
 Run locally before pushing:
 ```bash
 python3 detections/rule_cases.py detections/sigma/<T...>/<rule>.yml   # sidecar cases hold
+python3 detections/check_null_safety.py detections/sigma/<T...>/<rule>.yml  # null-safe `not`
 python3 detections/check_sufficiency.py --rule detections/sigma/<T...>/<rule>.yml
 python3 detections/validate_cloud_detections.py            # attack fires + benign clean
 python3 detections/score_benign.py --check --enforce       # FP snapshot current, budgets held

@@ -75,7 +75,13 @@ detection:
     # mentions 'assertion' (false negative). A non-empty test removes the former; the
     # latter is an inherent limit of not evaluating CEL (see falsepositives).
     protoPayload.request.workloadIdentityPoolProvider.attributeCondition|re: '.+'
-  condition: ((selection_provider_write and selection_request_trust) or selection_update_touches_condition) and not filter_has_attribute_condition
+  # Null-safe negation: a backend with three-valued logic (ES|QL and other SQL
+  # backends) reads NOT of a test on a missing field as NULL and drops the record. A
+  # provider created without a condition has no attributeCondition field, so the
+  # filter is ORed with a test that the field is absent.
+  sel_no_attribute_condition:
+    protoPayload.request.workloadIdentityPoolProvider.attributeCondition: null
+  condition: ((selection_provider_write and selection_request_trust) or selection_update_touches_condition) and (sel_no_attribute_condition or not filter_has_attribute_condition)
 falsepositives:
   - Legitimate federation onboarding without an attribute condition. The condition is
     optional (the IAM API reference says that if it is unspecified, all valid

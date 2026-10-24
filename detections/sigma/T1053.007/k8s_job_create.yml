@@ -76,7 +76,16 @@ detection:
   filter_namespace_teardown:
     user.username: 'system:serviceaccount:kube-system:namespace-controller'
     verb: 'deletecollection'
-  condition: select_batch_write and not filter_controllers and not filter_namespace_teardown
+  # Null-safe negation: a backend with three-valued logic (ES|QL and other SQL
+  # backends) reads NOT of a test on a missing field as NULL and drops the record. The
+  # record of a request that fails authentication (401) has no user.username (apiserver
+  # v1.36.4 WithFailedAuthenticationAudit and audit.LogRequestMetadata), so each filter
+  # on the user name is ORed with a test that the field is absent.
+  sel_no_username:
+    user.username: null
+  condition: >-
+    select_batch_write and (sel_no_username or not filter_controllers)
+    and (sel_no_username or not filter_namespace_teardown)
 falsepositives:
   - Legitimate batch work. Backups, report generation, and batch processing run
     as Jobs and CronJobs all the time. Baseline the identities (users and service

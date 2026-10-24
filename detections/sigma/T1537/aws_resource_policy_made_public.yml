@@ -174,6 +174,85 @@ detection:
     - requestParameters.resourcePolicy|re: *scoped_statement_5
     - requestParameters.attributeValue|re: *scoped_statement_5
     - requestParameters.attributes.Policy|re: *scoped_statement_5
+  # Null-safe copies of filter_scoped to filter_scoped_5 (see sel_no_error_code for
+  # why). A record holds its policy in one of the six fields, so five maps of each
+  # filter read a missing field, and a field: null selection cannot guard a block whose
+  # maps read different fields. Each map of each filter is repeated as a block of its
+  # own (filter_scoped[_N]_<field>), and the condition reads each one only where its
+  # field is present (not sel_no_<field>). In two-valued logic each copy holds exactly
+  # where its filter holds; in three-valued logic it is never NULL.
+  filter_scoped_bucket_policy_statement:
+    requestParameters.bucketPolicy.Statement|re: *scoped_statement_1
+  filter_scoped_policy:
+    requestParameters.policy|re: *scoped_statement_1
+  filter_scoped_policy_text:
+    requestParameters.policyText|re: *scoped_statement_1
+  filter_scoped_resource_policy:
+    requestParameters.resourcePolicy|re: *scoped_statement_1
+  filter_scoped_attribute_value:
+    requestParameters.attributeValue|re: *scoped_statement_1
+  filter_scoped_attributes_policy:
+    requestParameters.attributes.Policy|re: *scoped_statement_1
+  filter_scoped_2_bucket_policy_statement:
+    requestParameters.bucketPolicy.Statement|re: *scoped_statement_2
+  filter_scoped_2_policy:
+    requestParameters.policy|re: *scoped_statement_2
+  filter_scoped_2_policy_text:
+    requestParameters.policyText|re: *scoped_statement_2
+  filter_scoped_2_resource_policy:
+    requestParameters.resourcePolicy|re: *scoped_statement_2
+  filter_scoped_2_attribute_value:
+    requestParameters.attributeValue|re: *scoped_statement_2
+  filter_scoped_2_attributes_policy:
+    requestParameters.attributes.Policy|re: *scoped_statement_2
+  filter_scoped_3_bucket_policy_statement:
+    requestParameters.bucketPolicy.Statement|re: *scoped_statement_3
+  filter_scoped_3_policy:
+    requestParameters.policy|re: *scoped_statement_3
+  filter_scoped_3_policy_text:
+    requestParameters.policyText|re: *scoped_statement_3
+  filter_scoped_3_resource_policy:
+    requestParameters.resourcePolicy|re: *scoped_statement_3
+  filter_scoped_3_attribute_value:
+    requestParameters.attributeValue|re: *scoped_statement_3
+  filter_scoped_3_attributes_policy:
+    requestParameters.attributes.Policy|re: *scoped_statement_3
+  filter_scoped_4_bucket_policy_statement:
+    requestParameters.bucketPolicy.Statement|re: *scoped_statement_4
+  filter_scoped_4_policy:
+    requestParameters.policy|re: *scoped_statement_4
+  filter_scoped_4_policy_text:
+    requestParameters.policyText|re: *scoped_statement_4
+  filter_scoped_4_resource_policy:
+    requestParameters.resourcePolicy|re: *scoped_statement_4
+  filter_scoped_4_attribute_value:
+    requestParameters.attributeValue|re: *scoped_statement_4
+  filter_scoped_4_attributes_policy:
+    requestParameters.attributes.Policy|re: *scoped_statement_4
+  filter_scoped_5_bucket_policy_statement:
+    requestParameters.bucketPolicy.Statement|re: *scoped_statement_5
+  filter_scoped_5_policy:
+    requestParameters.policy|re: *scoped_statement_5
+  filter_scoped_5_policy_text:
+    requestParameters.policyText|re: *scoped_statement_5
+  filter_scoped_5_resource_policy:
+    requestParameters.resourcePolicy|re: *scoped_statement_5
+  filter_scoped_5_attribute_value:
+    requestParameters.attributeValue|re: *scoped_statement_5
+  filter_scoped_5_attributes_policy:
+    requestParameters.attributes.Policy|re: *scoped_statement_5
+  sel_no_bucket_policy_statement:
+    requestParameters.bucketPolicy.Statement: null
+  sel_no_policy:
+    requestParameters.policy: null
+  sel_no_policy_text:
+    requestParameters.policyText: null
+  sel_no_resource_policy:
+    requestParameters.resourcePolicy: null
+  sel_no_attribute_value:
+    requestParameters.attributeValue: null
+  sel_no_attributes_policy:
+    requestParameters.attributes.Policy: null
 
   # C14: an S3 bucket policy whose Statement is one object, not a list. CloudTrail logs
   # bucketPolicy as a nested object, so its fields flatten to Statement.Effect,
@@ -205,6 +284,23 @@ detection:
     - requestParameters.bucketPolicy.Statement.Condition.StringLike.aws:SourceVpce: '*'
     - requestParameters.bucketPolicy.Statement.Condition.ArnLike.aws:SourceArn: '*'
     - requestParameters.bucketPolicy.Statement.Condition.ArnEquals.aws:SourceArn: '*'
+  # Null-safe negation of filter_s3_single_statement_scoped (see sel_no_error_code): a
+  # record without a scope key has none of these fields, and each map of the filter
+  # matches any value of its field, so the filter is ORed with a test that all twelve
+  # fields are absent.
+  sel_s3_single_statement_unscoped:
+    requestParameters.bucketPolicy.Statement.Condition.StringEquals.aws:PrincipalOrgID: null
+    requestParameters.bucketPolicy.Statement.Condition.StringEquals.aws:PrincipalAccount: null
+    requestParameters.bucketPolicy.Statement.Condition.StringEquals.aws:SourceAccount: null
+    requestParameters.bucketPolicy.Statement.Condition.StringEquals.aws:SourceArn: null
+    requestParameters.bucketPolicy.Statement.Condition.StringEquals.aws:SourceVpc: null
+    requestParameters.bucketPolicy.Statement.Condition.StringEquals.aws:SourceVpce: null
+    requestParameters.bucketPolicy.Statement.Condition.StringLike.aws:PrincipalOrgID: null
+    requestParameters.bucketPolicy.Statement.Condition.StringLike.aws:SourceArn: null
+    requestParameters.bucketPolicy.Statement.Condition.StringLike.aws:SourceVpc: null
+    requestParameters.bucketPolicy.Statement.Condition.StringLike.aws:SourceVpce: null
+    requestParameters.bucketPolicy.Statement.Condition.ArnLike.aws:SourceArn: null
+    requestParameters.bucketPolicy.Statement.Condition.ArnEquals.aws:SourceArn: null
   selection_lambda:
     eventName|startswith: 'AddPermission'
     requestParameters.principal|re: '^\*$'
@@ -212,20 +308,61 @@ detection:
     # A Lambda wildcard grant scoped by an org ID or a source ARN is not public.
     - requestParameters.sourceArn: '*'
     - requestParameters.principalOrgID: '*'
+  # Null-safe negation of filter_lambda_scoped (see sel_no_error_code): an unscoped
+  # grant has neither field.
+  sel_lambda_unscoped:
+    requestParameters.sourceArn: null
+    requestParameters.principalOrgID: null
   filter_failed:
     # Denied / failed mutating calls carry an errorCode and did not change state.
     errorCode: '*'
+  # Null-safe negation: a backend with three-valued logic (ES|QL and other SQL
+  # backends) reads NOT of a test on a missing field as NULL and drops the record.
+  # CloudTrail writes errorCode only when the call returns an error, so the filter is
+  # ORed with a test that the field is absent.
+  sel_no_error_code:
+    errorCode: null
   condition: >
     ((selection_policy_write and
-      ((public_principal and not filter_scoped) or
-       (public_principal_2 and not filter_scoped_2) or
-       (public_principal_3 and not filter_scoped_3) or
-       (public_principal_4 and not filter_scoped_4) or
-       (public_principal_5 and not filter_scoped_5) or
+      ((public_principal and not (filter_scoped and
+        ((filter_scoped_bucket_policy_statement and not sel_no_bucket_policy_statement) or
+         (filter_scoped_policy and not sel_no_policy) or
+         (filter_scoped_policy_text and not sel_no_policy_text) or
+         (filter_scoped_resource_policy and not sel_no_resource_policy) or
+         (filter_scoped_attribute_value and not sel_no_attribute_value) or
+         (filter_scoped_attributes_policy and not sel_no_attributes_policy)))) or
+       (public_principal_2 and not (filter_scoped_2 and
+        ((filter_scoped_2_bucket_policy_statement and not sel_no_bucket_policy_statement) or
+         (filter_scoped_2_policy and not sel_no_policy) or
+         (filter_scoped_2_policy_text and not sel_no_policy_text) or
+         (filter_scoped_2_resource_policy and not sel_no_resource_policy) or
+         (filter_scoped_2_attribute_value and not sel_no_attribute_value) or
+         (filter_scoped_2_attributes_policy and not sel_no_attributes_policy)))) or
+       (public_principal_3 and not (filter_scoped_3 and
+        ((filter_scoped_3_bucket_policy_statement and not sel_no_bucket_policy_statement) or
+         (filter_scoped_3_policy and not sel_no_policy) or
+         (filter_scoped_3_policy_text and not sel_no_policy_text) or
+         (filter_scoped_3_resource_policy and not sel_no_resource_policy) or
+         (filter_scoped_3_attribute_value and not sel_no_attribute_value) or
+         (filter_scoped_3_attributes_policy and not sel_no_attributes_policy)))) or
+       (public_principal_4 and not (filter_scoped_4 and
+        ((filter_scoped_4_bucket_policy_statement and not sel_no_bucket_policy_statement) or
+         (filter_scoped_4_policy and not sel_no_policy) or
+         (filter_scoped_4_policy_text and not sel_no_policy_text) or
+         (filter_scoped_4_resource_policy and not sel_no_resource_policy) or
+         (filter_scoped_4_attribute_value and not sel_no_attribute_value) or
+         (filter_scoped_4_attributes_policy and not sel_no_attributes_policy)))) or
+       (public_principal_5 and not (filter_scoped_5 and
+        ((filter_scoped_5_bucket_policy_statement and not sel_no_bucket_policy_statement) or
+         (filter_scoped_5_policy and not sel_no_policy) or
+         (filter_scoped_5_policy_text and not sel_no_policy_text) or
+         (filter_scoped_5_resource_policy and not sel_no_resource_policy) or
+         (filter_scoped_5_attribute_value and not sel_no_attribute_value) or
+         (filter_scoped_5_attributes_policy and not sel_no_attributes_policy)))) or
        public_principal_beyond or
        (s3_single_statement_allow and s3_single_statement_public and
-        not filter_s3_single_statement_scoped)))
-     or (selection_lambda and not filter_lambda_scoped)) and not filter_failed
+        (sel_s3_single_statement_unscoped or not filter_s3_single_statement_scoped))))
+     or (selection_lambda and (sel_lambda_unscoped or not filter_lambda_scoped))) and (sel_no_error_code or not filter_failed)
 falsepositives:
   - Intentionally public static-website buckets, public datasets, and public container
     images; allowlist by resource name.
