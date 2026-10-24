@@ -446,6 +446,45 @@ pySigma 1.5.1 (`pySigma-backend-elasticsearch` 2.1.1) and Lucene 10.1 found thes
   trailing `$`), gives the same verdict as Python and RE2 on every case, fixture and
   benign-corpus value of its field.
 
+## Provider field mappings (AKS, GKE, EKS)
+
+The Kubernetes audit rules read the `audit.k8s.io/v1` Event, the shape the CI clusters
+write and EKS sends to CloudWatch Logs. AKS (`AKSAudit` / `AKSAuditAdmin`) and GKE
+(Cloud Audit Logs) store the event in other shapes, so
+[`pipelines/`](pipelines/README.md) holds a pySigma pipeline for each
+(`kubernetes_aks_auditlogs.yml`, `k8s_gke.py`) and a converter (`convert_k8s.py`, with
+a workaround for the Kusto backend's quoting of dotted field names and five related
+defects).
+[`check_provider_mappings.py`](check_provider_mappings.py) proves each mapping offline:
+it transforms every event of every sidecar case into the provider's record, and the
+rule's verdict and the events each block holds on must be the same in both shapes, in
+each variant of a JSON list's text (key order kept, and keys sorted). A rule the
+provider cannot express fails conversion and is NOT PORTABLE, with the reason; an
+accepted difference is a human-approved `EXPECTED_LOSS` entry. Anchors
+(`pipelines/anchors/`) check the transforms against records or column references from
+Google- and Microsoft-authored sources.
+
+```
+python3 detections/check_provider_mappings.py --check   # CI job provider-mappings (not required)
+python3 detections/check_provider_mappings.py --self-test
+python3 detections/check_provider_mappings.py --propose # after a Kubernetes rule or case change; then --write
+python3 detections/pipelines/convert_k8s.py aks detections/sigma/T1609/k8s_pod_exec_attach.yml
+#   (convert_k8s.py aks needs: pip install -r detections/requirements-convert.txt)
+```
+
+At this commit, on the `AKSAudit` table AKS keeps 28 of the 31 rules exactly, 1 with an
+approved loss
+([RULE_DEFECTS.md KTBD-B1](RULE_DEFECTS.md#ktbd-b1-k8s_rbac_privileged_grant-the-aggregation-clause-needs-the-api-servers-key-order))
+and 2 not portable (no `ImpersonatedUser` column); GKE keeps 13, 5 with approved losses
+(JSON-patch bodies, whose GKE form no public record shows, and the KTBD-B1 key order)
+and 13 not portable (no request URI, no HTTP status, no audit level, no impersonated
+groups). On `AKSAuditAdmin` (no `get` and `list`) and on GKE without Data Access logs,
+8 rules also lose positive cases. 16 rules match a JSON list as its text,
+which a backend that explodes arrays cannot do; [`pipelines/README.md`](pipelines/README.md#rules-that-read-a-list-as-its-json-text)
+lists them and says what a backend pipeline must map. The machine-readable result is
+[`pipelines/mapping_results.json`](pipelines/mapping_results.json). No query has run on
+a live AKS or GKE log yet (backlog issue #55).
+
 ## The benign corpus (false-positive scores)
 
 The hard gate answers "does the rule key on the technique?". The **benign corpus**
@@ -500,7 +539,9 @@ request, on push to `main`, and weekly: `rule-cases`, `check-sufficiency`,
 `sufficiency-ratchet` (pull requests only), `benign-corpus`
 (`score_benign.py --check --enforce`) and the shadow `benign-linux-live` capture.
 It also runs `schedule-freshness` (not on push), which reads the Actions API; see
-below.
+below. It also runs `provider-mappings` (not a required check; on a pull request only
+when a rule, a sidecar, the pipelines or the harness change), which proves the
+managed-cluster field mappings ([Provider field mappings](#provider-field-mappings-aks-gke-eks)).
 
 The `platform-coverage` job of the same workflow runs
 `python3 detections/k8s_policy_coverage.py --self-test --check` (see

@@ -1,0 +1,100 @@
+# pySigma processing pipeline: product kubernetes / service audit rules -> the Azure
+# Monitor resource-specific tables AKSAudit and AKSAuditAdmin (Log Analytics, Microsoft
+# Sentinel).
+#
+# Convert (the converter adds the table and works around a Kusto backend defect; see
+# detections/pipelines/README.md):
+#   python3 detections/pipelines/convert_k8s.py aks --table AKSAudit <rule.yml>...
+# The pipeline maps field names only, so it also loads in sigma-cli with any KQL backend:
+#   sigma convert -t kusto -p detections/pipelines/kubernetes_aks_auditlogs.yml <rule.yml>
+# (pySigma-backend-kusto 1.0.1 then quotes each dotted name as a string literal; use the
+# converter.)
+#
+# Column names (verified 2026-10-23 on Microsoft Learn, see detections/pipelines/SOURCES.md):
+#   learn.microsoft.com/azure/azure-monitor/reference/tables/aksaudit and .../aksauditadmin:
+#     Annotations, AuditId, Level, ObjectRef, PodName, RequestObject, RequestReceivedTime,
+#     RequestUri, ResponseObject, ResponseStatus, SourceIps, Stage, StageReceivedTime,
+#     User, UserAgent, Verb (and the Azure Monitor columns TimeGenerated, _ResourceId, ...).
+#   learn.microsoft.com/azure/azure-monitor/reference/queries/aksauditadmin and .../aksaudit
+#     (samples: ObjectRef.resource == "deployments", User.username != "...",
+#     ResponseStatus.code != 401).
+# The top-level columns are PascalCase. The keys INSIDE the dynamic columns (ObjectRef,
+# User, RequestObject, ResponseObject, ResponseStatus, Annotations) keep the
+# audit.k8s.io/v1 camelCase names, so only the first path segment is renamed.
+#
+# Not mapped; conversion fails on purpose:
+#   impersonatedUser.*  AKSAudit and AKSAuditAdmin have no ImpersonatedUser column. Use the
+#                       AzureDiagnostics table (Category "kube-audit", parse_json(log_s)) or
+#                       the Event Hub / storage export (properties.log). Those keep the raw
+#                       Event, so they need no field pipeline (native names after parsing).
+#   any other field     no AKSAudit column holds it.
+# What a mapped rule still cannot see (no pipeline fixes this):
+#   AKSAuditAdmin has no get and list events (WebSocket exec, attach and port-forward,
+#   Secret get/list, ...); RequestObject and ResponseObject can be the string
+#   "skipped-too-big-size-object"; Microsoft sets the AKS audit policy.
+name: Kubernetes audit to AKSAudit / AKSAuditAdmin (Azure Monitor resource-specific tables)
+priority: 20
+transformations:
+  - id: aks_impersonation_unavailable
+    type: detection_item_failure
+    rule_conditions:
+      - type: logsource
+        product: kubernetes
+        service: audit
+    message: "AKS pipeline cannot map this field: AKSAudit/AKSAuditAdmin have no ImpersonatedUser column; convert this rule for AzureDiagnostics (parse_json(log_s)) or the Event Hub export instead"
+    field_name_conditions:
+      - type: include_fields
+        mode: re
+        fields: ['^impersonatedUser(\..*)?$']
+  - id: aks_top_level_columns
+    type: field_name_mapping
+    rule_conditions:
+      - type: logsource
+        product: kubernetes
+        service: audit
+    mapping:
+      verb: Verb
+      requestURI: RequestUri
+      userAgent: UserAgent
+      sourceIPs: SourceIps
+      level: Level
+      stage: Stage
+      auditID: AuditId
+      requestReceivedTimestamp: RequestReceivedTime
+      stageTimestamp: StageReceivedTime
+      objectRef: ObjectRef
+      user: User
+      # The whole body: a query-time column that is null when the body is an object
+      # (convert_k8s.py writes its `extend` line). A whole-body item (requestObject|re,
+      # requestObject: null) reads only a JSON-patch list or raw text, as on the native
+      # Event, where an object has no value of its own. In KQL a property bag is not null
+      # and string operators read its JSON text, so RequestObject itself would not do.
+      requestObject: RequestObjectNotBag
+      responseObject: ResponseObjectNotBag
+      responseStatus: ResponseStatus
+      annotations: Annotations
+  - id: aks_dynamic_columns
+    type: field_name_prefix_mapping
+    rule_conditions:
+      - type: logsource
+        product: kubernetes
+        service: audit
+    mapping:
+      objectRef.: ObjectRef.
+      user.: User.
+      requestObject.: RequestObject.
+      responseObject.: ResponseObject.
+      responseStatus.: ResponseStatus.
+      annotations.: Annotations.
+  - id: aks_unmapped
+    type: detection_item_failure
+    rule_conditions:
+      - type: logsource
+        product: kubernetes
+        service: audit
+    message: "AKS pipeline cannot map this field: no AKSAudit/AKSAuditAdmin column holds it"
+    field_name_conditions:
+      - type: include_fields
+        mode: re
+        fields: ['^(Verb|RequestUri|UserAgent|SourceIps|Level|Stage|AuditId|RequestReceivedTime|StageReceivedTime|RequestObjectNotBag|ResponseObjectNotBag)$', '^(ObjectRef|User|RequestObject|ResponseObject|ResponseStatus|Annotations)(\..+)?$']
+    field_name_cond_not: true

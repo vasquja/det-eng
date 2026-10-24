@@ -1,0 +1,776 @@
+{
+ "provenance": {
+  "source": "https://github.com/GoogleCloudPlatform/khi/blob/ca3cc8829d47ab588d8ba11ba96e750a64a2931a/test/logs/k8s_audit/container_recorder_test_1_1.yaml",
+  "retrieved": "2026-10-23",
+  "license": "Apache-2.0",
+  "notice": "Copyright 2025 Google LLC. Licensed under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0). Modified by det-eng: see changes.",
+  "sha256_of_original": "0592441a5df4db57f0be473fe0b240a084705318f365bd92882282987833b734",
+  "changes": [
+   "YAML converted to JSON",
+   "identifiers rewritten to safe markers: namespace, pod, node, project and cluster names to trr9007- names, the two caller IP addresses to RFC 5737 192.0.2.3 and 192.0.2.7, and the UIDs and insert IDs to 00000000-0000-4000-8000-00000000000N",
+   "'native' (the audit.k8s.io/v1 Event this entry encodes) written by det-eng from the entry and the Kubernetes audit schema; it is not part of the source; as the API server writes it, its objectRef has no name: the request has only metadata.generateName, and kube-apiserver v1.36.4 fills objectRef.name from the request object before the name is generated (staging/src/k8s.io/apiserver/pkg/endpoints/handlers/create.go line 161, pkg/audit/request.go lines 129-135); the generated name is in responseObject.metadata.name"
+  ]
+ },
+ "what": "A GKE Kubernetes audit LogEntry: the ReplicaSet controller creates a pod (io.k8s.core.v1.pods.create). The transform must rebuild it from its native Event, and the pod-spec rule must see the pod (selection_pod) but not fire, until a privileged container is set in both shapes.",
+ "native": {
+  "kind": "Event",
+  "apiVersion": "audit.k8s.io/v1",
+  "level": "RequestResponse",
+  "auditID": "00000000-0000-4000-8000-000000000003",
+  "stage": "ResponseComplete",
+  "requestURI": "/api/v1/namespaces/trr9007-ns/pods",
+  "verb": "create",
+  "user": {
+   "username": "system:serviceaccount:kube-system:replicaset-controller"
+  },
+  "sourceIPs": [
+   "192.0.2.3"
+  ],
+  "userAgent": "kube-controller-manager/v1.28.14 (linux/amd64) kubernetes/a4ef1a6/system:serviceaccount:kube-system:replicaset-controller",
+  "objectRef": {
+   "resource": "pods",
+   "namespace": "trr9007-ns",
+   "apiVersion": "v1"
+  },
+  "responseStatus": {
+   "metadata": {},
+   "code": 201
+  },
+  "requestObject": {
+   "apiVersion": "v1",
+   "kind": "Pod",
+   "metadata": {
+    "creationTimestamp": null,
+    "generateName": "trr9007-web-8655b4b8c5-",
+    "labels": {
+     "app": "trr9007-web",
+     "pod-template-hash": "8655b4b8c5"
+    },
+    "ownerReferences": [
+     {
+      "apiVersion": "apps/v1",
+      "blockOwnerDeletion": true,
+      "controller": true,
+      "kind": "ReplicaSet",
+      "name": "trr9007-web-8655b4b8c5",
+      "uid": "00000000-0000-4000-8000-000000000001"
+     }
+    ]
+   },
+   "spec": {
+    "containers": [
+     {
+      "image": "nginx:1.14.2",
+      "imagePullPolicy": "IfNotPresent",
+      "name": "nginx",
+      "ports": [
+       {
+        "containerPort": 80,
+        "protocol": "TCP"
+       }
+      ],
+      "resources": {},
+      "terminationMessagePath": "/dev/termination-log",
+      "terminationMessagePolicy": "File"
+     },
+     {
+      "args": [
+       "/bin/sh",
+       "-c",
+       "sleep 60; touch /tmp/healthy; sleep 60000000;"
+      ],
+      "image": "registry.k8s.io/busybox",
+      "imagePullPolicy": "Always",
+      "name": "late-startup",
+      "readinessProbe": {
+       "exec": {
+        "command": [
+         "cat",
+         "/tmp/healthy"
+        ]
+       },
+       "failureThreshold": 3,
+       "periodSeconds": 1,
+       "successThreshold": 1,
+       "timeoutSeconds": 1
+      },
+      "resources": {},
+      "terminationMessagePath": "/dev/termination-log",
+      "terminationMessagePolicy": "File"
+     }
+    ],
+    "dnsPolicy": "ClusterFirst",
+    "enableServiceLinks": true,
+    "restartPolicy": "Always",
+    "schedulerName": "default-scheduler",
+    "securityContext": {},
+    "terminationGracePeriodSeconds": 30
+   },
+   "status": {}
+  },
+  "responseObject": {
+   "apiVersion": "v1",
+   "kind": "Pod",
+   "metadata": {
+    "creationTimestamp": "2024-01-01T01:00:00Z",
+    "generateName": "trr9007-web-8655b4b8c5-",
+    "labels": {
+     "app": "trr9007-web",
+     "pod-template-hash": "8655b4b8c5"
+    },
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:metadata": {
+        "f:generateName": {},
+        "f:labels": {
+         ".": {},
+         "f:app": {},
+         "f:pod-template-hash": {}
+        },
+        "f:ownerReferences": {
+         ".": {},
+         "k:{\"uid\":\"00000000-0000-4000-8000-000000000001\"}": {}
+        }
+       },
+       "f:spec": {
+        "f:containers": {
+         "k:{\"name\":\"late-startup\"}": {
+          ".": {},
+          "f:args": {},
+          "f:image": {},
+          "f:imagePullPolicy": {},
+          "f:name": {},
+          "f:readinessProbe": {
+           ".": {},
+           "f:exec": {
+            ".": {},
+            "f:command": {}
+           }
+          },
+          "f:resources": {},
+          "f:terminationMessagePath": {},
+          "f:terminationMessagePolicy": {}
+         },
+         "k:{\"name\":\"nginx\"}": {
+          ".": {},
+          "f:image": {},
+          "f:imagePullPolicy": {},
+          "f:name": {},
+          "f:ports": {
+           ".": {},
+           "k:{\"containerPort\":80,\"protocol\":\"TCP\"}": {
+            ".": {},
+            "f:containerPort": {},
+            "f:protocol": {}
+           }
+          },
+          "f:resources": {},
+          "f:terminationMessagePath": {},
+          "f:terminationMessagePolicy": {}
+         }
+        },
+        "f:status": {}
+       }
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "time": "2024-01-01T01:00:00Z"
+     }
+    ],
+    "name": "trr9007-web-8655b4b8c5-xf5f4",
+    "namespace": "trr9007-ns",
+    "ownerReferences": [
+     {
+      "apiVersion": "apps/v1",
+      "blockOwnerDeletion": true,
+      "controller": true,
+      "kind": "ReplicaSet",
+      "name": "trr9007-web-8655b4b8c5",
+      "uid": "00000000-0000-4000-8000-000000000001"
+     }
+    ],
+    "resourceVersion": "15465",
+    "uid": "00000000-0000-4000-8000-000000000002"
+   },
+   "spec": {
+    "containers": [
+     {
+      "image": "nginx:1.14.2",
+      "imagePullPolicy": "IfNotPresent",
+      "name": "nginx",
+      "ports": [
+       {
+        "containerPort": 80,
+        "protocol": "TCP"
+       }
+      ],
+      "resources": {},
+      "terminationMessagePath": "/dev/termination-log",
+      "terminationMessagePolicy": "File",
+      "volumeMounts": [
+       {
+        "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+        "name": "kube-api-access-nq8wz",
+        "readOnly": true
+       }
+      ]
+     },
+     {
+      "args": [
+       "/bin/sh",
+       "-c",
+       "sleep 60; touch /tmp/healthy; sleep 60000000;"
+      ],
+      "image": "registry.k8s.io/busybox",
+      "imagePullPolicy": "Always",
+      "name": "late-startup",
+      "readinessProbe": {
+       "exec": {
+        "command": [
+         "cat",
+         "/tmp/healthy"
+        ]
+       },
+       "failureThreshold": 3,
+       "periodSeconds": 1,
+       "successThreshold": 1,
+       "timeoutSeconds": 1
+      },
+      "resources": {},
+      "terminationMessagePath": "/dev/termination-log",
+      "terminationMessagePolicy": "File",
+      "volumeMounts": [
+       {
+        "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+        "name": "kube-api-access-nq8wz",
+        "readOnly": true
+       }
+      ]
+     }
+    ],
+    "dnsPolicy": "ClusterFirst",
+    "enableServiceLinks": true,
+    "preemptionPolicy": "PreemptLowerPriority",
+    "priority": 0,
+    "restartPolicy": "Always",
+    "schedulerName": "default-scheduler",
+    "securityContext": {},
+    "serviceAccount": "default",
+    "serviceAccountName": "default",
+    "terminationGracePeriodSeconds": 30,
+    "tolerations": [
+     {
+      "effect": "NoExecute",
+      "key": "node.kubernetes.io/not-ready",
+      "operator": "Exists",
+      "tolerationSeconds": 300
+     },
+     {
+      "effect": "NoExecute",
+      "key": "node.kubernetes.io/unreachable",
+      "operator": "Exists",
+      "tolerationSeconds": 300
+     }
+    ],
+    "volumes": [
+     {
+      "name": "kube-api-access-nq8wz",
+      "projected": {
+       "defaultMode": 420,
+       "sources": [
+        {
+         "serviceAccountToken": {
+          "expirationSeconds": 3607,
+          "path": "token"
+         }
+        },
+        {
+         "configMap": {
+          "items": [
+           {
+            "key": "ca.crt",
+            "path": "ca.crt"
+           }
+          ],
+          "name": "kube-root-ca.crt"
+         }
+        },
+        {
+         "downwardAPI": {
+          "items": [
+           {
+            "fieldRef": {
+             "apiVersion": "v1",
+             "fieldPath": "metadata.namespace"
+            },
+            "path": "namespace"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "status": {
+    "phase": "Pending",
+    "qosClass": "BestEffort"
+   }
+  },
+  "annotations": {
+   "authorization.k8s.io/decision": "allow",
+   "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"system:controller:replicaset-controller\" of ClusterRole \"system:controller:replicaset-controller\" to ServiceAccount \"replicaset-controller/kube-system\"",
+   "mutation.webhook.admission.k8s.io/round_0_index_3": "{\"configuration\":\"pod-ready.config.common-webhooks.networking.gke.io\",\"webhook\":\"pod-ready.common-webhooks.networking.gke.io\",\"mutated\":false}",
+   "mutation.webhook.admission.k8s.io/round_0_index_4": "{\"configuration\":\"warden-mutating.config.common-webhooks.networking.gke.io\",\"webhook\":\"warden-mutating.common-webhooks.networking.gke.io\",\"mutated\":false}",
+   "pod-security.kubernetes.io/enforce-policy": "privileged:latest"
+  }
+ },
+ "record": {
+  "insertId": "00000000-0000-4000-8000-000000000003",
+  "labels": {
+   "authorization.k8s.io/decision": "allow",
+   "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"system:controller:replicaset-controller\" of ClusterRole \"system:controller:replicaset-controller\" to ServiceAccount \"replicaset-controller/kube-system\"",
+   "mutation.webhook.admission.k8s.io/round_0_index_3": "{\"configuration\":\"pod-ready.config.common-webhooks.networking.gke.io\",\"webhook\":\"pod-ready.common-webhooks.networking.gke.io\",\"mutated\":false}",
+   "mutation.webhook.admission.k8s.io/round_0_index_4": "{\"configuration\":\"warden-mutating.config.common-webhooks.networking.gke.io\",\"webhook\":\"warden-mutating.common-webhooks.networking.gke.io\",\"mutated\":false}",
+   "pod-security.kubernetes.io/enforce-policy": "privileged:latest"
+  },
+  "logName": "projects/trr9007-project/logs/cloudaudit.googleapis.com%2Factivity",
+  "operation": {
+   "first": true,
+   "id": "00000000-0000-4000-8000-000000000003",
+   "last": true,
+   "producer": "k8s.io"
+  },
+  "protoPayload": {
+   "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+   "authenticationInfo": {
+    "principalEmail": "system:serviceaccount:kube-system:replicaset-controller"
+   },
+   "authorizationInfo": [
+    {
+     "granted": true,
+     "permission": "io.k8s.core.v1.pods.create",
+     "resource": "core/v1/namespaces/trr9007-ns/pods/trr9007-web-8655b4b8c5-xf5f4"
+    }
+   ],
+   "methodName": "io.k8s.core.v1.pods.create",
+   "request": {
+    "@type": "core.k8s.io/v1.Pod",
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "metadata": {
+     "creationTimestamp": null,
+     "generateName": "trr9007-web-8655b4b8c5-",
+     "labels": {
+      "app": "trr9007-web",
+      "pod-template-hash": "8655b4b8c5"
+     },
+     "ownerReferences": [
+      {
+       "apiVersion": "apps/v1",
+       "blockOwnerDeletion": true,
+       "controller": true,
+       "kind": "ReplicaSet",
+       "name": "trr9007-web-8655b4b8c5",
+       "uid": "00000000-0000-4000-8000-000000000001"
+      }
+     ]
+    },
+    "spec": {
+     "containers": [
+      {
+       "image": "nginx:1.14.2",
+       "imagePullPolicy": "IfNotPresent",
+       "name": "nginx",
+       "ports": [
+        {
+         "containerPort": 80,
+         "protocol": "TCP"
+        }
+       ],
+       "resources": {},
+       "terminationMessagePath": "/dev/termination-log",
+       "terminationMessagePolicy": "File"
+      },
+      {
+       "args": [
+        "/bin/sh",
+        "-c",
+        "sleep 60; touch /tmp/healthy; sleep 60000000;"
+       ],
+       "image": "registry.k8s.io/busybox",
+       "imagePullPolicy": "Always",
+       "name": "late-startup",
+       "readinessProbe": {
+        "exec": {
+         "command": [
+          "cat",
+          "/tmp/healthy"
+         ]
+        },
+        "failureThreshold": 3,
+        "periodSeconds": 1,
+        "successThreshold": 1,
+        "timeoutSeconds": 1
+       },
+       "resources": {},
+       "terminationMessagePath": "/dev/termination-log",
+       "terminationMessagePolicy": "File"
+      }
+     ],
+     "dnsPolicy": "ClusterFirst",
+     "enableServiceLinks": true,
+     "restartPolicy": "Always",
+     "schedulerName": "default-scheduler",
+     "securityContext": {},
+     "terminationGracePeriodSeconds": 30
+    },
+    "status": {}
+   },
+   "requestMetadata": {
+    "callerIp": "192.0.2.3",
+    "callerSuppliedUserAgent": "kube-controller-manager/v1.28.14 (linux/amd64) kubernetes/a4ef1a6/system:serviceaccount:kube-system:replicaset-controller"
+   },
+   "resourceName": "core/v1/namespaces/trr9007-ns/pods/trr9007-web-8655b4b8c5-xf5f4",
+   "response": {
+    "@type": "core.k8s.io/v1.Pod",
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "metadata": {
+     "creationTimestamp": "2024-01-01T01:00:00Z",
+     "generateName": "trr9007-web-8655b4b8c5-",
+     "labels": {
+      "app": "trr9007-web",
+      "pod-template-hash": "8655b4b8c5"
+     },
+     "managedFields": [
+      {
+       "apiVersion": "v1",
+       "fieldsType": "FieldsV1",
+       "fieldsV1": {
+        "f:metadata": {
+         "f:generateName": {},
+         "f:labels": {
+          ".": {},
+          "f:app": {},
+          "f:pod-template-hash": {}
+         },
+         "f:ownerReferences": {
+          ".": {},
+          "k:{\"uid\":\"00000000-0000-4000-8000-000000000001\"}": {}
+         }
+        },
+        "f:spec": {
+         "f:containers": {
+          "k:{\"name\":\"late-startup\"}": {
+           ".": {},
+           "f:args": {},
+           "f:image": {},
+           "f:imagePullPolicy": {},
+           "f:name": {},
+           "f:readinessProbe": {
+            ".": {},
+            "f:exec": {
+             ".": {},
+             "f:command": {}
+            }
+           },
+           "f:resources": {},
+           "f:terminationMessagePath": {},
+           "f:terminationMessagePolicy": {}
+          },
+          "k:{\"name\":\"nginx\"}": {
+           ".": {},
+           "f:image": {},
+           "f:imagePullPolicy": {},
+           "f:name": {},
+           "f:ports": {
+            ".": {},
+            "k:{\"containerPort\":80,\"protocol\":\"TCP\"}": {
+             ".": {},
+             "f:containerPort": {},
+             "f:protocol": {}
+            }
+           },
+           "f:resources": {},
+           "f:terminationMessagePath": {},
+           "f:terminationMessagePolicy": {}
+          }
+         },
+         "f:status": {}
+        }
+       },
+       "manager": "kube-controller-manager",
+       "operation": "Update",
+       "time": "2024-01-01T01:00:00Z"
+      }
+     ],
+     "name": "trr9007-web-8655b4b8c5-xf5f4",
+     "namespace": "trr9007-ns",
+     "ownerReferences": [
+      {
+       "apiVersion": "apps/v1",
+       "blockOwnerDeletion": true,
+       "controller": true,
+       "kind": "ReplicaSet",
+       "name": "trr9007-web-8655b4b8c5",
+       "uid": "00000000-0000-4000-8000-000000000001"
+      }
+     ],
+     "resourceVersion": "15465",
+     "uid": "00000000-0000-4000-8000-000000000002"
+    },
+    "spec": {
+     "containers": [
+      {
+       "image": "nginx:1.14.2",
+       "imagePullPolicy": "IfNotPresent",
+       "name": "nginx",
+       "ports": [
+        {
+         "containerPort": 80,
+         "protocol": "TCP"
+        }
+       ],
+       "resources": {},
+       "terminationMessagePath": "/dev/termination-log",
+       "terminationMessagePolicy": "File",
+       "volumeMounts": [
+        {
+         "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+         "name": "kube-api-access-nq8wz",
+         "readOnly": true
+        }
+       ]
+      },
+      {
+       "args": [
+        "/bin/sh",
+        "-c",
+        "sleep 60; touch /tmp/healthy; sleep 60000000;"
+       ],
+       "image": "registry.k8s.io/busybox",
+       "imagePullPolicy": "Always",
+       "name": "late-startup",
+       "readinessProbe": {
+        "exec": {
+         "command": [
+          "cat",
+          "/tmp/healthy"
+         ]
+        },
+        "failureThreshold": 3,
+        "periodSeconds": 1,
+        "successThreshold": 1,
+        "timeoutSeconds": 1
+       },
+       "resources": {},
+       "terminationMessagePath": "/dev/termination-log",
+       "terminationMessagePolicy": "File",
+       "volumeMounts": [
+        {
+         "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+         "name": "kube-api-access-nq8wz",
+         "readOnly": true
+        }
+       ]
+      }
+     ],
+     "dnsPolicy": "ClusterFirst",
+     "enableServiceLinks": true,
+     "preemptionPolicy": "PreemptLowerPriority",
+     "priority": 0,
+     "restartPolicy": "Always",
+     "schedulerName": "default-scheduler",
+     "securityContext": {},
+     "serviceAccount": "default",
+     "serviceAccountName": "default",
+     "terminationGracePeriodSeconds": 30,
+     "tolerations": [
+      {
+       "effect": "NoExecute",
+       "key": "node.kubernetes.io/not-ready",
+       "operator": "Exists",
+       "tolerationSeconds": 300
+      },
+      {
+       "effect": "NoExecute",
+       "key": "node.kubernetes.io/unreachable",
+       "operator": "Exists",
+       "tolerationSeconds": 300
+      }
+     ],
+     "volumes": [
+      {
+       "name": "kube-api-access-nq8wz",
+       "projected": {
+        "defaultMode": 420,
+        "sources": [
+         {
+          "serviceAccountToken": {
+           "expirationSeconds": 3607,
+           "path": "token"
+          }
+         },
+         {
+          "configMap": {
+           "items": [
+            {
+             "key": "ca.crt",
+             "path": "ca.crt"
+            }
+           ],
+           "name": "kube-root-ca.crt"
+          }
+         },
+         {
+          "downwardAPI": {
+           "items": [
+            {
+             "fieldRef": {
+              "apiVersion": "v1",
+              "fieldPath": "metadata.namespace"
+             },
+             "path": "namespace"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      }
+     ]
+    },
+    "status": {
+     "phase": "Pending",
+     "qosClass": "BestEffort"
+    }
+   },
+   "serviceName": "k8s.io",
+   "status": {
+    "code": 0
+   }
+  },
+  "receiveTimestamp": "2024-01-01T01:00:00Z",
+  "resource": {
+   "labels": {
+    "cluster_name": "trr9007-cluster",
+    "location": "us-central1-a",
+    "project_id": "trr9007-project"
+   },
+   "type": "k8s_cluster"
+  },
+  "timestamp": "2024-01-01T01:00:00Z"
+ },
+ "compare": [
+  [
+   "protoPayload",
+   "@type"
+  ],
+  [
+   "protoPayload",
+   "serviceName"
+  ],
+  [
+   "protoPayload",
+   "methodName"
+  ],
+  [
+   "protoPayload",
+   "resourceName"
+  ],
+  [
+   "protoPayload",
+   "authenticationInfo"
+  ],
+  [
+   "protoPayload",
+   "request"
+  ],
+  [
+   "protoPayload",
+   "response"
+  ],
+  [
+   "protoPayload",
+   "status"
+  ],
+  [
+   "protoPayload",
+   "requestMetadata"
+  ],
+  [
+   "labels"
+  ]
+ ],
+ "rules": [
+  {
+   "rule": "T1611/k8s_podspec_host_access.yml",
+   "fires": false,
+   "blocks": {
+    "selection_pod": true,
+    "sel_privileged": false
+   }
+  }
+ ],
+ "variants": [
+  {
+   "name": "privileged container set",
+   "set": {
+    "requestObject/spec/containers": [
+     {
+      "image": "nginx:1.14.2",
+      "imagePullPolicy": "IfNotPresent",
+      "name": "nginx",
+      "ports": [
+       {
+        "containerPort": 80,
+        "protocol": "TCP"
+       }
+      ],
+      "resources": {},
+      "terminationMessagePath": "/dev/termination-log",
+      "terminationMessagePolicy": "File",
+      "securityContext": {
+       "privileged": true
+      }
+     },
+     {
+      "args": [
+       "/bin/sh",
+       "-c",
+       "sleep 60; touch /tmp/healthy; sleep 60000000;"
+      ],
+      "image": "registry.k8s.io/busybox",
+      "imagePullPolicy": "Always",
+      "name": "late-startup",
+      "readinessProbe": {
+       "exec": {
+        "command": [
+         "cat",
+         "/tmp/healthy"
+        ]
+       },
+       "failureThreshold": 3,
+       "periodSeconds": 1,
+       "successThreshold": 1,
+       "timeoutSeconds": 1
+      },
+      "resources": {},
+      "terminationMessagePath": "/dev/termination-log",
+      "terminationMessagePolicy": "File"
+     }
+    ]
+   },
+   "fires": true,
+   "blocks": {
+    "selection_pod": true,
+    "sel_privileged": true
+   }
+  }
+ ]
+}

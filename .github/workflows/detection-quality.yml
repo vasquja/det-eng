@@ -57,6 +57,17 @@ name: detection-quality
 #                      today) must stay within its budget. Shadow-mode overruns only
 #                      warn. A smoke test also checks the live capture split
 #                      (--extra-split-at) on a constructed audit capture.
+#   provider-mappings  NOT REQUIRED. Each managed-cluster field mapping (AKS, GKE:
+#                      detections/pipelines/) must keep every Kubernetes audit rule's
+#                      verdict and block truth on every sidecar case after the case is
+#                      transformed to the provider's record shape, or the difference must
+#                      be a human-approved EXPECTED_LOSS / NOT_PORTABLE entry
+#                      (detections/check_provider_mappings.py --check, which also fails
+#                      when detections/pipelines/mapping_results.json is stale), plus the
+#                      harness and converter self-tests. On a pull request it runs only
+#                      when a rule or sidecar (detections/sigma/), the pipelines, the
+#                      harness or its imports (sigma_eval, rule_cases, sigma_explain) or
+#                      their requirements change; a renamed file counts by both paths.
 #   benign-linux-live  SHADOW. A real Ubuntu runner runs ordinary admin, developer
 #                      and service activity under the det-eng audit rules
 #                      (detections/benign/linux/), and every Linux rule is scored on
@@ -452,6 +463,111 @@ jobs:
             echo ''
             echo '```'
             cat /tmp/benign.out 2>/dev/null || echo '(no output captured)'
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  provider-mappings:
+    # Offline: no cloud account. A pull request that touches none of the patterns below
+    # skips the steps (the job still reports success); push, schedule and dispatch runs
+    # always run them.
+    name: provider-mappings
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether the mappings need a check
+        id: f
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_SHA:-}" ]; then
+            echo "Non-PR event; running the check."
+            echo "relevant=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # Shell patterns ('*' also matches '/'), matched against each changed path.
+          # Every rule path counts: the harness picks the Kubernetes audit rules by their
+          # logsource, not by their file name.
+          patterns=$(printf '%s\n' \
+            'detections/sigma/*' \
+            'detections/pipelines/*' \
+            'detections/check_provider_mappings.py' \
+            'detections/sigma_eval.py' \
+            'detections/rule_cases.py' \
+            'detections/sigma_explain.py' \
+            'detections/requirements.txt' \
+            'detections/requirements-convert.txt' \
+            '.github/scripts/check_sigma_regex.py' \
+            '.github/workflows/detection-quality.yml')
+          # --no-renames: a renamed rule lists its old path too (an approval keyed on it).
+          if ! changed="$(git diff --name-only --no-renames "${BASE_SHA}...${HEAD_SHA}" 2>/dev/null)"; then
+            echo "git diff failed; running the check to be safe."
+            echo "relevant=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          relevant=false
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            while IFS= read -r pat; do
+              [ -n "$pat" ] || continue
+              # shellcheck disable=SC2254  # the pattern is a glob on purpose
+              case "$file" in $pat) relevant=true; break 2 ;; esac
+            done <<< "$patterns"
+          done <<< "$changed"
+          echo "relevant=$relevant"
+          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        if: steps.f.outputs.relevant == 'true'
+        with:
+          # google-re2 ships wheels up to cp314 (see validate-detections, sigma-lint).
+          python-version: '3.14'
+
+      - name: Install requirements (validators + conversion checks)
+        if: steps.f.outputs.relevant == 'true'
+        run: |
+          pip install --quiet -r detections/requirements.txt -r detections/requirements-convert.txt
+          # RE2 for the lint of every regular expression a pipeline writes.
+          pip install --quiet google-re2==1.1.20251105
+
+      - name: Check every mapping on every case (and that mapping_results.json is current)
+        if: steps.f.outputs.relevant == 'true'
+        shell: bash
+        run: |
+          # shell: bash enables pipefail, so tee does not mask the exit code.
+          python3 detections/check_provider_mappings.py --check --require-re2 \
+            | tee /tmp/provider-mappings.out
+
+      - name: Self-test the harness (planted mapping errors must be caught)
+        if: steps.f.outputs.relevant == 'true'
+        run: python3 detections/check_provider_mappings.py --self-test
+
+      - name: Self-test the converter (the Kusto quoting workaround)
+        if: steps.f.outputs.relevant == 'true'
+        run: python3 detections/pipelines/convert_k8s.py --self-test
+
+      - name: Publish results to job summary
+        if: always() && steps.f.outputs.relevant == 'true'
+        shell: bash
+        run: |
+          {
+            echo '## Provider field mappings (AKS, GKE; exploded arrays as a warning)'
+            echo ''
+            echo '```'
+            tail -n 3 /tmp/provider-mappings.out 2>/dev/null || echo '(no output captured)'
+            echo '```'
+            echo ''
+            echo '<details><summary>check_provider_mappings.py output</summary>'
+            echo ''
+            echo '```'
+            cat /tmp/provider-mappings.out 2>/dev/null || echo '(no output captured)'
             echo '```'
             echo '</details>'
           } >> "$GITHUB_STEP_SUMMARY"

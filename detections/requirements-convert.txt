@@ -1,0 +1,6 @@
+# Conversion checks only (the provider-mappings CI job installs this next to
+# requirements.txt; no gate needs it). pySigma-backend-kusto turns the AKS pipeline's
+# output into KQL; detections/pipelines/convert_k8s.py works around its field quoting
+# (detections/pipelines/README.md). certifi is its own dependency, pinned too.
+pySigma-backend-kusto==1.0.1
+certifi==2026.7.22

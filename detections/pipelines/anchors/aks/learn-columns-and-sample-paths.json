@@ -1,0 +1,397 @@
+{
+ "provenance": {
+  "source": "https://learn.microsoft.com/azure/azure-monitor/reference/tables/aksaudit, https://learn.microsoft.com/azure/azure-monitor/reference/tables/aksauditadmin, https://learn.microsoft.com/azure/azure-monitor/reference/queries/aksaudit, https://learn.microsoft.com/azure/azure-monitor/reference/queries/aksauditadmin",
+  "retrieved": "2026-10-23",
+  "license": "column and field names cited as facts; no text copied"
+ },
+ "what": "The AKSAudit / AKSAuditAdmin columns (from the table reference, with each column's type and what its description says it holds) and the dynamic-column paths Microsoft's sample queries use. This is a column reference, not a recorded row: no public AKSAudit row was found. Every transformed row may hold only these columns; the pipeline must map each native field as field_map says, and every mapping the pipeline writes must have a field_map entry (field_map_complete).",
+ "columns": [
+  "Annotations",
+  "AuditId",
+  "Level",
+  "ObjectRef",
+  "PodName",
+  "RequestObject",
+  "RequestReceivedTime",
+  "RequestUri",
+  "ResponseObject",
+  "ResponseStatus",
+  "SourceIps",
+  "Stage",
+  "StageReceivedTime",
+  "User",
+  "UserAgent",
+  "Verb"
+ ],
+ "native": {
+  "kind": "Event",
+  "apiVersion": "audit.k8s.io/v1",
+  "level": "RequestResponse",
+  "auditID": "00000000-0000-4000-8000-000000000003",
+  "stage": "ResponseComplete",
+  "requestURI": "/api/v1/namespaces/trr9007-ns/pods",
+  "verb": "create",
+  "user": {
+   "username": "system:serviceaccount:kube-system:replicaset-controller"
+  },
+  "sourceIPs": [
+   "192.0.2.3"
+  ],
+  "userAgent": "kube-controller-manager/v1.28.14 (linux/amd64) kubernetes/a4ef1a6/system:serviceaccount:kube-system:replicaset-controller",
+  "objectRef": {
+   "resource": "pods",
+   "namespace": "trr9007-ns",
+   "name": "trr9007-web-8655b4b8c5-xf5f4",
+   "apiVersion": "v1"
+  },
+  "responseStatus": {
+   "metadata": {},
+   "code": 201
+  },
+  "requestObject": {
+   "apiVersion": "v1",
+   "kind": "Pod",
+   "metadata": {
+    "creationTimestamp": null,
+    "generateName": "trr9007-web-8655b4b8c5-",
+    "labels": {
+     "app": "trr9007-web",
+     "pod-template-hash": "8655b4b8c5"
+    },
+    "ownerReferences": [
+     {
+      "apiVersion": "apps/v1",
+      "blockOwnerDeletion": true,
+      "controller": true,
+      "kind": "ReplicaSet",
+      "name": "trr9007-web-8655b4b8c5",
+      "uid": "00000000-0000-4000-8000-000000000001"
+     }
+    ]
+   },
+   "spec": {
+    "containers": [
+     {
+      "image": "nginx:1.14.2",
+      "imagePullPolicy": "IfNotPresent",
+      "name": "nginx",
+      "ports": [
+       {
+        "containerPort": 80,
+        "protocol": "TCP"
+       }
+      ],
+      "resources": {},
+      "terminationMessagePath": "/dev/termination-log",
+      "terminationMessagePolicy": "File"
+     },
+     {
+      "args": [
+       "/bin/sh",
+       "-c",
+       "sleep 60; touch /tmp/healthy; sleep 60000000;"
+      ],
+      "image": "registry.k8s.io/busybox",
+      "imagePullPolicy": "Always",
+      "name": "late-startup",
+      "readinessProbe": {
+       "exec": {
+        "command": [
+         "cat",
+         "/tmp/healthy"
+        ]
+       },
+       "failureThreshold": 3,
+       "periodSeconds": 1,
+       "successThreshold": 1,
+       "timeoutSeconds": 1
+      },
+      "resources": {},
+      "terminationMessagePath": "/dev/termination-log",
+      "terminationMessagePolicy": "File"
+     }
+    ],
+    "dnsPolicy": "ClusterFirst",
+    "enableServiceLinks": true,
+    "restartPolicy": "Always",
+    "schedulerName": "default-scheduler",
+    "securityContext": {},
+    "terminationGracePeriodSeconds": 30
+   },
+   "status": {}
+  },
+  "responseObject": {
+   "apiVersion": "v1",
+   "kind": "Pod",
+   "metadata": {
+    "creationTimestamp": "2024-01-01T01:00:00Z",
+    "generateName": "trr9007-web-8655b4b8c5-",
+    "labels": {
+     "app": "trr9007-web",
+     "pod-template-hash": "8655b4b8c5"
+    },
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:metadata": {
+        "f:generateName": {},
+        "f:labels": {
+         ".": {},
+         "f:app": {},
+         "f:pod-template-hash": {}
+        },
+        "f:ownerReferences": {
+         ".": {},
+         "k:{\"uid\":\"00000000-0000-4000-8000-000000000001\"}": {}
+        }
+       },
+       "f:spec": {
+        "f:containers": {
+         "k:{\"name\":\"late-startup\"}": {
+          ".": {},
+          "f:args": {},
+          "f:image": {},
+          "f:imagePullPolicy": {},
+          "f:name": {},
+          "f:readinessProbe": {
+           ".": {},
+           "f:exec": {
+            ".": {},
+            "f:command": {}
+           }
+          },
+          "f:resources": {},
+          "f:terminationMessagePath": {},
+          "f:terminationMessagePolicy": {}
+         },
+         "k:{\"name\":\"nginx\"}": {
+          ".": {},
+          "f:image": {},
+          "f:imagePullPolicy": {},
+          "f:name": {},
+          "f:ports": {
+           ".": {},
+           "k:{\"containerPort\":80,\"protocol\":\"TCP\"}": {
+            ".": {},
+            "f:containerPort": {},
+            "f:protocol": {}
+           }
+          },
+          "f:resources": {},
+          "f:terminationMessagePath": {},
+          "f:terminationMessagePolicy": {}
+         }
+        },
+        "f:status": {}
+       }
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "time": "2024-01-01T01:00:00Z"
+     }
+    ],
+    "name": "trr9007-web-8655b4b8c5-xf5f4",
+    "namespace": "trr9007-ns",
+    "ownerReferences": [
+     {
+      "apiVersion": "apps/v1",
+      "blockOwnerDeletion": true,
+      "controller": true,
+      "kind": "ReplicaSet",
+      "name": "trr9007-web-8655b4b8c5",
+      "uid": "00000000-0000-4000-8000-000000000001"
+     }
+    ],
+    "resourceVersion": "15465",
+    "uid": "00000000-0000-4000-8000-000000000002"
+   },
+   "spec": {
+    "containers": [
+     {
+      "image": "nginx:1.14.2",
+      "imagePullPolicy": "IfNotPresent",
+      "name": "nginx",
+      "ports": [
+       {
+        "containerPort": 80,
+        "protocol": "TCP"
+       }
+      ],
+      "resources": {},
+      "terminationMessagePath": "/dev/termination-log",
+      "terminationMessagePolicy": "File",
+      "volumeMounts": [
+       {
+        "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+        "name": "kube-api-access-nq8wz",
+        "readOnly": true
+       }
+      ]
+     },
+     {
+      "args": [
+       "/bin/sh",
+       "-c",
+       "sleep 60; touch /tmp/healthy; sleep 60000000;"
+      ],
+      "image": "registry.k8s.io/busybox",
+      "imagePullPolicy": "Always",
+      "name": "late-startup",
+      "readinessProbe": {
+       "exec": {
+        "command": [
+         "cat",
+         "/tmp/healthy"
+        ]
+       },
+       "failureThreshold": 3,
+       "periodSeconds": 1,
+       "successThreshold": 1,
+       "timeoutSeconds": 1
+      },
+      "resources": {},
+      "terminationMessagePath": "/dev/termination-log",
+      "terminationMessagePolicy": "File",
+      "volumeMounts": [
+       {
+        "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+        "name": "kube-api-access-nq8wz",
+        "readOnly": true
+       }
+      ]
+     }
+    ],
+    "dnsPolicy": "ClusterFirst",
+    "enableServiceLinks": true,
+    "preemptionPolicy": "PreemptLowerPriority",
+    "priority": 0,
+    "restartPolicy": "Always",
+    "schedulerName": "default-scheduler",
+    "securityContext": {},
+    "serviceAccount": "default",
+    "serviceAccountName": "default",
+    "terminationGracePeriodSeconds": 30,
+    "tolerations": [
+     {
+      "effect": "NoExecute",
+      "key": "node.kubernetes.io/not-ready",
+      "operator": "Exists",
+      "tolerationSeconds": 300
+     },
+     {
+      "effect": "NoExecute",
+      "key": "node.kubernetes.io/unreachable",
+      "operator": "Exists",
+      "tolerationSeconds": 300
+     }
+    ],
+    "volumes": [
+     {
+      "name": "kube-api-access-nq8wz",
+      "projected": {
+       "defaultMode": 420,
+       "sources": [
+        {
+         "serviceAccountToken": {
+          "expirationSeconds": 3607,
+          "path": "token"
+         }
+        },
+        {
+         "configMap": {
+          "items": [
+           {
+            "key": "ca.crt",
+            "path": "ca.crt"
+           }
+          ],
+          "name": "kube-root-ca.crt"
+         }
+        },
+        {
+         "downwardAPI": {
+          "items": [
+           {
+            "fieldRef": {
+             "apiVersion": "v1",
+             "fieldPath": "metadata.namespace"
+            },
+            "path": "namespace"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "status": {
+    "phase": "Pending",
+    "qosClass": "BestEffort"
+   }
+  },
+  "annotations": {
+   "authorization.k8s.io/decision": "allow",
+   "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"system:controller:replicaset-controller\" of ClusterRole \"system:controller:replicaset-controller\" to ServiceAccount \"replicaset-controller/kube-system\"",
+   "mutation.webhook.admission.k8s.io/round_0_index_3": "{\"configuration\":\"pod-ready.config.common-webhooks.networking.gke.io\",\"webhook\":\"pod-ready.common-webhooks.networking.gke.io\",\"mutated\":false}",
+   "mutation.webhook.admission.k8s.io/round_0_index_4": "{\"configuration\":\"warden-mutating.config.common-webhooks.networking.gke.io\",\"webhook\":\"warden-mutating.common-webhooks.networking.gke.io\",\"mutated\":false}",
+   "pod-security.kubernetes.io/enforce-policy": "privileged:latest"
+  }
+ },
+ "field_map": {
+  "verb": "Verb",
+  "requestURI": "RequestUri",
+  "userAgent": "UserAgent",
+  "sourceIPs": "SourceIps",
+  "level": "Level",
+  "stage": "Stage",
+  "auditID": "AuditId",
+  "requestReceivedTimestamp": "RequestReceivedTime",
+  "stageTimestamp": "StageReceivedTime",
+  "objectRef": "ObjectRef",
+  "objectRef.resource": "ObjectRef.resource",
+  "objectRef.namespace": "ObjectRef.namespace",
+  "user": "User",
+  "user.username": "User.username",
+  "responseStatus": "ResponseStatus",
+  "responseStatus.code": "ResponseStatus.code",
+  "requestObject": "RequestObjectNotBag",
+  "requestObject.spec.replicas": "RequestObject.spec.replicas",
+  "responseObject": "ResponseObjectNotBag",
+  "responseObject.metadata.name": "ResponseObject.metadata.name",
+  "annotations": "Annotations",
+  "annotations.authorization.k8s.io/decision": "Annotations.authorization.k8s.io/decision"
+ },
+ "field_map_sources": {
+  "verb": "https://learn.microsoft.com/azure/azure-monitor/reference/tables/aksaudit (Verb, string: the Kubernetes verb of the request)",
+  "requestURI": "https://learn.microsoft.com/azure/azure-monitor/reference/tables/aksaudit (RequestUri, string: the URI of the request)",
+  "userAgent": "https://learn.microsoft.com/azure/azure-monitor/reference/tables/aksaudit (UserAgent, string: the client's user agent)",
+  "sourceIPs": "https://learn.microsoft.com/azure/azure-monitor/reference/tables/aksaudit (SourceIps, dynamic: the source IP list); https://learn.microsoft.com/azure/azure-monitor/reference/queries/aksaudit (SourceIps)",
+  "level": "https://learn.microsoft.com/azure/azure-monitor/reference/tables/aksaudit (Level, string: the audit level, Metadata, Request or RequestResponse)",
+  "stage": "https://learn.microsoft.com/azure/azure-monitor/reference/tables/aksaudit (Stage, string: the stage, RequestReceived, ResponseStarted, ResponseComplete or Panic)",
+  "auditID": "https://learn.microsoft.com/azure/azure-monitor/reference/tables/aksaudit (AuditId, string: the unique audit ID of the request)",
+  "requestReceivedTimestamp": "https://learn.microsoft.com/azure/azure-monitor/reference/tables/aksaudit (RequestReceivedTime, datetime: when the API server received the request)",
+  "stageTimestamp": "https://learn.microsoft.com/azure/azure-monitor/reference/tables/aksaudit (StageReceivedTime, datetime: when the request reached the stage)",
+  "objectRef": "https://learn.microsoft.com/azure/azure-monitor/reference/tables/aksaudit (ObjectRef, dynamic: the object reference)",
+  "objectRef.resource": "https://learn.microsoft.com/azure/azure-monitor/reference/queries/aksauditadmin (ObjectRef.resource)",
+  "objectRef.namespace": "https://learn.microsoft.com/azure/azure-monitor/reference/queries/aksauditadmin (ObjectRef.namespace)",
+  "user": "https://learn.microsoft.com/azure/azure-monitor/reference/tables/aksaudit (User, dynamic: the authenticated user)",
+  "user.username": "https://learn.microsoft.com/azure/azure-monitor/reference/queries/aksauditadmin (User.username)",
+  "responseStatus": "https://learn.microsoft.com/azure/azure-monitor/reference/tables/aksaudit (ResponseStatus, dynamic: the response status with its code)",
+  "responseStatus.code": "https://learn.microsoft.com/azure/azure-monitor/reference/queries/aksauditadmin (ResponseStatus.code)",
+  "requestObject": "query-time column defined by detections/pipelines/convert_k8s.py (extend from RequestObject; https://learn.microsoft.com/azure/azure-monitor/reference/tables/aksaudit: RequestObject, dynamic, the request object or the string skipped-too-big-size-object)",
+  "requestObject.spec.replicas": "https://learn.microsoft.com/azure/azure-monitor/reference/tables/aksaudit (RequestObject, dynamic: the request object; keys inside keep the Kubernetes names, as in https://learn.microsoft.com/azure/azure-monitor/reference/queries/aksauditadmin: project ... RequestObject)",
+  "responseObject": "query-time column defined by detections/pipelines/convert_k8s.py (extend from ResponseObject; https://learn.microsoft.com/azure/azure-monitor/reference/tables/aksaudit: ResponseObject, dynamic)",
+  "responseObject.metadata.name": "https://learn.microsoft.com/azure/azure-monitor/reference/tables/aksaudit (ResponseObject, dynamic: the response object)",
+  "annotations": "https://learn.microsoft.com/azure/azure-monitor/reference/tables/aksaudit (Annotations, dynamic: the key-value map of the audit event)",
+  "annotations.authorization.k8s.io/decision": "https://learn.microsoft.com/azure/azure-monitor/reference/tables/aksaudit (Annotations, dynamic map; a key keeps its dots and slash)"
+ },
+ "field_map_complete": true,
+ "query_columns": [
+  "RequestObjectNotBag",
+  "ResponseObjectNotBag"
+ ]
+}

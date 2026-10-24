@@ -82,6 +82,7 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [KTBD-A3](#ktbd-a3-body-graders-are-blind-under-the-openshift-default-profile-and-the-k3s-starter-policy) | the request-body graders of TRR9004, TRR9007, TRR9008 and TRR9025, under the OpenShift Default profile and the k3s starter policy | writes are logged at Metadata, so no `requestObject` or `responseObject` exists to grade | portability, policy gap | medium |
 | [KTBD-A4](#ktbd-a4-k8s_coredns_corefile_poisoned-blind-under-every-published-managed-policy) | the TRR9027 Corefile grader, on EKS, GCE kube-up, AKS, OpenShift with the Default profile and the k3s starter policy | the kube-system/coredns write is logged at Metadata, so the Corefile is not in the record | portability, policy gap | low |
 | [KTBD-A5](#ktbd-a5-aks-kube-audit-admin-the-category-drops-get-and-list-so-read-shaped-procedures-leave-no-record) | the read-shaped Kubernetes rules (TRR9002, TRR9006, TRR9009, TRR9026), on AKS with the kube-audit-admin category | the category drops every get and list record | portability | medium |
+| [KTBD-B1](#ktbd-b1-k8s_rbac_privileged_grant-the-aggregation-clause-needs-the-api-servers-key-order) | `T1098.006/k8s_rbac_privileged_grant` | on a store that does not keep the key order of an object (AKS `dynamic` columns, GKE's `Struct` body), the clusterrole-aggregation-controller's write of impersonate on users into admin or edit is filtered: `sel_agg_beyond_builtin` needs the keys of each RBAC rule in Go field order | false negative | low |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
@@ -1478,6 +1479,47 @@ prints the current ones.
   these procedures are seen by no audit rule.
 - **Then**: no case changes. The entry closes if Microsoft changes what the category
   keeps.
+
+### KTBD-B1. k8s_rbac_privileged_grant: the aggregation clause needs the API server's key order
+
+- **Rule**: [`sigma/T1098.006/k8s_rbac_privileged_grant.yml`](sigma/T1098.006/k8s_rbac_privileged_grant.yml) (level high).
+- **Kind**: false negative. **Severity**: low (a portability caveat: the lab and every
+  store that keeps the audit record's JSON text are not affected, and the aggregated
+  ClusterRole that adds the permission fires the rule on its own write).
+- **Problem**: the rule filters the clusterrole-aggregation-controller's writes of the
+  built-in `admin` and `edit` (`filter_aggregation_controller`) unless the written rules
+  carry more than the built-in roles (`sel_agg_beyond_builtin`). The impersonate clause
+  of `sel_agg_beyond_builtin` is a `|re` on the JSON text of `requestObject.rules`:
+  `"impersonate"[^\]]*\],\s*"apiGroups":\s*\[[^\]]*\],\s*"resources":\s*\[[^\]]*"(users|groups|uids|userextras)`.
+  It matches only when the keys of each RBAC rule come in Go field order (`verbs`,
+  `apiGroups`, `resources`), as the API server writes them. A store that does not keep
+  the key order of an object can give the text in another order: Kusto, for the AKS
+  `RequestObject` column ("Kusto doesn't attempt to preserve the order of name-to-value
+  mappings in a property bag",
+  [the dynamic data type](https://learn.microsoft.com/kusto/query/scalar-data-types/dynamic);
+  `dynamic_to_json()` sorts them), and GKE, whose `protoPayload.request` is a
+  `google.protobuf.Struct` (a map). There the clause does not hold, the filter holds,
+  and the controller's write of impersonate on users, groups, uids or userextras into
+  `admin` or `edit` does not fire. The other clauses (`"*"`, `escalate`, `bind`,
+  `nodes/proxy`) do not depend on key order.
+- **Evidence**: *probe* (`sigma_eval.py`) — the positive case
+  `aggregation-controller-writes-impersonate-users-into-admin` fires (1 hit) as
+  recorded; the same event with the keys of each object in `requestObject.rules` sorted
+  (`apiGroups`, `resources`, `verbs`) gives 0 hits. A create of a ClusterRole labelled
+  `rbac.authorization.k8s.io/aggregate-to-admin` with impersonate on users, by a user
+  other than the controller, fires in both key orders (1 hit each). *check* —
+  `python3 detections/check_provider_mappings.py -v --provider aks detections/sigma/T1098.006/k8s_rbac_privileged_grant.yml`
+  reports `sorted: native fires, aks quiet; blocks sel_agg_beyond_builtin` (and the same
+  for GKE); the AKS and GKE `EXPECTED_LOSS` entries for that case (reason `KEY_ORDER`)
+  point here. Which key order a KQL query or a GKE log store really gives: **unverified**
+  (backlog issue #55).
+- **Fix**: make the impersonate clause independent of the key order: add an alternative
+  for each other order of `verbs`, `apiGroups` and `resources` (the `[^\]]*` skips stay
+  inside one list, so each order is one more alternative of the same form). A rule change,
+  so a later pull request.
+- **Then**: a new positive case with the rule objects' keys sorted fires; the two
+  `KEY_ORDER` entries in `check_provider_mappings.py` become stale and are removed; the
+  entry closes.
 
 ## Cloud (AWS, Azure, GCP)
 
