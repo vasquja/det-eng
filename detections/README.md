@@ -512,6 +512,9 @@ pySigma 1.5.1 (`pySigma-backend-elasticsearch` 2.1.1) and Lucene 10.1 found thes
   two are among the 17). Each of these five sidecars now holds that record as a
   positive, and with them the check fails 20 rules of that `main`. All 20 now have a
   null-safe form, with every earlier case verdict and benign score the same as before.
+  The OpenShift branches that wave 4 adds to `T1565.001/k8s_coredns_configmap_modified.yml`
+  have no 2xx selection either, so their DNS Operator filter carries the same guard, and
+  the sidecar holds a 401 positive for each branch.
   **Limit:** the check proves null safety on the records that the cases and fixtures
   hold. A filter on a field that every positive carries is never tested absent;
   `check_null_safety.py --absent` lists those fields (information only). It lists these

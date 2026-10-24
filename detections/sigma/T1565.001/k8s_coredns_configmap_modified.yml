@@ -137,7 +137,15 @@ detection:
     verb:
       - 'create'
       - 'update'
-  condition: select_dns_configmap or ((select_openshift_dns_configmap or select_openshift_dns_operator_config) and not filter_openshift_dns_operator)
+  # A request that fails authentication (401) is logged with no user.username, so the
+  # operator filter cannot hold; the guard keeps that verdict on a three-valued backend
+  # (detections/README.md, null safety).
+  sel_no_username:
+    user.username: null
+  condition: >-
+    select_dns_configmap or ((select_openshift_dns_configmap or
+    select_openshift_dns_operator_config) and (sel_no_username or not
+    filter_openshift_dns_operator))
 falsepositives:
   - The cluster's own DNS operators updating the Corefile. The coredns and kube-dns
     service accounts, system:node:*, kube-controller-manager, and the managed
