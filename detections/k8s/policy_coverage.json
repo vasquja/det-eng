@@ -170,7 +170,7 @@
   },
   "recommended": {
    "files": [
-    {"path": "detections/k8s/audit-policy-recommended.yaml", "sha256": "d325000046da73df5053c1f113982ec169beedb9a7805fe131f6095bdbfe800b"}
+    {"path": "detections/k8s/audit-policy-recommended.yaml", "sha256": "848bef9e35618de932c679cfade5c3184f6efe4013cc40bbc119a77c349de1a8"}
    ],
    "kind": "recommended",
    "label": "this repository's recommended production policy (every Kubernetes audit rule; the TRR9027 D create needs its opt-in line)",

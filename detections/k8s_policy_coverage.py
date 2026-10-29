@@ -84,13 +84,14 @@ rule with sigma_eval.py (the pySigma SQLite backend that every gate uses):
      and the table fail when this breaks, as for the home check. The sidecar shows only
      some of the requests a rule selects, so the self-test also runs the selection
      check (selection_errors) on that policy: each request that a rule's "select" items
-     name (every resource of a group that an item selects whole, such as the six
-     admissionregistration.k8s.io resources, and every group of a resource that it
-     names without one) must be logged at the level that the item's sidecar requests
-     with the same verb need (the level from which each such positive fires and each
-     such negative stays quiet). Only the requests of the opt-in line may fail it, and
-     the self-test pins them. It also pins every cell (verb, group, resource, namespace,
-     name) of the policy's rules at Request and RequestResponse.
+     (and its "sel" items that name a resource) name (every resource of a group that an
+     item selects whole, such as the six admissionregistration.k8s.io resources, and
+     every group of a resource that it names without one) must be logged at the level
+     that the item's sidecar requests with the same verb need (the level from which each
+     such positive fires and each such negative stays quiet). Only the requests of the
+     opt-in line may fail it, and the self-test pins them. It also pins every cell
+     (verb, group, resource, namespace, name) of the policy's rules at Request and
+     RequestResponse.
   7. Needs: for each rule, the lowest UNIFORM level (a policy with the one rule
      `level: L` and omitStages [RequestReceived]) at which every positive fires, and
      the request tuples of the positives (rules[<rule>].needs, below). The requests
@@ -496,7 +497,9 @@ RECOMMENDED_OPT_IN_LOSSES = {
 UNIFORM_PREFIX = "uniform:"
 # The selection check of the recommended policy (selection_errors(), self-test section
 # 10). A Kubernetes audit rule selects its requests in the detection items whose name
-# starts with "select" (the convention of these rules) with the fields below. Where an
+# starts with "select" (the convention of these rules), and in the "sel" items that name
+# a resource (an OR branch such as sel_enforcer_namespace_delete; reading an AND-ed
+# narrower too is harmless), with the fields below. Where an
 # item names a group but no resource, it selects every resource of the group; where it
 # names a resource but no group, every group that serves a resource of that name. These
 # are the Kubernetes v1.36 facts for the groups and resources the rules name (top-level
@@ -1164,12 +1167,20 @@ def rule_needs(rel, uniform):
     if below != "None" and negs[below]:
         neg_events = [ev for c in cases if c["name"] in negs[below] for ev in c["events"]]
         reqs = _request_tuples(neg_events)[0]
-        notes.append(
-            f"At {below}, {len(negs[below])} negative case(s) fire because their records "
-            f"lose the body that keeps them quiet ({_names(negs[below])}; their requests: "
-            + ", ".join(_request_text(k, reqs[k]) for k in sorted(reqs, key=_tuple_order))
-            + "); " + (f"at {quiet} none fires." if quiet else
-                       "a negative fires at every uniform level."))
+        req_text = ", ".join(_request_text(k, reqs[k])
+                             for k in sorted(reqs, key=_tuple_order))
+        if quiet is None:
+            # No record loses a body at RequestResponse, so the body-loss reason does
+            # not apply there.
+            notes.append(
+                f"A negative case fires at every uniform level; at {below} "
+                f"{len(negs[below])} fire ({_names(negs[below])}; their requests: "
+                f"{req_text}).")
+        else:
+            notes.append(
+                f"At {below}, {len(negs[below])} negative case(s) fire because their "
+                f"records lose the body that keeps them quiet ({_names(negs[below])}; "
+                f"their requests: {req_text}); at {quiet} none fires.")
     return {"level": level,
             "requests": [{"group": k[0], "resource": k[1], "subresource": k[2],
                           "verbs": sorted(tuples[k])}
@@ -1183,18 +1194,23 @@ def _tuple_order(key):
 
 def rule_selections(rel):
     """The request selections of a rule: [(item name, {field: [value, ...]})], one per
-    map of each detection item whose name starts with "select" and that sets a
-    SELECTION_FIELDS field (keyed by its short name: group, resource, sub, verb, ns,
-    name; a null value is "" or, for sub, None), and the errors for what the selection
-    check cannot read (a modifier on such a field, an item that is not a map)."""
+    map of each detection item whose name starts with "select", or with "sel" when one
+    of its maps names objectRef.resource (for example sel_enforcer_namespace_delete, an
+    OR branch of the TRR9025 rules), and that sets a SELECTION_FIELDS field (keyed by
+    its short name: group, resource, sub, verb, ns, name; a null value is "" or, for
+    sub, None), and the errors for what the selection check cannot read (a modifier on
+    such a field, an item that is not a map)."""
     with open(os.path.join(SIGMA, rel), encoding="utf-8") as fh:
         docs = [d for d in yaml.safe_load_all(fh) if isinstance(d, dict)]
     out, errors = [], []
     for d in docs:
         for name, item in (d.get("detection") or {}).items():
-            if not str(name).startswith("select"):
+            maps = item if isinstance(item, list) else [item]
+            if not (str(name).startswith("select") or (
+                    str(name).startswith("sel") and any(
+                        isinstance(m, dict) and "objectRef.resource" in m for m in maps))):
                 continue
-            for m in item if isinstance(item, list) else [item]:
+            for m in maps:
                 if not isinstance(m, dict):
                     errors.append(f"{rel} {name}: a selection item that is not a map")
                     continue
@@ -2368,7 +2384,8 @@ def self_test():
                 (_rec("patch", "mutatingadmissionpolicies", name="m", group=adm),
                  "RequestResponse"),
                 (_rec("patch", "validatingadmissionpolicies", sub="status", name="v",
-                      group=adm, user="system:apiserver"), "Metadata"),
+                      group=adm, user="system:serviceaccount:kube-system:"
+                      "validatingadmissionpolicy-status-controller"), "Metadata"),
                 (_rec("delete", "mutatingadmissionpolicybindings", name="m", group=adm),
                  "Request"),
                 (_rec("create", "mutatingwebhookconfigurations", name="w", group=adm),
@@ -2554,8 +2571,9 @@ def self_test():
                       (res["off"]["negatives_firing"], res["on"]["negatives_firing"]),
                       ([], []))
                 n += 3
-        # The selection check (step 6): every request that a rule's "select" items name
-        # is logged at the level its sidecar shows the item needs. Only the opt-in
+        # The selection check (step 6): every request that a rule's "select" items (and
+        # its "sel" items that name a resource) name is logged at the level its sidecar
+        # shows the item needs. Only the opt-in
         # requests (a kube-system DNS ConfigMap create) fail it, none with the opt-in line
         # on, and it fails on a policy that drops a resource that no sidecar uses.
         uni10 = uniform_policies()
@@ -2591,6 +2609,22 @@ def self_test():
             check(f"{RECOMMENDED} with the opt-in line: selection check failures",
                   selection_errors(optin, ranks)[0], [])
             n += 1
+        # A "sel" item that names a resource is read too: the TRR9025 rules select
+        # namespace deletes in sel_enforcer_namespace_delete, whose sidecars hold only
+        # one of its three names, so a policy that drops the falco namespace delete fails
+        # the check for both rules.
+        no_falco = copy.deepcopy(rec)
+        no_falco["rules"].insert(0, parse_rule(
+            {"level": "None", "verbs": ["delete"],
+             "resources": [{"group": "", "resources": ["namespaces"],
+                            "resourceNames": ["falco"]}]}, "self-test", []))
+        check(f"{RECOMMENDED} selection check fails: the falco namespace delete dropped "
+              "(a sel item)",
+              sorted(f[0] for f in selection_errors(no_falco, ranks)[0]
+                     if (f[2], f[4], f[7]) == ("delete", "namespaces", "falco")),
+              ["T1685/k8s_enforcer_workload_removed.yml",
+               "T1685/k8s_security_tool_workload_removed.yml"])
+        n += 1
         for label, drop, want in (
                 ("ValidatingAdmissionPolicy dropped from the delete rule (K39)",
                  ("Request", "delete", adm, "validatingadmissionpolicies"),
@@ -2642,8 +2676,9 @@ def self_test():
         # The live job's validator agrees with the simulator: its expected misses
         # ("fires": False) are exactly the opt-in losses here, an expected miss that
         # "fires" names a positive that fires here, and each policy gate names a
-        # positive that fires here (POLICY_GATES and EXPECTED_MISS name the sidecar
-        # positive of their request as "case").
+        # positive that fires here (the "case" of a POLICY_GATES or EXPECTED_MISS entry
+        # must be a positive of the rule; that it is the positive of the gate's own
+        # request is not checked).
         try:
             import validate_apiserver_detections as vad
             xmap = vad.EXPECTED_MISS.get(RECOMMENDED, {})

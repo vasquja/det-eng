@@ -481,7 +481,9 @@ approval that lands after they have passed leaves the merge to a human (see
   (trailing slash, no `**`) to the `changes`-job pattern list. That job treats an
   entry ending in `/` as a prefix and any other entry as an exact path, so a glob
   there never matches, and the validator is skipped (which counts as success). The
-  kind validators have the same two lists.
+  kind validators have the same two lists; `validate-apiserver-detections.yml` also
+  has step `r` of the `changes` job (`validate-apiserver-recommended`), which needs
+  the same two prefixes.
 - The kind validators.
 - `lint-trr.yml`.
 - `detection-quality.yml`, on every PR:

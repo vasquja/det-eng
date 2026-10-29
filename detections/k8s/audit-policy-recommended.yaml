@@ -14,11 +14,14 @@
 # WHERE YOU CAN USE IT, AND WHAT TO DO WHERE YOU CANNOT
 #   * kubeadm: in ClusterConfiguration, apiServer.extraArgs audit-policy-file and
 #     audit-log-path (the v1beta4 config API takes a list of name/value pairs, for
-#     example "- name: audit-policy-file" and "value: <path>"), and an
-#     apiServer.extraVolumes entry that mounts this file into the API server pod
-#     (kubeadm "Customizing components with the kubeadm API" page). The Kubernetes
-#     "Auditing" page (the log backend section) shows the same flags and mounts on a
-#     kube-apiserver static pod.
+#     example "- name: audit-policy-file" and "value: <path>"), and two
+#     apiServer.extraVolumes entries: this file (readOnly: true) and a hostPath for the
+#     directory of audit-log-path (for example /var/log/kubernetes, readOnly: false,
+#     pathType: DirectoryOrCreate), so that the log persists on the node; without the
+#     second one the log stays inside the API server container and is lost when it
+#     restarts (kubeadm "Customizing components with the kubeadm API" page). The
+#     Kubernetes "Auditing" page (the log backend section) shows the same flags and
+#     mounts on a kube-apiserver static pod.
 #   * kind: kind-apiserver-recommended-cluster.yaml beside this file (extraMounts plus
 #     the same kubeadm patch; kind "Auditing" guide).
 #   * k3s: --kube-apiserver-arg=audit-policy-file=<path> and audit-log-path (k3s
@@ -26,12 +29,18 @@
 #   * RKE2: the audit-policy-file server option (RKE2 server configuration
 #     reference). With the CIS profile, RKE2 writes a policy whose one rule is
 #     "level: None" (RKE2 hardening guide), so it logs nothing until you replace it.
+#     RKE2 installs CoreDNS from its rke2-coredns Helm chart, so its Corefile ConfigMap
+#     is kube-system/rke2-coredns-rke2-coredns (rancher/rke2-charts rke2-coredns
+#     templates/configmap.yaml, coredns.fullname). The TRR9027 rules and the DNS row
+#     below do not select that name, so no TRR9027 rule sees a Corefile edit on RKE2
+#     (RULE_DEFECTS.md K47).
 #   * Amazon EKS: you cannot set the policy (the request to allow a custom policy,
 #     aws/containers-roadmap issue 566, is open). The EKS policy logs core Events at
 #     None and ConfigMaps (except aws-auth) at Metadata: read RULE_DEFECTS.md K38, K39 and
 #     K41 for what that costs.
 #   * GKE: GKE supplies the policy file itself (GKE "Audit policy" page); no GKE
-#     setting to replace it is known to this repository (unverified). Read K38 and K41.
+#     setting to replace it is known to this repository (unverified). Read K38, K39 and
+#     K41.
 #   * Azure AKS: "The audit policy is managed by AKS and can't be customized" (Microsoft
 #     Learn, "Monitor AKS"). Collect the kube-audit category, not only kube-audit-admin
 #     (K42); read K38, K39 and K41.
@@ -83,7 +92,8 @@
 # creates at Request. Without it, a recreated kube-system/coredns (TRR9027 Procedure D:
 # delete, then a POST to the collection) reaches the log at Metadata with no Corefile.
 # The chokepoint k8s_coredns_configmap_modified still fires on it; the Corefile grader
-# k8s_coredns_corefile_poisoned cannot grade it (an expected miss; see the rule).
+# k8s_coredns_corefile_poisoned cannot grade it (an expected miss: RULE_DEFECTS.md K41,
+# and EXPECTED_MISS in validate_apiserver_detections.py).
 #
 # COST, RULE_DEFECTS.md K23: at Request and RequestResponse the JSON audit backend drops
 # an apply patch sent with a YAML body, so such a write leaves NO record at all (also no
@@ -101,11 +111,15 @@
 # first noise rule below drops (ConfigMaps, Events, Endpoints, Leases, EndpointSlices,
 # nodes/status, pods/status) leaves NO record, and T1134/k8s_impersonation and
 # k8s_impersonation_privileged cannot fire on it. Every other impersonated request
-# reaches a logged rule. To close the gap, scope that noise rule to the system callers
-# (the EKS and GCE kube-up policies scope most of their None rules to named system
-# users and groups, but drop core Events for every caller, K38); it then logs the
-# reads of people and their tools at Metadata, a volume cost to weigh before you
-# change it (read the entry).
+# reaches a logged rule, except the reads (get, list, watch) of system:apiserver,
+# system:kube-scheduler and system:kube-controller-manager, which the second None rule
+# drops for every resource that no rule above it logs (Secrets and the command
+# subresources are logged). To close the gap, scope that noise rule to the system
+# callers (the EKS and GCE kube-up policies scope most of their None rules to named
+# system users and system:nodes, but drop core Events for every caller, K38); it then
+# logs the reads of people and their tools at Metadata, a volume cost to weigh before
+# you change it. A caller that stays in the scope keeps the gap; do not scope it to
+# system:serviceaccounts, which keeps it for every pod token (read the entry).
 #
 # VOLUME (an ESTIMATE for kind; see detections/README.md): on the lab's live benign
 # capture (1449 records at commit 50e606f: 909 bootstrap, 540 operator workload) no
@@ -117,10 +131,13 @@
 # system:kube-controller-manager, which those components do not send. It has fewer
 # bodies:
 # the kube-system ConfigMap creates of the bootstrap (about 7 objects, about 10 KB) are
-# at Metadata, and the RBAC deletes, the StatefulSet, ReplicaSet, CronJob and
+# at Metadata, and the RBAC deletes, the ValidatingAdmissionPolicy and binding creates
+# (the policy body), the StatefulSet, ReplicaSet, CronJob and
 # ReplicationController deletes, the DNS and aws-auth ConfigMap deletes and the
 # StatefulSet and ReplicaSet scale writes lose their small DeleteOptions, Status or
-# Scale bodies: a few percent of the bytes, at most. A local kube-apiserver v1.36.4 run
+# Scale bodies: a few percent of the bytes, at most. It logs more bodies than the lab
+# for MutatingAdmissionPolicy and its binding: writes at RequestResponse and deletes at
+# Request (K35), where the lab keeps Metadata. A local kube-apiserver v1.36.4 run
 # of the TRR9004, 9006, 9008-9010, 9025 and 9027 atomics measured 1108 records under
 # each policy and 2% fewer bytes under this one (10 KB fewer request bodies in the
 # bootstrap). The validate-apiserver-recommended job prints the measured records and
@@ -263,8 +280,11 @@ rules:
   # T1546/k8s_admission_webhook_repointed_to_url, T1685/k8s_admission_webhook_disabled
   # and T1546/k8s_admission_webhook_created (a server-side-apply install is a patch
   # answered 201), and the server-side-apply branch of
-  # k8s_malicious_admission_webhook_created. The status subresources (the API server's
-  # own type-check of a policy) stay at the catch-all. No secret: a webhook clientConfig
+  # k8s_malicious_admission_webhook_created. The status subresources stay at the
+  # catch-all: kube-controller-manager's validatingadmissionpolicy-status controller
+  # writes a policy's type-check there (an apply patch of
+  # validatingadmissionpolicies/status), and k8s_admission_webhook_disabled fires on it
+  # (RULE_DEFECTS.md K48). No secret: a webhook clientConfig
   # is a Service reference or a URL, a caBundle a public CA certificate, a policy CEL text.
   - level: RequestResponse
     verbs: ["update", "patch"]
@@ -303,7 +323,8 @@ rules:
   # Serves: T1565.001/k8s_coredns_corefile_poisoned (the Corefile in the request and in
   # the stored object, so a JSON patch is graded as a full write) and
   # T1565.001/k8s_coredns_configmap_modified (Metadata is enough). Scoped by
-  # resourceNames to the three DNS ConfigMaps. Copies the Corefile twice per write, and
+  # resourceNames to the three DNS ConfigMaps (not RKE2's rke2-coredns-rke2-coredns,
+  # K47). Copies the Corefile twice per write, and
   # a Corefile can hold credentials (header). A PATCH or PUT to the named object
   # (kubectl patch, edit, replace, and a server-side apply, also of a new object) is
   # logged here; a POST create names no object, so it reaches the catch-all at Metadata,
@@ -403,7 +424,8 @@ rules:
 
   # --- Catch-all: everything else at Metadata (never None) ---
   # Serves every Metadata chokepoint that no rule above names: T1098.006/k8s_rbac_write
-  # (deletes), T1053.007/k8s_job_create (deletes), T1546/k8s_admission_webhook_created
+  # (deletes), T1053.007/k8s_job_create (CronJob deletes),
+  # T1546/k8s_admission_webhook_created
   # (policy creates), T1565.001/k8s_coredns_configmap_modified and
   # T1098.006/k8s_eks_aws_auth_configmap_modified (creates and deletes), and the
   # impersonated requests of T1134/k8s_impersonation (any request can be impersonated)

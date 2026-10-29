@@ -1213,7 +1213,8 @@ MISS_MANIFEST = [
 # "fires" says whether the rule itself matches an evidence record (False: the grader has
 # nothing to grade); the run checks it. "case" names the rule's sidecar positive for the
 # same request: k8s_policy_coverage.py's self-test checks that the simulator agrees (a
-# "fires": False case is an expected opt-in loss, RECOMMENDED_OPT_IN_LOSSES).
+# "fires": False case is an expected opt-in loss, RECOMMENDED_OPT_IN_LOSSES), not that the
+# case is the positive of this request.
 POLICY_CHOICES = ("lab", "recommended")
 _D_CREATE_EVIDENCE = rec(verb="create", resource="configmaps", name="coredns",
                          ns="kube-system", user=non_system, window=("9027", "d"))
@@ -1248,15 +1249,19 @@ def request_body_has(token):
 
 # The MANIFEST entries whose gate a policy REPLACES in a strict run (see the module
 # docstring), with the reason and the rule's sidecar positive for the same request
-# ("case"; the self-test of k8s_policy_coverage.py checks that it fires under that
-# policy). A policy gate never makes the run weaker than the policy allows: 9027 D's
+# ("case"; the self-test of k8s_policy_coverage.py checks that it is a positive of the
+# rule and fires under that policy, not that it is the positive of this request). A
+# policy gate never makes the run weaker than the policy allows: 9027 D's
 # gate takes D's create with NO body (the policy is proven to drop it) in D's window,
 # and the 9027 B and C gates need a RequestResponse record with the sentinel in the
 # request body, where the MANIFEST gate also takes the fieldManager=trr9027-emulation of
 # the requestURI. A run under a policy with a policy gate or an expected miss needs
 # --ledger: without D's window the D gate would take kubeadm's bootstrap create of
 # coredns, and an expected miss would have no evidence. --expect-miss runs the MANIFEST
-# gates (the wider ones).
+# gates. For 9027 B and C they are wider than the policy gates. For 9027 D the MANIFEST
+# gate (the sentinel) and the policy gate (no body) select different records: only D's
+# ledger window tells the policy gate's record from the bootstrap create, and the
+# negative control runs without a ledger, so it cannot test that gate.
 POLICY_GATES = {
     "lab": {},
     "recommended": {

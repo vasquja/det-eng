@@ -380,6 +380,11 @@ def validate_result(rule, pid, res, npos):
           f"{rule} / {pid}: positives.total {res['positives']['total']} is not the "
           f"sidecar's {npos}")
     _need(isinstance(res["not_modeled_reads"], int), f"{w}.not_modeled_reads must be a count")
+    lost_names = [x.get("case") for x in res["positives"]["lost"]]
+    _need(len(set(lost_names)) == len(lost_names)
+          and res["positives"]["firing"] == res["positives"]["total"] - len(lost_names),
+          f"{rule} / {pid}: positives.firing {res['positives']['firing']} is not total "
+          f"{res['positives']['total']} minus the {len(lost_names)} lost case(s)")
     for lost in res["positives"]["lost"]:
         _keys(lost, ("case", "reason", "policy_rules"), w + ".positives.lost[]")
         _need(lost["reason"] in LOST_REASONS,
@@ -722,20 +727,28 @@ def compute_cell(pc, mr, cases, rule, shape, graders, pairs, stores):
     # What the policy and the store keep, before the provider's mapping.
     kept = total - len(lost)
     np_fields = []
-    fp_map = 0
+    # The negative cases that fire, by name: a negative that fires under the policy and
+    # also has an approved mapping false positive counts once ("fp n": n cases).
+    fp_cases = {n["case"] for n in res["negatives_firing"]}
+    by_name = {c["name"]: c for c in cases[rule]}
     approved_diff = 0
     if mapping != "native":
         m = mr["rules"][rule]["providers"][mapping]
         if m["status"] == "not_portable":
             np_fields = sorted({_field(a) for a in m["not_portable"]})
+        # A loss in every variant of the provider is a plain approved-loss.
+        every = tuple(sorted(((mr.get("providers") or {}).get(mapping) or {})
+                             .get("variants") or ()))
         for case, e in sorted(m["expected_loss"].items()):
             loss = _variants(e["diff"], LOSS_RE)
             if kinds.get(case) == "positive" and loss:
-                code = ("approved-loss" if loss == "all"
+                code = ("approved-loss" if loss == "all" or loss == every
                         else "approved-loss-if-" + "/".join(loss))
                 lost.setdefault(case, (code, None))
             elif kinds.get(case) != "positive" and _variants(e["diff"], FP_RE):
-                fp_map += 1
+                # A store without reads drops a read-only case, so it cannot fire there.
+                if not (reads and _all_reads(by_name.get(case, {}), READ_VERBS[reads])):
+                    fp_cases.add(case)
             else:
                 approved_diff += 1
     firing = total - len(lost)
@@ -756,7 +769,7 @@ def compute_cell(pc, mr, cases, rule, shape, graders, pairs, stores):
         codes.append(f"approved-diff {approved_diff}")
     if res["not_modeled_reads"]:
         codes.append(f"not-modeled {res['not_modeled_reads']}")
-    fp = len(res["negatives_firing"]) + fp_map
+    fp = len(fp_cases)
     if fp:
         codes.append(f"fp {fp}")
     if np_fields:
@@ -946,7 +959,9 @@ def block_needs(pc):
              "positive cases, makes every one of them fire (no uniform level: no single level "
              "does). "
              "Requests: the group (`core` for the core group), resource, subresource and "
-             "verbs of those cases.", "",
+             "verbs of those cases: a sample of what the rule selects, not a complete "
+             "list, so read the rule's detection (or start from the recommended policy) "
+             "before you write a policy from them.", "",
              "| Rule | Lowest level | Requests | Note |", "|---|---|---|---|"]
     for r in rules:
         n = pc["rules"][r].get("needs")
@@ -1034,7 +1049,8 @@ def block_recommended(pc, exists):
         f"positive case, {s['rules_some_positives']} on some, {s['rules_blind']} on none; "
         f"{s['positives_firing']} of {s['positives']} positive cases fire; "
         f"{s['negatives_firing']} negative cases fire; {s['not_modeled_reads']} events are "
-        "not proven (the policy logs a body that the case record lacks).",
+        "not proven (the policy logs a body that the case record lacks, and the rule "
+        "reads it).",
         "",
         f"What is verified: {_md(p['status'])}."]
     opt = p.get("opt_in_losses") or {}
@@ -1702,6 +1718,33 @@ def self_test():
     check("fp block lists provider policies only",
           "| `openshift-default-4.17` | `T2/exec` | `T2/exec.yml-dry` |" in fp
           and "`lab-apiserver`" not in fp.split("\n", 3)[-1], fp)
+    pc5, mr5, cases5, q5 = _fixture()
+    pc5["rules"]["T1/choke.yml"]["results"]["lab-apiserver"]["negatives_firing"] = [
+        {"case": "T1/choke.yml-dry", "kind": "filtered", "reason": "body-removed"}]
+    fp5 = block_fp(pc5, mr5, cases5, q5["stores"], store_columns(pc5))
+    check("fp block leaves out a lab policy's firing negative",
+          "| `lab-apiserver` |" not in fp5 and "| `eks` | `T1/choke` |" in fp5, fp5)
+    pc6, mr6, cases6, q6 = _fixture()
+    mr6["rules"]["T1/choke.yml"]["providers"]["gke"].update(
+        status="expected_loss", expected_loss={"c-get-recon": {
+            "diff": "all: native quiet, gke fires; blocks filter_x", "why": "W"}})
+    c6 = _row(render_blocks_t(pc6, mr6, cases6, exists, q6)["platform-coverage"],
+              "T1/choke.yml")
+    check("a mapping fp on a negative that already fires counts once; a store without "
+          "reads drops a read-only one",
+          (c6[col("gke")], c6[col("gke-admin")])
+          == ("**full** 1/1; not-modeled 2; fp 1", "**full** 1/1; not-modeled 1"),
+          (c6[col("gke")], c6[col("gke-admin")]))
+    pc7v, mr7v, cases7v, q7v = _fixture()
+    mr7v["providers"]["gke"]["variants"] = ["compact", "sorted"]
+    mr7v["rules"]["T1/grader.yml"]["providers"]["gke"]["expected_loss"]["p-patch"][
+        "diff"] = ("compact: native fires, gke quiet; blocks sel_a | "
+                   "sorted: native fires, gke quiet; blocks sel_a, sel_b")
+    g7v = _row(render_blocks_t(pc7v, mr7v, cases7v, exists, q7v)["platform-coverage"],
+               "T1/grader.yml")
+    check("a loss in every variant (different blocks) is a plain approved-loss",
+          g7v[col("gke")] == "**partial** 1/2; approved-loss 1; approved-diff 1",
+          g7v[col("gke")])
     check("fp block: a read fp is under the policy, not under the store without reads",
           "| `gce-kube-up` | `T1/choke` | `c-get-recon` |" in fp
           and "store `gke_admin_activity` | `T1/choke`" not in fp, fp)
@@ -1821,15 +1864,18 @@ def self_test():
         ("a store replay without a rule", lambda p, m, c, q: q["stores"][GKE_STORE].pop(
             "T4/np.yml"), "no result for every rule"),
         ("a store replay that keeps a read-only positive", lambda p, m, c, q: q["stores"][
-            GKE_STORE]["T3/imp.yml"]["positives"].update(lost=[]),
+            GKE_STORE]["T3/imp.yml"]["positives"].update(lost=[], firing=1),
          "the log filter drops [], the read verbs say ['i-get']"),
         ("a store without reads whose policy keeps a read-only positive (no sibling)",
          lambda p, m, c, q: (p["policies"]["aks-kube-audit"].update(files=[{"path": "x"}]),
                              p["rules"]["T3/imp.yml"]["results"]["aks-kube-audit-admin"][
-                                 "positives"].update(lost=[])),
+                                 "positives"].update(lost=[], firing=1)),
          "keeps the read-only positive cases ['i-get'], which the store aksauditadmin"),
         ("a store replay with a wrong total", lambda p, m, c, q: q["stores"][GKE_STORE][
             "T1/choke.yml"]["positives"].update(total=2), "is not the sidecar's 1"),
+        ("a firing count that is not total minus the lost cases", lambda p, m, c, q: p[
+            "rules"]["T1/choke.yml"]["results"]["eks"]["positives"].update(firing=99),
+         "minus the 0 lost case(s)"),
         ("a policy with a log filter that is not the store's", lambda p, m, c, q: p[
             "policies"]["gce-kube-up"].update(log_filter={"drop_verbs": ["get"]}),
          "the script cannot join them"),

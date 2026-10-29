@@ -182,8 +182,10 @@ jobs:
             echo "Non-PR event; running the validator."
             echo "relevant=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          # Exact file paths, or directory prefixes ending in '/'. Mirror of the
-          # push: paths: list above (keep the two in sync when adding a technique).
+          # Exact file paths, or directory prefixes ending in '/'. The push: paths:
+          # list above without the two recommended-policy files (step r's inputs
+          # only). When adding a technique, add its prefixes here, to step r and to
+          # push: paths:.
           patterns=$(printf '%s\n' \
             'detections/k8s/audit-policy-apiserver.yaml' \
             'detections/k8s/kind-apiserver-cluster.yaml' \
