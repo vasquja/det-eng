@@ -46,6 +46,11 @@ run-name: ${{ inputs.label && format('{0} [{1}]', github.workflow, inputs.label)
 # realistic operator traffic as well as bootstrap; it is then scored against every rule
 # as a live benign slice (score_benign.py, shadow mode: reported, never enforced).
 # On a public repo the run is free.
+#
+# A second job, validate-apiserver-recommended (at the end of this file, NOT a required
+# check), runs the same steps on a cluster that mounts the recommended production audit
+# policy (detections/k8s/audit-policy-recommended.yaml) when its inputs change, weekly,
+# and on a manual dispatch.
 
 on:
   push:
@@ -53,6 +58,10 @@ on:
     paths:
       - 'detections/k8s/audit-policy-apiserver.yaml'
       - 'detections/k8s/kind-apiserver-cluster.yaml'
+      # The inputs of validate-apiserver-recommended only (the job below); a push that
+      # changes only these also runs validate-apiserver, as every push here does.
+      - 'detections/k8s/audit-policy-recommended.yaml'
+      - 'detections/k8s/kind-apiserver-recommended-cluster.yaml'
       - 'detections/k8s/cri-pod-sensor.sh'
       - 'detections/k8s/auditd_file_events.py'
       - 'detections/benign/k8s/workload.sh'
@@ -157,6 +166,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       relevant: ${{ steps.f.outputs.relevant }}
+      recommended: ${{ steps.r.outputs.recommended }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -227,13 +237,95 @@ jobs:
           echo "Changed files vs base:"; printf '%s\n' "$changed"
           echo "relevant=$relevant"
           echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
+      # Whether validate-apiserver-recommended runs: on a pull request or a push, only
+      # when the diff touches its inputs (the recommended policy, its kind config, the
+      # sensors and benign workload it runs, the rule folders it gates, the validator
+      # and the modules it imports, the requirements, the atomics it runs, or this
+      # workflow: step f's list without the lab policy, the lab kind config and the
+      # benign scoring, plus the two recommended files); on the schedule and on a
+      # dispatch, always (that job skips a dispatch with a node_image input).
+      - id: r
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Exact file paths, or directory prefixes ending in '/'. Keep in sync with
+          # the matching entries of the push: paths: list above.
+          patterns=$(printf '%s\n' \
+            'detections/k8s/audit-policy-recommended.yaml' \
+            'detections/k8s/kind-apiserver-recommended-cluster.yaml' \
+            'detections/k8s/cri-pod-sensor.sh' \
+            'detections/k8s/auditd_file_events.py' \
+            'detections/benign/k8s/workload.sh' \
+            'detections/sigma/T1098.006/' \
+            'detections/sigma/T1053.007/' \
+            'detections/sigma/T1552.007/' \
+            'detections/sigma/T1611/' \
+            'detections/sigma/T1685/' \
+            'detections/sigma/T1134/' \
+            'detections/sigma/T1070/' \
+            'detections/sigma/T1546/' \
+            'detections/sigma/T1572/' \
+            'detections/sigma/T1565.001/' \
+            'detections/validate_apiserver_detections.py' \
+            'detections/sigma_eval.py' \
+            'detections/sigma_explain.py' \
+            'detections/requirements.txt' \
+            'atomics/T1098.006/' \
+            'atomics/T1053.007/' \
+            'atomics/T1552.007/' \
+            'atomics/T1611/' \
+            'atomics/T1685/' \
+            'atomics/T1134/' \
+            'atomics/T1070/' \
+            'atomics/T1546/' \
+            'atomics/T1572/' \
+            'atomics/T1565.001/' \
+            '.github/workflows/validate-apiserver-detections.yml')
+          range=""
+          case "${EVENT_NAME}" in
+            pull_request) range="${BASE_SHA}...${HEAD_SHA}" ;;
+            push)
+              # A new branch has no before commit (all zeros): run.
+              if [ -n "${BEFORE_SHA}" ] && [ -n "${BEFORE_SHA//0/}" ]; then
+                range="${BEFORE_SHA}..${AFTER_SHA}"
+              fi ;;
+          esac
+          if [ -z "${range}" ]; then
+            echo "${EVENT_NAME}: running the recommended-policy job."
+            echo "recommended=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # Fail safe: if the diff cannot be computed, run the job.
+          if ! changed="$(git diff --name-only "${range}" 2>/dev/null)"; then
+            echo "git diff ${range} failed; running the recommended-policy job to be safe."
+            echo "recommended=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          recommended=false
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            while IFS= read -r pat; do
+              [ -n "$pat" ] || continue
+              if [ "${pat%/}" != "$pat" ]; then
+                case "$file" in "$pat"*) recommended=true; break 2 ;; esac
+              else
+                [ "$file" = "$pat" ] && { recommended=true; break 2; }
+              fi
+            done <<< "$patterns"
+          done <<< "$changed"
+          echo "recommended=$recommended"
+          echo "recommended=$recommended" >> "$GITHUB_OUTPUT"
 
   validate:
     name: validate-apiserver
     needs: changes
     if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
-    env:
+    env: &apiserver-job-env
       # Each emulation appends one line per procedure (window + exit status) here; the
       # validator binds each procedure gate to its window with --ledger (C1-3).
       DETENG_LEDGER: /tmp/emulation-ledger.jsonl
@@ -242,16 +334,20 @@ jobs:
       # starts (C1-5).
       LAB_IMAGES: busybox:1.36 registry.k8s.io/pause:3.9
     steps:
-      - uses: actions/checkout@v4
+      - &apiserver-checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - &apiserver-python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
-      - name: Install validator requirements
+      - &apiserver-requirements
+        name: Install validator requirements
         run: pip install --quiet -r detections/requirements.txt
 
-      - name: Install kind and kubectl (pinned)
+      - &apiserver-install
+        name: Install kind and kubectl (pinned)
         shell: bash
         env:
           IN_KUBECTL_VERSION: ${{ inputs.kubectl_version }}
@@ -294,7 +390,8 @@ jobs:
             --config detections/k8s/kind-apiserver-cluster.yaml \
             --wait 150s
 
-      - name: Confirm the pinned Kubernetes version
+      - &apiserver-version
+        name: Confirm the pinned Kubernetes version
         shell: bash
         env:
           IN_NODE_IMAGE: ${{ inputs.node_image }}
@@ -313,14 +410,16 @@ jobs:
           fi
           echo "Kubernetes ${server} (node image ${KIND_NODE_IMAGE}, kubectl ${KUBECTL_VERSION})" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Confirm audit logging is active
+      - &apiserver-audit-on
+        name: Confirm audit logging is active
         shell: bash
         run: |
           docker exec "${CLUSTER_NAME}-control-plane" \
             cat /etc/kubernetes/manifests/kube-apiserver.yaml | grep -- --audit- \
             || { echo "::error::audit flags not set on the API server"; exit 1; }
 
-      - name: Pre-pull the lab images and wait for the default service account
+      - &apiserver-prepull
+        name: Pre-pull the lab images and wait for the default service account
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: |
@@ -344,7 +443,8 @@ jobs:
           # 'serviceaccount "default" not found'; wait for it (kubectl 1.31+).
           kubectl -n default wait --for=create serviceaccount/default --timeout=60s
 
-      - name: Start the node runtime sensor (CRI pod sandboxes)
+      - &apiserver-cri-sensor
+        name: Start the node runtime sensor (CRI pod sandboxes)
         # Guarded like every other step that needs the cluster: an earlier failure
         # (a pre-pull, a Confirm step) must not skip it, or the collect step and the
         # negative control have no CRI log and print no gate result.
@@ -366,7 +466,8 @@ jobs:
           docker exec "${NODE}" test -s /var/log/cri-pods.jsonl \
             || { echo "::error::the CRI sensor wrote nothing"; exit 1; }
 
-      - name: Start the node file-event sensor (auditd, TRR9006 Strategy 3)
+      - &apiserver-file-sensor
+        name: Start the node file-event sensor (auditd, TRR9006 Strategy 3)
         # A failure here must not skip the steps after it (the benign slice, the
         # pre-emulation capture), so it cannot stop the audit and CRI gates. The 9006 E
         # file gate fails closed without this sensor: no watch, no file event, MISS.
@@ -430,7 +531,8 @@ jobs:
           echo "TRR9006_TOKEN_FILE=${TOKEN_FILE}" >> "$GITHUB_ENV"
           echo "Canary held; watching ${TOKEN_FILE} (resolves to ${REAL}) for reads."
 
-      - name: Benign operator workload (live false-positive slice)
+      - &apiserver-benign
+        name: Benign operator workload (live false-positive slice)
         # Ordinary operator activity in its own namespace (detections/benign/k8s/), run
         # BEFORE the pre-emulation capture so that log holds bootstrap + operator
         # traffic. It never uses an emulation marker and cleans up after itself; a
@@ -447,7 +549,8 @@ jobs:
           echo "BENIGN_START=$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)" >> "$GITHUB_ENV"
           bash detections/benign/k8s/workload.sh
 
-      - name: Capture the logs before the emulation (negative control)
+      - &apiserver-capture
+        name: Capture the logs before the emulation (negative control)
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         env:
@@ -475,62 +578,72 @@ jobs:
             --key k8s_node_file > /tmp/pre-emulation-file.jsonl || true
           echo "Captured $(wc -l < /tmp/pre-emulation-file.jsonl) pre-emulation file event(s)."
 
-      - name: Emulate TRR9004 (RBAC, benign view bindings)
+      - &apiserver-emulate-9004
+        name: Emulate TRR9004 (RBAC, benign view bindings)
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: bash atomics/T1098.006/src/emulate.sh all
 
-      - name: Emulate TRR9005 (Jobs/CronJobs, benign id)
+      - &apiserver-emulate-9005
+        name: Emulate TRR9005 (Jobs/CronJobs, benign id)
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: bash atomics/T1053.007/src/emulate.sh all
 
-      - name: Emulate TRR9006 (Secrets, benign reads + token)
+      - &apiserver-emulate-9006
+        name: Emulate TRR9006 (Secrets, benign reads + token)
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         env:
           TRR9006_NODE: apiserver-control-plane
         run: bash atomics/T1552.007/src/emulate.sh all
 
-      - name: Emulate TRR9007 (dangerous pod specs, sleep-only)
+      - &apiserver-emulate-9007
+        name: Emulate TRR9007 (dangerous pod specs, sleep-only)
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         env:
           TRR9007_NODE: apiserver-control-plane
         run: bash atomics/T1611/src/emulate_k8s.sh all
 
-      - name: Emulate TRR9008 (disable admission control, no-op webhooks)
+      - &apiserver-emulate-9008
+        name: Emulate TRR9008 (disable admission control, no-op webhooks)
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         env:
           TRR9008_NODE: apiserver-control-plane
         run: bash atomics/T1685/src/emulate_k8s.sh all
 
-      - name: Emulate TRR9009 (impersonation, read-only)
+      - &apiserver-emulate-9009
+        name: Emulate TRR9009 (impersonation, read-only)
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: bash atomics/T1134/src/emulate.sh all
 
-      - name: Emulate TRR9010 (indicator removal, throwaway events/pod)
+      - &apiserver-emulate-9010
+        name: Emulate TRR9010 (indicator removal, throwaway events/pod)
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         env:
           TRR9010_NODE: apiserver-control-plane
         run: bash atomics/T1070/src/emulate.sh all
 
-      - name: Emulate TRR9025 (malicious admission webhooks, no-op)
+      - &apiserver-emulate-9025
+        name: Emulate TRR9025 (malicious admission webhooks, no-op)
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         env:
           TRR9025_NODE: apiserver-control-plane
         run: bash atomics/T1546/src/emulate_k8s.sh all
 
-      - name: Emulate TRR9026 (pod port-forward, harmless tunnel)
+      - &apiserver-emulate-9026
+        name: Emulate TRR9026 (pod port-forward, harmless tunnel)
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: bash atomics/T1572/src/emulate.sh all
 
-      - name: Emulate TRR9027 (cluster DNS poisoning, sentinel + restore)
+      - &apiserver-emulate-9027
+        name: Emulate TRR9027 (cluster DNS poisoning, sentinel + restore)
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         # Procedures A-D (kube-system CoreDNS) and E-F (OpenShift: an inert openshift-dns
@@ -543,7 +656,8 @@ jobs:
           TRR9027_NODE: apiserver-control-plane
         run: bash atomics/T1565.001/src/emulate.sh all
 
-      - name: Collect the audit log and the node sensor log
+      - &apiserver-collect
+        name: Collect the audit log and the node sensor log
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         env:
@@ -724,7 +838,190 @@ jobs:
             ${{ env.DETENG_LEDGER }}
           if-no-files-found: ignore
 
-      - name: Delete the cluster
+      - &apiserver-delete
+        name: Delete the cluster
         if: always()
         shell: bash
         run: kind delete cluster --name "${CLUSTER_NAME}" || true
+
+  # The recommended production audit policy (detections/k8s/audit-policy-recommended.yaml),
+  # proven live. The same pinned kind cluster, sensors, benign workload, atomics, ledger
+  # and negative control as validate-apiserver, with the recommended policy mounted
+  # (detections/k8s/kind-apiserver-recommended-cluster.yaml) and the validator run with
+  # --policy recommended (and --ledger, which that policy needs). The policy's opt-in
+  # kube-system ConfigMap-create line is off, so TRR9027 D's POST create reaches the log
+  # at Metadata, without a body. So the 9027 D chokepoint row runs a policy gate that
+  # must pass on that create in D's ledger window (POLICY_GATES; 9027 B and C also run
+  # one: a RequestResponse record with the sentinel in the request body), and the 9027
+  # D create grader row is an expected miss (EXPECTED_MISS): it must miss, with its
+  # evidence in the ledger window, and a pass fails the job. Every other MANIFEST and
+  # MISS_MANIFEST row must pass, as in validate-apiserver. The TRR9002 and TRR9003
+  # rules are not run here; detections/k8s_policy_coverage.py proves them for this
+  # policy.
+  #
+  # NOT a required check. It runs when its inputs change (the `recommended` output of
+  # changes-apiserver), on the weekly schedule, and on a manual dispatch with the pinned
+  # node image; the version matrix's dispatches (a node_image input) skip it. A red run
+  # still makes this workflow's run red (the README badge on a scheduled run, and
+  # check_schedule_freshness.py). The steps it shares with validate-apiserver are YAML
+  # aliases (*name) of that job's steps (&name), so the two jobs run the same steps.
+  validate-recommended:
+    name: validate-apiserver-recommended
+    needs: changes
+    if: needs.changes.outputs.recommended == 'true' && !inputs.node_image
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env: *apiserver-job-env
+    steps:
+      - *apiserver-checkout
+      - *apiserver-python
+      - *apiserver-requirements
+      - *apiserver-install
+
+      - name: Create kind cluster with the recommended audit policy
+        id: cluster
+        shell: bash
+        run: |
+          # Run from the repo root so the relative extraMounts path resolves.
+          kind create cluster \
+            --name "${CLUSTER_NAME}" \
+            --image "${KIND_NODE_IMAGE}" \
+            --config detections/k8s/kind-apiserver-recommended-cluster.yaml \
+            --wait 150s
+
+      - *apiserver-version
+      - *apiserver-audit-on
+
+      - name: Confirm the API server reads the recommended policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The file that --audit-policy-file names must be the recommended policy, byte
+          # for byte; else this job would prove another policy.
+          docker exec "${CLUSTER_NAME}-control-plane" \
+            cat /etc/kubernetes/policies/audit-policy.yaml \
+            | cmp - detections/k8s/audit-policy-recommended.yaml \
+            || { echo "::error::the control-plane node does not hold detections/k8s/audit-policy-recommended.yaml as its audit policy"; exit 1; }
+          echo "The API server reads detections/k8s/audit-policy-recommended.yaml (sha256 $(sha256sum detections/k8s/audit-policy-recommended.yaml | cut -c1-16))." >> "$GITHUB_STEP_SUMMARY"
+
+      - *apiserver-prepull
+      - *apiserver-cri-sensor
+      - *apiserver-file-sensor
+      - *apiserver-benign
+      - *apiserver-capture
+      - *apiserver-emulate-9004
+      - *apiserver-emulate-9005
+      - *apiserver-emulate-9006
+      - *apiserver-emulate-9007
+      - *apiserver-emulate-9008
+      - *apiserver-emulate-9009
+      - *apiserver-emulate-9010
+      - *apiserver-emulate-9025
+      - *apiserver-emulate-9026
+      - *apiserver-emulate-9027
+      - *apiserver-collect
+
+      - name: Validate detections under the recommended policy (expected misses named)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        run: |
+          python3 detections/validate_apiserver_detections.py --policy recommended \
+            --audit-log /tmp/kube-apiserver-audit.log \
+            --cri-log /tmp/cri-pods.jsonl --file-log /tmp/node-file-events.jsonl \
+            --ledger "${DETENG_LEDGER}" | tee /tmp/apival.out
+
+      - name: Negative control (no rule may pass without the emulation)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        run: |
+          python3 detections/validate_apiserver_detections.py --policy recommended \
+            --audit-log /tmp/pre-emulation-audit.log \
+            --cri-log /tmp/pre-emulation-cri.jsonl \
+            --file-log /tmp/pre-emulation-file.jsonl --expect-miss | tee /tmp/apineg.out
+
+      - name: Measure the audit log (records and bytes under the recommended policy)
+        # The measured side of the policy's volume estimate: records, bytes and body
+        # bytes of the pre-emulation capture (bootstrap and benign workload) and of the
+        # whole log. Counts only; it prints no field value. validate-apiserver's capture
+        # step prints the lab policy's line count for the same steps.
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          python3 - /tmp/pre-emulation-audit.log /tmp/kube-apiserver-audit.log <<'PY' | tee /tmp/apivol.out
+          import collections, json, os, sys
+          for path in sys.argv[1:]:
+              if not os.path.exists(path):
+                  print(f"{path}: not captured")
+                  continue
+              n = size = req = resp = bad = 0
+              levels = collections.Counter()
+              try:
+                  fh = open(path, "rb")
+              except OSError as err:
+                  print(f"{path}: cannot be read ({err.strerror})")
+                  continue
+              with fh:
+                  for line in fh:
+                      if not line.strip():
+                          continue
+                      size += len(line)
+                      try:
+                          e = json.loads(line)
+                      except ValueError:
+                          bad += 1
+                          continue
+                      if not isinstance(e, dict):
+                          bad += 1
+                          continue
+                      n += 1
+                      levels[str(e.get("level"))] += 1
+                      for key in ("requestObject", "responseObject"):
+                          if key in e:
+                              body = len(json.dumps(e[key], separators=(",", ":")))
+                              req, resp = (req + body, resp) if key == "requestObject" else (req, resp + body)
+              print(f"{path}: {n} records ({bad} not a JSON object), {size} bytes; requestObject "
+                    f"{req} bytes, responseObject {resp} bytes; per level "
+                    + ", ".join(f"{k} {v}" for k, v in sorted(levels.items())))
+          PY
+
+      - name: Publish results to job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Recommended audit policy: TRR9004-9010, 9025-9027 API server detection validation (--policy recommended)'
+            echo ''
+            echo '```'
+            cat /tmp/apival.out 2>/dev/null || echo '(no validator output captured)'
+            echo '```'
+            echo ''
+            echo '### Negative control (logs captured before the emulation)'
+            echo ''
+            echo '```'
+            cat /tmp/apineg.out 2>/dev/null || echo '(no negative-control output captured)'
+            echo '```'
+            echo ''
+            echo '### Audit log volume under the recommended policy'
+            echo ''
+            echo '```'
+            cat /tmp/apivol.out 2>/dev/null || echo '(no measurement captured)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the audit and node sensor logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apiserver-recommended-telemetry
+          path: |
+            /tmp/kube-apiserver-audit.log
+            /tmp/pre-emulation-audit.log
+            /tmp/cri-pods.jsonl
+            /tmp/pre-emulation-cri.jsonl
+            /tmp/node-file-events.jsonl
+            /tmp/pre-emulation-file.jsonl
+            ${{ env.DETENG_LEDGER }}
+          if-no-files-found: ignore
+
+      - *apiserver-delete

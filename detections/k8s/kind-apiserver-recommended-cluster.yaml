@@ -1,0 +1,56 @@
+# kind cluster for the live proof of the recommended production audit policy
+# (detections/k8s/audit-policy-recommended.yaml). It is kind-apiserver-cluster.yaml
+# (the API server lab: TRR9004-9010, 9025-9027) with that one file changed: the
+# control-plane node mounts the recommended policy, not the lab policy. The
+# validate-apiserver-recommended job in
+# .github/workflows/validate-apiserver-detections.yml runs the same atomics on it and
+# validate_apiserver_detections.py --policy recommended.
+#
+# Create it (from the repo root, so the relative extraMounts path resolves):
+#
+#   kind create cluster --name apiserver \
+#     --image kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed \
+#     --config detections/k8s/kind-apiserver-recommended-cluster.yaml
+#
+# (--image is the node image CI pins: KIND_NODE_IMAGE in the validate-*-detections
+# workflows. Update it here when that pin moves.)
+#
+# Use the cluster name apiserver, as for the lab: the atomics' node-access tests look
+# for the node container apiserver-control-plane. Read the audit log afterward:
+#
+#   docker exec apiserver-control-plane \
+#     cat /var/log/kubernetes/kube-apiserver-audit.log
+#
+# Keep the kubeadm patch below the same as in kind-apiserver-cluster.yaml, so the two
+# clusters differ only in the policy file. detections/k8s_policy_coverage.py checks this
+# (check_lab_mounts: the two files, parsed, must be equal but for the mounted policy).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: ClusterConfiguration
+        apiServer:
+          extraArgs:
+            audit-log-path: /var/log/kubernetes/kube-apiserver-audit.log
+            audit-policy-file: /etc/kubernetes/policies/audit-policy.yaml
+            # Keep the whole log for the run; rotation would hide early events.
+            audit-log-maxbackup: "1"
+            audit-log-maxsize: "100"
+          extraVolumes:
+            - name: audit-policies
+              hostPath: /etc/kubernetes/policies
+              mountPath: /etc/kubernetes/policies
+              readOnly: true
+              pathType: DirectoryOrCreate
+            - name: audit-logs
+              hostPath: /var/log/kubernetes
+              mountPath: /var/log/kubernetes
+              readOnly: false
+              pathType: DirectoryOrCreate
+    extraMounts:
+      # Path is relative to the working directory of `kind create cluster`.
+      - hostPath: ./detections/k8s/audit-policy-recommended.yaml
+        containerPath: /etc/kubernetes/policies/audit-policy.yaml
+        readOnly: true

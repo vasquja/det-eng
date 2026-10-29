@@ -76,6 +76,30 @@ rule with sigma_eval.py (the pySigma SQLite backend that every gate uses):
      its home policy every positive must fire and no negative may fire, because CI
      proves that live. --check, --update and the table fail when a rule has no
      home, more than one home, or a home column that breaks this.
+  6. Recommended check: under the "recommended" column (the repository's recommended
+     production policy, detections/k8s/audit-policy-recommended.yaml) every positive of
+     every rule must fire, except the positives named in RECOMMENDED_OPT_IN_LOSSES
+     (each needs the policy's commented-out opt-in line), and no negative may fire.
+     An expected loss that fires fails too, so the list stays exact. --check, --update
+     and the table fail when this breaks, as for the home check. The sidecar shows only
+     some of the requests a rule selects, so the self-test also runs the selection
+     check (selection_errors) on that policy: each request that a rule's "select" items
+     name (every resource of a group that an item selects whole, such as the six
+     admissionregistration.k8s.io resources, and every group of a resource that it
+     names without one) must be logged at the level that the item's sidecar requests
+     with the same verb need (the level from which each such positive fires and each
+     such negative stays quiet). Only the requests of the opt-in line may fail it, and
+     the self-test pins them. It also pins every cell (verb, group, resource, namespace,
+     name) of the policy's rules at Request and RequestResponse.
+  7. Needs: for each rule, the lowest UNIFORM level (a policy with the one rule
+     `level: L` and omitStages [RequestReceived]) at which every positive fires, and
+     the request tuples of the positives (rules[<rule>].needs, below). The requests
+     are those of the sidecar positives: a sample of what the rule selects, not a
+     complete list (read the rule's detection for its full selection before you
+     write a policy from them). A note says
+     where the lowest level differs per request, and where a negative fires at that
+     level because a filter loses the body it reads (a dry-run filter, for example),
+     with the lowest uniform level at which none fires.
 
 The simulator models the audit POLICY only. It does not model what a provider does
 after the log is written (CloudWatch's 1 MB entry limit on EKS, the AKSAudit table
@@ -84,7 +108,13 @@ the ResponseStarted record of a long-running request (watch, exec, attach,
 port-forward, proxy: it carries the same fields as ResponseComplete), the audit
 truncate backend, or a dropped YAML apply body (RULE_DEFECTS.md K23).
 
-Policies (POLICIES below): the three lab policies that a kind config mounts, and
+Policies (POLICIES below): the three lab policies that a kind config mounts, the
+recommended production policy (kind "recommended": this repository's policy for an
+API server that takes --audit-policy-file; its own kind config mounts it, and the
+non-required validate-apiserver-recommended CI job proves it live with
+validate_apiserver_detections.py --policy recommended; it is not a "lab" policy,
+because a lab policy is a home and every positive must fire under a home, and not a
+"provider" policy, because it is not a vendored third-party text), and
 the provider policies vendored under detections/k8s/provider-policies/ (sources,
 licenses and digests in its SOURCES.md): EKS (the Best Practices Guide policy),
 the GCE kube-up policy (cluster/gce/gci/configure-helper.sh, which the EKS user
@@ -98,6 +128,7 @@ published text unchanged is unverified (no live capture; backlog issue #55).
 Usage:
     python3 detections/k8s_policy_coverage.py                 # print the table
     python3 detections/k8s_policy_coverage.py --detail        # and every lost case
+    python3 detections/k8s_policy_coverage.py --needs         # the per-rule needs table
     python3 detections/k8s_policy_coverage.py --update        # rewrite the JSON
     python3 detections/k8s_policy_coverage.py --check         # fail if it is stale
     python3 detections/k8s_policy_coverage.py --self-test     # evaluator unit cases
@@ -110,11 +141,16 @@ file, a policy file, a validator's MANIFEST (a rule's home policy) or the evalua
 output changed. A rule's description or comments are not part of it, and neither is
 the evaluator's source: an edit of this script that keeps every result passes.
 Regenerate it with --update in the same pull request. It also fails the home check
-(step 5 above).
+(step 5 above) and the recommended check (step 6). The needs (step 7) are part of
+every result: --update writes them, --check checks them, and --needs prints them.
 
 Machine-readable result (detections/k8s/policy_coverage.json), schema
 "det-eng/k8s-policy-coverage/v1". A later version changes the schema string;
-consumers (the generator of detections/k8s/PLATFORMS.md) must check it.
+consumers (the generator of detections/k8s/PLATFORMS.md) must check it. Within v1,
+rules[].needs, policies[].opt_in_losses and the kind value "recommended" were added
+later: they add data and change no key that was there before, so a v1 consumer that
+reads only the older keys still works (one that switches on "kind" must accept the
+new value).
 
   {
     "schema": "det-eng/k8s-policy-coverage/v1",
@@ -123,7 +159,7 @@ consumers (the generator of detections/k8s/PLATFORMS.md) must check it.
     "policy_order": [<policy id>, ...],          # column order
     "policies": {
       "<policy id>": {
-        "kind": "lab" | "provider",
+        "kind": "lab" | "recommended" | "provider",
         "platform": "<who runs it>",
         "label": "<one line: what the column is>",
         "version": "<which release or text>",
@@ -131,7 +167,10 @@ consumers (the generator of detections/k8s/PLATFORMS.md) must check it.
         "files": [{"path": "<repo path>", "sha256": "<hex>"}],
         "log_filter": null | {"drop_verbs": [...], "source": "<url>"},
         "rule_count": <int>,
-        "warnings": ["<lenient-decoding or apiVersion note>", ...]
+        "warnings": ["<lenient-decoding or apiVersion note>", ...],
+        "opt_in_losses": {"<T>/<stem>.yml": {"<case>": "<why>"}}   # kind
+                                    # "recommended" only: the positives that the
+                                    # policy loses by design (step 6)
       }, ...
     },
     "rules": {
@@ -146,6 +185,26 @@ consumers (the generator of detections/k8s/PLATFORMS.md) must check it.
                         registers the rule>" | null,   # null fails the home check
         "case_counts": {"positive": n, "near-miss": n, "filtered": n,
                         "confounder": n, "benign": n},
+        "needs": {                  # step 7
+          "level": "None" | "Metadata" | "Request" | "RequestResponse" | null,
+                                    # the lowest uniform level at which every
+                                    # positive of the rule fires; null when no
+                                    # uniform level fires them all ("None" only for
+                                    # a rule with no positive)
+          "requests": [{"group": "<api group, '' for the core group>",
+                        "resource": "<resource>",
+                        "subresource": "<subresource>" | null,
+                        "verbs": ["<verb>", ...]}],    # verbs sorted and unique
+                                    # the request tuples of the rule's positives,
+                                    # as the policy sees them (attributes_from_record),
+                                    # unique and sorted by group, resource,
+                                    # subresource; a sample of the rule's
+                                    # selection, not a complete list
+          "note": "<sentences>" | null   # where the lowest level differs per
+                                    # request; negatives that fire at "level" and
+                                    # the lowest uniform level at which none fires;
+                                    # positives no uniform level fires
+        },
         "results": {
           "<policy id>": {
             "positives": {"total": n, "firing": n,
@@ -189,6 +248,7 @@ consumers (the generator of detections/k8s/PLATFORMS.md) must check it.
 import argparse
 import copy
 import hashlib
+import itertools
 import json
 import os
 import re
@@ -325,6 +385,18 @@ POLICIES = [
      "validator": "validate_staticpod_detections.py",
      "kind_config": "detections/k8s/kind-staticpod-cluster.yaml",
      "version": "this repository", "status": "proven live in CI"},
+    {"id": "recommended", "kind": "recommended",
+     "platform": "self-managed API server (--audit-policy-file: kubeadm, k3s, RKE2, kind)",
+     "label": "this repository's recommended production policy (every Kubernetes audit "
+              "rule; the TRR9027 D create needs its opt-in line)",
+     "files": ["detections/k8s/audit-policy-recommended.yaml"],
+     "validator": "validate_apiserver_detections.py",
+     "kind_config": "detections/k8s/kind-apiserver-recommended-cluster.yaml",
+     "version": "this repository (the opt-in kube-system ConfigMap-create line off)",
+     "status": "TRR9004-9010 and TRR9025-9027 rules proven live in CI by the non-required "
+               "validate-apiserver-recommended job (validate_apiserver_detections.py "
+               "--policy recommended); the TRR9002 and TRR9003 rules by this simulator "
+               "only"},
     {"id": "eks", "kind": "provider", "platform": "Amazon EKS",
      "label": "EKS audit policy as the EKS Best Practices Guide publishes it",
      "files": [f"{PP}/eks/eks-bpg-audit-policy.yaml"],
@@ -398,6 +470,61 @@ POLICIES = [
      "status": "published text; the guide calls it a starter policy, and a k3s cluster "
                "has no audit policy until the admin writes one"},
 ]
+
+# The recommended production policy (step 6 of the docstring). Its opt-in rule is
+# commented out with OPT_IN_PREFIX at the start of each line; removing the prefix
+# turns it on (the self-test does that and checks that every positive then fires).
+RECOMMENDED = "recommended"
+OPT_IN_PREFIX = "  # OPT-IN: "
+OPT_IN_LINES = 6
+# The positives that the recommended policy loses by design: each needs the opt-in
+# kube-system ConfigMap-create line. The recommended check fails when one of them
+# fires (the policy or the case changed: update this map, and the EXPECTED_MISS map
+# of validate_apiserver_detections.py), when any other positive is lost, or when any
+# negative fires.
+RECOMMENDED_OPT_IN_LOSSES = {
+    "T1565.001/k8s_coredns_corefile_poisoned.yml": {
+        "recreate-coredns-create-procD":
+            "TRR9027 Procedure D: a POST create of kube-system/coredns names no object "
+            "when the policy is evaluated, so only the opt-in kube-system ConfigMap-create "
+            "line logs its Corefile; without it the create is at Metadata",
+    },
+}
+# The uniform policies of the needs computation (step 7): one rule at one level, and
+# omitStages [RequestReceived] as a deployed policy has, so a positive is judged on the
+# record that such a policy writes.
+UNIFORM_PREFIX = "uniform:"
+# The selection check of the recommended policy (selection_errors(), self-test section
+# 10). A Kubernetes audit rule selects its requests in the detection items whose name
+# starts with "select" (the convention of these rules) with the fields below. Where an
+# item names a group but no resource, it selects every resource of the group; where it
+# names a resource but no group, every group that serves a resource of that name. These
+# are the Kubernetes v1.36 facts for the groups and resources the rules name (top-level
+# resources only; the scope is True for a namespaced resource). A rule that names a
+# group or resource missing here fails the check: add it.
+SELECTION_FIELDS = {"objectRef.apiGroup": "group", "objectRef.resource": "resource",
+                    "objectRef.subresource": "sub", "verb": "verb",
+                    "objectRef.namespace": "ns", "objectRef.name": "name"}
+_ADM, _RBAC = "admissionregistration.k8s.io", "rbac.authorization.k8s.io"
+SELECTION_GROUP_RESOURCES = {
+    _ADM: ("mutatingadmissionpolicies", "mutatingadmissionpolicybindings",
+           "mutatingwebhookconfigurations", "validatingadmissionpolicies",
+           "validatingadmissionpolicybindings", "validatingwebhookconfigurations"),
+    _RBAC: ("clusterrolebindings", "clusterroles", "rolebindings", "roles"),
+}
+SELECTION_RESOURCES = {  # resource: (the groups that serve it, namespaced)
+    "configmaps": (("",), True), "events": (("", "events.k8s.io"), True),
+    "namespaces": (("",), False), "nodes": (("",), False), "pods": (("",), True),
+    "replicationcontrollers": (("",), True), "secrets": (("",), True),
+    "serviceaccounts": (("",), True),
+    "daemonsets": (("apps",), True), "deployments": (("apps",), True),
+    "replicasets": (("apps",), True), "statefulsets": (("apps",), True),
+    "cronjobs": (("batch",), True), "jobs": (("batch",), True),
+    "dnses": (("operator.openshift.io",), False),
+    "clusterrolebindings": ((_RBAC,), False), "clusterroles": ((_RBAC,), False),
+    "rolebindings": ((_RBAC,), True), "roles": ((_RBAC,), True),
+    **{r: ((_ADM,), False) for r in SELECTION_GROUP_RESOURCES[_ADM]},
+}
 
 
 # --------------------------------------------------------------------------- policy
@@ -848,17 +975,392 @@ def home_errors(result, candidates=None):
     return errs
 
 
-def check_lab_mounts():
-    """Each lab policy must be the file its kind config mounts as the audit policy."""
+def check_lab_mounts(texts=None):
+    """Each lab policy, and the recommended policy, must be the file its kind config
+    mounts as the audit policy. The recommended policy's kind config must also be the
+    kind config of the lab policy with the same validator (its "twin"), but for the
+    mounted policy file, so that the live job proves the same cluster with another
+    policy: both are compared as parsed YAML, each kubeadm patch parsed too (comments
+    do not count). `texts` ({repo path: text}) replaces files, for the self-test."""
+    texts = texts or {}
+
+    def read(path):
+        if path in texts:
+            return texts[path]
+        with open(os.path.join(REPO, path), encoding="utf-8") as fh:
+            return fh.read()
     errors = []
     for p in POLICIES:
-        if p["kind"] != "lab":
+        if p["kind"] not in ("lab", RECOMMENDED):
             continue
-        with open(os.path.join(REPO, p["kind_config"]), encoding="utf-8") as fh:
-            text = fh.read()
-        if f"./{p['files'][0]}" not in text:
+        if f"./{p['files'][0]}" not in read(p["kind_config"]):
             errors.append(f"{p['kind_config']} does not mount {p['files'][0]}")
+    for p in POLICIES:
+        if p["kind"] != RECOMMENDED:
+            continue
+        twins = [q for q in POLICIES if q["kind"] == "lab" and q["validator"] == p["validator"]]
+        if len(twins) != 1:
+            errors.append(f"{p['id']}: no single lab policy with the validator "
+                          f"{p['validator']} to compare its kind config with")
+            continue
+        twin = twins[0]
+        try:
+            mine = _kind_config_shape(read(p["kind_config"]), p["files"][0])
+            theirs = _kind_config_shape(read(twin["kind_config"]), twin["files"][0])
+        except (yaml.YAMLError, AttributeError, TypeError) as e:
+            errors.append(f"{p['kind_config']} or {twin['kind_config']} does not parse: {e}")
+            continue
+        where = _first_difference(theirs, mine)
+        if where is not None:
+            errors.append(f"{p['kind_config']} differs from {twin['kind_config']} at {where}, "
+                          "not only in the mounted policy file: keep the two clusters the "
+                          "same, so the live job proves the lab's cluster with this policy")
     return errors
+
+
+def _kind_config_shape(text, policy_path):
+    """A kind config as data: each kubeadmConfigPatches string parsed, and the hostPath
+    of the extraMount of `policy_path` replaced by a placeholder."""
+    doc = yaml.safe_load(text)
+    for node in doc.get("nodes") or []:
+        node["kubeadmConfigPatches"] = [yaml.safe_load(x) if isinstance(x, str) else x
+                                        for x in node.get("kubeadmConfigPatches") or []]
+        for m in node.get("extraMounts") or []:
+            if m.get("hostPath") == f"./{policy_path}":
+                m["hostPath"] = "<the audit policy>"
+    return doc
+
+
+def _first_difference(a, b, path="$"):
+    """The path of the first place where two parsed YAML documents differ, or None."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        for key in sorted(set(a) | set(b), key=str):
+            if key not in a or key not in b:
+                return f"{path}.{key}"
+            where = _first_difference(a[key], b[key], f"{path}.{key}")
+            if where is not None:
+                return where
+        return None
+    if isinstance(a, list) and isinstance(b, list):
+        if len(a) != len(b):
+            return f"{path} (length {len(a)} != {len(b)})"
+        for i, (x, y) in enumerate(zip(a, b)):
+            where = _first_difference(x, y, f"{path}[{i}]")
+            if where is not None:
+                return where
+        return None
+    return None if a == b else path
+
+
+def recommended_errors(result, expected=None):
+    """What breaks the recommended check (module docstring, step 6): under the
+    'recommended' column a positive that is lost and not an expected opt-in loss, an
+    expected opt-in loss that is not lost, or a negative that fires."""
+    expected = RECOMMENDED_OPT_IN_LOSSES if expected is None else expected
+    if RECOMMENDED not in result.get("policies", {}):
+        return [f"no '{RECOMMENDED}' policy column"]
+    errs = []
+    for rel, row in result["rules"].items():
+        r = row["results"].get(RECOMMENDED)
+        if r is None:
+            errs.append(f"{rel}: the {RECOMMENDED} policy has no result")
+            continue
+        want = set(expected.get(rel, {}))
+        lost = {x["case"]: x["reason"] for x in r["positives"]["lost"]}
+        for case in sorted(set(lost) - want):
+            errs.append(f"{rel}: positive {case} is lost under the {RECOMMENDED} policy "
+                        f"({lost[case]}); the policy must log what the rule needs")
+        for case in sorted(want - set(lost)):
+            errs.append(f"{rel}: the expected opt-in loss {case} is not lost under the "
+                        f"{RECOMMENDED} policy (it fires, or the sidecar has no such "
+                        "positive); update RECOMMENDED_OPT_IN_LOSSES and the validator's "
+                        "EXPECTED_MISS")
+        for n in r["negatives_firing"]:
+            errs.append(f"{rel}: under the {RECOMMENDED} policy a negative fires: "
+                        f"{n['kind']} {n['case']} ({n['reason']})")
+    for rel in sorted(set(expected) - set(result["rules"])):
+        errs.append(f"{rel}: named in RECOMMENDED_OPT_IN_LOSSES, but it is not a "
+                    "Kubernetes audit rule")
+    return errs
+
+
+def uniform_policies():
+    """{"uniform:<level>": (policy, None)} for each level (module docstring, step 7)."""
+    return {f"{UNIFORM_PREFIX}{lv}": (policy_from_rules(
+        [{"level": lv}], omit_stages=["RequestReceived"]), None) for lv in LEVELS}
+
+
+def _names(items, limit=3):
+    items = sorted(items)
+    text = ", ".join(items[:limit])
+    return text + (f" and {len(items) - limit} more" if len(items) > limit else "")
+
+
+def _request_text(key, verbs):
+    group, resource, sub = key
+    return (f"{','.join(sorted(verbs))} {group + '/' if group else ''}{resource}"
+            + (f"/{sub}" if sub else ""))
+
+
+def _request_tuples(events):
+    """{(group, resource, subresource|None): {verb, ...}} of the resource requests in
+    `events`, and the count of non-resource requests."""
+    tuples, nonresource = {}, 0
+    for ev in events:
+        a = attributes_from_record(ev)
+        if not a["resource_request"]:
+            nonresource += 1
+            continue
+        key = (a["api_group"], a["resource"], a["subresource"] or None)
+        tuples.setdefault(key, set()).add(a["verb"])
+    return tuples, nonresource
+
+
+def rule_needs(rel, uniform):
+    """rules[rel].needs (module docstring, step 7) from run_rule()'s results under the
+    uniform policies."""
+    path = os.path.join(SIGMA, rel)
+    cases, errors = rule_cases.load_cases(rule_cases.cases_path(path))
+    if errors:
+        raise SystemExit(f"{rel}: sidecar errors: {errors}")
+    res = {lv: uniform[f"{UNIFORM_PREFIX}{lv}"] for lv in LEVELS}
+    lost = {lv: {x["case"] for x in res[lv]["positives"]["lost"]} for lv in LEVELS}
+    negs = {lv: {x["case"] for x in res[lv]["negatives_firing"]} for lv in LEVELS}
+    positives = [c for c in cases if c["kind"] == "positive"]
+    level = next((lv for lv in LEVELS if not lost[lv]), None)
+    tuples, nonresource = _request_tuples([ev for c in positives for ev in c["events"]])
+    # The lowest level of each (request, verb): the highest lowest-level of the
+    # positives it is in (len(LEVELS) for a positive that no uniform level fires).
+    rank = {}
+    for c in positives:
+        crank = next((i for i, lv in enumerate(LEVELS) if c["name"] not in lost[lv]),
+                     len(LEVELS))
+        for key, verbs in _request_tuples(c["events"])[0].items():
+            for verb in verbs:
+                rank[key + (verb,)] = max(rank.get(key + (verb,), 0), crank)
+    notes = []
+    if level is None:
+        notes.append("No uniform level fires every positive: at RequestResponse "
+                     f"{_names(lost['RequestResponse'])} stay lost.")
+    if nonresource:
+        notes.append(f"{nonresource} positive event(s) are non-resource requests, which "
+                     "have no request tuple.")
+    if len(set(rank.values())) > 1:
+        by_rank = {}
+        for (group, resource, sub, verb), r in rank.items():
+            by_rank.setdefault(r, {}).setdefault((group, resource, sub), set()).add(verb)
+        parts = []
+        for r in sorted(by_rank):
+            name = LEVELS[r] if r < len(LEVELS) else "no uniform level"
+            reqs = by_rank[r]
+            parts.append(f"{name} for " + ", ".join(
+                _request_text(k, reqs[k]) for k in sorted(reqs, key=_tuple_order)))
+        notes.append("The lowest level differs per request: " + "; ".join(parts) + ".")
+    # Negatives: the lowest uniform level (Metadata or higher) at which no negative
+    # fires, and the negatives that fire one level below it. At a uniform level below a
+    # record's own level the record only loses its body, so that is why they fire.
+    quiet = next((lv for lv in LEVELS[1:] if not negs[lv]), None)
+    below = LEVELS[LEVELS.index(quiet) - 1] if quiet is not None else LEVELS[-1]
+    if below != "None" and negs[below]:
+        neg_events = [ev for c in cases if c["name"] in negs[below] for ev in c["events"]]
+        reqs = _request_tuples(neg_events)[0]
+        notes.append(
+            f"At {below}, {len(negs[below])} negative case(s) fire because their records "
+            f"lose the body that keeps them quiet ({_names(negs[below])}; their requests: "
+            + ", ".join(_request_text(k, reqs[k]) for k in sorted(reqs, key=_tuple_order))
+            + "); " + (f"at {quiet} none fires." if quiet else
+                       "a negative fires at every uniform level."))
+    return {"level": level,
+            "requests": [{"group": k[0], "resource": k[1], "subresource": k[2],
+                          "verbs": sorted(tuples[k])}
+                         for k in sorted(tuples, key=_tuple_order)],
+            "note": " ".join(notes) or None}
+
+
+def _tuple_order(key):
+    return (key[0], key[1], key[2] or "")
+
+
+def rule_selections(rel):
+    """The request selections of a rule: [(item name, {field: [value, ...]})], one per
+    map of each detection item whose name starts with "select" and that sets a
+    SELECTION_FIELDS field (keyed by its short name: group, resource, sub, verb, ns,
+    name; a null value is "" or, for sub, None), and the errors for what the selection
+    check cannot read (a modifier on such a field, an item that is not a map)."""
+    with open(os.path.join(SIGMA, rel), encoding="utf-8") as fh:
+        docs = [d for d in yaml.safe_load_all(fh) if isinstance(d, dict)]
+    out, errors = [], []
+    for d in docs:
+        for name, item in (d.get("detection") or {}).items():
+            if not str(name).startswith("select"):
+                continue
+            for m in item if isinstance(item, list) else [item]:
+                if not isinstance(m, dict):
+                    errors.append(f"{rel} {name}: a selection item that is not a map")
+                    continue
+                sel = {}
+                for key, val in m.items():
+                    field, _, mod = str(key).partition("|")
+                    if field not in SELECTION_FIELDS:
+                        continue
+                    if mod:
+                        errors.append(f"{rel} {name}: {key}: the selection check reads only "
+                                      "plain values of this field")
+                        continue
+                    short = SELECTION_FIELDS[field]
+                    sel[short] = [(None if short == "sub" else "") if v is None else str(v)
+                                  for v in (val if isinstance(val, list) else [val])]
+                if sel:
+                    out.append((name, sel))
+    return out, errors
+
+
+def _request_of(ev):
+    """A record's request as rule_selections() keys it (objectRef as recorded)."""
+    o = ev.get("objectRef") or {}
+    return {"group": o.get("apiGroup") or "", "resource": o.get("resource") or "",
+            "sub": o.get("subresource") or None, "verb": ev.get("verb") or "",
+            "ns": o.get("namespace") or "", "name": o.get("name") or ""}
+
+
+def case_ranks(rel, uniform):
+    """[(request, rank, case name, case kind)] for each resource event of each sidecar case
+    of a rule, from run_rule()'s results under the uniform policies (step 7). The rank is
+    the index in LEVELS of the lowest uniform level, Metadata or higher, from which the
+    case holds at every level above it too (a positive fires, a negative stays quiet);
+    len(LEVELS) when it holds at none."""
+    cases, errors = rule_cases.load_cases(rule_cases.cases_path(os.path.join(SIGMA, rel)))
+    if errors:
+        raise SystemExit(f"{rel}: sidecar errors: {errors}")
+    bad = {}
+    for lv in LEVELS:
+        r = uniform[f"{UNIFORM_PREFIX}{lv}"]
+        bad[lv] = ({x["case"] for x in r["positives"]["lost"]}
+                   | {x["case"] for x in r["negatives_firing"]})
+    out = []
+    for c in cases:
+        holds = [c["name"] not in bad[lv] for lv in LEVELS]
+        rank = next((i for i in range(1, len(LEVELS)) if all(holds[i:])), len(LEVELS))
+        out += [(_request_of(ev), rank, c["name"], c["kind"])
+                for ev in c["events"] if ev.get("objectRef")]
+    return out
+
+
+def selection_cells(sel):
+    """The requests a selection names, [(group, resource, subresource|None, namespace,
+    name)]: each resource it names (or every resource of a group it selects whole,
+    SELECTION_GROUP_RESOURCES), in each group it names (or every group that serves the
+    resource, SELECTION_RESOURCES), with each subresource, namespace and name it names
+    ("trr-ns" for a namespaced resource and "" for a cluster-scoped one where it names
+    no namespace; "trr-x" where it names no object). And the errors."""
+    errors = []
+    if "resource" in sel:
+        resources = sel["resource"]
+    elif sel.get("group") and all(g in SELECTION_GROUP_RESOURCES for g in sel["group"]):
+        resources = sorted({r for g in sel["group"] for r in SELECTION_GROUP_RESOURCES[g]})
+    else:
+        return [], [f"it names the group(s) {sel.get('group') or 'none'} and no resource; "
+                    "add the group to SELECTION_GROUP_RESOURCES"]
+    cells = []
+    for res in resources:
+        if res not in SELECTION_RESOURCES:
+            errors.append(f"the resource {res!r} is not in SELECTION_RESOURCES")
+            continue
+        groups, namespaced = SELECTION_RESOURCES[res]
+        mine = [g for g in sel.get("group") or groups if g in groups]
+        if not mine:
+            errors.append(f"no group it names ({', '.join(sel['group'])}) serves {res!r} "
+                          "(SELECTION_RESOURCES)")
+        for group, sub, ns, name in itertools.product(
+                mine, sel.get("sub") or [None],
+                sel.get("ns") or (["trr-ns"] if namespaced else [""]),
+                sel.get("name") or ["trr-x"]):
+            cells.append((group, res, sub, ns, name))
+    return cells, errors
+
+
+def selection_errors(policy, ranks):
+    """The selection check (module docstring, step 6). For each request selection of each
+    rule (rule_selections) and each verb it names (where it names none: each verb of the
+    sidecar requests it selects), the level it needs is the highest rank (case_ranks) of
+    the sidecar requests it selects with that verb; where it names the verb and no
+    positive it selects has that verb, at least the highest rank of the positives it
+    selects; never below Metadata.
+    Every request the selection names (selection_cells: every resource of a group it
+    selects whole, every group of a resource it names without one, not only the requests
+    of its sidecar) must be logged at that level or higher under `policy`, for an
+    ordinary caller. `ranks` is {rule: case_ranks(rule, ...)}.
+
+    Returns (failures, errors, checked): failures [(rule, item, verb, group, resource,
+    subresource, namespace, name, level, needed level or None)], errors for a selection
+    the check cannot read, and the number of requests checked."""
+    failures, errors, checked = [], [], 0
+    for rel in sorted(ranks):
+        sels, errs = rule_selections(rel)
+        errors += errs
+        for item, sel in sels:
+            reqs = [(req, rank, kind) for req, rank, _c, kind in ranks[rel]
+                    if all(req[f] in vals for f, vals in sel.items())]
+            pos_max = max([r for _q, r, k in reqs if k == "positive"], default=1)
+            verbs = sel.get("verb") or sorted({q["verb"] for q, _r, _k in reqs})
+            cells, errs = selection_cells(sel)
+            errors += [f"{rel} {item}: {e}" for e in errs]
+            for verb in verbs:
+                mine = [(r, k) for q, r, k in reqs if q["verb"] == verb]
+                need = max([1] + [r for r, _k in mine])
+                if "verb" in sel and not any(k == "positive" for _r, k in mine):
+                    need = max(need, pos_max)
+                for group, res, sub, ns, name in cells:
+                    ref = {k: v for k, v in (("apiGroup", group), ("resource", res),
+                                             ("subresource", sub), ("namespace", ns),
+                                             ("name", name)) if v}
+                    ev = {"verb": verb, "objectRef": ref,
+                          "user": {"username": "trr-selection-check",
+                                   "groups": ["system:authenticated"]}}
+                    level = evaluate(policy, attributes_from_record(ev))[0]
+                    checked += 1
+                    if need >= len(LEVELS) or LEVELS.index(level) < need:
+                        failures.append((rel, item, verb, group, res, sub, ns, name, level,
+                                         LEVELS[need] if need < len(LEVELS) else None))
+    return failures, errors, checked
+
+
+def body_cells(policy):
+    """{(level, verb, group, resource, namespace, name, callers)}: every cell that a rule
+    at Request or RequestResponse names, "*" where the rule leaves a field unset (every
+    value), callers "*" or the rule's users and userGroups. Shadowing is not applied (the
+    self-test evaluates each pinned cell for that)."""
+    out = set()
+    for rule in policy["rules"]:
+        if LEVELS.index(rule["level"]) < LEVELS.index("Request"):
+            continue
+        who = ("*" if not (rule["users"] or rule["userGroups"]) else
+               f"users={','.join(rule['users'])};groups={','.join(rule['userGroups'])}")
+        if rule["nonResourceURLs"]:
+            who += ";nonResourceURLs=" + ",".join(rule["nonResourceURLs"])
+        groups = rule["resources"] or [{"group": "*", "resources": [], "resourceNames": []}]
+        for verb, gr, ns in itertools.product(rule["verbs"] or ["*"], groups,
+                                              rule["namespaces"] or ["*"]):
+            for res, name in itertools.product(gr["resources"] or ["*"],
+                                               gr["resourceNames"] or ["*"]):
+                out.add((rule["level"], verb, gr["group"], res, ns, name, who))
+    return out
+
+
+def _drop_resource(policy, level, verb, group, resource):
+    """A copy of `policy` without `resource` in the first rule at `level` whose verbs hold
+    `verb` and that names it in `group`, or None (the self-test's broken policies)."""
+    p = copy.deepcopy(policy)
+    for rule in p["rules"]:
+        if rule["level"] != level or verb not in rule["verbs"]:
+            continue
+        for i, gr in enumerate(rule["resources"]):
+            if gr["group"] == group and resource in gr["resources"]:
+                gr["resources"] = [r for r in gr["resources"] if r != resource]
+                if not gr["resources"]:  # an empty list would be every resource
+                    del rule["resources"][i]
+                return p
+    return None
 
 
 def _body_lost(info):
@@ -984,16 +1486,24 @@ def compute():
                       for f in p["files"]],
             "log_filter": p.get("log_filter"), "rule_count": len(policy["rules"]),
             "warnings": policy["warnings"]}
+        if p["kind"] == RECOMMENDED:
+            out["policies"][p["id"]]["opt_in_losses"] = {
+                rel: dict(sorted(cases.items()))
+                for rel, cases in sorted(RECOMMENDED_OPT_IN_LOSSES.items())}
+    uniform = uniform_policies()
     for rel in rels:
         path = os.path.join(SIGMA, rel)
         with open(path, encoding="utf-8") as fh:
             doc = next(x for x in yaml.safe_load_all(fh) if isinstance(x, dict))
-        results, counts = run_rule(rel, pols)
+        both, counts = run_rule(rel, {**pols, **uniform})
+        results = {pid: both[pid] for pid in pols}
         out["rules"][rel] = {
             "title": doc.get("title"), "level": doc.get("level"),
             "rule_digest": rule_digest(path),
             "cases_sha256": sha256_file(rule_cases.cases_path(path)),
-            "home_policy": homes[rel], "case_counts": counts, "results": results}
+            "home_policy": homes[rel], "case_counts": counts,
+            "needs": rule_needs(rel, {pid: both[pid] for pid in uniform}),
+            "results": results}
     for p in POLICIES:
         s = {"rules": 0, "rules_all_positives": 0, "rules_some_positives": 0,
              "rules_blind": 0, "positives": 0, "positives_firing": 0,
@@ -1097,6 +1607,24 @@ def print_table(result, policy_ids=None, rule_filter=None, detail=False):
         print("Policy warnings:")
         for i, msg in warn:
             print(f"  {i}: {msg}")
+
+
+def print_needs(result, rule_filter=None):
+    """The per-rule needs (module docstring, step 7)."""
+    print("Per rule: the lowest uniform audit level at which every positive fires, and "
+          "the requests of the positives (verbs group/resource/subresource). The requests "
+          "are a sample of what the rule selects (its sidecar positives), not a complete "
+          "list: read the rule's detection for its full selection.")
+    for rel, row in result["rules"].items():
+        if rule_filter and rel not in rule_filter:
+            continue
+        needs = row["needs"]
+        print(f"{rel}  {needs['level'] if needs['level'] is not None else 'no uniform level'}")
+        reqs = [_request_text((q["group"], q["resource"], q["subresource"]), q["verbs"])
+                for q in needs["requests"]]
+        print("    " + "; ".join(reqs))
+        if needs["note"]:
+            print(f"    note: {needs['note']}")
 
 
 def diff_summary(old, new):
@@ -1734,6 +2262,31 @@ def self_test():
     check("every provider policy file has a SOURCES entry", sorted(listed - set(SOURCES)), [])
     check("lab mounts", check_lab_mounts(), [])
     n += 2
+    # The recommended kind config must stay the lab's: a drift on either side fails.
+    rec_kind = next((p for p in POLICIES if p["kind"] == RECOMMENDED), None)
+    twin_kind = next((p for p in POLICIES if p["kind"] == "lab" and rec_kind
+                      and p["validator"] == rec_kind["validator"]), None)
+    if rec_kind and twin_kind:
+        with open(os.path.join(REPO, rec_kind["kind_config"]), encoding="utf-8") as fh:
+            rec_text = fh.read()
+        with open(os.path.join(REPO, twin_kind["kind_config"]), encoding="utf-8") as fh:
+            twin_text = fh.read()
+        for label, texts in (
+                ("a smaller audit-log-maxsize in the recommended kind config",
+                 {rec_kind["kind_config"]: rec_text.replace(
+                     'audit-log-maxsize: "100"', 'audit-log-maxsize: "1"')}),
+                ("a feature gate added to the lab kind config only",
+                 {twin_kind["kind_config"]: twin_text.replace(
+                     'audit-log-maxbackup: "1"',
+                     'audit-log-maxbackup: "1"\n            feature-gates: "SomeGate=true"')}),
+                ("the recommended kind config mounting the lab policy",
+                 {rec_kind["kind_config"]: rec_text.replace(
+                     f"./{rec_kind['files'][0]}", f"./{twin_kind['files'][0]}")})):
+            check(f"kind config drift is caught: {label}",
+                  len(check_lab_mounts(texts)) >= 1, True)
+            n += 1
+    else:
+        fails.append("kind config drift self-test: no recommended policy or no lab twin")
 
     # 9. The home check: it holds on the shipped lab policy and fails on a lab policy
     # that blinds a rule in its own column (core Events at None, as EKS does).
@@ -1758,6 +2311,398 @@ def self_test():
     else:
         fails.append(f"home check self-test: {rel} or the lab-apiserver policy is missing")
 
+    # 10. The recommended policy: its key levels, the never-above-Metadata rule for
+    # Secrets and tokens, its stages, its opt-in line, and the pinned simulator result
+    # (step 6) with and without the opt-in line.
+    rec = pols.get(RECOMMENDED)
+    if rec is None:
+        fails.append(f"the {RECOMMENDED} policy did not load")
+    else:
+        adm, apps = "admissionregistration.k8s.io", "apps"
+        for record, want in (
+                (_rec("create", "configmaps", name="coredns", ns="kube-system"), "Metadata"),
+                (_rec("patch", "configmaps", name="coredns", ns="kube-system"),
+                 "RequestResponse"),
+                (_rec("update", "configmaps", name="coredns-custom", ns="kube-system"),
+                 "RequestResponse"),
+                (_rec("delete", "configmaps", name="coredns", ns="kube-system"), "Metadata"),
+                (_rec("patch", "configmaps", name="kubeadm-config", ns="kube-system"),
+                 "Metadata"),
+                (_rec("patch", "configmaps", name="aws-auth", ns="kube-system"),
+                 "RequestResponse"),
+                (_rec("get", "configmaps", name="aws-auth", ns="kube-system"), "None"),
+                (_rec("list", "configmaps", ns="n"), "None"),
+                (_rec("patch", "configmaps", name="dns-default", ns="openshift-dns"),
+                 "RequestResponse"),
+                (_rec("create", "configmaps", name="dns-default", ns="openshift-dns"),
+                 "Request"),
+                (_rec("patch", "dnses", name="default", group="operator.openshift.io"),
+                 "RequestResponse"),
+                (_rec("delete", "dnses", name="default", group="operator.openshift.io"),
+                 "Request"),
+                (_rec("create", "pods", name="p", ns="n"), "Request"),
+                (_rec("patch", "pods", sub="ephemeralcontainers", name="p", ns="n"),
+                 "Request"),
+                (_rec("create", "pods", sub="exec", name="p", ns="n"), "Metadata"),
+                (_rec("get", "pods", sub="attach", name="p", ns="n"), "Metadata"),
+                (_rec("get", "pods", sub="portforward", name="p", ns="n"), "Metadata"),
+                (_rec("get", "nodes", sub="proxy", name="n1",
+                      user="system:kube-controller-manager"), "Metadata"),
+                (_rec("create", "deployments", name="d", ns="n", group=apps), "Request"),
+                (_rec("patch", "deployments", sub="scale", name="d", ns="n", group=apps),
+                 "Request"),
+                (_rec("patch", "statefulsets", sub="scale", name="s", ns="n", group=apps),
+                 "Metadata"),
+                (_rec("delete", "daemonsets", name="d", ns="n", group=apps), "Request"),
+                (_rec("delete", "statefulsets", name="s", ns="n", group=apps), "Metadata"),
+                (_rec("delete", "namespaces", name="n", ns="n"), "Request"),
+                (_rec("deletecollection", "events", ns="n", group="events.k8s.io"),
+                 "Request"),
+                (_rec("delete", "jobs", name="j", ns="n", group="batch"), "Request"),
+                (_rec("create", "clusterroles", name="c", group="rbac.authorization.k8s.io"),
+                 "Request"),
+                (_rec("delete", "clusterroles", name="c", group="rbac.authorization.k8s.io"),
+                 "Metadata"),
+                (_rec("patch", "validatingwebhookconfigurations", name="w", group=adm),
+                 "RequestResponse"),
+                (_rec("patch", "mutatingadmissionpolicies", name="m", group=adm),
+                 "RequestResponse"),
+                (_rec("patch", "validatingadmissionpolicies", sub="status", name="v",
+                      group=adm, user="system:apiserver"), "Metadata"),
+                (_rec("delete", "mutatingadmissionpolicybindings", name="m", group=adm),
+                 "Request"),
+                (_rec("create", "mutatingwebhookconfigurations", name="w", group=adm),
+                 "Request"),
+                (_rec("create", "validatingadmissionpolicies", name="v", group=adm),
+                 "Metadata"),
+                # The K35 rows: MutatingAdmissionPolicy and binding deletes at Request,
+                # their updates and patches at RequestResponse.
+                (_rec("delete", "mutatingadmissionpolicies", name="m", group=adm), "Request"),
+                (_rec("deletecollection", "mutatingadmissionpolicies", group=adm), "Request"),
+                (_rec("update", "mutatingadmissionpolicybindings", name="m", group=adm),
+                 "RequestResponse"),
+                (_rec("patch", "mutatingadmissionpolicybindings", name="m", group=adm),
+                 "RequestResponse"),
+                # All three kube-system DNS ConfigMaps (TRR9027 A, B, C) at
+                # RequestResponse; the openshift-dns/dns-default delete at Metadata.
+                (_rec("patch", "configmaps", name="kube-dns", ns="kube-system"),
+                 "RequestResponse"),
+                (_rec("update", "configmaps", name="kube-dns", ns="kube-system"),
+                 "RequestResponse"),
+                (_rec("patch", "configmaps", name="coredns-custom", ns="kube-system"),
+                 "RequestResponse"),
+                (_rec("delete", "configmaps", name="dns-default", ns="openshift-dns"),
+                 "Metadata"),
+                (_rec("create", "dnses", name="default", group="operator.openshift.io"),
+                 "Request"),
+                # exec and attach are above the control-plane None rule: logged for the
+                # control-plane users too (the lab policy drops their reads).
+                (_rec("get", "pods", sub="exec", name="p", ns="n",
+                      user="system:kube-controller-manager"), "Metadata"),
+                (_rec("get", "pods", sub="attach", name="p", ns="n",
+                      user="system:apiserver"), "Metadata"),
+                (_rec("get", "endpoints", name="e", ns="n"), "None"),
+                (_rec("get", "nodes", name="n1", user="system:kube-scheduler"), "None"),
+                (_rec("update", "leases", name="l", ns="kube-node-lease",
+                      group="coordination.k8s.io", user="system:node:n1"), "Metadata")):
+            o = record["objectRef"]
+            check(f"fact {RECOMMENDED}: {record['verb']} {o.get('apiGroup', '')}/"
+                  f"{o['resource']}{'/' + o['subresource'] if o.get('subresource') else ''} "
+                  f"{o.get('namespace', '')}/{o.get('name', '')} by {record['user']['username']}",
+                  evaluate(rec, attributes_from_record(record))[0], want)
+            n += 1
+        # Every body cell of the policy, pinned: each verb, group, resource, namespace
+        # and name that a rule at Request or RequestResponse names ("*": the rule leaves
+        # it unset). Removing or adding one fails here (also one that no sidecar
+        # positive uses, such as a ValidatingAdmissionPolicy dry-run delete, K39), and
+        # each cell must be logged at exactly its level (no earlier rule shadows it).
+        # Change this list only with the policy text and its comments.
+        adm6 = ("validatingwebhookconfigurations", "mutatingwebhookconfigurations",
+                "validatingadmissionpolicies", "validatingadmissionpolicybindings",
+                "mutatingadmissionpolicies", "mutatingadmissionpolicybindings")
+        cud, dl, up = ("create", "update", "patch"), ("delete", "deletecollection"), \
+            ("update", "patch")
+        pinned = []
+        for level, verbs, group, resources, nss, names in (
+                ("Request", cud, "", ("pods", "pods/ephemeralcontainers"), "*", "*"),
+                ("Request", cud, apps, ("deployments", "daemonsets", "statefulsets",
+                                        "replicasets"), "*", "*"),
+                ("Request", cud, "batch", ("jobs", "cronjobs"), "*", "*"),
+                ("Request", cud, "", ("replicationcontrollers",), "*", "*"),
+                ("Request", up, apps, ("deployments/scale",), "*", "*"),
+                ("Request", dl, "", ("pods", "events", "namespaces"), "*", "*"),
+                ("Request", dl, "events.k8s.io", ("events",), "*", "*"),
+                ("Request", dl, "batch", ("jobs",), "*", "*"),
+                ("Request", dl, apps, ("deployments", "daemonsets"), "*", "*"),
+                ("Request", dl, adm, adm6, "*", "*"),
+                ("Request", cud, "rbac.authorization.k8s.io",
+                 ("roles", "clusterroles", "rolebindings", "clusterrolebindings"), "*", "*"),
+                ("RequestResponse", up, adm, adm6, "*", "*"),
+                ("Request", ("create",), adm, adm6[:2], "*", "*"),
+                ("RequestResponse", up, "", ("configmaps",), ("kube-system",), ("aws-auth",)),
+                ("RequestResponse", up, "", ("configmaps",), ("kube-system",),
+                 ("coredns", "kube-dns", "coredns-custom")),
+                ("RequestResponse", up, "", ("configmaps",), ("openshift-dns",),
+                 ("dns-default",)),
+                ("Request", ("create",), "", ("configmaps",), ("openshift-dns",), "*"),
+                ("RequestResponse", up, "operator.openshift.io", ("dnses",), "*", "*"),
+                ("Request", ("create", "delete", "deletecollection"), "operator.openshift.io",
+                 ("dnses",), "*", "*")):
+            pinned += [(level, v, group, r, ns, nm, "*") for v in verbs for r in resources
+                       for ns in (nss if isinstance(nss, tuple) else (nss,))
+                       for nm in (names if isinstance(names, tuple) else (names,))]
+        declared = body_cells(rec)
+        check(f"{RECOMMENDED}: pinned body cells that the policy does not name",
+              sorted(set(pinned) - declared), [])
+        check(f"{RECOMMENDED}: body cells of the policy that are not pinned",
+              sorted(declared - set(pinned)), [])
+        shadowed = []
+        for level, verb, group, res, ns, name, _who in pinned:
+            base, _, sub = res.partition("/")
+            namespaced = SELECTION_RESOURCES.get(base, ((), True))[1]
+            r = _rec(verb, base, sub=sub or None, group=group or None,
+                     name=None if name == "*" else name,
+                     ns=(("trr-ns" if namespaced else None) if ns == "*" else ns))
+            got = evaluate(rec, attributes_from_record(r))[0]
+            if got != level:
+                shadowed.append(f"{verb} {group}/{res} {ns}/{name}: {got}, pinned {level}")
+        check(f"{RECOMMENDED}: each pinned body cell is logged at its level", shadowed, [])
+        n += 3
+        # The documented impersonation gap (RULE_DEFECTS.md KTBD-G1): the policy is
+        # evaluated on the authenticated caller, so an impersonated read of a resource
+        # that the noise rule drops leaves no record; an impersonated read of pods or
+        # Secrets is logged. Change these facts only with that entry.
+        for verb, res, ns, want in (("list", "configmaps", "kube-system", "None"),
+                                    ("get", "events", "default", "None"),
+                                    ("list", "pods", "kube-system", "Metadata"),
+                                    ("get", "secrets", "default", "Metadata")):
+            r = _rec(verb, res, name=None if verb == "list" else "x", ns=ns,
+                     user="kubernetes-admin", groups=("kubeadm:cluster-admins",))
+            r["impersonatedUser"] = {"username": "system:admin", "groups": ["system:masters"]}
+            check(f"fact {RECOMMENDED}: impersonated {verb} {res} (KTBD-G1)",
+                  evaluate(rec, attributes_from_record(r))[0], want)
+            n += 1
+        # Secrets (every verb) and TokenRequest stay at exactly Metadata, for every
+        # caller and namespace: never a body, never dropped.
+        callers = (("kubernetes-admin", ("kubeadm:cluster-admins",)),
+                   ("system:kube-controller-manager", ("system:authenticated",)),
+                   ("system:apiserver", ("system:masters",)),
+                   ("system:node:n1", ("system:nodes",)),
+                   ("system:serviceaccount:kube-system:x", ("system:serviceaccounts",)))
+        wrong = []
+        for user, groups in callers:
+            for ns in ("default", "kube-system", "openshift-dns"):
+                for verb in ("get", "list", "watch", "create", "update", "patch", "delete",
+                             "deletecollection"):
+                    r = _rec(verb, "secrets", name="s", ns=ns, user=user, groups=groups)
+                    if evaluate(rec, attributes_from_record(r))[0] != "Metadata":
+                        wrong.append(f"{verb} secrets {ns} {user}")
+                for res, sub in (("serviceaccounts", "token"), ("serviceaccounts", None)):
+                    r = _rec("create", res, sub=sub, name="sa", ns=ns, user=user,
+                             groups=groups)
+                    if evaluate(rec, attributes_from_record(r))[0] != "Metadata":
+                        wrong.append(f"create {res}/{sub} {ns} {user}")
+        check(f"{RECOMMENDED}: Secrets and tokens at exactly Metadata", wrong, [])
+        check(f"{RECOMMENDED}: one record per request (RequestReceived omitted)",
+              [x["stage"] for x in records_under(rec, _rec("create", "pods", name="p",
+                                                             ns="n"))[0]],
+              ["ResponseComplete"])
+        n += 2
+        # The opt-in line: exactly OPT_IN_LINES lines carry the prefix, and with the
+        # prefix removed the file loads with one more rule that logs a kube-system
+        # ConfigMap create at Request.
+        rpath = os.path.join(REPO, "detections/k8s/audit-policy-recommended.yaml")
+        with open(rpath, encoding="utf-8") as fh:
+            text = fh.read()
+        check(f"{RECOMMENDED}: lines that begin with the opt-in prefix",
+              sum(line.startswith(OPT_IN_PREFIX) for line in text.splitlines()),
+              OPT_IN_LINES)
+        n += 1
+        optin = None
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "policy.yaml"), "w", encoding="utf-8") as fh:
+                fh.write("\n".join(("  " + line[len(OPT_IN_PREFIX):]
+                                    if line.startswith(OPT_IN_PREFIX) else line)
+                                   for line in text.splitlines()) + "\n")
+            try:
+                optin = load_policy(["policy.yaml"], root=tmp)
+            except (PolicyError, yaml.YAMLError) as e:
+                fails.append(f"{RECOMMENDED}: the policy with its opt-in line on does not "
+                             f"load: {e}")
+        if optin is not None:
+            check(f"{RECOMMENDED}: the opt-in line adds one rule",
+                  len(optin["rules"]) - len(rec["rules"]), 1)
+            check(f"{RECOMMENDED} with the opt-in line: create kube-system ConfigMap",
+                  evaluate(optin, attributes_from_record(
+                      _rec("create", "configmaps", name="coredns", ns="kube-system")))[0],
+                  "Request")
+            n += 2
+            # The pinned simulator result for the rule that the opt-in line serves:
+            # without it exactly the expected opt-in losses are lost, with it none, and
+            # no negative fires either way.
+            for rel_r, want_lost in RECOMMENDED_OPT_IN_LOSSES.items():
+                if not os.path.exists(os.path.join(SIGMA, rel_r)):
+                    fails.append(f"{rel_r}: named in RECOMMENDED_OPT_IN_LOSSES, missing")
+                    continue
+                res, _ = run_rule(rel_r, {"off": (rec, None), "on": (optin, None)})
+                check(f"{RECOMMENDED} {rel_r}: lost positives without the opt-in line",
+                      sorted(x["case"] for x in res["off"]["positives"]["lost"]),
+                      sorted(want_lost))
+                check(f"{RECOMMENDED} {rel_r}: lost positives with the opt-in line",
+                      [x["case"] for x in res["on"]["positives"]["lost"]], [])
+                check(f"{RECOMMENDED} {rel_r}: negatives that fire (off, on)",
+                      (res["off"]["negatives_firing"], res["on"]["negatives_firing"]),
+                      ([], []))
+                n += 3
+        # The selection check (step 6): every request that a rule's "select" items name
+        # is logged at the level its sidecar shows the item needs. Only the opt-in
+        # requests (a kube-system DNS ConfigMap create) fail it, none with the opt-in line
+        # on, and it fails on a policy that drops a resource that no sidecar uses.
+        uni10 = uniform_policies()
+        ranks = {rel_s: case_ranks(rel_s, run_rule(rel_s, uni10)[0])
+                 for rel_s in audit_rules()}
+        sel_fail, sel_errs, _checked = selection_errors(rec, ranks)
+        check(f"{RECOMMENDED} selection check: selections it cannot read", sel_errs, [])
+        check(f"{RECOMMENDED} selection check: requests below their need (the opt-in "
+              "requests only)",
+              sorted((f[0], f[2], f[3], f[4], f[6], f[7], f[8], f[9]) for f in sel_fail),
+              sorted(("T1565.001/k8s_coredns_corefile_poisoned.yml", "create", "",
+                      "configmaps", "kube-system", nm, "Metadata", "Request")
+                     for nm in ("coredns", "coredns-custom", "kube-dns")))
+        # It reads a request selection in every rule but the two impersonation rules
+        # (they select any request with an impersonatedUser).
+        check(f"{RECOMMENDED} selection check: rules with no request selection",
+              sorted(r for r in ranks if not rule_selections(r)[0]),
+              ["T1134/k8s_impersonation.yml", "T1134/k8s_impersonation_privileged.yml"])
+        # A selection it cannot expand is an error, not a pass.
+        for label, sel, want in (
+                ("a resource missing from SELECTION_RESOURCES", {"resource": ["widgets"]}, 1),
+                ("a whole group missing from SELECTION_GROUP_RESOURCES",
+                 {"group": ["example.com"], "verb": ["delete"]}, 1),
+                ("a group that does not serve the resource",
+                 {"group": ["apps"], "resource": ["jobs"]}, 1),
+                ("the core group and events", {"resource": ["events"]}, 0)):
+            check(f"selection cells: {label}", len(selection_cells(sel)[1]), want)
+        check("selection cells: events in both groups",
+              sorted(c[0] for c in selection_cells({"resource": ["events"]})[0]),
+              ["", "events.k8s.io"])
+        n += 8
+        if optin is not None:
+            check(f"{RECOMMENDED} with the opt-in line: selection check failures",
+                  selection_errors(optin, ranks)[0], [])
+            n += 1
+        for label, drop, want in (
+                ("ValidatingAdmissionPolicy dropped from the delete rule (K39)",
+                 ("Request", "delete", adm, "validatingadmissionpolicies"),
+                 ("T1685/k8s_admission_webhook_disabled.yml", "delete", adm,
+                  "validatingadmissionpolicies")),
+                ("ReplicaSets dropped from the workload-controller rule",
+                 ("Request", "create", apps, "replicasets"),
+                 ("T1611/k8s_podspec_controller_host_access.yml", "create", apps,
+                  "replicasets")),
+                ("ReplicationControllers dropped from the workload-controller rule",
+                 ("Request", "patch", "", "replicationcontrollers"),
+                 ("T1611/k8s_podspec_confinement_disabled.yml", "patch", "",
+                  "replicationcontrollers")),
+                ("ValidatingAdmissionPolicyBindings dropped from the admission "
+                 "RequestResponse rule",
+                 ("RequestResponse", "patch", adm, "validatingadmissionpolicybindings"),
+                 ("T1685/k8s_admission_webhook_neutered.yml", "patch", adm,
+                  "validatingadmissionpolicybindings")),
+                ("ValidatingAdmissionPolicies dropped from the admission RequestResponse "
+                 "rule",
+                 ("RequestResponse", "update", adm, "validatingadmissionpolicies"),
+                 ("T1685/k8s_admission_webhook_neutered.yml", "update", adm,
+                  "validatingadmissionpolicies"))):
+            broken = _drop_resource(rec, *drop)
+            got_f = selection_errors(broken, ranks)[0] if broken is not None else []
+            check(f"{RECOMMENDED} selection check fails: {label}",
+                  any((f[0], f[2], f[3], f[4]) == want for f in got_f), True)
+            n += 1
+        # The recommended check fails on an unexpected loss, on an expected loss that
+        # fires, and on a firing negative.
+        def fake(lost, negs):
+            return {"policies": {RECOMMENDED: {}}, "rules": {"T/x.yml": {"results": {
+                RECOMMENDED: {"positives": {"lost": [{"case": c, "reason": "body-removed"}
+                                                     for c in lost]},
+                              "negatives_firing": [{"case": c, "kind": "filtered",
+                                                    "reason": "body-removed"}
+                                                   for c in negs]}}}}}
+        exp = {"T/x.yml": {"a": "why"}}
+        for label, res_, want in (
+                ("the expected loss only", fake(["a"], []), 0),
+                ("an unexpected loss", fake(["a", "b"], []), 1),
+                ("an expected loss that fires", fake([], []), 1),
+                ("a negative that fires", fake(["a"], ["n"]), 1)):
+            check(f"recommended check: {label}", len(recommended_errors(res_, exp)), want)
+            n += 1
+        check("recommended check: no recommended column",
+              len(recommended_errors({"policies": {}, "rules": {}})), 1)
+        n += 1
+        # The live job's validator agrees with the simulator: its expected misses
+        # ("fires": False) are exactly the opt-in losses here, an expected miss that
+        # "fires" names a positive that fires here, and each policy gate names a
+        # positive that fires here (POLICY_GATES and EXPECTED_MISS name the sidecar
+        # positive of their request as "case").
+        try:
+            import validate_apiserver_detections as vad
+            xmap = vad.EXPECTED_MISS.get(RECOMMENDED, {})
+            pmap = vad.POLICY_GATES.get(RECOMMENDED, {})
+            map_errors = vad.expected_miss_errors()
+        except Exception as e:  # noqa: BLE001 - report, do not stop the self-test
+            xmap, pmap, map_errors = {}, {}, []
+            fails.append(f"cannot read EXPECTED_MISS / POLICY_GATES of "
+                         f"validate_apiserver_detections: {e}")
+        check("every validator EXPECTED_MISS / POLICY_GATES key names a MANIFEST entry",
+              map_errors, [])
+        check("the validator's expected misses that do not fire are the opt-in losses",
+              sorted((rule, e.get("case")) for (rule, _l), e in xmap.items()
+                     if not e.get("fires")),
+              sorted((rule, case) for rule, cases in RECOMMENDED_OPT_IN_LOSSES.items()
+                     for case in cases))
+        n += 2
+        rows = [(rule, label, e.get("case"), bool(e.get("fires")), "EXPECTED_MISS")
+                for (rule, label), e in xmap.items()]
+        rows += [(rule, label, e.get("case"), True, "POLICY_GATES")
+                 for (rule, label), e in pmap.items()]
+        for rule, label, case, fires, src in rows:
+            if not os.path.exists(os.path.join(SIGMA, rule)):
+                fails.append(f"{src} [{label}] {rule}: the rule is missing")
+                continue
+            cases_, errs_ = rule_cases.load_cases(rule_cases.cases_path(
+                os.path.join(SIGMA, rule)))
+            positives = {c["name"] for c in cases_ if c["kind"] == "positive"}
+            res, _ = run_rule(rule, {"rec": (rec, None)})
+            lost = {x["case"] for x in res["rec"]["positives"]["lost"]}
+            check(f"{src} [{label}]: case {case} is a positive of {rule}",
+                  (not errs_) and case in positives, True)
+            check(f"{src} [{label}]: case {case} {'fires' if fires else 'is lost'} under "
+                  f"the {RECOMMENDED} policy", case not in lost, fires)
+            n += 2
+
+    # 11. Needs (step 7): two rules pinned (a Metadata chokepoint whose dry-run filter
+    # needs Request, and a grader whose lowest level differs per request).
+    uni = uniform_policies()
+    for rel_n, want in (
+            ("T1070/k8s_events_deleted.yml",
+             ("Metadata", [("", "events", None, ["delete", "deletecollection"]),
+                           ("events.k8s.io", "events", None, ["delete", "deletecollection"])],
+              "At Metadata, 3 negative case(s) fire")),
+            ("T1565.001/k8s_coredns_corefile_poisoned.yml",
+             ("RequestResponse", [("", "configmaps", None, ["create", "patch", "update"])],
+              "The lowest level differs per request: Request for create,update configmaps; "
+              "RequestResponse for patch configmaps."))):
+        if not os.path.exists(os.path.join(SIGMA, rel_n)):
+            fails.append(f"needs self-test: {rel_n} is missing")
+            continue
+        res, _ = run_rule(rel_n, uni)
+        got = rule_needs(rel_n, res)
+        check(f"needs {rel_n}: level and requests",
+              (got["level"], [(q["group"], q["resource"], q["subresource"], q["verbs"])
+                              for q in got["requests"]]), want[:2])
+        check(f"needs {rel_n}: note", (got["note"] or "").startswith(want[2]), True)
+        n += 2
+
     for f in fails:
         print(f"FAIL  {f}")
     print(f"self-test: {n} checks, {len(fails)} failed")
@@ -1780,6 +2725,9 @@ def main():
     ap.add_argument("--policy", action="append", help="print only these policy columns")
     ap.add_argument("--rule", action="append", help="print only these rules (<T>/<stem>.yml)")
     ap.add_argument("--detail", action="store_true", help="print every lost positive")
+    ap.add_argument("--needs", action="store_true",
+                    help="print the per-rule needs (the lowest uniform level at which "
+                         "every positive fires, and the requests of the positives)")
     ap.add_argument("--verify-sources", action="store_true",
                     help="network: fetch each upstream source and compare the vendored copy")
     ap.add_argument("--write-sources", action="store_true",
@@ -1809,14 +2757,23 @@ def main():
         for e in homes:
             print(f"  {e}")
         rc = 1
+    recs = recommended_errors(result)
+    if recs:
+        print(f"FAIL: recommended check (under the {RECOMMENDED} policy every positive "
+              "fires but the named opt-in losses, and no negative fires; module "
+              "docstring, step 6):")
+        for e in recs:
+            print(f"  {e}")
+        rc = 1
+        homes = homes + recs
     text = dumps(result)
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:
             fh.write(text)
     if args.update:
         if homes:
-            print(f"not written: {os.path.relpath(args.output, REPO)} (fix the home check "
-                  "first; --json writes the result for inspection)")
+            print(f"not written: {os.path.relpath(args.output, REPO)} (fix the home and "
+                  "recommended checks first; --json writes the result for inspection)")
             return 1
         with open(args.output, "w", encoding="utf-8") as fh:
             fh.write(text)
@@ -1843,14 +2800,19 @@ def main():
             return 1
         if homes:
             print(f"{os.path.relpath(args.output, REPO)} matches the recomputed result, "
-                  "but the home check above fails.")
+                  "but a check above fails.")
         else:
+            s = result["summary"][RECOMMENDED]
             print(f"OK: {os.path.relpath(args.output, REPO)} is current "
                   f"({len(result['rules'])} rule(s), {len(result['policies'])} policies; "
                   "every rule fires on all its positives and on no negative under its "
-                  "home lab policy).")
+                  f"home lab policy; under the {RECOMMENDED} policy "
+                  f"{s['positives_firing']} of {s['positives']} positives fire, the rest "
+                  "are the named opt-in losses, and no negative fires).")
         return rc
-    if not (args.update or args.json):
+    if args.needs:
+        print_needs(result, args.rule)
+    elif not (args.update or args.json):
         print_table(result, args.policy, args.rule, args.detail)
     return rc
 

@@ -57,6 +57,12 @@ name: detection-quality
 #                      it runs only when the PR changes a file the result depends on
 #                      (the step lists them); push, schedule and dispatch always run
 #                      it. Not a required check.
+#                      It also fails the recommended check: under the recommended
+#                      production policy (detections/k8s/audit-policy-recommended.yaml)
+#                      a positive outside RECOMMENDED_OPT_IN_LOSSES is lost, an expected
+#                      opt-in loss fires, or a negative fires; and the self-test fails
+#                      when that policy logs a request that a rule selects below the
+#                      level the rule needs (the selection check).
 #   benign-corpus      every rule scored against the committed benign corpus
 #                      (detections/score_benign.py): the snapshot scores.json must be
 #                      current, and a rule in `enforce` mode (every per-rule entry

@@ -1,0 +1,412 @@
+# Recommended production audit policy for the Kubernetes audit rules of this repository
+# (detections/sigma/: TRR9002-9010, TRR9025-9027; every rule whose logsource is
+# product kubernetes, service audit).
+#
+# WHAT IT IS FOR
+#   An API server that you start with --audit-policy-file. A default cluster writes NO
+#   audit log at all (without the flag "no events are logged", Kubernetes "Auditing"
+#   page), so a rule has nothing to match. Each rule line below names the detection
+#   rules it serves. The CI lab policies (audit-policy-apiserver.yaml, audit-policy.yaml,
+#   audit-policy-staticpod.yaml) stay as they are; this file is their union for one API
+#   server, without the parts that only the lab needs, and with each body rule narrowed
+#   to the groups, resources and verbs that the rules read.
+#
+# WHERE YOU CAN USE IT, AND WHAT TO DO WHERE YOU CANNOT
+#   * kubeadm: in ClusterConfiguration, apiServer.extraArgs audit-policy-file and
+#     audit-log-path (the v1beta4 config API takes a list of name/value pairs, for
+#     example "- name: audit-policy-file" and "value: <path>"), and an
+#     apiServer.extraVolumes entry that mounts this file into the API server pod
+#     (kubeadm "Customizing components with the kubeadm API" page). The Kubernetes
+#     "Auditing" page (the log backend section) shows the same flags and mounts on a
+#     kube-apiserver static pod.
+#   * kind: kind-apiserver-recommended-cluster.yaml beside this file (extraMounts plus
+#     the same kubeadm patch; kind "Auditing" guide).
+#   * k3s: --kube-apiserver-arg=audit-policy-file=<path> and audit-log-path (k3s
+#     hardening guide; k3s writes no audit log by default).
+#   * RKE2: the audit-policy-file server option (RKE2 server configuration
+#     reference). With the CIS profile, RKE2 writes a policy whose one rule is
+#     "level: None" (RKE2 hardening guide), so it logs nothing until you replace it.
+#   * Amazon EKS: you cannot set the policy (the request to allow a custom policy,
+#     aws/containers-roadmap issue 566, is open). The EKS policy logs core Events at
+#     None and ConfigMaps (except aws-auth) at Metadata: read RULE_DEFECTS.md K38, K39 and
+#     K41 for what that costs.
+#   * GKE: GKE supplies the policy file itself (GKE "Audit policy" page); no GKE
+#     setting to replace it is known to this repository (unverified). Read K38 and K41.
+#   * Azure AKS: "The audit policy is managed by AKS and can't be customized" (Microsoft
+#     Learn, "Monitor AKS"). Collect the kube-audit category, not only kube-audit-admin
+#     (K42); read K38, K39 and K41.
+#   * OpenShift: the API servers take an audit profile (Default, WriteRequestBodies,
+#     AllRequestBodies, None) and customRules that set a profile per user group
+#     (openshift/api config/v1 types_apiserver.go, APIServer spec.audit), not a policy
+#     file. Set the WriteRequestBodies profile (K40, K41). That profile logs the request
+#     and response body of every write that it does not keep at Metadata, ConfigMap
+#     writes in every namespace included: read the OPT-IN warning below (Helm release
+#     payloads, credentials in ConfigMaps) before you set it. The openshift-dns and
+#     operator.openshift.io rows below log what the TRR9027 E and F rules read: update
+#     and patch at RequestResponse, as WriteRequestBodies does. They log ConfigMap
+#     creates in openshift-dns and dnses creates and deletes at Request, and
+#     dns-default deletes at Metadata, where WriteRequestBodies logs RequestResponse.
+#     That is enough for the lab to prove TRR9027 E and F with this file.
+#
+# HOW TO DEPLOY IT
+#   The API server reads the file when it starts, and a policy that does not parse stops
+#   it. Start a kind cluster with this file first (the command in
+#   kind-apiserver-recommended-cluster.yaml), then copy it to the control-plane nodes and
+#   restart each API server. Rules are evaluated top to bottom, and the FIRST match wins:
+#   Secrets and tokens first (never above Metadata), then the Metadata subresources the
+#   rules key on, then the body rules, then the high-volume reads at None, then a
+#   catch-all at Metadata (never None), so that nothing else is lost. A rule selects
+#   the authenticated caller, not an impersonated identity (KNOWN GAP below).
+#
+# WHAT THE BODY RULES COPY INTO THE LOG (read each rule's comment before you deploy)
+#   * Pods and workload templates at Request: requestObject holds the whole pod spec,
+#     and so every literal env[].value. A credential set as a literal env value lands in
+#     the log.
+#   * RBAC writes at Request; admission-control objects at Request (create) and
+#     RequestResponse (update, patch): no secret (a webhook caBundle is a public CA
+#     certificate).
+#   * The cluster DNS ConfigMaps at RequestResponse: a Corefile can hold credentials
+#     (route53 aws_access_key, azure secret, tsig secret).
+#   * kube-system/aws-auth at RequestResponse: IAM role ARNs and Kubernetes user and
+#     group names, no credential.
+#   * Deletes at Request: a DeleteOptions object only (no object body, no secret).
+#
+# NEVER ABOVE METADATA: Secrets (every verb), serviceaccounts and serviceaccounts/token
+# creates (TokenRequest). Request or RequestResponse copies the Secret's data and the
+# signed token into the log, and the log becomes a credential store.
+#
+# CONFIGMAP READS stay at None, as the lab policies log them. The ConfigMap credential-
+# read candidate is NO-GO (.claude/skills/trr/references/technique-selection.md: no field
+# scopes a read to a ConfigMap that holds a credential), so no rule needs those reads.
+#
+# THE OPT-IN LINE: one rule below is commented out ("# OPT-IN:"): kube-system ConfigMap
+# creates at Request. Without it, a recreated kube-system/coredns (TRR9027 Procedure D:
+# delete, then a POST to the collection) reaches the log at Metadata with no Corefile.
+# The chokepoint k8s_coredns_configmap_modified still fires on it; the Corefile grader
+# k8s_coredns_corefile_poisoned cannot grade it (an expected miss; see the rule).
+#
+# COST, RULE_DEFECTS.md K23: at Request and RequestResponse the JSON audit backend drops
+# an apply patch sent with a YAML body, so such a write leaves NO record at all (also no
+# Metadata record for the chokepoints). This applies to every rule below at Request or
+# higher. `kubectl apply --server-side` sends JSON and is not affected. Watch the
+# apiserver_audit_error_total metric and the "Error in audit plugin" log line.
+#
+# KNOWN NOISE, RULE_DEFECTS.md K34: from kubectl v1.36 a default `kubectl debug` adds
+# SYS_PTRACE to its debug container. The pods rule below logs that write at Request, so
+# k8s_podspec_host_access (level high) fires on it.
+#
+# KNOWN GAP, RULE_DEFECTS.md KTBD-G1: the API server evaluates this policy on the
+# authenticated caller, before it applies impersonation, so no rule can select an
+# impersonated request. An impersonated get, list or watch of the resources that the
+# first noise rule below drops (ConfigMaps, Events, Endpoints, Leases, EndpointSlices,
+# nodes/status, pods/status) leaves NO record, and T1134/k8s_impersonation and
+# k8s_impersonation_privileged cannot fire on it. Every other impersonated request
+# reaches a logged rule. To close the gap, scope that noise rule to the system callers
+# (the EKS and GCE kube-up policies scope most of their None rules to named system
+# users and groups, but drop core Events for every caller, K38); it then logs the
+# reads of people and their tools at Metadata, a volume cost to weigh before you
+# change it (read the entry).
+#
+# VOLUME (an ESTIMATE for kind; see detections/README.md): on the lab's live benign
+# capture (1449 records at commit 50e606f: 909 bootstrap, 540 operator workload) no
+# request moves between None and a logged level against the API server lab policy, so
+# this policy writes records for the same requests (the count moves only with timing,
+# for example lease renewals). The one difference in what is logged at all: this file
+# logs pods/exec and pods/attach for every caller, and the lab policy drops their reads
+# (get, list, watch) by system:apiserver, system:kube-scheduler and
+# system:kube-controller-manager, which those components do not send. It has fewer
+# bodies:
+# the kube-system ConfigMap creates of the bootstrap (about 7 objects, about 10 KB) are
+# at Metadata, and the RBAC deletes, the StatefulSet, ReplicaSet, CronJob and
+# ReplicationController deletes, the DNS and aws-auth ConfigMap deletes and the
+# StatefulSet and ReplicaSet scale writes lose their small DeleteOptions, Status or
+# Scale bodies: a few percent of the bytes, at most. A local kube-apiserver v1.36.4 run
+# of the TRR9004, 9006, 9008-9010, 9025 and 9027 atomics measured 1108 records under
+# each policy and 2% fewer bytes under this one (10 KB fewer request bodies in the
+# bootstrap). The validate-apiserver-recommended job prints the measured records and
+# bytes of each CI run. In a larger cluster the Metadata catch-all on lease renewals
+# (each node every 10 s, each leader every 2 s) is the largest stream; no rule reads it,
+# but this file keeps it, as the lab does. omitManagedFields: true would make the
+# RequestResponse records smaller; it is not set, because managedFields name the field
+# manager of each write.
+#
+# PROOF: detections/k8s_policy_coverage.py simulates this policy (column "recommended")
+# for every Kubernetes audit rule: every sidecar positive fires except the TRR9027
+# Procedure D create (recreate-coredns-create-procD), which needs the opt-in line, and
+# no negative fires. The
+# validate-apiserver-recommended job in .github/workflows/validate-apiserver-detections.yml
+# proves the TRR9004-9010 and TRR9025-9027 rules live on kind with this file
+# (validate_apiserver_detections.py --policy recommended: the 9027 D chokepoint row
+# passes on D's create logged without a body, and the 9027 D create grader row is an
+# expected miss that must have that evidence). The TRR9002 rules (exec,
+# attach, ephemeral containers, node proxy) and the TRR9003 rule (static-pod mirror
+# create) are proven for this file by the simulator only; CI proves them live under
+# their own lab policies.
+apiVersion: audit.k8s.io/v1
+kind: Policy
+
+# One record per request: without this, each request also writes a RequestReceived
+# record (no body), and a rule that matches both alerts twice for one request. A
+# long-running request (watch, exec, port-forward) still writes ResponseStarted.
+omitStages:
+  - "RequestReceived"
+
+rules:
+  # --- Secrets at Metadata, every verb (NEVER Request or RequestResponse) ---
+  # Serves: T1552.007/k8s_secret_access, T1134/k8s_impersonation and
+  # k8s_impersonation_privileged (impersonated Secret reads). First, so that no later
+  # rule can log a Secret body and no None rule can drop a Secret read.
+  - level: Metadata
+    resources:
+      - group: ""
+        resources: ["secrets"]
+
+  # --- Service-account and token creates at Metadata (NEVER higher) ---
+  # Serves: T1552.007/k8s_secret_token_request (create serviceaccounts/token, the
+  # TokenRequest API). The response of a TokenRequest holds the signed token.
+  - level: Metadata
+    verbs: ["create"]
+    resources:
+      - group: ""
+        resources: ["serviceaccounts", "serviceaccounts/token"]
+
+  # --- Command execution and tunnels at Metadata (no body needed) ---
+  # Serves: T1609/k8s_pod_exec_attach (pods/exec, pods/attach, get for WebSocket and
+  # create for SPDY), T1572/k8s_pod_portforward (pods/portforward), T1609/k8s_node_proxy_exec,
+  # T1609/k8s_node_proxy_kubelet_api and T1572/k8s_node_proxy_portforward (nodes/proxy;
+  # the kubelet path is in requestURI). Every verb: the verb is what the rules record.
+  # Above the None rules, so that a None rule added later cannot drop them.
+  - level: Metadata
+    resources:
+      - group: ""
+        resources: ["pods/exec", "pods/attach", "pods/portforward", "nodes/proxy"]
+
+  # --- Pods and ephemeral containers at Request (requestObject.spec) ---
+  # Serves: T1611/k8s_podspec_host_access and k8s_podspec_confinement_disabled (the pod
+  # spec, and a JSON patch of pods/ephemeralcontainers), T1609/k8s_pod_ephemeral_container
+  # (Metadata is enough), T1543.005/k8s_static_pod_mirror_create (the kubelet's mirror-pod
+  # create as system:node:<node>; Metadata is enough). Copies literal env values (header).
+  - level: Request
+    verbs: ["create", "update", "patch"]
+    resources:
+      - group: ""
+        resources: ["pods", "pods/ephemeralcontainers"]
+
+  # --- Workload controllers at Request (the embedded pod template) ---
+  # Serves: T1611/k8s_podspec_controller_host_access and k8s_podspec_confinement_disabled
+  # (the seven controller resources those rules select), T1685/k8s_enforcer_workload_removed
+  # and k8s_security_tool_workload_removed (spec.replicas 0 in a Deployment or DaemonSet
+  # write), T1053.007/k8s_job_create (Metadata is enough).
+  - level: Request
+    verbs: ["create", "update", "patch"]
+    resources:
+      - group: "apps"
+        resources: ["deployments", "daemonsets", "statefulsets", "replicasets"]
+      - group: "batch"
+        resources: ["jobs", "cronjobs"]
+      - group: ""
+        resources: ["replicationcontrollers"]
+
+  # --- Deployment scale writes at Request (the Scale body) ---
+  # Serves: T1685/k8s_enforcer_workload_removed and k8s_security_tool_workload_removed
+  # (`kubectl scale --replicas=0` is a patch or a PUT of deployments/scale). Audit
+  # resource matching is exact: "deployments" does not cover "deployments/scale". A
+  # scale body holds a replica count only. No rule reads the scale of a StatefulSet or
+  # a ReplicaSet, so those stay at the Metadata catch-all.
+  - level: Request
+    verbs: ["update", "patch"]
+    resources:
+      - group: "apps"
+        resources: ["deployments/scale"]
+
+  # --- Deletes at Request (the DeleteOptions body; RULE_DEFECTS.md K39, K35) ---
+  # `kubectl delete --dry-run=server` puts dryRun ["All"] in the DeleteOptions body,
+  # which a Metadata record does not hold. At Request the dry-run filters work.
+  # Serves: T1070/k8s_events_deleted (core and events.k8s.io Events),
+  # k8s_namespace_deleted (namespaces), k8s_workload_deleted_evidence (pods, Jobs),
+  # T1685/k8s_enforcer_workload_removed and k8s_security_tool_workload_removed
+  # (Deployments, DaemonSets, the enforcer namespaces), k8s_admission_webhook_disabled
+  # (it selects the whole admissionregistration.k8s.io group: these are the six
+  # resources that group serves in v1.36, MutatingAdmissionPolicy and its binding
+  # included, K35). A DeleteOptions body holds no object and no secret; Request records
+  # no responseObject.
+  - level: Request
+    verbs: ["delete", "deletecollection"]
+    resources:
+      - group: ""
+        resources: ["pods", "events", "namespaces"]
+      - group: "events.k8s.io"
+        resources: ["events"]
+      - group: "batch"
+        resources: ["jobs"]
+      - group: "apps"
+        resources: ["deployments", "daemonsets"]
+      - group: "admissionregistration.k8s.io"
+        resources: ["validatingwebhookconfigurations", "mutatingwebhookconfigurations",
+                    "validatingadmissionpolicies", "validatingadmissionpolicybindings",
+                    "mutatingadmissionpolicies", "mutatingadmissionpolicybindings"]
+
+  # --- RBAC writes at Request (roleRef, subjects, rules) ---
+  # Serves: T1098.006/k8s_rbac_privileged_grant (every RBAC resource) and
+  # k8s_rbac_sensitive_permission_grant (roles, clusterroles), T1098.006/k8s_rbac_write
+  # (Metadata is enough; its deletes reach the catch-all).
+  - level: Request
+    verbs: ["create", "update", "patch"]
+    resources:
+      - group: "rbac.authorization.k8s.io"
+        resources: ["roles", "clusterroles", "rolebindings", "clusterrolebindings"]
+
+  # --- Admission-control updates and patches at RequestResponse (the stored object) ---
+  # Serves: T1685/k8s_admission_webhook_neutered (it selects the whole group: the six
+  # resources of the delete rule above; it reads the stored object, responseObject,
+  # because a merge or JSON patch body cannot show that a webhook lost its rules),
+  # T1546/k8s_admission_webhook_repointed_to_url, T1685/k8s_admission_webhook_disabled
+  # and T1546/k8s_admission_webhook_created (a server-side-apply install is a patch
+  # answered 201), and the server-side-apply branch of
+  # k8s_malicious_admission_webhook_created. The status subresources (the API server's
+  # own type-check of a policy) stay at the catch-all. No secret: a webhook clientConfig
+  # is a Service reference or a URL, a caBundle a public CA certificate, a policy CEL text.
+  - level: RequestResponse
+    verbs: ["update", "patch"]
+    resources:
+      - group: "admissionregistration.k8s.io"
+        resources: ["validatingwebhookconfigurations", "mutatingwebhookconfigurations",
+                    "validatingadmissionpolicies", "validatingadmissionpolicybindings",
+                    "mutatingadmissionpolicies", "mutatingadmissionpolicybindings"]
+
+  # --- Webhook configuration creates at Request (clientConfig) ---
+  # Serves: T1546/k8s_malicious_admission_webhook_created (the clientConfig.url of a new
+  # webhook), T1546/k8s_admission_webhook_created (Metadata is enough; the creates of the
+  # other resources of the group reach the catch-all).
+  - level: Request
+    verbs: ["create"]
+    resources:
+      - group: "admissionregistration.k8s.io"
+        resources: ["validatingwebhookconfigurations", "mutatingwebhookconfigurations"]
+
+  # --- kube-system/aws-auth writes at RequestResponse ---
+  # Serves: T1098.006/k8s_eks_aws_auth_configmap_modified (Metadata is enough). The body
+  # is for triage: mapRoles and mapUsers after the write. The aws-iam-authenticator reads
+  # this ConfigMap (on EKS, and where a self-managed cluster runs it in EKS ConfigMap
+  # mode); it holds IAM role ARNs and Kubernetes names, no credential. resourceNames
+  # cannot select a create (a POST names no object when the policy is evaluated), so a
+  # create reaches the catch-all at Metadata.
+  - level: RequestResponse
+    namespaces: ["kube-system"]
+    verbs: ["update", "patch"]
+    resources:
+      - group: ""
+        resources: ["configmaps"]
+        resourceNames: ["aws-auth"]
+
+  # --- kube-system DNS ConfigMap writes at RequestResponse (the Corefile) ---
+  # Serves: T1565.001/k8s_coredns_corefile_poisoned (the Corefile in the request and in
+  # the stored object, so a JSON patch is graded as a full write) and
+  # T1565.001/k8s_coredns_configmap_modified (Metadata is enough). Scoped by
+  # resourceNames to the three DNS ConfigMaps. Copies the Corefile twice per write, and
+  # a Corefile can hold credentials (header). A PATCH or PUT to the named object
+  # (kubectl patch, edit, replace, and a server-side apply, also of a new object) is
+  # logged here; a POST create names no object, so it reaches the catch-all at Metadata,
+  # unless you enable the OPT-IN rule below.
+  - level: RequestResponse
+    namespaces: ["kube-system"]
+    verbs: ["update", "patch"]
+    resources:
+      - group: ""
+        resources: ["configmaps"]
+        resourceNames: ["coredns", "kube-dns", "coredns-custom"]
+
+  # --- OPT-IN: kube-system ConfigMap creates at Request (OFF by default) ---
+  # Serves: T1565.001/k8s_coredns_corefile_poisoned on a recreated coredns (TRR9027
+  # Procedure D: a delete, then a POST create). To turn it on, remove "# OPT-IN: " from
+  # the six lines below.
+  # WARNING: this logs the full body of EVERY ConfigMap created in kube-system. Helm 2
+  # (Tiller) keeps each release revision as a ConfigMap in kube-system by default, and
+  # Helm 3 does the same in the release namespace with HELM_DRIVER=configmap. The release
+  # payload (base64 of gzip, which anyone who reads the log can decode) holds the
+  # rendered manifests, Secret data included, and the chart values (passwords, tokens);
+  # each upgrade writes a new revision. Do NOT enable it on a cluster that runs Helm 2,
+  # Helm 3 with HELM_DRIVER=configmap into kube-system, or an add-on that keeps a
+  # credential in a kube-system ConfigMap. Move that storage to Secrets (Helm 3's
+  # default driver) first.
+  # OPT-IN: - level: Request
+  # OPT-IN:   namespaces: ["kube-system"]
+  # OPT-IN:   verbs: ["create"]
+  # OPT-IN:   resources:
+  # OPT-IN:     - group: ""
+  # OPT-IN:       resources: ["configmaps"]
+
+  # --- OpenShift's rendered DNS ConfigMap at RequestResponse ---
+  # Serves: T1565.001/k8s_coredns_corefile_poisoned and k8s_coredns_configmap_modified
+  # (TRR9027 Procedure E: openshift-dns/dns-default). OpenShift does not take this file
+  # (header); this row logs updates and patches of dns-default at RequestResponse, as its
+  # WriteRequestBodies profile does (that profile also logs creates and deletes at
+  # RequestResponse; this file logs them at Request and Metadata), so that the lab can
+  # prove E with this file. On a cluster with no openshift-dns namespace it matches
+  # nothing.
+  - level: RequestResponse
+    namespaces: ["openshift-dns"]
+    verbs: ["update", "patch"]
+    resources:
+      - group: ""
+        resources: ["configmaps"]
+        resourceNames: ["dns-default"]
+
+  # --- ConfigMap creates in openshift-dns at Request ---
+  # Serves: T1565.001/k8s_coredns_corefile_poisoned on a created dns-default. On
+  # OpenShift that namespace holds dns-default and public CA bundles only.
+  - level: Request
+    namespaces: ["openshift-dns"]
+    verbs: ["create"]
+    resources:
+      - group: ""
+        resources: ["configmaps"]
+
+  # --- OpenShift DNS Operator object writes ---
+  # Serves: T1565.001/k8s_coredns_configmap_modified (TRR9027 Procedure F; Metadata is
+  # enough). The bodies are for triage (spec.servers, spec.upstreamResolvers and
+  # spec.managementState after the write), as the lab logs them; the object holds DNS
+  # configuration only. dnses/status reaches the catch-all.
+  - level: RequestResponse
+    verbs: ["update", "patch"]
+    resources:
+      - group: "operator.openshift.io"
+        resources: ["dnses"]
+  - level: Request
+    verbs: ["create", "delete", "deletecollection"]
+    resources:
+      - group: "operator.openshift.io"
+        resources: ["dnses"]
+
+  # --- Noise reduction: drop high-volume reads (as the lab policies do) ---
+  # No rule reads these. Secrets are logged by the first rule, so this does not touch
+  # them. ConfigMap reads are here on purpose (header: CONFIGMAP READS). It drops an
+  # impersonated read of these resources too (header: KNOWN GAP, KTBD-G1).
+  - level: None
+    verbs: ["get", "list", "watch"]
+    resources:
+      - group: ""
+        resources:
+          ["endpoints", "events", "nodes/status", "pods/status",
+           "configmaps", "leases"]
+      - group: "coordination.k8s.io"
+        resources: ["leases"]
+      - group: "discovery.k8s.io"
+        resources: ["endpointslices"]
+
+  # Drop the control-plane components' own read chatter (their Secret reads are logged
+  # by the first rule).
+  - level: None
+    users: ["system:apiserver", "system:kube-scheduler",
+            "system:kube-controller-manager"]
+    verbs: ["get", "list", "watch"]
+
+  # --- Catch-all: everything else at Metadata (never None) ---
+  # Serves every Metadata chokepoint that no rule above names: T1098.006/k8s_rbac_write
+  # (deletes), T1053.007/k8s_job_create (deletes), T1546/k8s_admission_webhook_created
+  # (policy creates), T1565.001/k8s_coredns_configmap_modified and
+  # T1098.006/k8s_eks_aws_auth_configmap_modified (creates and deletes), and the
+  # impersonated requests of T1134/k8s_impersonation (any request can be impersonated)
+  # that no rule above logs. An impersonated read that the first None rule drops never
+  # reaches this rule (header: KNOWN GAP, KTBD-G1).
+  - level: Metadata
