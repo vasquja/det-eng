@@ -109,6 +109,7 @@ python3 detections/check_null_safety.py
 # After a Kubernetes rule, case, lab policy or MANIFEST change: --update / --write.
 python3 detections/k8s_policy_coverage.py --check
 python3 detections/check_provider_mappings.py --check
+python3 detections/k8s_platforms_md.py --write      # after the two above; CI runs --check
 
 # Procedure coverage report (README chart + research/COVERAGE.md); --check in CI
 python3 research/tools/coverage_report.py
@@ -116,6 +117,7 @@ python3 research/tools/coverage_report.py
 # Lint
 python3 .github/scripts/trr_lint.py
 python3 .github/scripts/check_md_links.py
+python3 detections/k8s_platforms_md.py --anchors   # anchors of links into detections/k8s/PLATFORMS.md
 python3 .github/scripts/check_sigma_regex.py   # portable |re subset; --require-re2 with google-re2
 sigma check -x attacktag -x d3_fendtag -x cartag detections/sigma/
 ```

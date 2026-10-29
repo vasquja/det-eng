@@ -53,7 +53,14 @@ name: detection-quality
 #                      fail, a vendored policy changed, the committed
 #                      detections/k8s/policy_coverage.json is stale, or a rule loses a
 #                      positive (or a negative fires) under its own lab policy (the
-#                      home check). On a pull request
+#                      home check). It also runs detections/k8s_platforms_md.py
+#                      --self-test, then --check: the generated blocks of
+#                      detections/k8s/PLATFORMS.md must match that JSON,
+#                      detections/pipelines/mapping_results.json, a replay of the GKE
+#                      Admin Activity store (no reads) and a replay of each
+#                      grader's positive cases through its chokepoint. (The anchors of
+#                      the links into PLATFORMS.md are checked in markdown-links.)
+#                      On a pull request
 #                      it runs only when the PR changes a file the result depends on
 #                      (the step lists them); push, schedule and dispatch always run
 #                      it. Not a required check.
@@ -291,6 +298,8 @@ jobs:
             'detections/sigma/' \
             'detections/k8s/' \
             'detections/k8s_policy_coverage.py' \
+            'detections/k8s_platforms_md.py' \
+            'detections/pipelines/mapping_results.json' \
             'detections/sigma_eval.py' \
             'detections/sigma_explain.py' \
             'detections/rule_cases.py' \
@@ -337,6 +346,16 @@ jobs:
           # shell: bash enables pipefail, so tee does not mask the exit code.
           python3 detections/k8s_policy_coverage.py --self-test --check \
             | tee /tmp/platform-coverage.out
+
+      - name: Self-test the platform page generator and check detections/k8s/PLATFORMS.md
+        if: steps.f.outputs.relevant == 'true'
+        # PLATFORMS.md is under detections/k8s/ (listed above). --check replays the
+        # GKE Admin Activity store and the graders through their chokepoints with
+        # pySigma (installed above). Regenerate
+        # the page with python3 detections/k8s_platforms_md.py --write.
+        run: |
+          python3 detections/k8s_platforms_md.py --self-test
+          python3 detections/k8s_platforms_md.py --check
 
       - name: Publish the platform table to job summary
         if: ${{ always() && steps.f.outputs.relevant == 'true' }}

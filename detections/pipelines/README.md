@@ -109,7 +109,8 @@ The pipeline renames each top-level field to its column (`verb` -> `Verb`, `requ
   `T1134/k8s_impersonation.yml` and `k8s_impersonation_privileged.yml` fail conversion.
   Convert them for AzureDiagnostics (`parse_json(log_s)`) or the Event Hub export, which
   keep the raw Event.
-- **AKSAuditAdmin has no `get` and `list` events** (it keeps `watch`). The rules whose
+- **AKSAuditAdmin has no `get` and `list` events** (the table page names only those two;
+  whether it keeps `watch` is unverified: issue #55). The rules whose
   positive cases need such a read (computed on every case: `loses_positive_without_reads`
   in `mapping_results.json`) are `T1552.007/k8s_secret_access.yml` (its `watch` positive
   still fires), `T1609/k8s_pod_exec_attach.yml` and `T1572/k8s_pod_portforward.yml` (the

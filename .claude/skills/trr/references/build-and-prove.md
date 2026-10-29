@@ -474,7 +474,7 @@ approval that lands after they have passed leaves the merge to a human (see
 `detections/benign/README.md`, "Branch protection: what binds a manual merge"):
 
 - `validate-detections.yml`: auditd loop + `sigma check` + `markdown-links`, runs on
-  every PR.
+  every PR. `markdown-links` also runs `k8s_platforms_md.py --anchors`.
 - `validate-cloud-detections.yml`: the fixture loop, **path-filtered**. Add
   `detections/sigma/<T...>/**` and `atomics/<T...>/**` to the `push` `paths:` list,
   and add the directory prefixes `'detections/sigma/<T...>/'` and `'atomics/<T...>/'`
@@ -491,9 +491,13 @@ approval that lands after they have passed leaves the merge to a human (see
   - `check-sufficiency` is the gate above.
   - `platform-coverage` (not required) replays every Kubernetes audit rule's cases as
     each lab and provider audit policy records them (`k8s_policy_coverage.py
-    --self-test` and `--check`). After a change to a Kubernetes rule's detection,
-    title or level, a sidecar, a lab policy, a kind config or a validator MANIFEST,
-    run `--update` and commit `detections/k8s/policy_coverage.json`.
+    --self-test` and `--check`), and checks `detections/k8s/PLATFORMS.md`
+    (`k8s_platforms_md.py --self-test`, then `--check`). After a change to a
+    Kubernetes rule's detection, title or level, a sidecar, a lab policy, a kind config
+    or a validator MANIFEST, run `--update` and commit
+    `detections/k8s/policy_coverage.json`; then run
+    `python3 detections/k8s_platforms_md.py --write` and commit
+    `detections/k8s/PLATFORMS.md`.
   - `provider-mappings` (not required) proves the AKS and GKE pipelines on every
     Kubernetes case (`check_provider_mappings.py --check --require-re2` and both
     self-tests). After a Kubernetes rule or case change, run `--propose`, review each
@@ -516,11 +520,13 @@ python3 detections/check_null_safety.py detections/sigma/<T...>/<rule>.yml  # nu
 python3 detections/check_sufficiency.py --rule detections/sigma/<T...>/<rule>.yml
 python3 detections/k8s_policy_coverage.py --check          # Kubernetes: --update, then commit the JSON
 python3 detections/check_provider_mappings.py --check      # Kubernetes: --propose, review, --write
+python3 detections/k8s_platforms_md.py --write             # Kubernetes: after the two above, then commit detections/k8s/PLATFORMS.md
 python3 detections/validate_cloud_detections.py            # attack fires + benign clean
 python3 detections/score_benign.py --check --enforce       # FP snapshot current, budgets held
 sigma check -x attacktag -x d3_fendtag -x cartag -x detection_tag detections/sigma/<T...>/
 python3 .github/scripts/trr_lint.py
 python3 .github/scripts/check_md_links.py
+python3 detections/k8s_platforms_md.py --anchors          # anchors of links into detections/k8s/PLATFORMS.md
 ```
 The `sigma check` exclusions matter: the egress proxy blocks the ATT&CK/D3FEND/CAR tag
 downloads those validators need, so exclude them locally; they re-run server-side.

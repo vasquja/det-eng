@@ -456,6 +456,8 @@ One chokepoint rule covers the three admission-config paths. A severity rule gra
 the neuter. An alert rule covers the enforcer-workload removal in the engines'
 default namespaces, and an anchor rule covers it in every namespace.
 
+Platform coverage: [detections/k8s/PLATFORMS.md](../../../detections/k8s/PLATFORMS.md#rules-on-each-platform)
+
 ## Available Emulation Tests
 
 The tests run in a lab cluster with the shared audit policy (now recording the

@@ -354,6 +354,8 @@ TRR9002 Procedure E documents the direct-kubelet gap.
 One chokepoint rule covers the three API read paths. One fallback covers token
 minting. A node sensor covers the mounted-token read the API server never sees.
 
+Platform coverage: [detections/k8s/PLATFORMS.md](../../../detections/k8s/PLATFORMS.md#rules-on-each-platform)
+
 ## Available Emulation Tests
 
 The tests run in a lab cluster with an audit policy that records `secrets` reads

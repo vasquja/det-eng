@@ -663,7 +663,8 @@ when a rule, a sidecar, the pipelines or the harness change), which proves the
 managed-cluster field mappings ([Provider field mappings](#provider-field-mappings-aks-gke-eks)).
 
 The `platform-coverage` job of the same workflow runs
-`python3 detections/k8s_policy_coverage.py --self-test --check` (see
+`python3 detections/k8s_policy_coverage.py --self-test --check`, then
+`python3 detections/k8s_platforms_md.py --self-test` and `--check` (see
 [Managed platforms: the audit-policy simulator](#managed-platforms-the-audit-policy-simulator)).
 On a pull request it runs only when the pull request changes one of its inputs; it is
 not a required check.
@@ -1273,18 +1274,24 @@ their sources, licenses and digests in
 [`k8s/provider-policies/SOURCES.md`](k8s/provider-policies/SOURCES.md). It models the
 policy only, not a provider's log pipeline, and a published policy is not a capture.
 
+[`k8s/PLATFORMS.md`](k8s/PLATFORMS.md) joins this result and the provider-mapping result
+into one table per rule and platform log shape (EKS, AKS, GKE, OpenShift, k3s), with a
+sourced summary of each platform; `k8s_platforms_md.py --write` regenerates its tables.
+
 ```bash
 python3 detections/k8s_policy_coverage.py            # the table
 python3 detections/k8s_policy_coverage.py --detail   # and every lost positive
 python3 detections/k8s_policy_coverage.py --update   # rewrite k8s/policy_coverage.json
 python3 detections/k8s_policy_coverage.py --self-test --check   # what CI runs
+python3 detections/k8s_platforms_md.py --write       # then rewrite k8s/PLATFORMS.md
 ```
 
 The committed result, [`k8s/policy_coverage.json`](k8s/policy_coverage.json), has a
 documented schema (the script's docstring). `--check` fails when a rule, a sidecar, a
 policy file, a validator MANIFEST or the evaluator's output changed and the file was
 not regenerated, so a pull request that changes a Kubernetes rule or its cases also
-runs `--update`. `--check`, `--update` and the table also run a home check: the home
+runs `--update` (and then `k8s_platforms_md.py --write`).
+`--check`, `--update` and the table also run a home check: the home
 of a rule is the lab policy of the validator whose MANIFEST registers it, and under
 that policy every positive must fire and no negative may fire, because CI proves that
 live. The platform gaps it found are in [`RULE_DEFECTS.md`](RULE_DEFECTS.md) (the

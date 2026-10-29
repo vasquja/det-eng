@@ -467,6 +467,8 @@ controller template and a CronJob job template. All three rules grade the JSON-p
 delivery. Under a `Metadata`-only policy no rule in this repository sees an API-created
 dangerous pod; a runtime agent is the only view.
 
+Platform coverage: [detections/k8s/PLATFORMS.md](../../../detections/k8s/PLATFORMS.md#rules-on-each-platform)
+
 ## Available Emulation Tests
 
 The tests run in a lab cluster with an audit policy that records `pods` and the

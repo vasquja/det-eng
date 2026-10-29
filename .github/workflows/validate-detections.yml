@@ -128,6 +128,9 @@ jobs:
     # Verifies every relative Markdown link in the repo points at a file or
     # directory that exists. Offline and deterministic (no external URLs are
     # network-checked). Template dirs are skipped (they hold placeholder links).
+    # Then checks the anchors (#...) of the links into, inside and out of
+    # detections/k8s/PLATFORMS.md (standard library only; check_md_links.py
+    # checks paths only).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -138,3 +141,6 @@ jobs:
 
       - name: Check relative Markdown links
         run: python3 .github/scripts/check_md_links.py
+
+      - name: Check the anchors of the links into and out of detections/k8s/PLATFORMS.md
+        run: python3 detections/k8s_platforms_md.py --anchors

@@ -265,6 +265,8 @@ demonstration that the invariant anchor beats target-list matching.
 One presence rule covers every path. One severity rule grades the borrowed
 identity. There is no node-sensor fallback: the audit log is the sole sensor.
 
+Platform coverage: [detections/k8s/PLATFORMS.md](../../../detections/k8s/PLATFORMS.md#rules-on-each-platform)
+
 ## Available Emulation Tests
 
 The tests run in a lab cluster with the shared audit policy. The lab is a `kind`

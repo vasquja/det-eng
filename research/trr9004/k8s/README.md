@@ -562,6 +562,8 @@ rules read the request body to grade a grant: Strategy 2 (high) for wildcards,
 escalate/bind, powerful bindings and group subjects, and Strategy 3 (medium) for
 sensitive non-wildcard permissions.
 
+Platform coverage: [detections/k8s/PLATFORMS.md](../../../detections/k8s/PLATFORMS.md#rules-on-each-platform)
+
 ## Available Emulation Tests
 
 The tests run in a lab cluster with an audit policy that records the RBAC group

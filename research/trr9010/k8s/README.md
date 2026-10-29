@@ -442,6 +442,8 @@ namespace delete. A low-fidelity fallback
 covers workload-record deletion. A hunting rule covers the actor's namespace delete
 (Procedure F). A node sensor covers the audit-log clearing the API server never sees.
 
+Platform coverage: [detections/k8s/PLATFORMS.md](../../../detections/k8s/PLATFORMS.md#rules-on-each-platform)
+
 ## Available Emulation Tests
 
 The tests run in a lab cluster with the shared audit policy. The lab is a `kind`

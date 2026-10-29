@@ -145,6 +145,8 @@ filing wave; ATT&CK revokes and renames IDs between releases.
 | TRR9026  | T1572  | Pod Port-Forward Tunnel | Kubernetes | [`trr9026/k8s`](trr9026/k8s/README.md) |
 | TRR9027  | T1565.001 | Cluster DNS Poisoning via the CoreDNS ConfigMap | Kubernetes | [`trr9027/k8s`](trr9027/k8s/README.md) |
 
+Which Kubernetes rule works on which platform (EKS, AKS, GKE, OpenShift, k3s): [`detections/k8s/PLATFORMS.md`](../detections/k8s/PLATFORMS.md).
+
 ## How to start a new TRR
 
 1. Copy `templates/TRR-TEMPLATE.md` to `trrNNNN/<platform>/README.md`.
