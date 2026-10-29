@@ -89,7 +89,7 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [K43](#k43-k8s_rbac_privileged_grant-the-aggregation-clause-needs-the-api-servers-key-order) | `T1098.006/k8s_rbac_privileged_grant` | on a store that does not keep the key order of an object (AKS `dynamic` columns, GKE's `Struct` body), the clusterrole-aggregation-controller's write of impersonate on users into admin or edit is filtered: `sel_agg_beyond_builtin` needs the keys of each RBAC rule in Go field order | false negative | low |
 | [K45](#k45-k8s_coredns_configmap_modified-the-dns-operator-filter-trusts-the-operators-name) | `T1565.001/k8s_coredns_configmap_modified` | `filter_openshift_dns_operator` reads only the identity and the verb, so a create or a PUT of `openshift-dns/dns-default` or of the DNS Operator object sent with a stolen token of the DNS Operator's service account is filtered (TRR9027 E and F) | evasion | low |
 | [K46](#k46-k8s_impersonation-an-impersonated-read-that-the-policy-logs-at-none-leaves-no-record) | `T1134/k8s_impersonation`, `k8s_impersonation_privileged`, under the three lab policies and the recommended production policy (`k8s/audit-policy-recommended.yaml`), and the Event reads of EKS, GCE kube-up, AKS and OpenShift 4.17 | the API server evaluates the audit policy on the authenticated caller, before impersonation, so an impersonated get, list or watch of a resource that the policy's noise rule drops for every caller (ConfigMaps, Events, Endpoints, Leases, EndpointSlices, nodes/status, pods/status) leaves no record | policy gap, evasion | medium |
-| [K47](#k47-trr9027-coredns-rules-rke2-names-its-corefile-configmap-rke2-coredns-rke2-coredns) | `T1565.001/k8s_coredns_configmap_modified`, `k8s_coredns_corefile_poisoned`, on RKE2 | RKE2's CoreDNS chart names the Corefile ConfigMap `kube-system/rke2-coredns-rke2-coredns`, which neither rule (nor the DNS row of the recommended policy) selects, so no TRR9027 rule sees a Corefile edit on RKE2 | portability, description | medium |
+| [K47](#k47-trr9027-coredns-rules-rke2-names-its-corefile-configmap-rke2-coredns-rke2-coredns) | the TRR9027 kube-system branch of both CoreDNS rules, on RKE2 | RKE2's CoreDNS chart names the Corefile ConfigMap `kube-system/rke2-coredns-rke2-coredns`, which neither rule (nor the DNS row of the recommended policy) selects, so no TRR9027 rule sees a Corefile edit on RKE2 | portability, description | medium |
 | [K48](#k48-k8s_admission_webhook_disabled-the-validatingadmissionpolicy-status-controllers-status-patch-fires) | `T1685/k8s_admission_webhook_disabled` | kube-controller-manager's validatingadmissionpolicy-status controller writes each ValidatingAdmissionPolicy's type-check with an apply patch of `validatingadmissionpolicies/status`, and the rule (no subresource or identity filter) fires on it | false positive | medium |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
@@ -1721,12 +1721,15 @@ the current ones.
 
 ### K47. TRR9027 CoreDNS rules: RKE2 names its Corefile ConfigMap rke2-coredns-rke2-coredns
 
-- **Rules**: [`sigma/T1565.001/k8s_coredns_configmap_modified.yml`](sigma/T1565.001/k8s_coredns_configmap_modified.yml)
+- **Scope**: [`sigma/T1565.001/k8s_coredns_configmap_modified.yml`](sigma/T1565.001/k8s_coredns_configmap_modified.yml)
   (level medium) and [`sigma/T1565.001/k8s_coredns_corefile_poisoned.yml`](sigma/T1565.001/k8s_coredns_corefile_poisoned.yml)
-  (level high), on RKE2; and the kube-system DNS row of the recommended production
-  policy ([`k8s/audit-policy-recommended.yaml`](k8s/audit-policy-recommended.yaml)).
-- **Procedures**: `TRR9027.K8S.A`, `TRR9027.K8S.B`, `TRR9027.K8S.C`, `TRR9027.K8S.D`
-  (the kube-system branch; E and F are the OpenShift objects).
+  (level high), the kube-system branch (TRR9027 Procedures A to D), on RKE2; and the
+  kube-system DNS row of the recommended production policy
+  ([`k8s/audit-policy-recommended.yaml`](k8s/audit-policy-recommended.yaml)). As the
+  platform entries K38 to K42 do, this entry names its rules in a **Scope** bullet: on
+  the kind lab the procedures write `coredns`, and the rules prove them there, so
+  `research/tools/coverage_report.py` does not mark them as open defects. Whether a
+  platform gap must mark lab-proven procedures is a human decision.
 - **Kind**: portability, description. **Severity**: medium (RKE2 is a common
   self-managed distribution, and on it neither TRR9027 rule sees a Corefile edit).
 - **Problem**: the kube-system branch of both rules keys on the upstream names
