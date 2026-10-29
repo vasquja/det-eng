@@ -95,7 +95,7 @@
 # SYS_PTRACE to its debug container. The pods rule below logs that write at Request, so
 # k8s_podspec_host_access (level high) fires on it.
 #
-# KNOWN GAP, RULE_DEFECTS.md KTBD-G1: the API server evaluates this policy on the
+# KNOWN GAP, RULE_DEFECTS.md K46: the API server evaluates this policy on the
 # authenticated caller, before it applies impersonation, so no rule can select an
 # impersonated request. An impersonated get, list or watch of the resources that the
 # first noise rule below drops (ConfigMaps, Events, Endpoints, Leases, EndpointSlices,
@@ -381,7 +381,7 @@ rules:
   # --- Noise reduction: drop high-volume reads (as the lab policies do) ---
   # No rule reads these. Secrets are logged by the first rule, so this does not touch
   # them. ConfigMap reads are here on purpose (header: CONFIGMAP READS). It drops an
-  # impersonated read of these resources too (header: KNOWN GAP, KTBD-G1).
+  # impersonated read of these resources too (header: KNOWN GAP, K46).
   - level: None
     verbs: ["get", "list", "watch"]
     resources:
@@ -408,5 +408,5 @@ rules:
   # T1098.006/k8s_eks_aws_auth_configmap_modified (creates and deletes), and the
   # impersonated requests of T1134/k8s_impersonation (any request can be impersonated)
   # that no rule above logs. An impersonated read that the first None rule drops never
-  # reaches this rule (header: KNOWN GAP, KTBD-G1).
+  # reaches this rule (header: KNOWN GAP, K46).
   - level: Metadata

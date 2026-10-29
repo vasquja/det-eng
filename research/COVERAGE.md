@@ -105,10 +105,10 @@ Each procedure letter is followed by its status: **P** proven, **D** proven with
 | `TRR9008.K8S.B` | Delete a MutatingWebhookConfiguration | Proven, open defect | built | `k8s_admission_webhook_disabled` (K36) |
 | `TRR9008.K8S.C` | Neuter a webhook configuration in place | Proven, open defect | built | `k8s_admission_webhook_disabled` (K36) |
 | `TRR9008.K8S.D` | Remove the enforcer's workload | Proven, open defect | built | `k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed` (K29, K32, K33, K36, K37) |
-| `TRR9009.K8S.A` | Impersonate a user | Proven, open defect | built | `k8s_impersonation` (K16) |
-| `TRR9009.K8S.B` | Impersonate a group | Proven, open defect | built | `k8s_impersonation` (K16) |
-| `TRR9009.K8S.C` | Impersonate a service account | Proven, open defect | built | `k8s_impersonation` (K16) |
-| `TRR9009.K8S.D` | Impersonate a uid or extras | Proven, open defect | built | `k8s_impersonation` (K16) |
+| `TRR9009.K8S.A` | Impersonate a user | Proven, open defect | built | `k8s_impersonation` (K16, K46) |
+| `TRR9009.K8S.B` | Impersonate a group | Proven, open defect | built | `k8s_impersonation` (K16, K46) |
+| `TRR9009.K8S.C` | Impersonate a service account | Proven, open defect | built | `k8s_impersonation` (K16, K46) |
+| `TRR9009.K8S.D` | Impersonate a uid or extras | Proven, open defect | built | `k8s_impersonation` (K16, K46) |
 | `TRR9010.K8S.A` | Delete a single Event (core group) | Proven, open defect | built | `k8s_events_deleted` (K36, K37) |
 | `TRR9010.K8S.B` | Bulk-wipe Events (deletecollection, core group) | Proven, open defect | built | `k8s_events_deleted` (K36, K37) |
 | `TRR9010.K8S.C` | Delete an Event (events.k8s.io group) | Proven, open defect | built | `k8s_events_deleted` (K36, K37) |

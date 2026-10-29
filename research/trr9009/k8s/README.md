@@ -215,7 +215,7 @@ authenticated caller, before impersonation, so a None rule that has no user scop
 drops an impersonated request: under the lab policies and the recommended production
 policy, an impersonated get, list or watch of ConfigMaps, Events, Endpoints, Leases,
 EndpointSlices, nodes/status or pods/status leaves no record, and neither rule fires
-([RULE_DEFECTS.md KTBD-G1](../../../detections/RULE_DEFECTS.md#ktbd-g1-k8s_impersonation-an-impersonated-read-that-the-policy-logs-at-none-leaves-no-record)).
+([RULE_DEFECTS.md K46](../../../detections/RULE_DEFECTS.md#k46-k8s_impersonation-an-impersonated-read-that-the-policy-logs-at-none-leaves-no-record)).
 
 **Strategy 1 — chokepoint (covers A–D).**
 Match any audit event that carries `impersonatedUser.username`. This is stronger

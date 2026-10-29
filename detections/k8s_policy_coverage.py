@@ -2468,7 +2468,7 @@ def self_test():
                 shadowed.append(f"{verb} {group}/{res} {ns}/{name}: {got}, pinned {level}")
         check(f"{RECOMMENDED}: each pinned body cell is logged at its level", shadowed, [])
         n += 3
-        # The documented impersonation gap (RULE_DEFECTS.md KTBD-G1): the policy is
+        # The documented impersonation gap (RULE_DEFECTS.md K46): the policy is
         # evaluated on the authenticated caller, so an impersonated read of a resource
         # that the noise rule drops leaves no record; an impersonated read of pods or
         # Secrets is logged. Change these facts only with that entry.
@@ -2479,7 +2479,7 @@ def self_test():
             r = _rec(verb, res, name=None if verb == "list" else "x", ns=ns,
                      user="kubernetes-admin", groups=("kubeadm:cluster-admins",))
             r["impersonatedUser"] = {"username": "system:admin", "groups": ["system:masters"]}
-            check(f"fact {RECOMMENDED}: impersonated {verb} {res} (KTBD-G1)",
+            check(f"fact {RECOMMENDED}: impersonated {verb} {res} (K46)",
                   evaluate(rec, attributes_from_record(r))[0], want)
             n += 1
         # Secrets (every verb) and TokenRequest stay at exactly Metadata, for every

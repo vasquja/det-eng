@@ -1266,7 +1266,8 @@ body). A record never gains a body: where a policy logs more than a case record 
 the table marks the cell `~` when the rule reads that missing body, so that case is
 not proven on that platform. Where a policy keeps the RequestReceived stage (the k3s
 starter policy; some AKS and EKS rules), one request writes two records, and a rule
-alerts twice for it. The policies are the three lab policies, the recommended
+that tests no `responseStatus`, `impersonatedUser` or body field can alert twice for it
+(see [k8s/PLATFORMS.md](k8s/PLATFORMS.md#audit-levels)). The policies are the three lab policies, the recommended
 production policy ([below](#recommended-production-audit-policy)), and the published EKS,
 GCE kube-up, AKS (kube-audit and kube-audit-admin), OpenShift (Default and
 WriteRequestBodies, 4.17 and 4.18 and later) and k3s starter policies, vendored with
@@ -1352,7 +1353,7 @@ ConfigMaps) before you set it.
   impersonation, so an impersonated get, list or watch of the resources that the noise
   rule drops (ConfigMaps, Events, Endpoints, Leases, EndpointSlices, nodes/status,
   pods/status) leaves no record, and the TRR9009 rules cannot fire on it
-  ([KTBD-G1](RULE_DEFECTS.md#ktbd-g1-k8s_impersonation-an-impersonated-read-that-the-policy-logs-at-none-leaves-no-record)).
+  ([K46](RULE_DEFECTS.md#k46-k8s_impersonation-an-impersonated-read-that-the-policy-logs-at-none-leaves-no-record)).
   Scoping that rule to system callers closes it, at a volume cost: a decision for the
   maintainer.
 - **Simulator proof.** The `recommended` column of

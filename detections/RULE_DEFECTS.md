@@ -88,7 +88,7 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [K42](#k42-aks-kube-audit-admin-the-category-drops-get-and-list-so-read-shaped-procedures-leave-no-record) | the read-shaped Kubernetes rules (TRR9002, TRR9006, TRR9009, TRR9026), on AKS with the kube-audit-admin category | the category drops every get and list record | portability | medium |
 | [K43](#k43-k8s_rbac_privileged_grant-the-aggregation-clause-needs-the-api-servers-key-order) | `T1098.006/k8s_rbac_privileged_grant` | on a store that does not keep the key order of an object (AKS `dynamic` columns, GKE's `Struct` body), the clusterrole-aggregation-controller's write of impersonate on users into admin or edit is filtered: `sel_agg_beyond_builtin` needs the keys of each RBAC rule in Go field order | false negative | low |
 | [K45](#k45-k8s_coredns_configmap_modified-the-dns-operator-filter-trusts-the-operators-name) | `T1565.001/k8s_coredns_configmap_modified` | `filter_openshift_dns_operator` reads only the identity and the verb, so a create or a PUT of `openshift-dns/dns-default` or of the DNS Operator object sent with a stolen token of the DNS Operator's service account is filtered (TRR9027 E and F) | evasion | low |
-| [KTBD-G1](#ktbd-g1-k8s_impersonation-an-impersonated-read-that-the-policy-logs-at-none-leaves-no-record) | `T1134/k8s_impersonation`, `k8s_impersonation_privileged`, under the three lab policies and the recommended production policy (`k8s/audit-policy-recommended.yaml`) | the API server evaluates the audit policy on the authenticated caller, before impersonation, so an impersonated get, list or watch of a resource that the policy's noise rule drops for every caller (ConfigMaps, Events, Endpoints, Leases, EndpointSlices, nodes/status, pods/status) leaves no record | policy gap, evasion | medium |
+| [K46](#k46-k8s_impersonation-an-impersonated-read-that-the-policy-logs-at-none-leaves-no-record) | `T1134/k8s_impersonation`, `k8s_impersonation_privileged`, under the three lab policies and the recommended production policy (`k8s/audit-policy-recommended.yaml`) | the API server evaluates the audit policy on the authenticated caller, before impersonation, so an impersonated get, list or watch of a resource that the policy's noise rule drops for every caller (ConfigMaps, Events, Endpoints, Leases, EndpointSlices, nodes/status, pods/status) leaves no record | policy gap, evasion | medium |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
@@ -1634,7 +1634,7 @@ the current ones.
   sufficiency ratchet), and a new filtered case with the operator's user agent keeps its
   own writes quiet.
 
-### KTBD-G1. k8s_impersonation: an impersonated read that the policy logs at None leaves no record
+### K46. k8s_impersonation: an impersonated read that the policy logs at None leaves no record
 
 - **Rules**: [`sigma/T1134/k8s_impersonation.yml`](sigma/T1134/k8s_impersonation.yml) (level medium)
   and [`sigma/T1134/k8s_impersonation_privileged.yml`](sigma/T1134/k8s_impersonation_privileged.yml)
@@ -1680,7 +1680,7 @@ the current ones.
   ConfigMap is None too (Metadata under the other three); under `eks` and `gce-kube-up`
   only list events is None; under
   `aks-kube-audit`, `openshift-default`, `openshift-wrb` and `k3s-starter` none is None. The
-  self-test pins the recommended policy's levels (facts `impersonated ... (KTBD-G1)`). A
+  self-test pins the recommended policy's levels (facts `impersonated ... (K46)`). A
   local kube-apiserver v1.36.4 (etcd, no kubelet) with the recommended policy and a warm
   kubectl discovery cache: `kubectl --as=system:admin --as-group=system:masters -n
   kube-system get configmaps` and `-n default get events` wrote no record, and `-n
