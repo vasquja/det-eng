@@ -68,6 +68,8 @@ fails when the committed copy is stale, so the chart always matches the rules.
 | [`atomics/`](atomics/) | Safe emulations of each technique, by ATT&CK ID. |
 | [`detections/`](detections/README.md) | Sigma rules and the validators that prove them. |
 
+Which Kubernetes rule works on EKS, AKS, GKE, OpenShift or k3s: [`detections/k8s/PLATFORMS.md`](detections/k8s/PLATFORMS.md).
+
 Try the cloud loop locally (pure Python, no cloud account needed):
 
 ```bash

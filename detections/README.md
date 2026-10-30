@@ -663,7 +663,8 @@ when a rule, a sidecar, the pipelines or the harness change), which proves the
 managed-cluster field mappings ([Provider field mappings](#provider-field-mappings-aks-gke-eks)).
 
 The `platform-coverage` job of the same workflow runs
-`python3 detections/k8s_policy_coverage.py --self-test --check` (see
+`python3 detections/k8s_policy_coverage.py --self-test --check`, then
+`python3 detections/k8s_platforms_md.py --self-test` and `--check` (see
 [Managed platforms: the audit-policy simulator](#managed-platforms-the-audit-policy-simulator)).
 On a pull request it runs only when the pull request changes one of its inputs; it is
 not a required check.
@@ -752,7 +753,10 @@ the head commit of its ref. Empty inputs, and every push, pull request and sched
 use the pins. On `main`, a red leg shows a red `validate-*` check on main's head commit,
 which gates no pull request. The `validate-apiserver-detections` badge in the top-level
 README shows only the schedule runs (`?event=schedule`: the weekly run on the pin), so
-a leg does not change it. A cancelled leg also cancels its run, when it has found that run.
+a leg does not change it. That weekly run also runs the non-required
+`validate-apiserver-recommended` job ([below](#recommended-production-audit-policy)), so
+a failure of that job alone turns the badge red, and `check_schedule_freshness.py` red
+after two such weeks. A cancelled leg also cancels its run, when it has found that run.
 
 ### Kubernetes version notes
 
@@ -1262,25 +1266,34 @@ body). A record never gains a body: where a policy logs more than a case record 
 the table marks the cell `~` when the rule reads that missing body, so that case is
 not proven on that platform. Where a policy keeps the RequestReceived stage (the k3s
 starter policy; some AKS and EKS rules), one request writes two records, and a rule
-alerts twice for it. The policies are the three lab policies and the published EKS,
+that can match a record without a `responseStatus`, `impersonatedUser` or body field can
+alert twice for it
+(see [k8s/PLATFORMS.md](k8s/PLATFORMS.md#audit-levels)). The policies are the three lab policies, the recommended
+production policy ([below](#recommended-production-audit-policy)), and the published EKS,
 GCE kube-up, AKS (kube-audit and kube-audit-admin), OpenShift (Default and
 WriteRequestBodies, 4.17 and 4.18 and later) and k3s starter policies, vendored with
 their sources, licenses and digests in
 [`k8s/provider-policies/SOURCES.md`](k8s/provider-policies/SOURCES.md). It models the
 policy only, not a provider's log pipeline, and a published policy is not a capture.
 
+[`k8s/PLATFORMS.md`](k8s/PLATFORMS.md) joins this result and the provider-mapping result
+into one table per rule and platform log shape (EKS, AKS, GKE, OpenShift, k3s), with a
+sourced summary of each platform; `k8s_platforms_md.py --write` regenerates its tables.
+
 ```bash
 python3 detections/k8s_policy_coverage.py            # the table
 python3 detections/k8s_policy_coverage.py --detail   # and every lost positive
 python3 detections/k8s_policy_coverage.py --update   # rewrite k8s/policy_coverage.json
 python3 detections/k8s_policy_coverage.py --self-test --check   # what CI runs
+python3 detections/k8s_platforms_md.py --write       # then rewrite k8s/PLATFORMS.md
 ```
 
 The committed result, [`k8s/policy_coverage.json`](k8s/policy_coverage.json), has a
 documented schema (the script's docstring). `--check` fails when a rule, a sidecar, a
 policy file, a validator MANIFEST or the evaluator's output changed and the file was
 not regenerated, so a pull request that changes a Kubernetes rule or its cases also
-runs `--update`. `--check`, `--update` and the table also run a home check: the home
+runs `--update` (and then `k8s_platforms_md.py --write`).
+`--check`, `--update` and the table also run a home check: the home
 of a rule is the lab policy of the validator whose MANIFEST registers it, and under
 that policy every positive must fire and no negative may fire, because CI proves that
 live. The platform gaps it found are in [`RULE_DEFECTS.md`](RULE_DEFECTS.md) (the
@@ -1292,6 +1305,110 @@ request that regenerates it needs a human merge, and one that changes the result
 without regenerating it fails `platform-coverage`. Whether to add the file to that
 allowlist (it is derived, and `--check` recomputes it, as `benign/scores.json` is) or
 to make `platform-coverage` a required check is a decision for the maintainer.
+
+## Recommended production audit policy
+
+[`k8s/audit-policy-recommended.yaml`](k8s/audit-policy-recommended.yaml) is the audit
+policy to deploy where you set the API server's `--audit-policy-file` (kubeadm, k3s,
+RKE2, kind and similar). It gives every Kubernetes audit rule what it needs: it is the
+union of the three lab policies for one API server, without the lab-only parts, with
+each body rule narrowed to the groups, resources and verbs that the rules read, and each
+rule line names the detection rules it serves. Secrets and TokenRequest stay at
+Metadata (its first two rules), ConfigMap reads stay at None (the ConfigMap read
+detection is NO-GO), and deletes are logged at Request, so the dry-run filters work
+([K39](RULE_DEFECTS.md#k39-delete-dry-run-body-filters-have-no-input-where-a-platform-logs-deletes-at-metadata)).
+EKS and AKS do not take a custom policy, GKE supplies its own policy file (whether a user
+can replace it is unverified: the GKE page was not reachable when this was written), and
+OpenShift takes an audit profile; the file's header says what to do on each. On
+OpenShift, the WriteRequestBodies profile logs the body of every ConfigMap write in every
+namespace: read the file's OPT-IN warning (Helm release payloads, credentials in
+ConfigMaps) before you set it.
+
+- **Deploy.** Set both flags: without `--audit-log-path` the API server writes no log
+  file. kubeadm: `apiServer.extraArgs` (`audit-policy-file`, `audit-log-path`; name/value
+  pairs in the v1beta4 config API) and two `extraVolumes` entries, one for the policy
+  file (read-only) and one for the directory of `audit-log-path` (read-write,
+  `DirectoryOrCreate`), as in
+  [`k8s/kind-apiserver-recommended-cluster.yaml`](k8s/kind-apiserver-recommended-cluster.yaml).
+  Without the second one the log stays inside the API server container and is lost when
+  it restarts. k3s: `--kube-apiserver-arg=audit-policy-file=<path>` and
+  `--kube-apiserver-arg=audit-log-path=<path>`. RKE2: the `audit-policy-file` option; RKE2
+  names its CoreDNS ConfigMap `kube-system/rke2-coredns-rke2-coredns`, which no TRR9027
+  rule selects, so the TRR9027 rules do not cover RKE2
+  ([K47](RULE_DEFECTS.md#k47-trr9027-coredns-rules-rke2-names-its-corefile-configmap-rke2-coredns-rke2-coredns)). kind:
+  [`k8s/kind-apiserver-recommended-cluster.yaml`](k8s/kind-apiserver-recommended-cluster.yaml).
+  The API server reads the file when it starts, and a file that does not parse stops it:
+  try it on kind first.
+- **The opt-in line.** The kube-system ConfigMap-create rule is commented out
+  (`# OPT-IN:`). It logs the body of every ConfigMap created in kube-system, which can
+  hold Helm 2 or `HELM_DRIVER=configmap` release payloads (Secret data and chart values).
+  Without it, a recreated kube-system/coredns (TRR9027 Procedure D) reaches the log at
+  Metadata: the chokepoint fires, and the Corefile grader cannot grade it.
+- **Cost.** On the lab's live benign capture (1449 records at commit `50e606f`) no request
+  moves between None and a logged level against the API server lab policy, so it writes
+  records for the same requests, with about 10 KB fewer request bodies (an estimate). The
+  one difference in what is logged at all: it logs `pods/exec` and `pods/attach` for every
+  caller, where the lab policy drops their reads by three control-plane users that do not
+  send them. A local run on a kube-apiserver v1.36.4
+  binary (etcd and kube-controller-manager, no kubelet or scheduler) of the TRR9004,
+  9006, 9008-9010, 9025 and 9027 atomics wrote 1108 records under each policy, and 2%
+  fewer bytes under the recommended one. At Request and higher, an apply patch with a
+  YAML body leaves no record at all
+  ([K23](RULE_DEFECTS.md#k23-apply-patches-with-a-yaml-body-no-audit-record-at-request-level-or-higher)),
+  and a default `kubectl debug` fires `k8s_podspec_host_access`
+  ([K34](RULE_DEFECTS.md#k34-k8s_podspec_host_access-a-default-kubectl-debug-from-kubectl-v136-adds-sys_ptrace)).
+- **Known gap.** The API server evaluates the policy on the authenticated caller, before
+  impersonation, so an impersonated get, list or watch of the resources that the noise
+  rule drops (ConfigMaps, Events, Endpoints, Leases, EndpointSlices, nodes/status,
+  pods/status) leaves no record, and the TRR9009 rules cannot fire on it
+  ([K46](RULE_DEFECTS.md#k46-k8s_impersonation-an-impersonated-read-that-the-policy-logs-at-none-leaves-no-record)).
+  Scoping that rule to system callers closes it for every caller outside that scope, at
+  a volume cost: a decision for the maintainer.
+- **Simulator proof.** The `recommended` column of
+  [`k8s_policy_coverage.py`](k8s_policy_coverage.py): every positive of every rule fires
+  (441 of 442), except `recreate-coredns-create-procD` of `k8s_coredns_corefile_poisoned`,
+  which needs the opt-in line, and no negative fires. `--check` fails when that changes
+  (the recommended check), and the self-test pins the key levels and every cell of the
+  body rules, and shows that with the opt-in line on, every positive fires. The self-test
+  also runs the selection check: each request that a rule's `select` items (and its
+  `sel` items that name a resource) name (every
+  resource of a group that an item selects whole, not only the sidecar's requests, for
+  example a ValidatingAdmissionPolicy dry-run delete) must be logged at the level that
+  the item's sidecar requests show it needs; only the opt-in line's requests may fail it.
+  `--needs` prints, for each rule, the lowest uniform level at which all its positives
+  fire, the requests of its positives, and the level its negatives need (the `needs` key
+  of [`k8s/policy_coverage.json`](k8s/policy_coverage.json)). The requests are those of the
+  sidecar positives: a sample of what the rule selects, not a complete list, so read the
+  rule's detection before you write a policy from them.
+- **Live proof.** The non-required `validate-apiserver-recommended` job in
+  `.github/workflows/validate-apiserver-detections.yml` mounts the file on the pinned kind
+  cluster and runs the same atomics, sensors, benign workload, ledger and negative
+  control as `validate-apiserver`, with `validate_apiserver_detections.py --policy
+  recommended` (which needs `--ledger`). Three rows run a policy gate in place of their
+  MANIFEST gate (`POLICY_GATES`): `9027 D` (the chokepoint) must pass on D's accepted
+  create of kube-system/coredns in D's ledger window, logged with no body, and `9027 B` and `9027 C` need a RequestResponse record
+  with the trr9027 sentinel in the request body, so the job proves the policy's
+  RequestResponse row for kube-dns and coredns-custom. One row is an expected miss
+  (`EXPECTED_MISS`): `9027 D create` (the Corefile grader) must miss, the ledger window
+  must hold D's create logged without a body, the grader must not match it, and a pass
+  fails the job. Every other MANIFEST and MISS_MANIFEST row must pass, as in
+  `validate-apiserver`.
+  It runs when its inputs change (the policy, its kind config, the validator, the rule
+  folders of the ten techniques, `sigma_eval.py`, `sigma_explain.py`, the requirements,
+  the sensors, the benign workload, the atomics or the workflow), weekly, and on a manual
+  dispatch with the pinned node image (the version matrix's dispatches pass `node_image`
+  and skip it). It is not a required check, but its failure turns the workflow's weekly
+  run red (the badge in the top-level README, and schedule freshness). The TRR9002 and
+  TRR9003 rules (exec, attach, ephemeral containers, node proxy, static pods) are proven
+  for this policy by the simulator only; CI proves them live under their own lab
+  policies.
+
+```bash
+python3 detections/k8s_policy_coverage.py --policy recommended   # the column
+python3 detections/k8s_policy_coverage.py --needs                # what each rule needs
+python3 detections/validate_apiserver_detections.py --policy recommended \
+  --audit-log /tmp/kube-apiserver-audit.log --ledger /tmp/emulation-ledger.jsonl
+```
 
 ## External cloud detections (AWS, Azure, GCP)
 

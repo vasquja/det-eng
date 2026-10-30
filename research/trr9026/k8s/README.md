@@ -300,6 +300,8 @@ the gap and makes no kubelet call.
 Two verb-agnostic chokepoint rules cover the API-server transports and the node-proxy
 path. The direct-kubelet tunnel is a stated gap, shared with TRR9002.
 
+Platform coverage: [detections/k8s/PLATFORMS.md](../../../detections/k8s/PLATFORMS.md#rules-on-each-platform)
+
 ## Available Emulation Tests
 
 The tests run in a lab cluster with the shared audit policy. The lab is a `kind`

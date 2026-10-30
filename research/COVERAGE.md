@@ -101,14 +101,14 @@ Each procedure letter is followed by its status: **P** proven, **D** proven with
 | `TRR9007.K8S.C` | Host namespace (hostPID/hostNetwork/hostIPC) | Proven, open defect | built | `k8s_podspec_host_access` (K33, K34) |
 | `TRR9007.K8S.D` | Added dangerous capabilities | Proven, open defect | built | `k8s_podspec_host_access` (K33, K34) |
 | `TRR9007.K8S.E` | Seccomp or AppArmor confinement removed | Proven, open defect | built | `k8s_podspec_confinement_disabled` (K24, K25, K33) |
-| `TRR9008.K8S.A` | Delete a ValidatingWebhookConfiguration | Proven, open defect | built | `k8s_admission_webhook_disabled` (K36) |
-| `TRR9008.K8S.B` | Delete a MutatingWebhookConfiguration | Proven, open defect | built | `k8s_admission_webhook_disabled` (K36) |
-| `TRR9008.K8S.C` | Neuter a webhook configuration in place | Proven, open defect | built | `k8s_admission_webhook_disabled` (K36) |
+| `TRR9008.K8S.A` | Delete a ValidatingWebhookConfiguration | Proven, open defect | built | `k8s_admission_webhook_disabled` (K36, K48) |
+| `TRR9008.K8S.B` | Delete a MutatingWebhookConfiguration | Proven, open defect | built | `k8s_admission_webhook_disabled` (K36, K48) |
+| `TRR9008.K8S.C` | Neuter a webhook configuration in place | Proven, open defect | built | `k8s_admission_webhook_disabled` (K36, K48) |
 | `TRR9008.K8S.D` | Remove the enforcer's workload | Proven, open defect | built | `k8s_enforcer_workload_removed`, `k8s_security_tool_workload_removed` (K29, K32, K33, K36, K37) |
-| `TRR9009.K8S.A` | Impersonate a user | Proven, open defect | built | `k8s_impersonation` (K16) |
-| `TRR9009.K8S.B` | Impersonate a group | Proven, open defect | built | `k8s_impersonation` (K16) |
-| `TRR9009.K8S.C` | Impersonate a service account | Proven, open defect | built | `k8s_impersonation` (K16) |
-| `TRR9009.K8S.D` | Impersonate a uid or extras | Proven, open defect | built | `k8s_impersonation` (K16) |
+| `TRR9009.K8S.A` | Impersonate a user | Proven, open defect | built | `k8s_impersonation` (K16, K46) |
+| `TRR9009.K8S.B` | Impersonate a group | Proven, open defect | built | `k8s_impersonation` (K16, K46) |
+| `TRR9009.K8S.C` | Impersonate a service account | Proven, open defect | built | `k8s_impersonation` (K16, K46) |
+| `TRR9009.K8S.D` | Impersonate a uid or extras | Proven, open defect | built | `k8s_impersonation` (K16, K46) |
 | `TRR9010.K8S.A` | Delete a single Event (core group) | Proven, open defect | built | `k8s_events_deleted` (K36, K37) |
 | `TRR9010.K8S.B` | Bulk-wipe Events (deletecollection, core group) | Proven, open defect | built | `k8s_events_deleted` (K36, K37) |
 | `TRR9010.K8S.C` | Delete an Event (events.k8s.io group) | Proven, open defect | built | `k8s_events_deleted` (K36, K37) |
@@ -120,7 +120,7 @@ Each procedure letter is followed by its status: **P** proven, **D** proven with
 | `TRR9019.AWS.A` | Public / foreign resource-based policy | Proven, open defect | built | `aws_resource_policy_made_public` (C15) |
 | `TRR9020.GCP.C` | Bind a workforce principalSet to a privileged role | Proven, open defect | built | `gcp_workforce_principalset_privileged_binding` (C6) |
 | `TRR9021.AWS.C` | EFS file system policy made public | Proven, open defect | built | `aws_efs_file_system_policy_made_public` (C15) |
-| `TRR9025.K8S.D` | Repoint an installed webhook to a URL | Proven, open defect | built | `k8s_admission_webhook_disabled` (K36) |
+| `TRR9025.K8S.D` | Repoint an installed webhook to a URL | Proven, open defect | built | `k8s_admission_webhook_disabled` (K36, K48) |
 | `TRR9027.K8S.E` | Edit the OpenShift DNS ConfigMap dns-default | Proven, open defect | built | `k8s_coredns_configmap_modified` (K45) |
 | `TRR9027.K8S.F` | Edit the OpenShift DNS Operator object | Proven, open defect | built | `k8s_coredns_configmap_modified` (K45) |
 

@@ -290,6 +290,8 @@ policy.
 One chokepoint rule covers every procedure's setup write. One node rule catches
 the executions the chokepoint cannot keep.
 
+Platform coverage: [detections/k8s/PLATFORMS.md](../../../detections/k8s/PLATFORMS.md#rules-on-each-platform)
+
 ## Available Emulation Tests
 
 The tests run in a lab cluster with an audit policy that records the `batch` group

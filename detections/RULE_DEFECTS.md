@@ -88,6 +88,9 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [K42](#k42-aks-kube-audit-admin-the-category-drops-get-and-list-so-read-shaped-procedures-leave-no-record) | the read-shaped Kubernetes rules (TRR9002, TRR9006, TRR9009, TRR9026), on AKS with the kube-audit-admin category | the category drops every get and list record | portability | medium |
 | [K43](#k43-k8s_rbac_privileged_grant-the-aggregation-clause-needs-the-api-servers-key-order) | `T1098.006/k8s_rbac_privileged_grant` | on a store that does not keep the key order of an object (AKS `dynamic` columns, GKE's `Struct` body), the clusterrole-aggregation-controller's write of impersonate on users into admin or edit is filtered: `sel_agg_beyond_builtin` needs the keys of each RBAC rule in Go field order | false negative | low |
 | [K45](#k45-k8s_coredns_configmap_modified-the-dns-operator-filter-trusts-the-operators-name) | `T1565.001/k8s_coredns_configmap_modified` | `filter_openshift_dns_operator` reads only the identity and the verb, so a create or a PUT of `openshift-dns/dns-default` or of the DNS Operator object sent with a stolen token of the DNS Operator's service account is filtered (TRR9027 E and F) | evasion | low |
+| [K46](#k46-k8s_impersonation-an-impersonated-read-that-the-policy-logs-at-none-leaves-no-record) | `T1134/k8s_impersonation`, `k8s_impersonation_privileged`, under the three lab policies and the recommended production policy (`k8s/audit-policy-recommended.yaml`), and the Event reads of EKS, GCE kube-up, AKS and OpenShift 4.17 | the API server evaluates the audit policy on the authenticated caller, before impersonation, so an impersonated get, list or watch of a resource that the policy's noise rule drops for every caller (ConfigMaps, Events, Endpoints, Leases, EndpointSlices, nodes/status, pods/status) leaves no record | policy gap, evasion | medium |
+| [K47](#k47-trr9027-coredns-rules-rke2-names-its-corefile-configmap-rke2-coredns-rke2-coredns) | the TRR9027 kube-system branch of both CoreDNS rules, on RKE2 | RKE2's CoreDNS chart names the Corefile ConfigMap `kube-system/rke2-coredns-rke2-coredns`, which neither rule (nor the DNS row of the recommended policy) selects, so no TRR9027 rule sees a Corefile edit on RKE2 | portability, description | medium |
+| [K48](#k48-k8s_admission_webhook_disabled-the-validatingadmissionpolicy-status-controllers-status-patch-fires) | `T1685/k8s_admission_webhook_disabled` | kube-controller-manager's validatingadmissionpolicy-status controller writes each ValidatingAdmissionPolicy's type-check with an apply patch of `validatingadmissionpolicies/status`, and the rule (no subresource or identity filter) fires on it | false positive | medium |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
@@ -1041,7 +1044,10 @@ whether `arping` belongs in the allowlist.
   `detections/k8s/audit-policy-apiserver.yaml` (RequestResponse for update and patch,
   Request for create, delete and deletecollection), so the lab logs the DeleteOptions
   body and the rule's dry-run filter can read it. Name both resources in the rule's
-  description.
+  description. The recommended production policy
+  ([`k8s/audit-policy-recommended.yaml`](k8s/audit-policy-recommended.yaml)) already lists
+  both in its delete rule (Request) and its admission-control update and patch rule
+  (RequestResponse); the lab policy does not change.
 - **Then**: no case changes (the delete dry-run filter already reads the body of any
   `admissionregistration.k8s.io` delete). The entry closes when the policy rows list both
   resources.
@@ -1337,11 +1343,15 @@ the current ones.
   cluster.
 - **Fix**: where the user writes the policy, log delete and deletecollection of these
   resources at Request: on OpenShift, the WriteRequestBodies profile (no negative fires
-  under `openshift-wrb`); on k3s and other self-written policies, the delete rows of
-  the lab policy (phase-2 item G's recommended production policy,
-  `detections/k8s/audit-policy-recommended.yaml`, is the place to name them). Where the
-  policy is fixed (AKS, EKS), none: baseline the dry runs by `userAgent` and actor, or
-  accept the noise. A higher level has a cost (K23): at Request or higher, a
+  under `openshift-wrb`); on k3s, kubeadm and other clusters where the user sets
+  `--audit-policy-file`, the recommended production policy
+  [`k8s/audit-policy-recommended.yaml`](k8s/audit-policy-recommended.yaml): its delete
+  rule logs delete and deletecollection of these six rules' resources at Request (the
+  simulator's `recommended` column: no filtered case fires). It cannot fix a platform
+  whose provider manages the policy: the user cannot install it on EKS or AKS, and GKE
+  supplies its own policy file (whether a user can replace it is **unverified**).
+  Where the policy is fixed (AKS, EKS), none: baseline the dry runs by `userAgent` and
+  actor, or accept the noise. A higher level has a cost (K23): at Request or higher, a
   server-side apply patch with a YAML body leaves no record at all, so a profile or
   policy change that moves patches to Request trades this gap for K23's on those
   patches (deletes are not affected).
@@ -1409,9 +1419,13 @@ the current ones.
   (an admin decision; it logs write bodies, so Secrets stay at Metadata and ConfigMap
   bodies are logged). k3s and other self-written policies: log these writes at Request
   (RequestResponse for webhook-configuration updates and patches), as the lab policy
-  does, and add `omitStages: [RequestReceived]`; phase-2 item G's recommended
-  production policy (`detections/k8s/audit-policy-recommended.yaml`) is the place to
-  state those lines. TRR9007 on a Metadata-only cluster: the node sensor. Either change
+  does, and add `omitStages: [RequestReceived]`: the recommended production policy
+  [`k8s/audit-policy-recommended.yaml`](k8s/audit-policy-recommended.yaml) states those
+  rules, each narrowed to the resources and verbs these graders read, and every
+  positive of these graders fires under it (the simulator's `recommended` column). It
+  fixes the k3s starter policy's gap where the user replaces that policy; it cannot fix
+  the OpenShift Default profile (OpenShift takes a profile, not a policy file). TRR9007
+  on a Metadata-only cluster: the node sensor. Either change
   has a cost (K23): at Request or higher, a server-side apply patch with a YAML body
   leaves no record at all, so the body graders and the chokepoints both miss it. Under
   WriteRequestBodies that is every patch except the resources the profile keeps at
@@ -1430,7 +1444,7 @@ the current ones.
   categories), OpenShift with the Default profile, the k3s starter policy.
 - **Kind**: portability, policy gap. **Severity**: low (the chokepoint
   [`k8s_coredns_configmap_modified`](sigma/T1565.001/k8s_coredns_configmap_modified.yml)
-  needs only Metadata and fires under every published policy: 16 of 16; the grader only
+  needs only Metadata and fires under every published policy: 18 of 18; the grader only
   ranks).
 - **Problem**: the grader reads the Corefile in the request or stored ConfigMap, which
   only a Request or RequestResponse record of the kube-system/coredns write holds. The
@@ -1455,10 +1469,16 @@ the current ones.
   ConfigMaps and service accounts at Metadata). **unverified** on a live cluster.
 - **Fix**: none where the policy is fixed (EKS, AKS): rely on the chokepoint and
   triage the write by actor and time; read the stored Corefile out of band. Where the
-  user writes the policy: the lab policy's two TRR9027 rows (read their Helm warning
-  first), which phase-2 item G's recommended policy
-  (`detections/k8s/audit-policy-recommended.yaml`) is to state. OpenShift: the
-  WriteRequestBodies profile. At that level a server-side apply of the ConfigMap with a
+  user writes the policy: the recommended production policy
+  [`k8s/audit-policy-recommended.yaml`](k8s/audit-policy-recommended.yaml) logs writes
+  to the three kube-system DNS ConfigMaps (and to `openshift-dns/dns-default`) at
+  RequestResponse, so 46 of the 47 positives fire under it. Its kube-system
+  ConfigMap-create rule is an opt-in line, off by default because of the Helm warning in
+  the file; without it a recreated coredns (a POST create, TRR9027 D:
+  `recreate-coredns-create-procD`) has no Corefile in its record, and only the
+  chokepoint fires. It cannot fix EKS or AKS, whose provider manages the policy; GKE
+  supplies its own policy file (whether a user can replace it is **unverified**).
+  OpenShift: the WriteRequestBodies profile. At that level a server-side apply of the ConfigMap with a
   YAML body leaves no record (K23; TRR9027 B and C are server-side applies), so the
   chokepoint misses it too.
 - **Then**: no case changes.
@@ -1615,6 +1635,170 @@ the current ones.
   records prove the fix (relabelling a confounder is a human decision under the
   sufficiency ratchet), and a new filtered case with the operator's user agent keeps its
   own writes quiet.
+
+### K46. k8s_impersonation: an impersonated read that the policy logs at None leaves no record
+
+- **Rules**: [`sigma/T1134/k8s_impersonation.yml`](sigma/T1134/k8s_impersonation.yml) (level medium)
+  and [`sigma/T1134/k8s_impersonation_privileged.yml`](sigma/T1134/k8s_impersonation_privileged.yml)
+  (level high), under the API server lab policy
+  ([`k8s/audit-policy-apiserver.yaml`](k8s/audit-policy-apiserver.yaml)), the other two lab
+  policies, and the recommended production policy
+  ([`k8s/audit-policy-recommended.yaml`](k8s/audit-policy-recommended.yaml)).
+- **Kind**: policy gap, evasion. **Severity**: medium (an adversary who may impersonate
+  chooses what to read, and a ConfigMap can hold a credential; kubectl with a warm
+  discovery cache, or any client that sends no discovery request, leaves no impersonated
+  record of such a read).
+- **Problem**: the API server evaluates the audit policy in its audit filter, which runs
+  before the impersonation filter, on the authenticated caller (`user`). So no policy rule
+  can select an impersonated request, and a rule that drops a request for every caller also
+  drops it when the caller impersonates another identity. The first noise rule of these
+  policies drops get, list and watch of `endpoints`, `events`, `nodes/status`,
+  `pods/status`, `configmaps` and `leases` (core and `coordination.k8s.io`) and of
+  `endpointslices` for every caller. An impersonated read of one of these resources
+  therefore leaves no record, and neither impersonation rule can fire on it. Under the API
+  server lab policy, the kind lab policy ([`k8s/audit-policy.yaml`](k8s/audit-policy.yaml))
+  and the recommended policy, an impersonated read of pods, Secrets or any other
+  resource, and every impersonated write, is logged at Metadata or higher (except a read
+  by `system:apiserver`, `system:kube-scheduler` or `system:kube-controller-manager`,
+  which their second None rule drops unless an earlier rule logs it, as the Secrets rule
+  does). The static-pod
+  lab policy ([`k8s/audit-policy-staticpod.yaml`](k8s/audit-policy-staticpod.yaml)) drops
+  more: every get, list and watch of every resource, and every request (writes too) of
+  the resources above, for every caller, impersonated or not; no TRR9009 rule is homed
+  there (both are homed under the API server lab policy). The TRR9009 procedures read
+  namespaces and Secrets (the sidecar positives also nodes and clusterroles), none of
+  which the noise rule drops, so CI does not show the gap. The published provider
+  policies scope most of their None rules to named system users and groups, so there an
+  impersonated read of ConfigMaps, Endpoints or Leases is logged; EKS, the GCE kube-up
+  policy and OpenShift 4.17 and earlier drop core Events for every caller (K38), so the
+  gap holds there for Events only; the AKS policy logs Events (both groups) only for
+  delete and list (and for create, update and patch in default and kube-system) and
+  drops every other Events request for every caller, so on AKS the gap holds for an
+  impersonated get or watch of an Event.
+- **Evidence**: *source* — kubernetes v1.36.4
+  `staging/src/k8s.io/apiserver/pkg/server/config.go` L1055-1064 (`DefaultBuildHandlerChain`:
+  `WithAudit` wraps `WithImpersonation` and `WithConstrainedImpersonation`, so a request
+  passes the audit filter first) and `pkg/endpoints/filters/audit.go` L117-136
+  (`evaluatePolicyAndCreateAuditEvent`: the policy is evaluated on the request's authorizer
+  attributes, and level None writes no event). *simulator* (`k8s_policy_coverage.py`
+  `evaluate`, on constructed records of the user `alice` with an `impersonatedUser`) — list
+  configmaps, get configmaps, list events, get events, watch events, get endpoints, list
+  leases and list endpointslices are None under `lab-apiserver`, `lab-k8s`,
+  `lab-staticpod` and `recommended`; list pods and get secrets are Metadata under
+  `lab-apiserver`, `lab-k8s` and `recommended`, and None under `lab-staticpod`, where an
+  impersonated create of a ConfigMap is None too (Metadata under the other three); under
+  `eks` and `gce-kube-up` only list, get and watch of core events are None; under
+  `aks-kube-audit`, get and watch of events (core and events.k8s.io) are None (policy
+  rule #10) and the other probes are logged; under `openshift-default`, `openshift-wrb`
+  and `k3s-starter` none is None. The
+  self-test pins the recommended policy's levels (facts `impersonated ... (K46)`). A
+  local kube-apiserver v1.36.4 (etcd, no kubelet) with the recommended policy and a warm
+  kubectl discovery cache: `kubectl --as=system:admin --as-group=system:masters -n
+  kube-system get configmaps` and `-n default get events` wrote no record, and `-n
+  kube-system get pods` wrote one `list pods` record at Metadata with `impersonatedUser`
+  `system:admin`. **unverified** on kind in CI.
+- **Fix**: a human decision. Scope the first noise rule of the recommended policy (and of
+  the lab policy, if CI is to prove it) to the system callers, for example `userGroups:
+  ["system:nodes", "system:serviceaccounts:kube-system"]` (the control-plane users
+  `system:apiserver`, `system:kube-scheduler` and `system:kube-controller-manager` are
+  already dropped by the second None rule; a rule that sets both `users` and `userGroups`
+  matches only a caller in both, kubernetes v1.36.4 `pkg/audit/policy/checker.go`
+  `ruleMatches`, so put named users in a separate rule). The provider policies scope
+  theirs to named users and to `system:nodes`, not to a service-account group. Reads by
+  people and their tools then reach the Metadata catch-all. A caller in a group that
+  stays in the rule (here the kube-system service accounts) keeps the gap: its
+  impersonated reads of these resources still leave no record. Do not use
+  `system:serviceaccounts`, which keeps the gap for every pod token. Leader-election
+  lease reads by controllers outside kube-system then reach the Metadata catch-all
+  (volume). The cost is volume (every `kubectl get events` or `get configmaps` writes a
+  record), and ConfigMap reads by people are then logged at Metadata, where the lab and
+  this policy now drop them (the ConfigMap read rule is NO-GO, so no rule reads them). A
+  Sigma rule cannot fix it: there is no record.
+- **Then**: with the fix, a new TRR9009 positive (an impersonated list of configmaps)
+  fires under the changed policy, the self-test facts `impersonated list configmaps` and
+  `impersonated get events` change to Metadata, and `k8s_policy_coverage.py --update`
+  records the result.
+
+### K47. TRR9027 CoreDNS rules: RKE2 names its Corefile ConfigMap rke2-coredns-rke2-coredns
+
+- **Scope**: [`sigma/T1565.001/k8s_coredns_configmap_modified.yml`](sigma/T1565.001/k8s_coredns_configmap_modified.yml)
+  (level medium) and [`sigma/T1565.001/k8s_coredns_corefile_poisoned.yml`](sigma/T1565.001/k8s_coredns_corefile_poisoned.yml)
+  (level high), the kube-system branch (TRR9027 Procedures A to D), on RKE2; and the
+  kube-system DNS row of the recommended production policy
+  ([`k8s/audit-policy-recommended.yaml`](k8s/audit-policy-recommended.yaml)). As the
+  platform entries K38 to K42 do, this entry names its rules in a **Scope** bullet: on
+  the kind lab the procedures write `coredns`, and the rules prove them there, so
+  `research/tools/coverage_report.py` does not mark them as open defects. Whether a
+  platform gap must mark lab-proven procedures is a human decision.
+- **Kind**: portability, description. **Severity**: medium (RKE2 is a common
+  self-managed distribution, and on it neither TRR9027 rule sees a Corefile edit).
+- **Problem**: the kube-system branch of both rules keys on the upstream names
+  `coredns`, `kube-dns` and `coredns-custom`. RKE2 installs CoreDNS from its
+  `rke2-coredns` Helm chart, which names the ConfigMap (and the Deployment that mounts
+  it) after the release and the chart: `kube-system/rke2-coredns-rke2-coredns`. A
+  `fullnameOverride` in a HelmChartConfig can change that name. So a write of the
+  Corefile that CoreDNS reads on RKE2 fires neither rule, and the recommended policy's
+  DNS row (`resourceNames` of the same three names) logs it at Metadata only. The
+  description of `k8s_coredns_configmap_modified` says that the CoreDNS Deployment
+  mounts the ConfigMap named `coredns` and that an attacker "cannot rename it", which
+  RKE2 does not follow.
+- **Evidence**: *source* — rancher/rke2 `charts/chart_versions.yaml` pins rke2-coredns
+  1.49.002; rancher/rke2-charts `charts/rke2-coredns/rke2-coredns/1.49.002/templates/configmap.yaml`
+  L7 (`name: {{ template "coredns.fullname" . }}`), `templates/_helpers.tpl` L18
+  (`printf "%s-%s" .Release.Name $name`, unless `fullnameOverride`) and `Chart.yaml` L20
+  (`name: rke2-coredns`); rancher/rke2 `charts/build-chart.sh` (the HelmChart is named
+  after the chart file, `rke2-coredns`, in kube-system) and k3s-io/helm-controller
+  `pkg/controllers/chart/chart.go` (the job's `NAME`, the release name, is the HelmChart
+  name); rancher/rke2 `tests/client.go` L19 checks the Deployment
+  `rke2-coredns-rke2-coredns`. *simulator and probe* (`records_under` under
+  `recommended`, then `sigma_eval.py`, on the sidecar positive
+  `corefile-rewrite-fullbody-procA` with the object renamed): `coredns` is logged at
+  RequestResponse and both rules fire; `rke2-coredns-rke2-coredns` is logged at
+  Metadata and neither rule fires. **unverified** on a live RKE2 cluster.
+- **Fix**: add `rke2-coredns-rke2-coredns` to `objectRef.name` in the kube-system
+  selections of both rules and to the `resourceNames` of the recommended policy's DNS
+  row (and of the lab policy, if CI is to prove it), with a positive and a near-miss per
+  rule, a pinned body cell and self-test fact for the new name, and a corrected
+  description; then `k8s_policy_coverage.py --update` and `k8s_platforms_md.py --write`.
+  The change widens what the rules select (no filter is loosened); its new cases change
+  the provider-mapping results, and a new approval there (`check_provider_mappings.py
+  --propose`) is a human decision. On a cluster with a `fullnameOverride`, add that name
+  too.
+- **Then**: the new RKE2 positives fire under the lab and recommended policies, and the
+  recommended policy logs the RKE2 ConfigMap at RequestResponse.
+
+### K48. k8s_admission_webhook_disabled: the ValidatingAdmissionPolicy status controller's status patch fires
+
+- **Rule**: [`sigma/T1685/k8s_admission_webhook_disabled.yml`](sigma/T1685/k8s_admission_webhook_disabled.yml) (level medium).
+- **Kind**: false positive. **Severity**: medium (one alert for each
+  ValidatingAdmissionPolicy create or spec change, on every cluster that uses them).
+- **Problem**: `select_adm_write` takes any update or patch in the
+  `admissionregistration.k8s.io` group, with no subresource or identity filter.
+  kube-controller-manager's validatingadmissionpolicy-status controller type-checks each
+  ValidatingAdmissionPolicy whose generation is newer than its observed generation and
+  writes the result with an apply patch of `validatingadmissionpolicies/status`, under
+  its own service account (`system:serviceaccount:kube-system:validatingadmissionpolicy-status-controller`
+  where kube-controller-manager uses per-controller credentials, as kubeadm sets it). That
+  record is logged at Metadata under the API server lab policy and the recommended
+  policy (their catch-all), and the rule fires on it. No sidecar case, benign corpus
+  file or atomic writes a ValidatingAdmissionPolicy, so neither the cases nor the benign
+  corpus show it.
+- **Evidence**: *source* — kubernetes v1.36.4
+  `pkg/controller/validatingadmissionpolicystatus/controller.go` L39 (`ControllerName =
+  "validatingadmissionpolicy-status"`) and L166 (`c.policyClient.ApplyStatus(ctx,
+  applyConfig, metav1.ApplyOptions{FieldManager: ControllerName, Force: true})`);
+  `cmd/kube-controller-manager/app/validatingadmissionpolicystatus.go` L55
+  (`controllerContext.NewClient(names.ValidatingAdmissionPolicyStatusController)`, no
+  required feature gate) and `cmd/kube-controller-manager/names/controller_names.go` L88
+  (`"validatingadmissionpolicy-status-controller"`). *simulator and probe*
+  (`records_under`, then `sigma_eval.py`, on a constructed patch of
+  `validatingadmissionpolicies/status` by that service account): under `recommended`
+  and `lab-apiserver` it is one Metadata record, and the rule fires. **unverified** on a
+  live cluster.
+- **Fix**: a rule change: a filter on `objectRef.subresource` `status`, with a filtered
+  case for the controller's status patch and a positive that keeps a non-status patch
+  of a ValidatingAdmissionPolicy firing.
+- **Then**: the filtered case stays quiet, and the positives of the rule still fire.
 
 ## Cloud (AWS, Azure, GCP)
 

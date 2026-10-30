@@ -210,7 +210,12 @@ grades the borrowed identity.
 **Telemetry requirement.** The audit policy must record the impersonated request at
 Metadata level or higher. The shared policy's catch-all Metadata rule already does,
 and the impersonated reads here are not dropped by any None rule. No policy change
-is needed.
+is needed for these procedures. The API server evaluates the policy on the
+authenticated caller, before impersonation, so a None rule that has no user scope also
+drops an impersonated request: under the lab policies and the recommended production
+policy, an impersonated get, list or watch of ConfigMaps, Events, Endpoints, Leases,
+EndpointSlices, nodes/status or pods/status leaves no record, and neither rule fires
+([RULE_DEFECTS.md K46](../../../detections/RULE_DEFECTS.md#k46-k8s_impersonation-an-impersonated-read-that-the-policy-logs-at-none-leaves-no-record)).
 
 **Strategy 1 — chokepoint (covers A–D).**
 Match any audit event that carries `impersonatedUser.username`. This is stronger
@@ -259,6 +264,8 @@ demonstration that the invariant anchor beats target-list matching.
 
 One presence rule covers every path. One severity rule grades the borrowed
 identity. There is no node-sensor fallback: the audit log is the sole sensor.
+
+Platform coverage: [detections/k8s/PLATFORMS.md](../../../detections/k8s/PLATFORMS.md#rules-on-each-platform)
 
 ## Available Emulation Tests
 

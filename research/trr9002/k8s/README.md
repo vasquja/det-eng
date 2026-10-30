@@ -183,8 +183,15 @@ events for one request have the same `auditID`. Use `auditID` to remove
 duplicates.
 
 The API server does not write audit events until an administrator sets an
-audit policy. Managed services have different settings. Make sure that the
-audit log gets to the SIEM.
+audit policy. EKS and AKS send no audit log until you turn it on
+([EKS user guide](https://github.com/awsdocs/amazon-eks-user-guide/blob/8d43223e0e0dbb6afec4a6c9d6ba5b837b52ebb8/latest/ug/observability/control-plane-logs.adoc#L51),
+[Monitor AKS](https://github.com/MicrosoftDocs/azure-aks-docs/blob/e2c989a0116ab5416d32be4e49ab532f148a29a6/articles/aks/monitor-aks.md#L111)).
+The AKS `kube-audit-admin` category drops `get` requests
+([L119](https://github.com/MicrosoftDocs/azure-aks-docs/blob/e2c989a0116ab5416d32be4e49ab532f148a29a6/articles/aks/monitor-aks.md#L119)),
+and a WebSocket exec is a `get`. k3s writes no audit log by default
+([hardening guide](https://github.com/k3s-io/docs/blob/911393ceaf029778b356593cc8b6fab977293e96/docs/security/hardening-guide.md#L113)).
+Platform coverage: [detections/k8s/PLATFORMS.md](../../../detections/k8s/PLATFORMS.md#platform-summary).
+Make sure that the audit log gets to the SIEM.
 
 ### Why the technique works
 
@@ -644,6 +651,8 @@ double alert is intended, because such a request is itself anomalous.
 One audit log rule covers the two most common procedures. Three more audit log
 rules cover the less common API server paths. A node sensor covers the path
 that avoids the API server.
+
+Platform coverage: [detections/k8s/PLATFORMS.md](../../../detections/k8s/PLATFORMS.md#rules-on-each-platform)
 
 ## Available Emulation Tests
 

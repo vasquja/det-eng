@@ -133,6 +133,40 @@ Modes:
                         procedure gate to its window and exit status, and runs the
                         ABSENCE and MISS_MANIFEST checks. A missing file, or a line that
                         does not parse, fails the run.
+    --policy NAME       The audit policy the cluster ran: lab (default; the API server
+                        lab policy, detections/k8s/audit-policy-apiserver.yaml) or
+                        recommended (detections/k8s/audit-policy-recommended.yaml).
+                        It selects the POLICY_GATES and EXPECTED_MISS entries below;
+                        nothing else. A strict run (also with --report) under a policy
+                        with such entries needs --ledger (else exit 2).
+
+POLICY_GATES ({policy: {(rule path, MANIFEST label): {"reason", "case", "gate"}}}) names
+the MANIFEST entries whose gate a policy REPLACES in a strict run, because the policy
+logs the procedure's record in another shape. Under the recommended policy: 9027 D (its
+opt-in kube-system ConfigMap-create line is off, so D's POST create of kube-system/
+coredns reaches the log at Metadata, with no body and so no trr9027 sentinel; the
+chokepoint still fires on it, and its gate takes D's accepted create by a non-system
+user in D's ledger window, logged with no requestObject), and 9027 B and C (their gate
+also needs the record at level RequestResponse with the sentinel in the request body,
+so the run proves the policy's RequestResponse row for kube-dns and coredns-custom, not
+only the requestURI). A policy gate must PASS, as every MANIFEST gate must.
+
+EXPECTED_MISS ({policy: {(rule path, MANIFEST label): {"reason", "evidence", "fires",
+"case"}}}) names the MANIFEST entries that must MISS under a policy because the policy
+does not log, by design, the body that the rule needs (the recommended policy: 9027 D
+create, the Corefile grader on D's Metadata create). In a strict run such an entry is
+reported XMISS and does not fail the run. It FAILS the run when it passes (XPASS: the
+policy now logs the record; update the map, and RECOMMENDED_OPT_IN_LOSSES in
+k8s_policy_coverage.py), and (XMISS?) when its evidence gate selects no record in the
+procedure's ledger window, when a selected record holds a requestObject (so the miss is
+proven to come from the missing body, not from a procedure that did not run), or when
+the rule's match of those records is not what "fires" says. An expected miss never makes
+another entry pass. --expect-miss runs the MANIFEST gate of every entry (POLICY_GATES and
+EXPECTED_MISS do not apply to the negative control: no entry may pass on the
+pre-emulation log). A key of the selected policy's maps that names no MANIFEST entry, a
+key in both maps, or an entry with no sidecar "case" fails the run; --dry-run checks the
+maps of every policy, and the self-test of k8s_policy_coverage.py (the platform-coverage
+job) also checks each "case" against the simulator.
 
 A MISS is explained beneath its line (sigma_explain.py): what the gate requires,
 how many events carry the emulation's marker, and the marked event that came
@@ -1172,6 +1206,142 @@ MISS_MANIFEST = [
 ]
 
 
+# The audit policies a run can name (--policy), and the MANIFEST entries that must MISS
+# under each (see the module docstring). "evidence" is a gate that, with --ledger, must
+# select at least one record in the procedure's window, and none of those records may
+# hold a requestObject: the request was logged, but without the body the gate needs.
+# "fires" says whether the rule itself matches an evidence record (False: the grader has
+# nothing to grade); the run checks it. "case" names the rule's sidecar positive for the
+# same request: k8s_policy_coverage.py's self-test checks that the simulator agrees (a
+# "fires": False case is an expected opt-in loss, RECOMMENDED_OPT_IN_LOSSES), not that the
+# case is the positive of this request.
+POLICY_CHOICES = ("lab", "recommended")
+_D_CREATE_EVIDENCE = rec(verb="create", resource="configmaps", name="coredns",
+                         ns="kube-system", user=non_system, window=("9027", "d"))
+EXPECTED_MISS = {
+    "lab": {},
+    "recommended": {
+        ("T1565.001/k8s_coredns_corefile_poisoned.yml", "9027 D create"): {
+            "reason": "the grader reads the Corefile in the body of D's POST create of "
+                      "kube-system/coredns; the recommended policy logs that create at "
+                      "Metadata (its opt-in line is off), so there is no Corefile to grade",
+            "evidence": _D_CREATE_EVIDENCE, "fires": False,
+            "case": "recreate-coredns-create-procD"},
+    },
+}
+
+
+def no_request_body(e):
+    """A record with no requestObject field (Metadata level, or a body the policy drops)."""
+    return not any(k.startswith("requestObject") for k in e)
+
+
+no_request_body.describe = "no requestObject"
+
+
+def request_body_has(token):
+    """A record whose requestObject (the body the client sent) holds `token`."""
+    def gate(e):
+        return _sentinel_in_request(e, token)
+    gate.describe = f"a requestObject field contains {token!r}"
+    return gate
+
+
+# The MANIFEST entries whose gate a policy REPLACES in a strict run (see the module
+# docstring), with the reason and the rule's sidecar positive for the same request
+# ("case"; the self-test of k8s_policy_coverage.py checks that it is a positive of the
+# rule and fires under that policy, not that it is the positive of this request). A
+# policy gate never makes the run weaker than the policy allows: 9027 D's
+# gate takes D's create with NO body (the policy is proven to drop it) in D's window,
+# and the 9027 B and C gates need a RequestResponse record with the sentinel in the
+# request body, where the MANIFEST gate also takes the fieldManager=trr9027-emulation of
+# the requestURI. A run under a policy with a policy gate or an expected miss needs
+# --ledger: without D's window the D gate would take kubeadm's bootstrap create of
+# coredns, and an expected miss would have no evidence. --expect-miss runs the MANIFEST
+# gates. For 9027 B and C they are wider than the policy gates. For 9027 D the MANIFEST
+# gate (the sentinel) and the policy gate (no body) select different records: only D's
+# ledger window tells the policy gate's record from the bootstrap create, and the
+# negative control runs without a ledger, so it cannot test that gate.
+POLICY_GATES = {
+    "lab": {},
+    "recommended": {
+        ("T1565.001/k8s_coredns_configmap_modified.yml", "9027 D"): {
+            "reason": "the MANIFEST gate tells D's POST create of kube-system/coredns from "
+                      "the kubeadm bootstrap create by the trr9027 sentinel in its body; "
+                      "the recommended policy logs that create at Metadata (its opt-in "
+                      "line is off), so the gate takes D's accepted create by a non-system "
+                      "user in D's ledger window, logged with no requestObject",
+            "case": "coredns-recreate-create-procD",
+            "gate": [("D", rec(verb="create", resource="configmaps", name="coredns",
+                               ns="kube-system", user=non_system, also=no_request_body,
+                               window=("9027", "d")))]},
+        ("T1565.001/k8s_coredns_configmap_modified.yml", "9027 B"): {
+            "reason": "the policy logs kube-dns writes at RequestResponse; the gate needs "
+                      "that level and the trr9027 sentinel in the request body, so a "
+                      "record logged lower (a policy that lost the row, or logs it at "
+                      "Request) does not pass on the requestURI",
+            "case": "kube-dns-stubdomains-ssa-procB",
+            "gate": [("B", win(all_of(coredns_gate_named("kube-dns"),
+                                      field_eq("level", "RequestResponse"),
+                                      request_body_has("trr9027")), ("9027", "b")))]},
+        ("T1565.001/k8s_coredns_configmap_modified.yml", "9027 C"): {
+            "reason": "the policy logs coredns-custom writes at RequestResponse; the gate "
+                      "needs that level and the trr9027 sentinel in the request body, so a "
+                      "record logged lower does not pass on the requestURI",
+            "case": "coredns-custom-ssa-procC",
+            "gate": [("C", win(all_of(coredns_gate_named("coredns-custom"),
+                                      field_eq("level", "RequestResponse"),
+                                      request_body_has("trr9027")), ("9027", "c")))]},
+    },
+}
+
+
+def expected_miss_errors(policy=None):
+    """Errors in the EXPECTED_MISS and POLICY_GATES maps of the one `policy`, or of every
+    policy when it is None: a policy with no map, a key that names no MANIFEST entry, a
+    key in both maps, and an entry with no sidecar "case"."""
+    entries = {(f"{folder}/{fname}", label) for folder, fname, _s, label, _n, _g in MANIFEST}
+    pols = POLICY_CHOICES if policy is None else (policy,)
+    errs = []
+    for name, maps in (("EXPECTED_MISS", EXPECTED_MISS), ("POLICY_GATES", POLICY_GATES)):
+        errs += [f"{name} has no map for --policy {pol!r}" for pol in pols if pol not in maps]
+        errs += [f"{name}[{pol!r}] names no MANIFEST entry {key!r}"
+                 for pol in pols for key in maps.get(pol, {}) if key not in entries]
+        errs += [f"{name}[{pol!r}][{key!r}] has no sidecar 'case'"
+                 for pol in pols for key, entry in maps.get(pol, {}).items()
+                 if not isinstance(entry.get("case"), str)]
+    errs += [f"EXPECTED_MISS[{pol!r}] and POLICY_GATES[{pol!r}] both name {key!r}"
+             for pol in pols for key in EXPECTED_MISS.get(pol, {})
+             if key in POLICY_GATES.get(pol, {})]
+    return errs
+
+
+def expected_miss_evidence(entry, events, ledger, matched=()):
+    """Problems with an expected miss's evidence (an empty list when it holds), given the
+    rule's matches `matched`. Without a ledger the evidence cannot be placed in the
+    procedure's window, and that is a problem too (a strict run under such a policy
+    refuses to start without --ledger)."""
+    if ledger is None:
+        return ["no --ledger, so the evidence cannot be placed in the procedure's window"]
+    gate = windowed(entry["evidence"], ledger)
+    selected = [e for e in events if gate(e)]
+    if not selected:
+        return [f"no record passes the evidence gate ({describe_gate(gate)}): the "
+                "procedure did not run, failed, or sent another request"]
+    bodied = [e for e in selected if any(k.startswith("requestObject") for k in e)]
+    if bodied:
+        return [f"{len(bodied)} of the {len(selected)} evidence record(s) hold a "
+                "requestObject, so the policy logs the body this miss expects to be absent"]
+    hit = {id(e) for e in matched}
+    fired = any(id(e) in hit for e in selected)
+    if "fires" in entry and fired != entry["fires"]:
+        return [("the rule matches no evidence record, but EXPECTED_MISS says that it "
+                 "fires on it" if entry["fires"] else
+                 "the rule matches an evidence record, but EXPECTED_MISS says that it has "
+                 "nothing to match there")]
+    return []
+
+
 # Folders whose other rules are compiled (not match-gated) so a break still fails.
 FOLDERS = sorted({folder for folder, *_ in MANIFEST})
 
@@ -1655,8 +1825,11 @@ def main():
                     help="Emulation ledger (JSONL procedure windows). Binds each procedure "
                          "gate to its procedure's time window and exit status (C1-3); without "
                          "it the gates fall back to fields only.")
+    ap.add_argument("--policy", choices=POLICY_CHOICES, default="lab",
+                    help="The audit policy the cluster ran (default lab). It selects the "
+                         "EXPECTED_MISS entries: the rows that must miss under that policy.")
     args = ap.parse_args()
-    report = {"validator": "apiserver",
+    report = {"validator": "apiserver", "policy": args.policy,
               "mode": "dry-run" if args.dry_run else
               "expect-miss" if args.expect_miss else "validate", "results": []}
     code = validate(args, report)
@@ -1669,9 +1842,38 @@ def main():
 def validate(args, report):
     """The validation run behind main(); fills `report` for --json."""
     results = report["results"]
+    # --dry-run checks every policy's map; a run on a log checks the map it uses.
+    map_errors = expected_miss_errors(None if args.dry_run
+                                      else getattr(args, "policy", "lab"))
+    for line in map_errors:
+        print(f"ERROR {line}")
+    policy = getattr(args, "policy", "lab")
+    expected = EXPECTED_MISS.get(policy, {})
+    pgates = POLICY_GATES.get(policy, {})
+    if (expected or pgates) and args.expect_miss:
+        print(f"Audit policy: {policy}. EXPECTED_MISS and POLICY_GATES do not apply to the "
+              "negative control: every entry runs its MANIFEST gate and must stay quiet.\n")
+    elif (expected or pgates) and not args.dry_run:
+        if not getattr(args, "ledger", None):
+            print(f"ERROR: --policy {policy} needs --ledger: its policy gates and expected "
+                  "misses are proven only in their procedure's ledger window.")
+            return 2
+        print(f"Audit policy: {policy}.")
+        if pgates:
+            print(f"  {len(pgates)} MANIFEST entr{'y' if len(pgates) == 1 else 'ies'} "
+                  "run a policy gate in place of the MANIFEST gate (POLICY_GATES), and must "
+                  "pass:")
+            for (rule, label), entry in pgates.items():
+                print(f"  [{label}] {rule}: {entry['reason']}")
+        if expected:
+            print(f"  {len(expected)} MANIFEST entr{'y' if len(expected) == 1 else 'ies'} "
+                  "must miss, with evidence (EXPECTED_MISS):")
+            for (rule, label), entry in expected.items():
+                print(f"  [{label}] {rule}: {entry['reason']}")
+        print()
     # Compile the match-gated rules.
     queries = {}
-    parse_errors = 0
+    parse_errors = len(map_errors)
     gated = set()
     for folder, fname, source, label, note, _ in MANIFEST:
         key = (folder, fname)
@@ -1720,7 +1922,7 @@ def validate(args, report):
                         "explanation": []} for folder, fname in queries)
         print()
         if parse_errors:
-            print(f"Dry run FAILED: {parse_errors} compile error(s).")
+            print(f"Dry run FAILED: {parse_errors} compile, EXPECTED_MISS or POLICY_GATES error(s).")
             return 1
         print(f"Dry run OK: {len(queries)} match-gated rule(s) compile with pySigma.")
         return 0
@@ -1772,6 +1974,7 @@ def validate(args, report):
         print()
 
     passes = misses = skipped = 0
+    xmisses, xfails = 0, []
     for folder, fname, source, label, note, entry_gate in MANIFEST:
         key = (folder, fname)
         if key not in queries:
@@ -1788,6 +1991,10 @@ def validate(args, report):
             matched = dedup_by_audit_id(matched)
         rule_path = os.path.join(SIGMA, folder, fname)
         tag = "trr" + label.split()[0]  # e.g. '9004 A-E' -> 'trr9004'
+        # A policy gate (POLICY_GATES) replaces the MANIFEST gate in a strict run.
+        pentry = None if args.expect_miss else pgates.get((f"{folder}/{fname}", label))
+        if pentry is not None:
+            entry_gate = pentry["gate"]
         # Each procedure of the entry needs a record of its own (C1-1); with a ledger,
         # the gate is also bound to that procedure's window and exit status (C1-3).
         procs = []
@@ -1801,8 +2008,34 @@ def validate(args, report):
         # Validate: every procedure needs its own record. Negative control: a pass is
         # any one procedure matching in the pre-emulation log.
         passed = some if args.expect_miss else every
+        # An expected miss under --policy (EXPECTED_MISS): in a strict run it must miss,
+        # with its evidence; a pass, or missing evidence, fails the run.
+        xentry = None if args.expect_miss else expected.get((f"{folder}/{fname}", label))
         explanation = []
-        if passed:
+        status = "PASS" if passed else "MISS"
+        if xentry is not None:
+            problems = expected_miss_evidence(xentry, logs[source], ledger, matched)
+            if passed:
+                status = "XPASS"
+                detail = (f"an expected miss under --policy {args.policy} passed "
+                          f"({len(ours_ids)} emulation record(s) match): the policy now "
+                          "logs what EXPECTED_MISS says it does not; update EXPECTED_MISS "
+                          "and RECOMMENDED_OPT_IN_LOSSES (k8s_policy_coverage.py)")
+                xfails.append(f"[{label}] {fname}: {detail}")
+            elif problems:
+                status = "XMISS?"
+                detail = (f"an expected miss under --policy {args.policy}, but its "
+                          f"evidence does not hold: {'; '.join(problems)}")
+                xfails.append(f"[{label}] {fname}: {detail}")
+            else:
+                status = "XMISS"
+                xmisses += 1
+                detail = (f"expected miss under --policy {args.policy}: {xentry['reason']}"
+                          " (evidence: the request is logged without a body"
+                          + ("; the rule fires on it)" if xentry.get("fires") else
+                             "; the rule does not fire on it)"))
+            print(f"{status:5} [{label}] {fname}: {detail}")
+        elif passed:
             passes += 1
             detail = (f"{len(ours_ids)} emulation record(s) match"
                       + (f" (+{other} baseline/other)" if other else ""))
@@ -1813,11 +2046,13 @@ def validate(args, report):
                       "a procedure has no record of its own") + (
                 f" ({other} baseline/unrelated match(es) ignored)" if other else "")
             print(f"MISS  [{label}] {fname}: {detail}")
+        if pentry is not None:
+            print(f"        policy gate (--policy {policy}): {pentry['reason']}")
         for proc, gate, hits in procs:
             if proc is not None:
                 print(f"        {'ok  ' if hits else 'MISS'} {proc}: {len(hits)} match(es)"
                       + ("" if hits else f"   [gate: {describe_gate(gate)}]"))
-        if passed and not args.expect_miss:
+        if passed and not args.expect_miss and xentry is None:
             sample = next(e for _, _, hits in procs for e in hits)
             if source == "audit":
                 print(f"        e.g. verb={sample.get('verb')} "
@@ -1838,7 +2073,7 @@ def validate(args, report):
         if passed and args.expect_miss:
             ours = [e for _, _, hits in procs for e in hits]
             explanation = explained(explain_unexpected, rule_path, logs[source], ours, tag)
-        elif not passed and not args.expect_miss:
+        elif not passed and not args.expect_miss and xentry is None:
             for proc, gate, hits in procs:
                 if hits:
                     continue
@@ -1855,7 +2090,8 @@ def validate(args, report):
                   + ("; the log is empty, so this negative control can only fail on a "
                      "stray marked-reader event" if n == 0 else ""))
         results.append({"rule": f"{folder}/{fname}", "label": label, "source": source,
-                        "status": "PASS" if passed else "MISS", "detail": detail,
+                        "status": status, "detail": detail,
+                        "policy_gate": pentry is not None,
                         "emulation_matches": len(ours_ids), "other_matches": other,
                         "procedures": {p: len(h) for p, _, h in procs if p is not None},
                         "explanation": explanation})
@@ -1931,7 +2167,7 @@ def validate(args, report):
 
     print()
     if parse_errors:
-        print(f"FAILED: {parse_errors} compile error(s).")
+        print(f"FAILED: {parse_errors} compile, EXPECTED_MISS or POLICY_GATES error(s).")
         return 1
     if file_controls:
         print(f"FAILED: {len(file_controls)} file control(s) failed (see CONTROL FAILED "
@@ -1960,6 +2196,12 @@ def validate(args, report):
               "dry-run step did not run, failed, or was refused), or a rule does not fire "
               "on a shape without its dry-run marker either.")
         return 1
+    if xfails:
+        print(f"FAILED: {len(xfails)} expected miss(es) under --policy {args.policy} did "
+              "not hold (EXPECTED_MISS):")
+        for line in xfails:
+            print(f"  {line}")
+        return 1
     if misses and not args.report:
         print(f"FAILED: {misses} rule(s) did not fire. "
               f"(Use --report to treat misses as non-fatal.)")
@@ -1967,11 +2209,14 @@ def validate(args, report):
     if misses:
         print(f"Reported {misses} miss(es); not gated (--report).")
         return 0
+    xnote = (f" ({xmisses} expected miss(es) under --policy {args.policy}, each with its "
+             "reason above)" if xmisses else "")
     if skipped:
         print(f"The rule(s) with a log fired on the emulated telemetry; {skipped} "
-              "rule(s) skipped for lack of a log.")
+              f"rule(s) skipped for lack of a log.{xnote}")
         return 0
-    print("All TRR9004-9010, 9025-9027 match-gated detections fired on the emulated telemetry.")
+    print("All TRR9004-9010, 9025-9027 match-gated detections fired on the emulated "
+          f"telemetry.{xnote}")
     return 0
 
 

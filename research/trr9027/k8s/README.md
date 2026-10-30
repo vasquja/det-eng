@@ -511,6 +511,8 @@ apply: a create or PUT sent with a stolen DNS Operator token (K45), and, under
 `Unmanaged`, a repoint of the DNS DaemonSet to another ConfigMap (seen only as the
 write that set `Unmanaged`).
 
+Platform coverage: [detections/k8s/PLATFORMS.md](../../../detections/k8s/PLATFORMS.md#rules-on-each-platform)
+
 ## Available Emulation Tests
 
 The tests run in a lab cluster with the shared audit policy. The lab is a `kind`

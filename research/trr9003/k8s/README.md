@@ -415,6 +415,8 @@ attempt (including the invalid-namespace variant, as a failed create) but record
 the attempt, not the workload, and is noisy at bootstrap. Two node rules cover
 the upstream file and configuration changes.
 
+Platform coverage: [detections/k8s/PLATFORMS.md](../../../detections/k8s/PLATFORMS.md#rules-on-each-platform)
+
 ## Available Emulation Tests
 
 The tests run in a lab cluster. The lab is a `kind` cluster with a control-plane
