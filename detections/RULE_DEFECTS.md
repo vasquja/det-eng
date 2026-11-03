@@ -91,9 +91,21 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [K46](#k46-k8s_impersonation-an-impersonated-read-that-the-policy-logs-at-none-leaves-no-record) | `T1134/k8s_impersonation`, `k8s_impersonation_privileged`, under the three lab policies and the recommended production policy (`k8s/audit-policy-recommended.yaml`), and the Event reads of EKS, GCE kube-up, AKS and OpenShift 4.17 | the API server evaluates the audit policy on the authenticated caller, before impersonation, so an impersonated get, list or watch of a resource that the policy's noise rule drops for every caller (ConfigMaps, Events, Endpoints, Leases, EndpointSlices, nodes/status, pods/status) leaves no record | policy gap, evasion | medium |
 | [K47](#k47-trr9027-coredns-rules-rke2-names-its-corefile-configmap-rke2-coredns-rke2-coredns) | the TRR9027 kube-system branch of both CoreDNS rules, on RKE2 | RKE2's CoreDNS chart names the Corefile ConfigMap `kube-system/rke2-coredns-rke2-coredns`, which neither rule (nor the DNS row of the recommended policy) selects, so no TRR9027 rule sees a Corefile edit on RKE2 | portability, description | medium |
 | [K48](#k48-k8s_admission_webhook_disabled-the-validatingadmissionpolicy-status-controllers-status-patch-fires) | `T1685/k8s_admission_webhook_disabled` | kube-controller-manager's validatingadmissionpolicy-status controller writes each ValidatingAdmissionPolicy's type-check with an apply patch of `validatingadmissionpolicies/status`, and the rule (no subresource or identity filter) fires on it | false positive | medium |
+| [K49](#k49-k8s_storage_volume_deleted-one-delete-record-does-not-show-whether-the-volume-is-destroyed) | `T1485/k8s_storage_volume_deleted` | a PVC or PV delete record carries a `DeleteOptions` body only, not the bound PV's reclaim policy, so a destructive delete (reclaim `Delete`) looks like a non-destructive one (`Retain`) in one record; the grader `k8s_volume_reclaim_set_to_delete` covers the policy-flip step only | false negative | medium |
+| [K50](#k50-k8s_storage_volume_deleted-the-storage-controller-filters-trust-the-identity) | `T1485/k8s_storage_volume_deleted` | the controller filters read only `user.username` (and the teardown verb), so a delete with a stolen controller/provisioner token is filtered, and a managed-platform CSI provisioner service account (not the kind `local-path` identity) fires unless an operator baselines it | evasion, portability | low |
+| [K51](#k51-k8s_snapshot_or_backup_destroyed-a-stolen-controller-token-evades-the-identity-filters) | `T1490/k8s_snapshot_or_backup_destroyed` | an actor with a stolen snapshot-controller or velero service-account token is suppressed by the controller identity filters | evasion | low |
+| [K52](#k52-k8s_snapshot_or_backup_destroyed-a-server-side-dry-run-delete-is-indistinguishable-from-a-real-delete-at-metadata-and-fires) | `T1490/k8s_snapshot_or_backup_destroyed` | kubectl's default `--dry-run=server` delete puts dryRun in the unlogged DeleteOptions body, so at the shipped Metadata policy its record is byte-identical to a real delete and the rule fires | false positive | low |
+| [K53](#k53-k8s_pod_token_used_off_source-the-single-record-off-source-compare-degrades-on-managed-clusters) | the TRR9030 single-record off-source rule, on EKS/GKE/AKS | on EKS/GKE/AKS the last `sourceIPs` entry is a konnectivity agent / load balancer / NAT peer, not the pod, so the single-record off-source compare degrades to an approximation (TRR9030 Procedure A); the portable fallback is the credential-id value_count correlation prototyped in the TRR | portability | medium |
+| [K54](#k54-k8s_pod_controller_name_mimicry-does-not-cover-a-generatename-masquerade) | `T1036.005/k8s_pod_controller_name_mimicry` (no generateName branch) | a bare-pod `generateName` masquerade (`coredns-6f6b679f8f-`) is byte-identical to a real controller's generateName create, both with no `objectRef.name`, so the audit chokepoint cannot separate them without a per-site controller-identity allowlist; the rule ships the explicit-name branches A and C only | false negative | medium |
+| [K55](#k55-k8s_pod_controller_name_mimicry-the-name-shape-regex-is-not-portable-to-gke) | `T1036.005/k8s_pod_controller_name_mimicry` | GKE records `objectRef.name` inside `protoPayload.resourceName` (the object path), so the GKE pipeline maps the field to exact strings only and cannot apply the controller-shaped name regex; AKS and the lab are unaffected | portability | low |
+| [K58](#k58-k8s_service_exposed_nodeport_loadbalancer-is-blind-where-core-service-writes-stay-at-metadata-openshift-default-k3s-starter) | `T1133/k8s_service_exposed_nodeport_loadbalancer` (TRR9033 A-C), on OpenShift 4.17/4.18 Default and the k3s starter policy | these policies log core-group writes only at Metadata (no body), so neither `requestObject.spec.type` nor `responseObject.spec.type` is recorded and the rule sees no Service exposure | portability, policy gap | medium |
+| [K59](#k59-k8s_service_exposed_nodeport_loadbalancer-update-and-patch-fire-on-a-re-assertion-of-an-already-exposed-service) | `T1133/k8s_service_exposed_nodeport_loadbalancer`, the update/patch branch | one record cannot tell a type change from a re-assertion, so a PUT, server-side apply or re-apply of an already-exposed NodePort/LoadBalancer Service (GitOps, Helm) fires as a first exposure does; a create is unambiguous | false positive, description | medium |
+| [K60](#k60-k8s_csr_client_cert_minted-subject-ungradable-and-self-approval-non-portable) | `T1098.006/k8s_csr_client_cert_minted` | two disclosed backstop limits: the requested certificate subject (CN/O) is inside the DER CSR of `spec.request` and is not Sigma-gradable (so the rule cannot tell a privileged subject from an ordinary one), and self-approval (approver == requester) needs a Sigma field reference the portable backends reject | portability, description | low |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
+| [K56](#k56-aws_eks_access_entry_cluster_admin_policy-a-namespace-scoped-secrets-grant-is-missed) | `T1098.006/aws_eks_access_entry_cluster_admin_policy` | a reads-Secrets policy scoped to a sensitive namespace (`kube-system`) reads those Secrets but trips only the medium chokepoint, not the graded rule; one CloudTrail record cannot weigh one namespace against another | false negative | medium |
+| [K57](#k57-aws_eks_access_entry_cluster_admin_policy-no-safe-sigma-predicate-for-a-cross-account-grant) | `T1098.006/aws_eks_access_entry_cluster_admin_policy` | no safe Sigma predicate raises fidelity on a cross-account grant: `principalArn\|fieldref\|contains: recipientAccountId` goes quiet when the attacker names its role with the victim account ID | false negative (documented) | low |
 
 ## Linux (auditd and node file events)
 
@@ -1800,6 +1812,352 @@ the current ones.
   of a ValidatingAdmissionPolicy firing.
 - **Then**: the filtered case stays quiet, and the positives of the rule still fire.
 
+### K49. k8s_storage_volume_deleted: one delete record does not show whether the volume is destroyed
+
+- **Rule**: [`sigma/T1485/k8s_storage_volume_deleted.yml`](sigma/T1485/k8s_storage_volume_deleted.yml) (level medium).
+- **Kind**: false negative. **Severity**: medium (the rule still fires on every
+  actor delete; what it cannot do is grade destructiveness from one record).
+- **Problem**: a PVC or PV delete is audited with a `DeleteOptions` body only; the
+  record carries no `spec.persistentVolumeReclaimPolicy`. A bound PV with reclaim
+  policy `Delete` loses its backing volume on a PVC or PV delete, while a PV with
+  `Retain` keeps it. So the chokepoint cannot tell a destructive delete from a
+  non-destructive one in a single record, and it fires on both (the TRR9028 vet's
+  stated approximation). The reclaim policy lives on the **PV**, and a PVC delete
+  names the PVC, so even at Request level the bound PV's policy is not in the PVC
+  delete record.
+- **Evidence**: *probe* (`sigma_eval.py`) — the sidecar positives `pvc-delete-procA`
+  and `pv-delete-procB` carry no reclaim policy and the rule fires; a Retain-PV delete
+  of the same shape fires identically. The grader
+  [`sigma/T1485/k8s_volume_reclaim_set_to_delete.yml`](sigma/T1485/k8s_volume_reclaim_set_to_delete.yml)
+  matches the separate `patch` that sets a PV's reclaim policy to `Delete` (case
+  `reclaim-set-delete-procD`), the step that makes a later delete destructive.
+- **Fix**: enrichment, not a rule change: correlate a PVC delete with the bound PV's
+  reclaim policy (join on the PV's `claimRef`, or read the PV object), or alert on the
+  grader's reclaim flip and the chokepoint's delete together. The grader covers the
+  policy-flip step; the chokepoint is the record that names the actor of the delete.
+- **Then**: the grader fires on the flip, and the chokepoint keeps firing on the
+  actor's delete.
+
+### K50. k8s_storage_volume_deleted: the storage-controller filters trust the identity
+
+- **Rule**: [`sigma/T1485/k8s_storage_volume_deleted.yml`](sigma/T1485/k8s_storage_volume_deleted.yml) (level medium).
+- **Kind**: evasion, portability. **Severity**: low (the stolen-token path needs
+  `kube-system` service-account access, which allows much more than a storage delete;
+  the portability part is a per-platform baseline, not a miss on the lab).
+- **Problem**: the four controller filters (`filter_namespace_teardown`,
+  `filter_garbage_collector`, `filter_pv_binder`, `filter_provisioner`) read only
+  `user.username` (and the verb, for teardown). So a PVC or PV delete sent with a
+  stolen token of one of those service accounts is filtered, from any client and in a
+  namespace that nobody is deleting (the same shape as K37/K45). And the provisioner
+  filter names the kind identity
+  `system:serviceaccount:local-path-storage:local-path-provisioner-service-account`
+  only: a managed platform runs a different CSI provisioner service account
+  (`ebs-csi-controller-sa` on EKS, the GKE PD CSI and AKS equivalents), whose own PV
+  deletes are **not** filtered and fire until an operator baselines that identity.
+- **Evidence**: *case* — the confounder
+  `namespace-controller-token-deletecollection-known-miss` (a PVC deletecollection with
+  the namespace-controller identity in a namespace nobody deletes) is filtered and does
+  not fire; the filtered case `provisioner-pv-delete` shows the kind `local-path`
+  identity is excluded, so a different provisioner SA is not.
+- **Fix**: no rule change closes the stolen-token evasion (an identity filter is all
+  the record offers; the token read itself is the earlier, higher-fidelity signal).
+  For the managed-platform provisioner, name that platform's CSI provisioner service
+  account as a baseline (a Scope item in the TRR), or add it to the filter per platform.
+- **Then**: the baselined provisioner SA stays quiet, and every other identity's PVC
+  or PV delete fires.
+### K51. k8s_snapshot_or_backup_destroyed: a stolen controller token evades the identity filters
+
+- **Rule**: [`sigma/T1490/k8s_snapshot_or_backup_destroyed.yml`](sigma/T1490/k8s_snapshot_or_backup_destroyed.yml) (level medium).
+- **Kind**: evasion. **Severity**: low (the attacker must first steal a specific
+  controller's service-account token; the same trade-off every controller identity
+  filter in this repo accepts).
+- **Problem**: the rule filters the two controllers that churn these objects by
+  `user.username`, each scoped to the resources it churns: the snapshot-controller
+  (`system:serviceaccount:kube-system:snapshot-controller`) on VolumeSnapshotContent
+  deletes, and the Velero server (`system:serviceaccount:velero:velero`) on
+  deletebackuprequests, volumesnapshots and volumesnapshotcontents (its real churn --
+  it never deletes a Schedule or BackupStorageLocation, so a velero-SA delete of those is
+  not suppressed and fires). An actor who steals one of those tokens and acts as that
+  identity within its churn -- deleting a VolumeSnapshotContent as the snapshot-controller,
+  or creating a DeleteBackupRequest / deleting a VolumeSnapshot as the Velero server -- is
+  suppressed. The filter cannot tell the controller's own writes from an attacker
+  presenting its token.
+- **Evidence**: *case* -- the filtered cases `snapshot-controller-deletes-vsc`,
+  `velero-server-creates-deletebackuprequest-gc` and `velero-server-deletes-volumesnapshot`
+  in the sidecar hold on exactly these identities; *probe* -- with `user.username` set to
+  `system:serviceaccount:velero:velero`, a DeleteBackupRequest create is suppressed, and
+  flipping the name fires it.
+- **Fix**: no rule-only fix. Scoping each filter to the resources (and, for the
+  snapshot-controller, the verb) its controller actually churns, as done, bounds the
+  evasion -- a stolen token fires outside that controller's churn (a velero-SA Schedule or
+  BackupStorageLocation delete, a snapshot-controller VolumeSnapshot delete) -- but does
+  not close it within the churn. Correlate a controller-identity write with that identity's
+  other out-of-band activity (a token used from an unusual source, outside the controller's
+  normal object set), and baseline these two identities.
+- **Then**: the three filtered cases stay quiet (the controllers' real churn), and the
+  five positives still fire for a non-controller actor.
+
+### K52. k8s_snapshot_or_backup_destroyed: a server-side dry-run delete is indistinguishable from a real delete at Metadata and fires
+
+- **Rule**: [`sigma/T1490/k8s_snapshot_or_backup_destroyed.yml`](sigma/T1490/k8s_snapshot_or_backup_destroyed.yml) (level medium).
+- **Kind**: false positive. **Severity**: low (a dry run persists nothing; the hit is
+  benign, and the rule is a documented medium-fidelity correlation anchor).
+- **Problem**: these objects are CustomResourceDefinitions, which the shipped lab audit
+  policy and the recommended production policy both log at their Metadata catch-all, and a
+  Metadata record carries no request body. kubectl's default server-side dry-run delete
+  (`kubectl delete --dry-run=server`) sends the dry run in the DeleteOptions request
+  **body**, not the query: client-go's `Helper.DeleteWithOptions` builds DeleteOptions with
+  `DryRun = [All]` and calls `.Body(options)` (cli-runtime/pkg/resource/helper.go). At
+  Metadata the body is not logged and the record carries no `?dryRun=All` query marker, so
+  the audit record of a `--dry-run=server` delete is byte-identical to a real delete -- the
+  rule cannot tell them apart and fires. This is **not** a Request-level-only gap: it fires
+  at the shipped Metadata policy, which is the default. Only the **query** form of a dry run
+  is filtered: a create carries CreateOptions.dryRun in the query (`VersionedParams`,
+  procedure E), and a delete carries it in the query only when the client puts it there
+  (`kubectl delete --raw '<path>?dryRun=All'`, kubernetes-client/python). A stricter policy
+  that logs these CRDs at Request or RequestResponse records the body, but the rule does not
+  read `requestObject`, so the body-form dry run fires there too.
+- **Evidence**: *probe* -- the real-delete positive record and the record a
+  `kubectl delete --dry-run=server` produces at Metadata are the same shape (no `?dryRun=All`
+  query, no `requestObject`), so the rule fires on both; only a `?dryRun=All` query (the
+  create path, or a `--raw`/python-client delete) is suppressed by filter_dry_run_query.
+  Reproduced with detections/sigma_eval.py on the branch rule, and the body-vs-query split
+  verified from kubernetes v1.36.4 cli-runtime helper.go (`.Body` for DELETE,
+  `VersionedParams` for CREATE).
+- **Fix**: accept it. A dry-run delete persists nothing, so the hit is benign; baseline the
+  identities that run dry-run deletes of these objects, and correlate. The FP cannot be
+  filtered at Metadata, because the dryRun marker lives in a body the policy does not record,
+  so there is no distinguishing field; raising the policy to Request only lets a body-form
+  filter (`requestObject.dryRun|contains: 'All'`, null-safe) catch it, and the shipped policy
+  does not log the body, so the repo does not carry that filter.
+- **Then**: the FP class is documented and accepted; a real delete still fires, and a
+  query-form dry run (the dry-run control) stays quiet.
+### K53. k8s_pod_token_used_off_source: the single-record off-source compare degrades on managed clusters
+
+- **Scope**: [`sigma/T1528/k8s_pod_token_used_off_source.yml`](sigma/T1528/k8s_pod_token_used_off_source.yml)
+  (level high), TRR9030 Procedure A. Platforms: EKS, GKE and AKS (any cluster where a pod
+  does not reach the API server over a direct, un-SNATed connection). As K38 to K42 and
+  K47, the rule is named in this **Scope** bullet, not in the Summary row's rule column or
+  a Rules bullet, so `research/tools/coverage_report.py` keeps the lab-proven Procedure A
+  Proven; whether a platform gap must mark it is a human decision.
+- **Kind**: portability. **Severity**: medium (the rule still catches a token used from a
+  truly external address, but cannot tell an off-pod in-cluster source from the pod's own
+  on a managed control plane).
+- **Problem**: the discriminator is the LAST `sourceIPs` entry, the API server's TCP peer
+  (audit `apis/audit/v1` types.go: all but the last are client-settable). On kind and
+  self-managed kubeadm a pod reaches the API server over the pod network with the
+  kindnet/CNI LOCAL carve-out, so the peer is the pod IP (10.244.x) and a pod-CIDR
+  allowlist works (the repo fixtures and the live kind run record 10.244.x for an in-pod
+  call and 172.18.0.1 for the off-pod runner). On EKS/GKE/AKS the managed control plane is
+  reached through a konnectivity-style agent, a VPC/VNet load balancer, a private endpoint,
+  or node SNAT, so the peer the API server records is that intermediary, not the pod. A
+  pod's own in-cluster call and a token replayed from another node then both present an
+  in-fabric address, and the single-record compare cannot separate them; the operator
+  often cannot enumerate a stable pod CIDR for the allowlist either. The server-set
+  provenance marker (pod-name) is unaffected -- it is the SOURCE half of the compare that
+  degrades, the same honest limit as TRR9011 (EC2 instance credentials off-instance) and
+  TRR9022 (EKS IRSA used off-cluster).
+- **Evidence**: *probe* -- `sigma_eval.py` on the rule shows the anchored `|re` isolates
+  the LAST array element: `["198.51.100.23", "10.244.0.31"]` (an X-Forwarded-For prepend
+  with an in-cluster peer) does not fire, `["10.244.0.31", "198.51.100.23"]` fires, whereas
+  `sourceIPs|cidr` compiles to a first/whole-element `LIKE '10.244.%'` and is wrong for
+  both (it never matches the `[`-prefixed array text, so it would fire on the in-pod call
+  too). The live kind run proves Procedure A (off-pod 172.18.0.1) fires and the in-pod
+  baseline (10.244.x) stays quiet. The managed-platform source-IP behaviour is from the
+  providers' connectivity design (konnectivity / private endpoints / node SNAT) and is
+  **unverified** on a live managed cluster (no managed-cluster capture here; the same
+  backlog as the other platform entries).
+- **Fix**: on a managed cluster, use the portable credential-id value_count correlation
+  prototyped in the TRR (one `JTI=` credential-id seen from two or more distinct source
+  IPs within a window), which needs no CIDR parameter and keys on the server-set
+  credential-id marker. It is not shipped as a live-gated rule here because the repo's
+  correlation backend keys on a `timestamp` column that a Kubernetes audit record
+  (`requestReceivedTimestamp`) does not carry; wiring that mapping into the k8s validators
+  and the simulator is a shared-tooling change deferred to a human. Where the operator CAN
+  pin the in-fabric source set (a fixed NAT/LB egress, a known node CIDR), add it to the
+  allowlist, as on a self-managed cluster.
+- **Then**: no case changes.
+### K54. k8s_pod_controller_name_mimicry does not cover a generateName masquerade
+
+- **Rule**: [`sigma/T1036.005/k8s_pod_controller_name_mimicry.yml`](sigma/T1036.005/k8s_pod_controller_name_mimicry.yml) (level high).
+- **Kind**: false negative. **Severity**: medium (a real masquerade variant the rule
+  does not cover; the common explicit-name form is covered by branches A and C).
+- **Problem**: the rule keys on an EXPLICIT `objectRef.name` in the controller-generated
+  shape, which no controller create carries. An adversary can instead submit a bare pod
+  with `metadata.generateName: coredns-6f6b679f8f-` and let the API server append the
+  random suffix, which still produces a lookalike replica. But a real ReplicaSet
+  controller submits a byte-identical `generateName` (`<owner>-`, where `<owner>` already
+  carries the pod-template-hash), and both records carry NO `objectRef.name`. The only
+  server-trusted field that separates them is `user.username`, so a generateName rule
+  would need a per-site allowlist of the controller service accounts
+  (`system:serviceaccount:kube-system:replicaset-controller`, `daemon-set-controller`,
+  `job-controller`, and every platform add-on or custom controller that creates pods with
+  generateName). That allowlist is noisy and platform-specific, so no generateName branch
+  ships: it is a hunting signal, not a chokepoint. `metadata.ownerReferences` is not a
+  discriminator either (a client can forge it; the rule's
+  `positive_fake_owner_references` case proves a forged ownerReference does not change the
+  result).
+- **Evidence**: *source* — kubernetes v1.36.4
+  `pkg/controller/controller_utils.go` `GetPodFromTemplate` (`GenerateName: prefix`,
+  prefix = `<owner>-`) and `staging/src/k8s.io/apiserver/pkg/audit/request.go`
+  `LogRequestObject` (`if len(ae.ObjectRef.Name) == 0 { ae.ObjectRef.Name =
+  objMeta.GetName() }`, empty for a generateName create). *probe* — on a local
+  kube-apiserver v1.36.4 lab, a Deployment's `replicaset-controller` pod create recorded
+  `requestObject.metadata.generateName = lookalike-demo-65bb645ff8-`. That value has the
+  generateName prefix shape — the rule's ReplicaSet shape with the trailing `-<suffix 5>`
+  segment dropped, `^[a-z0-9.\-]+\-[bcdfghjklmnpqrstvwxz2456789]{6,10}\-$` — so it does
+  NOT match the shipped `sel_name_replicaset` regex (which ends
+  `...{6,10}\-[bcdfghjklmnpqrstvwxz2456789]{5}$`, requiring the trailing suffix), which is
+  why the rule stays quiet on it. A generateName rule keyed on that prefix shape, with no
+  `objectRef.name` and `user.username` not `system:node:*`, would instead fire on every
+  real controller create. The sidecar `confounder_controller_create` case holds that real
+  record and the shipped rule stays quiet on it. **unverified** against a managed
+  cluster's controller identities.
+- **Fix**: none that keeps a 0 false-positive budget. A separate, site-tuned hunting rule
+  could match a controller-shaped `generateName` from a user outside a controller-SA
+  allowlist; mapping and shipping that allowlist is a human decision (the SigmaHQ /
+  Falco / GKE prior art does not solve it either). Until then, a generateName masquerade
+  is a documented gap.
+- **Then**: a `k8s_pod_controller_name_mimicry` change that adds a generateName branch
+  ships with its own benign-corpus budget and an identity allowlist, and a positive and a
+  filtered case (a real controller create) that prove it.
+
+### K55. k8s_pod_controller_name_mimicry: the name-shape regex is not portable to GKE
+
+- **Rule**: [`sigma/T1036.005/k8s_pod_controller_name_mimicry.yml`](sigma/T1036.005/k8s_pod_controller_name_mimicry.yml) (level high).
+- **Kind**: portability. **Severity**: low (GKE ships its own equivalent control).
+- **Problem**: GKE's audit log records `objectRef.name` inside
+  `protoPayload.resourceName`, the object PATH (for example
+  `core/v1/namespaces/kube-system/pods/kube-proxy-x7k2q`), not a bare name field. The GKE
+  pipeline therefore maps `objectRef.name` to exact string values only and cannot apply
+  the rule's controller-shaped name regex (`sel_name_replicaset.objectRef.name`,
+  `sel_name_daemonset.objectRef.name`): an anchored `^<base>-<hash>-<suffix>$` pattern
+  does not match the path-prefixed `resourceName`. AKS is not affected (its `ObjectRef`
+  object text carries the bare name, so the regex converts). The rule is proven on the lab
+  (upstream Kubernetes v1.36.4 audit log), where `objectRef.name` is a first-class field.
+- **Evidence**: *check_provider_mappings* —
+  [`check_provider_mappings.py`](check_provider_mappings.py) `--check` reports
+  `[gke] T1036.005/k8s_pod_controller_name_mimicry.yml` NOT PORTABLE for both name items
+  (`GKE pipeline: only string values map here, got SigmaRegularExpression(...)`); the
+  `("gke", ...)` entry in `NOT_PORTABLE` is the human-approved record. AKS is `SAME`.
+- **Fix**: none in Sigma: GKE's `resourceName` encoding does not expose a bare pod name to
+  match a shape against. On GKE, use Event Threat Detection
+  'Defense Evasion: Potential Kubernetes Pod Masquerading', which this rule backstops on
+  EKS, AKS and self-managed clusters.
+- **Then**: n/a (a platform encoding limitation, not a rule change).
+### K58. k8s_service_exposed_nodeport_loadbalancer is blind where core Service writes stay at Metadata (OpenShift Default, k3s starter)
+
+- **Scope**: [`sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml`](sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml)
+  (level medium), TRR9033 Procedures A, B and C, on OpenShift 4.17 and 4.18 **Default**
+  (not WriteRequestBodies) and the **k3s starter** policy. As the platform entries K38
+  to K42 and K47 do, this entry names its rule in a **Scope** bullet, not in a Rules
+  bullet, so `research/tools/coverage_report.py` does not mark the lab-proven procedures
+  as open defects; whether a platform gap must mark them is a human decision. On the kind
+  lab, and on EKS, GKE, AKS and the self-managed `recommended` policy, the rule is full.
+- **Kind**: portability, policy gap. **Severity**: medium (the exposure the rule exists
+  for leaves a body-less record on these platforms, and no rule change can help; the
+  platform's published policy decides, and the user can change it only on self-managed
+  OpenShift or k3s).
+- **Problem**: the rule's discriminator is `spec.type` (NodePort or LoadBalancer), which
+  a record carries only in `requestObject` (Request and up) or `responseObject`
+  (RequestResponse). OpenShift's Default audit profile and the k3s starter policy log
+  core-group writes at Metadata only, with no request or response body. So a Service
+  create, update or patch is recorded (who, what, where), but `spec.type` is absent, and
+  the rule matches nothing. EKS (CloudWatch), GKE, AKS (both categories) and the repo's
+  `recommended` policy log core writes at RequestResponse, where the rule is full. A
+  JSON patch of `/spec/type` (Procedure C) needs the response body, so it is blind on
+  any profile below RequestResponse even where a create's request body is kept.
+- **Evidence**: *simulator* — [`k8s/policy_coverage.json`](k8s/policy_coverage.json) and
+  [`k8s/PLATFORMS.md`](k8s/PLATFORMS.md) (`k8s_policy_coverage.py`, the policy texts in
+  [`k8s/provider-policies/`](k8s/provider-policies/SOURCES.md)): the rule is **full** 3/3
+  on `lab-apiserver`, EKS, both GKE profiles, all four AKS categories, both OpenShift
+  WriteRequestBodies profiles and `recommended`; **blind** 0/3 (`body-removed 3`) on
+  `openshift-default` (4.18), `openshift-default-4.17` and `k3s-starter`. A published
+  policy is not a capture, so this is **unverified** on a live cluster.
+- **Fix**: none in the rule (no rule matches a body a policy does not record). Compensating
+  control: on self-managed OpenShift set the audit profile to WriteRequestBodies (or an
+  AllRequestBodies custom profile) for core Services, and on k3s run the `recommended`
+  policy; on a managed platform that already logs core writes at RequestResponse (EKS,
+  GKE, AKS) the rule needs no change.
+- **Then**: the rule is full on any profile that records the Service write body; the
+  Scope bullet names the platforms where it is not.
+
+### K59. k8s_service_exposed_nodeport_loadbalancer: update and patch fire on a re-assertion of an already-exposed Service
+
+- **Rule**: [`sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml`](sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml) (level medium).
+- **Kind**: false positive, description. **Severity**: medium (routine on a cluster whose
+  GitOps or Helm tooling re-applies LoadBalancer or NodePort Services, where core writes
+  are logged with a body).
+- **Problem**: the rule fires on a create, update or patch whose `spec.type` is NodePort
+  or LoadBalancer. One audit record cannot tell a *change to* an exposing type from a
+  *re-assertion* of one that is already set: a server-side apply, a PUT (`kubectl replace`
+  / `kubectl apply`) or a merge patch of a Service that is already LoadBalancer carries
+  `spec.type: LoadBalancer` again, exactly as a first exposure does. So an Argo CD or Flux
+  sync, or a `helm upgrade`, that re-applies an already-exposed front-end Service fires
+  the update/patch branch on every reconcile. A **create** is unambiguous (the Service is
+  exposed by that write). The repo benign corpus scores this rule 0 only because its
+  Service events are Metadata-level patches with no `spec.type`
+  ([`benign/slices/kubernetes/k8s-audit-gitops-ci.json`](benign/slices/kubernetes/k8s-audit-gitops-ci.json));
+  a corpus slice of RequestResponse LoadBalancer re-applies would score it above 0, and
+  is a human decision (not added here).
+- **Evidence**: *probe* (`sigma_eval.py` on the current rule): a PUT re-asserting an
+  already-LoadBalancer Service
+  (`verb=update`, `requestObject.spec.type=LoadBalancer`, `responseObject.spec.type=LoadBalancer`)
+  fires; a server-side apply re-asserting LoadBalancer (`verb=patch`, both bodies
+  LoadBalancer) fires; a ClusterIP re-apply (`verb=update`, both bodies ClusterIP) does
+  not. The rule's `falsepositives` names this limit, and the TRR Detection Strategy states
+  it as an accepted approximation.
+- **Fix**: none that one record supports: the record does not carry the prior
+  `spec.type`. Triage by whether the Service was internal before (a two-event correlation
+  on the same object, or an external store of prior state), and baseline the GitOps and
+  Helm identities and the controllers that manage ingress Services by `user.username` and
+  `user.groups`. A create stays a high-confidence signal.
+- **Then**: a future update/patch branch that keys on a true type *change* (prior state
+  from a correlation or an external store) ships with a positive for a real change and a
+  filtered or confounder case for a re-assertion.
+### K60. k8s_csr_client_cert_minted: subject ungradable and self-approval non-portable
+
+- **Rule**: [`sigma/T1098.006/k8s_csr_client_cert_minted.yml`](sigma/T1098.006/k8s_csr_client_cert_minted.yml) (level medium).
+- **Kind**: portability, description. **Severity**: low (two disclosed limits of a
+  backstop rule; the rule still fires on the create and approve chokepoint).
+- **Problem**: TRR9035's rule is honestly weaker than TRR9025 / TRR9027 — it carries no
+  content grader — because of two things pySigma cannot express:
+  1. **The requested subject is not Sigma-gradable.** The CN and O that become the
+     Kubernetes user and groups live only inside the DER PKCS#10 CSR in
+     `requestObject.spec.request`, which is base64 of a line-wrapped PEM. pySigma cannot
+     base64-then-DER decode it, so the rule cannot tell a `system:masters`-equivalent
+     subject from an ordinary one. (GKE Event Threat Detection does this by decoding in
+     ES|QL.) The highest-value subject is in any case refused at create: the default
+     `CertificateSubjectRestriction` admission plugin rejects a
+     `kubernetes.io/kube-apiserver-client` CSR that requests the `system:masters` group
+     (kubernetes v1.36.4
+     `plugin/pkg/admission/certificates/subjectrestriction/admission.go` L84-87). So the
+     realistic attack targets a lower-privilege subject that maps to an
+     already-privileged identity, which no Sigma rule can grade.
+  2. **Self-approval is not portably expressible.** The highest-fidelity signal —
+     approver (`user.username` on the approval record) equal to the requester
+     (`spec.username`, server-set on create) — needs a Sigma field reference. It fires
+     correctly in `sigma_eval` (SQLite), but the Elasticsearch Lucene and EQL backends
+     raise `SigmaFeatureNotSupportedByBackendError` and Splunk defers, so a portable
+     single rule cannot pair the two legs. The rule ships the two legs as two selections
+     and leaves pairing to a correlation or triage.
+- **Evidence**: *source* — the subject-restriction plugin cited above, and
+  kubernetes v1.36.4 `staging/src/k8s.io/apiserver/pkg/authentication/request/x509/x509.go`
+  `CommonNameUserConversion` L294/L296 (the CN is the username, each O a group). *lab* — on
+  a local kube-apiserver v1.36.4 lab a
+  `kubernetes.io/kube-apiserver-client` CSR requesting the `system:masters` group was
+  refused with 403 "use of kubernetes.io/kube-apiserver-client signer with
+  system:masters group is not allowed"; an ordinary-subject CSR was accepted (201) and
+  its approval recorded no `signerName` (Metadata level), so no body is available on the
+  approve leg. *case* — the sidecar positive `client-cert-csr-approve-procB` is in fact
+  a self-approval, and its `why` records that the rule fires on it only as a generic
+  non-system approval, not as a verified self-approval.
+- **Fix**: none portable. A SIEM that can base64/DER-decode (ES|QL) can add a subject
+  grader; a backend that supports field references can add a self-approval correlation.
+  Either is a per-platform add-on, not a change to this portable rule.
+- **Then**: the rule stays the create/approve chokepoint; a human who accepts a
+  non-portable rule can add the subject grader or the fieldref self-approval check.
+
 ## Cloud (AWS, Azure, GCP)
 
 ### C6. gcp_workforce_principalset_privileged_binding: where the privileged-role tier ends
@@ -1860,6 +2218,66 @@ the current ones.
   `sqs-public-allow-scoping-key-as-condition-value`,
   `efs-public-allow-scoping-key-as-condition-value`.
 - **Fix**: decode the policy JSON in the log pipeline and test each statement.
+
+### K56. aws_eks_access_entry_cluster_admin_policy: a namespace-scoped secrets grant is missed
+
+- **Rule**: [`sigma/T1098.006/aws_eks_access_entry_cluster_admin_policy.yml`](sigma/T1098.006/aws_eks_access_entry_cluster_admin_policy.yml) (level high).
+- **Kind**: false negative. **Severity**: medium.
+- **Problem**: the graded rule requires `requestParameters.accessScope.type: cluster`. A
+  grant of a reads-Secrets policy (`AmazonEKSSecretReaderPolicy`, `AmazonEKSAdminViewPolicy`,
+  `AmazonEKSEditPolicy`, ...) scoped to a sensitive namespace such as `kube-system` still
+  reads that namespace's Secrets (service-account tokens, TLS keys) but trips only the
+  medium chokepoint rule `aws_eks_access_entry_write.yml`, not this high rule. One
+  CloudTrail `AssociateAccessPolicy` record cannot weigh one namespace against another: an
+  allowlist of "sensitive namespaces" would be deployment-specific and attacker-evadable
+  (the attacker scopes to whichever namespace holds the target Secret).
+- **Evidence**: probe — the attack fixture's `AssociateAccessPolicy` of
+  `AmazonEKSSecretReaderPolicy` at cluster scope, rewritten with `accessScope.type:
+  namespace` and `accessScope.namespaces: ["kube-system"]`, fires the chokepoint rule but
+  not the graded rule (`sigma_eval.py`; see [Reproducing a probe](#reproducing-a-probe)).
+  The graded sidecar near-miss `namespace-scope-breaks-scope` already shows that flipping
+  `accessScope.type` to `namespace` (ClusterAdmin case) stops the graded rule firing.
+- **Fix**: a per-deployment list of sensitive namespaces feeds a graded namespace tier (a
+  second rule, or a SIEM enrichment field). Until then, baseline the IAM principals that
+  manage access entries and triage chokepoint hits whose `accessScope.namespaces` names a
+  sensitive namespace.
+
+### K57. aws_eks_access_entry_cluster_admin_policy: no safe Sigma predicate for a cross-account grant
+
+- **Rule**: [`sigma/T1098.006/aws_eks_access_entry_cluster_admin_policy.yml`](sigma/T1098.006/aws_eks_access_entry_cluster_admin_policy.yml) (level high).
+- **Kind**: false negative (documented). **Severity**: low.
+- **Problem**: a `STANDARD` access entry may name a principal in another AWS account, and
+  granting such an external principal standing access is a distinct, higher-suspicion
+  signal. Any `contains`-family test that the recipient account ID is a substring of
+  `principalArn` (the dynamic `principalArn|fieldref|contains: recipientAccountId`, or the
+  literal `principalArn|contains: '<home-account>'`) goes **quiet** when the attacker names
+  its own role with the victim account ID (`role/trr9032-123456789012-ext`): the ID is then
+  a substring of `principalArn`, the filter matches, and `not filter` drops the record. So
+  no `contains` provenance predicate raises fidelity on the cross-account form safely. (A
+  cross-account grant of a cluster-admin / reads-Secrets policy **at cluster scope** still
+  fires the graded rule, which reads no account field; and any cross-account access-entry
+  write fires the chokepoint. The gap is only the *cross-account elevation* of an otherwise
+  low-tier grant.)
+- **Evidence**: probe (`sigma_eval.py`; see [Reproducing a probe](#reproducing-a-probe)) on
+  records with `recipientAccountId` `123456789012` and the URL-encoded `principalArn` an
+  `AssociateAccessPolicy` carries. The **real `|fieldref` form runs here** — pySigma's SQLite
+  backend compiles `requestParameters.principalArn|fieldref|contains: recipientAccountId` to a
+  column-reference comparison (`requestParameters.principalArn LIKE '%' || ... recipientAccountId
+  ... || '%'`): `sel and not (requestParameters.principalArn|fieldref|contains:
+  recipientAccountId)` fires on an off-account role
+  (`...%3A210987654321%3Arole%2Ftrr9032-ext`) but stays silent on the embedded-ID evasion
+  (`...%3A210987654321%3Arole%2Ftrr9032-123456789012-ext`), because the victim ID is then a
+  substring of `principalArn`. The equivalent literal `principalArn|contains: '123456789012'`
+  has the identical flaw. The portable sound form (below) catches the embedded-ID evasion and
+  stays silent on the org accounts.
+- **Fix**: read only the account field of the (URL-encoded) ARN at the Sigma **condition**
+  level — a selection `principalArn|re: 'arn%3Aaws%3Aiam%3A%3A[0-9]{12}%3A'` minus a filter
+  `principalArn|re: 'arn%3Aaws%3Aiam%3A%3A(<org-account-1>|<org-account-2>)%3A'` of the org's
+  own account IDs (`sel_external and not filter_org_accounts`). Both patterns are in the
+  enforced portable `|re` subset (no `(?` group), so they pass `check_sigma_regex --require-re2`
+  and compile under Python `re` and RE2 — unlike a `(?!...)` negative-lookahead anchor, which
+  RE2 and `check_sigma_regex` reject. The org-account allowlist is operator-specific, so this
+  form is documented, not shipped. Baseline external-account principal ARNs on access entries.
 
 ## Checks to add
 

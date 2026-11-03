@@ -1065,7 +1065,7 @@ telemetry, so this repository records the layer as out of scope (vetted NO-GO,
 2026-10-20, in the technique-selection ledger). Falco's stable, incubating and sandbox
 rules are the reference there.
 
-## Kubernetes API server detections (TRR9004–9010, 9025–9027)
+## Kubernetes API server detections (TRR9004–9010, 9025–9031, 9033–9035)
 
 Several more Kubernetes techniques key on the same API server **audit log**, so one
 shared `kind` cluster, one audit policy (`k8s/audit-policy-apiserver.yaml`), one
@@ -1084,6 +1084,13 @@ validator (`validate_apiserver_detections.py`), and one workflow
 | TRR9025 | Malicious admission webhook (T1546) | `sigma/T1546/k8s_admission_webhook_created.yml` + a create grader and a repoint grader | Request (RequestResponse for update/patch) |
 | TRR9026 | Pod port-forward (T1572) | `sigma/T1572/k8s_pod_portforward.yml` (verb-agnostic subresource) + a nodes/proxy `/portForward/` rule | Metadata |
 | TRR9027 | Cluster DNS poisoning (T1565.001) | `sigma/T1565.001/k8s_coredns_configmap_modified.yml` + a Corefile grader | Metadata + RequestResponse (the three DNS ConfigMaps) + Request (kube-system ConfigMap creates; drop that rule where Helm stores releases in kube-system ConfigMaps); OpenShift (E, F): RequestResponse for `openshift-dns/dns-default` update/patch/delete and `dnses.operator.openshift.io` update/patch, Request for `openshift-dns` ConfigMap creates and `dnses` create/delete/deletecollection |
+| TRR9028 | Storage destruction (T1485) | `sigma/T1485/k8s_storage_volume_deleted.yml` (PVC/PV delete/deletecollection chokepoint; storage controllers filtered by identity) + `k8s_volume_reclaim_set_to_delete.yml` (a PV patch that sets the reclaim policy to Delete) | Metadata to fire; PVC/PV deletes at Request, so a dry run's DeleteOptions body is in the record; PV update/patch at Request for the reclaim grader |
+| TRR9029 | Inhibit recovery (T1490) | `sigma/T1490/k8s_snapshot_or_backup_destroyed.yml` (one chokepoint: snapshot/Velero deletes + DeleteBackupRequest create) | Metadata (the snapshot.storage.k8s.io and velero.io CRDs log at the catch-all; no body row needed) |
+| TRR9030 | Pod-bound SA token off its source (T1528) | `sigma/T1528/k8s_pod_token_used_off_source.yml` (the `pod-name` provenance marker vs the last `sourceIPs` entry) | Metadata (the markers and `sourceIPs` are request attributes on every record; no body) |
+| TRR9031 | Lookalike pod name (T1036.005) | `sigma/T1036.005/k8s_pod_controller_name_mimicry.yml` (a bare pod created with an explicit controller-shaped name by a non-node caller) | Metadata (the rule reads only objectRef/user/verb); pods create is at Request in the lab and recommended policies, which the validator's Procedure C gate uses for its `trr9031` label marker |
+| TRR9033 | Service exposure (T1133) | `sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml` (NodePort/LoadBalancer `spec.type`) | RequestResponse for core `services` create/update/patch (the create carries the body at Request; the JSON-patch form needs the stored object); `services/status` stays at the Metadata catch-all (the controller confounder) |
+| TRR9034 | Malicious image via an admission-policy verdict (T1204.003) | `sigma/T1204.003/k8s_admission_policy_image_violation.yml` (a policy-agnostic forwarder of a ValidatingAdmissionPolicy verdict on a workload: the `validation_failure` Audit annotation or the `denied request` Deny message) | Metadata (both markers; no body row needed, the existing pods/controllers Request rows carry them) |
+| TRR9035 | CSR client-cert persistence (T1098.006, T1136) | `sigma/T1098.006/k8s_csr_client_cert_minted.yml` (create scoped by `signerName` + approve of the approval subresource) | Request for the `certificatesigningrequests` create (so `spec.signerName` is logged; the public CSR carries no key), Metadata for the `certificatesigningrequests/approval` update |
 
 The audit **level** is per technique: pods, workload controllers, RBAC, and
 admission-webhook creates are logged at `Request` so `requestObject` carries the

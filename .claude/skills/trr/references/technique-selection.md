@@ -211,8 +211,17 @@ reasoning survives. Append an entry per vet; keep it short.
   trustworthy entry and survives XFF prepending. Q4: nearest prior art Elastic 'Service Account Token or
   Certificate Access Followed by Kubernetes API Request' + 3 D4C sequences join on pod-name but need a runtime
   sensor and never compare markers to sourceIPs or key on credential-id/node-name; SigmaHQ/Splunk/Falco ship
-  none. Use-side sibling of TRR9006 (Procedure E gap) and k8s sibling of TRR9022. Deferred to build as TRR9030
-  (k8s), detections/sigma/T1528/.
+  none. Use-side sibling of TRR9006 (Procedure E gap) and k8s sibling of TRR9022. **Built as TRR9030**
+  (k8s, detections/sigma/T1528/k8s_pod_token_used_off_source.yml): the single-record off-source rule
+  (pod-name marker vs the anchored last sourceIPs entry) is shipped and proven live on kind (Procedure A fires
+  from the off-pod runner 172.18.0.1; the in-pod baseline from 10.244.x stays quiet, the 9030 B absence check);
+  0 benign-corpus hits (every corpus pod-bound record is pod-IP sourced). AKS converts SAME; GKE is NOT_PORTABLE
+  (AuditLog records principalEmail only, no user.extra, and one callerIp, not the sourceIPs array). DROPPED from
+  the ship: detection (2), the credential-id value_count correlation, is prototyped and proven in sigma_eval but
+  NOT shipped as a live rule -- the repo's correlation backend keys on a `timestamp` column that a k8s audit
+  record (requestReceivedTimestamp) does not carry (a shared-tooling change, a human decision). The
+  managed-cluster single-record degradation is RULE_DEFECTS K53; the hostNetwork node-IP false positive is
+  in the rule's falsepositives.
 
 - **CSR client-certificate persistence (T1098.006/T1136) — LEAN-GO as a disclosed backstop (Q4 trodden; two
   proven build limits).** Q1 PASS: server-set objectRef.resource=certificatesigningrequests, verb=create,
@@ -230,6 +239,17 @@ reasoning survives. Append an entry per vet; keep it short.
   than TRR9025/9027 (no content grader possible). Deferred to build as TRR9035 (k8s),
   detections/sigma/T1098.006/, as a disclosed backstop; the subject grader and the fieldref self-approval check
   are dropped unless a human accepts a non-portable rule.
+  **Built as TRR9035** (detections/sigma/T1098.006/k8s_csr_client_cert_minted.yml, status experimental).
+  Shipped: the bare create/approve chokepoint — the create leg scoped by signerName
+  kubernetes.io/kube-apiserver-client (proven on a v1.36.4 lab; the kube-apiserver-client-kubelet and
+  kubelet-serving node CSRs, which differ only on signerName, are the hard near-misses), the approve leg on
+  objectRef.subresource=approval + verb=update with a `not system:*` approver filter (the csrapprover
+  auto-approval is the filtered case). Null-safe. Both legs proven live on the local kube-apiserver lab and
+  wired into validate-apiserver (MANIFEST 9035 A-B, atomics/T1098.006/src/emulate_csr.sh). Dropped as proven,
+  per the two limits: the subject grader (not Sigma-expressible — and v1.36.4's CertificateSubjectRestriction
+  admission plugin refuses a kube-apiserver-client CSR requesting system:masters, confirmed 403 on the lab) and
+  the fieldref self-approval check (non-portable). Both limits recorded in RULE_DEFECTS.md K60. No
+  CHOKEPOINT waiver was needed: the signerName discriminator makes check_sufficiency pass without one.
 
 - **ServiceAccount create, incl. kube-system / lookalike names (T1136.001/T1036.010) — NO-GO (Q3, reinforced by
   Q2+Q4).** Server-set markers (verb=create, objectRef.resource=serviceaccounts, apiGroup='') are non-spoofable
@@ -282,7 +302,21 @@ reasoning survives. Append an entry per vet; keep it short.
   'any access-entry write' is pure-surface and needs a human CHOKEPOINT entry. Q4: Elastic ships three rules
   (cluster-admin policy at any scope, any access-entry write, create-then-delete EQL); SigmaHQ has none. The
   difference is scope grading, every policy that reads Secrets, and Sigma. Note: `principalArn` is URL-encoded
-  in AssociateAccessPolicy. Deferred to build as TRR9032 (aws).
+  in AssociateAccessPolicy. **Built as TRR9032 (aws).** Two rules:
+  `aws_eks_access_entry_cluster_admin_policy.yml` (graded, high — `AssociateAccessPolicy` of a reads-Secrets/admin
+  policy at `accessScope.type: cluster`, null-safe `errorCode`) and `aws_eks_access_entry_write.yml` (surface
+  chokepoint, medium — any access-entry write; human-approved `CHOKEPOINT` waiver). The reads-Secrets set was pinned
+  from the awsdocs access-policy-reference at commit `8d43223` (2026-09-16): the **nine** AWS-managed cluster-access
+  policies that read Secrets and are associable to a customer principal — ClusterAdmin, Admin, AdminView, Edit,
+  SecretAdmin, SecretReader, ArgoCDPolicy (core `secrets` or `*`), **and** AWSBackupFullAccessPolicyForBackup /
+  AWSBackupFullAccessPolicyForRestore (`*`/`*` read; the two AWSBackup policies were added in round-1 review after the
+  pinned source showed they read every Secret and carry no service-linked restriction). ArgoCDClusterPolicy, ViewPolicy,
+  ACKPolicy and KROPolicy read no core Secrets; ClusterInsights is service-linked-only. Proven by
+  `validate_cloud_detections.py` over committed CloudTrail fixtures. **Dropped**: the namespace-scoped-secrets tier
+  (one record cannot weigh namespaces; K56) and the cross-account provenance predicate (the real
+  `principalArn|fieldref|contains: recipientAccountId` form runs on `sigma_eval` and its embedded-victim-ID evasion was
+  reproduced; the sound fix is a portable `sel_external and not filter_org_accounts` `|re` pair needing a
+  per-deployment org-account allowlist; K57) — both documented, not shipped.
 
 - **Service exposure through NodePort / LoadBalancer (T1133, MS-TA9005) — LEAN-GO (question 2 backstop; question
   4 differentiated).** Q1 PASS: `requestObject.spec.type` is an API enum the attacker must set to expose
@@ -297,7 +331,17 @@ reasoning survives. Append an entry per vet; keep it short.
   stored-object branch fires on services/status unless `objectRef.subresource` is excluded (the service
   controller patches only `status`, cloud-provider helper.go:142). Q4: the bare NodePort create is trodden
   (Elastic, Splunk, Panther, Falco), but no open rule set covers LoadBalancer, and SigmaHQ has no Service rule.
-  Deferred to build as TRR9033 (k8s), a chokepoint plus a sensitive-interface grader.
+  Built as TRR9033 (k8s): one chokepoint rule
+  `detections/sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml` on `spec.type`
+  NodePort/LoadBalancer in `requestObject` (A: NodePort create, B: LoadBalancer create)
+  or `responseObject` (C: JSON patch of `/spec/type`, which Elastic's request-only shape
+  misses), with `objectRef.subresource == status` excluded (the service/cloud controller
+  confounder) and null-safe. Dropped: the sensitive-interface grader (kept as a severity
+  note, not a brittle namespace/port allowlist that ages; GuardDuty / Defender cover that
+  closed slice). Stated limits: update/patch cannot tell a type change from a re-assertion
+  (RULE_DEFECTS.md K59), and the rule is blind where core writes stay at Metadata
+  (OpenShift Default, k3s starter; K58). A services RequestResponse row was added to
+  the lab and recommended audit policies.
 
 - **Credentials in ConfigMaps / pod configuration read through the API (T1552, MS-TA9027) — NO-GO (questions 1
   and 3, reinforced by log-exposure risk).** No field scopes a ConfigMap read to one that holds a credential:
@@ -325,6 +369,35 @@ reasoning survives. Append an entry per vet; keep it short.
   policy to Delete covers the 'make it destructive' step. `kubectl delete backup` is not destructive, because
   Velero's backup sync re-creates the CR. Deferred to build as two TRRs, TRR9028 (T1485) and TRR9029 (T1490);
   the chokepoints need human CHOKEPOINT waivers.
+  Built as TRR9028 (the T1485 half: PVC and PV deletes). Shipped: the chokepoint
+  `detections/sigma/T1485/k8s_storage_volume_deleted.yml` (delete/deletecollection of
+  core persistentvolumeclaims/persistentvolumes by a non-controller, filtering the
+  namespace-controller deletecollection, generic-garbage-collector, persistent-volume-binder
+  and the kind local-path provisioner by `user.username`; a CHOKEPOINT waiver, proposed)
+  and the Request-level grader `k8s_volume_reclaim_set_to_delete.yml` (a PV patch that sets
+  `persistentVolumeReclaimPolicy` to `Delete`). Dropped/deferred: the one-record reclaim
+  gap is unchanged and recorded as K49 (a delete record carries no reclaim policy, so
+  the grader covers the policy-flip step only); the identity filters' stolen-token evasion
+  and the managed-platform CSI-provisioner baseline are K50; no `deletionPolicy` on
+  volumesnapshotcontents here (that is the T1490/TRR9029 half, built in parallel). Prior
+  art re-checked at build time: still no PVC/PV deletion rule in SigmaHQ, Elastic, Splunk
+  or Falco k8saudit, and no Stratus/ART test; provider-native findings remain unverified
+  (AWS/GCP docs unreachable).
+  Built as TRR9029 (T1490 half): one chokepoint rule
+  `detections/sigma/T1490/k8s_snapshot_or_backup_destroyed.yml` over five procedures -- delete a
+  VolumeSnapshot (A), delete a cluster-scoped VolumeSnapshotContent (B), delete a Velero Schedule (C), delete a
+  Velero BackupStorageLocation (D), create a Velero DeleteBackupRequest (E, the real backup-deletion path; a
+  `backups` delete is explicitly NOT covered because backup sync re-creates it). Filters verified from
+  external-snapshotter v8.7.0 and velero v1.18.4 source: the snapshot-controller on volumesnapshotcontents
+  deletes, and the velero server (GC + backup-deletion controller). Positives are real v1.36.4 lab records; the
+  rule is Metadata-only, so no audit-policy body row was added, and it is portable across every modeled managed
+  policy (on GKE only the dry-run query filter is dropped, requestURI not in schema). CHOKEPOINT waiver added as
+  a proposed human decision (pure-surface). The velero-server filter is scoped to the resources it churns
+  (deletebackuprequests, volumesnapshots, volumesnapshotcontents), so a velero-SA Schedule/BSL delete still
+  fires. Dropped nothing from the T1490 scope; the reclaimPolicy/deletionPolicy enrichment gap and the
+  body-form dry-run FP (kubectl's default `--dry-run=server` delete puts dryRun in the unlogged DeleteOptions
+  body, so at Metadata its record is indistinguishable from a real delete and the rule fires -- an accepted FP,
+  K52) are documented. The T1485 half is TRR9028.
 
 - **Lookalike workload names (T1036.005) — LEAN-GO (Q1 and Q3 pass on a narrowed chokepoint; Q2 is GKE-native;
   respects the T1610 NO-GO).** Controllers create pods only with `generateName`
@@ -336,7 +409,15 @@ reasoning survives. Append an entry per vet; keep it short.
   controllers, mirror pods and scheduler bindings, and it fires on pods/exec. It does not key on the image
   either (Falco 'Pod Created in Kube Namespace'). GKE Event Threat Detection ships 'Defense Evasion: Potential
   Kubernetes Pod Masquerading'. Not covered: a lookalike Deployment or DaemonSet (its pods are real controller
-  creates) and typosquats. Deferred to build as TRR9031 (k8s).
+  creates) and typosquats. **Built as TRR9031 (k8s).** Shipped `k8s_pod_controller_name_mimicry.yml` with two
+  branches, both keyed on an EXPLICIT `objectRef.name` (which no controller create carries): A, the ReplicaSet
+  shape `-<hash 6-10>-<5>` in any namespace; C, the DaemonSet/Job shape `-<5>` in a control-plane namespace
+  (`node-debugger-*` and `system:node:*` filtered). Scores 0/2666 on the benign corpus. Dropped: the vet's
+  generateName branch (B). A real ReplicaSet controller's `generateName` (`<owner>-`, e.g.
+  `coredns-6f6b679f8f-`) is byte-identical to an adversary's fake-hash generateName, both with no
+  `objectRef.name`, confirmed on a kube-apiserver v1.36.4 lab; the only server-trusted discriminator is a
+  per-site controller-SA allowlist, so it is a documented gap (RULE_DEFECTS.md K54), not a shippable
+  chokepoint. A lookalike controller and typosquats remain stated gaps.
 
 - **Malicious image via an admission-policy verdict (T1204.003) — LEAN-GO (narrow; survives the T1610 NO-GO only
   as a forwarder of policy verdicts).** For a ValidatingAdmissionPolicy binding with `validationActions` Audit,
@@ -348,8 +429,17 @@ reasoning survives. Append an entry per vet; keep it short.
   PolicyReports, Gatekeeper audit, Defender gated deployment, and GKE Binary Authorization. Falco exposes
   `ka.validations.admission.policy.failure` but ships no rule; SigmaHQ, Elastic and Splunk have none.
   Kyverno-generated VAPs map Audit to [Audit, Warn]; webhook-based image verifiers leave no such annotation.
-  Deferred to build as TRR9034 (k8s), after TRR9031, as a policy-agnostic anchor with a reference VAP. Mapping
-  and shipping the policy are human decisions.
+  **Built as TRR9034 (k8s).** Re-pinned at v1.36.4: the annotation key and the denied-request message are
+  unchanged (apiserver dispatcher.go:312, :294), both at Metadata, and Deny is code 422 (reason Invalid). Built a
+  single policy-agnostic rule
+  (`detections/sigma/T1204.003/k8s_admission_policy_image_violation.yml`), scoped to workload resources, with two
+  branches: the Audit event annotation (value contains `"validationActions":[`) and the Deny responseStatus
+  message. Procedures A (Audit annotation), B (Deny 422 message) and C (a Deployment whose replicaset-controller
+  pod carries the annotation) with a reference VAP + two bindings the atomic installs; the allowed digest image is
+  the hard benign control. Dropped by decision: a pure Warn-only binding leaves no audit marker (documented gap),
+  and the Deny branch is NOT portable to GKE (responseStatus.message absent from Cloud Audit Logs; a NOT_PORTABLE
+  human-approval entry). Not keyed on the image string (survives the T1610 NO-GO). Mapping and shipping a real
+  image policy remain human decisions.
 
 - **Container-runtime lane (shells, drift, miners, IMDS from pods, escape primitives beyond setns) — NO-GO for
   now (question 1 for auditd, plus questions 2 and 3); recorded as out of scope, with Falco as the reference

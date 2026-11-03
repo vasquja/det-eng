@@ -1,0 +1,134 @@
+{
+  "style": {
+    "font-family": "sans-serif",
+    "background-color": "#ffffff",
+    "node-color": "#ffffff",
+    "border-width": 4,
+    "border-color": "#000000",
+    "radius": 50,
+    "outside-position": "auto",
+    "caption-font-size": 16,
+    "label-font-size": 14,
+    "label-border-width": 2,
+    "property-font-size": 14,
+    "arrow-width": 5,
+    "arrow-color": "#000000",
+    "type-font-size": 16
+  },
+  "nodes": [
+    {
+      "id": "n0",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "caption": "EKS access-entry backdoor detection",
+      "labels": [],
+      "properties": {
+        "chokepoint": "AssociateAccessPolicy, CloudTrail"
+      },
+      "style": {
+        "border-color": "#000000",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top"
+      }
+    },
+    {
+      "id": "n1",
+      "position": {
+        "x": 360,
+        "y": 0
+      },
+      "caption": "Cross-account STANDARD entry",
+      "labels": [],
+      "properties": {
+        "limit": "principalArn|fieldref contains evadable; sound form needs org-account allowlist"
+      },
+      "style": {
+        "border-color": "#9f9f9f",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "bottom"
+      }
+    },
+    {
+      "id": "n2",
+      "position": {
+        "x": 720,
+        "y": 0
+      },
+      "caption": "kubernetesGroups -> pre-existing binding",
+      "labels": [],
+      "properties": {
+        "gap": "e.g. system:masters: no RBAC write; only CreateAccessEntry (chokepoint)"
+      },
+      "style": {
+        "border-color": "#9f9f9f",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top"
+      }
+    },
+    {
+      "id": "n3",
+      "position": {
+        "x": 1080,
+        "y": 0
+      },
+      "caption": "Create-then-delete / data-plane",
+      "labels": [],
+      "properties": {
+        "gap": "correlation window; data events off by default"
+      },
+      "style": {
+        "border-color": "#9f9f9f",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "bottom"
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "id": "r0",
+      "fromId": "n0",
+      "toId": "n1",
+      "type": "not covered",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r1",
+      "fromId": "n0",
+      "toId": "n2",
+      "type": "not covered",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r2",
+      "fromId": "n0",
+      "toId": "n3",
+      "type": "not covered",
+      "properties": {},
+      "style": {}
+    }
+  ]
+}

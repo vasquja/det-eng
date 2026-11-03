@@ -21,6 +21,21 @@ run-name: ${{ inputs.label && format('{0} [{1}]', github.workflow, inputs.label)
 #   - TRR9027 (cluster DNS poisoning, T1565.001): kube-system DNS ConfigMap write + Corefile grade,
 #                                         and the OpenShift DNS objects (openshift-dns/dns-default,
 #                                         dnses.operator.openshift.io), emulated inert on kind
+#   - TRR9028 (storage destruction, T1485): PVC/PV delete/deletecollection chokepoint,
+#                                         and the PV reclaim-policy flip to Delete -> audit -> Sigma
+#   - TRR9029 (inhibit recovery, T1490): VolumeSnapshot/VolumeSnapshotContent and Velero
+#                                         Schedule/BackupStorageLocation deletes + DeleteBackupRequest
+#                                         create -> audit -> Sigma
+#   - TRR9030 (steal application access token, T1528): pod-bound SA token used off-source -> audit -> Sigma
+#   - TRR9031 (lookalike pod name, T1036.005): explicit controller-shaped pod name by a
+#                                         non-node caller -> audit -> Sigma
+#   - TRR9033 (service exposure, T1133): core Service create/update/patch whose spec.type is
+#                                         NodePort or LoadBalancer -> audit -> Sigma
+#   - TRR9034 (malicious image via admission-policy verdict, T1204.003): a workload the
+#                                         reference ValidatingAdmissionPolicy judged a violation
+#                                         (validation_failure annotation / deny message) -> audit -> Sigma
+#   - TRR9035 (CSR client-cert persistence, T1098.006/T1136): a kube-apiserver-client CSR
+#                                         create (signerName) + its approval -> audit -> Sigma
 #
 # A kind cluster runs on the ubuntu-latest runner with API server audit logging on
 # (pod creates, updates and patches; controller writes, deletes and deletecollections
@@ -77,6 +92,12 @@ on:
       - 'detections/sigma/T1546/**'
       - 'detections/sigma/T1572/**'
       - 'detections/sigma/T1565.001/**'
+      - 'detections/sigma/T1485/**'
+      - 'detections/sigma/T1490/**'
+      - 'detections/sigma/T1528/**'
+      - 'detections/sigma/T1036.005/**'
+      - 'detections/sigma/T1133/**'
+      - 'detections/sigma/T1204.003/**'
       - 'detections/validate_apiserver_detections.py'
       - 'detections/sigma_eval.py'
       - 'detections/sigma_explain.py'
@@ -91,6 +112,12 @@ on:
       - 'atomics/T1546/**'
       - 'atomics/T1572/**'
       - 'atomics/T1565.001/**'
+      - 'atomics/T1485/**'
+      - 'atomics/T1490/**'
+      - 'atomics/T1528/**'
+      - 'atomics/T1036.005/**'
+      - 'atomics/T1133/**'
+      - 'atomics/T1204.003/**'
       - '.github/workflows/validate-apiserver-detections.yml'
   # PRs always trigger this workflow (no paths: filter) so the required
   # `validate-apiserver` check ALWAYS reports a status. The `changes` job below
@@ -204,6 +231,12 @@ jobs:
             'detections/sigma/T1546/' \
             'detections/sigma/T1572/' \
             'detections/sigma/T1565.001/' \
+            'detections/sigma/T1485/' \
+            'detections/sigma/T1490/' \
+            'detections/sigma/T1528/' \
+            'detections/sigma/T1036.005/' \
+            'detections/sigma/T1133/' \
+            'detections/sigma/T1204.003/' \
             'detections/validate_apiserver_detections.py' \
             'detections/sigma_eval.py' \
             'detections/sigma_explain.py' \
@@ -218,6 +251,12 @@ jobs:
             'atomics/T1546/' \
             'atomics/T1572/' \
             'atomics/T1565.001/' \
+            'atomics/T1485/' \
+            'atomics/T1490/' \
+            'atomics/T1528/' \
+            'atomics/T1036.005/' \
+            'atomics/T1133/' \
+            'atomics/T1204.003/' \
             '.github/workflows/validate-apiserver-detections.yml')
           # Fail safe: if the diff cannot be computed, run the validator.
           if ! changed="$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}" 2>/dev/null)"; then
@@ -274,6 +313,12 @@ jobs:
             'detections/sigma/T1546/' \
             'detections/sigma/T1572/' \
             'detections/sigma/T1565.001/' \
+            'detections/sigma/T1485/' \
+            'detections/sigma/T1490/' \
+            'detections/sigma/T1528/' \
+            'detections/sigma/T1036.005/' \
+            'detections/sigma/T1133/' \
+            'detections/sigma/T1204.003/' \
             'detections/validate_apiserver_detections.py' \
             'detections/sigma_eval.py' \
             'detections/sigma_explain.py' \
@@ -288,6 +333,12 @@ jobs:
             'atomics/T1546/' \
             'atomics/T1572/' \
             'atomics/T1565.001/' \
+            'atomics/T1485/' \
+            'atomics/T1490/' \
+            'atomics/T1528/' \
+            'atomics/T1036.005/' \
+            'atomics/T1133/' \
+            'atomics/T1204.003/' \
             '.github/workflows/validate-apiserver-detections.yml')
           range=""
           case "${EVENT_NAME}" in
@@ -334,7 +385,7 @@ jobs:
       # The only images the atomics and the benign workload run; pre-pulled with a
       # bounded retry and loaded into the node so a Docker Hub hiccup does not flake pod
       # starts (C1-5).
-      LAB_IMAGES: busybox:1.36 registry.k8s.io/pause:3.9
+      LAB_IMAGES: busybox:1.36 registry.k8s.io/pause:3.9 curlimages/curl:8.11.1
     steps:
       - &apiserver-checkout
         uses: actions/checkout@v4
@@ -658,6 +709,79 @@ jobs:
           TRR9027_NODE: apiserver-control-plane
         run: bash atomics/T1565.001/src/emulate.sh all
 
+      - &apiserver-emulate-9028
+        name: Emulate TRR9028 (storage destruction, inert PVC/PV + reclaim flip)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        # Procedures A-D plus the dry-run control. Inert objects only: each PV is a
+        # no-provisioner, Retain hostPath reference, so deleting a PVC or PV destroys no
+        # backing volume; cleanup deletes only the trr9028 namespace and the PVs it made.
+        run: bash atomics/T1485/src/emulate.sh all
+      - &apiserver-emulate-9029
+        name: Emulate TRR9029 (inhibit recovery, inert snapshots + Velero objects)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        # Procedures A-E delete inert snapshot/Velero objects (and create a
+        # DeleteBackupRequest) in a throwaway trr9029 namespace. The snapshot and Velero
+        # CRDs (vendored in atomics/T1490/src/crds/) are installed only when absent and
+        # removed on cleanup only if this step installed them; the objects are inert
+        # (Retain deletion policy, fake handles, a namespace no real Velero watches), so no
+        # backup or storage snapshot is ever deleted.
+        run: bash atomics/T1490/src/emulate.sh all
+      - &apiserver-emulate-9030
+        name: Emulate TRR9030 (pod-bound token used off-source + in-pod baseline)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        # Procedure A: mint a pod-bound token for the inert trr9030-sa (bound to a running
+        # curl pod) and use it with `kubectl auth whoami` from the runner, which the API
+        # server sees as the off-pod docker-bridge gateway (positive). Procedure B: the same
+        # call from INSIDE the pod with the pod's own mounted token, so the source is the
+        # pod IP (benign baseline; the 9030 B absence check proves the rule stays quiet).
+        # No credential reaches a command line or a log line.
+        run: bash atomics/T1528/src/emulate.sh all
+      - &apiserver-emulate-9031
+        name: Emulate TRR9031 (lookalike pod names, inert pause pods)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        # Procedure A (ReplicaSet-shaped explicit name in the trr9031 namespace) and C
+        # (DaemonSet-shaped explicit name in kube-system). The pods are inert
+        # (registry.k8s.io/pause, no command, no host access) and are deleted on cleanup;
+        # the trr9031 namespace is created and deleted. The marker is the namespace (A)
+        # and the trr9031 label (C), never the controller-shaped pod name.
+        run: bash atomics/T1036.005/src/emulate.sh all
+      - &apiserver-emulate-9033
+        name: Emulate TRR9033 (service exposure, inert NodePort / LoadBalancer)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        # Procedures A (NodePort create), B (LoadBalancer create) and C (JSON patch of
+        # /spec/type to LoadBalancer) are the exposing writes the rule fires on; D (ClusterIP
+        # create) and E (services/status patch) are controls the rule must stay quiet on
+        # (validate_apiserver_detections.py ABSENCE 9033 D / 9033 E). Every object is inert
+        # (selector app=trr9033, no backing pod; kind has no cloud provider so a LoadBalancer
+        # stays <pending>) in the trr9033 namespace, which the emulation creates and deletes.
+        run: bash atomics/T1133/src/emulate.sh all
+      - &apiserver-emulate-9034
+        name: Emulate TRR9034 (malicious image via an admission-policy verdict)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        # Installs the reference ValidatingAdmissionPolicy + two namespace-scoped bindings
+        # (Audit and Deny), then creates inert pods the policy judges a violation: A is
+        # admitted and annotated, B is refused, C's replicaset-controller pod is annotated.
+        # The kind admin credential may write the cluster-scoped VAP; both bindings are
+        # confined to the trr9034 namespace, and cleanup deletes the VAP, bindings and the
+        # namespace. Creating/deleting the VAP also fires TRR9025/TRR9008 (expected).
+        run: bash atomics/T1204.003/src/emulate.sh all
+      - &apiserver-emulate-9035
+        name: Emulate TRR9035 (CSR client-cert persistence, inert subject)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        # Create a kubernetes.io/kube-apiserver-client CSR (subject CN=trr9035-persist,
+        # O=trr9035-group — an identity no binding references) and approve it. The kind
+        # admin credential (cluster-admin) may create and approve CSRs; the issued
+        # certificate grants nothing, and cleanup deletes the CSR. Separate from the
+        # TRR9004 RBAC/aws-auth emulation in the same T1098.006 folder.
+        run: bash atomics/T1098.006/src/emulate_csr.sh all
+
       - &apiserver-collect
         name: Collect the audit log and the node sensor log
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
@@ -812,7 +936,7 @@ jobs:
         shell: bash
         run: |
           {
-            echo '## TRR9004-9010, 9025-9027 API server detection validation (emulate -> audit + node sensor -> Sigma)'
+            echo '## TRR9004-9010, 9025-9031, 9033-9035 API server detection validation (emulate -> audit + node sensor -> Sigma)'
             echo ''
             echo '```'
             cat /tmp/apival.out 2>/dev/null || echo '(no validator output captured)'
@@ -921,6 +1045,13 @@ jobs:
       - *apiserver-emulate-9025
       - *apiserver-emulate-9026
       - *apiserver-emulate-9027
+      - *apiserver-emulate-9028
+      - *apiserver-emulate-9029
+      - *apiserver-emulate-9030
+      - *apiserver-emulate-9031
+      - *apiserver-emulate-9033
+      - *apiserver-emulate-9034
+      - *apiserver-emulate-9035
       - *apiserver-collect
 
       - name: Validate detections under the recommended policy (expected misses named)
@@ -992,7 +1123,7 @@ jobs:
         shell: bash
         run: |
           {
-            echo '## Recommended audit policy: TRR9004-9010, 9025-9027 API server detection validation (--policy recommended)'
+            echo '## Recommended audit policy: TRR9004-9010, 9025-9031, 9033-9035 API server detection validation (--policy recommended)'
             echo ''
             echo '```'
             cat /tmp/apival.out 2>/dev/null || echo '(no validator output captured)'

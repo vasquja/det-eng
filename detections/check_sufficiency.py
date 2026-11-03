@@ -422,6 +422,22 @@ CHOKEPOINT = {
     "T1098.006/k8s_rbac_write.yml": Waiver(
         "TRR9004 chokepoint: every RBAC-object grant passes through an RBAC write",
         "2298ffb181b03dc759985927b5a45d711cde1417342620a9670780fd8eb1c7ce"),
+    "T1485/k8s_storage_volume_deleted.yml": Waiver(
+        "TRR9028 chokepoint: a delete/deletecollection of a PVC or PV is the storage "
+        "destruction itself; the storage controllers are filtered by identity",
+        "eb9b2c8742f1c4ed8cc5b8106da70df2b8ce18ec28fc2c9ef32d6659ea32a32b"),
+    "T1490/k8s_snapshot_or_backup_destroyed.yml": Waiver(
+        "TRR9029 chokepoint: deleting a VolumeSnapshot/VolumeSnapshotContent, deleting a "
+        "Velero Schedule/BackupStorageLocation, or creating a Velero DeleteBackupRequest is "
+        "itself the recovery inhibition; the snapshot-controller and the Velero server are "
+        "filtered",
+        "d1ac08254cc145b292d13e58d2da20c520fc5594f1c7ea75e5870db57f1af03c"),
+    "T1098.006/aws_eks_access_entry_write.yml": Waiver(
+        "TRR9032 cloud chokepoint: every EKS access-entry backdoor procedure passes through "
+        "an access-entry/access-policy write (eventName in the write set); the record kind "
+        "itself is the technique. The graded sibling "
+        "aws_eks_access_entry_cluster_admin_policy.yml carries the discriminating policy/scope",
+        "67564f45b6a6eea9ad5d66dca41ef7dc0811fa6f6c136c46cbc88d94e18266da"),
     "T1546/k8s_admission_webhook_created.yml": Waiver(
         "TRR9025 chokepoint: creating an admission controller object (a create, or the "
         "server-side-apply create that is a patch answered 201; K21)",

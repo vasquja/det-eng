@@ -1,0 +1,113 @@
+attack_technique: T1133
+display_name: "External Remote Services (Kubernetes Service exposure via NodePort or LoadBalancer)"
+
+# Behavioral emulation for TRR9033. An adversary with write access to Services exposes an
+# internal interface outside the cluster by setting spec.type to NodePort or LoadBalancer
+# -- an API enum the API server validates (kubernetes v1.36.4
+# staging/src/k8s.io/api/core/v1/types.go ServiceType: ClusterIP, NodePort, LoadBalancer,
+# ExternalName; only NodePort and LoadBalancer expose pods). The API server then writes a
+# services create/update/patch audit record whose requestObject.spec.type (a full-object
+# write) or responseObject.spec.type (the stored object after a JSON patch of /spec/type)
+# carries the exposing type, which the paired Sigma rule
+# (detections/sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml) keys on.
+#
+# Every object is INERT: each Service selects app=trr9033, which no pod carries, so it
+# routes to nothing (no real backend is needed). kind has no cloud provider, so a
+# LoadBalancer's external IP stays <pending>; the object and its audit record are written
+# all the same. Objects live in the inert namespace trr9033 (created and labelled
+# app.kubernetes.io/part-of=trr9033 when absent, and deleted on cleanup only when the
+# emulation created it); a namespace trr9033 that exists WITHOUT that label is not touched.
+# The marker the validator gates read is the trr9033 name prefix and namespace.
+#
+# emulate.sh also runs two controls that the paired rule MUST NOT fire on; they are not
+# attack tests, so they have no atomic_test entry here, but `emulate.sh all` runs them and
+# the validator asserts the rule stays quiet on each (validate_apiserver_detections.py
+# ABSENCE 9033 D / 9033 E):
+#   D  create a ClusterIP Service trr9033-cip   (benign baseline: the non-exposing enum)
+#   E  patch the /status subresource of trr9033-lb (confounder: the service and cloud
+#      controllers patch only /status, which the rule filters and the lab policy keeps at
+#      Metadata, so no stored object is logged)
+#
+# These need a reachable cluster with rights to create and patch Services and to create a
+# namespace, and audit logging of core Service writes at RequestResponse
+# (detections/k8s/audit-policy-apiserver.yaml; see detections/k8s/kind-apiserver-cluster.yaml).
+
+atomic_tests:
+  - name: "TRR9033.K8S.A — create a NodePort Service"
+    auto_generated_guid: d4a78f4a-5a99-4965-8ede-33f9c1ed4ad3
+    description: |
+      Creates a Service trr9033-np of type NodePort in namespace trr9033, which opens a
+      port on every node. The API server writes a services create audit record whose
+      requestObject.spec.type and responseObject.spec.type are NodePort.
+      Chokepoint: verb=create, objectRef.resource=services, no objectRef.subresource,
+      requestObject.spec.type=NodePort.
+      Rule: detections/sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh a
+      cleanup_command: |
+        kubectl -n trr9033 delete service trr9033-np --ignore-not-found
+        kubectl delete namespace trr9033 --ignore-not-found --wait=false
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1133/src
+
+  - name: "TRR9033.K8S.B — create a LoadBalancer Service"
+    auto_generated_guid: ecc8f9dd-90e9-4283-bd16-df155ce2ef26
+    description: |
+      Creates a Service trr9033-lb of type LoadBalancer in namespace trr9033, which asks
+      the cloud provider for an external load balancer. The API server writes a services
+      create audit record whose requestObject.spec.type and responseObject.spec.type are
+      LoadBalancer. No open rule set covers LoadBalancer (Elastic, Splunk, Panther and
+      Falco cover only the NodePort create).
+      Chokepoint: verb=create, objectRef.resource=services, no objectRef.subresource,
+      requestObject.spec.type=LoadBalancer.
+      Rule: detections/sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh b
+      cleanup_command: |
+        kubectl -n trr9033 delete service trr9033-lb --ignore-not-found
+        kubectl delete namespace trr9033 --ignore-not-found --wait=false
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1133/src
+
+  - name: "TRR9033.K8S.C — JSON patch of /spec/type to LoadBalancer"
+    auto_generated_guid: d90e69b0-f1b9-4415-92d2-57affa87c98b
+    description: |
+      Creates a ClusterIP Service trr9033-jp (not exposing), then changes it to
+      LoadBalancer with a JSON patch of /spec/type. The request body is an RFC6902
+      operation list, not a Service, so the audit record carries no requestObject.spec.type;
+      only responseObject.spec.type (the stored object, at RequestResponse level) carries
+      the new LoadBalancer type. Elastic's request-only rule misses this patch form.
+      Chokepoint: verb=patch, objectRef.resource=services, no objectRef.subresource,
+      responseObject.spec.type=LoadBalancer.
+      Rule: detections/sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh c
+      cleanup_command: |
+        kubectl -n trr9033 delete service trr9033-jp --ignore-not-found
+        kubectl delete namespace trr9033 --ignore-not-found --wait=false
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1133/src

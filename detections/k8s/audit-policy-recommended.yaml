@@ -187,6 +187,26 @@ rules:
       - group: ""
         resources: ["serviceaccounts", "serviceaccounts/token"]
 
+  # --- CertificateSigningRequest client-cert persistence ---
+  # Serves: T1098.006/k8s_csr_client_cert_minted. The create of a CSR at Request so the
+  # rule reads requestObject.spec.signerName (the create leg is scoped to
+  # kubernetes.io/kube-apiserver-client); spec.request is a PKCS#10 CSR (public key +
+  # subject), NOT a private key, so Request copies no secret (unlike Secrets and
+  # serviceaccounts/token above, which stay at Metadata). The approval subresource
+  # update at Metadata carries the verb, subresource, objectRef and approver identity
+  # the approve leg keys on. certificatesigningrequests/status reaches the catch-all at
+  # Metadata (the signer writes the issued certificate there; the rule does not read it).
+  - level: Request
+    verbs: ["create"]
+    resources:
+      - group: "certificates.k8s.io"
+        resources: ["certificatesigningrequests"]
+  - level: Metadata
+    verbs: ["update"]
+    resources:
+      - group: "certificates.k8s.io"
+        resources: ["certificatesigningrequests/approval"]
+
   # --- Command execution and tunnels at Metadata (no body needed) ---
   # Serves: T1609/k8s_pod_exec_attach (pods/exec, pods/attach, get for WebSocket and
   # create for SPDY), T1572/k8s_pod_portforward (pods/portforward), T1609/k8s_node_proxy_exec,
@@ -202,7 +222,14 @@ rules:
   # Serves: T1611/k8s_podspec_host_access and k8s_podspec_confinement_disabled (the pod
   # spec, and a JSON patch of pods/ephemeralcontainers), T1609/k8s_pod_ephemeral_container
   # (Metadata is enough), T1543.005/k8s_static_pod_mirror_create (the kubelet's mirror-pod
-  # create as system:node:<node>; Metadata is enough). Copies literal env values (header).
+  # create as system:node:<node>; Metadata is enough), and T1036.005/
+  # k8s_pod_controller_name_mimicry (the rule needs only Metadata fields; the validator's
+  # Procedure C gate reads the trr9031 label in requestObject.metadata, which needs
+  # Request). Copies literal env values (header).
+  # Also serves T1204.003/k8s_admission_policy_image_violation: the VAP verdict markers
+  # (the validation.policy.admission.k8s.io/validation_failure annotation, and the
+  # "denied request" responseStatus) are at Metadata, so this rule already records them;
+  # no body row is needed (the workload-controllers rule below covers the indirect create).
   - level: Request
     verbs: ["create", "update", "patch"]
     resources:
@@ -262,6 +289,23 @@ rules:
         resources: ["validatingwebhookconfigurations", "mutatingwebhookconfigurations",
                     "validatingadmissionpolicies", "validatingadmissionpolicybindings",
                     "mutatingadmissionpolicies", "mutatingadmissionpolicybindings"]
+
+  # --- PVC/PV deletes and PV reclaim-policy writes at Request (TRR9028) ---
+  # Serves: T1485/k8s_storage_volume_deleted (Metadata fires the chokepoint; Request adds
+  # the DeleteOptions body so a kubectl delete --dry-run=server is filtered) and
+  # T1485/k8s_volume_reclaim_set_to_delete (the grader reads
+  # requestObject.spec.persistentVolumeReclaimPolicy from a PV patch). A delete body is
+  # DeleteOptions only; a PV body holds no secret.
+  - level: Request
+    verbs: ["delete", "deletecollection"]
+    resources:
+      - group: ""
+        resources: ["persistentvolumeclaims", "persistentvolumes"]
+  - level: Request
+    verbs: ["update", "patch"]
+    resources:
+      - group: ""
+        resources: ["persistentvolumes"]
 
   # --- RBAC writes at Request (roleRef, subjects, rules) ---
   # Serves: T1098.006/k8s_rbac_privileged_grant (every RBAC resource) and
@@ -398,6 +442,22 @@ rules:
     resources:
       - group: "operator.openshift.io"
         resources: ["dnses"]
+
+  # --- core Service writes at RequestResponse (spec.type exposure) ---
+  # Serves: T1133/k8s_service_exposed_nodeport_loadbalancer (TRR9033). The exposing
+  # signal is spec.type (NodePort or LoadBalancer) in requestObject (Request and up) or
+  # responseObject (RequestResponse); a JSON patch of /spec/type is seen only in
+  # responseObject, so this needs RequestResponse. A Service spec holds no credential
+  # (ports, a selector, a type). EKS and AKS already log core writes at RequestResponse.
+  # Audit resource matching is exact, so services/status and services/proxy reach the
+  # catch-all at Metadata: the service and cloud controllers patch only /status
+  # (cloud-provider service/helpers/helper.go PatchService), so their status patches are
+  # not logged here with a body. The rule also filters objectRef.subresource == status.
+  - level: RequestResponse
+    verbs: ["create", "update", "patch"]
+    resources:
+      - group: ""
+        resources: ["services"]
 
   # --- Noise reduction: drop high-volume reads (as the lab policies do) ---
   # No rule reads these. Secrets are logged by the first rule, so this does not touch

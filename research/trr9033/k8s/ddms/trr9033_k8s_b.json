@@ -1,0 +1,114 @@
+{
+  "style": {
+    "font-family": "sans-serif",
+    "background-color": "#ffffff",
+    "node-color": "#ffffff",
+    "border-width": 4,
+    "border-color": "#000000",
+    "radius": 50,
+    "outside-position": "auto",
+    "caption-font-size": 16,
+    "label-font-size": 14,
+    "label-border-width": 2,
+    "property-font-size": 14,
+    "arrow-width": 5,
+    "arrow-color": "#000000",
+    "type-font-size": 16
+  },
+  "nodes": [
+    {
+      "id": "n0",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "caption": "Create a Service, spec.type LoadBalancer",
+      "labels": [],
+      "properties": {
+        "objectRef.namespace": "the target's (forced)",
+        "spec.type": "LoadBalancer",
+        "Note": "no open rule set covers LoadBalancer"
+      },
+      "style": {
+        "border-color": "#9f9f9f",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top"
+      }
+    },
+    {
+      "id": "n1",
+      "position": {
+        "x": 380,
+        "y": 0
+      },
+      "caption": "Authorize + Audit Write",
+      "labels": [
+        "K8s Audit Log"
+      ],
+      "properties": {
+        "verb": "create",
+        "objectRef.resource": "services",
+        "objectRef.subresource": "(none)",
+        "requestObject.spec.type": "LoadBalancer",
+        "responseObject.spec.type": "LoadBalancer",
+        "Chokepoint": "exposing spec.type enum"
+      },
+      "style": {
+        "border-color": "#0062b1",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top",
+        "node-color": "#fff2a8"
+      }
+    },
+    {
+      "id": "n2",
+      "position": {
+        "x": 820,
+        "y": 0
+      },
+      "caption": "External load balancer requested",
+      "labels": [],
+      "properties": {
+        "Effect": "cloud LB fronts the selected pods (kind: IP stays <pending>)"
+      },
+      "style": {
+        "border-color": "#000000",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "bottom"
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "id": "r0",
+      "fromId": "n0",
+      "toId": "n1",
+      "type": "",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r1",
+      "fromId": "n1",
+      "toId": "n2",
+      "type": "",
+      "properties": {},
+      "style": {}
+    }
+  ]
+}

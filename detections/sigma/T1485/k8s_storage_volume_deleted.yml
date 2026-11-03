@@ -1,0 +1,148 @@
+title: Kubernetes PersistentVolume or PersistentVolumeClaim Deleted
+id: de1510c3-0080-4aa5-8e17-1794b9c58ae7
+status: experimental
+description: |
+  Detects destruction of application storage through the API server: a delete or
+  deletecollection of a core persistentvolumeclaims or persistentvolumes object by a
+  principal that is not a storage controller. The rule is a pure-surface chokepoint and
+  does not gate on the response code, so a denied (403) or unauthenticated (401) attempt
+  matches as well as a successful (200) delete (as in the events_deleted chokepoint).
+  This is the TRR9028 chokepoint for T1485 (Data Destruction), covering Procedure A
+  (delete a bound PVC), B (delete a PV) and C (bulk-wipe a namespace's PVCs with
+  deletecollection). Deleting a PersistentVolumeClaim releases its bound
+  PersistentVolume, and when that PV's persistentVolumeReclaimPolicy is Delete the
+  provisioner then deletes the PV and the backing volume, destroying the data;
+  deleting a PV (or a deletecollection of PVCs) does the same in bulk.
+
+  The discriminator is the actor class. Storage churn is routine, so the rule filters
+  the control-plane identities that delete PVCs and PVs by design, verified against
+  kubernetes v1.36.4 source, and fires on every other identity's delete:
+    - the namespace controller
+      (system:serviceaccount:kube-system:namespace-controller), whose
+      deletecollection empties a namespace being deleted
+      (pkg/controller/namespace/deletion/namespaced_resources_deleter.go; PVCs
+      support deletecollection, so the sweep is a deletecollection). Only its
+      deletecollection is filtered, so a single PVC delete by that identity still
+      fires (the k8s_namespace_deleted rule matches the namespace delete that caused
+      the sweep).
+    - the garbage collector
+      (system:serviceaccount:kube-system:generic-garbage-collector), which deletes an
+      owned PVC when its owner is gone (a generic ephemeral volume's owner pod, a
+      StatefulSet with persistentVolumeClaimRetentionPolicy, GA at v1.32).
+    - the in-tree persistent-volume binder
+      (system:serviceaccount:kube-system:persistent-volume-binder), which deletes a
+      released in-tree PV when its reclaim policy is Delete
+      (pkg/controller/volume/persistentvolume/pv_controller.go deleteVolumeOperation,
+      PersistentVolumes().Delete; client name cmd/kube-controller-manager/app/core.go).
+    - the external (CSI) provisioner that deletes a dynamically provisioned PV. On the
+      kind CI lab that is
+      system:serviceaccount:local-path-storage:local-path-provisioner-service-account.
+      A managed platform runs a different provisioner service account
+      (ebs-csi-controller-sa on EKS, and so on), so an operator must baseline that
+      identity there, or the provisioner's own PV deletes fire. This filter reads only
+      the identity, so a delete sent with a stolen provisioner or controller token is
+      filtered too (detections/RULE_DEFECTS.md K50).
+  The pv-protection and pvc-protection controllers do not delete; they only update to
+  remove a finalizer (pv_protection_controller.go, pvc_protection_controller.go), so
+  they are not storage deletes and are not filtered here.
+
+  Metadata level is enough to fire (verb, resource, name, namespace and identity are
+  all in the record; a delete carries no object body). The dry-run filter needs the
+  DeleteOptions body, which only Request level (or higher) holds; the shipped lab and
+  recommended policies log PVC and PV deletes at Request. A server-side dry run
+  (kubectl delete --dry-run=server) sends dryRun ["All"] in the DeleteOptions body and
+  persists nothing, so it is filtered. A delete with no body whose query holds
+  ?dryRun=All (kubectl delete --raw, the official Python client) is a dry run too and
+  still fires, because the filter reads only the body (the pattern and limit of
+  detections/RULE_DEFECTS.md K36). Under a managed policy that logs these deletes at
+  Metadata, a kubectl delete --dry-run=server also fires (K39-style).
+
+  Limit (detections/RULE_DEFECTS.md K49): one delete record does not carry the
+  bound PV's persistentVolumeReclaimPolicy, so this rule cannot tell a destructive
+  delete (reclaim Delete, the volume is destroyed) from a non-destructive one (reclaim
+  Retain, the volume is kept) in a single record. It is the chokepoint for the actor's
+  storage delete; the grader k8s_volume_reclaim_set_to_delete.yml covers the separate
+  "make it destructive" step (a patch that sets a PV's reclaim policy to Delete).
+
+  Platform coverage: detections/k8s/PLATFORMS.md#rules-on-each-platform.
+references:
+  - https://attack.mitre.org/techniques/T1485/
+  - https://kubernetes.io/docs/concepts/storage/persistent-volumes/#reclaiming
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+author: det-eng
+date: 2026/11/01
+tags:
+  - attack.impact
+  - attack.t1485
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_storage_delete:
+    objectRef.resource:
+      - 'persistentvolumeclaims'
+      - 'persistentvolumes'
+    verb:
+      - 'delete'
+      - 'deletecollection'
+  # Namespace teardown: the namespace controller deletecollections a namespace's PVCs
+  # when the namespace is deleted. Only its deletecollection is filtered (verb), so a
+  # single PVC delete by that identity still fires.
+  filter_namespace_teardown:
+    user.username: 'system:serviceaccount:kube-system:namespace-controller'
+    verb: 'deletecollection'
+  # The garbage collector deletes an owned PVC when its owner is gone.
+  filter_garbage_collector:
+    user.username: 'system:serviceaccount:kube-system:generic-garbage-collector'
+  # The in-tree PV binder deletes a released PV whose reclaim policy is Delete.
+  filter_pv_binder:
+    user.username: 'system:serviceaccount:kube-system:persistent-volume-binder'
+  # The external (CSI) provisioner deletes a dynamically provisioned PV. On kind this
+  # is local-path-provisioner; baseline the managed-platform provisioner SA (K50).
+  filter_provisioner:
+    user.username: 'system:serviceaccount:local-path-storage:local-path-provisioner-service-account'
+  # A server-side dry run (kubectl delete --dry-run=server) sends dryRun ["All"] in the
+  # DeleteOptions body, which only a Request-level (or higher) record holds. The query
+  # form (?dryRun=All) is not filtered: with a body present the API server ignores the
+  # query (RULE_DEFECTS.md K36).
+  filter_dry_run_delete_body:
+    requestObject.dryRun|contains: 'All'
+  # Null-safe negation (a three-valued SQL backend reads NOT of a test on a missing
+  # field as NULL and drops the record). The record of a request that fails
+  # authentication (401) has no user.username (apiserver v1.36.4
+  # WithFailedAuthenticationAudit), so each identity filter is ORed with a test that
+  # the field is absent. verb is present on every record the rule matches
+  # (select_storage_delete), so filter_namespace_teardown needs no verb guard.
+  sel_no_username:
+    user.username: null
+  # A delete without a DeleteOptions body, and every Metadata-level record, has no
+  # requestObject.dryRun, so the body filter is ORed with a test that the field is absent.
+  sel_no_dry_run_body:
+    requestObject.dryRun: null
+  condition: >-
+    select_storage_delete
+    and (sel_no_username or not filter_namespace_teardown)
+    and (sel_no_username or not filter_garbage_collector)
+    and (sel_no_username or not filter_pv_binder)
+    and (sel_no_username or not filter_provisioner)
+    and (sel_no_dry_run_body or not filter_dry_run_delete_body)
+falsepositives:
+  - A cluster operator or platform add-on that deletes PVCs or PVs by design (storage
+    migration, decommissioning a StatefulSet, a backup/restore tool). Baseline those
+    identities by user.username.
+  - A denied (403) or unauthenticated (401) delete or deletecollection attempt that
+    changed nothing. The rule is a pure-surface chokepoint with no response-code gate
+    (the same design as the events_deleted chokepoint), so it alerts on attempted-but-
+    blocked storage deletes (a mis-scoped controller, a user without delete rights, an
+    unauthenticated scan) as well as successful ones. Scope by responseStatus.code (a
+    2xx) if only successful destruction is wanted.
+  - A managed-platform CSI provisioner (ebs-csi-controller-sa on EKS, the GKE and AKS
+    equivalents) whose PV deletes are not the kind local-path identity this rule
+    filters. Baseline that provisioner's service account (detections/RULE_DEFECTS.md
+    K50).
+  - A server-side dry run (kubectl delete --dry-run=server) is filtered only when the
+    record holds the DeleteOptions body (Request level or higher). A delete with no
+    body whose query holds ?dryRun=All still fires (RULE_DEFECTS.md K36), and under a
+    managed policy that logs these deletes at Metadata a kubectl delete
+    --dry-run=server fires too (K39).
+level: medium

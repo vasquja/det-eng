@@ -1,0 +1,74 @@
+attack_technique: T1036.005
+display_name: "Masquerading: Match Legitimate Name or Location (Kubernetes Lookalike Pod Name)"
+
+# Behavioral emulation for TRR9031. Each test creates a bare pod with an EXPLICIT name in
+# the shape a workload controller generates, so the API server writes a pods create audit
+# record whose objectRef.name carries the controller-generated shape -- a name no
+# controller create has (controllers create pods with metadata.generateName only, so
+# their audit records carry no objectRef.name). The paired detection keys on that name
+# shape, not on the namespace or the image. The pods are inert (registry.k8s.io/pause, no
+# command, no host access) and deleted on cleanup; the trr9031 namespace is created and
+# deleted. The emulation's marker is the trr9031 namespace (A) and the label trr=trr9031
+# (A and C), never the pod name, which keeps the controller shape. These need a reachable
+# cluster with rights to create pods in the trr9031 and kube-system namespaces as a
+# non-node identity, and audit logging (see detections/k8s/kind-apiserver-cluster.yaml).
+#
+# There is no generateName procedure: a real controller and an adversary send a
+# byte-identical generateName, so the audit chokepoint cannot tell them apart without a
+# per-site controller-identity allowlist. It is a documented gap (RULE_DEFECTS.md
+# K54), not a procedure.
+
+atomic_tests:
+  - name: "TRR9031.K8S.A — ReplicaSet-shaped explicit pod name in an application namespace"
+    auto_generated_guid: c43ba1d7-6d0e-49ca-9342-e1ead061e000
+    description: |
+      Creates a bare pod named payments-api-6f6b679f8f-x7k2q in namespace trr9031, the
+      shape a Deployment's ReplicaSet controller generates (base-<pod-template-hash
+      6-10>-<suffix 5> from the vowel-free alphabet bcdfghjklmnpqrstvwxz2456789). A
+      controller create carries no objectRef.name, so an explicit name in this shape is
+      a client's choice.
+      Chokepoint: verb=create, objectRef.resource=pods, no objectRef.subresource,
+      objectRef.name matches the ReplicaSet shape, user not system:node:*.
+      Rule: detections/sigma/T1036.005/k8s_pod_controller_name_mimicry.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh a
+      cleanup_command: |
+        kubectl -n trr9031 delete pod payments-api-6f6b679f8f-x7k2q --ignore-not-found --force --grace-period=0
+        kubectl delete namespace trr9031 --ignore-not-found --wait=false
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1036.005/src
+
+  - name: "TRR9031.K8S.C — DaemonSet-shaped explicit pod name in kube-system"
+    auto_generated_guid: fc36edc3-506b-4abe-a019-a3b9bfc8b8c7
+    description: |
+      Creates a bare pod named kube-proxy-x7k2q in kube-system, the shape a DaemonSet or
+      Job controller generates (base-<suffix 5>). An explicitly-named bare pod in a
+      control-plane namespace is itself anomalous; no controller create carries an
+      explicit objectRef.name. The pod is inert, carries the trr9031 label, and is not
+      selected by the real kube-proxy DaemonSet.
+      Chokepoint: verb=create, objectRef.resource=pods, no objectRef.subresource,
+      objectRef.namespace in kube-system/kube-public/kube-node-lease, objectRef.name
+      matches the DaemonSet shape, user not system:node:*.
+      Rule: detections/sigma/T1036.005/k8s_pod_controller_name_mimicry.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh c
+      cleanup_command: |
+        kubectl -n kube-system delete pod kube-proxy-x7k2q --ignore-not-found --force --grace-period=0
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1036.005/src

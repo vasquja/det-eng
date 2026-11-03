@@ -1,0 +1,103 @@
+title: Kubernetes Workload Admission Policy Verdict
+id: 2f3a9c1d-6b40-4e5a-9f1c-7d2e8a04b913
+status: experimental
+description: |
+  Detects a workload write that a cluster ValidatingAdmissionPolicy (VAP) judged a
+  violation: the API server either admitted and annotated the request (an Audit-mode
+  binding) or refused it (a Deny-mode binding). This is the TRR9034 Strategy 1
+  chokepoint for T1204.003 (Malicious Image) on Kubernetes: a site whose VAP encodes an
+  image policy (digest-pinned, from an allowlisted registry, signed) sees every
+  workload whose image the policy rejects reported here, by a verdict the API server
+  computed and wrote into the audit record, not by the attacker-chosen image string
+  (that string is attacker-controlled; keying on it is the T1610 non-starter).
+
+  Two server-set markers, both at Metadata level, which a client cannot write
+  (v1.36.4, apiserver .../policy/validating/dispatcher.go):
+    - Audit binding (validationActions contains Audit): on a failed CEL decision the API
+      server publishes the event annotation
+      `validation.policy.admission.k8s.io/validation_failure` (dispatcher.go
+      publishValidationFailureAnnotation), a JSON list of
+      {message, policy, binding, expressionIndex, validationActions}. The request is
+      ADMITTED and annotated. The rule keys on the server JSON shape
+      (`"validationActions":[`), so a client that sets an OBJECT annotation of the same
+      name (which lands in requestObject.metadata.annotations, a different field) does
+      not trip it.
+    - Deny binding (validationActions contains Deny): the request is REFUSED with the
+      server-built message `ValidatingAdmissionPolicy '<p>' with binding '<b>' denied
+      request: <msg>` (dispatcher.go), reason Invalid, code 422. The message is copied
+      into responseStatus at Metadata level (apiserver audit context.go LogResponseObject).
+
+  The rule is scoped to workload resources (pods and the pod-template controllers), where
+  a container image lives, so it reports image/workload verdicts and not a VAP verdict on
+  an unrelated resource (a label or quota policy on a ConfigMap). An indirect create
+  (a Deployment whose pod template violates the policy) is seen on the replicaset
+  controller's own pods create, which carries the annotation, so the rule MUST NOT
+  filter controller service accounts.
+
+  POLICY-AGNOSTIC BY DESIGN. The rule does not key on a policy name, so it fires on ANY
+  Audit/Deny VAP verdict on a workload, including a site's own benign policy failures. A
+  site that runs an image-provenance VAP narrows this to that policy by adding
+  `"policy":"<site image policy>"` to the annotation match; mapping a real image policy,
+  and shipping one, are human decisions (this repo ships only a reference VAP that the
+  atomic installs, to prove the record shape). The rule is inert on a cluster with no
+  Audit- or Deny-mode VAP.
+
+  WHAT IT DOES NOT SEE. A pure Warn-only binding (validationActions [Warn]) returns a
+  client Warning: response header only (dispatcher.go warning.AddWarning) and leaves no
+  audit marker; a Kyverno-generated VAP maps its Audit action to [Audit, Warn], so the
+  Audit action still writes the annotation and this rule catches it. Webhook-based image
+  verifiers (Kyverno verifyImages, Gatekeeper, Ratify, sigstore policy-controller,
+  Defender for Containers gated deployment, GKE Binary Authorization) are admission
+  webhooks, not VAPs, and leave no `validation.policy.admission.k8s.io` annotation; each
+  reports in its own engine. See the TRR for the full gap list.
+references:
+  - https://attack.mitre.org/techniques/T1204/003/
+  - https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+author: det-eng
+date: 2026/11/02
+tags:
+  - attack.execution
+  - attack.t1204.003
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  # A container image lives in a pod spec or a pod-template controller. Scope to those
+  # so a VAP verdict on an unrelated resource (a label policy on a ConfigMap) is not
+  # reported as a malicious-image event. objectRef.resource is pods for a pod created
+  # directly and for a controller's own pods create (the indirect path).
+  select_workloads:
+    objectRef.resource:
+      - 'pods'
+      - 'deployments'
+      - 'replicasets'
+      - 'statefulsets'
+      - 'daemonsets'
+      - 'replicationcontrollers'
+      - 'jobs'
+      - 'cronjobs'
+  # Audit-mode binding: the server-written event annotation. The value is a JSON list
+  # whose server shape carries "validationActions":[ ; a client cannot set an
+  # event-level annotation (an object annotation of the same key is a different field).
+  verdict_audit:
+    'annotations.validation.policy.admission.k8s.io/validation_failure|contains': '"validationActions":['
+  # Deny-mode binding: the server-built Forbidden message copied into responseStatus.
+  # The optional binding clause covers the no-binding form of the same message.
+  verdict_deny:
+    responseStatus.message|re: "ValidatingAdmissionPolicy '[^']*'( with binding '[^']*')? denied request"
+  condition: select_workloads and (verdict_audit or verdict_deny)
+falsepositives:
+  - A site policy that is not an image policy (a label, resource-limit or naming VAP in
+    Audit or Deny mode) fires this rule too, because the rule is policy-agnostic. Narrow
+    it to the image policy by its name with "policy":"<site image policy>" in the
+    annotation value, or triage by the policy/binding names the annotation carries.
+  - A developer's own workload that an image policy rejects (a not-yet-pinned image, an
+    unapproved registry during a migration). Triage by the image and the actor; the
+    verdict is the policy's, not a detection heuristic.
+  - A server-side dry run of a disallowed workload (kubectl create/apply
+    --dry-run=server) runs admission, so an Audit binding annotates it and a Deny binding
+    refuses it; the record carries the marker although nothing is stored. The rule does
+    not filter it (a dry run of a rejected image is still worth triage). Nothing is
+    persisted.
+level: medium

@@ -1,0 +1,114 @@
+title: Kubernetes Pod-Bound Service Account Token Used From An Unexpected Source
+id: 41c290dc-adb4-43f6-a3f3-16b7636e7f6c
+status: experimental
+description: |
+  Detects a POD-BOUND service-account token used against kube-apiserver FROM A SOURCE
+  THE CLUSTER DOES NOT EXPECT FOR THAT POD -- the use-side chokepoint of a projected pod
+  token stolen from a compromised pod and replayed elsewhere (another pod, a node, or
+  off-cluster). This is the TRR9030 use-leg, the k8s sibling of TRR9022 (EKS IRSA used
+  off-cluster) and the use-side sibling of TRR9006, which stops at the mounted-token read
+  (Procedure E gap) and never sees where the token is later used.
+
+  The in-record provenance is the server-set, signed-claim-derived marker that a token is
+  pod-bound: user.username begins system:serviceaccount: AND
+  user.extra 'authentication.kubernetes.io/pod-name' is present. The apiserver sets
+  pod-name/pod-uid in the authenticated user's extra from the token's bound pod claim,
+  after a live GetPod lookup whose UID must match and whose pod must not be deleting
+  (kubernetes v1.36.4 pkg/serviceaccount/claims.go GetPod + UID compare, and
+  apiserver authentication/serviceaccount/util.go ServiceAccountInfo.UserInfo setting
+  PodNameKey/PodUIDKey). A client cannot forge or inject it: impersonation extras land in
+  impersonatedUser.extra, a SEPARATE audit field (apiserver apis/audit/v1 types.go Event),
+  never in user.extra, so these fields identify the pod the token was MINTED for -- which
+  is exactly the point (it says which pod the token belongs to, not where it is used).
+  pod-name identifies the binding target, is present since v1.12 (pod default since
+  BoundServiceAccountTokenVolume GA v1.22); the companion node-name/node-uid
+  (ServiceAccountTokenPodNodeInfo GA v1.32) and credential-id JTI= (ServiceAccountTokenJTI
+  GA v1.32) are set on pod-bound tokens too at v1.36.4 (see the TRR).
+
+  That provenance matches ~100% of benign pod-bound token use -- it is provenance, not a
+  detection. The discriminator is the off-source leg: the LAST sourceIPs entry is not an
+  address the cluster owns for that pod. The apiserver records sourceIPs as (in order) the
+  X-Forwarded-For IPs, then X-Real-Ip, then the connection's remote address; audit
+  apis/audit/v1 types.go states "All but the last IP can be arbitrarily set by the client",
+  so ONLY the last entry is trustworthy. This rule isolates it with an |re anchored to the
+  end of the serialized array (...]$), NOT sourceIPs|cidr, which compiles to a LIKE on the
+  first/whole element and is fooled by a prepended external X-Forwarded-For (see the TRR's
+  sigma_eval proof).
+
+  A single audit record cannot prove "the pod's own IP", so this rule APPROXIMATES it with
+  an in-cluster source allowlist you must baseline: the cluster POD CIDR (placeholder
+  10.244.0.0/16, kind's default), plus -- if you run hostNetwork workloads that present
+  service-account tokens (kube-proxy, CNI agents) -- their NODE CIDR(s). With the node CIDR
+  added, a token stolen from a hostNetwork pod and used elsewhere on the node network is a
+  residual false negative; without it, every hostNetwork pod's own token use looks
+  off-source (baseline them). On EKS/GKE/AKS the apiserver's TCP peer is a konnectivity
+  agent / VNet-integration ILB / NAT, not the pod, so the single-record compare degrades to
+  an approximation there (a demonstrated gap, like TRR9011/9022; see RULE_DEFECTS.md
+  K53). The portable fallback that needs no CIDR is the credential-id value_count
+  correlation prototyped in the TRR (one JTI from >=2 distinct source IPs).
+
+  No GuardDuty EKS finding, GKE Event Threat Detection detector or Microsoft Defender
+  audit rule keys on a pod-bound token used off its pod from the audit log (Defender's
+  token signal is a runtime file-open sensor, not an audit compare), so this audit rule is
+  the PRIMARY detection, not a backstop. Nearest prior art is Elastic's "Service Account
+  Token or Certificate Access Followed by Kubernetes API Request" and three Defend-for-
+  Containers D4C sequences, which JOIN an in-container process to audit events by
+  user.extra pod-name but need a runtime sensor and never compare the markers to sourceIPs
+  or key on credential-id/node-name; SigmaHQ, Splunk ESCU and Falco ship nothing on these
+  user.extra fields (see the TRR).
+references:
+  - https://attack.mitre.org/techniques/T1528/
+  - https://attack.mitre.org/techniques/T1550/001/
+  - https://attack.mitre.org/techniques/T1078/004/
+  - https://github.com/kubernetes/kubernetes/blob/v1.36.4/pkg/serviceaccount/claims.go
+  - https://github.com/kubernetes/kubernetes/blob/v1.36.4/staging/src/k8s.io/apiserver/pkg/authentication/serviceaccount/util.go
+  - https://github.com/kubernetes/kubernetes/blob/v1.36.4/staging/src/k8s.io/apiserver/pkg/apis/audit/v1/types.go
+author: det-eng
+date: 2026/11/01
+tags:
+  - attack.credential-access
+  - attack.t1528
+  - attack.lateral-movement
+  - attack.t1550.001
+  - attack.t1078.004
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  selection_pod_bound_token:
+    # system:serviceaccount: is a structural prefix (MakeUsername), not a name the
+    # emulation chose; pod-name present means the token is pod-bound (only service
+    # accounts get pod-bound tokens). A list field flattens to JSON text, so presence is
+    # a non-empty match with |re '.+' (field: '*' would also match an empty string).
+    user.username|startswith: 'system:serviceaccount:'
+    user.extra.authentication.kubernetes.io/pod-name|re: '.+'
+  filter_incluster_last_source:
+    # PLACEHOLDER: replace 10.244.0.0/16 with YOUR cluster's pod CIDR, and add each node
+    # CIDR if you run hostNetwork pods that present SA tokens. The regex is anchored to
+    # the END of the serialized sourceIPs array (...]$) so it tests only the LAST entry
+    # (the trustworthy connection peer), not a client-set X-Forwarded-For prefix. Entries:
+    #   10.244.0.0/16 -> \"10\.244\.[0-9]+\.[0-9]+\"]  (\" is a literal quote; the
+    #   portable subset requires the quote escaped, check_sigma_regex --require-re2).
+    sourceIPs|re: '\"10\.244\.[0-9]+\.[0-9]+\"\]$'
+  # Null-safe negation (CI null-safety): a three-valued SQL backend (ES|QL) reads the
+  # regex on a record with no sourceIPs as NULL and NOT NULL as NULL, dropping the record;
+  # SQLite keeps it (Sigma's meaning). sourceIPs is present on every real audit event, but
+  # OR the negation with a sourceIPs-absent guard so both logics agree (keep the record).
+  sel_no_source:
+    sourceIPs: null
+  condition: selection_pod_bound_token and (sel_no_source or not filter_incluster_last_source)
+falsepositives:
+  - hostNetwork pods (kube-proxy, CNI agents) present pod-bound tokens from the NODE IP,
+    not a pod IP, so they look off-source until you add the node CIDR(s) to the allowlist.
+    Adding them makes a token stolen from a hostNetwork pod and used elsewhere on the node
+    network a residual false negative.
+  - A token used from WITHIN an allowlisted CIDR (a compromised pod on the same pod
+    network, or the pod's own node) shows an in-cluster last source and is not matched;
+    pair with a first-seen overlay per pod/credential-id, or the credential-id value_count
+    correlation in the TRR.
+  - IPv6 / dual-stack pod and node CIDRs need their own anchored |re alternatives in the
+    allowlist (the example covers IPv4 10.244.0.0/16 only).
+  - On managed clusters (EKS/GKE/AKS) the last sourceIPs entry is a konnectivity agent /
+    NAT peer, not the pod, so this single-record rule is an approximation there; use the
+    credential-id value_count correlation instead (RULE_DEFECTS.md K53).
+level: high

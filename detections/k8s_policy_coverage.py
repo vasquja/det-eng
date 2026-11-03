@@ -518,12 +518,20 @@ SELECTION_GROUP_RESOURCES = {
 SELECTION_RESOURCES = {  # resource: (the groups that serve it, namespaced)
     "configmaps": (("",), True), "events": (("", "events.k8s.io"), True),
     "namespaces": (("",), False), "nodes": (("",), False), "pods": (("",), True),
+    "persistentvolumeclaims": (("",), True), "persistentvolumes": (("",), False),
     "replicationcontrollers": (("",), True), "secrets": (("",), True),
-    "serviceaccounts": (("",), True),
+    "serviceaccounts": (("",), True), "services": (("",), True),
     "daemonsets": (("apps",), True), "deployments": (("apps",), True),
     "replicasets": (("apps",), True), "statefulsets": (("apps",), True),
     "cronjobs": (("batch",), True), "jobs": (("batch",), True),
     "dnses": (("operator.openshift.io",), False),
+    # TRR9029 (T1490): snapshot and Velero CRDs. VolumeSnapshotContent is cluster-scoped.
+    "volumesnapshots": (("snapshot.storage.k8s.io",), True),
+    "volumesnapshotcontents": (("snapshot.storage.k8s.io",), False),
+    "schedules": (("velero.io",), True),
+    "backupstoragelocations": (("velero.io",), True),
+    "deletebackuprequests": (("velero.io",), True),
+    "certificatesigningrequests": (("certificates.k8s.io",), False),
     "clusterrolebindings": ((_RBAC,), False), "clusterroles": ((_RBAC,), False),
     "rolebindings": ((_RBAC,), True), "roles": ((_RBAC,), True),
     **{r: ((_ADM,), False) for r in SELECTION_GROUP_RESOURCES[_ADM]},
@@ -2199,6 +2207,12 @@ def self_test():
         ("lab-apiserver", _rec("patch", "configmaps", name="coredns", ns="kube-system"),
          "RequestResponse"),
         ("lab-apiserver", _rec("delete", "namespaces", name="n", ns="n"), "Request"),
+        # TRR9028: PVC/PV deletes and PV reclaim-policy writes at Request; a PVC create
+        # stays at the Metadata catch-all.
+        ("lab-apiserver", _rec("delete", "persistentvolumeclaims", name="p", ns="n"), "Request"),
+        ("lab-apiserver", _rec("delete", "persistentvolumes", name="pv"), "Request"),
+        ("lab-apiserver", _rec("patch", "persistentvolumes", name="pv"), "Request"),
+        ("lab-apiserver", _rec("create", "persistentvolumeclaims", name="p", ns="n"), "Metadata"),
         ("lab-apiserver", _rec("get", "secrets", name="s", ns="n"), "Metadata"),
         ("eks", _rec("delete", "events", name="e", ns="n"), "None"),
         ("eks", _rec("delete", "events", name="e", ns="n", group="events.k8s.io"),
@@ -2372,6 +2386,12 @@ def self_test():
                 (_rec("delete", "daemonsets", name="d", ns="n", group=apps), "Request"),
                 (_rec("delete", "statefulsets", name="s", ns="n", group=apps), "Metadata"),
                 (_rec("delete", "namespaces", name="n", ns="n"), "Request"),
+                # TRR9028: PVC/PV deletes and PV reclaim-policy writes at Request; PVC
+                # create stays Metadata.
+                (_rec("delete", "persistentvolumeclaims", name="p", ns="n"), "Request"),
+                (_rec("delete", "persistentvolumes", name="pv"), "Request"),
+                (_rec("patch", "persistentvolumes", name="pv"), "Request"),
+                (_rec("create", "persistentvolumeclaims", name="p", ns="n"), "Metadata"),
                 (_rec("deletecollection", "events", ns="n", group="events.k8s.io"),
                  "Request"),
                 (_rec("delete", "jobs", name="j", ns="n", group="batch"), "Request"),
@@ -2448,6 +2468,8 @@ def self_test():
                 ("Request", cud, "", ("replicationcontrollers",), "*", "*"),
                 ("Request", up, apps, ("deployments/scale",), "*", "*"),
                 ("Request", dl, "", ("pods", "events", "namespaces"), "*", "*"),
+                ("Request", dl, "", ("persistentvolumeclaims", "persistentvolumes"), "*", "*"),
+                ("Request", up, "", ("persistentvolumes",), "*", "*"),
                 ("Request", dl, "events.k8s.io", ("events",), "*", "*"),
                 ("Request", dl, "batch", ("jobs",), "*", "*"),
                 ("Request", dl, apps, ("deployments", "daemonsets"), "*", "*"),
@@ -2464,7 +2486,14 @@ def self_test():
                 ("Request", ("create",), "", ("configmaps",), ("openshift-dns",), "*"),
                 ("RequestResponse", up, "operator.openshift.io", ("dnses",), "*", "*"),
                 ("Request", ("create", "delete", "deletecollection"), "operator.openshift.io",
-                 ("dnses",), "*", "*")):
+                 ("dnses",), "*", "*"),
+                # TRR9033 service exposure: core Service create/update/patch at
+                # RequestResponse (spec.type NodePort/LoadBalancer in the body).
+                ("RequestResponse", cud, "", ("services",), "*", "*"),
+                # TRR9035 CSR client-cert persistence: certificatesigningrequests create at
+                # Request (the chokepoint reads the CSR request body / signerName).
+                ("Request", ("create",), "certificates.k8s.io",
+                 ("certificatesigningrequests",), "*", "*")):
             pinned += [(level, v, group, r, ns, nm, "*") for v in verbs for r in resources
                        for ns in (nss if isinstance(nss, tuple) else (nss,))
                        for nm in (names if isinstance(names, tuple) else (names,))]
@@ -2587,11 +2616,14 @@ def self_test():
               sorted(("T1565.001/k8s_coredns_corefile_poisoned.yml", "create", "",
                       "configmaps", "kube-system", nm, "Metadata", "Request")
                      for nm in ("coredns", "coredns-custom", "kube-dns")))
-        # It reads a request selection in every rule but the two impersonation rules
-        # (they select any request with an impersonatedUser).
+        # It reads a request selection (a resource/verb/subresource) in every rule but the
+        # two impersonation rules (they select any request with an impersonatedUser) and
+        # the pod-token-off-source rule (it selects any request by a pod-bound token from an
+        # off-source IP, whatever the resource).
         check(f"{RECOMMENDED} selection check: rules with no request selection",
               sorted(r for r in ranks if not rule_selections(r)[0]),
-              ["T1134/k8s_impersonation.yml", "T1134/k8s_impersonation_privileged.yml"])
+              ["T1134/k8s_impersonation.yml", "T1134/k8s_impersonation_privileged.yml",
+               "T1528/k8s_pod_token_used_off_source.yml"])
         # A selection it cannot expand is an error, not a pass.
         for label, sel, want in (
                 ("a resource missing from SELECTION_RESOURCES", {"resource": ["widgets"]}, 1),

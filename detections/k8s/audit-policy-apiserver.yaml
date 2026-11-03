@@ -66,6 +66,15 @@ omitStages:
 
 rules:
   # --- TRR9007: pods and ephemeral containers at Request (requestObject.spec) ---
+  # Also serves TRR9031 (lookalike pod name): the rule keys only on Metadata fields
+  # (objectRef.name/namespace/subresource, user.username, verb), but the validator's
+  # Procedure C gate reads the trr9031 label in requestObject.metadata (a kube-system
+  # create, where the namespace cannot be the emulation marker), which needs Request.
+  # Also serves TRR9034 (T1204.003): the ValidatingAdmissionPolicy verdict markers it
+  # keys on -- the event annotation validation.policy.admission.k8s.io/validation_failure
+  # (Audit binding) and the "denied request" responseStatus (Deny binding) -- are both at
+  # Metadata, so this Request-level pods rule already records them; no body row is needed
+  # (the workload-controllers rule below does the same for an indirect create).
   - level: Request
     verbs: ["create", "update", "patch"]
     resources:
@@ -93,6 +102,26 @@ rules:
         resources: ["pods", "events", "namespaces"]
       - group: "events.k8s.io"
         resources: ["events"]
+
+  # --- TRR9028: PVC/PV deletes and PV reclaim-policy writes at Request ---
+  # Serves: T1485/k8s_storage_volume_deleted (the chokepoint fires at Metadata, but
+  # Request adds the DeleteOptions body so its dry-run filter can read a
+  # kubectl delete --dry-run=server, as for pods/events/namespaces above) and
+  # T1485/k8s_volume_reclaim_set_to_delete (the grader reads
+  # requestObject.spec.persistentVolumeReclaimPolicy from a PV patch). A delete's
+  # requestObject is DeleteOptions only, and a PV body holds no secret (capacity,
+  # access modes, a volume source and the reclaim policy). No rule above names these
+  # resources, so nothing is lowered. Request records no responseObject.
+  - level: Request
+    verbs: ["delete", "deletecollection"]
+    resources:
+      - group: ""
+        resources: ["persistentvolumeclaims", "persistentvolumes"]
+  - level: Request
+    verbs: ["update", "patch"]
+    resources:
+      - group: ""
+        resources: ["persistentvolumes"]
 
   # --- TRR9026: pod port-forward tunnel at Metadata (resource/subresource/verb) ---
   # The pods subresource is not covered by the pods rule above (audit resource matching
@@ -300,6 +329,29 @@ rules:
       - group: "operator.openshift.io"
         resources: ["dnses"]
 
+  # --- TRR9033: core Service writes at RequestResponse (spec.type exposure) ---
+  # Serves: detections/sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml. The
+  # exposing signal is requestObject.spec.type / responseObject.spec.type (NodePort or
+  # LoadBalancer), which only Request records in the body and only RequestResponse in
+  # the stored object; a JSON patch of /spec/type (requestObject is an operation list,
+  # not a Service) is caught only by responseObject, so this needs RequestResponse. A
+  # Service spec carries no credential (its data is ports, a selector and a type).
+  # Services fall to the Metadata catch-all today (nothing above names them), so this
+  # raises nothing's level: it only adds the body of a Service create / update / patch.
+  # Audit resource matching is exact (checker.go ruleMatchesResource, v1.36.4: the policy
+  # resource must equal resource or resource/subresource), so services/status and
+  # services/proxy stay at the Metadata catch-all. The service controller and the
+  # cloud-provider helper patch ONLY the status subresource (kubernetes v1.36.4
+  # staging/src/k8s.io/cloud-provider/service/helpers/helper.go PatchService, the
+  # trailing "status"; controller.go patchStatus and the finalizer patches at :945, :960,
+  # :986), so their writes are not logged here with a body; the rule also filters
+  # objectRef.subresource == status for a platform that does log it (EKS, AKS).
+  - level: RequestResponse
+    verbs: ["create", "update", "patch"]
+    resources:
+      - group: ""
+        resources: ["services"]
+
   # --- TRR9006: Secret reads at Metadata (NEVER Request/RequestResponse) ---
   # Above every None rule, so a secret read is always recorded. Metadata carries
   # verb, objectRef, identity, source, client, and code -- but not the data.
@@ -314,6 +366,30 @@ rules:
     resources:
       - group: ""
         resources: ["serviceaccounts", "serviceaccounts/token"]
+
+  # --- TRR9035: CertificateSigningRequest client-cert persistence ---
+  # A create of a certificatesigningrequests object at Request, so
+  # requestObject.spec.signerName (and spec.request, spec.usages) is present for
+  # k8s_csr_client_cert_minted.yml to scope the create leg to the
+  # kubernetes.io/kube-apiserver-client signer. spec.request is a PKCS#10 CSR (a public
+  # key and a subject), NOT a private key, so Request level copies no secret into the
+  # log (unlike Secrets and serviceaccounts/token above, which stay at Metadata). The
+  # approval subresource update at Metadata carries the verb, subresource, objectRef and
+  # approver identity the approve leg keys on; no body is needed there. Above the
+  # None/catch-all rules; nothing above sets a level for these requests, so this lowers
+  # nothing (a CSR request otherwise reaches the final Metadata catch-all).
+  # certificatesigningrequests/status stays at the Metadata catch-all (the signer writes
+  # the issued certificate there; the rule does not read it).
+  - level: Request
+    verbs: ["create"]
+    resources:
+      - group: "certificates.k8s.io"
+        resources: ["certificatesigningrequests"]
+  - level: Metadata
+    verbs: ["update"]
+    resources:
+      - group: "certificates.k8s.io"
+        resources: ["certificatesigningrequests/approval"]
 
   # --- Noise reduction: drop high-volume read traffic. Does NOT touch secrets ---
   - level: None

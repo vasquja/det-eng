@@ -1,0 +1,115 @@
+title: Kubernetes Client-Auth CSR Created or Approved
+id: 075f3d0f-da3b-4232-bf6a-ccf6fffea1e9
+status: experimental
+description: |
+  Detects the two API-server-mediated legs of minting a long-lived x509 client
+  credential through the CertificateSigningRequest (CSR) API: the CREATE of a CSR
+  whose spec.signerName is kubernetes.io/kube-apiserver-client (the signer that
+  issues certificates a client uses to authenticate to kube-apiserver), and the
+  APPROVE of any CSR (an update of the certificatesigningrequests/approval
+  subresource) by a non-system identity. This is the TRR9035 chokepoint for
+  T1098.006 CSR client-certificate persistence: a successful create-and-approve
+  pair yields a client certificate that maps to a Kubernetes user and groups, a
+  credential no RBAC-object write reveals and that survives a password or token
+  rotation until the certificate expires.
+
+  Both markers are server-set and not spoofable. The API server injects
+  spec.username, spec.uid and spec.groups into a CSR from the requester's request
+  context and clears any client-supplied values (kubernetes v1.36.4
+  pkg/registry/certificates/certificates/strategy.go, PrepareForCreate), and the
+  approval decision is written only through the approval subresource, which the
+  record names as objectRef.subresource == 'approval'.
+
+  Scope. The create leg keys on signerName, so it fires on a
+  kubernetes.io/kube-apiserver-client request and NOT on the node bootstrap CSRs
+  that differ only on signerName: kubernetes.io/kube-apiserver-client-kubelet
+  (kubelets authenticating to the API server) and kubernetes.io/kubelet-serving
+  (kubelet serving certificates). Node CSRs are the hard benign baseline (see the
+  sidecar near-misses). The approve leg carries no request body: the approval
+  update is logged at Metadata (serving-certificate and client bodies never need a
+  higher level), so the rule cannot read signerName on the approve leg and keys on
+  the subresource and verb alone, with a filter that drops the built-in approver
+  (system:kube-controller-manager and the other system:* identities that run the
+  csrapprover auto-approving node CSRs). A human manually approving a node
+  kubelet-serving CSR therefore fires the approve leg; baseline that action per
+  cluster.
+
+  Two things this rule intentionally does NOT do (TRR9035 disclosed limits; see
+  the TRR and RULE_DEFECTS.md K60):
+  1. It does not grade the requested certificate subject. The subject (the CN and
+     O that become the Kubernetes user and groups) lives only in the DER CSR inside
+     spec.request, which is base64 of a line-wrapped PEM; pySigma cannot base64-
+     then-DER-decode it, so a Sigma rule cannot tell system:masters from an
+     ordinary CN. The API server's default CertificateSubjectRestriction admission
+     plugin (plugin/pkg/admission/certificates/subjectrestriction/admission.go)
+     already refuses a kubernetes.io/kube-apiserver-client CSR that requests the
+     system:masters group, so the highest-value subject cannot be requested through
+     this signer at all; a lower-privilege subject that maps to an existing
+     privileged identity is the realistic attack and is not subject-gradable.
+  2. It does not pair create with approval or detect self-approval (approver ==
+     requester) in one record. Correlating the two legs by identity needs a Sigma
+     field reference (user.username vs the stored spec.username), which the
+     Elasticsearch Lucene and EQL backends reject
+     (SigmaFeatureNotSupportedByBackendError) and Splunk defers, so a portable
+     single rule cannot express it. The two legs are shipped as two selections of
+     one rule; pairing is left to a correlation or triage.
+
+  This is a disclosed backstop, weaker than TRR9025/9027 (which ship content
+  graders this technique cannot have). Nearest prior art: Elastic's
+  'Kubernetes Client Certificate Signing Request Created or Approved' (k8s-audit,
+  keys on resource + verb + decision, does NOT scope by signerName), Elastic's
+  GKE CSR rules, the Azure AKS CSR rule, and GKE Event Threat Detection's CSR
+  detectors; Stratus Red Team ships the emulation
+  (k8s.persistence.create-client-certificate). SigmaHQ, Splunk ESCU and Falco ship
+  no CSR rule. The honest differentiation is a provider-agnostic pySigma rule that
+  scopes the create leg by signerName.
+references:
+  - https://attack.mitre.org/techniques/T1098/006/
+  - https://attack.mitre.org/techniques/T1136/
+  - https://kubernetes.io/docs/reference/access-authn-authz/certificate-signing-requests/
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+author: det-eng
+date: 2026/11/02
+tags:
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1098.006
+  - attack.t1136
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_create:
+    objectRef.resource: 'certificatesigningrequests'
+    objectRef.apiGroup: 'certificates.k8s.io'
+    verb: 'create'
+    requestObject.spec.signerName: 'kubernetes.io/kube-apiserver-client'
+  select_approval:
+    objectRef.resource: 'certificatesigningrequests'
+    objectRef.apiGroup: 'certificates.k8s.io'
+    objectRef.subresource: 'approval'
+    verb: 'update'
+  filter_system_approver:
+    user.username|startswith: 'system:'
+  # Null-safe negation: a three-valued backend (ES|QL and other SQL backends) reads
+  # NOT of a test on a missing field as NULL and would drop the record. The record of
+  # a request that fails authentication (401) has no user.username (apiserver v1.36.4
+  # WithFailedAuthenticationAudit), so the filter on the approver name is ORed with a
+  # test that the field is absent (the guard). The create leg has no negation.
+  sel_no_username:
+    user.username: null
+  condition: select_create or (select_approval and (sel_no_username or not filter_system_approver))
+falsepositives:
+  - Legitimate issuance of a client certificate for a new human user or an external
+    tool, where an administrator creates a kubernetes.io/kube-apiserver-client CSR
+    and approves it. Baseline the administrators and tools that mint user
+    certificates per cluster, and correlate with the requested subject.
+  - A human (not the csrapprover controller) manually approving a node
+    kubelet-serving or kube-apiserver-client-kubelet CSR. Some clusters require
+    manual approval of serving CSRs. The approve leg cannot see the signerName
+    (Metadata level), so such an approval fires it; baseline the node-CSR approval
+    workflow identity.
+  - The built-in csrapprover auto-approving node CSRs is excluded by the
+    filter_system_approver filter (system:kube-controller-manager and other
+    system:* identities).
+level: medium

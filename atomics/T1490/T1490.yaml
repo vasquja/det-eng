@@ -1,0 +1,171 @@
+attack_technique: T1490
+display_name: "Inhibit System Recovery (Kubernetes: destroy snapshots and Velero backups)"
+
+# Behavioral emulation for TRR9029. Each test destroys a cluster's recovery means through
+# the API server, so the API server writes the delete/create audit event the paired Sigma
+# rule (detections/sigma/T1490/k8s_snapshot_or_backup_destroyed.yml) keys on. Everything
+# happens in a throwaway namespace trr9029 with uniquely named trr9029- objects, so a
+# validator matches the emulation's own events.
+#
+# SAFE BY DESIGN. This runs on a throwaway kind cluster (or a local API-server lab), never
+# a production cluster. The objects are inert: the snapshot CRs reference a non-existent
+# PVC and a fake snapshot handle, and the VolumeSnapshotContent sets deletionPolicy Retain,
+# so even a running snapshot-controller would delete no physical storage; the Velero
+# Schedule, BackupStorageLocation and DeleteBackupRequest live in the trr9029 namespace,
+# which no real Velero server watches, so no backup or snapshot is ever deleted. The atomic
+# installs the snapshot and Velero CustomResourceDefinitions (vendored in src/crds/) only
+# when they are absent and removes on cleanup only the CRDs it installed and its own
+# trr9029- objects. Prerequisites: a reachable throwaway cluster (kubectl works), rights to
+# create CRDs and the inert objects, and audit logging at Metadata (the shared
+# detections/k8s/audit-policy-apiserver.yaml catch-all is enough).
+
+atomic_tests:
+  - name: "TRR9029.K8S.A — delete a VolumeSnapshot"
+    auto_generated_guid: 24e020b9-71d2-456c-a129-5c049abdeec0
+    description: |
+      Creates an inert snapshot.storage.k8s.io VolumeSnapshot trr9029-vs (source a
+      non-existent PVC) and VolumeSnapshotContent trr9029-vsc (deletionPolicy Retain), then
+      deletes the VolumeSnapshot. The delete is the actor's record.
+      Chokepoint: verb=delete, objectRef.apiGroup=snapshot.storage.k8s.io,
+      objectRef.resource=volumesnapshots.
+      Rule: detections/sigma/T1490/k8s_snapshot_or_backup_destroyed.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh a
+      cleanup_command: |
+        kubectl delete namespace trr9029 --ignore-not-found
+        kubectl delete volumesnapshotcontent.snapshot.storage.k8s.io trr9029-vsc --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1490/src
+
+  - name: "TRR9029.K8S.B — delete a VolumeSnapshotContent (cluster-scoped)"
+    auto_generated_guid: c9360765-bd84-4f7d-8564-4bf5d237ffaa
+    description: |
+      Creates the inert objects and deletes the cluster-scoped VolumeSnapshotContent
+      trr9029-vsc (deletionPolicy Retain, so no physical storage is removed). The record
+      carries no namespace. The rule filters the snapshot-controller on this resource; an
+      actor's own delete is not filtered.
+      Chokepoint: verb=delete, objectRef.apiGroup=snapshot.storage.k8s.io,
+      objectRef.resource=volumesnapshotcontents.
+      Rule: detections/sigma/T1490/k8s_snapshot_or_backup_destroyed.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh b
+      cleanup_command: |
+        kubectl delete namespace trr9029 --ignore-not-found
+        kubectl delete volumesnapshotcontent.snapshot.storage.k8s.io trr9029-vsc --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1490/src
+
+  - name: "TRR9029.K8S.C — delete a Velero Schedule"
+    auto_generated_guid: ec0f1bbf-5679-4c3e-89ec-cf842232e7ec
+    description: |
+      Creates an inert velero.io Schedule trr9029-schedule and deletes it, which stops
+      future scheduled backups.
+      Chokepoint: verb=delete, objectRef.apiGroup=velero.io, objectRef.resource=schedules.
+      Rule: detections/sigma/T1490/k8s_snapshot_or_backup_destroyed.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh c
+      cleanup_command: |
+        kubectl delete namespace trr9029 --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1490/src
+
+  - name: "TRR9029.K8S.D — delete a Velero BackupStorageLocation"
+    auto_generated_guid: 4455b22e-0a17-452c-a14b-8376d09b51a9
+    description: |
+      Creates an inert velero.io BackupStorageLocation trr9029-bsl and deletes it, which
+      orphans the backup object store.
+      Chokepoint: verb=delete, objectRef.apiGroup=velero.io,
+      objectRef.resource=backupstoragelocations.
+      Rule: detections/sigma/T1490/k8s_snapshot_or_backup_destroyed.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh d
+      cleanup_command: |
+        kubectl delete namespace trr9029 --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1490/src
+
+  - name: "TRR9029.K8S.E — create a Velero DeleteBackupRequest (the backup-deletion path)"
+    auto_generated_guid: 57a1e1e6-924f-4ed7-90f4-00fdd62dec27
+    description: |
+      Creates a velero.io DeleteBackupRequest (generateName trr9029-dbr-) in the trr9029
+      namespace, which is exactly what `velero backup delete` does. In this throwaway
+      namespace no Velero server watches it, so nothing is deleted; the create is the
+      actor's record. The record is answered 201 and carries no objectRef.name
+      (generateName). Deleting the Backup custom resource alone is NOT destructive (Velero's
+      backup-sync re-creates it), which is why this procedure is the DeleteBackupRequest
+      create and not a backups delete.
+      Chokepoint: verb=create, objectRef.apiGroup=velero.io,
+      objectRef.resource=deletebackuprequests.
+      Rule: detections/sigma/T1490/k8s_snapshot_or_backup_destroyed.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh e
+      cleanup_command: |
+        kubectl delete namespace trr9029 --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1490/src
+
+  - name: "TRR9029 dry-run control — server-side dry runs that must NOT fire the rule"
+    auto_generated_guid: f7175617-dbcc-4947-9576-f77996ef8be2
+    description: |
+      A control, not a procedure. Sends a server-side dry run of each chokepoint as the
+      query parameter ?dryRun=All (the four deletes with kubectl delete --raw, the
+      DeleteBackupRequest create with kubectl create --dry-run=server), on trr9029-dryrun-
+      objects in the trr9029-dryrun-ns namespace. A dry run persists nothing, so the rule
+      must match none of these records; the validator's MISS_MANIFEST proves it. Also used
+      as the all-tests cleanup.
+      Rule: detections/sigma/T1490/k8s_snapshot_or_backup_destroyed.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh dryrun
+      cleanup_command: |
+        kubectl delete namespace trr9029-dryrun-ns --ignore-not-found
+        kubectl delete volumesnapshotcontent.snapshot.storage.k8s.io trr9029-dryrun-vsc --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1490/src

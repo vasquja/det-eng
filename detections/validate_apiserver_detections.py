@@ -20,6 +20,23 @@ key on the same API server audit log (plus one node runtime sensor rule):
                                            + nodes/proxy /portForward/ path
   * TRR9027 (T1565.001, cluster DNS poison) - kube-system and OpenShift DNS config writes
                                            + Corefile grade
+  * TRR9028 (T1485, storage destruction) - PVC/PV delete/deletecollection chokepoint
+                                           + PV reclaim-policy-flip grade
+  * TRR9029 (T1490, inhibit recovery)    - VolumeSnapshot/VolumeSnapshotContent and Velero
+                                           Schedule/BackupStorageLocation deletes +
+                                           DeleteBackupRequest create
+  * TRR9030 (T1528, steal app access token) - pod-bound SA token used off its source: the
+                                           user.extra pod-name marker vs the last
+                                           sourceIPs entry
+  * TRR9031 (T1036.005, lookalike pod name) - explicit controller-shaped pod name by a
+                                           non-node caller
+  * TRR9033 (T1133, service exposure)    - core Service create/update/patch whose
+                                           spec.type is NodePort or LoadBalancer
+  * TRR9034 (T1204.003, malicious image via admission-policy verdict) - the reference
+                                           ValidatingAdmissionPolicy verdict marker
+                                           (validation_failure annotation / deny message)
+  * TRR9035 (T1098.006/T1136, CSR client-cert persistence) - a kube-apiserver-client CSR
+                                           create (scoped by signerName) + its approval
 
 The loop this proves, for each match-gated rule:
 
@@ -466,7 +483,7 @@ OK = "ok"               # 2xx, or 101 Switching Protocols (exec/attach/portforwa
 # dry-runs with one of these prefixes (R2-d, MISS_MANIFEST). No positive gate (rec()
 # or win()) selects such an object, so neither a dry-run request nor the real create
 # and cleanup delete of a dry-run object can stand in for a procedure.
-DRY_RUN_PREFIXES = ("trr9008-dryrun-", "trr9010-dryrun-", "trr9025-dryrun-")
+DRY_RUN_PREFIXES = ("trr9008-dryrun-", "trr9010-dryrun-", "trr9025-dryrun-", "trr9028-dryrun-", "trr9029-dryrun-")
 NOT_DRY_RUN = ("not a dry-run control object (name and namespace do not begin with "
                + ", ".join(repr(p) for p in DRY_RUN_PREFIXES) + ")")
 
@@ -667,6 +684,30 @@ def core_group(e):
 core_group.describe = "core API group"
 
 
+# TRR9034 (T1204.003): the ValidatingAdmissionPolicy verdict markers the rule keys on,
+# both server-set at Metadata (apiserver .../policy/validating/dispatcher.go, v1.36.4).
+# An Audit binding writes the event annotation (its JSON value carries "validationActions":[);
+# a Deny binding puts the "ValidatingAdmissionPolicy '...' denied request" message in
+# responseStatus. A and C carry the annotation; B carries the message (code 422).
+VAP_FAILURE_ANNOTATION = "annotations.validation.policy.admission.k8s.io/validation_failure"
+
+
+def vap_audit_annotation(e):
+    return '"validationActions":[' in str(e.get(VAP_FAILURE_ANNOTATION) or "")
+
+
+vap_audit_annotation.describe = (VAP_FAILURE_ANNOTATION + ' contains \'"validationActions":[\'')
+
+
+def vap_deny_message(e):
+    msg = str(e.get("responseStatus.message") or "")
+    return "ValidatingAdmissionPolicy '" in msg and "denied request" in msg
+
+
+vap_deny_message.describe = ("responseStatus.message names a ValidatingAdmissionPolicy "
+                             "denied request")
+
+
 def apigroup(group):
     return field_eq("objectRef.apiGroup", group)
 
@@ -729,6 +770,41 @@ def win(gate, window, code=OK):
     g.describe += f", {NOT_DRY_RUN}"
     g.window = window
     return g
+
+
+# --- TRR9030 (T1528): pod-bound SA token used from an unexpected source -------------
+# The inert service account trr9030-sa; its pod-bound token (the pod-name extra, set
+# server-side from the signed claim) is used off-source in Procedure A (from the runner,
+# which the apiserver records as the docker-bridge gateway, outside the pod CIDR) and
+# in-pod in the benign baseline B (the pod's own mounted token, from the pod IP). Both
+# gates read only request-attribute fields the audit log carries at Metadata (no body).
+TRR9030_SA = "system:serviceaccount:trr9030-ns:trr9030-sa"
+
+
+def _last_source_ip(e):
+    """The LAST sourceIPs entry (the apiserver's TCP peer; the only trustworthy one), from
+    the flattened JSON-text array."""
+    s = e.get("sourceIPs")
+    try:
+        arr = json.loads(s) if isinstance(s, str) else s
+        return arr[-1] if arr else None
+    except (ValueError, TypeError, IndexError):
+        return None
+
+
+def pod_bound_token(e):
+    return bool(str(e.get("user.extra.authentication.kubernetes.io/pod-name") or ""))
+
+
+pod_bound_token.describe = "user.extra 'authentication.kubernetes.io/pod-name' present"
+
+
+def off_pod_cidr(e):
+    ip = _last_source_ip(e)
+    return isinstance(ip, str) and not ip.startswith("10.244.")
+
+
+off_pod_cidr.describe = "last sourceIPs entry outside the pod CIDR 10.244.0.0/16"
 
 
 # (technique folder, rule file, source, label, note, gate). Order is report order.
@@ -963,6 +1039,28 @@ MANIFEST = [
      "namespace-delete hunting rule: the actor's own accepted delete of trr9010-ns-f",
      [("F", rec(verb="delete", resource="namespaces", name="trr9010-ns-f",
                 window=("9010", "f")))]),
+    # TRR9029 (T1490): the snapshot/backup destruction chokepoint. A-D are accepted
+    # deletes of the emulation's own trr9029- objects by a non-system caller (so a
+    # controller sweep cannot stand in); the VolumeSnapshotContent is cluster-scoped, so
+    # B names no namespace. E is the DeleteBackupRequest create: a generateName object, so
+    # it carries no objectRef.name and the gate keys on the namespace, resource and a
+    # non-system caller (the velero server's own GC creates are filtered by the rule).
+    ("T1490", "k8s_snapshot_or_backup_destroyed.yml", "audit", "9029 A-E",
+     "snapshot/backup destruction chokepoint (snapshot + Velero deletes, DBR create)", [
+        ("A", rec(verb="delete", resource="volumesnapshots", name="trr9029-vs",
+                  ns="trr9029", user=non_system, also=apigroup("snapshot.storage.k8s.io"),
+                  window=("9029", "a"))),
+        ("B", rec(verb="delete", resource="volumesnapshotcontents", name="trr9029-vsc",
+                  user=non_system, also=apigroup("snapshot.storage.k8s.io"),
+                  window=("9029", "b"))),
+        ("C", rec(verb="delete", resource="schedules", name="trr9029-schedule",
+                  ns="trr9029", user=non_system, also=apigroup("velero.io"),
+                  window=("9029", "c"))),
+        ("D", rec(verb="delete", resource="backupstoragelocations", name="trr9029-bsl",
+                  ns="trr9029", user=non_system, also=apigroup("velero.io"),
+                  window=("9029", "d"))),
+        ("E", rec(verb="create", resource="deletebackuprequests", ns="trr9029",
+                  user=non_system, also=apigroup("velero.io"), window=("9029", "e")))]),
     ("T1546", "k8s_admission_webhook_created.yml", "audit", "9025 A-C",
      "malicious admission-webhook create chokepoint", [
         ("A", rec(verb="create", resource="mutatingwebhookconfigurations", name="trr9025-mwc",
@@ -1058,22 +1156,133 @@ MANIFEST = [
      "OpenShift DNS Operator object write chokepoint: dnses.operator.openshift.io/default "
      "spec.servers patch",
      [("F", win(openshift_dnses_gate, ("9027", "f")))]),
+    # TRR9028 (T1485): an actor's delete of PVC/PV storage, and the reclaim-policy flip.
+    # Each procedure's delete is accepted (200) and by a non-system caller, so a storage
+    # controller's own delete (filtered by the rule) cannot stand in for it.
+    ("T1485", "k8s_storage_volume_deleted.yml", "audit", "9028 A-C",
+     "PVC/PV deletion chokepoint", [
+        ("A", rec(verb="delete", resource="persistentvolumeclaims", name="trr9028-pvc-a",
+                  ns="trr9028", user=non_system, window=("9028", "a"))),
+        ("B", rec(verb="delete", resource="persistentvolumes", name="trr9028-pv-b",
+                  user=non_system, window=("9028", "b"))),
+        ("C", rec(verb="deletecollection", resource="persistentvolumeclaims", ns="trr9028",
+                  user=non_system, window=("9028", "c")))]),
+    ("T1485", "k8s_volume_reclaim_set_to_delete.yml", "audit", "9028 D",
+     "reclaim-policy flip grader: a PV patch sets persistentVolumeReclaimPolicy Delete (Request)",
+     [("D", rec(verb="patch", resource="persistentvolumes", name="trr9028-pv-d",
+                user=non_system, window=("9028", "d")))]),
+    # TRR9030 A: the pod-bound token (pod-name present) used off-source. The emulation
+    # replays it with `kubectl auth whoami` (a create of selfsubjectreviews, allowed for
+    # every authenticated identity, answered 201) from the runner, so the last sourceIPs
+    # entry is the off-pod docker-bridge gateway. The gate needs the trr9030 SA, the
+    # pod-name marker and an off-pod-CIDR last source, so the pod's own in-cluster call
+    # (the benign baseline B, proven absent below) cannot stand in for it.
+    ("T1528", "k8s_pod_token_used_off_source.yml", "audit", "9030 A",
+     "pod-bound SA token used off-source chokepoint (pod-name marker vs the last sourceIPs "
+     "entry)", [
+        ("A", rec(verb="create", resource="selfsubjectreviews", sub=None,
+                  user=field_eq("user.username", TRR9030_SA),
+                  also=all_of(pod_bound_token, off_pod_cidr), window=("9030", "a")))]),
+    # TRR9031: a bare pod created with an EXPLICIT controller-shaped name by a non-node
+    # caller. No controller create carries an objectRef.name (controllers set only
+    # metadata.generateName), so the explicit name is the client's choice. The gate keys
+    # on the emulation marker (A: the trr9031 namespace; C: the trr9031 label in
+    # requestObject, pods create is at Request in both the lab and recommended policies),
+    # NEVER on the masquerade name the rule matches (R4). non_system excludes system:node.
+    ("T1036.005", "k8s_pod_controller_name_mimicry.yml", "audit", "9031 A,C",
+     "lookalike pod name: explicit controller-shaped objectRef.name no controller sets", [
+        ("A", rec(verb="create", resource="pods", sub=None, ns="trr9031", user=non_system,
+                  window=("9031", "a"))),
+        ("C", rec(verb="create", resource="pods", sub=None, ns="kube-system", user=non_system,
+                  also=field_eq("requestObject.metadata.labels.trr", "trr9031"),
+                  window=("9031", "c")))]),
+    # TRR9033 (T1133, service exposure through NodePort or LoadBalancer). The chokepoint
+    # fires on a create/update/patch of a core Service whose spec.type is NodePort or
+    # LoadBalancer, in requestObject (A, B: a full-object create) or responseObject (C: a
+    # JSON patch of /spec/type, whose request body is an operation list). The benign
+    # ClusterIP baseline (D) and the /status confounder (E) are ABSENCE controls below:
+    # the rule must stay quiet on them.
+    ("T1133", "k8s_service_exposed_nodeport_loadbalancer.yml", "audit", "9033 A-C",
+     "Service exposure chokepoint (NodePort / LoadBalancer spec.type)", [
+        ("A", rec(verb="create", resource="services", name="trr9033-np", ns="trr9033",
+                  window=("9033", "a"))),
+        ("B", rec(verb="create", resource="services", name="trr9033-lb", ns="trr9033",
+                  window=("9033", "b"))),
+        ("C", rec(verb="patch", resource="services", sub=None, name="trr9033-jp",
+                  ns="trr9033", window=("9033", "c")))]),
+    # TRR9034 (T1204.003): a workload the reference VAP judged a violation. A and C carry
+    # the Audit binding's event annotation; B carries the Deny binding's denied-request
+    # message (422). A is a direct pod create (objectRef.name set); C is the controller's
+    # own pod create, which uses generateName, so its objectRef.name is EMPTY -- that empty
+    # name is the robust distinguisher of the indirect path (the controller identity differs
+    # between a per-SA-token cluster like kind, system:serviceaccount:kube-system:
+    # replicaset-controller, and a static-token lab, system:kube-controller-manager, so the
+    # gate does not pin it). Each is bound to its own ledger window. Positive gates exclude
+    # dry-run objects (rec default).
+    ("T1204.003", "k8s_admission_policy_image_violation.yml", "audit", "9034 A-C",
+     "VAP verdict on a workload (Audit annotation, or Deny message)", [
+        ("A", rec(verb="create", resource="pods", also=vap_audit_annotation,
+                  window=("9034", "a"))),
+        ("B", rec(verb="create", resource="pods", also=vap_deny_message, code=(422,),
+                  window=("9034", "b"))),
+        ("C", rec(verb="create", resource="pods",
+                  also=all_of(vap_audit_annotation, no_field("objectRef.name")),
+                  window=("9034", "c")))]),
+    # TRR9035 (T1098.006 / T1136): CSR client-certificate persistence. A is the create
+    # of a kubernetes.io/kube-apiserver-client CSR (the create record is at Request, so
+    # the rule reads requestObject.spec.signerName); B is its approval, an update of the
+    # approval subresource (Metadata). Both name the trr9035-persist CSR. The gates match
+    # the emulation's own records; the rule then fires on them (the create by signerName,
+    # the approval by the approval subresource + a non-system approver).
+    ("T1098.006", "k8s_csr_client_cert_minted.yml", "audit", "9035 A-B",
+     "CSR client-auth create + approve chokepoint", [
+        ("A", rec(verb="create", resource="certificatesigningrequests",
+                  name="trr9035-persist", also=apigroup("certificates.k8s.io"),
+                  window=("9035", "a"))),
+        ("B", rec(verb="update", resource="certificatesigningrequests", sub="approval",
+                  name="trr9035-persist", also=apigroup("certificates.k8s.io"),
+                  window=("9035", "b")))]),
 ]
 
 
 # Absence checks (C2-4): with a ledger, these rules must match NOTHING in a procedure's
-# window. They prove a documented gap -- a node/on-disk action that leaves no API audit
-# event. Each is (label, folder, [rule file, ...], window, gate): a FAIL if any event the
-# gate selects, in that window, matches one of the rules. The gate is any non-system
-# caller (the operator identity the emulation runs as, in any namespace), so a
-# controller's or the kubelet's own background Secret read in the window cannot flake
-# the check. The check also fails when the procedure did not run, failed, has no window,
-# or when a matching event has no requestReceivedTimestamp to place it in time. Without
-# --ledger there is no window to bound them, so they are skipped.
+# window. They prove either a documented gap -- a node/on-disk action that leaves no API
+# audit event -- or a benign / confounder control: a write the API server DOES log but on
+# which the rule must stay quiet (a ClusterIP Service create, a services/status patch).
+# Each is (label, folder, [rule file, ...], window, gate): a FAIL if any event the gate
+# selects, in that window, matches one of the rules. The gate is any non-system caller
+# (the operator identity the emulation runs as, in any namespace), so a controller's or
+# the kubelet's own background read in the window cannot flake the check. The check also
+# fails when the procedure did not run, failed, has no window, or when a matching event
+# has no requestReceivedTimestamp to place it in time. Without --ledger there is no
+# window to bound them, so they are skipped.
 ABSENCE = [
     ("9006 E gap", "T1552.007",
      ["k8s_secret_access.yml", "k8s_secret_token_request.yml"],
      ("9006", "e"), non_system),
+    # TRR9030 B (benign baseline, not a technique procedure): the SAME pod-bound token
+    # used from the pod's OWN IP (in-cluster). The off-source rule must match NONE of the
+    # trr9030 SA's requests in B's window -- the hard benign baseline that differs from the
+    # positive A only on the last sourceIPs entry, proving the discriminator live. Fails if
+    # B did not run OR its in-pod call was rejected: the atomic runs that call with
+    # curl --fail, so a non-2xx answer (an absent/expired token recorded as anonymous, a
+    # 5xx) makes B exit non-zero and this check MISS, never a vacuous pass on a window with
+    # no trr9030-sa record.
+    ("9030 B incluster", "T1528",
+     ["k8s_pod_token_used_off_source.yml"],
+     ("9030", "b"), field_eq("user.username", TRR9030_SA)),
+    # TRR9033 D: the ClusterIP Service create is logged at RequestResponse (the services
+    # body row), so the record carries spec.type=ClusterIP; the rule must not fire (the
+    # exposing-type discriminator is load-bearing live, not only in the sidecar).
+    ("9033 D clusterip", "T1133",
+     ["k8s_service_exposed_nodeport_loadbalancer.yml"], ("9033", "d"), non_system),
+    # TRR9033 E: the /status patch of the LoadBalancer Service. The lab policy keeps
+    # services/status at Metadata (exact resource matching), so no stored object is
+    # logged and the rule cannot fire; the subresource filter keeps it quiet where the
+    # status subresource IS logged with a body (the sidecar filtered case proves that).
+    # Either way the rule must match nothing here.
+    ("9033 E status", "T1133",
+     ["k8s_service_exposed_nodeport_loadbalancer.yml"], ("9033", "e"), non_system),
 ]
 
 
@@ -1133,8 +1342,12 @@ def without_dry_run(e):
 DRY_9008 = ("9008", "dryrun")
 DRY_9010 = ("9010", "dryrun")
 DRY_9025 = ("9025", "dryrun")
+DRY_9028 = ("9028", "dryrun")
+DRY_9029 = ("9029", "dryrun")
 DRY_NS_9008 = "gatekeeper-system"     # the TRR9008 control's namespace (it creates it)
 DRY_NS_9010 = "trr9010-dryrun-ns"     # the TRR9010 control's own namespace
+DRY_NS_9028 = "trr9028-dryrun-ns"     # the TRR9028 control's own namespace
+DRY_NS_9029 = "trr9029-dryrun-ns"     # the TRR9029 control's own namespace
 IN_ENFORCER_NS = field_in("objectRef.namespace", ENFORCER_NAMESPACES)
 # kubectl delete --raw of a collection URL with a DeleteOptions body: the step's dry-run
 # deletecollection names its own objects in the query (a label selector).
@@ -1203,6 +1416,41 @@ MISS_MANIFEST = [
     ("T1685", "k8s_admission_webhook_disabled.yml", "9025 dryrun", [
         ("repoint patch", dry("patch", "validatingwebhookconfigurations", DRY_9025,
                               prefix="trr9025-dryrun-"))]),
+    # TRR9028: kubectl delete --dry-run=server of a PVC and a PV, and a dry-run
+    # deletecollection of the control namespace's PVCs (kubectl delete --raw with a
+    # DeleteOptions body holding dryRun All): the storage-deletion chokepoint must match
+    # none of them.
+    ("T1485", "k8s_storage_volume_deleted.yml", "9028 dryrun", [
+        ("pvc", dry("delete", "persistentvolumeclaims", DRY_9028, prefix="trr9028-dryrun-")),
+        ("pv", dry("delete", "persistentvolumes", DRY_9028, prefix="trr9028-dryrun-")),
+        ("deletecollection", dry("deletecollection", "persistentvolumeclaims", DRY_9028,
+                                 ns=DRY_NS_9028))]),
+    # TRR9028 grader: a kubectl patch pv --dry-run=server that flips the reclaim policy
+    # to Delete. For a PATCH the dryRun flag is a query parameter (?dryRun=All), not a
+    # DeleteOptions body, so the reclaim grader must match none of it by its query filter
+    # (without_dry_run strips the dryRun query param, and then the grader fires).
+    ("T1485", "k8s_volume_reclaim_set_to_delete.yml", "9028 dryrun", [
+        ("reclaim patch", dry("patch", "persistentvolumes", DRY_9028,
+                              prefix="trr9028-dryrun-"))]),
+    # TRR9029: a server-side dry run of each snapshot/backup chokepoint, sent as the query
+    # parameter ?dryRun=All (the CRDs log at Metadata, so the dry run is never in a body):
+    # the four deletes with kubectl delete --raw '<path>?dryRun=All', the DeleteBackupRequest
+    # create with kubectl create --dry-run=server. The rule must match none of them, and
+    # must match each once the dry-run marker is stripped. The VolumeSnapshotContent is
+    # cluster-scoped (name prefix); the DeleteBackupRequest is a generateName object (its
+    # namespace carries the dry-run prefix).
+    ("T1490", "k8s_snapshot_or_backup_destroyed.yml", "9029 dryrun", [
+        ("volumesnapshot", dry("delete", "volumesnapshots", DRY_9029, prefix="trr9029-dryrun-",
+                               also=apigroup("snapshot.storage.k8s.io"))),
+        ("volumesnapshotcontent", dry("delete", "volumesnapshotcontents", DRY_9029,
+                                      prefix="trr9029-dryrun-",
+                                      also=apigroup("snapshot.storage.k8s.io"))),
+        ("schedule", dry("delete", "schedules", DRY_9029, prefix="trr9029-dryrun-",
+                         also=apigroup("velero.io"))),
+        ("backupstoragelocation", dry("delete", "backupstoragelocations", DRY_9029,
+                                      prefix="trr9029-dryrun-", also=apigroup("velero.io"))),
+        ("deletebackuprequest", dry("create", "deletebackuprequests", DRY_9029,
+                                    ns=DRY_NS_9029, also=apigroup("velero.io")))]),
 ]
 
 
@@ -1805,7 +2053,8 @@ def write_json(path, report):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Validate TRR9004-9010, 9025-9027 K8s detections.")
+    ap = argparse.ArgumentParser(
+        description="Validate TRR9004-9010, 9025-9031, 9033-9035 K8s detections.")
     ap.add_argument("--audit-log", default="/tmp/kube-apiserver-audit.log",
                     help="Path to the API server audit log (JSON lines).")
     ap.add_argument("--cri-log",
@@ -2215,7 +2464,7 @@ def validate(args, report):
         print(f"The rule(s) with a log fired on the emulated telemetry; {skipped} "
               f"rule(s) skipped for lack of a log.{xnote}")
         return 0
-    print("All TRR9004-9010, 9025-9027 match-gated detections fired on the emulated "
+    print("All TRR9004-9010, 9025-9031, 9033-9035 match-gated detections fired on the emulated "
           f"telemetry.{xnote}")
     return 0
 

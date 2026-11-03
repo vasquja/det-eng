@@ -1,0 +1,113 @@
+{
+  "style": {
+    "font-family": "sans-serif",
+    "background-color": "#ffffff",
+    "node-color": "#ffffff",
+    "border-width": 4,
+    "border-color": "#000000",
+    "radius": 50,
+    "outside-position": "auto",
+    "caption-font-size": 16,
+    "label-font-size": 14,
+    "label-border-width": 2,
+    "property-font-size": 14,
+    "arrow-width": 5,
+    "arrow-color": "#000000",
+    "type-font-size": 16
+  },
+  "nodes": [
+    {
+      "id": "n0",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "caption": "Existing ClusterIP Service (internal)",
+      "labels": [],
+      "properties": {
+        "spec.type": "ClusterIP",
+        "Note": "a JSON patch body is an op list, not a Service"
+      },
+      "style": {
+        "border-color": "#9f9f9f",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top"
+      }
+    },
+    {
+      "id": "n1",
+      "position": {
+        "x": 400,
+        "y": 0
+      },
+      "caption": "Authorize + Audit Write (RequestResponse)",
+      "labels": [
+        "K8s Audit Log"
+      ],
+      "properties": {
+        "verb": "patch",
+        "objectRef.resource": "services",
+        "objectRef.subresource": "(none)",
+        "requestObject": "[{op: replace, path: /spec/type, ...}]",
+        "responseObject.spec.type": "LoadBalancer",
+        "Chokepoint": "stored type (Elastic request-only misses it)"
+      },
+      "style": {
+        "border-color": "#0062b1",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top",
+        "node-color": "#fff2a8"
+      }
+    },
+    {
+      "id": "n2",
+      "position": {
+        "x": 900,
+        "y": 0
+      },
+      "caption": "Internal Service now exposed",
+      "labels": [],
+      "properties": {
+        "Effect": "a ClusterIP front end is reachable off-cluster"
+      },
+      "style": {
+        "border-color": "#000000",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "bottom"
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "id": "r0",
+      "fromId": "n0",
+      "toId": "n1",
+      "type": "",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r1",
+      "fromId": "n1",
+      "toId": "n2",
+      "type": "",
+      "properties": {},
+      "style": {}
+    }
+  ]
+}
