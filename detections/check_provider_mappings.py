@@ -204,6 +204,10 @@ EXPECTED_LOSS = {
         "crb-json-patch-appends-sa-to-tenant-binding": ExpectedLoss(
             GKE_JSON_PATCH, "all: blocks sel_jsonpatch_subjects_path"),
     },
+    ("gke", "T1485/k8s_volume_reclaim_set_to_delete.yml"): {
+        "reclaim-set-delete-jsonpatch": ExpectedLoss(
+            GKE_JSON_PATCH, "all: blocks sel_reclaim_jsonpatch"),
+    },
     ("gke", "T1546/k8s_admission_webhook_repointed_to_url.yml"): {
         "jsonpatch-add-url-value-first": ExpectedLoss(
             GKE_JSON_PATCH, "all: blocks sel_jsonpatch_url"),
@@ -579,6 +583,11 @@ NOT_PORTABLE = {
     ),
     ("gke", "T1134/k8s_impersonation_privileged.yml"): (
         "sel_priv_groups.impersonatedUser.groups",
+    ),
+    ("gke", "T1485/k8s_volume_reclaim_set_to_delete.yml"): (
+        "filter_dry_run_query.requestURI",
+        "sel_accepted.responseStatus.code",
+        "sel_no_request_uri.requestURI",
     ),
     ("gke", "T1546/k8s_admission_webhook_created.yml"): (
         "select_adm_ssa_create.responseStatus.code",

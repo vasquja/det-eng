@@ -325,6 +325,20 @@ reasoning survives. Append an entry per vet; keep it short.
   policy to Delete covers the 'make it destructive' step. `kubectl delete backup` is not destructive, because
   Velero's backup sync re-creates the CR. Deferred to build as two TRRs, TRR9028 (T1485) and TRR9029 (T1490);
   the chokepoints need human CHOKEPOINT waivers.
+  Built as TRR9028 (the T1485 half: PVC and PV deletes). Shipped: the chokepoint
+  `detections/sigma/T1485/k8s_storage_volume_deleted.yml` (delete/deletecollection of
+  core persistentvolumeclaims/persistentvolumes by a non-controller, filtering the
+  namespace-controller deletecollection, generic-garbage-collector, persistent-volume-binder
+  and the kind local-path provisioner by `user.username`; a CHOKEPOINT waiver, proposed)
+  and the Request-level grader `k8s_volume_reclaim_set_to_delete.yml` (a PV patch that sets
+  `persistentVolumeReclaimPolicy` to `Delete`). Dropped/deferred: the one-record reclaim
+  gap is unchanged and recorded as KTBD-H1 (a delete record carries no reclaim policy, so
+  the grader covers the policy-flip step only); the identity filters' stolen-token evasion
+  and the managed-platform CSI-provisioner baseline are KTBD-H2; no `deletionPolicy` on
+  volumesnapshotcontents here (that is the T1490/TRR9029 half, built in parallel). Prior
+  art re-checked at build time: still no PVC/PV deletion rule in SigmaHQ, Elastic, Splunk
+  or Falco k8saudit, and no Stratus/ART test; provider-native findings remain unverified
+  (AWS/GCP docs unreachable).
 
 - **Lookalike workload names (T1036.005) — LEAN-GO (Q1 and Q3 pass on a narrowed chokepoint; Q2 is GKE-native;
   respects the T1610 NO-GO).** Controllers create pods only with `generateName`

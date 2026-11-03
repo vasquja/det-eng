@@ -94,6 +94,26 @@ rules:
       - group: "events.k8s.io"
         resources: ["events"]
 
+  # --- TRR9028: PVC/PV deletes and PV reclaim-policy writes at Request ---
+  # Serves: T1485/k8s_storage_volume_deleted (the chokepoint fires at Metadata, but
+  # Request adds the DeleteOptions body so its dry-run filter can read a
+  # kubectl delete --dry-run=server, as for pods/events/namespaces above) and
+  # T1485/k8s_volume_reclaim_set_to_delete (the grader reads
+  # requestObject.spec.persistentVolumeReclaimPolicy from a PV patch). A delete's
+  # requestObject is DeleteOptions only, and a PV body holds no secret (capacity,
+  # access modes, a volume source and the reclaim policy). No rule above names these
+  # resources, so nothing is lowered. Request records no responseObject.
+  - level: Request
+    verbs: ["delete", "deletecollection"]
+    resources:
+      - group: ""
+        resources: ["persistentvolumeclaims", "persistentvolumes"]
+  - level: Request
+    verbs: ["update", "patch"]
+    resources:
+      - group: ""
+        resources: ["persistentvolumes"]
+
   # --- TRR9026: pod port-forward tunnel at Metadata (resource/subresource/verb) ---
   # The pods subresource is not covered by the pods rule above (audit resource matching
   # is exact), and a port-forward is get (WebSocket) or create (SPDY); Metadata carries

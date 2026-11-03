@@ -263,6 +263,23 @@ rules:
                     "validatingadmissionpolicies", "validatingadmissionpolicybindings",
                     "mutatingadmissionpolicies", "mutatingadmissionpolicybindings"]
 
+  # --- PVC/PV deletes and PV reclaim-policy writes at Request (TRR9028) ---
+  # Serves: T1485/k8s_storage_volume_deleted (Metadata fires the chokepoint; Request adds
+  # the DeleteOptions body so a kubectl delete --dry-run=server is filtered) and
+  # T1485/k8s_volume_reclaim_set_to_delete (the grader reads
+  # requestObject.spec.persistentVolumeReclaimPolicy from a PV patch). A delete body is
+  # DeleteOptions only; a PV body holds no secret.
+  - level: Request
+    verbs: ["delete", "deletecollection"]
+    resources:
+      - group: ""
+        resources: ["persistentvolumeclaims", "persistentvolumes"]
+  - level: Request
+    verbs: ["update", "patch"]
+    resources:
+      - group: ""
+        resources: ["persistentvolumes"]
+
   # --- RBAC writes at Request (roleRef, subjects, rules) ---
   # Serves: T1098.006/k8s_rbac_privileged_grant (every RBAC resource) and
   # k8s_rbac_sensitive_permission_grant (roles, clusterroles), T1098.006/k8s_rbac_write

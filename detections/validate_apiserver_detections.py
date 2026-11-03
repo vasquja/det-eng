@@ -20,6 +20,8 @@ key on the same API server audit log (plus one node runtime sensor rule):
                                            + nodes/proxy /portForward/ path
   * TRR9027 (T1565.001, cluster DNS poison) - kube-system and OpenShift DNS config writes
                                            + Corefile grade
+  * TRR9028 (T1485, storage destruction) - PVC/PV delete/deletecollection chokepoint
+                                           + PV reclaim-policy-flip grade
 
 The loop this proves, for each match-gated rule:
 
@@ -466,7 +468,7 @@ OK = "ok"               # 2xx, or 101 Switching Protocols (exec/attach/portforwa
 # dry-runs with one of these prefixes (R2-d, MISS_MANIFEST). No positive gate (rec()
 # or win()) selects such an object, so neither a dry-run request nor the real create
 # and cleanup delete of a dry-run object can stand in for a procedure.
-DRY_RUN_PREFIXES = ("trr9008-dryrun-", "trr9010-dryrun-", "trr9025-dryrun-")
+DRY_RUN_PREFIXES = ("trr9008-dryrun-", "trr9010-dryrun-", "trr9025-dryrun-", "trr9028-dryrun-")
 NOT_DRY_RUN = ("not a dry-run control object (name and namespace do not begin with "
                + ", ".join(repr(p) for p in DRY_RUN_PREFIXES) + ")")
 
@@ -1058,6 +1060,21 @@ MANIFEST = [
      "OpenShift DNS Operator object write chokepoint: dnses.operator.openshift.io/default "
      "spec.servers patch",
      [("F", win(openshift_dnses_gate, ("9027", "f")))]),
+    # TRR9028 (T1485): an actor's delete of PVC/PV storage, and the reclaim-policy flip.
+    # Each procedure's delete is accepted (200) and by a non-system caller, so a storage
+    # controller's own delete (filtered by the rule) cannot stand in for it.
+    ("T1485", "k8s_storage_volume_deleted.yml", "audit", "9028 A-C",
+     "PVC/PV deletion chokepoint", [
+        ("A", rec(verb="delete", resource="persistentvolumeclaims", name="trr9028-pvc-a",
+                  ns="trr9028", user=non_system, window=("9028", "a"))),
+        ("B", rec(verb="delete", resource="persistentvolumes", name="trr9028-pv-b",
+                  user=non_system, window=("9028", "b"))),
+        ("C", rec(verb="deletecollection", resource="persistentvolumeclaims", ns="trr9028",
+                  user=non_system, window=("9028", "c")))]),
+    ("T1485", "k8s_volume_reclaim_set_to_delete.yml", "audit", "9028 D",
+     "reclaim-policy flip grader: a PV patch sets persistentVolumeReclaimPolicy Delete (Request)",
+     [("D", rec(verb="patch", resource="persistentvolumes", name="trr9028-pv-d",
+                user=non_system, window=("9028", "d")))]),
 ]
 
 
@@ -1133,8 +1150,10 @@ def without_dry_run(e):
 DRY_9008 = ("9008", "dryrun")
 DRY_9010 = ("9010", "dryrun")
 DRY_9025 = ("9025", "dryrun")
+DRY_9028 = ("9028", "dryrun")
 DRY_NS_9008 = "gatekeeper-system"     # the TRR9008 control's namespace (it creates it)
 DRY_NS_9010 = "trr9010-dryrun-ns"     # the TRR9010 control's own namespace
+DRY_NS_9028 = "trr9028-dryrun-ns"     # the TRR9028 control's own namespace
 IN_ENFORCER_NS = field_in("objectRef.namespace", ENFORCER_NAMESPACES)
 # kubectl delete --raw of a collection URL with a DeleteOptions body: the step's dry-run
 # deletecollection names its own objects in the query (a label selector).
@@ -1203,6 +1222,22 @@ MISS_MANIFEST = [
     ("T1685", "k8s_admission_webhook_disabled.yml", "9025 dryrun", [
         ("repoint patch", dry("patch", "validatingwebhookconfigurations", DRY_9025,
                               prefix="trr9025-dryrun-"))]),
+    # TRR9028: kubectl delete --dry-run=server of a PVC and a PV, and a dry-run
+    # deletecollection of the control namespace's PVCs (kubectl delete --raw with a
+    # DeleteOptions body holding dryRun All): the storage-deletion chokepoint must match
+    # none of them.
+    ("T1485", "k8s_storage_volume_deleted.yml", "9028 dryrun", [
+        ("pvc", dry("delete", "persistentvolumeclaims", DRY_9028, prefix="trr9028-dryrun-")),
+        ("pv", dry("delete", "persistentvolumes", DRY_9028, prefix="trr9028-dryrun-")),
+        ("deletecollection", dry("deletecollection", "persistentvolumeclaims", DRY_9028,
+                                 ns=DRY_NS_9028))]),
+    # TRR9028 grader: a kubectl patch pv --dry-run=server that flips the reclaim policy
+    # to Delete. For a PATCH the dryRun flag is a query parameter (?dryRun=All), not a
+    # DeleteOptions body, so the reclaim grader must match none of it by its query filter
+    # (without_dry_run strips the dryRun query param, and then the grader fires).
+    ("T1485", "k8s_volume_reclaim_set_to_delete.yml", "9028 dryrun", [
+        ("reclaim patch", dry("patch", "persistentvolumes", DRY_9028,
+                              prefix="trr9028-dryrun-"))]),
 ]
 
 
@@ -1805,7 +1840,7 @@ def write_json(path, report):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Validate TRR9004-9010, 9025-9027 K8s detections.")
+    ap = argparse.ArgumentParser(description="Validate TRR9004-9010, 9025-9028 K8s detections.")
     ap.add_argument("--audit-log", default="/tmp/kube-apiserver-audit.log",
                     help="Path to the API server audit log (JSON lines).")
     ap.add_argument("--cri-log",
@@ -2215,7 +2250,7 @@ def validate(args, report):
         print(f"The rule(s) with a log fired on the emulated telemetry; {skipped} "
               f"rule(s) skipped for lack of a log.{xnote}")
         return 0
-    print("All TRR9004-9010, 9025-9027 match-gated detections fired on the emulated "
+    print("All TRR9004-9010, 9025-9028 match-gated detections fired on the emulated "
           f"telemetry.{xnote}")
     return 0
 

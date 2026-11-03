@@ -91,6 +91,8 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [K46](#k46-k8s_impersonation-an-impersonated-read-that-the-policy-logs-at-none-leaves-no-record) | `T1134/k8s_impersonation`, `k8s_impersonation_privileged`, under the three lab policies and the recommended production policy (`k8s/audit-policy-recommended.yaml`), and the Event reads of EKS, GCE kube-up, AKS and OpenShift 4.17 | the API server evaluates the audit policy on the authenticated caller, before impersonation, so an impersonated get, list or watch of a resource that the policy's noise rule drops for every caller (ConfigMaps, Events, Endpoints, Leases, EndpointSlices, nodes/status, pods/status) leaves no record | policy gap, evasion | medium |
 | [K47](#k47-trr9027-coredns-rules-rke2-names-its-corefile-configmap-rke2-coredns-rke2-coredns) | the TRR9027 kube-system branch of both CoreDNS rules, on RKE2 | RKE2's CoreDNS chart names the Corefile ConfigMap `kube-system/rke2-coredns-rke2-coredns`, which neither rule (nor the DNS row of the recommended policy) selects, so no TRR9027 rule sees a Corefile edit on RKE2 | portability, description | medium |
 | [K48](#k48-k8s_admission_webhook_disabled-the-validatingadmissionpolicy-status-controllers-status-patch-fires) | `T1685/k8s_admission_webhook_disabled` | kube-controller-manager's validatingadmissionpolicy-status controller writes each ValidatingAdmissionPolicy's type-check with an apply patch of `validatingadmissionpolicies/status`, and the rule (no subresource or identity filter) fires on it | false positive | medium |
+| [KTBD-H1](#ktbd-h1-k8s_storage_volume_deleted-one-delete-record-does-not-show-whether-the-volume-is-destroyed) | `T1485/k8s_storage_volume_deleted` | a PVC or PV delete record carries a `DeleteOptions` body only, not the bound PV's reclaim policy, so a destructive delete (reclaim `Delete`) looks like a non-destructive one (`Retain`) in one record; the grader `k8s_volume_reclaim_set_to_delete` covers the policy-flip step only | false negative | medium |
+| [KTBD-H2](#ktbd-h2-k8s_storage_volume_deleted-the-storage-controller-filters-trust-the-identity) | `T1485/k8s_storage_volume_deleted` | the controller filters read only `user.username` (and the teardown verb), so a delete with a stolen controller/provisioner token is filtered, and a managed-platform CSI provisioner service account (not the kind `local-path` identity) fires unless an operator baselines it | evasion, portability | low |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
@@ -1799,6 +1801,60 @@ the current ones.
   case for the controller's status patch and a positive that keeps a non-status patch
   of a ValidatingAdmissionPolicy firing.
 - **Then**: the filtered case stays quiet, and the positives of the rule still fire.
+
+### KTBD-H1. k8s_storage_volume_deleted: one delete record does not show whether the volume is destroyed
+
+- **Rule**: [`sigma/T1485/k8s_storage_volume_deleted.yml`](sigma/T1485/k8s_storage_volume_deleted.yml) (level medium).
+- **Kind**: false negative. **Severity**: medium (the rule still fires on every
+  actor delete; what it cannot do is grade destructiveness from one record).
+- **Problem**: a PVC or PV delete is audited with a `DeleteOptions` body only; the
+  record carries no `spec.persistentVolumeReclaimPolicy`. A bound PV with reclaim
+  policy `Delete` loses its backing volume on a PVC or PV delete, while a PV with
+  `Retain` keeps it. So the chokepoint cannot tell a destructive delete from a
+  non-destructive one in a single record, and it fires on both (the TRR9028 vet's
+  stated approximation). The reclaim policy lives on the **PV**, and a PVC delete
+  names the PVC, so even at Request level the bound PV's policy is not in the PVC
+  delete record.
+- **Evidence**: *probe* (`sigma_eval.py`) — the sidecar positives `pvc-delete-procA`
+  and `pv-delete-procB` carry no reclaim policy and the rule fires; a Retain-PV delete
+  of the same shape fires identically. The grader
+  [`sigma/T1485/k8s_volume_reclaim_set_to_delete.yml`](sigma/T1485/k8s_volume_reclaim_set_to_delete.yml)
+  matches the separate `patch` that sets a PV's reclaim policy to `Delete` (case
+  `reclaim-set-delete-procD`), the step that makes a later delete destructive.
+- **Fix**: enrichment, not a rule change: correlate a PVC delete with the bound PV's
+  reclaim policy (join on the PV's `claimRef`, or read the PV object), or alert on the
+  grader's reclaim flip and the chokepoint's delete together. The grader covers the
+  policy-flip step; the chokepoint is the record that names the actor of the delete.
+- **Then**: the grader fires on the flip, and the chokepoint keeps firing on the
+  actor's delete.
+
+### KTBD-H2. k8s_storage_volume_deleted: the storage-controller filters trust the identity
+
+- **Rule**: [`sigma/T1485/k8s_storage_volume_deleted.yml`](sigma/T1485/k8s_storage_volume_deleted.yml) (level medium).
+- **Kind**: evasion, portability. **Severity**: low (the stolen-token path needs
+  `kube-system` service-account access, which allows much more than a storage delete;
+  the portability part is a per-platform baseline, not a miss on the lab).
+- **Problem**: the four controller filters (`filter_namespace_teardown`,
+  `filter_garbage_collector`, `filter_pv_binder`, `filter_provisioner`) read only
+  `user.username` (and the verb, for teardown). So a PVC or PV delete sent with a
+  stolen token of one of those service accounts is filtered, from any client and in a
+  namespace that nobody is deleting (the same shape as K37/K45). And the provisioner
+  filter names the kind identity
+  `system:serviceaccount:local-path-storage:local-path-provisioner-service-account`
+  only: a managed platform runs a different CSI provisioner service account
+  (`ebs-csi-controller-sa` on EKS, the GKE PD CSI and AKS equivalents), whose own PV
+  deletes are **not** filtered and fire until an operator baselines that identity.
+- **Evidence**: *case* — the confounder
+  `namespace-controller-token-deletecollection-known-miss` (a PVC deletecollection with
+  the namespace-controller identity in a namespace nobody deletes) is filtered and does
+  not fire; the filtered case `provisioner-pv-delete` shows the kind `local-path`
+  identity is excluded, so a different provisioner SA is not.
+- **Fix**: no rule change closes the stolen-token evasion (an identity filter is all
+  the record offers; the token read itself is the earlier, higher-fidelity signal).
+  For the managed-platform provisioner, name that platform's CSI provisioner service
+  account as a baseline (a Scope item in the TRR), or add it to the filter per platform.
+- **Then**: the baselined provisioner SA stays quiet, and every other identity's PVC
+  or PV delete fires.
 
 ## Cloud (AWS, Azure, GCP)
 

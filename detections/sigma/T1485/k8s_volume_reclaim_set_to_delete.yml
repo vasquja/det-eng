@@ -1,0 +1,101 @@
+title: Kubernetes PersistentVolume Reclaim Policy Set to Delete
+id: 5572264e-ffc0-4bf5-96f2-bdeed4530f34
+status: experimental
+description: |
+  Detects the "make it destructive" step of T1485 storage destruction: an accepted
+  patch of a core persistentvolumes object whose request body sets
+  spec.persistentVolumeReclaimPolicy to Delete. This is TRR9028 Procedure D. A
+  PersistentVolume with reclaim policy Retain keeps its backing volume when the PV is
+  released, so a delete destroys nothing; flipping the policy to Delete first means a
+  later release (a PVC or PV delete, the k8s_storage_volume_deleted chokepoint) makes
+  the provisioner destroy the backing volume. The flip and the delete are two separate
+  audit records, and a delete record does not carry the bound PV's reclaim policy
+  (detections/RULE_DEFECTS.md KTBD-H1), so this grader is the record that shows the
+  destructive intent.
+
+  It keys on a patch (verb patch), not a full-object update (verb update, a PUT). A
+  targeted patch body that sets spec.persistentVolumeReclaimPolicy to Delete is a
+  deliberate flip (kubectl patch, a strategic-merge or JSON-merge body; a kubectl
+  patch --type=json op list). A PUT carries the whole stored object, whose
+  reclaimPolicy is already Delete for every dynamically provisioned PV, and the
+  pv-protection controller removes a PV's finalizer with a PUT (pv_controller.go), so a
+  PUT that carries reclaimPolicy Delete is ordinary and is NOT graded here (the
+  chokepoint still records the later delete). A strategic-merge patch that changes
+  another field of a PV whose policy is already Delete does not carry
+  persistentVolumeReclaimPolicy in the body, so it does not fire; only a body that sets
+  the policy to Delete does.
+
+  Request level is enough: the grader reads the request body
+  (requestObject.spec.persistentVolumeReclaimPolicy, or the JSON-patch op list in
+  requestObject), not the stored object. The shipped lab and recommended policies log
+  persistentvolumes patches at Request. A refused patch (403, 409, 422) changed
+  nothing and is excluded by the accepted-response check.
+
+  Limits: a GitOps or server-side-apply reconcile that declares a PV with reclaim
+  policy Delete is a patch that sets the policy and fires; baseline that identity
+  (falsepositives). kubectl edit of a typed PV is NOT a PUT: it sends a strategic-merge
+  patch of the diff (kubectl editoptions.go visitToPatch, CreateTwoWayMergePatch, verb
+  patch), so a reclaim flip with kubectl edit carries requestObject.spec.
+  persistentVolumeReclaimPolicy Delete and IS graded. Only a full-object PUT (verb
+  update), which kubectl replace sends, flips the policy with no graded record
+  (detections/RULE_DEFECTS.md KTBD-H1); a JSON-patch op whose keys are not in
+  op/path/value order is also not graded. In each ungraded case the chokepoint still
+  records the destructive delete that follows.
+
+  Platform coverage: detections/k8s/PLATFORMS.md#rules-on-each-platform.
+references:
+  - https://attack.mitre.org/techniques/T1485/
+  - https://kubernetes.io/docs/concepts/storage/persistent-volumes/#reclaim-policy
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+author: det-eng
+date: 2026/11/01
+tags:
+  - attack.impact
+  - attack.t1485
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_pv_patch:
+    objectRef.resource: 'persistentvolumes'
+    verb: 'patch'
+  # A strategic-merge or JSON-merge patch body that sets the reclaim policy to Delete.
+  sel_reclaim_merge:
+    requestObject.spec.persistentVolumeReclaimPolicy: 'Delete'
+  # A kubectl patch --type=json op list that replaces /spec/persistentVolumeReclaimPolicy
+  # with Delete. requestObject is the op list, which flattens to JSON text; the op's keys
+  # are in the usual op/path/value order.
+  sel_reclaim_jsonpatch:
+    requestObject|re: '\"path\"\s*:\s*\"/spec/persistentVolumeReclaimPolicy\"\s*,\s*\"value\"\s*:\s*\"Delete\"'
+  # The API server accepted the patch (a 200). A refused patch changed nothing.
+  sel_accepted:
+    responseStatus.code: 200
+  # A server-side dry run (kubectl patch/apply/diff --dry-run=server) persists nothing.
+  # For a PATCH the dryRun flag is a query parameter (?dryRun=All), not a body field:
+  # client-go sends PatchOptions as query params (VersionedParams) and the patch itself
+  # as the body (gentype.go Client.Patch), and the API server logs the patch body as
+  # requestObject with no dryRun field, so a dry run shows only in requestURI. Without
+  # this filter a GitOps / CI `kubectl diff` or `apply --dry-run=server` on a
+  # reclaim-Delete PV (a no-op preview) would fire the grader.
+  filter_dry_run_query:
+    requestURI|contains: 'dryRun=All'
+  # Null-safe negation: a record with no requestURI reads NOT of the query test as NULL
+  # under the three-valued backend and would be dropped, so the filter is ORed with a
+  # test that the field is absent (the storage-delete chokepoint's body filter does the
+  # same; detections/check_null_safety.py).
+  sel_no_request_uri:
+    requestURI: null
+  condition: >-
+    select_pv_patch
+    and (sel_reclaim_merge or sel_reclaim_jsonpatch)
+    and sel_accepted
+    and (sel_no_request_uri or not filter_dry_run_query)
+falsepositives:
+  - A platform or operator that legitimately sets a PV's reclaim policy to Delete
+    (decommissioning a volume, a storage migration). Baseline those identities by
+    user.username.
+  - GitOps (Argo CD, Flux) or a server-side apply that declares a statically
+    provisioned PersistentVolume with reclaim policy Delete in source control, so each
+    reconcile is a patch that sets the policy and fires. Baseline the GitOps controller
+    or fieldManager. A PV managed this way with reclaim policy Retain does not fire.
+level: high

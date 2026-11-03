@@ -77,6 +77,7 @@ on:
       - 'detections/sigma/T1546/**'
       - 'detections/sigma/T1572/**'
       - 'detections/sigma/T1565.001/**'
+      - 'detections/sigma/T1485/**'
       - 'detections/validate_apiserver_detections.py'
       - 'detections/sigma_eval.py'
       - 'detections/sigma_explain.py'
@@ -91,6 +92,7 @@ on:
       - 'atomics/T1546/**'
       - 'atomics/T1572/**'
       - 'atomics/T1565.001/**'
+      - 'atomics/T1485/**'
       - '.github/workflows/validate-apiserver-detections.yml'
   # PRs always trigger this workflow (no paths: filter) so the required
   # `validate-apiserver` check ALWAYS reports a status. The `changes` job below
@@ -204,6 +206,7 @@ jobs:
             'detections/sigma/T1546/' \
             'detections/sigma/T1572/' \
             'detections/sigma/T1565.001/' \
+            'detections/sigma/T1485/' \
             'detections/validate_apiserver_detections.py' \
             'detections/sigma_eval.py' \
             'detections/sigma_explain.py' \
@@ -218,6 +221,7 @@ jobs:
             'atomics/T1546/' \
             'atomics/T1572/' \
             'atomics/T1565.001/' \
+            'atomics/T1485/' \
             '.github/workflows/validate-apiserver-detections.yml')
           # Fail safe: if the diff cannot be computed, run the validator.
           if ! changed="$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}" 2>/dev/null)"; then
@@ -274,6 +278,7 @@ jobs:
             'detections/sigma/T1546/' \
             'detections/sigma/T1572/' \
             'detections/sigma/T1565.001/' \
+            'detections/sigma/T1485/' \
             'detections/validate_apiserver_detections.py' \
             'detections/sigma_eval.py' \
             'detections/sigma_explain.py' \
@@ -288,6 +293,7 @@ jobs:
             'atomics/T1546/' \
             'atomics/T1572/' \
             'atomics/T1565.001/' \
+            'atomics/T1485/' \
             '.github/workflows/validate-apiserver-detections.yml')
           range=""
           case "${EVENT_NAME}" in
@@ -658,6 +664,15 @@ jobs:
           TRR9027_NODE: apiserver-control-plane
         run: bash atomics/T1565.001/src/emulate.sh all
 
+      - &apiserver-emulate-9028
+        name: Emulate TRR9028 (storage destruction, inert PVC/PV + reclaim flip)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        # Procedures A-D plus the dry-run control. Inert objects only: each PV is a
+        # no-provisioner, Retain hostPath reference, so deleting a PVC or PV destroys no
+        # backing volume; cleanup deletes only the trr9028 namespace and the PVs it made.
+        run: bash atomics/T1485/src/emulate.sh all
+
       - &apiserver-collect
         name: Collect the audit log and the node sensor log
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
@@ -921,6 +936,7 @@ jobs:
       - *apiserver-emulate-9025
       - *apiserver-emulate-9026
       - *apiserver-emulate-9027
+      - *apiserver-emulate-9028
       - *apiserver-collect
 
       - name: Validate detections under the recommended policy (expected misses named)

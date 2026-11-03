@@ -1083,6 +1083,49 @@
           "url": "../atomics/T1565.001/src/emulate.sh"
         }
       }
+    },
+    {
+      "name": "Storage Destruction via PVC and PV Deletes (Kubernetes)",
+      "id": "TRR9028",
+      "tactics": [
+        "Impact"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1485"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "Delete a bound PersistentVolumeClaim",
+        "B": "Delete a PersistentVolume",
+        "C": "Bulk-wipe a namespace's PVCs with deletecollection",
+        "D": "Flip a PV reclaim policy to Delete"
+      },
+      "pub_date": "2026-11-01",
+      "last_update": "2026-11-01",
+      "path": "trr9028/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng bound-PVC delete behavioral emulation (inert no-provisioner Retain PV, kind)",
+          "url": "../atomics/T1485/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng PersistentVolume delete behavioral emulation (inert, kind)",
+          "url": "../atomics/T1485/src/emulate.sh"
+        },
+        "C": {
+          "text": "det-eng PVC deletecollection behavioral emulation (inert, kind)",
+          "url": "../atomics/T1485/src/emulate.sh"
+        },
+        "D": {
+          "text": "det-eng PV reclaim-policy flip (Retain -> Delete) behavioral emulation (inert, kind)",
+          "url": "../atomics/T1485/src/emulate.sh"
+        }
+      }
     }
   ]
 }

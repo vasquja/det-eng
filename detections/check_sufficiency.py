@@ -422,6 +422,10 @@ CHOKEPOINT = {
     "T1098.006/k8s_rbac_write.yml": Waiver(
         "TRR9004 chokepoint: every RBAC-object grant passes through an RBAC write",
         "2298ffb181b03dc759985927b5a45d711cde1417342620a9670780fd8eb1c7ce"),
+    "T1485/k8s_storage_volume_deleted.yml": Waiver(
+        "TRR9028 chokepoint: a delete/deletecollection of a PVC or PV is the storage "
+        "destruction itself; the storage controllers are filtered by identity",
+        "eb9b2c8742f1c4ed8cc5b8106da70df2b8ce18ec28fc2c9ef32d6659ea32a32b"),
     "T1546/k8s_admission_webhook_created.yml": Waiver(
         "TRR9025 chokepoint: creating an admission controller object (a create, or the "
         "server-side-apply create that is a patch answered 201; K21)",
