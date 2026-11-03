@@ -39,6 +39,36 @@
   "gke_admin_activity": "GKE with Data Access logs off: Admin Activity only, no get, list or watch (gke-mcp k8s_audit_logs.md: Data Access logs hold reads, 'if enabled')"
  },
  "rules": {
+  "T1036.005/k8s_pod_controller_name_mimicry.yml": {
+   "list_text_items": [],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "same"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {
+      "sel_name_daemonset.objectRef.name": "GKE pipeline: only string values map here, got SigmaRegularExpression(regexp=SigmaString(['^[a-z0-9.\\\\-]+\\\\-[bcdfghjklmnpqrstvwxz2456789]{5}$']), flags=set())",
+      "sel_name_replicaset.objectRef.name": "GKE pipeline: only string values map here, got SigmaRegularExpression(regexp=SigmaString(['^[a-z0-9.\\\\-]+\\\\-[bcdfghjklmnpqrstvwxz2456789]{6,10}\\\\-[bcdfghjklmnpqrstvwxz2456789]{5}$']), flags=set())"
+     },
+     "status": "not_portable",
+     "unexpected": {}
+    }
+   }
+  },
   "T1053.007/k8s_job_create.yml": {
    "list_text_items": [],
    "loses_positive_without_reads": {
@@ -1816,7 +1846,7 @@
    "diverges": 17,
    "expected_loss": 0,
    "not_portable": 0,
-   "same": 15
+   "same": 16
   },
   "gke": {
    "diverges": 0,

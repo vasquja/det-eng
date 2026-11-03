@@ -28,6 +28,8 @@ key on the same API server audit log (plus one node runtime sensor rule):
   * TRR9030 (T1528, steal app access token) - pod-bound SA token used off its source: the
                                            user.extra pod-name marker vs the last
                                            sourceIPs entry
+  * TRR9031 (T1036.005, lookalike pod name) - explicit controller-shaped pod name by a
+                                           non-node caller
 
 The loop this proves, for each match-gated rule:
 
@@ -1150,6 +1152,19 @@ MANIFEST = [
         ("A", rec(verb="create", resource="selfsubjectreviews", sub=None,
                   user=field_eq("user.username", TRR9030_SA),
                   also=all_of(pod_bound_token, off_pod_cidr), window=("9030", "a")))]),
+    # TRR9031: a bare pod created with an EXPLICIT controller-shaped name by a non-node
+    # caller. No controller create carries an objectRef.name (controllers set only
+    # metadata.generateName), so the explicit name is the client's choice. The gate keys
+    # on the emulation marker (A: the trr9031 namespace; C: the trr9031 label in
+    # requestObject, pods create is at Request in both the lab and recommended policies),
+    # NEVER on the masquerade name the rule matches (R4). non_system excludes system:node.
+    ("T1036.005", "k8s_pod_controller_name_mimicry.yml", "audit", "9031 A,C",
+     "lookalike pod name: explicit controller-shaped objectRef.name no controller sets", [
+        ("A", rec(verb="create", resource="pods", sub=None, ns="trr9031", user=non_system,
+                  window=("9031", "a"))),
+        ("C", rec(verb="create", resource="pods", sub=None, ns="kube-system", user=non_system,
+                  also=field_eq("requestObject.metadata.labels.trr", "trr9031"),
+                  window=("9031", "c")))]),
 ]
 
 
@@ -2360,8 +2375,7 @@ def validate(args, report):
         print(f"The rule(s) with a log fired on the emulated telemetry; {skipped} "
               f"rule(s) skipped for lack of a log.{xnote}")
         return 0
-    print("All TRR9004-9010, 9025-9028 match-gated detections fired on the emulated "
-    print("All TRR9004-9010, 9025-9027, 9030 match-gated detections fired on the emulated "
+    print("All TRR9004-9010, 9025-9035 match-gated detections fired on the emulated "
           f"telemetry.{xnote}")
     return 0
 

@@ -66,6 +66,10 @@ omitStages:
 
 rules:
   # --- TRR9007: pods and ephemeral containers at Request (requestObject.spec) ---
+  # Also serves TRR9031 (lookalike pod name): the rule keys only on Metadata fields
+  # (objectRef.name/namespace/subresource, user.username, verb), but the validator's
+  # Procedure C gate reads the trr9031 label in requestObject.metadata (a kube-system
+  # create, where the namespace cannot be the emulation marker), which needs Request.
   - level: Request
     verbs: ["create", "update", "patch"]
     resources:

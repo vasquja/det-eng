@@ -22,6 +22,8 @@ run-name: ${{ inputs.label && format('{0} [{1}]', github.workflow, inputs.label)
 #                                         and the OpenShift DNS objects (openshift-dns/dns-default,
 #                                         dnses.operator.openshift.io), emulated inert on kind
 #   - TRR9030 (steal application access token, T1528): pod-bound SA token used off-source -> audit -> Sigma
+#   - TRR9031 (lookalike pod name, T1036.005): explicit controller-shaped pod name by a
+#                                         non-node caller -> audit -> Sigma
 #
 # A kind cluster runs on the ubuntu-latest runner with API server audit logging on
 # (pod creates, updates and patches; controller writes, deletes and deletecollections
@@ -81,6 +83,7 @@ on:
       - 'detections/sigma/T1485/**'
       - 'detections/sigma/T1490/**'
       - 'detections/sigma/T1528/**'
+      - 'detections/sigma/T1036.005/**'
       - 'detections/validate_apiserver_detections.py'
       - 'detections/sigma_eval.py'
       - 'detections/sigma_explain.py'
@@ -98,6 +101,7 @@ on:
       - 'atomics/T1485/**'
       - 'atomics/T1490/**'
       - 'atomics/T1528/**'
+      - 'atomics/T1036.005/**'
       - '.github/workflows/validate-apiserver-detections.yml'
   # PRs always trigger this workflow (no paths: filter) so the required
   # `validate-apiserver` check ALWAYS reports a status. The `changes` job below
@@ -214,6 +218,7 @@ jobs:
             'detections/sigma/T1485/' \
             'detections/sigma/T1490/' \
             'detections/sigma/T1528/' \
+            'detections/sigma/T1036.005/' \
             'detections/validate_apiserver_detections.py' \
             'detections/sigma_eval.py' \
             'detections/sigma_explain.py' \
@@ -231,6 +236,7 @@ jobs:
             'atomics/T1485/' \
             'atomics/T1490/' \
             'atomics/T1528/' \
+            'atomics/T1036.005/' \
             '.github/workflows/validate-apiserver-detections.yml')
           # Fail safe: if the diff cannot be computed, run the validator.
           if ! changed="$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}" 2>/dev/null)"; then
@@ -290,6 +296,7 @@ jobs:
             'detections/sigma/T1485/' \
             'detections/sigma/T1490/' \
             'detections/sigma/T1528/' \
+            'detections/sigma/T1036.005/' \
             'detections/validate_apiserver_detections.py' \
             'detections/sigma_eval.py' \
             'detections/sigma_explain.py' \
@@ -307,6 +314,7 @@ jobs:
             'atomics/T1485/' \
             'atomics/T1490/' \
             'atomics/T1528/' \
+            'atomics/T1036.005/' \
             '.github/workflows/validate-apiserver-detections.yml')
           range=""
           case "${EVENT_NAME}" in
@@ -707,6 +715,16 @@ jobs:
         # pod IP (benign baseline; the 9030 B absence check proves the rule stays quiet).
         # No credential reaches a command line or a log line.
         run: bash atomics/T1528/src/emulate.sh all
+      - &apiserver-emulate-9031
+        name: Emulate TRR9031 (lookalike pod names, inert pause pods)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        # Procedure A (ReplicaSet-shaped explicit name in the trr9031 namespace) and C
+        # (DaemonSet-shaped explicit name in kube-system). The pods are inert
+        # (registry.k8s.io/pause, no command, no host access) and are deleted on cleanup;
+        # the trr9031 namespace is created and deleted. The marker is the namespace (A)
+        # and the trr9031 label (C), never the controller-shaped pod name.
+        run: bash atomics/T1036.005/src/emulate.sh all
 
       - &apiserver-collect
         name: Collect the audit log and the node sensor log
@@ -974,6 +992,7 @@ jobs:
       - *apiserver-emulate-9028
       - *apiserver-emulate-9029
       - *apiserver-emulate-9030
+      - *apiserver-emulate-9031
       - *apiserver-collect
 
       - name: Validate detections under the recommended policy (expected misses named)

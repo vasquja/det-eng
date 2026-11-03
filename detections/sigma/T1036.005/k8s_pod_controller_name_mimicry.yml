@@ -1,0 +1,124 @@
+title: Kubernetes Lookalike Pod With a Controller-Generated Name
+id: 09b7ce0c-90d2-47c8-897d-8cd085c511b7
+status: experimental
+description: |
+  Detects a bare pod created with an EXPLICIT name in the shape a workload
+  controller generates, by a caller that is not a node. This is masquerading
+  (T1036.005, Match Legitimate Name or Location): an adversary names a backdoor
+  pod so it reads as a replica of a real Deployment, DaemonSet or Job
+  (`coredns-6f6b679f8f-x7k2q` next to the real CoreDNS pods, or `kube-proxy-x7k2q`
+  in kube-system) to blend into `kubectl get pods`.
+
+  The invariant it keys on is server-side and not spoofable. The ReplicaSet,
+  DaemonSet and Job controllers create pods ONLY with `metadata.generateName`
+  (`<owner>-`), never an explicit `metadata.name`
+  (pkg/controller/controller_utils.go GetPodFromTemplate at v1.36.4). The API
+  server copies `objectRef.name` from the submitted `metadata.name` before it
+  appends the random suffix (apiserver audit request.go LogRequestObject), so a
+  controller's own pod-create record carries NO `objectRef.name` at all. An
+  explicit `objectRef.name` that already has the controller-generated shape is
+  therefore a client's choice, which no controller makes. The shape is a
+  base, then a pod-template-hash from the vowel-free alphabet
+  `bcdfghjklmnpqrstvwxz2456789` (the controller emits 1 to 10 characters, in
+  practice 8 to 10; the rule uses a 6-character lower bound deliberately, which
+  trades a negligible miss of a hash of 5 or fewer characters — about 2e-5 for a
+  32-bit hash — for precision against ordinary names), then a 5-character suffix
+  from the same alphabet (the ReplicaSet form); or, in a system namespace, a base
+  then a single 5-character suffix (the DaemonSet and Job form). The alphabet and
+  lengths are apimachinery rand.String / SafeEncodeString and names/generate.go
+  randomLength (v1.36.4). The rule excludes `system:node:*` (a kubelet's mirror pod of a static
+  pod is a legitimate bare create with an explicit name) and `node-debugger-*`
+  (an explicit-name bare pod that `kubectl debug node` creates).
+
+  Scope. The rule does NOT key on the namespace alone (SigmaHQ 'Creation Of Pod In
+  System Namespace' does, and fires on every controller, mirror and scheduler
+  create in kube-system) and NOT on the container image (Falco 'Pod Created in
+  Kube Namespace' allowlists image repositories, which an adversary evades by
+  running a real image). It keys on a name property a benign controller create
+  cannot have. Not covered, by design, and documented as gaps in the TRR: a
+  lookalike Deployment, DaemonSet or Job itself (its pods are REAL controller
+  creates, with no explicit name; a StatefulSet's pods carry an explicit
+  `<set>-<ordinal>` name, which is not in the random-suffix shape the rule
+  matches), a typosquatted name (`cordns`, not the controller shape), a
+  `generateName` masquerade (byte-identical to a real controller's
+  `generateName`, so it needs a per-site controller-identity allowlist;
+  RULE_DEFECTS.md KTBD-K1), a single-suffix `<base>-<5>` lookalike in an
+  application namespace (branch C is scoped to control-plane namespaces to hold
+  benign hits at 0; the double-suffix Deployment/ReplicaSet shape is covered in
+  every namespace), and a controller-shaped name carrying a `node-debugger-`
+  prefix (the node-debugger exclusion is a name heuristic that a
+  `node-debugger-<controller-shape>` name defeats, but that prefix also abandons
+  the target-workload masquerade). Nearest prior art: SigmaHQ 'Creation Of
+  Pod In System Namespace' (T1036.005; namespace presence), Falco 'Pod Created in
+  Kube Namespace' (image allowlist), and GKE Event Threat Detection 'Defense
+  Evasion: Potential Kubernetes Pod Masquerading' (GKE-only, matches GKE default
+  workload names). This is a provider-agnostic backstop for EKS, AKS and
+  self-managed clusters that keys on the name SHAPE rather than a fixed name list.
+references:
+  - https://attack.mitre.org/techniques/T1036/005/
+  - https://kubernetes.io/docs/reference/access-authn-authz/audit/
+  - https://github.com/kubernetes/kubernetes/blob/v1.36.4/pkg/controller/controller_utils.go
+  - https://github.com/kubernetes/kubernetes/blob/v1.36.4/staging/src/k8s.io/apiserver/pkg/storage/names/generate.go
+author: det-eng
+date: 2026/11/01
+tags:
+  - attack.stealth
+  - attack.t1036.005
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  selection:
+    verb: 'create'
+    objectRef.resource: 'pods'
+  # A bare pod create has no subresource; pods/exec, pods/binding (the scheduler),
+  # pods/eviction and pods/portforward do. objectRef.subresource is absent on the
+  # records the rule matches, so the negation is guarded null-safe (sel_no_subresource).
+  filter_subresource:
+    objectRef.subresource: '*'
+  sel_no_subresource:
+    objectRef.subresource: null
+  # A kubelet's mirror pod of a static pod is a legitimate bare create by a node.
+  filter_node:
+    user.username|startswith: 'system:node:'
+  # kubectl debug node/X creates node-debugger-<node>-<5> explicitly; benign.
+  filter_node_debugger:
+    objectRef.name|startswith: 'node-debugger-'
+  # ReplicaSet/Deployment pod shape: <base>-<pod-template-hash 6-10>-<suffix 5>,
+  # in any namespace. A controller sets this only via generateName (no objectRef.name).
+  sel_name_replicaset:
+    objectRef.name|re: '^[a-z0-9.\-]+\-[bcdfghjklmnpqrstvwxz2456789]{6,10}\-[bcdfghjklmnpqrstvwxz2456789]{5}$'
+  # DaemonSet/Job pod shape: <base>-<suffix 5>, but only in a control-plane
+  # namespace, where an explicitly-named bare pod is itself anomalous.
+  sel_system_namespace:
+    objectRef.namespace:
+      - 'kube-system'
+      - 'kube-public'
+      - 'kube-node-lease'
+  sel_name_daemonset:
+    objectRef.name|re: '^[a-z0-9.\-]+\-[bcdfghjklmnpqrstvwxz2456789]{5}$'
+  condition: >
+    selection
+    and (sel_no_subresource or not filter_subresource)
+    and not filter_node
+    and not filter_node_debugger
+    and (sel_name_replicaset or (sel_system_namespace and sel_name_daemonset))
+falsepositives:
+  - A human or tool that creates a bare pod with an explicit, controller-shaped
+    name (for example `kubectl run name-abcde` or a script that reuses a dead
+    replica's name). Rare; baseline the identities that create bare pods and
+    triage on actor, source IP and namespace.
+  - A CI or ephemeral-pod naming scheme that happens to match the
+    Deployment/ReplicaSet shape, for example `<app>-<short-git-sha>-<rand5>`
+    where both tail segments avoid vowels and `0`/`1`/`3` (a short hex sha is
+    fully in the alphabet about 5% of the time). Baseline the CI identities and
+    namespaces that create bare pods.
+  - A backup/restore or clone/migration tool (for example Velero restoring a
+    standalone pod, or a namespace-clone utility) that recreates a pod under its
+    ORIGINAL controller-generated name. Note that service-account identities are
+    NOT excluded (the rule excludes only `system:node:*` and `node-debugger-*`),
+    so a restore run by `system:serviceaccount:*` fires; baseline the restore and
+    migration service accounts.
+  - '`kubectl debug node` run against a control-plane node with an explicit
+    `-n kube-system` (the node-debugger-* name) is excluded by a filter.'
+level: high

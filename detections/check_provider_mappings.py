@@ -572,6 +572,17 @@ EXPECTED_LOSS = {
 # refuses. The pipeline's own message is the reason (printed and in mapping_results.json).
 # A human approval, like EXPECTED_LOSS.
 NOT_PORTABLE = {
+    # PROPOSED (human approval): GKE records objectRef.name inside
+    # protoPayload.resourceName (the object PATH, e.g. core/v1/namespaces/<ns>/pods/<name>),
+    # so the GKE pipeline maps objectRef.name to exact string values only and cannot apply
+    # the controller-shaped name regex (an anchored ^...$ pattern would not match the
+    # path-prefixed resourceName). The rule is proven on the lab; on GKE this masquerade is
+    # better served by GKE Event Threat Detection 'Potential Kubernetes Pod Masquerading'.
+    # Tracked in RULE_DEFECTS.md KTBD-K2.
+    ("gke", "T1036.005/k8s_pod_controller_name_mimicry.yml"): (
+        "sel_name_daemonset.objectRef.name",
+        "sel_name_replicaset.objectRef.name",
+    ),
     ("gke", "T1070/k8s_namespace_deleted.yml"): (
         "filter_dry_run[0].requestURI",
         "filter_dry_run_query.requestURI",

@@ -202,7 +202,10 @@ rules:
   # Serves: T1611/k8s_podspec_host_access and k8s_podspec_confinement_disabled (the pod
   # spec, and a JSON patch of pods/ephemeralcontainers), T1609/k8s_pod_ephemeral_container
   # (Metadata is enough), T1543.005/k8s_static_pod_mirror_create (the kubelet's mirror-pod
-  # create as system:node:<node>; Metadata is enough). Copies literal env values (header).
+  # create as system:node:<node>; Metadata is enough), and T1036.005/
+  # k8s_pod_controller_name_mimicry (the rule needs only Metadata fields; the validator's
+  # Procedure C gate reads the trr9031 label in requestObject.metadata, which needs
+  # Request). Copies literal env values (header).
   - level: Request
     verbs: ["create", "update", "patch"]
     resources:

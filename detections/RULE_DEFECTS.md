@@ -96,6 +96,8 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [KTBD-I1](#ktbd-i1-k8s_snapshot_or_backup_destroyed-a-stolen-controller-token-evades-the-identity-filters) | `T1490/k8s_snapshot_or_backup_destroyed` | an actor with a stolen snapshot-controller or velero service-account token is suppressed by the controller identity filters | evasion | low |
 | [KTBD-I2](#ktbd-i2-k8s_snapshot_or_backup_destroyed-a-server-side-dry-run-delete-is-indistinguishable-from-a-real-delete-at-metadata-and-fires) | `T1490/k8s_snapshot_or_backup_destroyed` | kubectl's default `--dry-run=server` delete puts dryRun in the unlogged DeleteOptions body, so at the shipped Metadata policy its record is byte-identical to a real delete and the rule fires | false positive | low |
 | [KTBD-J1](#ktbd-j1-k8s_pod_token_used_off_source-the-single-record-off-source-compare-degrades-on-managed-clusters) | the TRR9030 single-record off-source rule, on EKS/GKE/AKS | on EKS/GKE/AKS the last `sourceIPs` entry is a konnectivity agent / load balancer / NAT peer, not the pod, so the single-record off-source compare degrades to an approximation (TRR9030 Procedure A); the portable fallback is the credential-id value_count correlation prototyped in the TRR | portability | medium |
+| [KTBD-K1](#ktbd-k1-k8s_pod_controller_name_mimicry-does-not-cover-a-generatename-masquerade) | `T1036.005/k8s_pod_controller_name_mimicry` (no generateName branch) | a bare-pod `generateName` masquerade (`coredns-6f6b679f8f-`) is byte-identical to a real controller's generateName create, both with no `objectRef.name`, so the audit chokepoint cannot separate them without a per-site controller-identity allowlist; the rule ships the explicit-name branches A and C only | false negative | medium |
+| [KTBD-K2](#ktbd-k2-k8s_pod_controller_name_mimicry-the-name-shape-regex-is-not-portable-to-gke) | `T1036.005/k8s_pod_controller_name_mimicry` | GKE records `objectRef.name` inside `protoPayload.resourceName` (the object path), so the GKE pipeline maps the field to exact strings only and cannot apply the controller-shaped name regex; AKS and the lab are unaffected | portability | low |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
@@ -1970,6 +1972,74 @@ the current ones.
   pin the in-fabric source set (a fixed NAT/LB egress, a known node CIDR), add it to the
   allowlist, as on a self-managed cluster.
 - **Then**: no case changes.
+### KTBD-K1. k8s_pod_controller_name_mimicry does not cover a generateName masquerade
+
+- **Rule**: [`sigma/T1036.005/k8s_pod_controller_name_mimicry.yml`](sigma/T1036.005/k8s_pod_controller_name_mimicry.yml) (level high).
+- **Kind**: false negative. **Severity**: medium (a real masquerade variant the rule
+  does not cover; the common explicit-name form is covered by branches A and C).
+- **Problem**: the rule keys on an EXPLICIT `objectRef.name` in the controller-generated
+  shape, which no controller create carries. An adversary can instead submit a bare pod
+  with `metadata.generateName: coredns-6f6b679f8f-` and let the API server append the
+  random suffix, which still produces a lookalike replica. But a real ReplicaSet
+  controller submits a byte-identical `generateName` (`<owner>-`, where `<owner>` already
+  carries the pod-template-hash), and both records carry NO `objectRef.name`. The only
+  server-trusted field that separates them is `user.username`, so a generateName rule
+  would need a per-site allowlist of the controller service accounts
+  (`system:serviceaccount:kube-system:replicaset-controller`, `daemon-set-controller`,
+  `job-controller`, and every platform add-on or custom controller that creates pods with
+  generateName). That allowlist is noisy and platform-specific, so no generateName branch
+  ships: it is a hunting signal, not a chokepoint. `metadata.ownerReferences` is not a
+  discriminator either (a client can forge it; the rule's
+  `positive_fake_owner_references` case proves a forged ownerReference does not change the
+  result).
+- **Evidence**: *source* — kubernetes v1.36.4
+  `pkg/controller/controller_utils.go` `GetPodFromTemplate` (`GenerateName: prefix`,
+  prefix = `<owner>-`) and `staging/src/k8s.io/apiserver/pkg/audit/request.go`
+  `LogRequestObject` (`if len(ae.ObjectRef.Name) == 0 { ae.ObjectRef.Name =
+  objMeta.GetName() }`, empty for a generateName create). *probe* — on a local
+  kube-apiserver v1.36.4 lab, a Deployment's `replicaset-controller` pod create recorded
+  `requestObject.metadata.generateName = lookalike-demo-65bb645ff8-`. That value has the
+  generateName prefix shape — the rule's ReplicaSet shape with the trailing `-<suffix 5>`
+  segment dropped, `^[a-z0-9.\-]+\-[bcdfghjklmnpqrstvwxz2456789]{6,10}\-$` — so it does
+  NOT match the shipped `sel_name_replicaset` regex (which ends
+  `...{6,10}\-[bcdfghjklmnpqrstvwxz2456789]{5}$`, requiring the trailing suffix), which is
+  why the rule stays quiet on it. A generateName rule keyed on that prefix shape, with no
+  `objectRef.name` and `user.username` not `system:node:*`, would instead fire on every
+  real controller create. The sidecar `confounder_controller_create` case holds that real
+  record and the shipped rule stays quiet on it. **unverified** against a managed
+  cluster's controller identities.
+- **Fix**: none that keeps a 0 false-positive budget. A separate, site-tuned hunting rule
+  could match a controller-shaped `generateName` from a user outside a controller-SA
+  allowlist; mapping and shipping that allowlist is a human decision (the SigmaHQ /
+  Falco / GKE prior art does not solve it either). Until then, a generateName masquerade
+  is a documented gap.
+- **Then**: a `k8s_pod_controller_name_mimicry` change that adds a generateName branch
+  ships with its own benign-corpus budget and an identity allowlist, and a positive and a
+  filtered case (a real controller create) that prove it.
+
+### KTBD-K2. k8s_pod_controller_name_mimicry: the name-shape regex is not portable to GKE
+
+- **Rule**: [`sigma/T1036.005/k8s_pod_controller_name_mimicry.yml`](sigma/T1036.005/k8s_pod_controller_name_mimicry.yml) (level high).
+- **Kind**: portability. **Severity**: low (GKE ships its own equivalent control).
+- **Problem**: GKE's audit log records `objectRef.name` inside
+  `protoPayload.resourceName`, the object PATH (for example
+  `core/v1/namespaces/kube-system/pods/kube-proxy-x7k2q`), not a bare name field. The GKE
+  pipeline therefore maps `objectRef.name` to exact string values only and cannot apply
+  the rule's controller-shaped name regex (`sel_name_replicaset.objectRef.name`,
+  `sel_name_daemonset.objectRef.name`): an anchored `^<base>-<hash>-<suffix>$` pattern
+  does not match the path-prefixed `resourceName`. AKS is not affected (its `ObjectRef`
+  object text carries the bare name, so the regex converts). The rule is proven on the lab
+  (upstream Kubernetes v1.36.4 audit log), where `objectRef.name` is a first-class field.
+- **Evidence**: *check_provider_mappings* —
+  [`check_provider_mappings.py`](check_provider_mappings.py) `--check` reports
+  `[gke] T1036.005/k8s_pod_controller_name_mimicry.yml` NOT PORTABLE for both name items
+  (`GKE pipeline: only string values map here, got SigmaRegularExpression(...)`); the
+  `("gke", ...)` entry in `NOT_PORTABLE` is the human-approved record. AKS is `SAME`.
+- **Fix**: none in Sigma: GKE's `resourceName` encoding does not expose a bare pod name to
+  match a shape against. On GKE, use Event Threat Detection
+  'Defense Evasion: Potential Kubernetes Pod Masquerading', which this rule backstops on
+  EKS, AKS and self-managed clusters.
+- **Then**: n/a (a platform encoding limitation, not a rule change).
 
 ## Cloud (AWS, Azure, GCP)
 

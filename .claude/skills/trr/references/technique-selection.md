@@ -374,7 +374,15 @@ reasoning survives. Append an entry per vet; keep it short.
   controllers, mirror pods and scheduler bindings, and it fires on pods/exec. It does not key on the image
   either (Falco 'Pod Created in Kube Namespace'). GKE Event Threat Detection ships 'Defense Evasion: Potential
   Kubernetes Pod Masquerading'. Not covered: a lookalike Deployment or DaemonSet (its pods are real controller
-  creates) and typosquats. Deferred to build as TRR9031 (k8s).
+  creates) and typosquats. **Built as TRR9031 (k8s).** Shipped `k8s_pod_controller_name_mimicry.yml` with two
+  branches, both keyed on an EXPLICIT `objectRef.name` (which no controller create carries): A, the ReplicaSet
+  shape `-<hash 6-10>-<5>` in any namespace; C, the DaemonSet/Job shape `-<5>` in a control-plane namespace
+  (`node-debugger-*` and `system:node:*` filtered). Scores 0/2666 on the benign corpus. Dropped: the vet's
+  generateName branch (B). A real ReplicaSet controller's `generateName` (`<owner>-`, e.g.
+  `coredns-6f6b679f8f-`) is byte-identical to an adversary's fake-hash generateName, both with no
+  `objectRef.name`, confirmed on a kube-apiserver v1.36.4 lab; the only server-trusted discriminator is a
+  per-site controller-SA allowlist, so it is a documented gap (RULE_DEFECTS.md KTBD-K1), not a shippable
+  chokepoint. A lookalike controller and typosquats remain stated gaps.
 
 - **Malicious image via an admission-policy verdict (T1204.003) — LEAN-GO (narrow; survives the T1610 NO-GO only
   as a forwarder of policy verdicts).** For a ValidatingAdmissionPolicy binding with `validationActions` Audit,

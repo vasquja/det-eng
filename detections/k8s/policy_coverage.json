@@ -73,7 +73,7 @@
   },
   "lab-apiserver": {
    "files": [
-    {"path": "detections/k8s/audit-policy-apiserver.yaml", "sha256": "8e156409c2cbaf6e5bb88cd3502b57a6f78984b900af707d443852aacfa6f781"}
+    {"path": "detections/k8s/audit-policy-apiserver.yaml", "sha256": "005854118793290ce1cca4e770abc540e4a82436e67fafe80bb2f889d904f0c7"}
    ],
    "kind": "lab",
    "label": "API server lab policy (TRR9004-9010, TRR9025-9027)",
@@ -170,7 +170,7 @@
   },
   "recommended": {
    "files": [
-    {"path": "detections/k8s/audit-policy-recommended.yaml", "sha256": "848bef9e35618de932c679cfade5c3184f6efe4013cc40bbc119a77c349de1a8"}
+    {"path": "detections/k8s/audit-policy-recommended.yaml", "sha256": "5f81ee821eb96511bbb6b866dff94b2e7b092421656c9baafc5c781a242ba8aa"}
    ],
    "kind": "recommended",
    "label": "this repository's recommended production policy (every Kubernetes audit rule; the TRR9027 D create needs its opt-in line)",
@@ -201,6 +201,40 @@
   "k3s-starter"
  ],
  "rules": {
+  "T1036.005/k8s_pod_controller_name_mimicry.yml": {
+   "case_counts": {
+    "benign": 0,
+    "confounder": 3,
+    "filtered": 4,
+    "near-miss": 3,
+    "positive": 3
+   },
+   "cases_sha256": "3818aeb9ac8002af33345147d648637126a63c19a485b2894e2e361995705064",
+   "home_policy": "lab-apiserver",
+   "level": "high",
+   "needs": {
+    "level": "Metadata",
+    "note": null,
+    "requests": [{"group": "", "resource": "pods", "subresource": null, "verbs": ["create"]}]
+   },
+   "results": {
+    "aks-kube-audit": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 13, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "aks-kube-audit-admin": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 13, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "eks": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 13, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "gce-kube-up": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 13, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "k3s-starter": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "lab-apiserver": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "lab-k8s": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "lab-staticpod": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "openshift-default": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "openshift-default-4.17": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "openshift-wrb": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 13, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "openshift-wrb-4.17": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 13, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "recommended": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}}
+   },
+   "rule_digest": "eb54f80f78735c93344e633563bcd331d2ddf0194c9fd913b8aeeeb229d0939a",
+   "title": "Kubernetes Lookalike Pod With a Controller-Generated Name"
+  },
   "T1053.007/k8s_job_create.yml": {
    "case_counts": {
     "benign": 0,
@@ -540,40 +574,6 @@
    },
    "rule_digest": "4b44c5ef602f1c76230f10595f5b9a01d40cc70825c6b39bb7fa50b88b8b8f1d",
    "title": "Kubernetes Impersonation of a Privileged Identity"
-  },
-  "T1528/k8s_pod_token_used_off_source.yml": {
-   "case_counts": {
-    "benign": 1,
-    "confounder": 0,
-    "filtered": 2,
-    "near-miss": 1,
-    "positive": 2
-   },
-   "cases_sha256": "5438346b9bb635ab043a5b16a83e2f68dacf37b2cfc9e1d1d134eea981a74542",
-   "home_policy": "lab-apiserver",
-   "level": "high",
-   "needs": {
-    "level": "Metadata",
-    "note": null,
-    "requests": [{"group": "authentication.k8s.io", "resource": "selfsubjectreviews", "subresource": null, "verbs": ["create"]}]
-   },
-   "results": {
-    "aks-kube-audit": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 6, "not_modeled_reads": 0, "positives": {"firing": 2, "lost": [], "total": 2}},
-    "aks-kube-audit-admin": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 6, "not_modeled_reads": 0, "positives": {"firing": 2, "lost": [], "total": 2}},
-    "eks": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 6, "not_modeled_reads": 0, "positives": {"firing": 2, "lost": [], "total": 2}},
-    "gce-kube-up": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 6, "not_modeled_reads": 0, "positives": {"firing": 2, "lost": [], "total": 2}},
-    "k3s-starter": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 2, "lost": [], "total": 2}},
-    "lab-apiserver": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 2, "lost": [], "total": 2}},
-    "lab-k8s": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 2, "lost": [], "total": 2}},
-    "lab-staticpod": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 2, "lost": [], "total": 2}},
-    "openshift-default": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 2, "lost": [], "total": 2}},
-    "openshift-default-4.17": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 2, "lost": [], "total": 2}},
-    "openshift-wrb": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 6, "not_modeled_reads": 0, "positives": {"firing": 2, "lost": [], "total": 2}},
-    "openshift-wrb-4.17": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 6, "not_modeled_reads": 0, "positives": {"firing": 2, "lost": [], "total": 2}},
-    "recommended": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 2, "lost": [], "total": 2}}
-   },
-   "rule_digest": "b632c3825b38cbb50dd2754b0d21d67a843241a24e9e0a84b7f947c2dcbe55f4",
-   "title": "Kubernetes Pod-Bound Service Account Token Used From An Unexpected Source"
   },
   "T1543.005/k8s_static_pod_mirror_create.yml": {
    "case_counts": {
@@ -1295,10 +1295,10 @@
  "summary": {
   "aks-kube-audit": {
    "negatives_firing": 1,
-   "not_modeled": 618,
+   "not_modeled": 625,
    "not_modeled_reads": 86,
-   "positives": 444,
-   "positives_firing": 394,
+   "positives": 445,
+   "positives_firing": 395,
    "rules": 32,
    "rules_all_positives": 30,
    "rules_blind": 1,
@@ -1306,10 +1306,10 @@
   },
   "aks-kube-audit-admin": {
    "negatives_firing": 1,
-   "not_modeled": 552,
+   "not_modeled": 559,
    "not_modeled_reads": 81,
-   "positives": 444,
-   "positives_firing": 359,
+   "positives": 445,
+   "positives_firing": 360,
    "rules": 32,
    "rules_all_positives": 22,
    "rules_blind": 3,
@@ -1317,10 +1317,10 @@
   },
   "eks": {
    "negatives_firing": 1,
-   "not_modeled": 631,
+   "not_modeled": 638,
    "not_modeled_reads": 88,
-   "positives": 444,
-   "positives_firing": 391,
+   "positives": 445,
+   "positives_firing": 392,
    "rules": 32,
    "rules_all_positives": 30,
    "rules_blind": 1,
@@ -1328,10 +1328,10 @@
   },
   "gce-kube-up": {
    "negatives_firing": 1,
-   "not_modeled": 623,
+   "not_modeled": 630,
    "not_modeled_reads": 88,
-   "positives": 444,
-   "positives_firing": 391,
+   "positives": 445,
+   "positives_firing": 392,
    "rules": 32,
    "rules_all_positives": 30,
    "rules_blind": 1,
@@ -1341,8 +1341,8 @@
    "negatives_firing": 13,
    "not_modeled": 0,
    "not_modeled_reads": 0,
-   "positives": 444,
-   "positives_firing": 135,
+   "positives": 445,
+   "positives_firing": 136,
    "rules": 32,
    "rules_all_positives": 20,
    "rules_blind": 8,
@@ -1352,8 +1352,8 @@
    "negatives_firing": 0,
    "not_modeled": 184,
    "not_modeled_reads": 142,
-   "positives": 444,
-   "positives_firing": 444,
+   "positives": 445,
+   "positives_firing": 445,
    "rules": 32,
    "rules_all_positives": 32,
    "rules_blind": 0,
@@ -1363,8 +1363,8 @@
    "negatives_firing": 13,
    "not_modeled": 0,
    "not_modeled_reads": 0,
-   "positives": 444,
-   "positives_firing": 135,
+   "positives": 445,
+   "positives_firing": 136,
    "rules": 32,
    "rules_all_positives": 20,
    "rules_blind": 8,
@@ -1374,8 +1374,8 @@
    "negatives_firing": 11,
    "not_modeled": 0,
    "not_modeled_reads": 0,
-   "positives": 444,
-   "positives_firing": 76,
+   "positives": 445,
+   "positives_firing": 77,
    "rules": 32,
    "rules_all_positives": 9,
    "rules_blind": 12,
@@ -1385,8 +1385,8 @@
    "negatives_firing": 13,
    "not_modeled": 0,
    "not_modeled_reads": 0,
-   "positives": 444,
-   "positives_firing": 135,
+   "positives": 445,
+   "positives_firing": 136,
    "rules": 32,
    "rules_all_positives": 20,
    "rules_blind": 8,
@@ -1396,8 +1396,8 @@
    "negatives_firing": 11,
    "not_modeled": 0,
    "not_modeled_reads": 0,
-   "positives": 444,
-   "positives_firing": 129,
+   "positives": 445,
+   "positives_firing": 130,
    "rules": 32,
    "rules_all_positives": 19,
    "rules_blind": 8,
@@ -1405,10 +1405,10 @@
   },
   "openshift-wrb": {
    "negatives_firing": 0,
-   "not_modeled": 665,
+   "not_modeled": 672,
    "not_modeled_reads": 153,
-   "positives": 444,
-   "positives_firing": 444,
+   "positives": 445,
+   "positives_firing": 445,
    "rules": 32,
    "rules_all_positives": 32,
    "rules_blind": 0,
@@ -1416,10 +1416,10 @@
   },
   "openshift-wrb-4.17": {
    "negatives_firing": 0,
-   "not_modeled": 655,
+   "not_modeled": 662,
    "not_modeled_reads": 148,
-   "positives": 444,
-   "positives_firing": 438,
+   "positives": 445,
+   "positives_firing": 439,
    "rules": 32,
    "rules_all_positives": 31,
    "rules_blind": 0,
@@ -1429,8 +1429,8 @@
    "negatives_firing": 0,
    "not_modeled": 180,
    "not_modeled_reads": 141,
-   "positives": 444,
-   "positives_firing": 443,
+   "positives": 445,
+   "positives_firing": 444,
    "rules": 32,
    "rules_all_positives": 31,
    "rules_blind": 0,

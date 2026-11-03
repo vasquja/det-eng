@@ -147,6 +147,7 @@ filing wave; ATT&CK revokes and renames IDs between releases.
 | TRR9028  | T1485  | Storage Destruction via PVC and PV Deletes | Kubernetes | [`trr9028/k8s`](trr9028/k8s/README.md) |
 | TRR9029  | T1490  | Inhibit Recovery by Destroying Snapshots and Velero Backups | Kubernetes | [`trr9029/k8s`](trr9029/k8s/README.md) |
 | TRR9030  | T1528  | Pod-Bound SA Token Used From An Unexpected Source | Kubernetes | [`trr9030/k8s`](trr9030/k8s/README.md) |
+| TRR9031  | T1036.005 | Lookalike Pod With a Controller-Generated Name | Kubernetes | [`trr9031/k8s`](trr9031/k8s/README.md) |
 
 Which Kubernetes rule works on which platform (EKS, AKS, GKE, OpenShift, k3s): [`detections/k8s/PLATFORMS.md`](../detections/k8s/PLATFORMS.md).
 
