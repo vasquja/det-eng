@@ -73,13 +73,13 @@
   },
   "lab-apiserver": {
    "files": [
-    {"path": "detections/k8s/audit-policy-apiserver.yaml", "sha256": "345f27507c1650afe7dfdb7784564f54fda0f801d89dd6f587357b85657023a2"}
+    {"path": "detections/k8s/audit-policy-apiserver.yaml", "sha256": "f626d216b7fb9913d56edad24a490b6e2942ccff4b7b580b1e1e875cb921aff0"}
    ],
    "kind": "lab",
    "label": "API server lab policy (TRR9004-9010, TRR9025-9027)",
    "log_filter": null,
    "platform": "kind lab (CI)",
-   "rule_count": 20,
+   "rule_count": 19,
    "status": "proven live in CI",
    "version": "this repository",
    "warnings": []
@@ -170,7 +170,7 @@
   },
   "recommended": {
    "files": [
-    {"path": "detections/k8s/audit-policy-recommended.yaml", "sha256": "bf796c278de3676765af801da3a44d902aa593c3c66e04c316efba34b4c118b4"}
+    {"path": "detections/k8s/audit-policy-recommended.yaml", "sha256": "18430d51925922f475258b0c462bcf9c901a9e4e5686d5ae3aaf81378cdacda2"}
    ],
    "kind": "recommended",
    "label": "this repository's recommended production policy (every Kubernetes audit rule; the TRR9027 D create needs its opt-in line)",
@@ -179,7 +179,7 @@
     "T1565.001/k8s_coredns_corefile_poisoned.yml": {"recreate-coredns-create-procD": "TRR9027 Procedure D: a POST create of kube-system/coredns names no object when the policy is evaluated, so only the opt-in kube-system ConfigMap-create line logs its Corefile; without it the create is at Metadata"}
    },
    "platform": "self-managed API server (--audit-policy-file: kubeadm, k3s, RKE2, kind)",
-   "rule_count": 20,
+   "rule_count": 19,
    "status": "TRR9004-9010 and TRR9025-9027 rules proven live in CI by the non-required validate-apiserver-recommended job (validate_apiserver_detections.py --policy recommended); the TRR9002 and TRR9003 rules by this simulator only",
    "version": "this repository (the opt-in kube-system ConfigMap-create line off)",
    "warnings": []
@@ -473,40 +473,6 @@
    "rule_digest": "13f9e7636767c545ebe5dffd542437d89e3795f4a0f883b4f8ede54e4a36f28d",
    "title": "Kubernetes RBAC Object Written"
   },
-  "T1133/k8s_service_exposed_nodeport_loadbalancer.yml": {
-   "case_counts": {
-    "benign": 0,
-    "confounder": 1,
-    "filtered": 1,
-    "near-miss": 2,
-    "positive": 3
-   },
-   "cases_sha256": "f3c7172586192bd3f689497c6ae9c5af3097b12b0434981f304c5884a557c55f",
-   "home_policy": "lab-apiserver",
-   "level": "medium",
-   "needs": {
-    "level": "RequestResponse",
-    "note": "The lowest level differs per request: Request for create services; RequestResponse for patch services.",
-    "requests": [{"group": "", "resource": "services", "subresource": null, "verbs": ["create", "patch"]}]
-   },
-   "results": {
-    "aks-kube-audit": {"near_misses": {"no_record": 0, "quiet": 2, "total": 2}, "negatives_firing": [], "not_modeled": 1, "not_modeled_reads": 1, "positives": {"firing": 3, "lost": [], "total": 3}},
-    "aks-kube-audit-admin": {"near_misses": {"no_record": 0, "quiet": 2, "total": 2}, "negatives_firing": [], "not_modeled": 1, "not_modeled_reads": 1, "positives": {"firing": 3, "lost": [], "total": 3}},
-    "eks": {"near_misses": {"no_record": 0, "quiet": 2, "total": 2}, "negatives_firing": [], "not_modeled": 1, "not_modeled_reads": 1, "positives": {"firing": 3, "lost": [], "total": 3}},
-    "gce-kube-up": {"near_misses": {"no_record": 0, "quiet": 2, "total": 2}, "negatives_firing": [], "not_modeled": 1, "not_modeled_reads": 1, "positives": {"firing": 3, "lost": [], "total": 3}},
-    "k3s-starter": {"near_misses": {"no_record": 0, "quiet": 2, "total": 2}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 0, "lost": [{"case": "nodeport-create-procA", "policy_rules": [0], "reason": "body-removed"}, {"case": "loadbalancer-create-procB", "policy_rules": [0], "reason": "body-removed"}, {"case": "jsonpatch-spec-type-loadbalancer-procC", "policy_rules": [0], "reason": "body-removed"}], "total": 3}},
-    "lab-apiserver": {"near_misses": {"no_record": 0, "quiet": 2, "total": 2}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
-    "lab-k8s": {"near_misses": {"no_record": 0, "quiet": 2, "total": 2}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 0, "lost": [{"case": "nodeport-create-procA", "policy_rules": [5], "reason": "body-removed"}, {"case": "loadbalancer-create-procB", "policy_rules": [5], "reason": "body-removed"}, {"case": "jsonpatch-spec-type-loadbalancer-procC", "policy_rules": [5], "reason": "body-removed"}], "total": 3}},
-    "lab-staticpod": {"near_misses": {"no_record": 0, "quiet": 2, "total": 2}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 0, "lost": [{"case": "nodeport-create-procA", "policy_rules": [3], "reason": "body-removed"}, {"case": "loadbalancer-create-procB", "policy_rules": [3], "reason": "body-removed"}, {"case": "jsonpatch-spec-type-loadbalancer-procC", "policy_rules": [3], "reason": "body-removed"}], "total": 3}},
-    "openshift-default": {"near_misses": {"no_record": 0, "quiet": 2, "total": 2}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 0, "lost": [{"case": "nodeport-create-procA", "policy_rules": [3], "reason": "body-removed"}, {"case": "loadbalancer-create-procB", "policy_rules": [3], "reason": "body-removed"}, {"case": "jsonpatch-spec-type-loadbalancer-procC", "policy_rules": [3], "reason": "body-removed"}], "total": 3}},
-    "openshift-default-4.17": {"near_misses": {"no_record": 0, "quiet": 2, "total": 2}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 0, "lost": [{"case": "nodeport-create-procA", "policy_rules": [4], "reason": "body-removed"}, {"case": "loadbalancer-create-procB", "policy_rules": [4], "reason": "body-removed"}, {"case": "jsonpatch-spec-type-loadbalancer-procC", "policy_rules": [4], "reason": "body-removed"}], "total": 3}},
-    "openshift-wrb": {"near_misses": {"no_record": 0, "quiet": 2, "total": 2}, "negatives_firing": [], "not_modeled": 1, "not_modeled_reads": 1, "positives": {"firing": 3, "lost": [], "total": 3}},
-    "openshift-wrb-4.17": {"near_misses": {"no_record": 0, "quiet": 2, "total": 2}, "negatives_firing": [], "not_modeled": 1, "not_modeled_reads": 1, "positives": {"firing": 3, "lost": [], "total": 3}},
-    "recommended": {"near_misses": {"no_record": 0, "quiet": 2, "total": 2}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}}
-   },
-   "rule_digest": "e0c5fb25ab6c82a4168368681a3f6e3631d25bab20bbefe4bc78ed09011fb599",
-   "title": "Kubernetes Service Exposed via NodePort or LoadBalancer"
-  },
   "T1134/k8s_impersonation.yml": {
    "case_counts": {
     "benign": 3,
@@ -574,6 +540,40 @@
    },
    "rule_digest": "4b44c5ef602f1c76230f10595f5b9a01d40cc70825c6b39bb7fa50b88b8b8f1d",
    "title": "Kubernetes Impersonation of a Privileged Identity"
+  },
+  "T1204.003/k8s_admission_policy_image_violation.yml": {
+   "case_counts": {
+    "benign": 1,
+    "confounder": 2,
+    "filtered": 0,
+    "near-miss": 3,
+    "positive": 3
+   },
+   "cases_sha256": "bcc2365db5a33867b5cec90437f9de0f1cae0c9c00ee7b5187a08b6014edf97e",
+   "home_policy": "lab-apiserver",
+   "level": "medium",
+   "needs": {
+    "level": "Metadata",
+    "note": null,
+    "requests": [{"group": "", "resource": "pods", "subresource": null, "verbs": ["create"]}]
+   },
+   "results": {
+    "aks-kube-audit": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 8, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "aks-kube-audit-admin": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 8, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "eks": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 8, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "gce-kube-up": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 8, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "k3s-starter": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "lab-apiserver": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "lab-k8s": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "lab-staticpod": {"near_misses": {"no_record": 1, "quiet": 2, "total": 3}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "openshift-default": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "openshift-default-4.17": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "openshift-wrb": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 9, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "openshift-wrb-4.17": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 9, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}},
+    "recommended": {"near_misses": {"no_record": 0, "quiet": 3, "total": 3}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 3, "lost": [], "total": 3}}
+   },
+   "rule_digest": "c88321849f19f30f9807a4817e3edf986e5a5e1280ef26350a1e9c9341ee7e22",
+   "title": "Kubernetes Workload Admission Policy Verdict"
   },
   "T1543.005/k8s_static_pod_mirror_create.yml": {
    "case_counts": {
@@ -842,7 +842,7 @@
     "openshift-default-4.17": {"near_misses": {"no_record": 0, "quiet": 24, "total": 24}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 0, "lost": [{"case": "corefile-rewrite-fullbody-procA", "policy_rules": [4], "reason": "body-removed"}, {"case": "corefile-forward-ipv4-fullbody", "policy_rules": [4], "reason": "body-removed"}, {"case": "corefile-forward-ipv6-fullbody", "policy_rules": [4], "reason": "body-removed"}, {"case": "jsonpatch-rewrite-raw", "policy_rules": [4], "reason": "body-removed"}, {"case": "root-forward-to-pod-ip", "policy_rules": [4], "reason": "body-removed"}, {"case": "jsonpatch-root-forward-to-ip", "policy_rules": [4], "reason": "body-removed"}, {"case": "root-brace-next-line", "policy_rules": [4], "reason": "body-removed"}, {"case": "jsonpatch-root-brace-next-line", "policy_rules": [4], "reason": "body-removed"}, {"case": "root-comma-key-list", "policy_rules": [4], "reason": "body-removed"}, {"case": "jsonpatch-root-comma-key-list", "policy_rules": [4], "reason": "body-removed"}, {"case": "root-braceless-block", "policy_rules": [4], "reason": "body-removed"}, {"case": "jsonpatch-root-braceless-block", "policy_rules": [4], "reason": "body-removed"}, {"case": "root-forward-on-brace-line", "policy_rules": [4], "reason": "body-removed"}, {"case": "root-brace-in-comment", "policy_rules": [4], "reason": "body-removed"}, {"case": "root-after-stub-block", "policy_rules": [4], "reason": "body-removed"}, {"case": "jsonpatch-root-after-stub-block", "policy_rules": [4], "reason": "body-removed"}, {"case": "root-after-tab-separated-import", "policy_rules": [4], "reason": "body-removed"}, {"case": "recreate-coredns-create-procD", "policy_rules": [4], "reason": "body-removed"}, {"case": "stub-zone-forward-public-ip", "policy_rules": [4], "reason": "body-removed"}, {"case": "jsonpatch-stub-zone-forward-public-ip", "policy_rules": [4], "reason": "body-removed"}, {"case": "root-domain-scoped-forward-public-ip", "policy_rules": [4], "reason": "body-removed"}, {"case": "root-forward-after-quoted-brace", "policy_rules": [4], "reason": "body-removed"}, {"case": "root-tab-separated-keys", "policy_rules": [4], "reason": "body-removed"}, {"case": "jsonpatch-root-tab-separated-keys", "policy_rules": [4], "reason": "body-removed"}, {"case": "jsonpatch-quoted-brace-stored-corefile", "policy_rules": [4], "reason": "body-removed"}, {"case": "quoted-rewrite-directive", "policy_rules": [4], "reason": "body-removed"}, {"case": "rewrite-on-brace-line", "policy_rules": [4], "reason": "body-removed"}, {"case": "quoted-hosts-directive", "policy_rules": [4], "reason": "body-removed"}, {"case": "nbsp-separated-rewrite", "policy_rules": [4], "reason": "body-removed"}, {"case": "env-placeholder-splits-rewrite", "policy_rules": [4], "reason": "body-removed"}, {"case": "jsonpatch-env-placeholder-splits-forward", "policy_rules": [4], "reason": "body-removed"}, {"case": "stored-env-placeholder-root-ip", "policy_rules": [4], "reason": "body-removed"}, {"case": "cluster-zone-stub-to-pod-ip", "policy_rules": [4], "reason": "body-removed"}, {"case": "api-service-name-zone-to-pod-ip", "policy_rules": [4], "reason": "body-removed"}, {"case": "root-forward-from-cluster-subzone", "policy_rules": [4], "reason": "body-removed"}, {"case": "jsonpatch-cluster-zone-stub-to-pod-ip", "policy_rules": [4], "reason": "body-removed"}, {"case": "stored-cluster-zone-stub-to-pod-ip", "policy_rules": [4], "reason": "body-removed"}, {"case": "k3s-nodehosts-block-entry-added", "policy_rules": [4], "reason": "body-removed"}, {"case": "k3s-default-plus-second-hosts-block", "policy_rules": [4], "reason": "body-removed"}, {"case": "minikube-hosts-extra-name", "policy_rules": [4], "reason": "body-removed"}, {"case": "stub-zone-forward-ipv4-mapped-public", "policy_rules": [4], "reason": "body-removed"}, {"case": "openshift-dns-default-patch-procE", "policy_rules": [4], "reason": "body-removed"}, {"case": "openshift-operator-renders-public-stub-zone", "policy_rules": [4], "reason": "body-removed"}, {"case": "openshift-operator-renders-root-upstream-after-stub", "policy_rules": [4], "reason": "body-removed"}, {"case": "openshift-operator-renders-root-upstream-first", "policy_rules": [4], "reason": "body-removed"}, {"case": "openshift-dns-default-direct-edit-port-5353", "policy_rules": [4], "reason": "body-removed"}, {"case": "openshift-dns-operator-token-put-poisoned-dns-default", "policy_rules": [4], "reason": "body-removed"}], "total": 47}},
     "openshift-wrb": {"near_misses": {"no_record": 0, "quiet": 24, "total": 24}, "negatives_firing": [], "not_modeled": 63, "not_modeled_reads": 63, "positives": {"firing": 47, "lost": [], "total": 47}},
     "openshift-wrb-4.17": {"near_misses": {"no_record": 0, "quiet": 24, "total": 24}, "negatives_firing": [], "not_modeled": 63, "not_modeled_reads": 63, "positives": {"firing": 47, "lost": [], "total": 47}},
-    "recommended": {"near_misses": {"no_record": 1, "quiet": 23, "total": 24}, "negatives_firing": [], "not_modeled": 58, "not_modeled_reads": 58, "positives": {"firing": 46, "lost": [{"case": "recreate-coredns-create-procD", "policy_rules": [19], "reason": "body-removed"}], "total": 47}}
+    "recommended": {"near_misses": {"no_record": 1, "quiet": 23, "total": 24}, "negatives_firing": [], "not_modeled": 58, "not_modeled_reads": 58, "positives": {"firing": 46, "lost": [{"case": "recreate-coredns-create-procD", "policy_rules": [18], "reason": "body-removed"}], "total": 47}}
    },
    "rule_digest": "77f6577c936059348c95eb85e81624a3b468b51da74ce5145e370da0cc019cbc",
    "title": "Kubernetes CoreDNS Corefile Poisoned"
@@ -1295,8 +1295,8 @@
  "summary": {
   "aks-kube-audit": {
    "negatives_firing": 1,
-   "not_modeled": 613,
-   "not_modeled_reads": 87,
+   "not_modeled": 620,
+   "not_modeled_reads": 86,
    "positives": 445,
    "positives_firing": 395,
    "rules": 32,
@@ -1306,8 +1306,8 @@
   },
   "aks-kube-audit-admin": {
    "negatives_firing": 1,
-   "not_modeled": 547,
-   "not_modeled_reads": 82,
+   "not_modeled": 554,
+   "not_modeled_reads": 81,
    "positives": 445,
    "positives_firing": 360,
    "rules": 32,
@@ -1317,8 +1317,8 @@
   },
   "eks": {
    "negatives_firing": 1,
-   "not_modeled": 626,
-   "not_modeled_reads": 89,
+   "not_modeled": 633,
+   "not_modeled_reads": 88,
    "positives": 445,
    "positives_firing": 392,
    "rules": 32,
@@ -1328,8 +1328,8 @@
   },
   "gce-kube-up": {
    "negatives_firing": 1,
-   "not_modeled": 618,
-   "not_modeled_reads": 89,
+   "not_modeled": 625,
+   "not_modeled_reads": 88,
    "positives": 445,
    "positives_firing": 392,
    "rules": 32,
@@ -1342,10 +1342,10 @@
    "not_modeled": 0,
    "not_modeled_reads": 0,
    "positives": 445,
-   "positives_firing": 133,
+   "positives_firing": 136,
    "rules": 32,
-   "rules_all_positives": 19,
-   "rules_blind": 9,
+   "rules_all_positives": 20,
+   "rules_blind": 8,
    "rules_some_positives": 4
   },
   "lab-apiserver": {
@@ -1364,10 +1364,10 @@
    "not_modeled": 0,
    "not_modeled_reads": 0,
    "positives": 445,
-   "positives_firing": 133,
+   "positives_firing": 136,
    "rules": 32,
-   "rules_all_positives": 19,
-   "rules_blind": 9,
+   "rules_all_positives": 20,
+   "rules_blind": 8,
    "rules_some_positives": 4
   },
   "lab-staticpod": {
@@ -1375,10 +1375,10 @@
    "not_modeled": 0,
    "not_modeled_reads": 0,
    "positives": 445,
-   "positives_firing": 74,
+   "positives_firing": 77,
    "rules": 32,
-   "rules_all_positives": 8,
-   "rules_blind": 13,
+   "rules_all_positives": 9,
+   "rules_blind": 12,
    "rules_some_positives": 11
   },
   "openshift-default": {
@@ -1386,10 +1386,10 @@
    "not_modeled": 0,
    "not_modeled_reads": 0,
    "positives": 445,
-   "positives_firing": 133,
+   "positives_firing": 136,
    "rules": 32,
-   "rules_all_positives": 19,
-   "rules_blind": 9,
+   "rules_all_positives": 20,
+   "rules_blind": 8,
    "rules_some_positives": 4
   },
   "openshift-default-4.17": {
@@ -1397,16 +1397,16 @@
    "not_modeled": 0,
    "not_modeled_reads": 0,
    "positives": 445,
-   "positives_firing": 127,
+   "positives_firing": 130,
    "rules": 32,
-   "rules_all_positives": 18,
-   "rules_blind": 9,
+   "rules_all_positives": 19,
+   "rules_blind": 8,
    "rules_some_positives": 5
   },
   "openshift-wrb": {
    "negatives_firing": 0,
-   "not_modeled": 660,
-   "not_modeled_reads": 154,
+   "not_modeled": 668,
+   "not_modeled_reads": 153,
    "positives": 445,
    "positives_firing": 445,
    "rules": 32,
@@ -1416,8 +1416,8 @@
   },
   "openshift-wrb-4.17": {
    "negatives_firing": 0,
-   "not_modeled": 650,
-   "not_modeled_reads": 149,
+   "not_modeled": 658,
+   "not_modeled_reads": 148,
    "positives": 445,
    "positives_firing": 439,
    "rules": 32,

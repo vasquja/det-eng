@@ -1,0 +1,112 @@
+attack_technique: T1204.003
+display_name: "Malicious Image (Kubernetes Admission-Policy Verdict)"
+
+# Behavioral emulation for TRR9034. Each test installs a REFERENCE ValidatingAdmissionPolicy
+# (atomics/T1204.003/src/vap-image-provenance.yaml, authored by det-eng, NOT a production
+# image policy) with two namespace-scoped bindings, then creates an inert pod whose image
+# the policy judges a violation, so the API server writes the server-computed verdict the
+# detection keys on. The "malicious image" is a benign placeholder (registry.k8s.io/pause
+# by tag, not digest-pinned); the reference policy flags it by a chosen condition, not by
+# being malware. Every pod carries a nodeSelector no node matches, so it never schedules,
+# pulls or runs. Creating the VAP fires TRR9025's create chokepoint and deleting it fires
+# TRR9008's disable chokepoint (both expected, both documented in the TRR). These need a
+# reachable cluster with rights to write ValidatingAdmissionPolicy/Binding objects and
+# pods, and audit logging of pod creates at Metadata or higher (see
+# detections/k8s/audit-policy-apiserver.yaml).
+
+atomic_tests:
+  - name: "TRR9034.K8S.A — pod the Audit binding flags (admitted + verdict annotation)"
+    auto_generated_guid: 7b1e4d2a-9c08-4f31-a6b5-0d2e7c9a4f10
+    description: |
+      Installs the reference VAP and creates pod trr9034-web (label trr9034-mode=audit) with
+      a tag-only image. The Audit binding ADMITS it and the API server writes the event
+      annotation validation.policy.admission.k8s.io/validation_failure
+      (apiserver .../policy/validating/dispatcher.go, v1.36.4).
+      Rule: detections/sigma/T1204.003/k8s_admission_policy_image_violation.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh a
+      cleanup_command: |
+        kubectl delete namespace trr9034 --ignore-not-found
+        kubectl delete -f #{source_dir}/vap-image-provenance.yaml --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1204.003/src
+
+  - name: "TRR9034.K8S.B — pod the Deny binding flags (refused with denied-request message)"
+    auto_generated_guid: 9d6f3a51-2b84-4e7c-8f09-5a1c3e2d7b64
+    description: |
+      Installs the reference VAP and creates pod trr9034-deny-web (label trr9034-mode=deny)
+      with a tag-only image. The Deny binding REFUSES it; the response carries the message
+      "ValidatingAdmissionPolicy '...' with binding '...' denied request: ..." (422 Invalid),
+      copied into responseStatus at Metadata. The test succeeds when the create is refused.
+      Rule: detections/sigma/T1204.003/k8s_admission_policy_image_violation.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh b
+      cleanup_command: |
+        kubectl delete namespace trr9034 --ignore-not-found
+        kubectl delete -f #{source_dir}/vap-image-provenance.yaml --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1204.003/src
+
+  - name: "TRR9034.K8S.C — Deployment whose controller pod the Audit binding flags (indirect)"
+    auto_generated_guid: 2c8a5e94-6f13-4b20-9d7e-8a0b1f4c3d56
+    description: |
+      Installs the reference VAP and creates Deployment trr9034-deploy whose pod template
+      (label trr9034-mode=audit) has a tag-only image. The Deployment itself is not matched;
+      the replicaset controller's own pods create carries the verdict annotation. Proves the
+      detection must not filter controller identities (the indirect path).
+      Rule: detections/sigma/T1204.003/k8s_admission_policy_image_violation.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh c
+      cleanup_command: |
+        kubectl delete namespace trr9034 --ignore-not-found
+        kubectl delete -f #{source_dir}/vap-image-provenance.yaml --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1204.003/src
+
+  - name: "TRR9034.K8S — pod with a digest-pinned image the policy allows (control: must not fire)"
+    auto_generated_guid: 4e0d7c62-1a95-4836-b2f1-7c9a6e3b58d2
+    description: |
+      A control, not a procedure. Installs the reference VAP and creates pod trr9034-web-ok
+      (label trr9034-mode=audit) with a digest-pinned image. The Audit binding ADMITS it and
+      writes NO verdict annotation, so the rule must not fire on it. This is the hard benign
+      baseline that differs from Procedure A only in the image.
+      Rule: detections/sigma/T1204.003/k8s_admission_policy_image_violation.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh allow
+      cleanup_command: |
+        kubectl delete namespace trr9034 --ignore-not-found
+        kubectl delete -f #{source_dir}/vap-image-provenance.yaml --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1204.003/src

@@ -418,8 +418,17 @@ reasoning survives. Append an entry per vet; keep it short.
   PolicyReports, Gatekeeper audit, Defender gated deployment, and GKE Binary Authorization. Falco exposes
   `ka.validations.admission.policy.failure` but ships no rule; SigmaHQ, Elastic and Splunk have none.
   Kyverno-generated VAPs map Audit to [Audit, Warn]; webhook-based image verifiers leave no such annotation.
-  Deferred to build as TRR9034 (k8s), after TRR9031, as a policy-agnostic anchor with a reference VAP. Mapping
-  and shipping the policy are human decisions.
+  **Built as TRR9034 (k8s).** Re-pinned at v1.36.4: the annotation key and the denied-request message are
+  unchanged (apiserver dispatcher.go:312, :294), both at Metadata, and Deny is code 422 (reason Invalid). Built a
+  single policy-agnostic rule
+  (`detections/sigma/T1204.003/k8s_admission_policy_image_violation.yml`), scoped to workload resources, with two
+  branches: the Audit event annotation (value contains `"validationActions":[`) and the Deny responseStatus
+  message. Procedures A (Audit annotation), B (Deny 422 message) and C (a Deployment whose replicaset-controller
+  pod carries the annotation) with a reference VAP + two bindings the atomic installs; the allowed digest image is
+  the hard benign control. Dropped by decision: a pure Warn-only binding leaves no audit marker (documented gap),
+  and the Deny branch is NOT portable to GKE (responseStatus.message absent from Cloud Audit Logs; a NOT_PORTABLE
+  human-approval entry). Not keyed on the image string (survives the T1610 NO-GO). Mapping and shipping a real
+  image policy remain human decisions.
 
 - **Container-runtime lane (shells, drift, miners, IMDS from pods, escape primitives beyond setns) — NO-GO for
   now (question 1 for auditd, plus questions 2 and 3); recorded as out of scope, with Falco as the reference

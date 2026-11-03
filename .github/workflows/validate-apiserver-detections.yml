@@ -87,6 +87,7 @@ on:
       - 'detections/sigma/T1528/**'
       - 'detections/sigma/T1036.005/**'
       - 'detections/sigma/T1133/**'
+      - 'detections/sigma/T1204.003/**'
       - 'detections/validate_apiserver_detections.py'
       - 'detections/sigma_eval.py'
       - 'detections/sigma_explain.py'
@@ -106,6 +107,7 @@ on:
       - 'atomics/T1528/**'
       - 'atomics/T1036.005/**'
       - 'atomics/T1133/**'
+      - 'atomics/T1204.003/**'
       - '.github/workflows/validate-apiserver-detections.yml'
   # PRs always trigger this workflow (no paths: filter) so the required
   # `validate-apiserver` check ALWAYS reports a status. The `changes` job below
@@ -224,6 +226,7 @@ jobs:
             'detections/sigma/T1528/' \
             'detections/sigma/T1036.005/' \
             'detections/sigma/T1133/' \
+            'detections/sigma/T1204.003/' \
             'detections/validate_apiserver_detections.py' \
             'detections/sigma_eval.py' \
             'detections/sigma_explain.py' \
@@ -243,6 +246,7 @@ jobs:
             'atomics/T1528/' \
             'atomics/T1036.005/' \
             'atomics/T1133/' \
+            'atomics/T1204.003/' \
             '.github/workflows/validate-apiserver-detections.yml')
           # Fail safe: if the diff cannot be computed, run the validator.
           if ! changed="$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}" 2>/dev/null)"; then
@@ -304,6 +308,7 @@ jobs:
             'detections/sigma/T1528/' \
             'detections/sigma/T1036.005/' \
             'detections/sigma/T1133/' \
+            'detections/sigma/T1204.003/' \
             'detections/validate_apiserver_detections.py' \
             'detections/sigma_eval.py' \
             'detections/sigma_explain.py' \
@@ -323,6 +328,7 @@ jobs:
             'atomics/T1528/' \
             'atomics/T1036.005/' \
             'atomics/T1133/' \
+            'atomics/T1204.003/' \
             '.github/workflows/validate-apiserver-detections.yml')
           range=""
           case "${EVENT_NAME}" in
@@ -744,6 +750,17 @@ jobs:
         # (selector app=trr9033, no backing pod; kind has no cloud provider so a LoadBalancer
         # stays <pending>) in the trr9033 namespace, which the emulation creates and deletes.
         run: bash atomics/T1133/src/emulate.sh all
+      - &apiserver-emulate-9034
+        name: Emulate TRR9034 (malicious image via an admission-policy verdict)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        # Installs the reference ValidatingAdmissionPolicy + two namespace-scoped bindings
+        # (Audit and Deny), then creates inert pods the policy judges a violation: A is
+        # admitted and annotated, B is refused, C's replicaset-controller pod is annotated.
+        # The kind admin credential may write the cluster-scoped VAP; both bindings are
+        # confined to the trr9034 namespace, and cleanup deletes the VAP, bindings and the
+        # namespace. Creating/deleting the VAP also fires TRR9025/TRR9008 (expected).
+        run: bash atomics/T1204.003/src/emulate.sh all
 
       - &apiserver-collect
         name: Collect the audit log and the node sensor log
@@ -1013,6 +1030,7 @@ jobs:
       - *apiserver-emulate-9030
       - *apiserver-emulate-9031
       - *apiserver-emulate-9033
+      - *apiserver-emulate-9034
       - *apiserver-collect
 
       - name: Validate detections under the recommended policy (expected misses named)

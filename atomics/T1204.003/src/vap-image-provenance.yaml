@@ -1,0 +1,81 @@
+# TRR9034 reference ValidatingAdmissionPolicy (T1204.003 — Malicious Image).
+#
+# A policy-agnostic ANCHOR, authored by det-eng, NOT a production image policy. It
+# encodes one chosen image-provenance condition ("every container and initContainer
+# image must be digest-pinned, i.e. contain @sha256:"), purely so the emulation can trip
+# a server-computed verdict and prove the audit-record shape the Sigma rule keys on.
+# Mapping and shipping a real image policy (allowlisted registries, signature
+# verification, exceptions) are HUMAN decisions; this file exists only to make the
+# telemetry exist in the lab.
+#
+# The policy is cluster-scoped (VAPs always are), but both bindings are confined to the
+# trr9034 namespace by namespaceSelector, so installing it never affects the rest of the
+# cluster. The two bindings split by an objectSelector pod label so the emulation can
+# trip exactly one verdict per pod:
+#   - the Audit binding (validationActions [Audit]) matches pods labelled
+#     trr9034-mode=audit: a violating pod is ADMITTED and the API server writes the
+#     validation.policy.admission.k8s.io/validation_failure event annotation.
+#   - the Deny binding (validationActions [Deny]) matches pods labelled
+#     trr9034-mode=deny: a violating pod is REFUSED (422 Invalid) with the message
+#     "ValidatingAdmissionPolicy '...' with binding '...' denied request: ...".
+# A pure Warn-only binding would leave no audit marker (a client Warning header only);
+# that gap is documented in the TRR, not emulated.
+#
+# The emulation's pods are kept inert with a nodeSelector no node matches
+# (trr9034-unschedulable=true), so they never schedule, pull or run; the image is only a
+# string the CEL expression reads at admission.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: trr9034-image-provenance
+  labels:
+    app.kubernetes.io/part-of: trr9034
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  validations:
+    - expression: >-
+        object.spec.containers.all(c, c.image.contains('@sha256:'))
+        && (!has(object.spec.initContainers)
+            || object.spec.initContainers.all(c, c.image.contains('@sha256:')))
+      message: "image not allowed: every container image must be digest-pinned (contain @sha256:)"
+      reason: Invalid
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: trr9034-image-provenance-audit
+  labels:
+    app.kubernetes.io/part-of: trr9034
+spec:
+  policyName: trr9034-image-provenance
+  validationActions: ["Audit"]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        trr9034: enabled
+    objectSelector:
+      matchLabels:
+        trr9034-mode: audit
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: trr9034-image-provenance-deny
+  labels:
+    app.kubernetes.io/part-of: trr9034
+spec:
+  policyName: trr9034-image-provenance
+  validationActions: ["Deny"]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        trr9034: enabled
+    objectSelector:
+      matchLabels:
+        trr9034-mode: deny

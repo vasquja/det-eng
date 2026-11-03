@@ -609,6 +609,15 @@ NOT_PORTABLE = {
     ("gke", "T1134/k8s_impersonation_privileged.yml"): (
         "sel_priv_groups.impersonatedUser.groups",
     ),
+    # TRR9034 (T1204.003): the Deny-mode branch keys on the VAP denied-request message in
+    # responseStatus; GKE Cloud Audit Logs record only protoPayload.status (a
+    # google.rpc.Status), not the HTTP responseStatus.message, so the deny branch is not
+    # portable there (the same source conflict approved for T1134's responseStatus items).
+    # The Audit-mode branch (the validation_failure annotation) IS portable to GKE. Human
+    # decision: GKE sees Audit-mode VAP verdicts; Deny-mode ones are triaged in the engine.
+    ("gke", "T1204.003/k8s_admission_policy_image_violation.yml"): (
+        "verdict_deny.responseStatus.message",
+    ),
     ("gke", "T1485/k8s_volume_reclaim_set_to_delete.yml"): (
         "filter_dry_run_query.requestURI",
         "sel_accepted.responseStatus.code",

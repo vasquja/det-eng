@@ -70,6 +70,11 @@ rules:
   # (objectRef.name/namespace/subresource, user.username, verb), but the validator's
   # Procedure C gate reads the trr9031 label in requestObject.metadata (a kube-system
   # create, where the namespace cannot be the emulation marker), which needs Request.
+  # Also serves TRR9034 (T1204.003): the ValidatingAdmissionPolicy verdict markers it
+  # keys on -- the event annotation validation.policy.admission.k8s.io/validation_failure
+  # (Audit binding) and the "denied request" responseStatus (Deny binding) -- are both at
+  # Metadata, so this Request-level pods rule already records them; no body row is needed
+  # (the workload-controllers rule below does the same for an indirect create).
   - level: Request
     verbs: ["create", "update", "patch"]
     resources:

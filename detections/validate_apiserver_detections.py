@@ -679,6 +679,30 @@ def core_group(e):
 core_group.describe = "core API group"
 
 
+# TRR9034 (T1204.003): the ValidatingAdmissionPolicy verdict markers the rule keys on,
+# both server-set at Metadata (apiserver .../policy/validating/dispatcher.go, v1.36.4).
+# An Audit binding writes the event annotation (its JSON value carries "validationActions":[);
+# a Deny binding puts the "ValidatingAdmissionPolicy '...' denied request" message in
+# responseStatus. A and C carry the annotation; B carries the message (code 422).
+VAP_FAILURE_ANNOTATION = "annotations.validation.policy.admission.k8s.io/validation_failure"
+
+
+def vap_audit_annotation(e):
+    return '"validationActions":[' in str(e.get(VAP_FAILURE_ANNOTATION) or "")
+
+
+vap_audit_annotation.describe = (VAP_FAILURE_ANNOTATION + ' contains \'"validationActions":[\'')
+
+
+def vap_deny_message(e):
+    msg = str(e.get("responseStatus.message") or "")
+    return "ValidatingAdmissionPolicy '" in msg and "denied request" in msg
+
+
+vap_deny_message.describe = ("responseStatus.message names a ValidatingAdmissionPolicy "
+                             "denied request")
+
+
 def apigroup(group):
     return field_eq("objectRef.apiGroup", group)
 
@@ -1181,6 +1205,24 @@ MANIFEST = [
                   window=("9033", "b"))),
         ("C", rec(verb="patch", resource="services", sub=None, name="trr9033-jp",
                   ns="trr9033", window=("9033", "c")))]),
+    # TRR9034 (T1204.003): a workload the reference VAP judged a violation. A and C carry
+    # the Audit binding's event annotation; B carries the Deny binding's denied-request
+    # message (422). A is a direct pod create (objectRef.name set); C is the controller's
+    # own pod create, which uses generateName, so its objectRef.name is EMPTY -- that empty
+    # name is the robust distinguisher of the indirect path (the controller identity differs
+    # between a per-SA-token cluster like kind, system:serviceaccount:kube-system:
+    # replicaset-controller, and a static-token lab, system:kube-controller-manager, so the
+    # gate does not pin it). Each is bound to its own ledger window. Positive gates exclude
+    # dry-run objects (rec default).
+    ("T1204.003", "k8s_admission_policy_image_violation.yml", "audit", "9034 A-C",
+     "VAP verdict on a workload (Audit annotation, or Deny message)", [
+        ("A", rec(verb="create", resource="pods", also=vap_audit_annotation,
+                  window=("9034", "a"))),
+        ("B", rec(verb="create", resource="pods", also=vap_deny_message, code=(422,),
+                  window=("9034", "b"))),
+        ("C", rec(verb="create", resource="pods",
+                  also=all_of(vap_audit_annotation, no_field("objectRef.name")),
+                  window=("9034", "c")))]),
 ]
 
 

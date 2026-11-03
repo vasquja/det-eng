@@ -14,18 +14,6 @@
         "linux-auditd-dev-workstation": 1
       }
     },
-    "T1036.005/k8s_pod_controller_name_mimicry.yml": {
-      "actors": {},
-      "distinct_actors": 0,
-      "events": 2666,
-      "hits": 0,
-      "rate_per_10k": 0.0,
-      "slices": {
-        "k8s-audit-control-plane": 0,
-        "k8s-audit-gitops-ci": 0,
-        "k8s-audit-human-operators": 0
-      }
-    },
     "T1040/afinet_raw_socket.yml": {
       "actors": {
         "/usr/bin/mtr-packet": 6
@@ -373,32 +361,6 @@
         "gcp-platform-ops": 0
       }
     },
-    "T1098.006/aws_eks_access_entry_cluster_admin_policy.yml": {
-      "actors": {},
-      "distinct_actors": 0,
-      "events": 4000,
-      "hits": 0,
-      "rate_per_10k": 0.0,
-      "slices": {
-        "aws-cicd-oidc-irsa": 0,
-        "aws-developer-iam-user-keys": 0,
-        "aws-ec2-service-roles": 0,
-        "aws-iac-admin-policy-changes": 0
-      }
-    },
-    "T1098.006/aws_eks_access_entry_write.yml": {
-      "actors": {},
-      "distinct_actors": 0,
-      "events": 4000,
-      "hits": 0,
-      "rate_per_10k": 0.0,
-      "slices": {
-        "aws-cicd-oidc-irsa": 0,
-        "aws-developer-iam-user-keys": 0,
-        "aws-ec2-service-roles": 0,
-        "aws-iac-admin-policy-changes": 0
-      }
-    },
     "T1098.006/k8s_eks_aws_auth_configmap_modified.yml": {
       "actors": {},
       "distinct_actors": 0,
@@ -450,18 +412,6 @@
       "slices": {
         "k8s-audit-control-plane": 0,
         "k8s-audit-gitops-ci": 24,
-        "k8s-audit-human-operators": 0
-      }
-    },
-    "T1133/k8s_service_exposed_nodeport_loadbalancer.yml": {
-      "actors": {},
-      "distinct_actors": 0,
-      "events": 2666,
-      "hits": 0,
-      "rate_per_10k": 0.0,
-      "slices": {
-        "k8s-audit-control-plane": 0,
-        "k8s-audit-gitops-ci": 0,
         "k8s-audit-human-operators": 0
       }
     },
@@ -519,7 +469,7 @@
         "gcp-platform-ops": 0
       }
     },
-    "T1490/k8s_snapshot_or_backup_destroyed.yml": {
+    "T1204.003/k8s_admission_policy_image_violation.yml": {
       "actors": {},
       "distinct_actors": 0,
       "events": 2666,
@@ -553,18 +503,6 @@
       "rate_per_10k": 0.0,
       "slices": {
         "azure-entra-audit-appmgmt": 0
-      }
-    },
-    "T1528/k8s_pod_token_used_off_source.yml": {
-      "actors": {},
-      "distinct_actors": 0,
-      "events": 2666,
-      "hits": 0,
-      "rate_per_10k": 0.0,
-      "slices": {
-        "k8s-audit-control-plane": 0,
-        "k8s-audit-gitops-ci": 0,
-        "k8s-audit-human-operators": 0
       }
     },
     "T1537/aws_efs_file_system_policy_made_public.yml": {

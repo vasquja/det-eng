@@ -206,6 +206,10 @@ rules:
   # k8s_pod_controller_name_mimicry (the rule needs only Metadata fields; the validator's
   # Procedure C gate reads the trr9031 label in requestObject.metadata, which needs
   # Request). Copies literal env values (header).
+  # Also serves T1204.003/k8s_admission_policy_image_violation: the VAP verdict markers
+  # (the validation.policy.admission.k8s.io/validation_failure annotation, and the
+  # "denied request" responseStatus) are at Metadata, so this rule already records them;
+  # no body row is needed (the workload-controllers rule below covers the indirect create).
   - level: Request
     verbs: ["create", "update", "patch"]
     resources:
