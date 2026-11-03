@@ -587,6 +587,13 @@ NOT_PORTABLE = {
     ("gke", "T1485/k8s_volume_reclaim_set_to_delete.yml"): (
         "filter_dry_run_query.requestURI",
         "sel_accepted.responseStatus.code",
+    ),
+    # TRR9029: the dry-run filter keys on the requestURI query (?dryRun=All), which GKE's
+    # Cloud Audit Logs protoPayload does not carry, so the GKE pipeline cannot express it.
+    # The chokepoint itself (verb + apiGroup + resource + user.username) is portable; the
+    # positives all fire on GKE (k8s_policy_coverage.py gce-kube-up).
+    ("gke", "T1490/k8s_snapshot_or_backup_destroyed.yml"): (
+        "filter_dry_run_query.requestURI",
         "sel_no_request_uri.requestURI",
     ),
     ("gke", "T1546/k8s_admission_webhook_created.yml"): (

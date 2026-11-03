@@ -525,6 +525,12 @@ SELECTION_RESOURCES = {  # resource: (the groups that serve it, namespaced)
     "replicasets": (("apps",), True), "statefulsets": (("apps",), True),
     "cronjobs": (("batch",), True), "jobs": (("batch",), True),
     "dnses": (("operator.openshift.io",), False),
+    # TRR9029 (T1490): snapshot and Velero CRDs. VolumeSnapshotContent is cluster-scoped.
+    "volumesnapshots": (("snapshot.storage.k8s.io",), True),
+    "volumesnapshotcontents": (("snapshot.storage.k8s.io",), False),
+    "schedules": (("velero.io",), True),
+    "backupstoragelocations": (("velero.io",), True),
+    "deletebackuprequests": (("velero.io",), True),
     "clusterrolebindings": ((_RBAC,), False), "clusterroles": ((_RBAC,), False),
     "rolebindings": ((_RBAC,), True), "roles": ((_RBAC,), True),
     **{r: ((_ADM,), False) for r in SELECTION_GROUP_RESOURCES[_ADM]},

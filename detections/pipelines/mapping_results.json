@@ -403,11 +403,8 @@
     }
    }
   },
-  "T1485/k8s_storage_volume_deleted.yml": {
-   "list_text_items": [
-    "filter_dry_run_delete_body.requestObject.dryRun",
-    "sel_no_dry_run_body.requestObject.dryRun"
-   ],
+  "T1490/k8s_snapshot_or_backup_destroyed.yml": {
+   "list_text_items": [],
    "loses_positive_without_reads": {
     "aksauditadmin": false,
     "gke_admin_activity": false
@@ -422,48 +419,13 @@
     },
     "exploded": {
      "loses_positive": false,
-     "status": "diverges"
+     "status": "same"
     },
     "gke": {
      "errors": [],
      "expected_loss": {},
-     "not_portable": {},
-     "status": "same",
-     "unexpected": {}
-    }
-   }
-  },
-  "T1485/k8s_volume_reclaim_set_to_delete.yml": {
-   "list_text_items": [
-    "sel_reclaim_jsonpatch.requestObject"
-   ],
-   "loses_positive_without_reads": {
-    "aksauditadmin": false,
-    "gke_admin_activity": false
-   },
-   "providers": {
-    "aks": {
-     "errors": [],
-     "expected_loss": {},
-     "not_portable": {},
-     "status": "same",
-     "unexpected": {}
-    },
-    "exploded": {
-     "loses_positive": true,
-     "status": "diverges"
-    },
-    "gke": {
-     "errors": [],
-     "expected_loss": {
-      "reclaim-set-delete-jsonpatch": {
-       "diff": "all: blocks sel_reclaim_jsonpatch",
-       "why": "GKE_JSON_PATCH"
-      }
-     },
      "not_portable": {
       "filter_dry_run_query.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded",
-      "sel_accepted.responseStatus.code": "GKE pipeline cannot map this field: the sources conflict on the HTTP status: gke-mcp lists protoPayload.responseStatus.code ('if present'); audit_log.proto and the recorded KHI entries have only protoPayload.status, a google.rpc.Status (code 0 = OK); Falco's converter infers it",
       "sel_no_request_uri.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded"
      },
      "status": "not_portable",
@@ -1833,22 +1795,22 @@
    "diverges": 0,
    "expected_loss": 1,
    "not_portable": 2,
-   "same": 30
+   "same": 29
   },
   "aksauditadmin": {
    "rules_losing_a_positive": 8
   },
   "exploded": {
-   "diverges": 18,
+   "diverges": 16,
    "expected_loss": 0,
    "not_portable": 0,
-   "same": 15
+   "same": 16
   },
   "gke": {
    "diverges": 0,
    "expected_loss": 5,
    "not_portable": 14,
-   "same": 14
+   "same": 13
   },
   "gke_admin_activity": {
    "rules_losing_a_positive": 8

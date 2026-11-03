@@ -93,6 +93,8 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [K48](#k48-k8s_admission_webhook_disabled-the-validatingadmissionpolicy-status-controllers-status-patch-fires) | `T1685/k8s_admission_webhook_disabled` | kube-controller-manager's validatingadmissionpolicy-status controller writes each ValidatingAdmissionPolicy's type-check with an apply patch of `validatingadmissionpolicies/status`, and the rule (no subresource or identity filter) fires on it | false positive | medium |
 | [KTBD-H1](#ktbd-h1-k8s_storage_volume_deleted-one-delete-record-does-not-show-whether-the-volume-is-destroyed) | `T1485/k8s_storage_volume_deleted` | a PVC or PV delete record carries a `DeleteOptions` body only, not the bound PV's reclaim policy, so a destructive delete (reclaim `Delete`) looks like a non-destructive one (`Retain`) in one record; the grader `k8s_volume_reclaim_set_to_delete` covers the policy-flip step only | false negative | medium |
 | [KTBD-H2](#ktbd-h2-k8s_storage_volume_deleted-the-storage-controller-filters-trust-the-identity) | `T1485/k8s_storage_volume_deleted` | the controller filters read only `user.username` (and the teardown verb), so a delete with a stolen controller/provisioner token is filtered, and a managed-platform CSI provisioner service account (not the kind `local-path` identity) fires unless an operator baselines it | evasion, portability | low |
+| [KTBD-I1](#ktbd-i1-k8s_snapshot_or_backup_destroyed-a-stolen-controller-token-evades-the-identity-filters) | `T1490/k8s_snapshot_or_backup_destroyed` | an actor with a stolen snapshot-controller or velero service-account token is suppressed by the controller identity filters | evasion | low |
+| [KTBD-I2](#ktbd-i2-k8s_snapshot_or_backup_destroyed-a-server-side-dry-run-delete-is-indistinguishable-from-a-real-delete-at-metadata-and-fires) | `T1490/k8s_snapshot_or_backup_destroyed` | kubectl's default `--dry-run=server` delete puts dryRun in the unlogged DeleteOptions body, so at the shipped Metadata policy its record is byte-identical to a real delete and the rule fires | false positive | low |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
@@ -1855,6 +1857,73 @@ the current ones.
   account as a baseline (a Scope item in the TRR), or add it to the filter per platform.
 - **Then**: the baselined provisioner SA stays quiet, and every other identity's PVC
   or PV delete fires.
+### KTBD-I1. k8s_snapshot_or_backup_destroyed: a stolen controller token evades the identity filters
+
+- **Rule**: [`sigma/T1490/k8s_snapshot_or_backup_destroyed.yml`](sigma/T1490/k8s_snapshot_or_backup_destroyed.yml) (level medium).
+- **Kind**: evasion. **Severity**: low (the attacker must first steal a specific
+  controller's service-account token; the same trade-off every controller identity
+  filter in this repo accepts).
+- **Problem**: the rule filters the two controllers that churn these objects by
+  `user.username`, each scoped to the resources it churns: the snapshot-controller
+  (`system:serviceaccount:kube-system:snapshot-controller`) on VolumeSnapshotContent
+  deletes, and the Velero server (`system:serviceaccount:velero:velero`) on
+  deletebackuprequests, volumesnapshots and volumesnapshotcontents (its real churn --
+  it never deletes a Schedule or BackupStorageLocation, so a velero-SA delete of those is
+  not suppressed and fires). An actor who steals one of those tokens and acts as that
+  identity within its churn -- deleting a VolumeSnapshotContent as the snapshot-controller,
+  or creating a DeleteBackupRequest / deleting a VolumeSnapshot as the Velero server -- is
+  suppressed. The filter cannot tell the controller's own writes from an attacker
+  presenting its token.
+- **Evidence**: *case* -- the filtered cases `snapshot-controller-deletes-vsc`,
+  `velero-server-creates-deletebackuprequest-gc` and `velero-server-deletes-volumesnapshot`
+  in the sidecar hold on exactly these identities; *probe* -- with `user.username` set to
+  `system:serviceaccount:velero:velero`, a DeleteBackupRequest create is suppressed, and
+  flipping the name fires it.
+- **Fix**: no rule-only fix. Scoping each filter to the resources (and, for the
+  snapshot-controller, the verb) its controller actually churns, as done, bounds the
+  evasion -- a stolen token fires outside that controller's churn (a velero-SA Schedule or
+  BackupStorageLocation delete, a snapshot-controller VolumeSnapshot delete) -- but does
+  not close it within the churn. Correlate a controller-identity write with that identity's
+  other out-of-band activity (a token used from an unusual source, outside the controller's
+  normal object set), and baseline these two identities.
+- **Then**: the three filtered cases stay quiet (the controllers' real churn), and the
+  five positives still fire for a non-controller actor.
+
+### KTBD-I2. k8s_snapshot_or_backup_destroyed: a server-side dry-run delete is indistinguishable from a real delete at Metadata and fires
+
+- **Rule**: [`sigma/T1490/k8s_snapshot_or_backup_destroyed.yml`](sigma/T1490/k8s_snapshot_or_backup_destroyed.yml) (level medium).
+- **Kind**: false positive. **Severity**: low (a dry run persists nothing; the hit is
+  benign, and the rule is a documented medium-fidelity correlation anchor).
+- **Problem**: these objects are CustomResourceDefinitions, which the shipped lab audit
+  policy and the recommended production policy both log at their Metadata catch-all, and a
+  Metadata record carries no request body. kubectl's default server-side dry-run delete
+  (`kubectl delete --dry-run=server`) sends the dry run in the DeleteOptions request
+  **body**, not the query: client-go's `Helper.DeleteWithOptions` builds DeleteOptions with
+  `DryRun = [All]` and calls `.Body(options)` (cli-runtime/pkg/resource/helper.go). At
+  Metadata the body is not logged and the record carries no `?dryRun=All` query marker, so
+  the audit record of a `--dry-run=server` delete is byte-identical to a real delete -- the
+  rule cannot tell them apart and fires. This is **not** a Request-level-only gap: it fires
+  at the shipped Metadata policy, which is the default. Only the **query** form of a dry run
+  is filtered: a create carries CreateOptions.dryRun in the query (`VersionedParams`,
+  procedure E), and a delete carries it in the query only when the client puts it there
+  (`kubectl delete --raw '<path>?dryRun=All'`, kubernetes-client/python). A stricter policy
+  that logs these CRDs at Request or RequestResponse records the body, but the rule does not
+  read `requestObject`, so the body-form dry run fires there too.
+- **Evidence**: *probe* -- the real-delete positive record and the record a
+  `kubectl delete --dry-run=server` produces at Metadata are the same shape (no `?dryRun=All`
+  query, no `requestObject`), so the rule fires on both; only a `?dryRun=All` query (the
+  create path, or a `--raw`/python-client delete) is suppressed by filter_dry_run_query.
+  Reproduced with detections/sigma_eval.py on the branch rule, and the body-vs-query split
+  verified from kubernetes v1.36.4 cli-runtime helper.go (`.Body` for DELETE,
+  `VersionedParams` for CREATE).
+- **Fix**: accept it. A dry-run delete persists nothing, so the hit is benign; baseline the
+  identities that run dry-run deletes of these objects, and correlate. The FP cannot be
+  filtered at Metadata, because the dryRun marker lives in a body the policy does not record,
+  so there is no distinguishing field; raising the policy to Request only lets a body-form
+  filter (`requestObject.dryRun|contains: 'All'`, null-safe) catch it, and the shipped policy
+  does not log the body, so the repo does not carry that filter.
+- **Then**: the FP class is documented and accepted; a real delete still fires, and a
+  query-form dry run (the dry-run control) stays quiet.
 
 ## Cloud (AWS, Azure, GCP)
 

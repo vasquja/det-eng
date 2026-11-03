@@ -426,6 +426,12 @@ CHOKEPOINT = {
         "TRR9028 chokepoint: a delete/deletecollection of a PVC or PV is the storage "
         "destruction itself; the storage controllers are filtered by identity",
         "eb9b2c8742f1c4ed8cc5b8106da70df2b8ce18ec28fc2c9ef32d6659ea32a32b"),
+    "T1490/k8s_snapshot_or_backup_destroyed.yml": Waiver(
+        "TRR9029 chokepoint: deleting a VolumeSnapshot/VolumeSnapshotContent, deleting a "
+        "Velero Schedule/BackupStorageLocation, or creating a Velero DeleteBackupRequest is "
+        "itself the recovery inhibition; the snapshot-controller and the Velero server are "
+        "filtered",
+        "d1ac08254cc145b292d13e58d2da20c520fc5594f1c7ea75e5870db57f1af03c"),
     "T1546/k8s_admission_webhook_created.yml": Waiver(
         "TRR9025 chokepoint: creating an admission controller object (a create, or the "
         "server-side-apply create that is a patch answered 201; K21)",

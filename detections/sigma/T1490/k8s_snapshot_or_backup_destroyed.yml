@@ -1,0 +1,173 @@
+title: Kubernetes Snapshot or Backup Destroyed (Inhibit Recovery)
+id: 823ba535-7932-4723-a593-4915a451e453
+status: experimental
+description: |
+  Detects destruction of a Kubernetes cluster's recovery means through the API server
+  (TRR9029, T1490). This is the invariant chokepoint: a server-set verb on a server-set
+  objectRef.resource/apiGroup, by a caller that is not the controller that churns the
+  object. It covers five procedures:
+
+    A. delete a snapshot.storage.k8s.io VolumeSnapshot (the restore point of a PVC).
+    B. delete a snapshot.storage.k8s.io VolumeSnapshotContent (the cluster-scoped binding
+       to the physical snapshot). With deletionPolicy Delete the snapshot-controller then
+       removes the underlying storage snapshot.
+    C. delete a velero.io Schedule (stops future scheduled backups).
+    D. delete a velero.io BackupStorageLocation (orphans the backup bucket; new backups
+       have nowhere to go).
+    E. create a velero.io DeleteBackupRequest. This is the real Velero backup-deletion
+       path: `velero backup delete` creates a DeleteBackupRequest (generateName
+       '<backup>-'), and its controller deletes the object-store backup and its volume
+       snapshots. Deleting the Backup custom resource alone is NOT destructive, because
+       Velero's backup-sync controller re-creates the Backup CR from the bucket
+       (vmware-tanzu/velero pkg/controller/backup_sync_controller.go). So the destructive
+       step is the DeleteBackupRequest create, not a Backups delete -- and this rule does
+       not match a backups delete.
+
+  It matches delete and deletecollection for the four delete chokepoints and create for
+  the DeleteBackupRequest. The discriminator is the actor class in the server-set
+  user.username, which separates an actor's request from the two controllers that churn
+  these objects by design, both verified from source:
+
+    - the snapshot-controller (system:serviceaccount:kube-system:snapshot-controller)
+      deletes VolumeSnapshotContents when a VolumeSnapshot with deletionPolicy Delete is
+      removed (kubernetes-csi/external-snapshotter
+      pkg/common-controller/snapshot_controller.go; it deletes VolumeSnapshotContents
+      only, never VolumeSnapshots). filter_snapshot_controller removes that identity on
+      volumesnapshotcontents deletes.
+    - the Velero server (system:serviceaccount:velero:velero) creates DeleteBackupRequests
+      for expired backups through its garbage collector (vmware-tanzu/velero
+      pkg/controller/gc_controller.go) and deletes CSI VolumeSnapshots while processing a
+      DeleteBackupRequest (pkg/controller/backup_deletion_controller.go).
+      filter_velero_server removes that identity, scoped to the resources it churns
+      (deletebackuprequests, volumesnapshots, volumesnapshotcontents); it never deletes a
+      Velero Schedule or BackupStorageLocation, so a velero-SA delete of those still fires.
+
+  An actor who steals the velero or snapshot-controller token and acts as that identity
+  is suppressed (detections/RULE_DEFECTS.md KTBD-I1), the same evasion every controller
+  identity filter accepts; baseline those identities and correlate.
+
+  These objects are CustomResourceDefinitions, so the shipped lab audit policy logs them
+  at the Metadata catch-all: verb, objectRef.resource/apiGroup/namespace/name and
+  user.username are all present, which is all this chokepoint needs. The rule keys on no
+  request body, so it needs no Request-level entry.
+
+  A server-side dry run persists nothing. Only the query form of a dry run is filtered
+  (filter_dry_run_query, ?dryRun=All): a create carries CreateOptions.dryRun in the query
+  (procedure E), and a delete carries it in the query only when the client puts it there
+  (kubectl delete --raw '<path>?dryRun=All', kubernetes-client/python). kubectl's default
+  `kubectl delete --dry-run=server` instead sends DeleteOptions.dryRun in the request body
+  (client-go Helper.DeleteWithOptions calls .Body(options)); at Metadata the body is not
+  logged and the record carries no query marker, so it is indistinguishable from a real
+  delete and the rule fires -- an accepted, indistinguishable false positive
+  (detections/RULE_DEFECTS.md KTBD-I2). A stricter policy that logs these CRDs at Request
+  carries dryRun in the DeleteOptions body (requestObject), which this Metadata-keyed rule
+  does not read, so there it also fires. The shipped lab policy logs these CRDs at Metadata.
+
+  This is the bare chokepoint: every selection item is a surface field (verb,
+  objectRef.resource, objectRef.apiGroup), so a refused attempt (403) also matches. That
+  is intended for a recovery-inhibition chokepoint -- an attempt to destroy backups is
+  worth a hunt -- but it means the rule is a medium-fidelity correlation anchor, not a
+  standalone alert: baseline the human and automation identities that delete snapshots or
+  Velero objects by design, and correlate a hit with the same actor's other impact
+  actions.
+references:
+  - https://attack.mitre.org/techniques/T1490/
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+  - https://github.com/kubernetes-csi/external-snapshotter/blob/v8.7.0/pkg/common-controller/snapshot_controller.go
+  - https://github.com/vmware-tanzu/velero/blob/v1.18.4/pkg/controller/backup_deletion_controller.go
+author: det-eng
+date: 2026/11/01
+tags:
+  - attack.impact
+  - attack.t1490
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  # Chokepoint A/B: a VolumeSnapshot or VolumeSnapshotContent delete.
+  sel_snapshot_delete:
+    objectRef.apiGroup: 'snapshot.storage.k8s.io'
+    objectRef.resource:
+      - 'volumesnapshots'
+      - 'volumesnapshotcontents'
+    verb:
+      - 'delete'
+      - 'deletecollection'
+  # Chokepoint C/D: a Velero Schedule or BackupStorageLocation delete.
+  sel_velero_delete:
+    objectRef.apiGroup: 'velero.io'
+    objectRef.resource:
+      - 'schedules'
+      - 'backupstoragelocations'
+    verb:
+      - 'delete'
+      - 'deletecollection'
+  # Chokepoint E: a Velero DeleteBackupRequest create (the backup-deletion path).
+  sel_velero_dbr_create:
+    objectRef.apiGroup: 'velero.io'
+    objectRef.resource: 'deletebackuprequests'
+    verb: 'create'
+  # Controller churn, verified from source (see the description).
+  filter_snapshot_controller:
+    user.username: 'system:serviceaccount:kube-system:snapshot-controller'
+    objectRef.resource: 'volumesnapshotcontents'
+    verb:
+      - 'delete'
+      - 'deletecollection'
+  # The Velero server churns only three of the chokepoint resources, verified from source
+  # (velero v1.18.4): it creates DeleteBackupRequests for expired backups (gc_controller.go)
+  # and deletes CSI VolumeSnapshots while processing one (backup_deletion_controller.go ->
+  # csi.CleanupVolumeSnapshot, which patches the bound VolumeSnapshotContent's deletionPolicy
+  # and deletes the VolumeSnapshot). It never deletes a Velero Schedule or
+  # BackupStorageLocation, so the filter is scoped to those three resources: a velero-SA
+  # delete of a Schedule or BackupStorageLocation is not suppressed and fires.
+  filter_velero_server:
+    user.username: 'system:serviceaccount:velero:velero'
+    objectRef.resource:
+      - 'deletebackuprequests'
+      - 'volumesnapshots'
+      - 'volumesnapshotcontents'
+  # A server-side dry run, in the requestURI query (?dryRun=All). The first "?" starts
+  # the query (the logged path is escaped, so it holds no raw "?"), and Go net/url splits
+  # the query at "&": dryRun=All must come directly after that "?" or after an "&", and end
+  # at an "&" or the end, so a value of another parameter ("?note=?dryRun=All",
+  # "x%26dryRun=All") is not a dry run. Go net/url parses dryRun=All regardless of how many
+  # "&" the query carries (empty segments are skipped, no parameter-count limit), so no
+  # parse-count guard is needed: a ?dryRun=All query is always honored as a dry run.
+  filter_dry_run_query:
+    requestURI|re: '^[^?]*\?(.*\&)?dryRun=All(\&.*)?$'
+  # Null-safe negations: a backend with three-valued logic (ES|QL and other SQL backends)
+  # reads NOT of a test on a missing field as NULL and drops the record. The record of a
+  # request that fails authentication (401) has no user.username (apiserver v1.36.4
+  # WithFailedAuthenticationAudit), so the controller filters are ORed with a test that
+  # user.username is absent; and a record could in principle lack requestURI, so the dry-run
+  # filter is ORed with a test that requestURI is absent.
+  sel_no_username:
+    user.username: null
+  sel_no_request_uri:
+    requestURI: null
+  condition: >-
+    (sel_snapshot_delete or sel_velero_delete or sel_velero_dbr_create)
+    and (sel_no_username or not filter_snapshot_controller)
+    and (sel_no_username or not filter_velero_server)
+    and (sel_no_request_uri or not filter_dry_run_query)
+falsepositives:
+  - Planned removal of a VolumeSnapshot, VolumeSnapshotContent, Velero Schedule or
+    BackupStorageLocation by an operator or by GitOps pruning, and routine Velero backup
+    deletion by an administrator (`velero backup delete`, a DeleteBackupRequest create).
+    Baseline those identities (and their object-name patterns); this rule is a medium
+    correlation anchor, not a standalone alert.
+  - A refused attempt (responseStatus.code 403/404) also matches, because the rule is a
+    bare chokepoint and does not filter the response code, by design, so a denied
+    destruction attempt is surfaced for a hunt.
+  - kubectl's default server-side dry-run delete (`kubectl delete --dry-run=server`) sends
+    the dry run in the DeleteOptions request body, not the query. At the shipped Metadata
+    policy the body is not logged and the record carries no query marker, so it is
+    indistinguishable from a real delete and the rule fires -- an accepted, indistinguishable
+    false positive (detections/RULE_DEFECTS.md KTBD-I2). The rule filters only the query form
+    of a dry run -- a create's CreateOptions.dryRun in the query (procedure E), or a delete via
+    `kubectl --raw`/kubernetes-client-python that puts ?dryRun=All in the query. A stricter
+    policy that logs these CRDs at Request also fires, because the rule does not read the body.
+  - An actor who acts with a stolen snapshot-controller or velero service-account token is
+    suppressed by the controller filters (detections/RULE_DEFECTS.md KTBD-I1).
+level: medium

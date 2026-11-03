@@ -180,8 +180,7 @@ Columns (each is one policy and one record shape):
 | [`T1098.006/k8s_rbac_write`](../sigma/T1098.006/k8s_rbac_write.yml) | **full** 6/6 `lab-apiserver` | **full** 6/6 | **full** 6/6 | **full** 6/6 | **full** 6/6 | **full** 6/6 | **full** 6/6 | **full** 6/6 | **full** 6/6 | **full** 6/6 | **full** 6/6 | **full** 6/6 | **full** 6/6 | **full** 6/6 |
 | [`T1134/k8s_impersonation`](../sigma/T1134/k8s_impersonation.yml) | **full** 11/11 `lab-apiserver` | **full** 11/11 | **not portable** (11/11 by policy and store); not-in-schema: `responseStatus.code`, `responseStatus.message` | **blind** 0/11; not-in-schema: `responseStatus.code`, `responseStatus.message`; reads-dropped 11 | **not portable** (11/11 by policy and store); not-in-schema: `impersonatedUser.username` | **blind** 0/11; not-in-schema: `impersonatedUser.username`; reads-dropped 11 | **full** 11/11 | **blind** 0/11; reads-dropped 11 | **full** 11/11 | **full** 11/11 | **full** 11/11 | **full** 11/11 | **full** 11/11 | **full** 11/11 |
 | [`T1134/k8s_impersonation_privileged`](../sigma/T1134/k8s_impersonation_privileged.yml) L | **full** 3/3 `lab-apiserver` | **full** 3/3 | **not portable** (3/3 by policy and store); not-in-schema: `impersonatedUser.groups` | **blind** 0/3; not-in-schema: `impersonatedUser.groups`; reads-dropped 3 | **not portable** (3/3 by policy and store); not-in-schema: `impersonatedUser.groups`, `impersonatedUser.username` | **blind** 0/3; not-in-schema: `impersonatedUser.groups`, `impersonatedUser.username`; reads-dropped 3 | **full** 3/3 | **blind** 0/3; reads-dropped 3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 |
-| [`T1485/k8s_storage_volume_deleted`](../sigma/T1485/k8s_storage_volume_deleted.yml) L | **full** 5/5 `lab-apiserver`; not-modeled 1 | **full** 5/5; not-modeled 1 | **full** 5/5; not-modeled 1 | **full** 5/5; not-modeled 1 | **full** 5/5; not-modeled 1 | **full** 5/5; not-modeled 1 | **full** 5/5; not-modeled 1 | **full** 5/5; not-modeled 1 | **full** 5/5; fp 3 | **full** 5/5; not-modeled 1 | **full** 5/5; fp 3 | **full** 5/5; not-modeled 1 | **full** 5/5; fp 3 | **full** 5/5; not-modeled 1 |
-| [`T1485/k8s_volume_reclaim_set_to_delete`](../sigma/T1485/k8s_volume_reclaim_set_to_delete.yml) L | **full** 2/2 `lab-apiserver` | **full** 2/2 | **not portable** (2/2 by policy and store); not-in-schema: `requestURI`, `responseStatus.code` | **not portable** (2/2 by policy and store); not-in-schema: `requestURI`, `responseStatus.code` | **full** 2/2 | **full** 2/2 | **full** 2/2 | **full** 2/2 | **blind** 0/2; body-removed 2 | **full** 2/2 | **blind** 0/2; body-removed 2 | **full** 2/2 | **blind** 0/2; body-removed 2 | **full** 2/2 |
+| [`T1490/k8s_snapshot_or_backup_destroyed`](../sigma/T1490/k8s_snapshot_or_backup_destroyed.yml) | **full** 8/8 `lab-apiserver` | **full** 8/8 | **not portable** (8/8 by policy and store); not-in-schema: `requestURI` | **not portable** (8/8 by policy and store); not-in-schema: `requestURI` | **full** 8/8 | **full** 8/8 | **full** 8/8 | **full** 8/8 | **full** 8/8 | **full** 8/8 | **full** 8/8 | **full** 8/8 | **full** 8/8 | **full** 8/8 |
 | [`T1543.005/k8s_static_pod_mirror_create`](../sigma/T1543.005/k8s_static_pod_mirror_create.yml) | **full** 3/3 `lab-staticpod` | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 |
 | [`T1546/k8s_admission_webhook_created`](../sigma/T1546/k8s_admission_webhook_created.yml) | **full** 4/4 `lab-apiserver` | **full** 4/4 | **not portable** (4/4 by policy and store); not-in-schema: `responseStatus.code` | **not portable** (4/4 by policy and store); not-in-schema: `responseStatus.code` | **full** 4/4 | **full** 4/4 | **full** 4/4 | **full** 4/4 | **full** 4/4 | **full** 4/4 | **full** 4/4 | **full** 4/4 | **full** 4/4 | **full** 4/4 |
 | [`T1546/k8s_admission_webhook_repointed_to_url`](../sigma/T1546/k8s_admission_webhook_repointed_to_url.yml) L | **full** 20/20 `lab-apiserver` | **full** 20/20 | **not portable** (20/20 by policy and store); not-in-schema: `requestURI`, `responseStatus.code` | **not portable** (20/20 by policy and store); not-in-schema: `requestURI`, `responseStatus.code` | **full** 20/20 | **full** 20/20 | **full** 20/20 | **full** 20/20 | **chokepoint only** 0/20; body-removed 20; chokepoint 20/20 | **full** 20/20 | **chokepoint only** 0/20; body-removed 20; chokepoint 20/20 | **full** 20/20 | **chokepoint only** 0/20; body-removed 20; chokepoint 20/20 | **full** 20/20 |
@@ -208,38 +207,38 @@ Rules per support word (full, partial, chokepoint only, chokepoint partial, blin
 
 | Shape | full | partial | chokepoint only | chokepoint partial | blind | not portable |
 |---|---|---|---|---|---|---|
-| kind lab (home policy) | 33 | 0 | 0 | 0 | 0 | 0 |
-| EKS (CloudWatch) | 31 | 1 | 0 | 1 | 0 | 0 |
-| GKE, Data Access on | 13 | 5 | 0 | 1 | 0 | 14 |
-| GKE, Admin Activity only | 10 | 7 | 0 | 1 | 3 | 12 |
-| AKS AKSAudit | 28 | 2 | 0 | 1 | 0 | 2 |
-| AKS AKSAuditAdmin | 22 | 8 | 0 | 1 | 2 | 0 |
-| AKS raw Event, kube-audit | 31 | 1 | 0 | 1 | 0 | 0 |
-| AKS raw Event, kube-audit-admin | 23 | 7 | 0 | 1 | 2 | 0 |
-| OpenShift 4.18+ Default | 20 | 4 | 4 | 1 | 4 | 0 |
-| OpenShift 4.18+ WriteRequestBodies | 33 | 0 | 0 | 0 | 0 | 0 |
-| OpenShift 4.17 Default | 19 | 5 | 4 | 1 | 4 | 0 |
-| OpenShift 4.17 WriteRequestBodies | 32 | 1 | 0 | 0 | 0 | 0 |
-| k3s starter policy | 20 | 4 | 4 | 1 | 4 | 0 |
-| Self-managed, `recommended` | 32 | 1 | 0 | 0 | 0 | 0 |
+| kind lab (home policy) | 32 | 0 | 0 | 0 | 0 | 0 |
+| EKS (CloudWatch) | 30 | 1 | 0 | 1 | 0 | 0 |
+| GKE, Data Access on | 12 | 5 | 0 | 1 | 0 | 14 |
+| GKE, Admin Activity only | 9 | 7 | 0 | 1 | 3 | 12 |
+| AKS AKSAudit | 27 | 2 | 0 | 1 | 0 | 2 |
+| AKS AKSAuditAdmin | 21 | 8 | 0 | 1 | 2 | 0 |
+| AKS raw Event, kube-audit | 30 | 1 | 0 | 1 | 0 | 0 |
+| AKS raw Event, kube-audit-admin | 22 | 7 | 0 | 1 | 2 | 0 |
+| OpenShift 4.18+ Default | 20 | 4 | 4 | 1 | 3 | 0 |
+| OpenShift 4.18+ WriteRequestBodies | 32 | 0 | 0 | 0 | 0 | 0 |
+| OpenShift 4.17 Default | 19 | 5 | 4 | 1 | 3 | 0 |
+| OpenShift 4.17 WriteRequestBodies | 31 | 1 | 0 | 0 | 0 | 0 |
+| k3s starter policy | 20 | 4 | 4 | 1 | 3 | 0 |
+| Self-managed, `recommended` | 31 | 1 | 0 | 0 | 0 | 0 |
 
 Every policy, as the simulator reports it (no mapping): rules with every / some / no positive case firing, positive cases firing, negative cases that fire, and events whose missing body the rule reads (not proven):
 
 | Policy | Platform | What the column is | Rules every / some / none | Positives firing | Negatives firing | Not proven | What is verified |
 |---|---|---|---|---|---|---|---|
-| `lab-apiserver` | kind lab (CI) | API server lab policy (TRR9004-9010, TRR9025-9027) ([`audit-policy-apiserver.yaml`](audit-policy-apiserver.yaml)) | 33 / 0 / 0 | 449 of 449 | 0 | 143 | proven live in CI |
-| `lab-k8s` | kind lab (CI) | TRR9002 lab policy (exec, attach, node proxy) ([`audit-policy.yaml`](audit-policy.yaml)) | 20 / 4 / 9 | 138 of 449 | 16 | 0 | proven live in CI |
-| `lab-staticpod` | kind lab (CI) | TRR9003 lab policy (static pods) ([`audit-policy-staticpod.yaml`](audit-policy-staticpod.yaml)) | 9 / 11 / 13 | 79 of 449 | 14 | 0 | proven live in CI |
-| `recommended` | self-managed API server (--audit-policy-file: kubeadm, k3s, RKE2, kind) | this repository's recommended production policy (every Kubernetes audit rule; the TRR9027 D create needs its opt-in line) ([`audit-policy-recommended.yaml`](audit-policy-recommended.yaml)) | 32 / 1 / 0 | 448 of 449 | 0 | 142 | TRR9004-9010 and TRR9025-9027 rules proven live in CI by the non-required validate-apiserver-recommended job (validate_apiserver_detections.py --policy recommended); the TRR9002 and TRR9003 rules by this simulator only |
-| `eks` | Amazon EKS | EKS audit policy as the EKS Best Practices Guide publishes it ([`eks-bpg-audit-policy.yaml`](provider-policies/eks/eks-bpg-audit-policy.yaml)) | 31 / 1 / 1 | 396 of 449 | 1 | 89 | published text, a variant of the kube-up configure-helper.sh policy (it adds aws-auth writes at RequestResponse and serviceaccounts/token at Request, and drops a few kube-up identities); the EKS user guide (control-plane-logs) links that configure-helper.sh policy as its audit policy (the gce-kube-up column); neither text is verified on a live EKS cluster |
-| `gce-kube-up` | GCE kube-up (the policy the EKS user guide links; GKE unverified) | the policy kube-up's configure-helper.sh writes on GCE ([`gce-kube-up-audit-policy.yaml`](provider-policies/gce/gce-kube-up-audit-policy.yaml)) | 31 / 1 / 1 | 396 of 449 | 1 | 89 | the EKS user guide (control-plane-logs) links this configure-helper.sh policy as 'the audit policy', and the GKE audit-policy page names configure-helper.sh as the script that generates the policy; whether EKS or GKE runs this text unchanged, and GKE's Admin Activity / Data Access split of reads, are unverified (not modeled) |
-| `aks-kube-audit` | Azure AKS | AKS audit policy, kube-audit log category ([`aks-audit-policy.yaml`](provider-policies/aks/aks-audit-policy.yaml)) | 31 / 1 / 1 | 399 of 449 | 1 | 87 | published text; the page says the policy is managed by AKS and cannot be customized |
-| `aks-kube-audit-admin` | Azure AKS | AKS audit policy, kube-audit-admin log category (no get and list) ([`aks-audit-policy.yaml`](provider-policies/aks/aks-audit-policy.yaml)) | 23 / 7 / 3 | 364 of 449 | 1 | 82 | published text; whether kube-audit-admin also drops watch is unverified (the page names get and list only) |
-| `openshift-default` | Red Hat OpenShift | OpenShift 4.18 and later, Default audit profile ([`base-policy-release-4.18.yaml`](provider-policies/openshift/base-policy-release-4.18.yaml), [`default-rules-release-4.18.yaml`](provider-policies/openshift/default-rules-release-4.18.yaml)) | 20 / 4 / 9 | 138 of 449 | 16 | 0 | source text; the kube-apiserver operator release-4.18 vendors the same files |
-| `openshift-default-4.17` | Red Hat OpenShift | OpenShift 4.17 and earlier, Default audit profile (core Events at None) ([`base-policy-release-4.17.yaml`](provider-policies/openshift/base-policy-release-4.17.yaml), [`default-rules-release-4.17.yaml`](provider-policies/openshift/default-rules-release-4.17.yaml)) | 19 / 5 / 9 | 132 of 449 | 14 | 0 | source text; the kube-apiserver operator release-4.17 vendors the same files |
-| `openshift-wrb` | Red Hat OpenShift | OpenShift 4.18 and later, WriteRequestBodies audit profile ([`base-policy-release-4.18.yaml`](provider-policies/openshift/base-policy-release-4.18.yaml), [`writerequestbodies-rules-release-4.18.yaml`](provider-policies/openshift/writerequestbodies-rules-release-4.18.yaml)) | 33 / 0 / 0 | 449 of 449 | 0 | 154 | source text; an admin chooses this profile (the default is Default) |
-| `openshift-wrb-4.17` | Red Hat OpenShift | OpenShift 4.17 and earlier, WriteRequestBodies audit profile ([`base-policy-release-4.17.yaml`](provider-policies/openshift/base-policy-release-4.17.yaml), [`writerequestbodies-rules-release-4.17.yaml`](provider-policies/openshift/writerequestbodies-rules-release-4.17.yaml)) | 32 / 1 / 0 | 443 of 449 | 0 | 149 | source text; an admin chooses this profile (the default is Default) |
-| `k3s-starter` | k3s | k3s hardening-guide starter policy (k3s writes no audit log by default) ([`k3s-hardening-starter-audit-policy.yaml`](provider-policies/k3s/k3s-hardening-starter-audit-policy.yaml)) | 20 / 4 / 9 | 138 of 449 | 16 | 0 | published text; the guide calls it a starter policy, and a k3s cluster has no audit policy until the admin writes one |
+| `lab-apiserver` | kind lab (CI) | API server lab policy (TRR9004-9010, TRR9025-9027) ([`audit-policy-apiserver.yaml`](audit-policy-apiserver.yaml)) | 32 / 0 / 0 | 450 of 450 | 0 | 142 | proven live in CI |
+| `lab-k8s` | kind lab (CI) | TRR9002 lab policy (exec, attach, node proxy) ([`audit-policy.yaml`](audit-policy.yaml)) | 20 / 4 / 8 | 141 of 450 | 13 | 0 | proven live in CI |
+| `lab-staticpod` | kind lab (CI) | TRR9003 lab policy (static pods) ([`audit-policy-staticpod.yaml`](audit-policy-staticpod.yaml)) | 9 / 11 / 12 | 82 of 450 | 11 | 0 | proven live in CI |
+| `recommended` | self-managed API server (--audit-policy-file: kubeadm, k3s, RKE2, kind) | this repository's recommended production policy (every Kubernetes audit rule; the TRR9027 D create needs its opt-in line) ([`audit-policy-recommended.yaml`](audit-policy-recommended.yaml)) | 31 / 1 / 0 | 449 of 450 | 0 | 141 | TRR9004-9010 and TRR9025-9027 rules proven live in CI by the non-required validate-apiserver-recommended job (validate_apiserver_detections.py --policy recommended); the TRR9002 and TRR9003 rules by this simulator only |
+| `eks` | Amazon EKS | EKS audit policy as the EKS Best Practices Guide publishes it ([`eks-bpg-audit-policy.yaml`](provider-policies/eks/eks-bpg-audit-policy.yaml)) | 30 / 1 / 1 | 397 of 450 | 1 | 88 | published text, a variant of the kube-up configure-helper.sh policy (it adds aws-auth writes at RequestResponse and serviceaccounts/token at Request, and drops a few kube-up identities); the EKS user guide (control-plane-logs) links that configure-helper.sh policy as its audit policy (the gce-kube-up column); neither text is verified on a live EKS cluster |
+| `gce-kube-up` | GCE kube-up (the policy the EKS user guide links; GKE unverified) | the policy kube-up's configure-helper.sh writes on GCE ([`gce-kube-up-audit-policy.yaml`](provider-policies/gce/gce-kube-up-audit-policy.yaml)) | 30 / 1 / 1 | 397 of 450 | 1 | 88 | the EKS user guide (control-plane-logs) links this configure-helper.sh policy as 'the audit policy', and the GKE audit-policy page names configure-helper.sh as the script that generates the policy; whether EKS or GKE runs this text unchanged, and GKE's Admin Activity / Data Access split of reads, are unverified (not modeled) |
+| `aks-kube-audit` | Azure AKS | AKS audit policy, kube-audit log category ([`aks-audit-policy.yaml`](provider-policies/aks/aks-audit-policy.yaml)) | 30 / 1 / 1 | 400 of 450 | 1 | 86 | published text; the page says the policy is managed by AKS and cannot be customized |
+| `aks-kube-audit-admin` | Azure AKS | AKS audit policy, kube-audit-admin log category (no get and list) ([`aks-audit-policy.yaml`](provider-policies/aks/aks-audit-policy.yaml)) | 22 / 7 / 3 | 365 of 450 | 1 | 81 | published text; whether kube-audit-admin also drops watch is unverified (the page names get and list only) |
+| `openshift-default` | Red Hat OpenShift | OpenShift 4.18 and later, Default audit profile ([`base-policy-release-4.18.yaml`](provider-policies/openshift/base-policy-release-4.18.yaml), [`default-rules-release-4.18.yaml`](provider-policies/openshift/default-rules-release-4.18.yaml)) | 20 / 4 / 8 | 141 of 450 | 13 | 0 | source text; the kube-apiserver operator release-4.18 vendors the same files |
+| `openshift-default-4.17` | Red Hat OpenShift | OpenShift 4.17 and earlier, Default audit profile (core Events at None) ([`base-policy-release-4.17.yaml`](provider-policies/openshift/base-policy-release-4.17.yaml), [`default-rules-release-4.17.yaml`](provider-policies/openshift/default-rules-release-4.17.yaml)) | 19 / 5 / 8 | 135 of 450 | 11 | 0 | source text; the kube-apiserver operator release-4.17 vendors the same files |
+| `openshift-wrb` | Red Hat OpenShift | OpenShift 4.18 and later, WriteRequestBodies audit profile ([`base-policy-release-4.18.yaml`](provider-policies/openshift/base-policy-release-4.18.yaml), [`writerequestbodies-rules-release-4.18.yaml`](provider-policies/openshift/writerequestbodies-rules-release-4.18.yaml)) | 32 / 0 / 0 | 450 of 450 | 0 | 153 | source text; an admin chooses this profile (the default is Default) |
+| `openshift-wrb-4.17` | Red Hat OpenShift | OpenShift 4.17 and earlier, WriteRequestBodies audit profile ([`base-policy-release-4.17.yaml`](provider-policies/openshift/base-policy-release-4.17.yaml), [`writerequestbodies-rules-release-4.17.yaml`](provider-policies/openshift/writerequestbodies-rules-release-4.17.yaml)) | 31 / 1 / 0 | 444 of 450 | 0 | 148 | source text; an admin chooses this profile (the default is Default) |
+| `k3s-starter` | k3s | k3s hardening-guide starter policy (k3s writes no audit log by default) ([`k3s-hardening-starter-audit-policy.yaml`](provider-policies/k3s/k3s-hardening-starter-audit-policy.yaml)) | 20 / 4 / 8 | 141 of 450 | 13 | 0 | published text; the guide calls it a starter policy, and a k3s cluster has no audit policy until the admin writes one |
 
 Simulator warnings:
 
@@ -290,8 +289,7 @@ Lowest level: the lowest level that, given to every request of the rule's positi
 | `T1098.006/k8s_rbac_write` | Metadata | `rbac.authorization.k8s.io/clusterrolebindings`: create, delete<br>`rbac.authorization.k8s.io/clusterroles`: patch<br>`rbac.authorization.k8s.io/rolebindings`: deletecollection<br>`rbac.authorization.k8s.io/roles`: update |  |
 | `T1134/k8s_impersonation` | Metadata | `core/namespaces`: list<br>`core/nodes`: list<br>`core/secrets`: list |  |
 | `T1134/k8s_impersonation_privileged` | Metadata | `core/namespaces`: list<br>`core/secrets`: get<br>`rbac.authorization.k8s.io/clusterroles`: list |  |
-| `T1485/k8s_storage_volume_deleted` | Metadata | `core/persistentvolumeclaims`: delete, deletecollection<br>`core/persistentvolumes`: delete | At Metadata, 3 negative case(s) fire because their records lose the body that keeps them quiet (pv-delete-dry-run-body, pvc-delete-dry-run-body, pvc-deletecollection-dry-run-body; their requests: delete,deletecollection persistentvolumeclaims, delete persistentvolumes); at Request none fires. |
-| `T1485/k8s_volume_reclaim_set_to_delete` | Request | `core/persistentvolumes`: patch |  |
+| `T1490/k8s_snapshot_or_backup_destroyed` | Metadata | `snapshot.storage.k8s.io/volumesnapshotcontents`: delete<br>`snapshot.storage.k8s.io/volumesnapshots`: delete, deletecollection<br>`velero.io/backupstoragelocations`: delete<br>`velero.io/deletebackuprequests`: create<br>`velero.io/schedules`: delete |  |
 | `T1543.005/k8s_static_pod_mirror_create` | Metadata | `core/pods`: create |  |
 | `T1546/k8s_admission_webhook_created` | Metadata | `admissionregistration.k8s.io/mutatingwebhookconfigurations`: create<br>`admissionregistration.k8s.io/validatingadmissionpolicies`: create<br>`admissionregistration.k8s.io/validatingwebhookconfigurations`: create, patch |  |
 | `T1546/k8s_admission_webhook_repointed_to_url` | Request | `admissionregistration.k8s.io/mutatingwebhookconfigurations`: patch<br>`admissionregistration.k8s.io/validatingwebhookconfigurations`: patch, update |  |
@@ -325,7 +323,7 @@ that reads the DeleteOptions body has no input
 <!-- platform-fp:begin -->
 <!-- Generated by detections/k8s_platforms_md.py --write. Do not edit by hand. -->
 
-Negative cases that fire, per platform policy and replayed store: `eks` 1, `gce-kube-up` 1, `aks-kube-audit` 1, `aks-kube-audit-admin` 1, `openshift-default` 16, `openshift-default-4.17` 14, `k3s-starter` 16, `gce-kube-up` + store `gke_admin_activity` 1. Lab policies are left out: they are not platforms, and under its own home policy no negative case of a rule fires (the simulator's home check).
+Negative cases that fire, per platform policy and replayed store: `eks` 1, `gce-kube-up` 1, `aks-kube-audit` 1, `aks-kube-audit-admin` 1, `openshift-default` 13, `openshift-default-4.17` 11, `k3s-starter` 13, `gce-kube-up` + store `gke_admin_activity` 1. Lab policies are left out: they are not platforms, and under its own home policy no negative case of a rule fires (the simulator's home check).
 
 | Policy | Rule | Case | Kind | Why it fires |
 |---|---|---|---|---|
@@ -339,9 +337,6 @@ Negative cases that fire, per platform policy and replayed store: `eks` 1, `gce-
 | `openshift-default` | `T1070/k8s_namespace_deleted` | `namespace-delete-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
 | `openshift-default` | `T1070/k8s_workload_deleted_evidence` | `delete-job-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
 | `openshift-default` | `T1070/k8s_workload_deleted_evidence` | `deletecollection-pods-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
-| `openshift-default` | `T1485/k8s_storage_volume_deleted` | `pvc-delete-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
-| `openshift-default` | `T1485/k8s_storage_volume_deleted` | `pv-delete-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
-| `openshift-default` | `T1485/k8s_storage_volume_deleted` | `pvc-deletecollection-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
 | `openshift-default` | `T1685/k8s_admission_webhook_disabled` | `delete-validating-webhook-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
 | `openshift-default` | `T1685/k8s_enforcer_workload_removed` | `delete-falco-daemonset-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
 | `openshift-default` | `T1685/k8s_enforcer_workload_removed` | `enforcer-namespace-delete-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
@@ -353,9 +348,6 @@ Negative cases that fire, per platform policy and replayed store: `eks` 1, `gce-
 | `openshift-default-4.17` | `T1070/k8s_namespace_deleted` | `namespace-delete-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
 | `openshift-default-4.17` | `T1070/k8s_workload_deleted_evidence` | `delete-job-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
 | `openshift-default-4.17` | `T1070/k8s_workload_deleted_evidence` | `deletecollection-pods-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
-| `openshift-default-4.17` | `T1485/k8s_storage_volume_deleted` | `pvc-delete-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
-| `openshift-default-4.17` | `T1485/k8s_storage_volume_deleted` | `pv-delete-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
-| `openshift-default-4.17` | `T1485/k8s_storage_volume_deleted` | `pvc-deletecollection-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
 | `openshift-default-4.17` | `T1685/k8s_admission_webhook_disabled` | `delete-validating-webhook-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
 | `openshift-default-4.17` | `T1685/k8s_enforcer_workload_removed` | `delete-falco-daemonset-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
 | `openshift-default-4.17` | `T1685/k8s_enforcer_workload_removed` | `enforcer-namespace-delete-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
@@ -369,9 +361,6 @@ Negative cases that fire, per platform policy and replayed store: `eks` 1, `gce-
 | `k3s-starter` | `T1070/k8s_namespace_deleted` | `namespace-delete-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
 | `k3s-starter` | `T1070/k8s_workload_deleted_evidence` | `delete-job-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
 | `k3s-starter` | `T1070/k8s_workload_deleted_evidence` | `deletecollection-pods-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
-| `k3s-starter` | `T1485/k8s_storage_volume_deleted` | `pvc-delete-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
-| `k3s-starter` | `T1485/k8s_storage_volume_deleted` | `pv-delete-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
-| `k3s-starter` | `T1485/k8s_storage_volume_deleted` | `pvc-deletecollection-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
 | `k3s-starter` | `T1685/k8s_admission_webhook_disabled` | `delete-validating-webhook-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
 | `k3s-starter` | `T1685/k8s_enforcer_workload_removed` | `delete-falco-daemonset-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
 | `k3s-starter` | `T1685/k8s_enforcer_workload_removed` | `enforcer-namespace-delete-dry-run-body` | filtered | the record has no body, so a filter that reads the body has no input |
@@ -411,7 +400,7 @@ No setting to change the EKS or GKE policy was found (**unverified**; see the
 
 **This repository's recommended production policy (every Kubernetes audit rule; the TRR9027 D create needs its opt-in line)**: [`detections/k8s/audit-policy-recommended.yaml`](audit-policy-recommended.yaml). Version: this repository (the opt-in kube-system ConfigMap-create line off).
 
-Simulator result: 32 of 33 rules fire on every positive case, 1 on some, 0 on none; 448 of 449 positive cases fire; 0 negative cases fire; 142 events are not proven (the policy logs a body that the case record lacks, and the rule reads it).
+Simulator result: 31 of 32 rules fire on every positive case, 1 on some, 0 on none; 449 of 450 positive cases fire; 0 negative cases fire; 141 events are not proven (the policy logs a body that the case record lacks, and the rule reads it).
 
 What is verified: TRR9004-9010 and TRR9025-9027 rules proven live in CI by the non-required validate-apiserver-recommended job (validate_apiserver_detections.py --policy recommended); the TRR9002 and TRR9003 rules by this simulator only.
 

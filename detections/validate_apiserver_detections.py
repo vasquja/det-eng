@@ -22,6 +22,9 @@ key on the same API server audit log (plus one node runtime sensor rule):
                                            + Corefile grade
   * TRR9028 (T1485, storage destruction) - PVC/PV delete/deletecollection chokepoint
                                            + PV reclaim-policy-flip grade
+  * TRR9029 (T1490, inhibit recovery)    - VolumeSnapshot/VolumeSnapshotContent and Velero
+                                           Schedule/BackupStorageLocation deletes +
+                                           DeleteBackupRequest create
 
 The loop this proves, for each match-gated rule:
 
@@ -468,7 +471,7 @@ OK = "ok"               # 2xx, or 101 Switching Protocols (exec/attach/portforwa
 # dry-runs with one of these prefixes (R2-d, MISS_MANIFEST). No positive gate (rec()
 # or win()) selects such an object, so neither a dry-run request nor the real create
 # and cleanup delete of a dry-run object can stand in for a procedure.
-DRY_RUN_PREFIXES = ("trr9008-dryrun-", "trr9010-dryrun-", "trr9025-dryrun-", "trr9028-dryrun-")
+DRY_RUN_PREFIXES = ("trr9008-dryrun-", "trr9010-dryrun-", "trr9025-dryrun-", "trr9028-dryrun-", "trr9029-dryrun-")
 NOT_DRY_RUN = ("not a dry-run control object (name and namespace do not begin with "
                + ", ".join(repr(p) for p in DRY_RUN_PREFIXES) + ")")
 
@@ -965,6 +968,28 @@ MANIFEST = [
      "namespace-delete hunting rule: the actor's own accepted delete of trr9010-ns-f",
      [("F", rec(verb="delete", resource="namespaces", name="trr9010-ns-f",
                 window=("9010", "f")))]),
+    # TRR9029 (T1490): the snapshot/backup destruction chokepoint. A-D are accepted
+    # deletes of the emulation's own trr9029- objects by a non-system caller (so a
+    # controller sweep cannot stand in); the VolumeSnapshotContent is cluster-scoped, so
+    # B names no namespace. E is the DeleteBackupRequest create: a generateName object, so
+    # it carries no objectRef.name and the gate keys on the namespace, resource and a
+    # non-system caller (the velero server's own GC creates are filtered by the rule).
+    ("T1490", "k8s_snapshot_or_backup_destroyed.yml", "audit", "9029 A-E",
+     "snapshot/backup destruction chokepoint (snapshot + Velero deletes, DBR create)", [
+        ("A", rec(verb="delete", resource="volumesnapshots", name="trr9029-vs",
+                  ns="trr9029", user=non_system, also=apigroup("snapshot.storage.k8s.io"),
+                  window=("9029", "a"))),
+        ("B", rec(verb="delete", resource="volumesnapshotcontents", name="trr9029-vsc",
+                  user=non_system, also=apigroup("snapshot.storage.k8s.io"),
+                  window=("9029", "b"))),
+        ("C", rec(verb="delete", resource="schedules", name="trr9029-schedule",
+                  ns="trr9029", user=non_system, also=apigroup("velero.io"),
+                  window=("9029", "c"))),
+        ("D", rec(verb="delete", resource="backupstoragelocations", name="trr9029-bsl",
+                  ns="trr9029", user=non_system, also=apigroup("velero.io"),
+                  window=("9029", "d"))),
+        ("E", rec(verb="create", resource="deletebackuprequests", ns="trr9029",
+                  user=non_system, also=apigroup("velero.io"), window=("9029", "e")))]),
     ("T1546", "k8s_admission_webhook_created.yml", "audit", "9025 A-C",
      "malicious admission-webhook create chokepoint", [
         ("A", rec(verb="create", resource="mutatingwebhookconfigurations", name="trr9025-mwc",
@@ -1154,6 +1179,10 @@ DRY_9028 = ("9028", "dryrun")
 DRY_NS_9008 = "gatekeeper-system"     # the TRR9008 control's namespace (it creates it)
 DRY_NS_9010 = "trr9010-dryrun-ns"     # the TRR9010 control's own namespace
 DRY_NS_9028 = "trr9028-dryrun-ns"     # the TRR9028 control's own namespace
+DRY_9029 = ("9029", "dryrun")
+DRY_NS_9008 = "gatekeeper-system"     # the TRR9008 control's namespace (it creates it)
+DRY_NS_9010 = "trr9010-dryrun-ns"     # the TRR9010 control's own namespace
+DRY_NS_9029 = "trr9029-dryrun-ns"     # the TRR9029 control's own namespace
 IN_ENFORCER_NS = field_in("objectRef.namespace", ENFORCER_NAMESPACES)
 # kubectl delete --raw of a collection URL with a DeleteOptions body: the step's dry-run
 # deletecollection names its own objects in the query (a label selector).
@@ -1238,6 +1267,25 @@ MISS_MANIFEST = [
     ("T1485", "k8s_volume_reclaim_set_to_delete.yml", "9028 dryrun", [
         ("reclaim patch", dry("patch", "persistentvolumes", DRY_9028,
                               prefix="trr9028-dryrun-"))]),
+    # TRR9029: a server-side dry run of each snapshot/backup chokepoint, sent as the query
+    # parameter ?dryRun=All (the CRDs log at Metadata, so the dry run is never in a body):
+    # the four deletes with kubectl delete --raw '<path>?dryRun=All', the DeleteBackupRequest
+    # create with kubectl create --dry-run=server. The rule must match none of them, and
+    # must match each once the dry-run marker is stripped. The VolumeSnapshotContent is
+    # cluster-scoped (name prefix); the DeleteBackupRequest is a generateName object (its
+    # namespace carries the dry-run prefix).
+    ("T1490", "k8s_snapshot_or_backup_destroyed.yml", "9029 dryrun", [
+        ("volumesnapshot", dry("delete", "volumesnapshots", DRY_9029, prefix="trr9029-dryrun-",
+                               also=apigroup("snapshot.storage.k8s.io"))),
+        ("volumesnapshotcontent", dry("delete", "volumesnapshotcontents", DRY_9029,
+                                      prefix="trr9029-dryrun-",
+                                      also=apigroup("snapshot.storage.k8s.io"))),
+        ("schedule", dry("delete", "schedules", DRY_9029, prefix="trr9029-dryrun-",
+                         also=apigroup("velero.io"))),
+        ("backupstoragelocation", dry("delete", "backupstoragelocations", DRY_9029,
+                                      prefix="trr9029-dryrun-", also=apigroup("velero.io"))),
+        ("deletebackuprequest", dry("create", "deletebackuprequests", DRY_9029,
+                                    ns=DRY_NS_9029, also=apigroup("velero.io")))]),
 ]
 
 

@@ -339,6 +339,21 @@ reasoning survives. Append an entry per vet; keep it short.
   art re-checked at build time: still no PVC/PV deletion rule in SigmaHQ, Elastic, Splunk
   or Falco k8saudit, and no Stratus/ART test; provider-native findings remain unverified
   (AWS/GCP docs unreachable).
+  Built as TRR9029 (T1490 half): one chokepoint rule
+  `detections/sigma/T1490/k8s_snapshot_or_backup_destroyed.yml` over five procedures -- delete a
+  VolumeSnapshot (A), delete a cluster-scoped VolumeSnapshotContent (B), delete a Velero Schedule (C), delete a
+  Velero BackupStorageLocation (D), create a Velero DeleteBackupRequest (E, the real backup-deletion path; a
+  `backups` delete is explicitly NOT covered because backup sync re-creates it). Filters verified from
+  external-snapshotter v8.7.0 and velero v1.18.4 source: the snapshot-controller on volumesnapshotcontents
+  deletes, and the velero server (GC + backup-deletion controller). Positives are real v1.36.4 lab records; the
+  rule is Metadata-only, so no audit-policy body row was added, and it is portable across every modeled managed
+  policy (on GKE only the dry-run query filter is dropped, requestURI not in schema). CHOKEPOINT waiver added as
+  a proposed human decision (pure-surface). The velero-server filter is scoped to the resources it churns
+  (deletebackuprequests, volumesnapshots, volumesnapshotcontents), so a velero-SA Schedule/BSL delete still
+  fires. Dropped nothing from the T1490 scope; the reclaimPolicy/deletionPolicy enrichment gap and the
+  body-form dry-run FP (kubectl's default `--dry-run=server` delete puts dryRun in the unlogged DeleteOptions
+  body, so at Metadata its record is indistinguishable from a real delete and the rule fires -- an accepted FP,
+  KTBD-I2) are documented. The T1485 half is TRR9028.
 
 - **Lookalike workload names (T1036.005) — LEAN-GO (Q1 and Q3 pass on a narrowed chokepoint; Q2 is GKE-native;
   respects the T1610 NO-GO).** Controllers create pods only with `generateName`
