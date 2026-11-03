@@ -1,0 +1,164 @@
+[
+  {
+    "eventVersion": "1.09",
+    "userIdentity": {
+      "type": "AssumedRole",
+      "principalId": "AROATRR9032EXAMPLEID:trr9032-session",
+      "arn": "arn:aws:sts::123456789012:assumed-role/trr9032-attacker/trr9032-session",
+      "accountId": "123456789012",
+      "sessionContext": {
+        "sessionIssuer": {
+          "type": "Role",
+          "principalId": "AROATRR9032EXAMPLEID",
+          "arn": "arn:aws:iam::123456789012:role/trr9032-attacker",
+          "accountId": "123456789012",
+          "userName": "trr9032-attacker"
+        },
+        "attributes": {
+          "creationDate": "2026-11-01T14:05:00Z",
+          "mfaAuthenticated": "false"
+        }
+      }
+    },
+    "eventTime": "2026-11-01T14:07:01Z",
+    "eventSource": "eks.amazonaws.com",
+    "eventName": "CreateAccessEntry",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "198.51.100.77",
+    "userAgent": "aws-cli/2.15.0 Python/3.11 Linux/6.1 exec-env/CLI",
+    "requestParameters": {
+      "name": "trr9032-cluster",
+      "principalArn": "arn:aws:iam::123456789012:role/trr9032-backdoor"
+    },
+    "responseElements": {
+      "accessEntry": {
+        "clusterName": "trr9032-cluster",
+        "principalArn": "arn:aws:iam::123456789012:role/trr9032-backdoor",
+        "type": "STANDARD",
+        "kubernetesGroups": [],
+        "accessEntryArn": "arn:aws:eks:us-east-1:123456789012:access-entry/trr9032-cluster/role/123456789012/trr9032-backdoor/aaaabbbb-cccc-dddd-eeee-ffff00009032",
+        "createdAt": "Nov 1, 2026 2:07:01 PM",
+        "modifiedAt": "Nov 1, 2026 2:07:01 PM",
+        "tags": {},
+        "username": "arn:aws:iam::123456789012:role/trr9032-backdoor"
+      }
+    },
+    "requestID": "aaaa0000-9032-4aaa-bbbb-000000000001",
+    "eventID": "cccc0000-9032-4ccc-dddd-000000000001",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management"
+  },
+  {
+    "eventVersion": "1.09",
+    "userIdentity": {
+      "type": "AssumedRole",
+      "principalId": "AROATRR9032EXAMPLEID:trr9032-session",
+      "arn": "arn:aws:sts::123456789012:assumed-role/trr9032-attacker/trr9032-session",
+      "accountId": "123456789012",
+      "sessionContext": {
+        "sessionIssuer": {
+          "type": "Role",
+          "principalId": "AROATRR9032EXAMPLEID",
+          "arn": "arn:aws:iam::123456789012:role/trr9032-attacker",
+          "accountId": "123456789012",
+          "userName": "trr9032-attacker"
+        },
+        "attributes": {
+          "creationDate": "2026-11-01T14:05:00Z",
+          "mfaAuthenticated": "false"
+        }
+      }
+    },
+    "eventTime": "2026-11-01T14:07:02Z",
+    "eventSource": "eks.amazonaws.com",
+    "eventName": "AssociateAccessPolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "198.51.100.77",
+    "userAgent": "aws-cli/2.15.0 Python/3.11 Linux/6.1 exec-env/CLI",
+    "requestParameters": {
+      "policyArn": "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy",
+      "accessScope": {
+        "type": "cluster"
+      },
+      "name": "trr9032-cluster",
+      "principalArn": "arn%3Aaws%3Aiam%3A%3A123456789012%3Arole%2Ftrr9032-backdoor"
+    },
+    "responseElements": {
+      "clusterName": "trr9032-cluster",
+      "principalArn": "arn:aws:iam::123456789012:role/trr9032-backdoor",
+      "associatedAccessPolicy": {
+        "policyArn": "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy",
+        "accessScope": {
+          "type": "cluster"
+        },
+        "associatedAt": "Nov 1, 2026 2:07:02 PM",
+        "modifiedAt": "Nov 1, 2026 2:07:02 PM"
+      }
+    },
+    "requestID": "aaaa0000-9032-4aaa-bbbb-000000000002",
+    "eventID": "cccc0000-9032-4ccc-dddd-000000000002",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management"
+  },
+  {
+    "eventVersion": "1.09",
+    "userIdentity": {
+      "type": "AssumedRole",
+      "principalId": "AROATRR9032EXAMPLEID:trr9032-session",
+      "arn": "arn:aws:sts::123456789012:assumed-role/trr9032-attacker/trr9032-session",
+      "accountId": "123456789012",
+      "sessionContext": {
+        "sessionIssuer": {
+          "type": "Role",
+          "principalId": "AROATRR9032EXAMPLEID",
+          "arn": "arn:aws:iam::123456789012:role/trr9032-attacker",
+          "accountId": "123456789012",
+          "userName": "trr9032-attacker"
+        },
+        "attributes": {
+          "creationDate": "2026-11-01T14:05:00Z",
+          "mfaAuthenticated": "false"
+        }
+      }
+    },
+    "eventTime": "2026-11-01T14:07:03Z",
+    "eventSource": "eks.amazonaws.com",
+    "eventName": "AssociateAccessPolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "198.51.100.77",
+    "userAgent": "aws-cli/2.15.0 Python/3.11 Linux/6.1 exec-env/CLI",
+    "requestParameters": {
+      "policyArn": "arn:aws:eks::aws:cluster-access-policy/AmazonEKSSecretReaderPolicy",
+      "accessScope": {
+        "type": "cluster"
+      },
+      "name": "trr9032-cluster",
+      "principalArn": "arn%3Aaws%3Aiam%3A%3A123456789012%3Arole%2Ftrr9032-reader"
+    },
+    "responseElements": {
+      "clusterName": "trr9032-cluster",
+      "principalArn": "arn:aws:iam::123456789012:role/trr9032-reader",
+      "associatedAccessPolicy": {
+        "policyArn": "arn:aws:eks::aws:cluster-access-policy/AmazonEKSSecretReaderPolicy",
+        "accessScope": {
+          "type": "cluster"
+        },
+        "associatedAt": "Nov 1, 2026 2:07:02 PM",
+        "modifiedAt": "Nov 1, 2026 2:07:02 PM"
+      }
+    },
+    "requestID": "aaaa0000-9032-4aaa-bbbb-000000000003",
+    "eventID": "cccc0000-9032-4ccc-dddd-000000000003",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management"
+  }
+]

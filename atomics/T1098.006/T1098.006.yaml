@@ -205,3 +205,57 @@ atomic_tests:
         description: Path to the atomic source directory.
         type: string
         default: PathToAtomicsFolder/T1098.006/src
+
+  # --- TRR9032 (AWS / cloud): EKS access-entry backdoor in CloudTrail ----------------
+  # A different TRR under the same ATT&CK ID. The grant lives in the EKS control plane,
+  # so it NEVER reaches the Kubernetes audit log -- it is proven by the CloudTrail
+  # fixtures in detections/cloud/fixtures/trr9032/ via validate_cloud_detections.py, not
+  # by the kind lab above. These live tests make real WRITE calls (then revert them) in
+  # YOUR OWN AWS account / EKS cluster and are gated by TRR9032_LIVE=1; they are NOT run
+  # in CI. Dry by default; --show-fixture prints the recorded telemetry.
+  - name: "TRR9032.AWS.A — EKS access entry granted cluster-admin at cluster scope"
+    auto_generated_guid: 0c5533b9-5d18-4eb5-8b1d-069d14bcf063
+    description: |
+      Creates an EKS access entry for an IAM role and associates
+      AmazonEKSClusterAdminPolicy at cluster scope (Stratus Red Team
+      eks.lateral-movement.create-access-entry). The grant gives the IAM principal
+      standing cluster-admin through the EKS control-plane API, invisible to the
+      Kubernetes audit log. The live path reverts at once (disassociate + delete).
+      Chokepoint: CloudTrail eventSource eks.amazonaws.com, eventName
+      AssociateAccessPolicy, requestParameters.policyArn ending AmazonEKSClusterAdminPolicy,
+      requestParameters.accessScope.type cluster, no errorCode.
+      Rule: detections/sigma/T1098.006/aws_eks_access_entry_cluster_admin_policy.yml
+    supported_platforms:
+      - iaas:aws
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_eks_access_entry.sh a
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1098.006/src
+
+  - name: "TRR9032.AWS.B — EKS access entry granted a secrets-reading policy at cluster scope"
+    auto_generated_guid: 7800d014-e0d1-42c4-9bb5-55f17aaed0f8
+    description: |
+      Associates a cluster-access policy that reads Kubernetes Secrets without being an
+      admin policy (AmazonEKSSecretReaderPolicy) at cluster scope. A lower-noise variant
+      of A that still reads every Secret cluster-wide. The live path reverts at once.
+      Chokepoint: CloudTrail eventName AssociateAccessPolicy, requestParameters.policyArn
+      in the reads-Secrets set, requestParameters.accessScope.type cluster, no errorCode.
+      Rule: detections/sigma/T1098.006/aws_eks_access_entry_cluster_admin_policy.yml
+    supported_platforms:
+      - iaas:aws
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_eks_access_entry.sh b
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1098.006/src

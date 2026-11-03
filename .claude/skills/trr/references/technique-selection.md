@@ -291,7 +291,21 @@ reasoning survives. Append an entry per vet; keep it short.
   'any access-entry write' is pure-surface and needs a human CHOKEPOINT entry. Q4: Elastic ships three rules
   (cluster-admin policy at any scope, any access-entry write, create-then-delete EQL); SigmaHQ has none. The
   difference is scope grading, every policy that reads Secrets, and Sigma. Note: `principalArn` is URL-encoded
-  in AssociateAccessPolicy. Deferred to build as TRR9032 (aws).
+  in AssociateAccessPolicy. **Built as TRR9032 (aws).** Two rules:
+  `aws_eks_access_entry_cluster_admin_policy.yml` (graded, high — `AssociateAccessPolicy` of a reads-Secrets/admin
+  policy at `accessScope.type: cluster`, null-safe `errorCode`) and `aws_eks_access_entry_write.yml` (surface
+  chokepoint, medium — any access-entry write; human-approved `CHOKEPOINT` waiver). The reads-Secrets set was pinned
+  from the awsdocs access-policy-reference at commit `8d43223` (2026-09-16): the **nine** AWS-managed cluster-access
+  policies that read Secrets and are associable to a customer principal — ClusterAdmin, Admin, AdminView, Edit,
+  SecretAdmin, SecretReader, ArgoCDPolicy (core `secrets` or `*`), **and** AWSBackupFullAccessPolicyForBackup /
+  AWSBackupFullAccessPolicyForRestore (`*`/`*` read; the two AWSBackup policies were added in round-1 review after the
+  pinned source showed they read every Secret and carry no service-linked restriction). ArgoCDClusterPolicy, ViewPolicy,
+  ACKPolicy and KROPolicy read no core Secrets; ClusterInsights is service-linked-only. Proven by
+  `validate_cloud_detections.py` over committed CloudTrail fixtures. **Dropped**: the namespace-scoped-secrets tier
+  (one record cannot weigh namespaces; KTBD-L1) and the cross-account provenance predicate (the real
+  `principalArn|fieldref|contains: recipientAccountId` form runs on `sigma_eval` and its embedded-victim-ID evasion was
+  reproduced; the sound fix is a portable `sel_external and not filter_org_accounts` `|re` pair needing a
+  per-deployment org-account allowlist; KTBD-L2) — both documented, not shipped.
 
 - **Service exposure through NodePort / LoadBalancer (T1133, MS-TA9005) — LEAN-GO (question 2 backstop; question
   4 differentiated).** Q1 PASS: `requestObject.spec.type` is an API enum the attacker must set to expose

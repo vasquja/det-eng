@@ -1,0 +1,133 @@
+title: AWS EKS Access Entry Granted a Cluster-Wide Admin or Secrets-Reading Policy
+id: db6c6432-af5d-4aa5-bbdb-c396a5c8c2fd
+status: experimental
+description: |
+  Detects an EKS AssociateAccessPolicy call (CloudTrail, eventSource eks.amazonaws.com)
+  that grants an access entry one of the AWS-managed cluster-access policies that confer
+  cluster administrator privileges OR read Kubernetes Secrets, AT CLUSTER SCOPE. This is
+  the high-fidelity TRR9032 signal for an EKS access-entry backdoor (T1098.006, secondary
+  T1098.003): an IAM principal is given standing, cluster-wide access to the Kubernetes
+  control plane entirely through the EKS control-plane API, so the grant never appears in
+  the Kubernetes audit log -- only in CloudTrail.
+
+  The discriminator is the requested policy and its scope, both set by the attacker as the
+  permission they ask for and neither spoofable to evade (the policyArn is a closed set of
+  AWS-managed ARNs, arn:aws:eks::aws:cluster-access-policy/<Name>; accessScope.type is the
+  API enum cluster or namespace). This rule fires only on the SECRETS-READING / ADMIN tier
+  at CLUSTER scope:
+    AmazonEKSClusterAdminPolicy (full cluster admin, */*/*),
+    AmazonEKSAdminPolicy        (most resources incl. secrets),
+    AmazonEKSAdminViewPolicy    (get/list/watch */*, which includes Secrets -- so named by AWS),
+    AmazonEKSEditPolicy         (edit most resources incl. secrets),
+    AmazonEKSSecretAdminPolicy  (* on secrets),
+    AmazonEKSSecretReaderPolicy (get/list/watch on secrets),
+    AmazonEKSArgoCDPolicy       (* on secrets -- a capability policy EKS normally
+                                 associates at NAMESPACE scope for the Argo CD role, so
+                                 a CLUSTER-scope grant of it is anomalous),
+    AWSBackupFullAccessPolicyForBackup  (get/list on */*, which reads every Secret
+                                 cluster-wide; normally held by the AWS Backup service role),
+    AWSBackupFullAccessPolicyForRestore (get/list/create on */* PLUS rbac
+                                 roles/clusterroles create/update/escalate/bind -- an
+                                 admin-tier grant that also reads every Secret).
+  AmazonEKSViewPolicy does NOT read Secrets and does not fire this rule; nor does a
+  namespace-scoped grant of any policy. Those lower-tier grants are caught by the broad
+  companion chokepoint rule aws_eks_access_entry_write.yml (TRR9032 Procedure C), which a
+  defender triages at a lower priority. Keeping the policy and scope as the discriminators
+  (rather than any access-entry write) is what separates this high-fidelity rule from the
+  surface chokepoint.
+
+  Scope decision (documented limit): a namespace-scoped AmazonEKSSecretReaderPolicy on a
+  sensitive namespace (kube-system) still reads those Secrets but trips only the chokepoint
+  rule here, because a single CloudTrail record cannot weigh one namespace against another;
+  baseline access-entry writers instead. The cross-account STANDARD form (a principal in
+  another AWS account) is a real variant, but a contains-style provenance predicate is
+  evadable and the only sound form needs a per-deployment org-account allowlist -- see the
+  TRR9032 report, Procedure D -- so no cross-account provenance predicate is shipped here.
+
+  CloudTrail normalises requestParameters to lowerCamelCase, so the fields are
+  requestParameters.policyArn and requestParameters.accessScope.type (the API model is
+  PolicyArn / AccessScope). The principalArn is URL-encoded in AssociateAccessPolicy (a
+  path parameter) and the rule does not key on it.
+
+  Prior art (named, differentiated): Elastic ships "AWS EKS Access Entry Granted Cluster
+  Admin Policy" (AssociateAccessPolicy with AmazonEKSClusterAdminPolicy or
+  AmazonEKSAdminPolicy at ANY scope) and "AWS EKS Access Entry Modified" (any of the
+  access-entry APIs). Datadog Cloud SIEM ships def-000-cm5/-dzx/-b69 (a closed rule set).
+  SigmaHQ, Splunk ESCU, Falco and Panther ship none. This rule's differentiation is the
+  scope grade (cluster vs namespace), the full reads-Secrets policy set (all nine
+  AWS-managed cluster-access policies that read Secrets and can be associated with a
+  customer principal, not only the two admin policies), and being the first Sigma rule
+  for the behaviour. There is no GuardDuty
+  or Microsoft Defender for Containers finding for an access-entry write (GuardDuty EKS
+  findings read the Kubernetes audit log, which this grant never reaches), so this is a
+  provider-agnostic backstop, not a rediscovery.
+references:
+  - https://attack.mitre.org/techniques/T1098/006/
+  - https://attack.mitre.org/techniques/T1098/003/
+  - https://docs.aws.amazon.com/eks/latest/userguide/access-policies.html
+  - https://docs.aws.amazon.com/eks/latest/userguide/access-entries.html
+  - https://securitylabs.datadoghq.com/articles/eks-cluster-access-management-deep-dive/
+author: det-eng
+date: 2026/11/01
+tags:
+  - attack.persistence
+  - attack.t1098.006
+  - attack.privilege-escalation
+  - attack.t1098.003
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_api:
+    eventSource: 'eks.amazonaws.com'
+    eventName: 'AssociateAccessPolicy'
+  selection_secrets_or_admin_policy:
+    # Closed set of AWS-managed cluster-access-policy ARNs (access-policy-reference) that
+    # grant cluster admin or read Kubernetes Secrets. AmazonEKSViewPolicy (no secrets) is
+    # deliberately absent. Each entry is the FULL managed-policy name, which is what
+    # disambiguates look-alikes: '/AmazonEKSAdminPolicy' is not a suffix of
+    # '...AmazonEKSSecretAdminPolicy' or '...AmazonEKSAdminViewPolicy', and
+    # '/AmazonEKSArgoCDPolicy' is not a suffix of '...AmazonEKSArgoCDClusterPolicy'
+    # (reads no Secrets), because the characters before the shared tail differ. The
+    # leading '/' anchors the match on the ARN's final path segment, so only a policy
+    # whose name is exactly one of these (not merely ends with the same letters) matches.
+    # The two AWSBackupFullAccessPolicyFor* policies read every Secret via */* and are
+    # associable to a customer principal (no service-linked restriction, unlike
+    # AmazonEKSClusterInsightsPolicy); AmazonEKSACKPolicy/AmazonEKSKROPolicy read no core
+    # Secrets (their */* is scoped to the capability's own API groups), so are absent.
+    requestParameters.policyArn|endswith:
+      - '/AmazonEKSClusterAdminPolicy'
+      - '/AmazonEKSAdminPolicy'
+      - '/AmazonEKSAdminViewPolicy'
+      - '/AmazonEKSEditPolicy'
+      - '/AmazonEKSSecretAdminPolicy'
+      - '/AmazonEKSSecretReaderPolicy'
+      - '/AmazonEKSArgoCDPolicy'
+      - '/AWSBackupFullAccessPolicyForBackup'
+      - '/AWSBackupFullAccessPolicyForRestore'
+  selection_cluster_scope:
+    requestParameters.accessScope.type: 'cluster'
+  filter_failed:
+    errorCode: '*'
+  # Null-safe negation: CloudTrail writes errorCode only on an error, so a bare
+  # `not filter_failed` would drop every successful (fired) call on a three-valued backend
+  # (ES|QL and other SQL backends read NOT of a test on a missing field as NULL). OR the
+  # filter with a test that errorCode is absent.
+  sel_no_error_code:
+    errorCode: null
+  condition: selection_api and selection_secrets_or_admin_policy and selection_cluster_scope and (sel_no_error_code or not filter_failed)
+falsepositives:
+  - A platform / IAM administrator legitimately granting cluster-wide admin or secrets
+    access to an operator role through the EKS access-entry API. Baseline the IAM
+    principals (userIdentity.arn) that manage access entries and the target principalArns;
+    a grant to an unexpected principal, or from an unexpected administrator, is the signal.
+  - Infrastructure-as-code (Terraform aws_eks_access_policy_association, eksctl) that
+    associates AmazonEKSClusterAdminPolicy at cluster scope during cluster bootstrap --
+    allowlist the automation principal.
+  - Microsoft Defender for Containers onboarding associates its own policy to
+    MDCContainersK8sRole; allowlist that service's principal if Defender is in use.
+  - AWS Backup onboarding associates AWSBackupFullAccessPolicyForBackup /
+    AWSBackupFullAccessPolicyForRestore (both read every Secret via */*) with the AWS
+    Backup service role at cluster scope; allowlist that role's principalArn if AWS
+    Backup for EKS is in use.
+level: high

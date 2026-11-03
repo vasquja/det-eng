@@ -1,0 +1,57 @@
+title: AWS EKS Access Entry or Access Policy Written
+id: 6861fa16-b1a7-4fa6-bc79-dec12209ebc6
+status: experimental
+description: |
+  Low-fidelity TRR9032 backstop: any write to the EKS cluster-access-management API
+  (CloudTrail, eventSource eks.amazonaws.com) -- creating, updating or deleting an access
+  entry, or associating or disassociating an access policy. Every access-entry backdoor
+  procedure passes through one of these calls, and the grant lives in the EKS control
+  plane, so it never appears in the Kubernetes audit log (T1098.006, secondary T1098.003).
+
+  This is a pure-surface chokepoint: it keys only on the record kind (the access-entry
+  write API names), not on a discriminating field, so it fires on every legitimate
+  access-entry write as well. It is the broad companion of the high-fidelity rule
+  aws_eks_access_entry_cluster_admin_policy.yml, and it exists to catch the forms that the
+  graded rule deliberately does not -- a namespace-scoped grant, a non-secrets View grant,
+  and the create / delete / update calls -- which a defender triages at a lower priority
+  or feeds a first-seen-principal overlay. Scope it with a baseline of the IAM principals
+  that manage access entries (userIdentity.arn) rather than treating every hit as an alert.
+
+  Prior art: this is the Sigma counterpart of Elastic's "AWS EKS Access Entry Modified"
+  (any of the access-entry APIs, minus named automation ARNs). SigmaHQ, Splunk ESCU, Falco
+  and Panther ship no equivalent; Datadog Cloud SIEM's def-000 EKS rules are a closed set.
+  No GuardDuty or Microsoft Defender for Containers finding covers an access-entry write.
+references:
+  - https://attack.mitre.org/techniques/T1098/006/
+  - https://attack.mitre.org/techniques/T1098/003/
+  - https://docs.aws.amazon.com/eks/latest/userguide/access-entries.html
+  - https://docs.aws.amazon.com/eks/latest/userguide/access-policies.html
+author: det-eng
+date: 2026/11/01
+tags:
+  - attack.persistence
+  - attack.t1098.006
+  - attack.privilege-escalation
+  - attack.t1098.003
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventSource: 'eks.amazonaws.com'
+    eventName:
+      - 'CreateAccessEntry'
+      - 'UpdateAccessEntry'
+      - 'DeleteAccessEntry'
+      - 'AssociateAccessPolicy'
+      - 'DisassociateAccessPolicy'
+  condition: selection
+falsepositives:
+  - Routine EKS access-entry administration by Terraform / eksctl / console operators
+    creating, updating or deleting access entries and associating or disassociating access
+    policies. This rule fires on all of them by design; baseline the IAM principals
+    (userIdentity.arn) that manage access entries, and treat a write by an unexpected
+    principal, or targeting an unexpected principalArn, as the signal.
+  - Microsoft Defender for Containers onboarding creates an access entry and associates a
+    policy for MDCContainersK8sRole; allowlist that service's principal if Defender is used.
+level: medium

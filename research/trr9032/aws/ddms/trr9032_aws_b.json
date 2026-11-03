@@ -1,0 +1,110 @@
+{
+  "style": {
+    "font-family": "sans-serif",
+    "background-color": "#ffffff",
+    "node-color": "#ffffff",
+    "border-width": 4,
+    "border-color": "#000000",
+    "radius": 50,
+    "outside-position": "auto",
+    "caption-font-size": 16,
+    "label-font-size": 14,
+    "label-border-width": 2,
+    "property-font-size": 14,
+    "arrow-width": 5,
+    "arrow-color": "#000000",
+    "type-font-size": 16
+  },
+  "nodes": [
+    {
+      "id": "n0",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "caption": "IAM principal with eks:AssociateAccessPolicy",
+      "labels": [],
+      "properties": {
+        "Kubernetes RBAC": "none required"
+      },
+      "style": {
+        "border-color": "#9f9f9f",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top"
+      }
+    },
+    {
+      "id": "n1",
+      "position": {
+        "x": 340,
+        "y": 0
+      },
+      "caption": "AssociateAccessPolicy (CloudTrail)",
+      "labels": [
+        "CloudTrail"
+      ],
+      "properties": {
+        "eventSource": "eks.amazonaws.com",
+        "eventName": "AssociateAccessPolicy",
+        "policyArn": "...AmazonEKSSecretReaderPolicy",
+        "accessScope.type": "cluster"
+      },
+      "style": {
+        "border-color": "#0062b1",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "bottom",
+        "node-color": "#fff2a8"
+      }
+    },
+    {
+      "id": "n2",
+      "position": {
+        "x": 680,
+        "y": 0
+      },
+      "caption": "Reads every Kubernetes Secret cluster-wide",
+      "labels": [],
+      "properties": {
+        "tier": "reads-Secrets set (not admin)"
+      },
+      "style": {
+        "border-color": "#000000",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top"
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "id": "r0",
+      "fromId": "n0",
+      "toId": "n1",
+      "type": "associate secrets-reading policy",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r1",
+      "fromId": "n1",
+      "toId": "n2",
+      "type": "grant effective",
+      "properties": {},
+      "style": {}
+    }
+  ]
+}

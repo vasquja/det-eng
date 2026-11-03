@@ -208,6 +208,23 @@ MANIFEST = [
      "EKS IRSA role session used off-cluster (use leg)",
      marker("trr9022", "requestParameters.roleArn", "responseElements.subjectFromWebIdentityToken",
             "userIdentity.arn", "userIdentity.sessionContext.sessionIssuer.arn")),
+    # --- TRR9032: EKS access-entry backdoor in CloudTrail (T1098.006, secondary T1098.003).
+    #     The grant lives in the EKS control plane, so it never reaches the Kubernetes audit
+    #     log -- this is a cloud TRR, alongside (not touching) the k8s T1098.006 rules.
+    #     The graded rule's benign baseline (benign.json) is the SAME call differing only on
+    #     the discriminator (View policy / namespace scope / denied). The chokepoint rule
+    #     fires on any access-entry write, so its baseline (benign_chokepoint.json) is EKS
+    #     read calls on the same eventSource -- the two rules cannot share one benign file.
+    #     principalArn is URL-encoded in AssociateAccessPolicy; the marker 'trr9032' survives
+    #     it (letters/digits/'-' are not percent-encoded) and the rule does not match it.
+    ("TRR9032", "T1098.006", "aws_eks_access_entry_cluster_admin_policy.yml",
+     "trr9032/attack.json", "trr9032/benign.json", "AWS",
+     "EKS access entry granted a cluster-wide admin or secrets-reading policy (graded)",
+     marker("trr9032", "requestParameters.principalArn")),
+    ("TRR9032", "T1098.006", "aws_eks_access_entry_write.yml",
+     "trr9032/attack.json", "trr9032/benign_chokepoint.json", "AWS",
+     "any EKS access-entry / access-policy write (surface chokepoint)",
+     marker("trr9032", "requestParameters.principalArn", "requestParameters.name")),
 ]
 
 FOLDERS = sorted({folder for _, folder, *_ in MANIFEST})

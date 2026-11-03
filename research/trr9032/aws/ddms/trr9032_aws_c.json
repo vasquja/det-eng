@@ -1,0 +1,109 @@
+{
+  "style": {
+    "font-family": "sans-serif",
+    "background-color": "#ffffff",
+    "node-color": "#ffffff",
+    "border-width": 4,
+    "border-color": "#000000",
+    "radius": 50,
+    "outside-position": "auto",
+    "caption-font-size": 16,
+    "label-font-size": 14,
+    "label-border-width": 2,
+    "property-font-size": 14,
+    "arrow-width": 5,
+    "arrow-color": "#000000",
+    "type-font-size": 16
+  },
+  "nodes": [
+    {
+      "id": "n0",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "caption": "AssociateAccessPolicy (View, or namespace scope) (CloudTrail)",
+      "labels": [
+        "CloudTrail"
+      ],
+      "properties": {
+        "eventName": "AssociateAccessPolicy",
+        "policyArn": "...AmazonEKSViewPolicy",
+        "accessScope.type": "namespace"
+      },
+      "style": {
+        "border-color": "#0062b1",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "bottom",
+        "node-color": "#fff2a8"
+      }
+    },
+    {
+      "id": "n1",
+      "position": {
+        "x": 420,
+        "y": 0
+      },
+      "caption": "Surface chokepoint rule fires (low)",
+      "labels": [],
+      "properties": {
+        "rule": "aws_eks_access_entry_write.yml"
+      },
+      "style": {
+        "border-color": "#000000",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top"
+      }
+    },
+    {
+      "id": "n2",
+      "position": {
+        "x": 820,
+        "y": 0
+      },
+      "caption": "Graded rule does NOT fire",
+      "labels": [],
+      "properties": {
+        "why": "View reads no Secrets; namespace scope is below the threshold"
+      },
+      "style": {
+        "border-color": "#9f9f9f",
+        "border-width": 3,
+        "caption-font-size": 16,
+        "label-position": "outside",
+        "label-font-size": 14,
+        "label-border-width": 2,
+        "property-font-size": 14,
+        "outside-position": "top"
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "id": "r0",
+      "fromId": "n0",
+      "toId": "n1",
+      "type": "any access-entry write",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r1",
+      "fromId": "n0",
+      "toId": "n2",
+      "type": "below secrets/cluster grade",
+      "properties": {},
+      "style": {}
+    }
+  ]
+}

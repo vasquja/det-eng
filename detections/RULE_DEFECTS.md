@@ -101,6 +101,8 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
+| [KTBD-L1](#ktbd-l1-aws_eks_access_entry_cluster_admin_policy-a-namespace-scoped-secrets-grant-is-missed) | `T1098.006/aws_eks_access_entry_cluster_admin_policy` | a reads-Secrets policy scoped to a sensitive namespace (`kube-system`) reads those Secrets but trips only the medium chokepoint, not the graded rule; one CloudTrail record cannot weigh one namespace against another | false negative | medium |
+| [KTBD-L2](#ktbd-l2-aws_eks_access_entry_cluster_admin_policy-no-safe-sigma-predicate-for-a-cross-account-grant) | `T1098.006/aws_eks_access_entry_cluster_admin_policy` | no safe Sigma predicate raises fidelity on a cross-account grant: `principalArn\|fieldref\|contains: recipientAccountId` goes quiet when the attacker names its role with the victim account ID | false negative (documented) | low |
 
 ## Linux (auditd and node file events)
 
@@ -2101,6 +2103,66 @@ the current ones.
   `sqs-public-allow-scoping-key-as-condition-value`,
   `efs-public-allow-scoping-key-as-condition-value`.
 - **Fix**: decode the policy JSON in the log pipeline and test each statement.
+
+### KTBD-L1. aws_eks_access_entry_cluster_admin_policy: a namespace-scoped secrets grant is missed
+
+- **Rule**: [`sigma/T1098.006/aws_eks_access_entry_cluster_admin_policy.yml`](sigma/T1098.006/aws_eks_access_entry_cluster_admin_policy.yml) (level high).
+- **Kind**: false negative. **Severity**: medium.
+- **Problem**: the graded rule requires `requestParameters.accessScope.type: cluster`. A
+  grant of a reads-Secrets policy (`AmazonEKSSecretReaderPolicy`, `AmazonEKSAdminViewPolicy`,
+  `AmazonEKSEditPolicy`, ...) scoped to a sensitive namespace such as `kube-system` still
+  reads that namespace's Secrets (service-account tokens, TLS keys) but trips only the
+  medium chokepoint rule `aws_eks_access_entry_write.yml`, not this high rule. One
+  CloudTrail `AssociateAccessPolicy` record cannot weigh one namespace against another: an
+  allowlist of "sensitive namespaces" would be deployment-specific and attacker-evadable
+  (the attacker scopes to whichever namespace holds the target Secret).
+- **Evidence**: probe — the attack fixture's `AssociateAccessPolicy` of
+  `AmazonEKSSecretReaderPolicy` at cluster scope, rewritten with `accessScope.type:
+  namespace` and `accessScope.namespaces: ["kube-system"]`, fires the chokepoint rule but
+  not the graded rule (`sigma_eval.py`; see [Reproducing a probe](#reproducing-a-probe)).
+  The graded sidecar near-miss `namespace-scope-breaks-scope` already shows that flipping
+  `accessScope.type` to `namespace` (ClusterAdmin case) stops the graded rule firing.
+- **Fix**: a per-deployment list of sensitive namespaces feeds a graded namespace tier (a
+  second rule, or a SIEM enrichment field). Until then, baseline the IAM principals that
+  manage access entries and triage chokepoint hits whose `accessScope.namespaces` names a
+  sensitive namespace.
+
+### KTBD-L2. aws_eks_access_entry_cluster_admin_policy: no safe Sigma predicate for a cross-account grant
+
+- **Rule**: [`sigma/T1098.006/aws_eks_access_entry_cluster_admin_policy.yml`](sigma/T1098.006/aws_eks_access_entry_cluster_admin_policy.yml) (level high).
+- **Kind**: false negative (documented). **Severity**: low.
+- **Problem**: a `STANDARD` access entry may name a principal in another AWS account, and
+  granting such an external principal standing access is a distinct, higher-suspicion
+  signal. Any `contains`-family test that the recipient account ID is a substring of
+  `principalArn` (the dynamic `principalArn|fieldref|contains: recipientAccountId`, or the
+  literal `principalArn|contains: '<home-account>'`) goes **quiet** when the attacker names
+  its own role with the victim account ID (`role/trr9032-123456789012-ext`): the ID is then
+  a substring of `principalArn`, the filter matches, and `not filter` drops the record. So
+  no `contains` provenance predicate raises fidelity on the cross-account form safely. (A
+  cross-account grant of a cluster-admin / reads-Secrets policy **at cluster scope** still
+  fires the graded rule, which reads no account field; and any cross-account access-entry
+  write fires the chokepoint. The gap is only the *cross-account elevation* of an otherwise
+  low-tier grant.)
+- **Evidence**: probe (`sigma_eval.py`; see [Reproducing a probe](#reproducing-a-probe)) on
+  records with `recipientAccountId` `123456789012` and the URL-encoded `principalArn` an
+  `AssociateAccessPolicy` carries. The **real `|fieldref` form runs here** — pySigma's SQLite
+  backend compiles `requestParameters.principalArn|fieldref|contains: recipientAccountId` to a
+  column-reference comparison (`requestParameters.principalArn LIKE '%' || ... recipientAccountId
+  ... || '%'`): `sel and not (requestParameters.principalArn|fieldref|contains:
+  recipientAccountId)` fires on an off-account role
+  (`...%3A210987654321%3Arole%2Ftrr9032-ext`) but stays silent on the embedded-ID evasion
+  (`...%3A210987654321%3Arole%2Ftrr9032-123456789012-ext`), because the victim ID is then a
+  substring of `principalArn`. The equivalent literal `principalArn|contains: '123456789012'`
+  has the identical flaw. The portable sound form (below) catches the embedded-ID evasion and
+  stays silent on the org accounts.
+- **Fix**: read only the account field of the (URL-encoded) ARN at the Sigma **condition**
+  level — a selection `principalArn|re: 'arn%3Aaws%3Aiam%3A%3A[0-9]{12}%3A'` minus a filter
+  `principalArn|re: 'arn%3Aaws%3Aiam%3A%3A(<org-account-1>|<org-account-2>)%3A'` of the org's
+  own account IDs (`sel_external and not filter_org_accounts`). Both patterns are in the
+  enforced portable `|re` subset (no `(?` group), so they pass `check_sigma_regex --require-re2`
+  and compile under Python `re` and RE2 — unlike a `(?!...)` negative-lookahead anchor, which
+  RE2 and `check_sigma_regex` reject. The org-account allowlist is operator-specific, so this
+  form is documented, not shipped. Baseline external-account principal ARNs on access entries.
 
 ## Checks to add
 
