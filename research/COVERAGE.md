@@ -7,8 +7,8 @@ Mapped to ATT&CK, 29 of 30 techniques have a rule (97%). Counted by execution pa
 | Status | Procedures | Share | Meaning |
 |--------|-----------:|------:|---------|
 | Proven | 66 | 45% | emulated, validated in CI, no open defect |
-| Proven, open defect | 40 | 27% | validated in CI; a known miss or noise is tracked |
-| Claimed | 14 | 10% | a rule maps to it, but this procedure is not emulated, has no per-procedure gate yet, or the rule is in no validator |
+| Proven, open defect | 42 | 29% | validated in CI; a known miss or noise is tracked |
+| Claimed | 12 | 8% | a rule maps to it, but this procedure is not emulated, has no per-procedure gate yet, or the rule is in no validator |
 | Sensor only | 4 | 3% | needs a sensor that no Sigma rule reads |
 | Gap | 22 | 15% | researched, no detection |
 
@@ -17,7 +17,7 @@ Mapped to ATT&CK, 29 of 30 techniques have a rule (97%). Counted by execution pa
 | Platform | Procedures | Proven | Proven, open defect | Claimed | Sensor only | Gap |
 |----------|-----------:|------:|------:|------:|------:|------:|
 | Linux | 7 | 5 | 0 | 0 | 2 | 0 |
-| Kubernetes | 78 | 36 | 35 | 2 | 2 | 3 |
+| Kubernetes | 78 | 36 | 37 | 0 | 2 | 3 |
 | AWS | 36 | 15 | 4 | 6 | 0 | 11 |
 | Azure | 13 | 5 | 0 | 4 | 0 | 4 |
 | GCP | 12 | 5 | 1 | 2 | 0 | 4 |
@@ -58,7 +58,7 @@ Each procedure letter is followed by its status: **P** proven, **D** proven with
 | [TRR9028](trr9028/k8s/README.md) | Storage Destruction via PVC and PV Deletes (Kubernetes) | T1485 | Kubernetes | 1/4 | A:**D** B:**D** C:**D** D:P |
 | [TRR9029](trr9029/k8s/README.md) | Inhibit Recovery by Destroying Snapshots and Velero Backups (Kubernetes) | T1490 | Kubernetes | 0/5 | A:**D** B:**D** C:**D** D:**D** E:**D** |
 | [TRR9030](trr9030/k8s/README.md) | Pod-Bound Service Account Token Used From An Unexpected Source (Kubernetes) | T1528 | Kubernetes | 1/1 | A:P |
-| [TRR9031](trr9031/k8s/README.md) | Lookalike Pod With a Controller-Generated Name (Kubernetes) | T1036.005 | Kubernetes | 0/2 | A:**C** C:**C** |
+| [TRR9031](trr9031/k8s/README.md) | Lookalike Pod With a Controller-Generated Name (Kubernetes) | T1036.005 | Kubernetes | 0/2 | A:**D** C:**D** |
 | [TRR9032](trr9032/aws/README.md) | EKS Access-Entry Backdoor in CloudTrail (AWS) | T1098.006, T1098.003 | AWS | 2/4 | A:P B:P C:**C** D:**G** |
 | [TRR9033](trr9033/k8s/README.md) | Service Exposure Through a NodePort or LoadBalancer Service (Kubernetes) | T1133 | Kubernetes | 0/3 | A:**D** B:**D** C:**D** |
 | [TRR9034](trr9034/k8s/README.md) | Malicious Image Surfaced by an Admission-Policy Verdict (Kubernetes) | T1204.003 | Kubernetes | 3/3 | A:P B:P C:P |
@@ -105,8 +105,6 @@ Each procedure letter is followed by its status: **P** proven, **D** proven with
 | `TRR9017.AZR.E` | Direct Graph creation of the grant | Claimed | backlog | `entra_illicit_oauth_consent_grant` |
 | `TRR9018.GCP.B` | Loosen an existing provider trust | Claimed | documented | `gcp_workload_identity_pool_provider_created` |
 | `TRR9020.GCP.B` | Loosen an existing workforce provider trust | Claimed | documented | `gcp_workforce_pool_provider_no_attribute_condition` |
-| `TRR9031.K8S.A` | ReplicaSet-shaped explicit name (any namespace) | Claimed | not listed | `k8s_pod_controller_name_mimicry` (K54, K55) |
-| `TRR9031.K8S.C` | DaemonSet/Job-shaped explicit name (control-plane namespace) | Claimed | not listed | `k8s_pod_controller_name_mimicry` (K54, K55) |
 | `TRR9032.AWS.C` | Grading boundary (View / namespace scope) | Claimed | backlog | `aws_eks_access_entry_write` |
 | `TRR9004.K8S.F` | Map an IAM principal through the EKS aws-auth ConfigMap | Proven, open defect | built | `k8s_eks_aws_auth_configmap_modified` (K28) |
 | `TRR9006.K8S.E` | Read a mounted token off disk (the gap) | Proven, open defect | built | `linux_k8s_sa_token_read` (L16) |
@@ -145,6 +143,8 @@ Each procedure letter is followed by its status: **P** proven, **D** proven with
 | `TRR9029.K8S.C` | Delete a Velero Schedule | Proven, open defect | built | `k8s_snapshot_or_backup_destroyed` (K51, K52) |
 | `TRR9029.K8S.D` | Delete a Velero BackupStorageLocation | Proven, open defect | built | `k8s_snapshot_or_backup_destroyed` (K51, K52) |
 | `TRR9029.K8S.E` | Create a Velero DeleteBackupRequest | Proven, open defect | built | `k8s_snapshot_or_backup_destroyed` (K51, K52) |
+| `TRR9031.K8S.A` | ReplicaSet-shaped explicit name (any namespace) | Proven, open defect | built | `k8s_pod_controller_name_mimicry` (K54, K55) |
+| `TRR9031.K8S.C` | DaemonSet/Job-shaped explicit name (control-plane namespace) | Proven, open defect | built | `k8s_pod_controller_name_mimicry` (K54, K55) |
 | `TRR9033.K8S.A` | Create a NodePort Service | Proven, open defect | built | `k8s_service_exposed_nodeport_loadbalancer` (K58, K59) |
 | `TRR9033.K8S.B` | Create a LoadBalancer Service | Proven, open defect | built | `k8s_service_exposed_nodeport_loadbalancer` (K58, K59) |
 | `TRR9033.K8S.C` | JSON patch of /spec/type to LoadBalancer | Proven, open defect | built | `k8s_service_exposed_nodeport_loadbalancer` (K58, K59) |

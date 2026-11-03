@@ -281,8 +281,8 @@ and the label (C), never the pod name, which keeps the controller shape for the 
 
 | Procedure | Test | Status |
 |-----------|------|--------|
-| A | [`atomics/T1036.005/src/emulate.sh`](../../../atomics/T1036.005/) `a` | built |
-| C | [`atomics/T1036.005/src/emulate.sh`](../../../atomics/T1036.005/) `c` | built |
+| TRR9031.K8S.A | [`atomics/T1036.005/src/emulate.sh`](../../../atomics/T1036.005/) `a` | built |
+| TRR9031.K8S.C | [`atomics/T1036.005/src/emulate.sh`](../../../atomics/T1036.005/) `c` | built |
 
 ## Detections
 

@@ -59,7 +59,8 @@ Kubernetes authenticates clients by x509 client certificate as well as by bearer
 A certificate signed by the cluster CA with the `kubernetes.io/kube-apiserver-client`
 signer authenticates to the API server as the certificate's subject: the Common Name
 (CN) is the username and each Organization (O) is a group
-(kubernetes v1.36.4 `staging/src/k8s.io/api/certificates/v1/types.go` L149-152). An
+(kubernetes v1.36.4 `staging/src/k8s.io/apiserver/pkg/authentication/request/x509/x509.go`
+`CommonNameUserConversion`, L294/L296). An
 adversary who can create and approve CSRs can therefore mint a credential for any
 user/group that already has RBAC — a self-contained persistence foothold.
 

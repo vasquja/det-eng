@@ -9,7 +9,7 @@
 | Tactics      | Impact |
 | Platforms    | Kubernetes |
 | Contributors | det-eng |
-| Status       | experimental |
+| Status       | draft |
 
 ### Scope Statement
 

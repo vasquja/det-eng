@@ -2142,8 +2142,9 @@ the current ones.
      single rule cannot pair the two legs. The rule ships the two legs as two selections
      and leaves pairing to a correlation or triage.
 - **Evidence**: *source* — the subject-restriction plugin cited above, and
-  kubernetes v1.36.4 `staging/src/k8s.io/api/certificates/v1/types.go` L149-152 (the CN
-  is the username, each O a group). *lab* — on a local kube-apiserver v1.36.4 lab a
+  kubernetes v1.36.4 `staging/src/k8s.io/apiserver/pkg/authentication/request/x509/x509.go`
+  `CommonNameUserConversion` L294/L296 (the CN is the username, each O a group). *lab* — on
+  a local kube-apiserver v1.36.4 lab a
   `kubernetes.io/kube-apiserver-client` CSR requesting the `system:masters` group was
   refused with 403 "use of kubernetes.io/kube-apiserver-client signer with
   system:masters group is not allowed"; an ordinary-subject CSR was accepted (201) and

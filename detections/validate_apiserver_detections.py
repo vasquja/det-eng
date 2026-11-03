@@ -32,6 +32,9 @@ key on the same API server audit log (plus one node runtime sensor rule):
                                            non-node caller
   * TRR9033 (T1133, service exposure)    - core Service create/update/patch whose
                                            spec.type is NodePort or LoadBalancer
+  * TRR9034 (T1204.003, malicious image via admission-policy verdict) - the reference
+                                           ValidatingAdmissionPolicy verdict marker
+                                           (validation_failure annotation / deny message)
   * TRR9035 (T1098.006/T1136, CSR client-cert persistence) - a kube-apiserver-client CSR
                                            create (scoped by signerName) + its approval
 

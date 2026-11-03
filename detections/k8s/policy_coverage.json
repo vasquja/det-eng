@@ -651,7 +651,7 @@
     "near-miss": 3,
     "positive": 3
    },
-   "cases_sha256": "bcc2365db5a33867b5cec90437f9de0f1cae0c9c00ee7b5187a08b6014edf97e",
+   "cases_sha256": "f643ddfe4d836e5c6a5cb1c9ae773dbec631493a24227b0ee18a0cf5cffc1633",
    "home_policy": "lab-apiserver",
    "level": "medium",
    "needs": {

@@ -21,11 +21,19 @@ run-name: ${{ inputs.label && format('{0} [{1}]', github.workflow, inputs.label)
 #   - TRR9027 (cluster DNS poisoning, T1565.001): kube-system DNS ConfigMap write + Corefile grade,
 #                                         and the OpenShift DNS objects (openshift-dns/dns-default,
 #                                         dnses.operator.openshift.io), emulated inert on kind
+#   - TRR9028 (storage destruction, T1485): PVC/PV delete/deletecollection chokepoint,
+#                                         and the PV reclaim-policy flip to Delete -> audit -> Sigma
+#   - TRR9029 (inhibit recovery, T1490): VolumeSnapshot/VolumeSnapshotContent and Velero
+#                                         Schedule/BackupStorageLocation deletes + DeleteBackupRequest
+#                                         create -> audit -> Sigma
 #   - TRR9030 (steal application access token, T1528): pod-bound SA token used off-source -> audit -> Sigma
 #   - TRR9031 (lookalike pod name, T1036.005): explicit controller-shaped pod name by a
 #                                         non-node caller -> audit -> Sigma
 #   - TRR9033 (service exposure, T1133): core Service create/update/patch whose spec.type is
 #                                         NodePort or LoadBalancer -> audit -> Sigma
+#   - TRR9034 (malicious image via admission-policy verdict, T1204.003): a workload the
+#                                         reference ValidatingAdmissionPolicy judged a violation
+#                                         (validation_failure annotation / deny message) -> audit -> Sigma
 #   - TRR9035 (CSR client-cert persistence, T1098.006/T1136): a kube-apiserver-client CSR
 #                                         create (signerName) + its approval -> audit -> Sigma
 #
