@@ -505,6 +505,18 @@
         "azure-entra-audit-appmgmt": 0
       }
     },
+    "T1528/k8s_pod_token_used_off_source.yml": {
+      "actors": {},
+      "distinct_actors": 0,
+      "events": 2666,
+      "hits": 0,
+      "rate_per_10k": 0.0,
+      "slices": {
+        "k8s-audit-control-plane": 0,
+        "k8s-audit-gitops-ci": 0,
+        "k8s-audit-human-operators": 0
+      }
+    },
     "T1537/aws_efs_file_system_policy_made_public.yml": {
       "actors": {},
       "distinct_actors": 0,

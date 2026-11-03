@@ -172,8 +172,16 @@ GKE_CREATE_NAME = (
     "of failed creates with no name); the native Event's objectRef.name comes from the "
     "request body (empty for generateName). So an objectRef.name item on such a create can "
     "differ on GKE. A live GKE capture (issue #55) settles it")
+GKE_POD_TOKEN = (
+    "GKE's AuditLog.authenticationInfo records principalEmail only, not the Kubernetes "
+    "user.extra claims (no pod-name, node-name or credential-id; googleapis "
+    "google/cloud/audit/audit_log.proto), so the pod-binding marker is NOT_PORTABLE, and "
+    "GKE records the source as a single callerIp (protoPayload.requestMetadata.callerIp), "
+    "not the sourceIPs array, so the anchored last-element filter has no array to isolate. "
+    "Neither this single-record rule nor the credential-id correlation runs on GKE Cloud "
+    "Audit Logs. A live GKE capture (issue #55) settles it")
 REASONS = {"GKE_JSON_PATCH": GKE_JSON_PATCH, "KEY_ORDER": KEY_ORDER,
-           "GKE_CREATE_NAME": GKE_CREATE_NAME}
+           "GKE_CREATE_NAME": GKE_CREATE_NAME, "GKE_POD_TOKEN": GKE_POD_TOKEN}
 
 # Proposed in the Wave 4 pull request (managed-cluster portability); a human approves
 # the entries by merging it. Regenerate the text with --propose, then review it.
@@ -207,6 +215,12 @@ EXPECTED_LOSS = {
     ("gke", "T1485/k8s_volume_reclaim_set_to_delete.yml"): {
         "reclaim-set-delete-jsonpatch": ExpectedLoss(
             GKE_JSON_PATCH, "all: blocks sel_reclaim_jsonpatch"),
+    },
+    ("gke", "T1528/k8s_pod_token_used_off_source.yml"): {
+        "in-pod-use-benign": ExpectedLoss(
+            GKE_POD_TOKEN, "all: blocks filter_incluster_last_source"),
+        "xff-prepended-last-incluster": ExpectedLoss(
+            GKE_POD_TOKEN, "all: blocks filter_incluster_last_source"),
     },
     ("gke", "T1546/k8s_admission_webhook_repointed_to_url.yml"): {
         "jsonpatch-add-url-value-first": ExpectedLoss(
@@ -596,6 +610,9 @@ NOT_PORTABLE = {
         "filter_dry_run_query.requestURI",
         "sel_no_request_uri.requestURI",
     ),
+    ("gke", "T1528/k8s_pod_token_used_off_source.yml"): (
+        "selection_pod_bound_token.user.extra.authentication.kubernetes.io/pod-name",
+    ),
     ("gke", "T1546/k8s_admission_webhook_created.yml"): (
         "select_adm_ssa_create.responseStatus.code",
     ),
@@ -710,12 +727,15 @@ def gke_method_and_resource(ev, ref_name_on_create=False):
     return method, "/".join(parts)
 
 
-def convert_gke(ev, keep_bodies=False, ref_name_on_create=False):
+def convert_gke(ev, keep_bodies=False, ref_name_on_create=False, source_array=False):
     """audit.k8s.io/v1 Event -> one GKE Cloud Logging LogEntry (protoPayload AuditLog).
 
-    The two options are counterfactuals that prove an EXPECTED_LOSS reason: keep_bodies
-    keeps a body that is not an object (GKE_JSON_PATCH), ref_name_on_create takes a
-    create's name from objectRef.name (GKE_CREATE_NAME)."""
+    The options are counterfactuals that prove an EXPECTED_LOSS reason: keep_bodies keeps a
+    body that is not an object (GKE_JSON_PATCH), ref_name_on_create takes a create's name
+    from objectRef.name (GKE_CREATE_NAME), and source_array keeps callerIp as the whole
+    sourceIPs array as JSON text instead of its first element (GKE_POD_TOKEN: GKE records
+    one callerIp, not the array, so a rule that reads the last sourceIPs entry cannot
+    apply)."""
     if ref_name_on_create:
         method, resource = gke_method_and_resource(ev, ref_name_on_create=True)
     else:
@@ -734,7 +754,7 @@ def convert_gke(ev, keep_bodies=False, ref_name_on_create=False):
         pp["authenticationInfo"] = auth
     meta = {}
     if ev.get("sourceIPs"):
-        meta["callerIp"] = ev["sourceIPs"][0]
+        meta["callerIp"] = json.dumps(ev["sourceIPs"]) if source_array else ev["sourceIPs"][0]
     if "userAgent" in ev:
         meta["callerSuppliedUserAgent"] = ev["userAgent"]
     if meta:
@@ -849,6 +869,14 @@ def convert_gke_ref_name(ev):
     return convert_gke(ev, ref_name_on_create=True)
 
 
+def convert_gke_source_array(ev):
+    """convert_gke, but callerIp keeps the whole sourceIPs array as JSON text: the
+    counterfactual that proves a GKE_POD_TOKEN difference comes from GKE recording one
+    callerIp (sourceIPs[0]) instead of the array, so the rule's anchored last-entry
+    filter cannot apply."""
+    return convert_gke(ev, source_array=True)
+
+
 def gke_dropped(field, event):
     """The transform drops a body that is not an object: AuditLog.request is a Struct."""
     return field in ("requestObject", "responseObject") and field in event \
@@ -878,7 +906,8 @@ PROVIDERS = {
                     "GKE Cloud Audit Logs (Cloud Logging LogEntry JSON; reads only with Data "
                     "Access logs on: see loses_positive_without_reads)", gke_dropped,
                     {"GKE_JSON_PATCH": convert_gke_keeping_bodies,
-                     "GKE_CREATE_NAME": convert_gke_ref_name}, None),
+                     "GKE_CREATE_NAME": convert_gke_ref_name,
+                     "GKE_POD_TOKEN": convert_gke_source_array}, None),
     # No pipeline: the EKS CloudWatch message (and any raw-JSON store) IS the native Event.
     # This mode only shows which rules read a list as its JSON text, which a backend that
     # explodes JSON arrays into multi-valued fields cannot match. It never fails.

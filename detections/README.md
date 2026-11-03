@@ -1065,7 +1065,7 @@ telemetry, so this repository records the layer as out of scope (vetted NO-GO,
 2026-10-20, in the technique-selection ledger). Falco's stable, incubating and sandbox
 rules are the reference there.
 
-## Kubernetes API server detections (TRR9004–9010, 9025–9029)
+## Kubernetes API server detections (TRR9004–9010, 9025–9030)
 
 Several more Kubernetes techniques key on the same API server **audit log**, so one
 shared `kind` cluster, one audit policy (`k8s/audit-policy-apiserver.yaml`), one
@@ -1086,6 +1086,7 @@ validator (`validate_apiserver_detections.py`), and one workflow
 | TRR9027 | Cluster DNS poisoning (T1565.001) | `sigma/T1565.001/k8s_coredns_configmap_modified.yml` + a Corefile grader | Metadata + RequestResponse (the three DNS ConfigMaps) + Request (kube-system ConfigMap creates; drop that rule where Helm stores releases in kube-system ConfigMaps); OpenShift (E, F): RequestResponse for `openshift-dns/dns-default` update/patch/delete and `dnses.operator.openshift.io` update/patch, Request for `openshift-dns` ConfigMap creates and `dnses` create/delete/deletecollection |
 | TRR9028 | Storage destruction (T1485) | `sigma/T1485/k8s_storage_volume_deleted.yml` (PVC/PV delete/deletecollection chokepoint; storage controllers filtered by identity) + `k8s_volume_reclaim_set_to_delete.yml` (a PV patch that sets the reclaim policy to Delete) | Metadata to fire; PVC/PV deletes at Request, so a dry run's DeleteOptions body is in the record; PV update/patch at Request for the reclaim grader |
 | TRR9029 | Inhibit recovery (T1490) | `sigma/T1490/k8s_snapshot_or_backup_destroyed.yml` (one chokepoint: snapshot/Velero deletes + DeleteBackupRequest create) | Metadata (the snapshot.storage.k8s.io and velero.io CRDs log at the catch-all; no body row needed) |
+| TRR9030 | Pod-bound SA token off its source (T1528) | `sigma/T1528/k8s_pod_token_used_off_source.yml` (the `pod-name` provenance marker vs the last `sourceIPs` entry) | Metadata (the markers and `sourceIPs` are request attributes on every record; no body) |
 
 The audit **level** is per technique: pods, workload controllers, RBAC, and
 admission-webhook creates are logged at `Request` so `requestObject` carries the

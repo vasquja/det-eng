@@ -403,8 +403,12 @@
     }
    }
   },
-  "T1490/k8s_snapshot_or_backup_destroyed.yml": {
-   "list_text_items": [],
+  "T1528/k8s_pod_token_used_off_source.yml": {
+   "list_text_items": [
+    "filter_incluster_last_source.sourceIPs",
+    "sel_no_source.sourceIPs",
+    "selection_pod_bound_token.user.extra.authentication.kubernetes.io/pod-name"
+   ],
    "loses_positive_without_reads": {
     "aksauditadmin": false,
     "gke_admin_activity": false
@@ -418,15 +422,23 @@
      "unexpected": {}
     },
     "exploded": {
-     "loses_positive": false,
-     "status": "same"
+     "loses_positive": true,
+     "status": "diverges"
     },
     "gke": {
      "errors": [],
-     "expected_loss": {},
+     "expected_loss": {
+      "in-pod-use-benign": {
+       "diff": "all: blocks filter_incluster_last_source",
+       "why": "GKE_POD_TOKEN"
+      },
+      "xff-prepended-last-incluster": {
+       "diff": "all: blocks filter_incluster_last_source",
+       "why": "GKE_POD_TOKEN"
+      }
+     },
      "not_portable": {
-      "filter_dry_run_query.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded",
-      "sel_no_request_uri.requestURI": "GKE pipeline cannot map this field: GKE has no request URI: resourceName is the object path, and the query string (dryRun, command, ...) is not recorded"
+      "selection_pod_bound_token.user.extra.authentication.kubernetes.io/pod-name": "GKE pipeline cannot map this field: AuditLog.authenticationInfo records principalEmail only (no groups, uid or extra)"
      },
      "status": "not_portable",
      "unexpected": {}
@@ -1801,10 +1813,10 @@
    "rules_losing_a_positive": 8
   },
   "exploded": {
-   "diverges": 16,
+   "diverges": 17,
    "expected_loss": 0,
    "not_portable": 0,
-   "same": 16
+   "same": 15
   },
   "gke": {
    "diverges": 0,

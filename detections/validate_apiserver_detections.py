@@ -25,6 +25,9 @@ key on the same API server audit log (plus one node runtime sensor rule):
   * TRR9029 (T1490, inhibit recovery)    - VolumeSnapshot/VolumeSnapshotContent and Velero
                                            Schedule/BackupStorageLocation deletes +
                                            DeleteBackupRequest create
+  * TRR9030 (T1528, steal app access token) - pod-bound SA token used off its source: the
+                                           user.extra pod-name marker vs the last
+                                           sourceIPs entry
 
 The loop this proves, for each match-gated rule:
 
@@ -736,6 +739,41 @@ def win(gate, window, code=OK):
     return g
 
 
+# --- TRR9030 (T1528): pod-bound SA token used from an unexpected source -------------
+# The inert service account trr9030-sa; its pod-bound token (the pod-name extra, set
+# server-side from the signed claim) is used off-source in Procedure A (from the runner,
+# which the apiserver records as the docker-bridge gateway, outside the pod CIDR) and
+# in-pod in the benign baseline B (the pod's own mounted token, from the pod IP). Both
+# gates read only request-attribute fields the audit log carries at Metadata (no body).
+TRR9030_SA = "system:serviceaccount:trr9030-ns:trr9030-sa"
+
+
+def _last_source_ip(e):
+    """The LAST sourceIPs entry (the apiserver's TCP peer; the only trustworthy one), from
+    the flattened JSON-text array."""
+    s = e.get("sourceIPs")
+    try:
+        arr = json.loads(s) if isinstance(s, str) else s
+        return arr[-1] if arr else None
+    except (ValueError, TypeError, IndexError):
+        return None
+
+
+def pod_bound_token(e):
+    return bool(str(e.get("user.extra.authentication.kubernetes.io/pod-name") or ""))
+
+
+pod_bound_token.describe = "user.extra 'authentication.kubernetes.io/pod-name' present"
+
+
+def off_pod_cidr(e):
+    ip = _last_source_ip(e)
+    return isinstance(ip, str) and not ip.startswith("10.244.")
+
+
+off_pod_cidr.describe = "last sourceIPs entry outside the pod CIDR 10.244.0.0/16"
+
+
 # (technique folder, rule file, source, label, note, gate). Order is report order.
 # The gate is one callable (any marked record passes), or a list of (procedure label,
 # gate) pairs: then EVERY procedure must have its own record (C1-1). A rec(window=...)
@@ -1100,6 +1138,18 @@ MANIFEST = [
      "reclaim-policy flip grader: a PV patch sets persistentVolumeReclaimPolicy Delete (Request)",
      [("D", rec(verb="patch", resource="persistentvolumes", name="trr9028-pv-d",
                 user=non_system, window=("9028", "d")))]),
+    # TRR9030 A: the pod-bound token (pod-name present) used off-source. The emulation
+    # replays it with `kubectl auth whoami` (a create of selfsubjectreviews, allowed for
+    # every authenticated identity, answered 201) from the runner, so the last sourceIPs
+    # entry is the off-pod docker-bridge gateway. The gate needs the trr9030 SA, the
+    # pod-name marker and an off-pod-CIDR last source, so the pod's own in-cluster call
+    # (the benign baseline B, proven absent below) cannot stand in for it.
+    ("T1528", "k8s_pod_token_used_off_source.yml", "audit", "9030 A",
+     "pod-bound SA token used off-source chokepoint (pod-name marker vs the last sourceIPs "
+     "entry)", [
+        ("A", rec(verb="create", resource="selfsubjectreviews", sub=None,
+                  user=field_eq("user.username", TRR9030_SA),
+                  also=all_of(pod_bound_token, off_pod_cidr), window=("9030", "a")))]),
 ]
 
 
@@ -1116,6 +1166,17 @@ ABSENCE = [
     ("9006 E gap", "T1552.007",
      ["k8s_secret_access.yml", "k8s_secret_token_request.yml"],
      ("9006", "e"), non_system),
+    # TRR9030 B (benign baseline, not a technique procedure): the SAME pod-bound token
+    # used from the pod's OWN IP (in-cluster). The off-source rule must match NONE of the
+    # trr9030 SA's requests in B's window -- the hard benign baseline that differs from the
+    # positive A only on the last sourceIPs entry, proving the discriminator live. Fails if
+    # B did not run OR its in-pod call was rejected: the atomic runs that call with
+    # curl --fail, so a non-2xx answer (an absent/expired token recorded as anonymous, a
+    # 5xx) makes B exit non-zero and this check MISS, never a vacuous pass on a window with
+    # no trr9030-sa record.
+    ("9030 B incluster", "T1528",
+     ["k8s_pod_token_used_off_source.yml"],
+     ("9030", "b"), field_eq("user.username", TRR9030_SA)),
 ]
 
 
@@ -1889,6 +1950,7 @@ def write_json(path, report):
 
 def main():
     ap = argparse.ArgumentParser(description="Validate TRR9004-9010, 9025-9028 K8s detections.")
+    ap = argparse.ArgumentParser(description="Validate TRR9004-9010, 9025-9027, 9030 K8s detections.")
     ap.add_argument("--audit-log", default="/tmp/kube-apiserver-audit.log",
                     help="Path to the API server audit log (JSON lines).")
     ap.add_argument("--cri-log",
@@ -2299,6 +2361,7 @@ def validate(args, report):
               f"rule(s) skipped for lack of a log.{xnote}")
         return 0
     print("All TRR9004-9010, 9025-9028 match-gated detections fired on the emulated "
+    print("All TRR9004-9010, 9025-9027, 9030 match-gated detections fired on the emulated "
           f"telemetry.{xnote}")
     return 0
 

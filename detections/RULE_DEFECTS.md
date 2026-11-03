@@ -95,6 +95,7 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [KTBD-H2](#ktbd-h2-k8s_storage_volume_deleted-the-storage-controller-filters-trust-the-identity) | `T1485/k8s_storage_volume_deleted` | the controller filters read only `user.username` (and the teardown verb), so a delete with a stolen controller/provisioner token is filtered, and a managed-platform CSI provisioner service account (not the kind `local-path` identity) fires unless an operator baselines it | evasion, portability | low |
 | [KTBD-I1](#ktbd-i1-k8s_snapshot_or_backup_destroyed-a-stolen-controller-token-evades-the-identity-filters) | `T1490/k8s_snapshot_or_backup_destroyed` | an actor with a stolen snapshot-controller or velero service-account token is suppressed by the controller identity filters | evasion | low |
 | [KTBD-I2](#ktbd-i2-k8s_snapshot_or_backup_destroyed-a-server-side-dry-run-delete-is-indistinguishable-from-a-real-delete-at-metadata-and-fires) | `T1490/k8s_snapshot_or_backup_destroyed` | kubectl's default `--dry-run=server` delete puts dryRun in the unlogged DeleteOptions body, so at the shipped Metadata policy its record is byte-identical to a real delete and the rule fires | false positive | low |
+| [KTBD-J1](#ktbd-j1-k8s_pod_token_used_off_source-the-single-record-off-source-compare-degrades-on-managed-clusters) | the TRR9030 single-record off-source rule, on EKS/GKE/AKS | on EKS/GKE/AKS the last `sourceIPs` entry is a konnectivity agent / load balancer / NAT peer, not the pod, so the single-record off-source compare degrades to an approximation (TRR9030 Procedure A); the portable fallback is the credential-id value_count correlation prototyped in the TRR | portability | medium |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
@@ -1924,6 +1925,51 @@ the current ones.
   does not log the body, so the repo does not carry that filter.
 - **Then**: the FP class is documented and accepted; a real delete still fires, and a
   query-form dry run (the dry-run control) stays quiet.
+### KTBD-J1. k8s_pod_token_used_off_source: the single-record off-source compare degrades on managed clusters
+
+- **Scope**: [`sigma/T1528/k8s_pod_token_used_off_source.yml`](sigma/T1528/k8s_pod_token_used_off_source.yml)
+  (level high), TRR9030 Procedure A. Platforms: EKS, GKE and AKS (any cluster where a pod
+  does not reach the API server over a direct, un-SNATed connection). As K38 to K42 and
+  K47, the rule is named in this **Scope** bullet, not in the Summary row's rule column or
+  a Rules bullet, so `research/tools/coverage_report.py` keeps the lab-proven Procedure A
+  Proven; whether a platform gap must mark it is a human decision.
+- **Kind**: portability. **Severity**: medium (the rule still catches a token used from a
+  truly external address, but cannot tell an off-pod in-cluster source from the pod's own
+  on a managed control plane).
+- **Problem**: the discriminator is the LAST `sourceIPs` entry, the API server's TCP peer
+  (audit `apis/audit/v1` types.go: all but the last are client-settable). On kind and
+  self-managed kubeadm a pod reaches the API server over the pod network with the
+  kindnet/CNI LOCAL carve-out, so the peer is the pod IP (10.244.x) and a pod-CIDR
+  allowlist works (the repo fixtures and the live kind run record 10.244.x for an in-pod
+  call and 172.18.0.1 for the off-pod runner). On EKS/GKE/AKS the managed control plane is
+  reached through a konnectivity-style agent, a VPC/VNet load balancer, a private endpoint,
+  or node SNAT, so the peer the API server records is that intermediary, not the pod. A
+  pod's own in-cluster call and a token replayed from another node then both present an
+  in-fabric address, and the single-record compare cannot separate them; the operator
+  often cannot enumerate a stable pod CIDR for the allowlist either. The server-set
+  provenance marker (pod-name) is unaffected -- it is the SOURCE half of the compare that
+  degrades, the same honest limit as TRR9011 (EC2 instance credentials off-instance) and
+  TRR9022 (EKS IRSA used off-cluster).
+- **Evidence**: *probe* -- `sigma_eval.py` on the rule shows the anchored `|re` isolates
+  the LAST array element: `["198.51.100.23", "10.244.0.31"]` (an X-Forwarded-For prepend
+  with an in-cluster peer) does not fire, `["10.244.0.31", "198.51.100.23"]` fires, whereas
+  `sourceIPs|cidr` compiles to a first/whole-element `LIKE '10.244.%'` and is wrong for
+  both (it never matches the `[`-prefixed array text, so it would fire on the in-pod call
+  too). The live kind run proves Procedure A (off-pod 172.18.0.1) fires and the in-pod
+  baseline (10.244.x) stays quiet. The managed-platform source-IP behaviour is from the
+  providers' connectivity design (konnectivity / private endpoints / node SNAT) and is
+  **unverified** on a live managed cluster (no managed-cluster capture here; the same
+  backlog as the other platform entries).
+- **Fix**: on a managed cluster, use the portable credential-id value_count correlation
+  prototyped in the TRR (one `JTI=` credential-id seen from two or more distinct source
+  IPs within a window), which needs no CIDR parameter and keys on the server-set
+  credential-id marker. It is not shipped as a live-gated rule here because the repo's
+  correlation backend keys on a `timestamp` column that a Kubernetes audit record
+  (`requestReceivedTimestamp`) does not carry; wiring that mapping into the k8s validators
+  and the simulator is a shared-tooling change deferred to a human. Where the operator CAN
+  pin the in-fabric source set (a fixed NAT/LB egress, a known node CIDR), add it to the
+  allowlist, as on a self-managed cluster.
+- **Then**: no case changes.
 
 ## Cloud (AWS, Azure, GCP)
 

@@ -2608,11 +2608,14 @@ def self_test():
               sorted(("T1565.001/k8s_coredns_corefile_poisoned.yml", "create", "",
                       "configmaps", "kube-system", nm, "Metadata", "Request")
                      for nm in ("coredns", "coredns-custom", "kube-dns")))
-        # It reads a request selection in every rule but the two impersonation rules
-        # (they select any request with an impersonatedUser).
+        # It reads a request selection (a resource/verb/subresource) in every rule but the
+        # two impersonation rules (they select any request with an impersonatedUser) and
+        # the pod-token-off-source rule (it selects any request by a pod-bound token from an
+        # off-source IP, whatever the resource).
         check(f"{RECOMMENDED} selection check: rules with no request selection",
               sorted(r for r in ranks if not rule_selections(r)[0]),
-              ["T1134/k8s_impersonation.yml", "T1134/k8s_impersonation_privileged.yml"])
+              ["T1134/k8s_impersonation.yml", "T1134/k8s_impersonation_privileged.yml",
+               "T1528/k8s_pod_token_used_off_source.yml"])
         # A selection it cannot expand is an error, not a pass.
         for label, sel, want in (
                 ("a resource missing from SELECTION_RESOURCES", {"resource": ["widgets"]}, 1),

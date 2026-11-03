@@ -211,8 +211,17 @@ reasoning survives. Append an entry per vet; keep it short.
   trustworthy entry and survives XFF prepending. Q4: nearest prior art Elastic 'Service Account Token or
   Certificate Access Followed by Kubernetes API Request' + 3 D4C sequences join on pod-name but need a runtime
   sensor and never compare markers to sourceIPs or key on credential-id/node-name; SigmaHQ/Splunk/Falco ship
-  none. Use-side sibling of TRR9006 (Procedure E gap) and k8s sibling of TRR9022. Deferred to build as TRR9030
-  (k8s), detections/sigma/T1528/.
+  none. Use-side sibling of TRR9006 (Procedure E gap) and k8s sibling of TRR9022. **Built as TRR9030**
+  (k8s, detections/sigma/T1528/k8s_pod_token_used_off_source.yml): the single-record off-source rule
+  (pod-name marker vs the anchored last sourceIPs entry) is shipped and proven live on kind (Procedure A fires
+  from the off-pod runner 172.18.0.1; the in-pod baseline from 10.244.x stays quiet, the 9030 B absence check);
+  0 benign-corpus hits (every corpus pod-bound record is pod-IP sourced). AKS converts SAME; GKE is NOT_PORTABLE
+  (AuditLog records principalEmail only, no user.extra, and one callerIp, not the sourceIPs array). DROPPED from
+  the ship: detection (2), the credential-id value_count correlation, is prototyped and proven in sigma_eval but
+  NOT shipped as a live rule -- the repo's correlation backend keys on a `timestamp` column that a k8s audit
+  record (requestReceivedTimestamp) does not carry (a shared-tooling change, a human decision). The
+  managed-cluster single-record degradation is RULE_DEFECTS KTBD-J1; the hostNetwork node-IP false positive is
+  in the rule's falsepositives.
 
 - **CSR client-certificate persistence (T1098.006/T1136) — LEAN-GO as a disclosed backstop (Q4 trodden; two
   proven build limits).** Q1 PASS: server-set objectRef.resource=certificatesigningrequests, verb=create,

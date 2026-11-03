@@ -1,5 +1,5 @@
 attack_technique: T1528
-display_name: "Steal Application Access Token (Entra illicit OAuth consent + device-code phishing)"
+display_name: "Steal Application Access Token (Entra illicit OAuth consent + device-code phishing; Kubernetes pod-bound token used off-source)"
 
 # Behavioral emulation for TRR9017. The live tests register a throwaway Entra app and
 # request high-privilege delegated scopes (or run a device-code sign-in) in your own
@@ -70,6 +70,37 @@ atomic_tests:
       elevation_required: false
       command: |
         bash #{source_dir}/emulate_entra_consent.sh d
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1528/src
+
+  # --- TRR9030 (Kubernetes, use-side): a pod-bound SA token used off its source ---
+  # CI validates this one on a live kind cluster (detections/validate_apiserver_detections.py);
+  # it is harmless (the service account holds no RBAC and the token only reflects the
+  # caller's identity via SelfSubjectReview). No credential reaches a command line or a log.
+  - name: "TRR9030.K8S.A — pod-bound service account token used from an unexpected source"
+    auto_generated_guid: b2c3d4e5-9030-4a1b-8c2d-1e2f3a4b5c60
+    description: |
+      Mints a pod-bound service-account token for the inert trr9030-sa (bound to a running
+      pod trr9030-user), then uses it with `kubectl auth whoami` FROM THE RUNNER, which the
+      API server records as the off-pod docker-bridge gateway (positive). The benign
+      baseline B makes the same call from INSIDE the pod with the pod's own mounted token,
+      so the API server records the pod IP; the rule's in-cluster-source filter suppresses
+      it. The off-source replay carries the server-set pod-name marker in user.extra, and
+      the last sourceIPs entry (the only trustworthy one) is outside the pod CIDR.
+      Chokepoint: a Kubernetes audit event whose user.username begins
+      system:serviceaccount:, whose user.extra 'authentication.kubernetes.io/pod-name' is
+      present, and whose LAST sourceIPs entry is outside the cluster's pod CIDR.
+      Rule: detections/sigma/T1528/k8s_pod_token_used_off_source.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh all
     input_arguments:
       source_dir:
         description: Path to the atomic source directory.
