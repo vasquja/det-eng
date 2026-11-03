@@ -227,29 +227,11 @@ atomic_tests:
       Rule: detections/sigma/T1098.006/aws_eks_access_entry_cluster_admin_policy.yml
     supported_platforms:
       - iaas:aws
-  # --- TRR9035 (CSR client-certificate persistence) ------------------------------
-  # Separate emulation (src/emulate_csr.sh); it touches none of the TRR9004 objects.
-  - name: "TRR9035.K8S.A — create a kube-apiserver-client CSR"
-    auto_generated_guid: d353b85d-cb29-45fd-9ba1-9d4a22902fbc
-    description: |
-      Creates a CertificateSigningRequest with signerName
-      kubernetes.io/kube-apiserver-client for an inert subject (CN=trr9035-persist,
-      O=trr9035-group — an identity that no RoleBinding or ClusterRoleBinding
-      references, so the issued certificate grants nothing). The private key stays in
-      a mode-600 temp file and is never sent; only the public CSR is submitted. This
-      is the create leg of the chokepoint: the audit record carries
-      requestObject.spec.signerName at Request level.
-      Rule: detections/sigma/T1098.006/k8s_csr_client_cert_minted.yml
-    supported_platforms:
-      - containers
     executor:
       name: bash
       elevation_required: false
       command: |
         bash #{source_dir}/emulate_eks_access_entry.sh a
-        bash #{source_dir}/emulate_csr.sh a
-      cleanup_command: |
-        kubectl delete certificatesigningrequest trr9035-persist --ignore-not-found
     input_arguments:
       source_dir:
         description: Path to the atomic source directory.
@@ -267,6 +249,48 @@ atomic_tests:
       Rule: detections/sigma/T1098.006/aws_eks_access_entry_cluster_admin_policy.yml
     supported_platforms:
       - iaas:aws
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_eks_access_entry.sh b
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1098.006/src
+
+  # --- TRR9035 (CSR client-certificate persistence) ------------------------------
+  # Separate emulation (src/emulate_csr.sh); it touches none of the TRR9004 objects
+  # and nothing in AWS. These tests run only emulate_csr.sh — the TRR9032 EKS
+  # live script (emulate_eks_access_entry.sh) is NEVER invoked here, so a Kubernetes
+  # CSR test can never make an AWS write even with TRR9032_LIVE=1 set.
+  - name: "TRR9035.K8S.A — create a kube-apiserver-client CSR"
+    auto_generated_guid: d353b85d-cb29-45fd-9ba1-9d4a22902fbc
+    description: |
+      Creates a CertificateSigningRequest with signerName
+      kubernetes.io/kube-apiserver-client for an inert subject (CN=trr9035-persist,
+      O=trr9035-group — an identity that no RoleBinding or ClusterRoleBinding
+      references, so the issued certificate grants nothing). The private key stays in
+      a mode-600 temp file and is never sent; only the public CSR is submitted. This
+      is the create leg of the chokepoint: the audit record carries
+      requestObject.spec.signerName at Request level.
+      Rule: detections/sigma/T1098.006/k8s_csr_client_cert_minted.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_csr.sh a
+      cleanup_command: |
+        kubectl delete certificatesigningrequest trr9035-persist --ignore-not-found
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1098.006/src
+
   - name: "TRR9035.K8S.B — approve the CSR"
     auto_generated_guid: 7482d3c0-05bb-48e8-8462-abe63428d76b
     description: |
@@ -283,7 +307,6 @@ atomic_tests:
       name: bash
       elevation_required: false
       command: |
-        bash #{source_dir}/emulate_eks_access_entry.sh b
         bash #{source_dir}/emulate_csr.sh b
       cleanup_command: |
         kubectl delete certificatesigningrequest trr9035-persist --ignore-not-found
