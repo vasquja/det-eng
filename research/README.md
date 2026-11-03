@@ -151,6 +151,7 @@ filing wave; ATT&CK revokes and renames IDs between releases.
 | TRR9032  | T1098.006 | EKS Access-Entry Backdoor in CloudTrail | AWS | [`trr9032/aws`](trr9032/aws/README.md) |
 | TRR9033  | T1133  | Service Exposure Through a NodePort or LoadBalancer Service | Kubernetes | [`trr9033/k8s`](trr9033/k8s/README.md) |
 | TRR9034  | T1204.003 | Malicious Image Surfaced by an Admission-Policy Verdict | Kubernetes | [`trr9034/k8s`](trr9034/k8s/README.md) |
+| TRR9035  | T1098.006, T1136 | CSR Client-Certificate Persistence | Kubernetes | [`trr9035/k8s`](trr9035/k8s/README.md) |
 
 Which Kubernetes rule works on which platform (EKS, AKS, GKE, OpenShift, k3s): [`detections/k8s/PLATFORMS.md`](../detections/k8s/PLATFORMS.md).
 

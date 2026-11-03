@@ -1065,7 +1065,7 @@ telemetry, so this repository records the layer as out of scope (vetted NO-GO,
 2026-10-20, in the technique-selection ledger). Falco's stable, incubating and sandbox
 rules are the reference there.
 
-## Kubernetes API server detections (TRR9004–9010, 9025–9031, 9033–9034)
+## Kubernetes API server detections (TRR9004–9010, 9025–9031, 9033–9035)
 
 Several more Kubernetes techniques key on the same API server **audit log**, so one
 shared `kind` cluster, one audit policy (`k8s/audit-policy-apiserver.yaml`), one
@@ -1090,6 +1090,7 @@ validator (`validate_apiserver_detections.py`), and one workflow
 | TRR9031 | Lookalike pod name (T1036.005) | `sigma/T1036.005/k8s_pod_controller_name_mimicry.yml` (a bare pod created with an explicit controller-shaped name by a non-node caller) | Metadata (the rule reads only objectRef/user/verb); pods create is at Request in the lab and recommended policies, which the validator's Procedure C gate uses for its `trr9031` label marker |
 | TRR9033 | Service exposure (T1133) | `sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml` (NodePort/LoadBalancer `spec.type`) | RequestResponse for core `services` create/update/patch (the create carries the body at Request; the JSON-patch form needs the stored object); `services/status` stays at the Metadata catch-all (the controller confounder) |
 | TRR9034 | Malicious image via an admission-policy verdict (T1204.003) | `sigma/T1204.003/k8s_admission_policy_image_violation.yml` (a policy-agnostic forwarder of a ValidatingAdmissionPolicy verdict on a workload: the `validation_failure` Audit annotation or the `denied request` Deny message) | Metadata (both markers; no body row needed, the existing pods/controllers Request rows carry them) |
+| TRR9035 | CSR client-cert persistence (T1098.006, T1136) | `sigma/T1098.006/k8s_csr_client_cert_minted.yml` (create scoped by `signerName` + approve of the approval subresource) | Request for the `certificatesigningrequests` create (so `spec.signerName` is logged; the public CSR carries no key), Metadata for the `certificatesigningrequests/approval` update |
 
 The audit **level** is per technique: pods, workload controllers, RBAC, and
 admission-webhook creates are logged at `Request` so `requestObject` carries the

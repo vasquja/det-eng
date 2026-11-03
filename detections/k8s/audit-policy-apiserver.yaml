@@ -367,6 +367,30 @@ rules:
       - group: ""
         resources: ["serviceaccounts", "serviceaccounts/token"]
 
+  # --- TRR9035: CertificateSigningRequest client-cert persistence ---
+  # A create of a certificatesigningrequests object at Request, so
+  # requestObject.spec.signerName (and spec.request, spec.usages) is present for
+  # k8s_csr_client_cert_minted.yml to scope the create leg to the
+  # kubernetes.io/kube-apiserver-client signer. spec.request is a PKCS#10 CSR (a public
+  # key and a subject), NOT a private key, so Request level copies no secret into the
+  # log (unlike Secrets and serviceaccounts/token above, which stay at Metadata). The
+  # approval subresource update at Metadata carries the verb, subresource, objectRef and
+  # approver identity the approve leg keys on; no body is needed there. Above the
+  # None/catch-all rules; nothing above sets a level for these requests, so this lowers
+  # nothing (a CSR request otherwise reaches the final Metadata catch-all).
+  # certificatesigningrequests/status stays at the Metadata catch-all (the signer writes
+  # the issued certificate there; the rule does not read it).
+  - level: Request
+    verbs: ["create"]
+    resources:
+      - group: "certificates.k8s.io"
+        resources: ["certificatesigningrequests"]
+  - level: Metadata
+    verbs: ["update"]
+    resources:
+      - group: "certificates.k8s.io"
+        resources: ["certificatesigningrequests/approval"]
+
   # --- Noise reduction: drop high-volume read traffic. Does NOT touch secrets ---
   - level: None
     verbs: ["get", "list", "watch"]

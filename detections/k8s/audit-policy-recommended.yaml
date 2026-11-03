@@ -187,6 +187,26 @@ rules:
       - group: ""
         resources: ["serviceaccounts", "serviceaccounts/token"]
 
+  # --- CertificateSigningRequest client-cert persistence ---
+  # Serves: T1098.006/k8s_csr_client_cert_minted. The create of a CSR at Request so the
+  # rule reads requestObject.spec.signerName (the create leg is scoped to
+  # kubernetes.io/kube-apiserver-client); spec.request is a PKCS#10 CSR (public key +
+  # subject), NOT a private key, so Request copies no secret (unlike Secrets and
+  # serviceaccounts/token above, which stay at Metadata). The approval subresource
+  # update at Metadata carries the verb, subresource, objectRef and approver identity
+  # the approve leg keys on. certificatesigningrequests/status reaches the catch-all at
+  # Metadata (the signer writes the issued certificate there; the rule does not read it).
+  - level: Request
+    verbs: ["create"]
+    resources:
+      - group: "certificates.k8s.io"
+        resources: ["certificatesigningrequests"]
+  - level: Metadata
+    verbs: ["update"]
+    resources:
+      - group: "certificates.k8s.io"
+        resources: ["certificatesigningrequests/approval"]
+
   # --- Command execution and tunnels at Metadata (no body needed) ---
   # Serves: T1609/k8s_pod_exec_attach (pods/exec, pods/attach, get for WebSocket and
   # create for SPDY), T1572/k8s_pod_portforward (pods/portforward), T1609/k8s_node_proxy_exec,

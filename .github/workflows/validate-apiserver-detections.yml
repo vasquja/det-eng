@@ -26,6 +26,8 @@ run-name: ${{ inputs.label && format('{0} [{1}]', github.workflow, inputs.label)
 #                                         non-node caller -> audit -> Sigma
 #   - TRR9033 (service exposure, T1133): core Service create/update/patch whose spec.type is
 #                                         NodePort or LoadBalancer -> audit -> Sigma
+#   - TRR9035 (CSR client-cert persistence, T1098.006/T1136): a kube-apiserver-client CSR
+#                                         create (signerName) + its approval -> audit -> Sigma
 #
 # A kind cluster runs on the ubuntu-latest runner with API server audit logging on
 # (pod creates, updates and patches; controller writes, deletes and deletecollections
@@ -761,6 +763,16 @@ jobs:
         # confined to the trr9034 namespace, and cleanup deletes the VAP, bindings and the
         # namespace. Creating/deleting the VAP also fires TRR9025/TRR9008 (expected).
         run: bash atomics/T1204.003/src/emulate.sh all
+      - &apiserver-emulate-9035
+        name: Emulate TRR9035 (CSR client-cert persistence, inert subject)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        # Create a kubernetes.io/kube-apiserver-client CSR (subject CN=trr9035-persist,
+        # O=trr9035-group — an identity no binding references) and approve it. The kind
+        # admin credential (cluster-admin) may create and approve CSRs; the issued
+        # certificate grants nothing, and cleanup deletes the CSR. Separate from the
+        # TRR9004 RBAC/aws-auth emulation in the same T1098.006 folder.
+        run: bash atomics/T1098.006/src/emulate_csr.sh all
 
       - &apiserver-collect
         name: Collect the audit log and the node sensor log
@@ -916,7 +928,7 @@ jobs:
         shell: bash
         run: |
           {
-            echo '## TRR9004-9010, 9025-9027, 9033 API server detection validation (emulate -> audit + node sensor -> Sigma)'
+            echo '## TRR9004-9010, 9025-9031, 9033-9035 API server detection validation (emulate -> audit + node sensor -> Sigma)'
             echo ''
             echo '```'
             cat /tmp/apival.out 2>/dev/null || echo '(no validator output captured)'
@@ -1031,6 +1043,7 @@ jobs:
       - *apiserver-emulate-9031
       - *apiserver-emulate-9033
       - *apiserver-emulate-9034
+      - *apiserver-emulate-9035
       - *apiserver-collect
 
       - name: Validate detections under the recommended policy (expected misses named)
@@ -1102,7 +1115,7 @@ jobs:
         shell: bash
         run: |
           {
-            echo '## Recommended audit policy: TRR9004-9010, 9025-9027, 9033 API server detection validation (--policy recommended)'
+            echo '## Recommended audit policy: TRR9004-9010, 9025-9031, 9033-9035 API server detection validation (--policy recommended)'
             echo ''
             echo '```'
             cat /tmp/apival.out 2>/dev/null || echo '(no validator output captured)'

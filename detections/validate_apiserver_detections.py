@@ -32,6 +32,8 @@ key on the same API server audit log (plus one node runtime sensor rule):
                                            non-node caller
   * TRR9033 (T1133, service exposure)    - core Service create/update/patch whose
                                            spec.type is NodePort or LoadBalancer
+  * TRR9035 (T1098.006/T1136, CSR client-cert persistence) - a kube-apiserver-client CSR
+                                           create (scoped by signerName) + its approval
 
 The loop this proves, for each match-gated rule:
 
@@ -1223,6 +1225,20 @@ MANIFEST = [
         ("C", rec(verb="create", resource="pods",
                   also=all_of(vap_audit_annotation, no_field("objectRef.name")),
                   window=("9034", "c")))]),
+    # TRR9035 (T1098.006 / T1136): CSR client-certificate persistence. A is the create
+    # of a kubernetes.io/kube-apiserver-client CSR (the create record is at Request, so
+    # the rule reads requestObject.spec.signerName); B is its approval, an update of the
+    # approval subresource (Metadata). Both name the trr9035-persist CSR. The gates match
+    # the emulation's own records; the rule then fires on them (the create by signerName,
+    # the approval by the approval subresource + a non-system approver).
+    ("T1098.006", "k8s_csr_client_cert_minted.yml", "audit", "9035 A-B",
+     "CSR client-auth create + approve chokepoint", [
+        ("A", rec(verb="create", resource="certificatesigningrequests",
+                  name="trr9035-persist", also=apigroup("certificates.k8s.io"),
+                  window=("9035", "a"))),
+        ("B", rec(verb="update", resource="certificatesigningrequests", sub="approval",
+                  name="trr9035-persist", also=apigroup("certificates.k8s.io"),
+                  window=("9035", "b")))]),
 ]
 
 
@@ -2034,9 +2050,8 @@ def write_json(path, report):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Validate TRR9004-9010, 9025-9028 K8s detections.")
-    ap = argparse.ArgumentParser(description="Validate TRR9004-9010, 9025-9027, 9030 K8s detections.")
-    ap = argparse.ArgumentParser(description="Validate TRR9004-9010, 9025-9027, 9033 K8s detections.")
+    ap = argparse.ArgumentParser(
+        description="Validate TRR9004-9010, 9025-9031, 9033-9035 K8s detections.")
     ap.add_argument("--audit-log", default="/tmp/kube-apiserver-audit.log",
                     help="Path to the API server audit log (JSON lines).")
     ap.add_argument("--cri-log",
@@ -2446,7 +2461,7 @@ def validate(args, report):
         print(f"The rule(s) with a log fired on the emulated telemetry; {skipped} "
               f"rule(s) skipped for lack of a log.{xnote}")
         return 0
-    print("All TRR9004-9010, 9025-9035 match-gated detections fired on the emulated "
+    print("All TRR9004-9010, 9025-9031, 9033-9035 match-gated detections fired on the emulated "
           f"telemetry.{xnote}")
     return 0
 

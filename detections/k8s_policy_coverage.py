@@ -531,6 +531,7 @@ SELECTION_RESOURCES = {  # resource: (the groups that serve it, namespaced)
     "schedules": (("velero.io",), True),
     "backupstoragelocations": (("velero.io",), True),
     "deletebackuprequests": (("velero.io",), True),
+    "certificatesigningrequests": (("certificates.k8s.io",), False),
     "clusterrolebindings": ((_RBAC,), False), "clusterroles": ((_RBAC,), False),
     "rolebindings": ((_RBAC,), True), "roles": ((_RBAC,), True),
     **{r: ((_ADM,), False) for r in SELECTION_GROUP_RESOURCES[_ADM]},
@@ -2488,7 +2489,11 @@ def self_test():
                  ("dnses",), "*", "*"),
                 # TRR9033 service exposure: core Service create/update/patch at
                 # RequestResponse (spec.type NodePort/LoadBalancer in the body).
-                ("RequestResponse", cud, "", ("services",), "*", "*")):
+                ("RequestResponse", cud, "", ("services",), "*", "*"),
+                # TRR9035 CSR client-cert persistence: certificatesigningrequests create at
+                # Request (the chokepoint reads the CSR request body / signerName).
+                ("Request", ("create",), "certificates.k8s.io",
+                 ("certificatesigningrequests",), "*", "*")):
             pinned += [(level, v, group, r, ns, nm, "*") for v in verbs for r in resources
                        for ns in (nss if isinstance(nss, tuple) else (nss,))
                        for nm in (names if isinstance(names, tuple) else (names,))]

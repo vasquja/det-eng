@@ -239,6 +239,17 @@ reasoning survives. Append an entry per vet; keep it short.
   than TRR9025/9027 (no content grader possible). Deferred to build as TRR9035 (k8s),
   detections/sigma/T1098.006/, as a disclosed backstop; the subject grader and the fieldref self-approval check
   are dropped unless a human accepts a non-portable rule.
+  **Built as TRR9035** (detections/sigma/T1098.006/k8s_csr_client_cert_minted.yml, status experimental).
+  Shipped: the bare create/approve chokepoint — the create leg scoped by signerName
+  kubernetes.io/kube-apiserver-client (proven on a v1.36.4 lab; the kube-apiserver-client-kubelet and
+  kubelet-serving node CSRs, which differ only on signerName, are the hard near-misses), the approve leg on
+  objectRef.subresource=approval + verb=update with a `not system:*` approver filter (the csrapprover
+  auto-approval is the filtered case). Null-safe. Both legs proven live on the local kube-apiserver lab and
+  wired into validate-apiserver (MANIFEST 9035 A-B, atomics/T1098.006/src/emulate_csr.sh). Dropped as proven,
+  per the two limits: the subject grader (not Sigma-expressible — and v1.36.4's CertificateSubjectRestriction
+  admission plugin refuses a kube-apiserver-client CSR requesting system:masters, confirmed 403 on the lab) and
+  the fieldref self-approval check (non-portable). Both limits recorded in RULE_DEFECTS.md KTBD-O1. No
+  CHOKEPOINT waiver was needed: the signerName discriminator makes check_sufficiency pass without one.
 
 - **ServiceAccount create, incl. kube-system / lookalike names (T1136.001/T1036.010) — NO-GO (Q3, reinforced by
   Q2+Q4).** Server-set markers (verb=create, objectRef.resource=serviceaccounts, apiGroup='') are non-spoofable

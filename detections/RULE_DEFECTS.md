@@ -100,6 +100,7 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [KTBD-K2](#ktbd-k2-k8s_pod_controller_name_mimicry-the-name-shape-regex-is-not-portable-to-gke) | `T1036.005/k8s_pod_controller_name_mimicry` | GKE records `objectRef.name` inside `protoPayload.resourceName` (the object path), so the GKE pipeline maps the field to exact strings only and cannot apply the controller-shaped name regex; AKS and the lab are unaffected | portability | low |
 | [KTBD-M1](#ktbd-m1-k8s_service_exposed_nodeport_loadbalancer-is-blind-where-core-service-writes-stay-at-metadata-openshift-default-k3s-starter) | `T1133/k8s_service_exposed_nodeport_loadbalancer` (TRR9033 A-C), on OpenShift 4.17/4.18 Default and the k3s starter policy | these policies log core-group writes only at Metadata (no body), so neither `requestObject.spec.type` nor `responseObject.spec.type` is recorded and the rule sees no Service exposure | portability, policy gap | medium |
 | [KTBD-M2](#ktbd-m2-k8s_service_exposed_nodeport_loadbalancer-update-and-patch-fire-on-a-re-assertion-of-an-already-exposed-service) | `T1133/k8s_service_exposed_nodeport_loadbalancer`, the update/patch branch | one record cannot tell a type change from a re-assertion, so a PUT, server-side apply or re-apply of an already-exposed NodePort/LoadBalancer Service (GitOps, Helm) fires as a first exposure does; a create is unambiguous | false positive, description | medium |
+| [KTBD-O1](#ktbd-o1-k8s_csr_client_cert_minted-subject-ungradable-and-self-approval-non-portable) | `T1098.006/k8s_csr_client_cert_minted` | two disclosed backstop limits: the requested certificate subject (CN/O) is inside the DER CSR of `spec.request` and is not Sigma-gradable (so the rule cannot tell a privileged subject from an ordinary one), and self-approval (approver == requester) needs a Sigma field reference the portable backends reject | portability, description | low |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
@@ -2114,6 +2115,47 @@ the current ones.
 - **Then**: a future update/patch branch that keys on a true type *change* (prior state
   from a correlation or an external store) ships with a positive for a real change and a
   filtered or confounder case for a re-assertion.
+### KTBD-O1. k8s_csr_client_cert_minted: subject ungradable and self-approval non-portable
+
+- **Rule**: [`sigma/T1098.006/k8s_csr_client_cert_minted.yml`](sigma/T1098.006/k8s_csr_client_cert_minted.yml) (level medium).
+- **Kind**: portability, description. **Severity**: low (two disclosed limits of a
+  backstop rule; the rule still fires on the create and approve chokepoint).
+- **Problem**: TRR9035's rule is honestly weaker than TRR9025 / TRR9027 — it carries no
+  content grader — because of two things pySigma cannot express:
+  1. **The requested subject is not Sigma-gradable.** The CN and O that become the
+     Kubernetes user and groups live only inside the DER PKCS#10 CSR in
+     `requestObject.spec.request`, which is base64 of a line-wrapped PEM. pySigma cannot
+     base64-then-DER decode it, so the rule cannot tell a `system:masters`-equivalent
+     subject from an ordinary one. (GKE Event Threat Detection does this by decoding in
+     ES|QL.) The highest-value subject is in any case refused at create: the default
+     `CertificateSubjectRestriction` admission plugin rejects a
+     `kubernetes.io/kube-apiserver-client` CSR that requests the `system:masters` group
+     (kubernetes v1.36.4
+     `plugin/pkg/admission/certificates/subjectrestriction/admission.go` L84-87). So the
+     realistic attack targets a lower-privilege subject that maps to an
+     already-privileged identity, which no Sigma rule can grade.
+  2. **Self-approval is not portably expressible.** The highest-fidelity signal —
+     approver (`user.username` on the approval record) equal to the requester
+     (`spec.username`, server-set on create) — needs a Sigma field reference. It fires
+     correctly in `sigma_eval` (SQLite), but the Elasticsearch Lucene and EQL backends
+     raise `SigmaFeatureNotSupportedByBackendError` and Splunk defers, so a portable
+     single rule cannot pair the two legs. The rule ships the two legs as two selections
+     and leaves pairing to a correlation or triage.
+- **Evidence**: *source* — the subject-restriction plugin cited above, and
+  kubernetes v1.36.4 `staging/src/k8s.io/api/certificates/v1/types.go` L149-152 (the CN
+  is the username, each O a group). *lab* — on a local kube-apiserver v1.36.4 lab a
+  `kubernetes.io/kube-apiserver-client` CSR requesting the `system:masters` group was
+  refused with 403 "use of kubernetes.io/kube-apiserver-client signer with
+  system:masters group is not allowed"; an ordinary-subject CSR was accepted (201) and
+  its approval recorded no `signerName` (Metadata level), so no body is available on the
+  approve leg. *case* — the sidecar positive `client-cert-csr-approve-procB` is in fact
+  a self-approval, and its `why` records that the rule fires on it only as a generic
+  non-system approval, not as a verified self-approval.
+- **Fix**: none portable. A SIEM that can base64/DER-decode (ES|QL) can add a subject
+  grader; a backend that supports field references can add a self-approval correlation.
+  Either is a per-platform add-on, not a change to this portable rule.
+- **Then**: the rule stays the create/approve chokepoint; a human who accepts a
+  non-portable rule can add the subject grader or the fieldref self-approval check.
 
 ## Cloud (AWS, Azure, GCP)
 

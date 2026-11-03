@@ -165,6 +165,33 @@
     }
    }
   },
+  "T1098.006/k8s_csr_client_cert_minted.yml": {
+   "list_text_items": [],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "same"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    }
+   }
+  },
   "T1098.006/k8s_eks_aws_auth_configmap_modified.yml": {
    "list_text_items": [],
    "loses_positive_without_reads": {
@@ -397,35 +424,6 @@
      "expected_loss": {},
      "not_portable": {
       "sel_priv_groups.impersonatedUser.groups": "GKE pipeline cannot map this field: no public source shows how GKE records impersonated groups, uid or extra"
-     },
-     "status": "not_portable",
-     "unexpected": {}
-    }
-   }
-  },
-  "T1204.003/k8s_admission_policy_image_violation.yml": {
-   "list_text_items": [],
-   "loses_positive_without_reads": {
-    "aksauditadmin": false,
-    "gke_admin_activity": false
-   },
-   "providers": {
-    "aks": {
-     "errors": [],
-     "expected_loss": {},
-     "not_portable": {},
-     "status": "same",
-     "unexpected": {}
-    },
-    "exploded": {
-     "loses_positive": false,
-     "status": "same"
-    },
-    "gke": {
-     "errors": [],
-     "expected_loss": {},
-     "not_portable": {
-      "verdict_deny.responseStatus.message": "GKE pipeline cannot map this field: the sources conflict on the HTTP status: gke-mcp lists protoPayload.responseStatus.code ('if present'); audit_log.proto and the recorded KHI entries have only protoPayload.status, a google.rpc.Status (code 0 = OK); Falco's converter infers it"
      },
      "status": "not_portable",
      "unexpected": {}
@@ -1808,8 +1806,8 @@
   "gke": {
    "diverges": 0,
    "expected_loss": 5,
-   "not_portable": 14,
-   "same": 13
+   "not_portable": 13,
+   "same": 14
   },
   "gke_admin_activity": {
    "rules_losing_a_positive": 8
