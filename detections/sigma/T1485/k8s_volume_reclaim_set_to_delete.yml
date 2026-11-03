@@ -10,7 +10,7 @@ description: |
   later release (a PVC or PV delete, the k8s_storage_volume_deleted chokepoint) makes
   the provisioner destroy the backing volume. The flip and the delete are two separate
   audit records, and a delete record does not carry the bound PV's reclaim policy
-  (detections/RULE_DEFECTS.md KTBD-H1), so this grader is the record that shows the
+  (detections/RULE_DEFECTS.md K49), so this grader is the record that shows the
   destructive intent.
 
   It keys on a patch (verb patch), not a full-object update (verb update, a PUT). A
@@ -38,7 +38,7 @@ description: |
   patch), so a reclaim flip with kubectl edit carries requestObject.spec.
   persistentVolumeReclaimPolicy Delete and IS graded. Only a full-object PUT (verb
   update), which kubectl replace sends, flips the policy with no graded record
-  (detections/RULE_DEFECTS.md KTBD-H1); a JSON-patch op whose keys are not in
+  (detections/RULE_DEFECTS.md K49); a JSON-patch op whose keys are not in
   op/path/value order is also not graded. In each ungraded case the chokepoint still
   records the destructive delete that follows.
 

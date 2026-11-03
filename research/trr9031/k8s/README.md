@@ -36,7 +36,7 @@ Strategy):
   different detection.
 - A **`generateName` masquerade** of a bare pod. A controller and an adversary send a
   byte-identical `generateName` (`<owner>-`), so the audit record cannot tell them apart
-  without a per-site controller-identity allowlist (RULE_DEFECTS.md KTBD-K1).
+  without a per-site controller-identity allowlist (RULE_DEFECTS.md K54).
 - A **typosquat** (`cordns`, `kube-prox`): a name that resembles a real workload but is
   not in the controller-generated shape. A name-similarity model, not a shape rule,
   covers that.
@@ -127,7 +127,7 @@ not change the result).
 
 > The letters A and C follow the vet's naming (B is the `generateName` masquerade, a
 > documented gap with no procedure; see the Detection Strategy and RULE_DEFECTS.md
-> KTBD-K1).
+> K54).
 
 ### Procedure A: ReplicaSet-shaped explicit name  (`TRR9031.K8S.A`)
 
@@ -193,7 +193,7 @@ have — an explicit `objectRef.name` — not on the namespace alone and not on 
   ReplicaSet controller sends the byte-identical `generateName`, and both records carry
   no `objectRef.name`, so the shape cannot separate them. The only server-trusted
   discriminator is identity (a per-site allowlist of controller service accounts), which
-  is noisy and platform-specific. Confirmed on the lab (RULE_DEFECTS.md **KTBD-K1**):
+  is noisy and platform-specific. Confirmed on the lab (RULE_DEFECTS.md **K54**):
   the real `replicaset-controller` create's `generateName` has the same
   base-plus-pod-template-hash prefix shape an adversary would send, so a generateName
   rule keyed on that shape fires on every controller create.
@@ -242,7 +242,7 @@ platform whose audit policy drops pod creates (for example a cluster that sets
 `level: None` for them) is blind to it; the lab-proven procedures stay Proven on the lab.
 The name-shape regex is **not portable to GKE**: GKE records the name inside
 `protoPayload.resourceName` (the object path), so its pipeline cannot apply the regex
-(RULE_DEFECTS.md **KTBD-K2**; AKS is unaffected). GKE Event Threat Detection's
+(RULE_DEFECTS.md **K55**; AKS is unaffected). GKE Event Threat Detection's
 'Potential Kubernetes Pod Masquerading' covers GKE; this rule is the backstop for EKS,
 AKS and self-managed clusters.
 

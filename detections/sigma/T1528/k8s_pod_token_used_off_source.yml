@@ -44,7 +44,7 @@ description: |
   off-source (baseline them). On EKS/GKE/AKS the apiserver's TCP peer is a konnectivity
   agent / VNet-integration ILB / NAT, not the pod, so the single-record compare degrades to
   an approximation there (a demonstrated gap, like TRR9011/9022; see RULE_DEFECTS.md
-  KTBD-J1). The portable fallback that needs no CIDR is the credential-id value_count
+  K53). The portable fallback that needs no CIDR is the credential-id value_count
   correlation prototyped in the TRR (one JTI from >=2 distinct source IPs).
 
   No GuardDuty EKS finding, GKE Event Threat Detection detector or Microsoft Defender
@@ -110,5 +110,5 @@ falsepositives:
     allowlist (the example covers IPv4 10.244.0.0/16 only).
   - On managed clusters (EKS/GKE/AKS) the last sourceIPs entry is a konnectivity agent /
     NAT peer, not the pod, so this single-record rule is an approximation there; use the
-    credential-id value_count correlation instead (RULE_DEFECTS.md KTBD-J1).
+    credential-id value_count correlation instead (RULE_DEFECTS.md K53).
 level: high

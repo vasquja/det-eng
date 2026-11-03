@@ -578,7 +578,7 @@ NOT_PORTABLE = {
     # the controller-shaped name regex (an anchored ^...$ pattern would not match the
     # path-prefixed resourceName). The rule is proven on the lab; on GKE this masquerade is
     # better served by GKE Event Threat Detection 'Potential Kubernetes Pod Masquerading'.
-    # Tracked in RULE_DEFECTS.md KTBD-K2.
+    # Tracked in RULE_DEFECTS.md K55.
     ("gke", "T1036.005/k8s_pod_controller_name_mimicry.yml"): (
         "sel_name_daemonset.objectRef.name",
         "sel_name_replicaset.objectRef.name",
@@ -621,6 +621,7 @@ NOT_PORTABLE = {
     ("gke", "T1485/k8s_volume_reclaim_set_to_delete.yml"): (
         "filter_dry_run_query.requestURI",
         "sel_accepted.responseStatus.code",
+        "sel_no_request_uri.requestURI",
     ),
     # TRR9029: the dry-run filter keys on the requestURI query (?dryRun=All), which GKE's
     # Cloud Audit Logs protoPayload does not carry, so the GKE pipeline cannot express it.

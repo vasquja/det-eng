@@ -35,7 +35,7 @@ description: |
   cluster.
 
   Two things this rule intentionally does NOT do (TRR9035 disclosed limits; see
-  the TRR and RULE_DEFECTS.md KTBD-O1):
+  the TRR and RULE_DEFECTS.md K60):
   1. It does not grade the requested certificate subject. The subject (the CN and
      O that become the Kubernetes user and groups) lives only in the DER CSR inside
      spec.request, which is base64 of a line-wrapped PEM; pySigma cannot base64-

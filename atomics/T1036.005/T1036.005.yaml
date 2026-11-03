@@ -16,7 +16,7 @@ display_name: "Masquerading: Match Legitimate Name or Location (Kubernetes Looka
 # There is no generateName procedure: a real controller and an adversary send a
 # byte-identical generateName, so the audit chokepoint cannot tell them apart without a
 # per-site controller-identity allowlist. It is a documented gap (RULE_DEFECTS.md
-# KTBD-K1), not a procedure.
+# K54), not a procedure.
 
 atomic_tests:
   - name: "TRR9031.K8S.A — ReplicaSet-shaped explicit pod name in an application namespace"

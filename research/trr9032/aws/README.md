@@ -228,7 +228,7 @@ A documented residual: a **namespace**-scoped `AmazonEKSSecretReaderPolicy` on a
 namespace (`kube-system`) still reads those Secrets but trips only the chokepoint, because
 one CloudTrail record cannot weigh one namespace against another; baseline access-entry
 writers instead. This false negative of the graded rule is tracked in
-[`detections/RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) **KTBD-L1**.
+[`detections/RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) **K56**.
 
 ### Procedure D: Residual gaps and the cross-account limit  (`TRR9032.AWS.D`)
 
@@ -241,7 +241,7 @@ Three forms the rules do **not** match, documented so the boundary is explicit.
   `sigma_eval` using the literal form (see Detection Strategy). Only an anchored `|re` with an
   org-account allowlist holds, so this form is a documented limit rather than a shipped
   predicate, tracked in [`detections/RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md)
-  **KTBD-L2**. (A cross-account grant of a cluster-admin / reads-Secrets policy at cluster
+  **K57**. (A cross-account grant of a cluster-admin / reads-Secrets policy at cluster
   scope still fires the graded rule, which reads no account field; what no safe Sigma
   predicate can add is a *cross-account-specific* elevation of an otherwise low-tier grant.)
 - **`kubernetesGroups` → in-cluster binding:** `CreateAccessEntry` with
@@ -318,7 +318,7 @@ embedded-ID evasion and stays silent on the org accounts (proven with `sigma_eva
 `|re` patterns are in the enforced portable subset — no `(?` group — so they compile under
 Python `re` and RE2, unlike a `(?!...)` negative-lookahead form, which RE2 and
 `check_sigma_regex --require-re2` reject). The org-account allowlist is operator-specific, so
-the cross-account form is documented here, not shipped (Procedure D; `RULE_DEFECTS.md` KTBD-L2).
+the cross-account form is documented here, not shipped (Procedure D; `RULE_DEFECTS.md` K57).
 
 **Prior art (named, differentiated).** Elastic ships three rules: *AWS EKS Access Entry
 Granted Cluster Admin Policy* (`AssociateAccessPolicy` with `AmazonEKSClusterAdminPolicy`

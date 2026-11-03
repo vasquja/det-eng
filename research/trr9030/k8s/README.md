@@ -126,7 +126,7 @@ follow and are stated in the rule's `falsepositives` and below:
 - **Managed clusters** (EKS/GKE/AKS) route a pod's API call through a konnectivity agent,
   a load balancer, a private endpoint, or node SNAT, so the recorded peer is that
   intermediary, not the pod. The single-record compare degrades to an approximation there
-  (a demonstrated gap, [RULE_DEFECTS KTBD-J1](../../../detections/RULE_DEFECTS.md#ktbd-j1-k8s_pod_token_used_off_source-the-single-record-off-source-compare-degrades-on-managed-clusters));
+  (a demonstrated gap, [RULE_DEFECTS K53](../../../detections/RULE_DEFECTS.md#k53-k8s_pod_token_used_off_source-the-single-record-off-source-compare-degrades-on-managed-clusters));
   the portable fallback is the credential-id correlation below.
 
 ### Why the technique works
@@ -216,7 +216,7 @@ detection, not a backstop (see Upstream).
 
 **Strategy 2 — credential-id correlation fallback (prototype; portable, no CIDR).**
 The single-record rule needs an in-cluster-source allowlist, which degrades on managed
-clusters (KTBD-J1). A portable fallback keys on the server-set `credential-id` instead:
+clusters (K53). A portable fallback keys on the server-set `credential-id` instead:
 one token (`JTI=<uuid>`) seen from **two or more distinct source IPs** inside a window is
 a token used from more than one place, with no CIDR parameter and no dependence on which
 IP the control plane records. This is the Sigma `value_count` correlation prototyped and
@@ -224,7 +224,7 @@ proven in `sigma_eval` below. It is **not shipped as a live-gated rule here**, a
 human decision: the repo's correlation backend keys on a fixed `timestamp` column that a
 Kubernetes audit record (`requestReceivedTimestamp`) does not carry, so wiring a
 timestamp mapping into the k8s validators and the simulator is a shared-tooling change
-left to a human. On GKE the correlation does not run at all (no `user.extra`, KTBD-J1).
+left to a human. On GKE the correlation does not run at all (no `user.extra`, K53).
 
 ```yaml
 # PROTOTYPE (not shipped): one pod-bound token (credential-id) from >= 2 distinct source IPs.
@@ -260,14 +260,14 @@ correlation:
 - Correlation: one credential-id from two distinct source IPs raises one alert; the same
   IP twice, or two different credential-ids, raises none.
 
-**Demonstrated gap — managed clusters (KTBD-J1).** On EKS/GKE/AKS the last `sourceIPs`
+**Demonstrated gap — managed clusters (K53).** On EKS/GKE/AKS the last `sourceIPs`
 entry is a konnectivity agent / load balancer / NAT peer, not the pod, so the pod-CIDR
 compare cannot separate an off-pod in-cluster source from the pod's own. The single-record
 rule still catches a token used from a truly external address; for the in-cluster case use
 the credential-id correlation. On GKE the rule does not run at all (GKE's
 `AuditLog.authenticationInfo` records `principalEmail` only — no `user.extra` — and one
 `callerIp`, not the `sourceIPs` array). Tracked as
-[RULE_DEFECTS KTBD-J1](../../../detections/RULE_DEFECTS.md#ktbd-j1-k8s_pod_token_used_off_source-the-single-record-off-source-compare-degrades-on-managed-clusters).
+[RULE_DEFECTS K53](../../../detections/RULE_DEFECTS.md#k53-k8s_pod_token_used_off_source-the-single-record-off-source-compare-degrades-on-managed-clusters).
 
 **Residual false negative — in-allowlist reuse.** A token reused from within an
 allowlisted CIDR (a compromised pod on the same pod network, or the pod's own node) shows
@@ -289,9 +289,9 @@ here.
 
 **Scope (platform gap, like K38 to K42 and K47).** Strategy 1 is proven on
 kind/kubeadm, where the pod reaches the API server over the pod network with the CNI's
-LOCAL carve-out, so the peer is the pod IP. On managed platforms it degrades (KTBD-J1);
+LOCAL carve-out, so the peer is the pod IP. On managed platforms it degrades (K53);
 on GKE it is not portable at all. The lab-proven Procedure A stays Proven; the managed-
-platform caveat is in KTBD-J1's Scope bullet, not here, so the coverage report does not
+platform caveat is in K53's Scope bullet, not here, so the coverage report does not
 mark it an open defect.
 
 **Coverage summary.**

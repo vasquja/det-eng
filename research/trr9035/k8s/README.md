@@ -34,9 +34,9 @@ This TRR does **not** cover:
   requester), and the shipped rule's create leg excludes them by `signerName`.
 - The requested certificate **subject** (the CN/O that become the user and groups). It
   is not Sigma-gradable; see the Technical Background and
-  [`RULE_DEFECTS.md` KTBD-O1](../../../detections/RULE_DEFECTS.md#ktbd-o1-k8s_csr_client_cert_minted-subject-ungradable-and-self-approval-non-portable).
+  [`RULE_DEFECTS.md` K60](../../../detections/RULE_DEFECTS.md#k60-k8s_csr_client_cert_minted-subject-ungradable-and-self-approval-non-portable).
 - **Self-approval** as a distinct, higher-fidelity signal (approver == requester). It
-  needs a Sigma field reference that the portable backends reject; see KTBD-O1.
+  needs a Sigma field reference that the portable backends reject; see K60.
 - The legacy `kubernetes.io/legacy-unknown` signer (the v1 API rejects it on create:
   kubernetes v1.36.4 `pkg/apis/certificates/validation/validation.go` L210).
 
@@ -125,7 +125,7 @@ CSR, no private key, so Request level copies no secret) and the **approval updat
 Metadata** (the approve leg needs no body). Placed so no existing level drops;
 `certificatesigningrequests/status` stays at the Metadata catch-all.
 
-### Two things a Sigma rule cannot do here (disclosed limits, KTBD-O1)
+### Two things a Sigma rule cannot do here (disclosed limits, K60)
 
 1. **The subject is not Sigma-gradable.** The requested CN/O live only inside the DER
    CSR in `spec.request`, base64 of a line-wrapped PEM; pySigma cannot base64-then-DER
@@ -232,7 +232,7 @@ CSRs is filtered). One rule covers both legs.
 The rule is a disclosed backstop: pure surface on the approve leg (no body at Metadata)
 and scoped by `signerName` on the create leg. It carries no content grader, because the
 certificate subject is unreadable to Sigma and self-approval is not portably
-expressible (see the Technical Background and KTBD-O1). It is null-safe: the record of a
+expressible (see the Technical Background and K60). It is null-safe: the record of a
 request that fails authentication has no `user.username`, so the approve-leg filter is
 ORed with a `user.username: null` guard.
 

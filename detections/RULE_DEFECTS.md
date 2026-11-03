@@ -91,21 +91,21 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [K46](#k46-k8s_impersonation-an-impersonated-read-that-the-policy-logs-at-none-leaves-no-record) | `T1134/k8s_impersonation`, `k8s_impersonation_privileged`, under the three lab policies and the recommended production policy (`k8s/audit-policy-recommended.yaml`), and the Event reads of EKS, GCE kube-up, AKS and OpenShift 4.17 | the API server evaluates the audit policy on the authenticated caller, before impersonation, so an impersonated get, list or watch of a resource that the policy's noise rule drops for every caller (ConfigMaps, Events, Endpoints, Leases, EndpointSlices, nodes/status, pods/status) leaves no record | policy gap, evasion | medium |
 | [K47](#k47-trr9027-coredns-rules-rke2-names-its-corefile-configmap-rke2-coredns-rke2-coredns) | the TRR9027 kube-system branch of both CoreDNS rules, on RKE2 | RKE2's CoreDNS chart names the Corefile ConfigMap `kube-system/rke2-coredns-rke2-coredns`, which neither rule (nor the DNS row of the recommended policy) selects, so no TRR9027 rule sees a Corefile edit on RKE2 | portability, description | medium |
 | [K48](#k48-k8s_admission_webhook_disabled-the-validatingadmissionpolicy-status-controllers-status-patch-fires) | `T1685/k8s_admission_webhook_disabled` | kube-controller-manager's validatingadmissionpolicy-status controller writes each ValidatingAdmissionPolicy's type-check with an apply patch of `validatingadmissionpolicies/status`, and the rule (no subresource or identity filter) fires on it | false positive | medium |
-| [KTBD-H1](#ktbd-h1-k8s_storage_volume_deleted-one-delete-record-does-not-show-whether-the-volume-is-destroyed) | `T1485/k8s_storage_volume_deleted` | a PVC or PV delete record carries a `DeleteOptions` body only, not the bound PV's reclaim policy, so a destructive delete (reclaim `Delete`) looks like a non-destructive one (`Retain`) in one record; the grader `k8s_volume_reclaim_set_to_delete` covers the policy-flip step only | false negative | medium |
-| [KTBD-H2](#ktbd-h2-k8s_storage_volume_deleted-the-storage-controller-filters-trust-the-identity) | `T1485/k8s_storage_volume_deleted` | the controller filters read only `user.username` (and the teardown verb), so a delete with a stolen controller/provisioner token is filtered, and a managed-platform CSI provisioner service account (not the kind `local-path` identity) fires unless an operator baselines it | evasion, portability | low |
-| [KTBD-I1](#ktbd-i1-k8s_snapshot_or_backup_destroyed-a-stolen-controller-token-evades-the-identity-filters) | `T1490/k8s_snapshot_or_backup_destroyed` | an actor with a stolen snapshot-controller or velero service-account token is suppressed by the controller identity filters | evasion | low |
-| [KTBD-I2](#ktbd-i2-k8s_snapshot_or_backup_destroyed-a-server-side-dry-run-delete-is-indistinguishable-from-a-real-delete-at-metadata-and-fires) | `T1490/k8s_snapshot_or_backup_destroyed` | kubectl's default `--dry-run=server` delete puts dryRun in the unlogged DeleteOptions body, so at the shipped Metadata policy its record is byte-identical to a real delete and the rule fires | false positive | low |
-| [KTBD-J1](#ktbd-j1-k8s_pod_token_used_off_source-the-single-record-off-source-compare-degrades-on-managed-clusters) | the TRR9030 single-record off-source rule, on EKS/GKE/AKS | on EKS/GKE/AKS the last `sourceIPs` entry is a konnectivity agent / load balancer / NAT peer, not the pod, so the single-record off-source compare degrades to an approximation (TRR9030 Procedure A); the portable fallback is the credential-id value_count correlation prototyped in the TRR | portability | medium |
-| [KTBD-K1](#ktbd-k1-k8s_pod_controller_name_mimicry-does-not-cover-a-generatename-masquerade) | `T1036.005/k8s_pod_controller_name_mimicry` (no generateName branch) | a bare-pod `generateName` masquerade (`coredns-6f6b679f8f-`) is byte-identical to a real controller's generateName create, both with no `objectRef.name`, so the audit chokepoint cannot separate them without a per-site controller-identity allowlist; the rule ships the explicit-name branches A and C only | false negative | medium |
-| [KTBD-K2](#ktbd-k2-k8s_pod_controller_name_mimicry-the-name-shape-regex-is-not-portable-to-gke) | `T1036.005/k8s_pod_controller_name_mimicry` | GKE records `objectRef.name` inside `protoPayload.resourceName` (the object path), so the GKE pipeline maps the field to exact strings only and cannot apply the controller-shaped name regex; AKS and the lab are unaffected | portability | low |
-| [KTBD-M1](#ktbd-m1-k8s_service_exposed_nodeport_loadbalancer-is-blind-where-core-service-writes-stay-at-metadata-openshift-default-k3s-starter) | `T1133/k8s_service_exposed_nodeport_loadbalancer` (TRR9033 A-C), on OpenShift 4.17/4.18 Default and the k3s starter policy | these policies log core-group writes only at Metadata (no body), so neither `requestObject.spec.type` nor `responseObject.spec.type` is recorded and the rule sees no Service exposure | portability, policy gap | medium |
-| [KTBD-M2](#ktbd-m2-k8s_service_exposed_nodeport_loadbalancer-update-and-patch-fire-on-a-re-assertion-of-an-already-exposed-service) | `T1133/k8s_service_exposed_nodeport_loadbalancer`, the update/patch branch | one record cannot tell a type change from a re-assertion, so a PUT, server-side apply or re-apply of an already-exposed NodePort/LoadBalancer Service (GitOps, Helm) fires as a first exposure does; a create is unambiguous | false positive, description | medium |
-| [KTBD-O1](#ktbd-o1-k8s_csr_client_cert_minted-subject-ungradable-and-self-approval-non-portable) | `T1098.006/k8s_csr_client_cert_minted` | two disclosed backstop limits: the requested certificate subject (CN/O) is inside the DER CSR of `spec.request` and is not Sigma-gradable (so the rule cannot tell a privileged subject from an ordinary one), and self-approval (approver == requester) needs a Sigma field reference the portable backends reject | portability, description | low |
+| [K49](#k49-k8s_storage_volume_deleted-one-delete-record-does-not-show-whether-the-volume-is-destroyed) | `T1485/k8s_storage_volume_deleted` | a PVC or PV delete record carries a `DeleteOptions` body only, not the bound PV's reclaim policy, so a destructive delete (reclaim `Delete`) looks like a non-destructive one (`Retain`) in one record; the grader `k8s_volume_reclaim_set_to_delete` covers the policy-flip step only | false negative | medium |
+| [K50](#k50-k8s_storage_volume_deleted-the-storage-controller-filters-trust-the-identity) | `T1485/k8s_storage_volume_deleted` | the controller filters read only `user.username` (and the teardown verb), so a delete with a stolen controller/provisioner token is filtered, and a managed-platform CSI provisioner service account (not the kind `local-path` identity) fires unless an operator baselines it | evasion, portability | low |
+| [K51](#k51-k8s_snapshot_or_backup_destroyed-a-stolen-controller-token-evades-the-identity-filters) | `T1490/k8s_snapshot_or_backup_destroyed` | an actor with a stolen snapshot-controller or velero service-account token is suppressed by the controller identity filters | evasion | low |
+| [K52](#k52-k8s_snapshot_or_backup_destroyed-a-server-side-dry-run-delete-is-indistinguishable-from-a-real-delete-at-metadata-and-fires) | `T1490/k8s_snapshot_or_backup_destroyed` | kubectl's default `--dry-run=server` delete puts dryRun in the unlogged DeleteOptions body, so at the shipped Metadata policy its record is byte-identical to a real delete and the rule fires | false positive | low |
+| [K53](#k53-k8s_pod_token_used_off_source-the-single-record-off-source-compare-degrades-on-managed-clusters) | the TRR9030 single-record off-source rule, on EKS/GKE/AKS | on EKS/GKE/AKS the last `sourceIPs` entry is a konnectivity agent / load balancer / NAT peer, not the pod, so the single-record off-source compare degrades to an approximation (TRR9030 Procedure A); the portable fallback is the credential-id value_count correlation prototyped in the TRR | portability | medium |
+| [K54](#k54-k8s_pod_controller_name_mimicry-does-not-cover-a-generatename-masquerade) | `T1036.005/k8s_pod_controller_name_mimicry` (no generateName branch) | a bare-pod `generateName` masquerade (`coredns-6f6b679f8f-`) is byte-identical to a real controller's generateName create, both with no `objectRef.name`, so the audit chokepoint cannot separate them without a per-site controller-identity allowlist; the rule ships the explicit-name branches A and C only | false negative | medium |
+| [K55](#k55-k8s_pod_controller_name_mimicry-the-name-shape-regex-is-not-portable-to-gke) | `T1036.005/k8s_pod_controller_name_mimicry` | GKE records `objectRef.name` inside `protoPayload.resourceName` (the object path), so the GKE pipeline maps the field to exact strings only and cannot apply the controller-shaped name regex; AKS and the lab are unaffected | portability | low |
+| [K58](#k58-k8s_service_exposed_nodeport_loadbalancer-is-blind-where-core-service-writes-stay-at-metadata-openshift-default-k3s-starter) | `T1133/k8s_service_exposed_nodeport_loadbalancer` (TRR9033 A-C), on OpenShift 4.17/4.18 Default and the k3s starter policy | these policies log core-group writes only at Metadata (no body), so neither `requestObject.spec.type` nor `responseObject.spec.type` is recorded and the rule sees no Service exposure | portability, policy gap | medium |
+| [K59](#k59-k8s_service_exposed_nodeport_loadbalancer-update-and-patch-fire-on-a-re-assertion-of-an-already-exposed-service) | `T1133/k8s_service_exposed_nodeport_loadbalancer`, the update/patch branch | one record cannot tell a type change from a re-assertion, so a PUT, server-side apply or re-apply of an already-exposed NodePort/LoadBalancer Service (GitOps, Helm) fires as a first exposure does; a create is unambiguous | false positive, description | medium |
+| [K60](#k60-k8s_csr_client_cert_minted-subject-ungradable-and-self-approval-non-portable) | `T1098.006/k8s_csr_client_cert_minted` | two disclosed backstop limits: the requested certificate subject (CN/O) is inside the DER CSR of `spec.request` and is not Sigma-gradable (so the rule cannot tell a privileged subject from an ordinary one), and self-approval (approver == requester) needs a Sigma field reference the portable backends reject | portability, description | low |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
-| [KTBD-L1](#ktbd-l1-aws_eks_access_entry_cluster_admin_policy-a-namespace-scoped-secrets-grant-is-missed) | `T1098.006/aws_eks_access_entry_cluster_admin_policy` | a reads-Secrets policy scoped to a sensitive namespace (`kube-system`) reads those Secrets but trips only the medium chokepoint, not the graded rule; one CloudTrail record cannot weigh one namespace against another | false negative | medium |
-| [KTBD-L2](#ktbd-l2-aws_eks_access_entry_cluster_admin_policy-no-safe-sigma-predicate-for-a-cross-account-grant) | `T1098.006/aws_eks_access_entry_cluster_admin_policy` | no safe Sigma predicate raises fidelity on a cross-account grant: `principalArn\|fieldref\|contains: recipientAccountId` goes quiet when the attacker names its role with the victim account ID | false negative (documented) | low |
+| [K56](#k56-aws_eks_access_entry_cluster_admin_policy-a-namespace-scoped-secrets-grant-is-missed) | `T1098.006/aws_eks_access_entry_cluster_admin_policy` | a reads-Secrets policy scoped to a sensitive namespace (`kube-system`) reads those Secrets but trips only the medium chokepoint, not the graded rule; one CloudTrail record cannot weigh one namespace against another | false negative | medium |
+| [K57](#k57-aws_eks_access_entry_cluster_admin_policy-no-safe-sigma-predicate-for-a-cross-account-grant) | `T1098.006/aws_eks_access_entry_cluster_admin_policy` | no safe Sigma predicate raises fidelity on a cross-account grant: `principalArn\|fieldref\|contains: recipientAccountId` goes quiet when the attacker names its role with the victim account ID | false negative (documented) | low |
 
 ## Linux (auditd and node file events)
 
@@ -1812,7 +1812,7 @@ the current ones.
   of a ValidatingAdmissionPolicy firing.
 - **Then**: the filtered case stays quiet, and the positives of the rule still fire.
 
-### KTBD-H1. k8s_storage_volume_deleted: one delete record does not show whether the volume is destroyed
+### K49. k8s_storage_volume_deleted: one delete record does not show whether the volume is destroyed
 
 - **Rule**: [`sigma/T1485/k8s_storage_volume_deleted.yml`](sigma/T1485/k8s_storage_volume_deleted.yml) (level medium).
 - **Kind**: false negative. **Severity**: medium (the rule still fires on every
@@ -1838,7 +1838,7 @@ the current ones.
 - **Then**: the grader fires on the flip, and the chokepoint keeps firing on the
   actor's delete.
 
-### KTBD-H2. k8s_storage_volume_deleted: the storage-controller filters trust the identity
+### K50. k8s_storage_volume_deleted: the storage-controller filters trust the identity
 
 - **Rule**: [`sigma/T1485/k8s_storage_volume_deleted.yml`](sigma/T1485/k8s_storage_volume_deleted.yml) (level medium).
 - **Kind**: evasion, portability. **Severity**: low (the stolen-token path needs
@@ -1865,7 +1865,7 @@ the current ones.
   account as a baseline (a Scope item in the TRR), or add it to the filter per platform.
 - **Then**: the baselined provisioner SA stays quiet, and every other identity's PVC
   or PV delete fires.
-### KTBD-I1. k8s_snapshot_or_backup_destroyed: a stolen controller token evades the identity filters
+### K51. k8s_snapshot_or_backup_destroyed: a stolen controller token evades the identity filters
 
 - **Rule**: [`sigma/T1490/k8s_snapshot_or_backup_destroyed.yml`](sigma/T1490/k8s_snapshot_or_backup_destroyed.yml) (level medium).
 - **Kind**: evasion. **Severity**: low (the attacker must first steal a specific
@@ -1897,7 +1897,7 @@ the current ones.
 - **Then**: the three filtered cases stay quiet (the controllers' real churn), and the
   five positives still fire for a non-controller actor.
 
-### KTBD-I2. k8s_snapshot_or_backup_destroyed: a server-side dry-run delete is indistinguishable from a real delete at Metadata and fires
+### K52. k8s_snapshot_or_backup_destroyed: a server-side dry-run delete is indistinguishable from a real delete at Metadata and fires
 
 - **Rule**: [`sigma/T1490/k8s_snapshot_or_backup_destroyed.yml`](sigma/T1490/k8s_snapshot_or_backup_destroyed.yml) (level medium).
 - **Kind**: false positive. **Severity**: low (a dry run persists nothing; the hit is
@@ -1932,7 +1932,7 @@ the current ones.
   does not log the body, so the repo does not carry that filter.
 - **Then**: the FP class is documented and accepted; a real delete still fires, and a
   query-form dry run (the dry-run control) stays quiet.
-### KTBD-J1. k8s_pod_token_used_off_source: the single-record off-source compare degrades on managed clusters
+### K53. k8s_pod_token_used_off_source: the single-record off-source compare degrades on managed clusters
 
 - **Scope**: [`sigma/T1528/k8s_pod_token_used_off_source.yml`](sigma/T1528/k8s_pod_token_used_off_source.yml)
   (level high), TRR9030 Procedure A. Platforms: EKS, GKE and AKS (any cluster where a pod
@@ -1977,7 +1977,7 @@ the current ones.
   pin the in-fabric source set (a fixed NAT/LB egress, a known node CIDR), add it to the
   allowlist, as on a self-managed cluster.
 - **Then**: no case changes.
-### KTBD-K1. k8s_pod_controller_name_mimicry does not cover a generateName masquerade
+### K54. k8s_pod_controller_name_mimicry does not cover a generateName masquerade
 
 - **Rule**: [`sigma/T1036.005/k8s_pod_controller_name_mimicry.yml`](sigma/T1036.005/k8s_pod_controller_name_mimicry.yml) (level high).
 - **Kind**: false negative. **Severity**: medium (a real masquerade variant the rule
@@ -2022,7 +2022,7 @@ the current ones.
   ships with its own benign-corpus budget and an identity allowlist, and a positive and a
   filtered case (a real controller create) that prove it.
 
-### KTBD-K2. k8s_pod_controller_name_mimicry: the name-shape regex is not portable to GKE
+### K55. k8s_pod_controller_name_mimicry: the name-shape regex is not portable to GKE
 
 - **Rule**: [`sigma/T1036.005/k8s_pod_controller_name_mimicry.yml`](sigma/T1036.005/k8s_pod_controller_name_mimicry.yml) (level high).
 - **Kind**: portability. **Severity**: low (GKE ships its own equivalent control).
@@ -2045,7 +2045,7 @@ the current ones.
   'Defense Evasion: Potential Kubernetes Pod Masquerading', which this rule backstops on
   EKS, AKS and self-managed clusters.
 - **Then**: n/a (a platform encoding limitation, not a rule change).
-### KTBD-M1. k8s_service_exposed_nodeport_loadbalancer is blind where core Service writes stay at Metadata (OpenShift Default, k3s starter)
+### K58. k8s_service_exposed_nodeport_loadbalancer is blind where core Service writes stay at Metadata (OpenShift Default, k3s starter)
 
 - **Scope**: [`sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml`](sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml)
   (level medium), TRR9033 Procedures A, B and C, on OpenShift 4.17 and 4.18 **Default**
@@ -2082,7 +2082,7 @@ the current ones.
 - **Then**: the rule is full on any profile that records the Service write body; the
   Scope bullet names the platforms where it is not.
 
-### KTBD-M2. k8s_service_exposed_nodeport_loadbalancer: update and patch fire on a re-assertion of an already-exposed Service
+### K59. k8s_service_exposed_nodeport_loadbalancer: update and patch fire on a re-assertion of an already-exposed Service
 
 - **Rule**: [`sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml`](sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml) (level medium).
 - **Kind**: false positive, description. **Severity**: medium (routine on a cluster whose
@@ -2115,7 +2115,7 @@ the current ones.
 - **Then**: a future update/patch branch that keys on a true type *change* (prior state
   from a correlation or an external store) ships with a positive for a real change and a
   filtered or confounder case for a re-assertion.
-### KTBD-O1. k8s_csr_client_cert_minted: subject ungradable and self-approval non-portable
+### K60. k8s_csr_client_cert_minted: subject ungradable and self-approval non-portable
 
 - **Rule**: [`sigma/T1098.006/k8s_csr_client_cert_minted.yml`](sigma/T1098.006/k8s_csr_client_cert_minted.yml) (level medium).
 - **Kind**: portability, description. **Severity**: low (two disclosed limits of a
@@ -2218,7 +2218,7 @@ the current ones.
   `efs-public-allow-scoping-key-as-condition-value`.
 - **Fix**: decode the policy JSON in the log pipeline and test each statement.
 
-### KTBD-L1. aws_eks_access_entry_cluster_admin_policy: a namespace-scoped secrets grant is missed
+### K56. aws_eks_access_entry_cluster_admin_policy: a namespace-scoped secrets grant is missed
 
 - **Rule**: [`sigma/T1098.006/aws_eks_access_entry_cluster_admin_policy.yml`](sigma/T1098.006/aws_eks_access_entry_cluster_admin_policy.yml) (level high).
 - **Kind**: false negative. **Severity**: medium.
@@ -2241,7 +2241,7 @@ the current ones.
   manage access entries and triage chokepoint hits whose `accessScope.namespaces` names a
   sensitive namespace.
 
-### KTBD-L2. aws_eks_access_entry_cluster_admin_policy: no safe Sigma predicate for a cross-account grant
+### K57. aws_eks_access_entry_cluster_admin_policy: no safe Sigma predicate for a cross-account grant
 
 - **Rule**: [`sigma/T1098.006/aws_eks_access_entry_cluster_admin_policy.yml`](sigma/T1098.006/aws_eks_access_entry_cluster_admin_policy.yml) (level high).
 - **Kind**: false negative (documented). **Severity**: low.

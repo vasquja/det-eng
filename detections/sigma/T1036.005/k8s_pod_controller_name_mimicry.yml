@@ -42,7 +42,7 @@ description: |
   matches), a typosquatted name (`cordns`, not the controller shape), a
   `generateName` masquerade (byte-identical to a real controller's
   `generateName`, so it needs a per-site controller-identity allowlist;
-  RULE_DEFECTS.md KTBD-K1), a single-suffix `<base>-<5>` lookalike in an
+  RULE_DEFECTS.md K54), a single-suffix `<base>-<5>` lookalike in an
   application namespace (branch C is scoped to control-plane namespaces to hold
   benign hits at 0; the double-suffix Deployment/ReplicaSet shape is covered in
   every namespace), and a controller-shaped name carrying a `node-debugger-`

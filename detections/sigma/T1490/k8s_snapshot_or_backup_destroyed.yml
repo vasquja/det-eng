@@ -43,7 +43,7 @@ description: |
       Velero Schedule or BackupStorageLocation, so a velero-SA delete of those still fires.
 
   An actor who steals the velero or snapshot-controller token and acts as that identity
-  is suppressed (detections/RULE_DEFECTS.md KTBD-I1), the same evasion every controller
+  is suppressed (detections/RULE_DEFECTS.md K51), the same evasion every controller
   identity filter accepts; baseline those identities and correlate.
 
   These objects are CustomResourceDefinitions, so the shipped lab audit policy logs them
@@ -59,7 +59,7 @@ description: |
   (client-go Helper.DeleteWithOptions calls .Body(options)); at Metadata the body is not
   logged and the record carries no query marker, so it is indistinguishable from a real
   delete and the rule fires -- an accepted, indistinguishable false positive
-  (detections/RULE_DEFECTS.md KTBD-I2). A stricter policy that logs these CRDs at Request
+  (detections/RULE_DEFECTS.md K52). A stricter policy that logs these CRDs at Request
   carries dryRun in the DeleteOptions body (requestObject), which this Metadata-keyed rule
   does not read, so there it also fires. The shipped lab policy logs these CRDs at Metadata.
 
@@ -164,10 +164,10 @@ falsepositives:
     the dry run in the DeleteOptions request body, not the query. At the shipped Metadata
     policy the body is not logged and the record carries no query marker, so it is
     indistinguishable from a real delete and the rule fires -- an accepted, indistinguishable
-    false positive (detections/RULE_DEFECTS.md KTBD-I2). The rule filters only the query form
+    false positive (detections/RULE_DEFECTS.md K52). The rule filters only the query form
     of a dry run -- a create's CreateOptions.dryRun in the query (procedure E), or a delete via
     `kubectl --raw`/kubernetes-client-python that puts ?dryRun=All in the query. A stricter
     policy that logs these CRDs at Request also fires, because the rule does not read the body.
   - An actor who acts with a stolen snapshot-controller or velero service-account token is
-    suppressed by the controller filters (detections/RULE_DEFECTS.md KTBD-I1).
+    suppressed by the controller filters (detections/RULE_DEFECTS.md K51).
 level: medium

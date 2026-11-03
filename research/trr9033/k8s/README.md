@@ -37,7 +37,7 @@ Strategy):
   cannot tell them apart: a create is unambiguous (the Service is exposed by that write,
   though the write itself may be routine), but an update, a PUT or a server-side apply of
   an already-exposed Service carries `spec.type` again, so the rule's update and patch
-  branch fires on a re-apply as on a first change (RULE_DEFECTS.md **KTBD-M2**).
+  branch fires on a re-apply as on a first change (RULE_DEFECTS.md **K59**).
 - **Grading the exposed interface.** A LoadBalancer or NodePort that exposes a sensitive
   port or workload (a dashboard, Kubeflow, Argo) is higher severity, but a rule that keys
   on a namespace, selector or port list needs a fixed allowlist that ages and that the
@@ -201,7 +201,7 @@ not grade the exposed namespace or port: that needs a fixed allowlist that ages,
 provider controls already cover that slice where they are enabled (see Prior art). Triage
 an alert by whether the Service was internal before and by the identity.
 
-**Accepted approximation (RULE_DEFECTS.md KTBD-M2).** One record cannot tell a type
+**Accepted approximation (RULE_DEFECTS.md K59).** One record cannot tell a type
 *change* from a *re-assertion*. A create (A, B) is unambiguous — the Service is exposed by
 that write. An update, a PUT or a server-side apply of an already-exposed Service carries
 `spec.type` again, so the update and patch branch fires on a re-apply by GitOps (Argo CD,
@@ -224,7 +224,7 @@ no `spec.type` (`detections/benign/slices/kubernetes/k8s-audit-gitops-ci.json`);
 RequestResponse LoadBalancer re-applies would score it above 0 and is a human decision (not
 added here).
 
-**Scope: platform gaps (RULE_DEFECTS.md KTBD-M1).** The rule is proven on the kind lab and
+**Scope: platform gaps (RULE_DEFECTS.md K58).** The rule is proven on the kind lab and
 is full on EKS (CloudWatch), GKE, AKS (both categories), OpenShift WriteRequestBodies and
 the self-managed `recommended` policy, which log core writes with a body. It is **blind on
 OpenShift 4.17 and 4.18 Default and on the k3s starter policy**, which log core writes at

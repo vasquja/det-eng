@@ -41,7 +41,7 @@ description: |
       (ebs-csi-controller-sa on EKS, and so on), so an operator must baseline that
       identity there, or the provisioner's own PV deletes fire. This filter reads only
       the identity, so a delete sent with a stolen provisioner or controller token is
-      filtered too (detections/RULE_DEFECTS.md KTBD-H2).
+      filtered too (detections/RULE_DEFECTS.md K50).
   The pv-protection and pvc-protection controllers do not delete; they only update to
   remove a finalizer (pv_protection_controller.go, pvc_protection_controller.go), so
   they are not storage deletes and are not filtered here.
@@ -57,7 +57,7 @@ description: |
   detections/RULE_DEFECTS.md K36). Under a managed policy that logs these deletes at
   Metadata, a kubectl delete --dry-run=server also fires (K39-style).
 
-  Limit (detections/RULE_DEFECTS.md KTBD-H1): one delete record does not carry the
+  Limit (detections/RULE_DEFECTS.md K49): one delete record does not carry the
   bound PV's persistentVolumeReclaimPolicy, so this rule cannot tell a destructive
   delete (reclaim Delete, the volume is destroyed) from a non-destructive one (reclaim
   Retain, the volume is kept) in a single record. It is the chokepoint for the actor's
@@ -98,7 +98,7 @@ detection:
   filter_pv_binder:
     user.username: 'system:serviceaccount:kube-system:persistent-volume-binder'
   # The external (CSI) provisioner deletes a dynamically provisioned PV. On kind this
-  # is local-path-provisioner; baseline the managed-platform provisioner SA (KTBD-H2).
+  # is local-path-provisioner; baseline the managed-platform provisioner SA (K50).
   filter_provisioner:
     user.username: 'system:serviceaccount:local-path-storage:local-path-provisioner-service-account'
   # A server-side dry run (kubectl delete --dry-run=server) sends dryRun ["All"] in the
@@ -139,7 +139,7 @@ falsepositives:
   - A managed-platform CSI provisioner (ebs-csi-controller-sa on EKS, the GKE and AKS
     equivalents) whose PV deletes are not the kind local-path identity this rule
     filters. Baseline that provisioner's service account (detections/RULE_DEFECTS.md
-    KTBD-H2).
+    K50).
   - A server-side dry run (kubectl delete --dry-run=server) is filtered only when the
     record holds the DeleteOptions body (Request level or higher). A delete with no
     body whose query holds ?dryRun=All still fires (RULE_DEFECTS.md K36), and under a

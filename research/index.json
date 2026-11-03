@@ -1126,6 +1126,264 @@
           "url": "../atomics/T1485/src/emulate.sh"
         }
       }
+    },
+    {
+      "name": "Inhibit Recovery by Destroying Snapshots and Velero Backups (Kubernetes)",
+      "id": "TRR9029",
+      "tactics": [
+        "Impact"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1490"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "Delete a VolumeSnapshot",
+        "B": "Delete a VolumeSnapshotContent",
+        "C": "Delete a Velero Schedule",
+        "D": "Delete a Velero BackupStorageLocation",
+        "E": "Create a Velero DeleteBackupRequest"
+      },
+      "pub_date": "2026-11-01",
+      "last_update": "2026-11-01",
+      "path": "trr9029/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng VolumeSnapshot deletion behavioral emulation (inert, kind)",
+          "url": "../atomics/T1490/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng VolumeSnapshotContent deletion behavioral emulation (cluster-scoped, Retain, kind)",
+          "url": "../atomics/T1490/src/emulate.sh"
+        },
+        "C": {
+          "text": "det-eng Velero Schedule deletion behavioral emulation (inert, kind)",
+          "url": "../atomics/T1490/src/emulate.sh"
+        },
+        "D": {
+          "text": "det-eng Velero BackupStorageLocation deletion behavioral emulation (inert, kind)",
+          "url": "../atomics/T1490/src/emulate.sh"
+        },
+        "E": {
+          "text": "det-eng Velero DeleteBackupRequest create behavioral emulation (the backup-deletion path, inert, kind)",
+          "url": "../atomics/T1490/src/emulate.sh"
+        }
+      }
+    },
+    {
+      "name": "Pod-Bound Service Account Token Used From An Unexpected Source (Kubernetes)",
+      "id": "TRR9030",
+      "tactics": [
+        "Credential Access"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1528"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "Pod-bound token used from an unexpected source"
+      },
+      "pub_date": "2026-11-01",
+      "last_update": "2026-11-01",
+      "path": "trr9030/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng pod-bound token used off-source behavioral emulation (mint + off-source whoami; in-pod baseline)",
+          "url": "../atomics/T1528/src/emulate.sh"
+        }
+      }
+    },
+    {
+      "name": "Lookalike Pod With a Controller-Generated Name (Kubernetes)",
+      "id": "TRR9031",
+      "tactics": [
+        "Defense Evasion"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1036.005"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "ReplicaSet-shaped explicit name (any namespace)",
+        "C": "DaemonSet/Job-shaped explicit name (control-plane namespace)"
+      },
+      "pub_date": "2026-11-01",
+      "last_update": "2026-11-01",
+      "path": "trr9031/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng ReplicaSet-shaped explicit pod name behavioral emulation (inert pause pod, kind)",
+          "url": "../atomics/T1036.005/src/emulate.sh"
+        },
+        "C": {
+          "text": "det-eng DaemonSet-shaped explicit pod name in kube-system behavioral emulation (inert pause pod, kind)",
+          "url": "../atomics/T1036.005/src/emulate.sh"
+        }
+      }
+    },
+    {
+      "name": "EKS Access-Entry Backdoor in CloudTrail (AWS)",
+      "id": "TRR9032",
+      "tactics": [
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1098.006",
+        "T1098.003"
+      ],
+      "platforms": [
+        "AWS"
+      ],
+      "procedures": {
+        "A": "Cluster-admin access-entry backdoor",
+        "B": "Secrets-reading policy grant",
+        "C": "Grading boundary (View / namespace scope)",
+        "D": "Residual gaps and the cross-account limit"
+      },
+      "pub_date": "2026-11-02",
+      "last_update": "2026-11-02",
+      "path": "trr9032/aws/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures (CreateAccessEntry + AssociateAccessPolicy ClusterAdmin at cluster scope)",
+          "url": "../atomics/T1098.006/src/emulate_eks_access_entry.sh"
+        },
+        "B": {
+          "text": "det-eng behavioral emulation / recorded fixtures (AssociateAccessPolicy of a reads-Secrets policy at cluster scope)",
+          "url": "../atomics/T1098.006/src/emulate_eks_access_entry.sh"
+        }
+      }
+    },
+    {
+      "name": "Service Exposure Through a NodePort or LoadBalancer Service (Kubernetes)",
+      "id": "TRR9033",
+      "tactics": [
+        "Persistence",
+        "Initial Access"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1133"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "Create a NodePort Service",
+        "B": "Create a LoadBalancer Service",
+        "C": "JSON patch of /spec/type to LoadBalancer"
+      },
+      "pub_date": "2026-11-01",
+      "last_update": "2026-11-01",
+      "path": "trr9033/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng NodePort Service create behavioral emulation (inert Service, kind)",
+          "url": "../atomics/T1133/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng LoadBalancer Service create behavioral emulation (inert Service, kind)",
+          "url": "../atomics/T1133/src/emulate.sh"
+        },
+        "C": {
+          "text": "det-eng JSON patch of /spec/type to LoadBalancer behavioral emulation (inert Service, kind)",
+          "url": "../atomics/T1133/src/emulate.sh"
+        }
+      }
+    },
+    {
+      "name": "Malicious Image Surfaced by an Admission-Policy Verdict (Kubernetes)",
+      "id": "TRR9034",
+      "tactics": [
+        "Execution"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1204.003"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "Pod the Audit binding flags",
+        "B": "Pod the Deny binding flags",
+        "C": "Deployment whose controller pod the Audit binding flags"
+      },
+      "pub_date": "2026-11-02",
+      "last_update": "2026-11-02",
+      "path": "trr9034/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng admission-policy Audit-verdict behavioral emulation (reference VAP, inert pod, annotation)",
+          "url": "../atomics/T1204.003/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng admission-policy Deny-verdict behavioral emulation (reference VAP, refused create)",
+          "url": "../atomics/T1204.003/src/emulate.sh"
+        },
+        "C": {
+          "text": "det-eng admission-policy controller-pod Audit-verdict behavioral emulation (Deployment -> replicaset controller pod)",
+          "url": "../atomics/T1204.003/src/emulate.sh"
+        }
+      }
+    },
+    {
+      "name": "CSR Client-Certificate Persistence (Kubernetes)",
+      "id": "TRR9035",
+      "tactics": [
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1098.006",
+        "T1136"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "Create a kube-apiserver-client CSR",
+        "B": "Approve the CSR"
+      },
+      "pub_date": "2026-11-02",
+      "last_update": "2026-11-02",
+      "path": "trr9035/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng kube-apiserver-client CSR create behavioral emulation (inert subject, kind)",
+          "url": "../atomics/T1098.006/src/emulate_csr.sh"
+        },
+        "B": {
+          "text": "det-eng CSR approval behavioral emulation (approval subresource, no privilege granted, kind)",
+          "url": "../atomics/T1098.006/src/emulate_csr.sh"
+        }
+      }
     }
   ]
 }

@@ -99,7 +99,7 @@ The discriminator is the actor class, verified against kubernetes v1.36.4 source
   a managed platform runs a different service account (`ebs-csi-controller-sa` on EKS,
   and so on). The rule filters the kind identity; on a managed platform the operator
   must baseline the provisioner's own service account (see **Detection Strategy** and
-  [RULE_DEFECTS KTBD-H2](../../../detections/RULE_DEFECTS.md#ktbd-h2-k8s_storage_volume_deleted-the-storage-controller-filters-trust-the-identity)).
+  [RULE_DEFECTS K50](../../../detections/RULE_DEFECTS.md#k50-k8s_storage_volume_deleted-the-storage-controller-filters-trust-the-identity)).
 
 The `pv-protection` and `pvc-protection` controllers do **not** delete; they only
 `update` an object to remove a finalizer
@@ -116,7 +116,7 @@ body is `DeleteOptions`). So, from one record, a **destructive** delete (reclaim
 them apart. The separate grader `k8s_volume_reclaim_set_to_delete` catches the step
 that makes a delete destructive — a patch that sets a PV's reclaim policy to `Delete`.
 This gap is tracked as
-[RULE_DEFECTS KTBD-H1](../../../detections/RULE_DEFECTS.md#ktbd-h1-k8s_storage_volume_deleted-one-delete-record-does-not-show-whether-the-volume-is-destroyed).
+[RULE_DEFECTS K49](../../../detections/RULE_DEFECTS.md#k49-k8s_storage_volume_deleted-one-delete-record-does-not-show-whether-the-volume-is-destroyed).
 
 ## Procedures
 
@@ -219,9 +219,9 @@ Scope: the filter reads only the identity, so a delete sent with a stolen provis
 or controller token is filtered too, and on a managed platform the CSI provisioner's
 own service account (not the kind `local-path` identity) must be baselined, or its PV
 deletes fire. Both are tracked as
-[RULE_DEFECTS KTBD-H2](../../../detections/RULE_DEFECTS.md#ktbd-h2-k8s_storage_volume_deleted-the-storage-controller-filters-trust-the-identity).
+[RULE_DEFECTS K50](../../../detections/RULE_DEFECTS.md#k50-k8s_storage_volume_deleted-the-storage-controller-filters-trust-the-identity).
 The chokepoint also cannot tell a destructive delete from a non-destructive one in one
-record ([KTBD-H1](../../../detections/RULE_DEFECTS.md#ktbd-h1-k8s_storage_volume_deleted-one-delete-record-does-not-show-whether-the-volume-is-destroyed)).
+record ([K49](../../../detections/RULE_DEFECTS.md#k49-k8s_storage_volume_deleted-one-delete-record-does-not-show-whether-the-volume-is-destroyed)).
 
 **Strategy 2 — grader (covers D).** `k8s_volume_reclaim_set_to_delete` (level high)
 matches an accepted `patch` of a `persistentvolumes` object whose request body sets

@@ -220,7 +220,7 @@ reasoning survives. Append an entry per vet; keep it short.
   the ship: detection (2), the credential-id value_count correlation, is prototyped and proven in sigma_eval but
   NOT shipped as a live rule -- the repo's correlation backend keys on a `timestamp` column that a k8s audit
   record (requestReceivedTimestamp) does not carry (a shared-tooling change, a human decision). The
-  managed-cluster single-record degradation is RULE_DEFECTS KTBD-J1; the hostNetwork node-IP false positive is
+  managed-cluster single-record degradation is RULE_DEFECTS K53; the hostNetwork node-IP false positive is
   in the rule's falsepositives.
 
 - **CSR client-certificate persistence (T1098.006/T1136) — LEAN-GO as a disclosed backstop (Q4 trodden; two
@@ -248,7 +248,7 @@ reasoning survives. Append an entry per vet; keep it short.
   wired into validate-apiserver (MANIFEST 9035 A-B, atomics/T1098.006/src/emulate_csr.sh). Dropped as proven,
   per the two limits: the subject grader (not Sigma-expressible — and v1.36.4's CertificateSubjectRestriction
   admission plugin refuses a kube-apiserver-client CSR requesting system:masters, confirmed 403 on the lab) and
-  the fieldref self-approval check (non-portable). Both limits recorded in RULE_DEFECTS.md KTBD-O1. No
+  the fieldref self-approval check (non-portable). Both limits recorded in RULE_DEFECTS.md K60. No
   CHOKEPOINT waiver was needed: the signerName discriminator makes check_sufficiency pass without one.
 
 - **ServiceAccount create, incl. kube-system / lookalike names (T1136.001/T1036.010) — NO-GO (Q3, reinforced by
@@ -313,10 +313,10 @@ reasoning survives. Append an entry per vet; keep it short.
   pinned source showed they read every Secret and carry no service-linked restriction). ArgoCDClusterPolicy, ViewPolicy,
   ACKPolicy and KROPolicy read no core Secrets; ClusterInsights is service-linked-only. Proven by
   `validate_cloud_detections.py` over committed CloudTrail fixtures. **Dropped**: the namespace-scoped-secrets tier
-  (one record cannot weigh namespaces; KTBD-L1) and the cross-account provenance predicate (the real
+  (one record cannot weigh namespaces; K56) and the cross-account provenance predicate (the real
   `principalArn|fieldref|contains: recipientAccountId` form runs on `sigma_eval` and its embedded-victim-ID evasion was
   reproduced; the sound fix is a portable `sel_external and not filter_org_accounts` `|re` pair needing a
-  per-deployment org-account allowlist; KTBD-L2) — both documented, not shipped.
+  per-deployment org-account allowlist; K57) — both documented, not shipped.
 
 - **Service exposure through NodePort / LoadBalancer (T1133, MS-TA9005) — LEAN-GO (question 2 backstop; question
   4 differentiated).** Q1 PASS: `requestObject.spec.type` is an API enum the attacker must set to expose
@@ -339,8 +339,8 @@ reasoning survives. Append an entry per vet; keep it short.
   confounder) and null-safe. Dropped: the sensitive-interface grader (kept as a severity
   note, not a brittle namespace/port allowlist that ages; GuardDuty / Defender cover that
   closed slice). Stated limits: update/patch cannot tell a type change from a re-assertion
-  (RULE_DEFECTS.md KTBD-M2), and the rule is blind where core writes stay at Metadata
-  (OpenShift Default, k3s starter; KTBD-M1). A services RequestResponse row was added to
+  (RULE_DEFECTS.md K59), and the rule is blind where core writes stay at Metadata
+  (OpenShift Default, k3s starter; K58). A services RequestResponse row was added to
   the lab and recommended audit policies.
 
 - **Credentials in ConfigMaps / pod configuration read through the API (T1552, MS-TA9027) — NO-GO (questions 1
@@ -376,9 +376,9 @@ reasoning survives. Append an entry per vet; keep it short.
   and the kind local-path provisioner by `user.username`; a CHOKEPOINT waiver, proposed)
   and the Request-level grader `k8s_volume_reclaim_set_to_delete.yml` (a PV patch that sets
   `persistentVolumeReclaimPolicy` to `Delete`). Dropped/deferred: the one-record reclaim
-  gap is unchanged and recorded as KTBD-H1 (a delete record carries no reclaim policy, so
+  gap is unchanged and recorded as K49 (a delete record carries no reclaim policy, so
   the grader covers the policy-flip step only); the identity filters' stolen-token evasion
-  and the managed-platform CSI-provisioner baseline are KTBD-H2; no `deletionPolicy` on
+  and the managed-platform CSI-provisioner baseline are K50; no `deletionPolicy` on
   volumesnapshotcontents here (that is the T1490/TRR9029 half, built in parallel). Prior
   art re-checked at build time: still no PVC/PV deletion rule in SigmaHQ, Elastic, Splunk
   or Falco k8saudit, and no Stratus/ART test; provider-native findings remain unverified
@@ -397,7 +397,7 @@ reasoning survives. Append an entry per vet; keep it short.
   fires. Dropped nothing from the T1490 scope; the reclaimPolicy/deletionPolicy enrichment gap and the
   body-form dry-run FP (kubectl's default `--dry-run=server` delete puts dryRun in the unlogged DeleteOptions
   body, so at Metadata its record is indistinguishable from a real delete and the rule fires -- an accepted FP,
-  KTBD-I2) are documented. The T1485 half is TRR9028.
+  K52) are documented. The T1485 half is TRR9028.
 
 - **Lookalike workload names (T1036.005) — LEAN-GO (Q1 and Q3 pass on a narrowed chokepoint; Q2 is GKE-native;
   respects the T1610 NO-GO).** Controllers create pods only with `generateName`
@@ -416,7 +416,7 @@ reasoning survives. Append an entry per vet; keep it short.
   generateName branch (B). A real ReplicaSet controller's `generateName` (`<owner>-`, e.g.
   `coredns-6f6b679f8f-`) is byte-identical to an adversary's fake-hash generateName, both with no
   `objectRef.name`, confirmed on a kube-apiserver v1.36.4 lab; the only server-trusted discriminator is a
-  per-site controller-SA allowlist, so it is a documented gap (RULE_DEFECTS.md KTBD-K1), not a shippable
+  per-site controller-SA allowlist, so it is a documented gap (RULE_DEFECTS.md K54), not a shippable
   chokepoint. A lookalike controller and typosquats remain stated gaps.
 
 - **Malicious image via an admission-policy verdict (T1204.003) — LEAN-GO (narrow; survives the T1610 NO-GO only

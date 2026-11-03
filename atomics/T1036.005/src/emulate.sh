@@ -20,7 +20,7 @@
 # technique, so the name is attacker-chosen by design; the pods carry no command and
 # reach nothing. There is no generateName procedure (B): a controller and an adversary
 # send a byte-identical generateName, so the audit chokepoint cannot tell them apart
-# without a per-site controller-identity allowlist (RULE_DEFECTS.md KTBD-K1); it is a
+# without a per-site controller-identity allowlist (RULE_DEFECTS.md K54); it is a
 # documented gap, not a procedure.
 #
 # Run ONE procedure:

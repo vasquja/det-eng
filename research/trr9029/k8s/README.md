@@ -237,11 +237,11 @@ many `&` the query carries, so no parse-count guard is needed.
 **Limits.** A stolen snapshot-controller or velero service-account token evades the identity
 filters within that controller's churn (a velero token still fires on a Schedule or
 BackupStorageLocation delete, which the server never does)
-([RULE_DEFECTS KTBD-I1](../../../detections/RULE_DEFECTS.md#ktbd-i1-k8s_snapshot_or_backup_destroyed-a-stolen-controller-token-evades-the-identity-filters));
+([RULE_DEFECTS K51](../../../detections/RULE_DEFECTS.md#k51-k8s_snapshot_or_backup_destroyed-a-stolen-controller-token-evades-the-identity-filters));
 and kubectl's default `kubectl delete --dry-run=server` carries the dry run in the
 DeleteOptions body, which at `Metadata` is not logged, so its record is indistinguishable
 from a real delete and the rule fires -- an accepted false positive
-([RULE_DEFECTS KTBD-I2](../../../detections/RULE_DEFECTS.md#ktbd-i2-k8s_snapshot_or_backup_destroyed-a-server-side-dry-run-delete-is-indistinguishable-from-a-real-delete-at-metadata-and-fires)).
+([RULE_DEFECTS K52](../../../detections/RULE_DEFECTS.md#k52-k8s_snapshot_or_backup_destroyed-a-server-side-dry-run-delete-is-indistinguishable-from-a-real-delete-at-metadata-and-fires)).
 
 **Portability.** The chokepoint is `Metadata`-only (verb, apiGroup, resource,
 user.username), so it fires under every managed audit policy modeled here: all positives
