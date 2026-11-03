@@ -320,7 +320,17 @@ reasoning survives. Append an entry per vet; keep it short.
   stored-object branch fires on services/status unless `objectRef.subresource` is excluded (the service
   controller patches only `status`, cloud-provider helper.go:142). Q4: the bare NodePort create is trodden
   (Elastic, Splunk, Panther, Falco), but no open rule set covers LoadBalancer, and SigmaHQ has no Service rule.
-  Deferred to build as TRR9033 (k8s), a chokepoint plus a sensitive-interface grader.
+  Built as TRR9033 (k8s): one chokepoint rule
+  `detections/sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml` on `spec.type`
+  NodePort/LoadBalancer in `requestObject` (A: NodePort create, B: LoadBalancer create)
+  or `responseObject` (C: JSON patch of `/spec/type`, which Elastic's request-only shape
+  misses), with `objectRef.subresource == status` excluded (the service/cloud controller
+  confounder) and null-safe. Dropped: the sensitive-interface grader (kept as a severity
+  note, not a brittle namespace/port allowlist that ages; GuardDuty / Defender cover that
+  closed slice). Stated limits: update/patch cannot tell a type change from a re-assertion
+  (RULE_DEFECTS.md KTBD-M2), and the rule is blind where core writes stay at Metadata
+  (OpenShift Default, k3s starter; KTBD-M1). A services RequestResponse row was added to
+  the lab and recommended audit policies.
 
 - **Credentials in ConfigMaps / pod configuration read through the API (T1552, MS-TA9027) — NO-GO (questions 1
   and 3, reinforced by log-exposure risk).** No field scopes a ConfigMap read to one that holds a credential:

@@ -324,6 +324,29 @@ rules:
       - group: "operator.openshift.io"
         resources: ["dnses"]
 
+  # --- TRR9033: core Service writes at RequestResponse (spec.type exposure) ---
+  # Serves: detections/sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml. The
+  # exposing signal is requestObject.spec.type / responseObject.spec.type (NodePort or
+  # LoadBalancer), which only Request records in the body and only RequestResponse in
+  # the stored object; a JSON patch of /spec/type (requestObject is an operation list,
+  # not a Service) is caught only by responseObject, so this needs RequestResponse. A
+  # Service spec carries no credential (its data is ports, a selector and a type).
+  # Services fall to the Metadata catch-all today (nothing above names them), so this
+  # raises nothing's level: it only adds the body of a Service create / update / patch.
+  # Audit resource matching is exact (checker.go ruleMatchesResource, v1.36.4: the policy
+  # resource must equal resource or resource/subresource), so services/status and
+  # services/proxy stay at the Metadata catch-all. The service controller and the
+  # cloud-provider helper patch ONLY the status subresource (kubernetes v1.36.4
+  # staging/src/k8s.io/cloud-provider/service/helpers/helper.go PatchService, the
+  # trailing "status"; controller.go patchStatus and the finalizer patches at :945, :960,
+  # :986), so their writes are not logged here with a body; the rule also filters
+  # objectRef.subresource == status for a platform that does log it (EKS, AKS).
+  - level: RequestResponse
+    verbs: ["create", "update", "patch"]
+    resources:
+      - group: ""
+        resources: ["services"]
+
   # --- TRR9006: Secret reads at Metadata (NEVER Request/RequestResponse) ---
   # Above every None rule, so a secret read is always recorded. Metadata carries
   # verb, objectRef, identity, source, client, and code -- but not the data.

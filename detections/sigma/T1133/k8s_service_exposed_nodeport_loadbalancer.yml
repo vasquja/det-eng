@@ -1,0 +1,127 @@
+title: Kubernetes Service Exposed via NodePort or LoadBalancer
+id: 1aab15c0-44d0-4b48-8e17-d4342e7850b2
+status: experimental
+description: |
+  Detects a write to a core Service that exposes it outside the cluster: an audit event
+  whose objectRef.resource is services, whose verb is create, update or patch, and whose
+  spec.type is NodePort or LoadBalancer in the submitted object (requestObject.spec.type)
+  or in the stored object (responseObject.spec.type). This is the TRR9033 chokepoint for
+  T1133 (External Remote Services) on Kubernetes, covering Procedure A (create a NodePort
+  Service), B (create a LoadBalancer Service) and C (change an existing Service's
+  spec.type to LoadBalancer with a JSON patch of /spec/type).
+
+  spec.type is the exposure itself, not a name or an annotation: the API server
+  validates it against the enum ClusterIP, NodePort, LoadBalancer, ExternalName
+  (kubernetes core/v1 types.go, v1.36.4), and only NodePort and LoadBalancer expose pods
+  outside the cluster (NodePort opens a port on every node; LoadBalancer provisions an
+  external load balancer). ClusterIP and ExternalName do not expose, so they are the
+  non-exposing values the rule does not fire on. objectRef.resource and verb are set by
+  the API server. objectRef.namespace is forced by the target -- a Service selects pods
+  only in its own namespace -- so it is not a discriminator and must never be a filter.
+  The Service name, spec.loadBalancerSourceRanges and the internal / internet-facing
+  annotations are attacker-chosen (source ranges narrowed to the attacker's own address
+  are still exposure), so they are never filters either.
+
+  The responseObject branch catches a type change made by a JSON patch of /spec/type,
+  whose request body is a JSON-patch operation list, not a Service, so
+  requestObject.spec.type is absent; the stored object after the write carries the new
+  type. Elastic's request-only rule misses that patch form. The branch needs
+  RequestResponse level; the audit policy logs core Service writes there
+  (detections/k8s/audit-policy-apiserver.yaml; EKS and AKS log core writes at
+  RequestResponse already).
+
+  The rule filters objectRef.subresource == status: the service controller and the
+  cloud-provider helper patch only the /status subresource (kubernetes v1.36.4
+  cloud-provider service/helpers/helper.go PatchService, the trailing "status";
+  controller.go patchStatus and the finalizer patches), and a services/status write
+  returns the whole Service, whose responseObject.spec.type would otherwise fire this
+  rule on a platform that logs the status subresource with a body (EKS, AKS). The repo's
+  audit policy keeps services/status at Metadata, so no stored object is logged for it
+  there; the filter keeps the rule quiet where it is logged. The filter is null-safe: a
+  main-resource write has no objectRef.subresource, so sel_no_subresource OR-guards the
+  negation (detections/README.md, null safety).
+
+  Limit: one record cannot tell a type change from a re-assertion. A create (A, B) is
+  unambiguous -- the Service is exposed by that write. An update, a PUT or a server-side
+  apply of an already-exposed Service carries spec.type again, so update and patch
+  approximate: they fire on a re-assertion of an existing NodePort or LoadBalancer
+  Service as they do on a first change. Triage by whether the Service was internal
+  before, and baseline the controllers and GitOps / Helm identities that manage ingress
+  controllers and app front ends; the record cannot show whether a cloud load balancer
+  actually became reachable from the internet.
+
+  A LoadBalancer or NodePort that exposes a sensitive interface (a dashboard, Kubeflow,
+  Argo) is higher severity; this rule stays policy-light and does not grade the exposed
+  port or namespace, which would need a fragile allowlist that ages (see the TRR). On
+  AWS, GuardDuty Policy:Kubernetes/ExposedDashboard and KubeflowDashboardExposed, and on
+  Azure, Defender for Containers "Exposed Kubernetes service detected", cover that
+  sensitive-interface slice natively; this is the provider-agnostic Sigma backstop, and
+  it also covers LoadBalancer and the JSON-patch form, which the nearest open rules
+  (Elastic / Splunk / Panther / Falco "Create NodePort Service", all NodePort-create
+  only) do not.
+references:
+  - https://attack.mitre.org/techniques/T1133/
+  - https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+author: det-eng
+date: 2026/11/01
+tags:
+  - attack.persistence
+  - attack.initial-access
+  - attack.t1133
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  selection_service_write:
+    objectRef.resource: 'services'
+    verb:
+      - 'create'
+      - 'update'
+      - 'patch'
+  # The submitted object (a create, an update, a merge / strategic patch, or a
+  # server-side apply all carry a Service with spec.type).
+  selection_request_type:
+    requestObject.spec.type:
+      - 'NodePort'
+      - 'LoadBalancer'
+  # The stored object after the write. Catches a JSON patch of /spec/type, whose request
+  # body is an operation list and carries no requestObject.spec.type (needs
+  # RequestResponse level).
+  selection_response_type:
+    responseObject.spec.type:
+      - 'NodePort'
+      - 'LoadBalancer'
+  # The service and cloud controllers patch only /status (helper.go PatchService); a
+  # services/status write returns the whole Service, so responseObject.spec.type would
+  # fire this rule on a platform that logs that subresource with a body. Exclude it.
+  filter_status_subresource:
+    objectRef.subresource: 'status'
+  # Null guard: a main-resource write has no objectRef.subresource, so a bare
+  # `not filter_status_subresource` would drop it on a three-valued backend.
+  sel_no_subresource:
+    objectRef.subresource: null
+  condition: >-
+    selection_service_write and (selection_request_type or selection_response_type)
+    and (sel_no_subresource or not filter_status_subresource)
+falsepositives:
+  - Ingress controllers (ingress-nginx, Istio ingressgateway, Traefik, MetalLB) and
+    app front ends that are legitimately exposed as NodePort or LoadBalancer. Baseline
+    the GitOps / Helm identities (Argo CD, Flux) and the controllers that manage them by
+    user.username and user.groups; an attacker exposes the same object a legitimate
+    operator does, so triage by the identity and by whether the Service was internal
+    before.
+  - A server-side apply, PUT or re-apply of an already-exposed Service re-asserts
+    spec.type, so update and patch fire on a re-assertion as on a first change (a
+    documented limit). A create is unambiguous only in that the Service is exposed by
+    that write -- not that the write is malicious.
+  - A first-time create of an internal (annotated) LoadBalancer or NodePort Service is
+    common and benign where a platform or infra team provisions internal load balancers,
+    and it also fires at medium, because the rule keys on spec.type and never on the
+    internal / internet-facing annotations (attacker-chosen), so an internal LoadBalancer
+    is not distinguishable from an internet-facing one on one record. Triage such a
+    create by identity, as with the re-apply case.
+  - On a platform that logs reads with a body, this rule does not fire (verb is create,
+    update or patch only). The cloud controller's /status patches are excluded by
+    objectRef.subresource.
+level: medium

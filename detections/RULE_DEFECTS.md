@@ -98,6 +98,8 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [KTBD-J1](#ktbd-j1-k8s_pod_token_used_off_source-the-single-record-off-source-compare-degrades-on-managed-clusters) | the TRR9030 single-record off-source rule, on EKS/GKE/AKS | on EKS/GKE/AKS the last `sourceIPs` entry is a konnectivity agent / load balancer / NAT peer, not the pod, so the single-record off-source compare degrades to an approximation (TRR9030 Procedure A); the portable fallback is the credential-id value_count correlation prototyped in the TRR | portability | medium |
 | [KTBD-K1](#ktbd-k1-k8s_pod_controller_name_mimicry-does-not-cover-a-generatename-masquerade) | `T1036.005/k8s_pod_controller_name_mimicry` (no generateName branch) | a bare-pod `generateName` masquerade (`coredns-6f6b679f8f-`) is byte-identical to a real controller's generateName create, both with no `objectRef.name`, so the audit chokepoint cannot separate them without a per-site controller-identity allowlist; the rule ships the explicit-name branches A and C only | false negative | medium |
 | [KTBD-K2](#ktbd-k2-k8s_pod_controller_name_mimicry-the-name-shape-regex-is-not-portable-to-gke) | `T1036.005/k8s_pod_controller_name_mimicry` | GKE records `objectRef.name` inside `protoPayload.resourceName` (the object path), so the GKE pipeline maps the field to exact strings only and cannot apply the controller-shaped name regex; AKS and the lab are unaffected | portability | low |
+| [KTBD-M1](#ktbd-m1-k8s_service_exposed_nodeport_loadbalancer-is-blind-where-core-service-writes-stay-at-metadata-openshift-default-k3s-starter) | `T1133/k8s_service_exposed_nodeport_loadbalancer` (TRR9033 A-C), on OpenShift 4.17/4.18 Default and the k3s starter policy | these policies log core-group writes only at Metadata (no body), so neither `requestObject.spec.type` nor `responseObject.spec.type` is recorded and the rule sees no Service exposure | portability, policy gap | medium |
+| [KTBD-M2](#ktbd-m2-k8s_service_exposed_nodeport_loadbalancer-update-and-patch-fire-on-a-re-assertion-of-an-already-exposed-service) | `T1133/k8s_service_exposed_nodeport_loadbalancer`, the update/patch branch | one record cannot tell a type change from a re-assertion, so a PUT, server-side apply or re-apply of an already-exposed NodePort/LoadBalancer Service (GitOps, Helm) fires as a first exposure does; a create is unambiguous | false positive, description | medium |
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
@@ -2042,6 +2044,76 @@ the current ones.
   'Defense Evasion: Potential Kubernetes Pod Masquerading', which this rule backstops on
   EKS, AKS and self-managed clusters.
 - **Then**: n/a (a platform encoding limitation, not a rule change).
+### KTBD-M1. k8s_service_exposed_nodeport_loadbalancer is blind where core Service writes stay at Metadata (OpenShift Default, k3s starter)
+
+- **Scope**: [`sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml`](sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml)
+  (level medium), TRR9033 Procedures A, B and C, on OpenShift 4.17 and 4.18 **Default**
+  (not WriteRequestBodies) and the **k3s starter** policy. As the platform entries K38
+  to K42 and K47 do, this entry names its rule in a **Scope** bullet, not in a Rules
+  bullet, so `research/tools/coverage_report.py` does not mark the lab-proven procedures
+  as open defects; whether a platform gap must mark them is a human decision. On the kind
+  lab, and on EKS, GKE, AKS and the self-managed `recommended` policy, the rule is full.
+- **Kind**: portability, policy gap. **Severity**: medium (the exposure the rule exists
+  for leaves a body-less record on these platforms, and no rule change can help; the
+  platform's published policy decides, and the user can change it only on self-managed
+  OpenShift or k3s).
+- **Problem**: the rule's discriminator is `spec.type` (NodePort or LoadBalancer), which
+  a record carries only in `requestObject` (Request and up) or `responseObject`
+  (RequestResponse). OpenShift's Default audit profile and the k3s starter policy log
+  core-group writes at Metadata only, with no request or response body. So a Service
+  create, update or patch is recorded (who, what, where), but `spec.type` is absent, and
+  the rule matches nothing. EKS (CloudWatch), GKE, AKS (both categories) and the repo's
+  `recommended` policy log core writes at RequestResponse, where the rule is full. A
+  JSON patch of `/spec/type` (Procedure C) needs the response body, so it is blind on
+  any profile below RequestResponse even where a create's request body is kept.
+- **Evidence**: *simulator* — [`k8s/policy_coverage.json`](k8s/policy_coverage.json) and
+  [`k8s/PLATFORMS.md`](k8s/PLATFORMS.md) (`k8s_policy_coverage.py`, the policy texts in
+  [`k8s/provider-policies/`](k8s/provider-policies/SOURCES.md)): the rule is **full** 3/3
+  on `lab-apiserver`, EKS, both GKE profiles, all four AKS categories, both OpenShift
+  WriteRequestBodies profiles and `recommended`; **blind** 0/3 (`body-removed 3`) on
+  `openshift-default` (4.18), `openshift-default-4.17` and `k3s-starter`. A published
+  policy is not a capture, so this is **unverified** on a live cluster.
+- **Fix**: none in the rule (no rule matches a body a policy does not record). Compensating
+  control: on self-managed OpenShift set the audit profile to WriteRequestBodies (or an
+  AllRequestBodies custom profile) for core Services, and on k3s run the `recommended`
+  policy; on a managed platform that already logs core writes at RequestResponse (EKS,
+  GKE, AKS) the rule needs no change.
+- **Then**: the rule is full on any profile that records the Service write body; the
+  Scope bullet names the platforms where it is not.
+
+### KTBD-M2. k8s_service_exposed_nodeport_loadbalancer: update and patch fire on a re-assertion of an already-exposed Service
+
+- **Rule**: [`sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml`](sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.yml) (level medium).
+- **Kind**: false positive, description. **Severity**: medium (routine on a cluster whose
+  GitOps or Helm tooling re-applies LoadBalancer or NodePort Services, where core writes
+  are logged with a body).
+- **Problem**: the rule fires on a create, update or patch whose `spec.type` is NodePort
+  or LoadBalancer. One audit record cannot tell a *change to* an exposing type from a
+  *re-assertion* of one that is already set: a server-side apply, a PUT (`kubectl replace`
+  / `kubectl apply`) or a merge patch of a Service that is already LoadBalancer carries
+  `spec.type: LoadBalancer` again, exactly as a first exposure does. So an Argo CD or Flux
+  sync, or a `helm upgrade`, that re-applies an already-exposed front-end Service fires
+  the update/patch branch on every reconcile. A **create** is unambiguous (the Service is
+  exposed by that write). The repo benign corpus scores this rule 0 only because its
+  Service events are Metadata-level patches with no `spec.type`
+  ([`benign/slices/kubernetes/k8s-audit-gitops-ci.json`](benign/slices/kubernetes/k8s-audit-gitops-ci.json));
+  a corpus slice of RequestResponse LoadBalancer re-applies would score it above 0, and
+  is a human decision (not added here).
+- **Evidence**: *probe* (`sigma_eval.py` on the current rule): a PUT re-asserting an
+  already-LoadBalancer Service
+  (`verb=update`, `requestObject.spec.type=LoadBalancer`, `responseObject.spec.type=LoadBalancer`)
+  fires; a server-side apply re-asserting LoadBalancer (`verb=patch`, both bodies
+  LoadBalancer) fires; a ClusterIP re-apply (`verb=update`, both bodies ClusterIP) does
+  not. The rule's `falsepositives` names this limit, and the TRR Detection Strategy states
+  it as an accepted approximation.
+- **Fix**: none that one record supports: the record does not carry the prior
+  `spec.type`. Triage by whether the Service was internal before (a two-event correlation
+  on the same object, or an external store of prior state), and baseline the GitOps and
+  Helm identities and the controllers that manage ingress Services by `user.username` and
+  `user.groups`. A create stays a high-confidence signal.
+- **Then**: a future update/patch branch that keys on a true type *change* (prior state
+  from a correlation or an external store) ships with a positive for a real change and a
+  filtered or confounder case for a re-assertion.
 
 ## Cloud (AWS, Azure, GCP)
 

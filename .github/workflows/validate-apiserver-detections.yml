@@ -24,6 +24,8 @@ run-name: ${{ inputs.label && format('{0} [{1}]', github.workflow, inputs.label)
 #   - TRR9030 (steal application access token, T1528): pod-bound SA token used off-source -> audit -> Sigma
 #   - TRR9031 (lookalike pod name, T1036.005): explicit controller-shaped pod name by a
 #                                         non-node caller -> audit -> Sigma
+#   - TRR9033 (service exposure, T1133): core Service create/update/patch whose spec.type is
+#                                         NodePort or LoadBalancer -> audit -> Sigma
 #
 # A kind cluster runs on the ubuntu-latest runner with API server audit logging on
 # (pod creates, updates and patches; controller writes, deletes and deletecollections
@@ -84,6 +86,7 @@ on:
       - 'detections/sigma/T1490/**'
       - 'detections/sigma/T1528/**'
       - 'detections/sigma/T1036.005/**'
+      - 'detections/sigma/T1133/**'
       - 'detections/validate_apiserver_detections.py'
       - 'detections/sigma_eval.py'
       - 'detections/sigma_explain.py'
@@ -102,6 +105,7 @@ on:
       - 'atomics/T1490/**'
       - 'atomics/T1528/**'
       - 'atomics/T1036.005/**'
+      - 'atomics/T1133/**'
       - '.github/workflows/validate-apiserver-detections.yml'
   # PRs always trigger this workflow (no paths: filter) so the required
   # `validate-apiserver` check ALWAYS reports a status. The `changes` job below
@@ -219,6 +223,7 @@ jobs:
             'detections/sigma/T1490/' \
             'detections/sigma/T1528/' \
             'detections/sigma/T1036.005/' \
+            'detections/sigma/T1133/' \
             'detections/validate_apiserver_detections.py' \
             'detections/sigma_eval.py' \
             'detections/sigma_explain.py' \
@@ -237,6 +242,7 @@ jobs:
             'atomics/T1490/' \
             'atomics/T1528/' \
             'atomics/T1036.005/' \
+            'atomics/T1133/' \
             '.github/workflows/validate-apiserver-detections.yml')
           # Fail safe: if the diff cannot be computed, run the validator.
           if ! changed="$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}" 2>/dev/null)"; then
@@ -297,6 +303,7 @@ jobs:
             'detections/sigma/T1490/' \
             'detections/sigma/T1528/' \
             'detections/sigma/T1036.005/' \
+            'detections/sigma/T1133/' \
             'detections/validate_apiserver_detections.py' \
             'detections/sigma_eval.py' \
             'detections/sigma_explain.py' \
@@ -315,6 +322,7 @@ jobs:
             'atomics/T1490/' \
             'atomics/T1528/' \
             'atomics/T1036.005/' \
+            'atomics/T1133/' \
             '.github/workflows/validate-apiserver-detections.yml')
           range=""
           case "${EVENT_NAME}" in
@@ -725,6 +733,17 @@ jobs:
         # the trr9031 namespace is created and deleted. The marker is the namespace (A)
         # and the trr9031 label (C), never the controller-shaped pod name.
         run: bash atomics/T1036.005/src/emulate.sh all
+      - &apiserver-emulate-9033
+        name: Emulate TRR9033 (service exposure, inert NodePort / LoadBalancer)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        # Procedures A (NodePort create), B (LoadBalancer create) and C (JSON patch of
+        # /spec/type to LoadBalancer) are the exposing writes the rule fires on; D (ClusterIP
+        # create) and E (services/status patch) are controls the rule must stay quiet on
+        # (validate_apiserver_detections.py ABSENCE 9033 D / 9033 E). Every object is inert
+        # (selector app=trr9033, no backing pod; kind has no cloud provider so a LoadBalancer
+        # stays <pending>) in the trr9033 namespace, which the emulation creates and deletes.
+        run: bash atomics/T1133/src/emulate.sh all
 
       - &apiserver-collect
         name: Collect the audit log and the node sensor log
@@ -880,7 +899,7 @@ jobs:
         shell: bash
         run: |
           {
-            echo '## TRR9004-9010, 9025-9027 API server detection validation (emulate -> audit + node sensor -> Sigma)'
+            echo '## TRR9004-9010, 9025-9027, 9033 API server detection validation (emulate -> audit + node sensor -> Sigma)'
             echo ''
             echo '```'
             cat /tmp/apival.out 2>/dev/null || echo '(no validator output captured)'
@@ -993,6 +1012,7 @@ jobs:
       - *apiserver-emulate-9029
       - *apiserver-emulate-9030
       - *apiserver-emulate-9031
+      - *apiserver-emulate-9033
       - *apiserver-collect
 
       - name: Validate detections under the recommended policy (expected misses named)
@@ -1064,7 +1084,7 @@ jobs:
         shell: bash
         run: |
           {
-            echo '## Recommended audit policy: TRR9004-9010, 9025-9027 API server detection validation (--policy recommended)'
+            echo '## Recommended audit policy: TRR9004-9010, 9025-9027, 9033 API server detection validation (--policy recommended)'
             echo ''
             echo '```'
             cat /tmp/apival.out 2>/dev/null || echo '(no validator output captured)'

@@ -30,6 +30,8 @@ key on the same API server audit log (plus one node runtime sensor rule):
                                            sourceIPs entry
   * TRR9031 (T1036.005, lookalike pod name) - explicit controller-shaped pod name by a
                                            non-node caller
+  * TRR9033 (T1133, service exposure)    - core Service create/update/patch whose
+                                           spec.type is NodePort or LoadBalancer
 
 The loop this proves, for each match-gated rule:
 
@@ -1165,18 +1167,34 @@ MANIFEST = [
         ("C", rec(verb="create", resource="pods", sub=None, ns="kube-system", user=non_system,
                   also=field_eq("requestObject.metadata.labels.trr", "trr9031"),
                   window=("9031", "c")))]),
+    # TRR9033 (T1133, service exposure through NodePort or LoadBalancer). The chokepoint
+    # fires on a create/update/patch of a core Service whose spec.type is NodePort or
+    # LoadBalancer, in requestObject (A, B: a full-object create) or responseObject (C: a
+    # JSON patch of /spec/type, whose request body is an operation list). The benign
+    # ClusterIP baseline (D) and the /status confounder (E) are ABSENCE controls below:
+    # the rule must stay quiet on them.
+    ("T1133", "k8s_service_exposed_nodeport_loadbalancer.yml", "audit", "9033 A-C",
+     "Service exposure chokepoint (NodePort / LoadBalancer spec.type)", [
+        ("A", rec(verb="create", resource="services", name="trr9033-np", ns="trr9033",
+                  window=("9033", "a"))),
+        ("B", rec(verb="create", resource="services", name="trr9033-lb", ns="trr9033",
+                  window=("9033", "b"))),
+        ("C", rec(verb="patch", resource="services", sub=None, name="trr9033-jp",
+                  ns="trr9033", window=("9033", "c")))]),
 ]
 
 
 # Absence checks (C2-4): with a ledger, these rules must match NOTHING in a procedure's
-# window. They prove a documented gap -- a node/on-disk action that leaves no API audit
-# event. Each is (label, folder, [rule file, ...], window, gate): a FAIL if any event the
-# gate selects, in that window, matches one of the rules. The gate is any non-system
-# caller (the operator identity the emulation runs as, in any namespace), so a
-# controller's or the kubelet's own background Secret read in the window cannot flake
-# the check. The check also fails when the procedure did not run, failed, has no window,
-# or when a matching event has no requestReceivedTimestamp to place it in time. Without
-# --ledger there is no window to bound them, so they are skipped.
+# window. They prove either a documented gap -- a node/on-disk action that leaves no API
+# audit event -- or a benign / confounder control: a write the API server DOES log but on
+# which the rule must stay quiet (a ClusterIP Service create, a services/status patch).
+# Each is (label, folder, [rule file, ...], window, gate): a FAIL if any event the gate
+# selects, in that window, matches one of the rules. The gate is any non-system caller
+# (the operator identity the emulation runs as, in any namespace), so a controller's or
+# the kubelet's own background read in the window cannot flake the check. The check also
+# fails when the procedure did not run, failed, has no window, or when a matching event
+# has no requestReceivedTimestamp to place it in time. Without --ledger there is no
+# window to bound them, so they are skipped.
 ABSENCE = [
     ("9006 E gap", "T1552.007",
      ["k8s_secret_access.yml", "k8s_secret_token_request.yml"],
@@ -1192,6 +1210,18 @@ ABSENCE = [
     ("9030 B incluster", "T1528",
      ["k8s_pod_token_used_off_source.yml"],
      ("9030", "b"), field_eq("user.username", TRR9030_SA)),
+    # TRR9033 D: the ClusterIP Service create is logged at RequestResponse (the services
+    # body row), so the record carries spec.type=ClusterIP; the rule must not fire (the
+    # exposing-type discriminator is load-bearing live, not only in the sidecar).
+    ("9033 D clusterip", "T1133",
+     ["k8s_service_exposed_nodeport_loadbalancer.yml"], ("9033", "d"), non_system),
+    # TRR9033 E: the /status patch of the LoadBalancer Service. The lab policy keeps
+    # services/status at Metadata (exact resource matching), so no stored object is
+    # logged and the rule cannot fire; the subresource filter keeps it quiet where the
+    # status subresource IS logged with a body (the sidecar filtered case proves that).
+    # Either way the rule must match nothing here.
+    ("9033 E status", "T1133",
+     ["k8s_service_exposed_nodeport_loadbalancer.yml"], ("9033", "e"), non_system),
 ]
 
 
@@ -1252,12 +1282,10 @@ DRY_9008 = ("9008", "dryrun")
 DRY_9010 = ("9010", "dryrun")
 DRY_9025 = ("9025", "dryrun")
 DRY_9028 = ("9028", "dryrun")
-DRY_NS_9008 = "gatekeeper-system"     # the TRR9008 control's namespace (it creates it)
-DRY_NS_9010 = "trr9010-dryrun-ns"     # the TRR9010 control's own namespace
-DRY_NS_9028 = "trr9028-dryrun-ns"     # the TRR9028 control's own namespace
 DRY_9029 = ("9029", "dryrun")
 DRY_NS_9008 = "gatekeeper-system"     # the TRR9008 control's namespace (it creates it)
 DRY_NS_9010 = "trr9010-dryrun-ns"     # the TRR9010 control's own namespace
+DRY_NS_9028 = "trr9028-dryrun-ns"     # the TRR9028 control's own namespace
 DRY_NS_9029 = "trr9029-dryrun-ns"     # the TRR9029 control's own namespace
 IN_ENFORCER_NS = field_in("objectRef.namespace", ENFORCER_NAMESPACES)
 # kubectl delete --raw of a collection URL with a DeleteOptions body: the step's dry-run
@@ -1966,6 +1994,7 @@ def write_json(path, report):
 def main():
     ap = argparse.ArgumentParser(description="Validate TRR9004-9010, 9025-9028 K8s detections.")
     ap = argparse.ArgumentParser(description="Validate TRR9004-9010, 9025-9027, 9030 K8s detections.")
+    ap = argparse.ArgumentParser(description="Validate TRR9004-9010, 9025-9027, 9033 K8s detections.")
     ap.add_argument("--audit-log", default="/tmp/kube-apiserver-audit.log",
                     help="Path to the API server audit log (JSON lines).")
     ap.add_argument("--cri-log",

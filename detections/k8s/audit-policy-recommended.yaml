@@ -419,6 +419,22 @@ rules:
       - group: "operator.openshift.io"
         resources: ["dnses"]
 
+  # --- core Service writes at RequestResponse (spec.type exposure) ---
+  # Serves: T1133/k8s_service_exposed_nodeport_loadbalancer (TRR9033). The exposing
+  # signal is spec.type (NodePort or LoadBalancer) in requestObject (Request and up) or
+  # responseObject (RequestResponse); a JSON patch of /spec/type is seen only in
+  # responseObject, so this needs RequestResponse. A Service spec holds no credential
+  # (ports, a selector, a type). EKS and AKS already log core writes at RequestResponse.
+  # Audit resource matching is exact, so services/status and services/proxy reach the
+  # catch-all at Metadata: the service and cloud controllers patch only /status
+  # (cloud-provider service/helpers/helper.go PatchService), so their status patches are
+  # not logged here with a body. The rule also filters objectRef.subresource == status.
+  - level: RequestResponse
+    verbs: ["create", "update", "patch"]
+    resources:
+      - group: ""
+        resources: ["services"]
+
   # --- Noise reduction: drop high-volume reads (as the lab policies do) ---
   # No rule reads these. Secrets are logged by the first rule, so this does not touch
   # them. ConfigMap reads are here on purpose (header: CONFIGMAP READS). It drops an

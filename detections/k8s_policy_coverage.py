@@ -520,7 +520,7 @@ SELECTION_RESOURCES = {  # resource: (the groups that serve it, namespaced)
     "namespaces": (("",), False), "nodes": (("",), False), "pods": (("",), True),
     "persistentvolumeclaims": (("",), True), "persistentvolumes": (("",), False),
     "replicationcontrollers": (("",), True), "secrets": (("",), True),
-    "serviceaccounts": (("",), True),
+    "serviceaccounts": (("",), True), "services": (("",), True),
     "daemonsets": (("apps",), True), "deployments": (("apps",), True),
     "replicasets": (("apps",), True), "statefulsets": (("apps",), True),
     "cronjobs": (("batch",), True), "jobs": (("batch",), True),
@@ -2485,7 +2485,10 @@ def self_test():
                 ("Request", ("create",), "", ("configmaps",), ("openshift-dns",), "*"),
                 ("RequestResponse", up, "operator.openshift.io", ("dnses",), "*", "*"),
                 ("Request", ("create", "delete", "deletecollection"), "operator.openshift.io",
-                 ("dnses",), "*", "*")):
+                 ("dnses",), "*", "*"),
+                # TRR9033 service exposure: core Service create/update/patch at
+                # RequestResponse (spec.type NodePort/LoadBalancer in the body).
+                ("RequestResponse", cud, "", ("services",), "*", "*")):
             pinned += [(level, v, group, r, ns, nm, "*") for v in verbs for r in resources
                        for ns in (nss if isinstance(nss, tuple) else (nss,))
                        for nm in (names if isinstance(names, tuple) else (names,))]

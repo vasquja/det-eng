@@ -39,36 +39,6 @@
   "gke_admin_activity": "GKE with Data Access logs off: Admin Activity only, no get, list or watch (gke-mcp k8s_audit_logs.md: Data Access logs hold reads, 'if enabled')"
  },
  "rules": {
-  "T1036.005/k8s_pod_controller_name_mimicry.yml": {
-   "list_text_items": [],
-   "loses_positive_without_reads": {
-    "aksauditadmin": false,
-    "gke_admin_activity": false
-   },
-   "providers": {
-    "aks": {
-     "errors": [],
-     "expected_loss": {},
-     "not_portable": {},
-     "status": "same",
-     "unexpected": {}
-    },
-    "exploded": {
-     "loses_positive": false,
-     "status": "same"
-    },
-    "gke": {
-     "errors": [],
-     "expected_loss": {},
-     "not_portable": {
-      "sel_name_daemonset.objectRef.name": "GKE pipeline: only string values map here, got SigmaRegularExpression(regexp=SigmaString(['^[a-z0-9.\\\\-]+\\\\-[bcdfghjklmnpqrstvwxz2456789]{5}$']), flags=set())",
-      "sel_name_replicaset.objectRef.name": "GKE pipeline: only string values map here, got SigmaRegularExpression(regexp=SigmaString(['^[a-z0-9.\\\\-]+\\\\-[bcdfghjklmnpqrstvwxz2456789]{6,10}\\\\-[bcdfghjklmnpqrstvwxz2456789]{5}$']), flags=set())"
-     },
-     "status": "not_portable",
-     "unexpected": {}
-    }
-   }
-  },
   "T1053.007/k8s_job_create.yml": {
    "list_text_items": [],
    "loses_positive_without_reads": {
@@ -363,6 +333,33 @@
     }
    }
   },
+  "T1133/k8s_service_exposed_nodeport_loadbalancer.yml": {
+   "list_text_items": [],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "same"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    }
+   }
+  },
   "T1134/k8s_impersonation.yml": {
    "list_text_items": [],
    "loses_positive_without_reads": {
@@ -427,48 +424,6 @@
      "expected_loss": {},
      "not_portable": {
       "sel_priv_groups.impersonatedUser.groups": "GKE pipeline cannot map this field: no public source shows how GKE records impersonated groups, uid or extra"
-     },
-     "status": "not_portable",
-     "unexpected": {}
-    }
-   }
-  },
-  "T1528/k8s_pod_token_used_off_source.yml": {
-   "list_text_items": [
-    "filter_incluster_last_source.sourceIPs",
-    "sel_no_source.sourceIPs",
-    "selection_pod_bound_token.user.extra.authentication.kubernetes.io/pod-name"
-   ],
-   "loses_positive_without_reads": {
-    "aksauditadmin": false,
-    "gke_admin_activity": false
-   },
-   "providers": {
-    "aks": {
-     "errors": [],
-     "expected_loss": {},
-     "not_portable": {},
-     "status": "same",
-     "unexpected": {}
-    },
-    "exploded": {
-     "loses_positive": true,
-     "status": "diverges"
-    },
-    "gke": {
-     "errors": [],
-     "expected_loss": {
-      "in-pod-use-benign": {
-       "diff": "all: blocks filter_incluster_last_source",
-       "why": "GKE_POD_TOKEN"
-      },
-      "xff-prepended-last-incluster": {
-       "diff": "all: blocks filter_incluster_last_source",
-       "why": "GKE_POD_TOKEN"
-      }
-     },
-     "not_portable": {
-      "selection_pod_bound_token.user.extra.authentication.kubernetes.io/pod-name": "GKE pipeline cannot map this field: AuditLog.authenticationInfo records principalEmail only (no groups, uid or extra)"
      },
      "status": "not_portable",
      "unexpected": {}
@@ -1843,7 +1798,7 @@
    "rules_losing_a_positive": 8
   },
   "exploded": {
-   "diverges": 17,
+   "diverges": 16,
    "expected_loss": 0,
    "not_portable": 0,
    "same": 16
@@ -1851,8 +1806,8 @@
   "gke": {
    "diverges": 0,
    "expected_loss": 5,
-   "not_portable": 14,
-   "same": 13
+   "not_portable": 13,
+   "same": 14
   },
   "gke_admin_activity": {
    "rules_losing_a_positive": 8

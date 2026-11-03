@@ -149,6 +149,7 @@ filing wave; ATT&CK revokes and renames IDs between releases.
 | TRR9030  | T1528  | Pod-Bound SA Token Used From An Unexpected Source | Kubernetes | [`trr9030/k8s`](trr9030/k8s/README.md) |
 | TRR9031  | T1036.005 | Lookalike Pod With a Controller-Generated Name | Kubernetes | [`trr9031/k8s`](trr9031/k8s/README.md) |
 | TRR9032  | T1098.006 | EKS Access-Entry Backdoor in CloudTrail | AWS | [`trr9032/aws`](trr9032/aws/README.md) |
+| TRR9033  | T1133  | Service Exposure Through a NodePort or LoadBalancer Service | Kubernetes | [`trr9033/k8s`](trr9033/k8s/README.md) |
 
 Which Kubernetes rule works on which platform (EKS, AKS, GKE, OpenShift, k3s): [`detections/k8s/PLATFORMS.md`](../detections/k8s/PLATFORMS.md).
 
