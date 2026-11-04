@@ -360,6 +360,16 @@
         "gcp-platform-ops": 0
       }
     },
+    "T1098.003/azure_privileged_role_assignment.yml": {
+      "actors": {},
+      "distinct_actors": 0,
+      "events": 300,
+      "hits": 0,
+      "rate_per_10k": 0.0,
+      "slices": {
+        "azure-activity-mi-admin": 0
+      }
+    },
     "T1098.003/gcp_public_iam_member_grant.yml": {
       "actors": {
         "terraform@ci-shared-svc.iam.gserviceaccount.com": 4

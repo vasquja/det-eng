@@ -1,0 +1,95 @@
+[
+  {
+    "time": "2026-11-03T22:14:09.117Z",
+    "resourceId": "/subscriptions/11111111-2222-3333-4444-555555555555/providers/Microsoft.Authorization/roleAssignments/7c1f0a2b-3d4e-4f50-8a6b-9c0d1e2f3a4b",
+    "operationName": "Microsoft.Authorization/roleAssignments/write",
+    "category": "Administrative",
+    "resultType": "Start",
+    "resultSignature": "Started.",
+    "durationMs": 0,
+    "callerIpAddress": "198.51.100.91",
+    "correlationId": "d4c3b2a1-9f8e-4d7c-b6a5-0e1f2a3b4c5d",
+    "identity": {
+      "authorization": {
+        "scope": "/subscriptions/11111111-2222-3333-4444-555555555555",
+        "action": "Microsoft.Authorization/roleAssignments/write",
+        "evidence": {
+          "role": "User Access Administrator",
+          "roleAssignmentScope": "/subscriptions/11111111-2222-3333-4444-555555555555",
+          "roleAssignmentId": "2b3c4d5e6f708192a3b4c5d6e7f80918",
+          "roleDefinitionId": "18d7d88d-d35e-4fb5-a5c3-7773c20a72d9",
+          "principalId": "a1b2c3d4-0001-4e5f-8a9b-0c1d2e3f4a01",
+          "principalType": "User"
+        }
+      },
+      "claims": {
+        "aud": "https://management.core.windows.net/",
+        "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+        "appid": "c44b4083-3bb0-49c1-b47d-974e53cbdf3c",
+        "appidacr": "0",
+        "idtyp": "user",
+        "http://schemas.microsoft.com/claims/authnmethodsreferences": "pwd",
+        "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": "trr9036-attacker@example.com",
+        "name": "trr9036-attacker",
+        "ipaddr": "198.51.100.91",
+        "http://schemas.microsoft.com/identity/claims/objectidentifier": "a1b2c3d4-0001-4e5f-8a9b-0c1d2e3f4a01",
+        "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+        "ver": "1.0"
+      }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+      "serviceRequestId": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b",
+      "eventCategory": "Administrative",
+      "entity": "/subscriptions/11111111-2222-3333-4444-555555555555/providers/Microsoft.Authorization/roleAssignments/7c1f0a2b-3d4e-4f50-8a6b-9c0d1e2f3a4b",
+      "message": "Microsoft.Authorization/roleAssignments/write",
+      "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/11111111-2222-3333-4444-555555555555",
+      "requestbody": "{\"Id\":\"7c1f0a2b-3d4e-4f50-8a6b-9c0d1e2f3a4b\",\"Properties\":{\"PrincipalId\":\"b7a6c5d4-9036-4e3d-8c2b-1a0f9e8d7c6b\",\"PrincipalType\":\"User\",\"RoleDefinitionId\":\"/subscriptions/11111111-2222-3333-4444-555555555555/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635\",\"Scope\":\"/subscriptions/11111111-2222-3333-4444-555555555555\"}}"
+    }
+  },
+  {
+    "time": "2026-11-03T22:14:09.902Z",
+    "resourceId": "/subscriptions/11111111-2222-3333-4444-555555555555/providers/Microsoft.Authorization/roleAssignments/7c1f0a2b-3d4e-4f50-8a6b-9c0d1e2f3a4b",
+    "operationName": "Microsoft.Authorization/roleAssignments/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.Created",
+    "durationMs": 785,
+    "callerIpAddress": "198.51.100.91",
+    "correlationId": "d4c3b2a1-9f8e-4d7c-b6a5-0e1f2a3b4c5d",
+    "identity": {
+      "authorization": {
+        "scope": "/subscriptions/11111111-2222-3333-4444-555555555555",
+        "action": "Microsoft.Authorization/roleAssignments/write",
+        "evidence": {
+          "role": "User Access Administrator",
+          "roleAssignmentScope": "/subscriptions/11111111-2222-3333-4444-555555555555",
+          "roleAssignmentId": "2b3c4d5e6f708192a3b4c5d6e7f80918",
+          "principalId": "a1b2c3d4-0001-4e5f-8a9b-0c1d2e3f4a01",
+          "principalType": "User"
+        }
+      },
+      "claims": {
+        "aud": "https://management.core.windows.net/",
+        "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+        "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": "trr9036-attacker@example.com",
+        "name": "trr9036-attacker",
+        "ipaddr": "198.51.100.91",
+        "http://schemas.microsoft.com/identity/claims/objectidentifier": "a1b2c3d4-0001-4e5f-8a9b-0c1d2e3f4a01",
+        "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+        "ver": "1.0"
+      }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+      "statusCode": "Created",
+      "serviceRequestId": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b",
+      "eventCategory": "Administrative",
+      "entity": "/subscriptions/11111111-2222-3333-4444-555555555555/providers/Microsoft.Authorization/roleAssignments/7c1f0a2b-3d4e-4f50-8a6b-9c0d1e2f3a4b",
+      "message": "Microsoft.Authorization/roleAssignments/write",
+      "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/11111111-2222-3333-4444-555555555555"
+    }
+  }
+]

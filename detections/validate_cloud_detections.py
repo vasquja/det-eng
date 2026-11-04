@@ -225,6 +225,20 @@ MANIFEST = [
      "trr9032/attack.json", "trr9032/benign_chokepoint.json", "AWS",
      "any EKS access-entry / access-policy write (surface chokepoint)",
      marker("trr9032", "requestParameters.principalArn", "requestParameters.name")),
+    # --- Wave 6: TRR9036 -- Azure ARM RBAC privileged role assignment at subscription /
+    #     management-group scope (T1098.003, Azure Activity Log). A resource-plane grant:
+    #     it lands in the Azure Activity Log (Microsoft.Authorization/roleAssignments/write),
+    #     the same log as the TRR9013 managed-identity FIC rule above. The role + scope are
+    #     only on the START record, in properties.requestbody (a JSON string), so the rule
+    #     fires on resultType '^start' -- the opposite of TRR9013's filter_start. The hard
+    #     benign (benign.json) is a Terraform grant of the non-privileged Key Vault Secrets
+    #     User role at a Key Vault (resource-group) scope, differing from the attack only on
+    #     the requestbody RoleDefinitionId + Scope. The marker 'trr9036-attacker' sits in
+    #     identity.claims.name, which the rule does not read (the rule keys on requestbody).
+    ("TRR9036", "T1098.003", "azure_privileged_role_assignment.yml",
+     "trr9036/attack.json", "trr9036/benign.json", "Azure",
+     "privileged built-in role assigned at subscription / management-group scope",
+     marker("trr9036-attacker", "identity.claims.name")),
 ]
 
 FOLDERS = sorted({folder for _, folder, *_ in MANIFEST})

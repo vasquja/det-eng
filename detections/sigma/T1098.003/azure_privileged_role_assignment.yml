@@ -1,0 +1,93 @@
+title: Azure Privileged Built-In Role Assigned at Subscription or Management-Group Scope
+id: 2f8b6a4c-6d1e-4c7a-9b3d-7e5f0a1c2d93
+status: experimental
+description: |
+  Detects an Azure Resource Manager (ARM) RBAC role assignment that grants one of the
+  high-privilege built-in roles — Owner, Contributor, User Access Administrator, or Role
+  Based Access Control Administrator — at subscription or management-group scope, recorded
+  in the Azure Activity Log as the Administrative operation
+  Microsoft.Authorization/roleAssignments/write.
+
+  The assigned role and its scope are server-recorded only in properties.requestbody (a
+  JSON string carrying Properties.RoleDefinitionId and Properties.Scope), which the Activity
+  Log attaches to the START record of the write, not the completion record. The rule
+  therefore fires on the Start record (resultType starts "Start"), parses the requestbody
+  string, and keys on two server-set fields:
+    - Properties.RoleDefinitionId ends with one of the pinned privileged built-in role
+      GUIDs (MS Learn "Azure built-in roles"); and
+    - Properties.Scope starts at /subscriptions/<guid> or
+      /providers/Microsoft.Management/managementGroups/<id> AND is not a resource-group or
+      resource scope (no /resourceGroups/). This high-scope gate follows Microsoft's own
+      documented Azure Monitor "role-assignments-alert" query (scope startswith the two
+      prefixes and not contains "/resourceGroups/"); it is a stated approximation.
+  operationName, category and resultType are matched case-insensitively because exported
+  Activity Log records do not keep one casing (MS Learn, "Activity log in Azure Monitor").
+
+  This is the graded, scope-aware counterpart to SigmaHQ's bare-keyword rule
+  (azure_granting_permission_detection.yml) and the Sigma equivalent of Elastic's
+  "Azure RBAC Built-In Administrator Roles Assigned" and Microsoft's own customer-built
+  Kusto alert: it raises fidelity by discriminating on the requestbody RoleDefinitionId and
+  Scope, and it covers management-group scope and non-PIM tenants, which PIM's
+  "Roles assigned outside PIM" alert does not. It is a disclosed backstop, not a discovery.
+  Baseline the IaC / platform principals that legitimately grant privileged roles at
+  subscription or management-group scope. Two limits are tracked in RULE_DEFECTS.md: a
+  custom role with Owner-equivalent permissions evades the built-in-GUID allowlist
+  (KTBD-AZ1), and some Activity Log exporters omit or truncate requestbody so the
+  body-grade degrades to the surface chokepoint (KTBD-AZ2).
+references:
+  - https://attack.mitre.org/techniques/T1098/003/
+  - https://learn.microsoft.com/azure/role-based-access-control/built-in-roles
+  - https://learn.microsoft.com/azure/role-based-access-control/role-assignments-alert
+  - https://learn.microsoft.com/azure/azure-monitor/platform/activity-log-schema
+  - https://github.com/elastic/detection-rules/blob/main/rules/integrations/azure/privilege_escalation_azure_builtin_admin_role_assigned.toml
+author: det-eng
+date: 2026/11/04
+tags:
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1098.003
+logsource:
+  product: azure
+  service: activitylogs
+detection:
+  # The ARM role-assignment write, on the Start record only. ARM logs each write twice:
+  # a Start record that carries the request body (the role + scope) and a Success/Failure
+  # completion record that does not. Category: MS Learn's mapping table says the exported
+  # category is "Always Administrative", but its own export samples carry the operation
+  # type ('Write') there; both are accepted, in any casing, as in the TRR9013 sibling rule.
+  selection_write:
+    category|re|i: '^(administrative|write)$'
+    operationName|re|i: '^microsoft\.authorization/roleassignments/write$'
+    resultType|re|i: '^start'
+  # Privileged built-in role GUIDs (MS Learn "Azure built-in roles"), matched after the
+  # roleDefinitions/ path segment so a subscription GUID cannot collide:
+  #   Owner 8e3af657-a8ff-443c-a75c-2fe8c4bcb635
+  #   Contributor b24988ac-6180-42a0-ab88-20f7382dd24c
+  #   User Access Administrator 18d7d88d-d35e-4fb5-a5c3-7773c20a72d9
+  #   Role Based Access Control Administrator f58310d9-a9f6-439a-9e8d-f62e7b41a168
+  selection_privileged_role:
+    properties.requestbody|re|i: 'roledefinitions/(8e3af657-a8ff-443c-a75c-2fe8c4bcb635|b24988ac-6180-42a0-ab88-20f7382dd24c|18d7d88d-d35e-4fb5-a5c3-7773c20a72d9|f58310d9-a9f6-439a-9e8d-f62e7b41a168)'
+  # Scope begins at a subscription or a management group (both forms also begin at
+  # /subscriptions/ for a subscription, and /providers/Microsoft.Management/managementGroups/
+  # for a management group). A resource-group or resource scope also begins /subscriptions/,
+  # so the resource-group filter below removes it (Microsoft's documented query shape).
+  selection_high_scope:
+    properties.requestbody|re|i: '\"scope\":\s*\"(/subscriptions/|/providers/microsoft\.management/managementgroups/)'
+  # Resource-group / resource scope: the request body's Scope carries /resourceGroups/
+  # (the only place that segment appears in a role-assignment body). Drop it so the rule
+  # fires only on subscription / management-group scope.
+  filter_resource_group_scope:
+    properties.requestbody|re|i: '/resourcegroups/'
+  # Null-safe guard: the completion record and some exporters carry no requestbody, so the
+  # negation's operand can be absent. selection_privileged_role / selection_high_scope
+  # already require requestbody, so this guard never fires a real positive; it keeps the
+  # negation identical in two- and three-valued logic (check_null_safety).
+  selection_no_requestbody:
+    properties.requestbody: null
+  condition: selection_write and selection_privileged_role and selection_high_scope and (selection_no_requestbody or not filter_resource_group_scope)
+falsepositives:
+  - Infrastructure-as-code (Terraform/Bicep), platform or identity-governance principals
+    that legitimately assign Owner / Contributor / User Access Administrator / RBAC
+    Administrator at subscription or management-group scope; baseline those principals.
+  - Break-glass or just-in-time elevation performed outside PIM.
+level: medium

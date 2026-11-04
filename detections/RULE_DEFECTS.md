@@ -106,6 +106,8 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
 | [K56](#k56-aws_eks_access_entry_cluster_admin_policy-a-namespace-scoped-secrets-grant-is-missed) | `T1098.006/aws_eks_access_entry_cluster_admin_policy` | a reads-Secrets policy scoped to a sensitive namespace (`kube-system`) reads those Secrets but trips only the medium chokepoint, not the graded rule; one CloudTrail record cannot weigh one namespace against another | false negative | medium |
 | [K57](#k57-aws_eks_access_entry_cluster_admin_policy-no-safe-sigma-predicate-for-a-cross-account-grant) | `T1098.006/aws_eks_access_entry_cluster_admin_policy` | no safe Sigma predicate raises fidelity on a cross-account grant: `principalArn\|fieldref\|contains: recipientAccountId` goes quiet when the attacker names its role with the victim account ID | false negative (documented) | low |
+| [KTBD-AZ1](#ktbd-az1-azure_privileged_role_assignment-a-custom-role-with-owner-equivalent-permissions-evades-the-built-in-guid-allowlist) | `T1098.003/azure_privileged_role_assignment` (TRR9036 A, B) | a custom role definition with Owner-equivalent permissions carries a tenant-specific GUID that is not on the built-in-role allowlist, so the body grade does not fire; the fix is a per-tenant privileged-role-GUID list | evasion | medium |
+| [KTBD-AZ2](#ktbd-az2-azure_privileged_role_assignment-requestbody-can-be-absent-on-some-activity-log-exporters-and-the-grant-is-only-on-the-start-record) | `T1098.003/azure_privileged_role_assignment` (TRR9036 A, B) | the assigned role + scope are only in `properties.requestbody` on the Start record, and some Activity Log exporters / diagnostic settings omit or truncate it, so the body grade is a fixture-provable approximation that degrades to the surface chokepoint where the body is absent | portability, false negative | medium |
 
 ## Linux (auditd and node file events)
 
@@ -2278,6 +2280,75 @@ the current ones.
   and compile under Python `re` and RE2 — unlike a `(?!...)` negative-lookahead anchor, which
   RE2 and `check_sigma_regex` reject. The org-account allowlist is operator-specific, so this
   form is documented, not shipped. Baseline external-account principal ARNs on access entries.
+
+### KTBD-AZ1. azure_privileged_role_assignment: a custom role with Owner-equivalent permissions evades the built-in-GUID allowlist
+
+> Placeholder ID (KTBD-AZ1): the integrator renumbers it to the next free K-number
+> (last used is K60; KTBD-AZ1/KTBD-AZ2 are the next two).
+
+- **Rule**: [`sigma/T1098.003/azure_privileged_role_assignment.yml`](sigma/T1098.003/azure_privileged_role_assignment.yml) (level medium).
+- **Procedures**: TRR9036.AZR.A, TRR9036.AZR.B.
+- **Kind**: evasion. **Severity**: medium (misses a plausible, admin-equivalent variant).
+- **Problem**: `selection_privileged_role` matches only the four built-in privileged-role
+  GUIDs (Owner, Contributor, User Access Administrator, Role Based Access Control
+  Administrator). Azure lets a tenant define **custom roles**, and a custom role can carry
+  Owner-equivalent permissions — for example `Actions: ["*"]`, or
+  `Microsoft.Authorization/roleAssignments/write` plus broad data actions. A custom role
+  definition has a **tenant-specific GUID** (`/subscriptions/<sub>/providers/Microsoft.Authorization/roleDefinitions/<custom-guid>`
+  or `/providers/Microsoft.Management/managementGroups/<mg>/providers/Microsoft.Authorization/roleDefinitions/<custom-guid>`),
+  which is not on the built-in allowlist and is unknowable in a portable rule. So a grant of
+  such a custom role at subscription / management-group scope does not fire, although it is
+  the same privilege escalation.
+- **Evidence**: *source* — Microsoft, "Azure custom roles"
+  (<https://learn.microsoft.com/azure/role-based-access-control/custom-roles>): a custom role
+  may hold `Actions: ["*"]`, and its `name` (the role-definition GUID) is generated per
+  tenant. *probe* — a `roleAssignments/write` Start record whose `requestbody`
+  `Properties.RoleDefinitionId` ends with a non-built-in GUID does not fire
+  `azure_privileged_role_assignment.yml` (reproduce by changing the Owner GUID in
+  `detections/cloud/fixtures/trr9036/attack.json` to a random GUID and running
+  `sigma_eval.py`; see [Reproducing a probe](#reproducing-a-probe)).
+- **Fix**: a **per-tenant privileged-role-GUID list** — the operator enumerates the custom
+  roles that confer admin-equivalent permissions (via `az role definition list`) and extends
+  `selection_privileged_role` with their GUIDs. The list is site-specific, so it is a
+  documented operator step, not a change to the shipped rule. A complementary hunt grades the
+  `roleDefinitions/write` records that create or widen a custom role.
+- **Then**: with the per-tenant list configured, a sidecar positive whose `requestbody`
+  carries a site custom-role GUID fires, and this entry closes.
+
+### KTBD-AZ2. azure_privileged_role_assignment: requestbody can be absent on some Activity Log exporters, and the grant is only on the Start record
+
+> Placeholder ID (KTBD-AZ2): the integrator renumbers it to the next free K-number
+> (last used is K60; KTBD-AZ1/KTBD-AZ2 are the next two).
+
+- **Rule**: [`sigma/T1098.003/azure_privileged_role_assignment.yml`](sigma/T1098.003/azure_privileged_role_assignment.yml) (level medium).
+- **Procedures**: TRR9036.AZR.A, TRR9036.AZR.B.
+- **Kind**: portability, false negative. **Severity**: medium.
+- **Problem**: the assigned role and scope are server-recorded **only** in
+  `properties.requestbody` (a JSON string), and the Activity Log attaches that body to the
+  **Start** record, not the completion record. Two consequences: (1) the rule must fire on
+  the Start record (it does — `resultType` starts `Start`), and a pipeline that keeps only
+  the completion record sees no body; (2) some Activity Log exporters and diagnostic-setting
+  configurations omit or truncate `requestbody`. Where the body is absent the body grade
+  cannot fire, and the rule degrades to the surface chokepoint
+  (`roleAssignments/write` at high scope). This is the same fixture-provable-approximation
+  shape documented for the TRR9011 IMDS off-source and TRR9030 off-source degrades.
+- **Evidence**: *source* — Microsoft, "Azure Activity Log event schema"
+  (<https://learn.microsoft.com/azure/azure-monitor/platform/activity-log-schema>): the
+  `properties` bag is free-form and not guaranteed to carry `requestbody` on every export
+  path; the completion record in this repo's own fixtures carries no `requestbody`. *case* —
+  the sidecar confounder `role-assignment-owner-subscription-completion` is the Success
+  completion record of the attack write; it carries no `requestbody` and does not fire, which
+  is correct here but is also the shape an exporter that drops the body produces for the Start
+  record. *probe* — deleting `properties.requestbody` from the attack Start record makes the
+  rule miss (reproduce with `sigma_eval.py`; see [Reproducing a probe](#reproducing-a-probe)).
+- **Fix**: where `requestbody` is reliably present (the default Azure Monitor / Event Hub
+  export), keep the body grade; where an exporter drops it, add a **surface fallback** rule —
+  `roleAssignments/write` at subscription / management-group scope keyed on
+  `identity.authorization.scope` (server-set), tuned by the baselined set of principals that
+  legitimately grant privileged roles. The fallback is noisier (no role discriminator), so it
+  is a follow-up rule and an operator tuning step, not a change to this rule.
+- **Then**: a surface-fallback rule plus its cases, scored against the benign corpus, closes
+  the exporter-absence half; the Start-record half is already proven by the fixtures.
 
 ## Checks to add
 
