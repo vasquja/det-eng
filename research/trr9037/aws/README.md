@@ -91,10 +91,13 @@ The trust-anchor and profile writes are default-logged Roles Anywhere management
     types.
   `responseElements.trustAnchor` echoes `trustAnchorId`, `trustAnchorArn`, `name`,
   `enabled` and `source.sourceType`.
-- **`UpdateTrustAnchor`**: carries `requestParameters.trustAnchorId` and the **full**
-  `requestParameters.source` object when the source is changed (so a repoint to an external
-  CA records `source.sourceType`); an update that edits only `enabled` or
-  `notificationSettings` carries **no** `source`.
+- **`UpdateTrustAnchor`**: takes only `requestParameters.trustAnchorId`, an optional
+  `requestParameters.name`, and the **full** `requestParameters.source` object when the
+  source is changed (so a repoint to an external CA records `source.sourceType`); an update
+  that changes only `name` carries **no** `source`. `UpdateTrustAnchor` **cannot** edit
+  `enabled` or notifications — enable/disable are the separate `EnableTrustAnchor` /
+  `DisableTrustAnchor` operations and notifications are `PutNotificationSettings` /
+  `ResetNotificationSettings`, none of which carry a CA `source`.
 - **`CreateProfile` / `UpdateProfile`**: `requestParameters.name`,
   `requestParameters.roleArns` (the roles a session may assume), `durationSeconds`,
   `enabled`. A profile write carries no CA `source`.
@@ -117,9 +120,12 @@ The trust-anchor and profile writes are default-logged Roles Anywhere management
 ### Why `source.sourceType` is the discriminator, and why it is sound
 
 `source.sourceType` is a closed, server-recorded **API enum** — the API server sets it
-from the request body, not from renamable caller free text, so it is **not spoofable to
-evade**: an attacker who wants an external CA must record one of the two external values.
-The three values split cleanly:
+from the request body, not from renamable caller free text, so **the field cannot be
+renamed** to disguise external certificate data as `AWS_ACM_PCA`: an attacker who supplies a
+PEM bundle or self-signed repository must record one of the two external values. That is a
+property of the **field**, not of the whole technique — an attacker who controls an
+in-account ACM Private CA can still evade the *graded* rule with an `AWS_ACM_PCA` anchor
+(Procedure C). The three values split cleanly:
 
 | `source.sourceType` | CA | `sourceData` key | Benign-common? | Graded rule |
 |---------------------|----|------------------|----------------|-------------|
@@ -136,9 +142,11 @@ this one field. That is why the graded rule's hard benign (`benign.json`) is the
 
 - A delta-style `UpdateTrustAnchor` that **changes** the source to an external CA records
   `source.sourceType` with the external value and **still fires** the graded rule. An
-  `UpdateTrustAnchor` that edits only `enabled`/`notificationSettings` carries no `source`
-  and correctly does **not** fire (no CA change was made) — only the surface chokepoint
-  sees it.
+  `UpdateTrustAnchor` that changes only `name` carries no `source` and correctly does **not**
+  fire (no CA change was made). Enable/disable (`EnableTrustAnchor` / `DisableTrustAnchor`)
+  and notification changes (`PutNotificationSettings` / `ResetNotificationSettings`) are
+  **separate** operations that carry no `source`; only the surface chokepoint sees the enable
+  leg.
 - The external-CA grade is a **policy-hygiene** signal: an organisation that legitimately
   runs its own corporate or on-premises PKI (rather than ACM Private CA) trips it on every
   legitimate anchor. It is a finding to **triage against change tickets and the IAM
@@ -226,6 +234,16 @@ rule's threshold by design, and the external-PKI-shop false positive.
   fires on all of them (any trust-anchor/profile write); the **graded** rule does not —
   there is no external `source.sourceType` in the record. This is the discriminator that
   separates the high-fidelity rule from the surface one.
+- **Graded-rule evasion — attacker-controlled in-account ACM Private CA.** An attacker does
+  **not** need an external CA for certificate-based persistence. They can stand up their own
+  in-account ACM Private CA (`acm-pca:CreateCertificateAuthority`), then `CreateTrustAnchor`
+  with `source.sourceType` `AWS_ACM_PCA` pointing at that attacker-controlled CA, and attach
+  a profile — identical persistence, but the **graded** rule stays **silent** (it keys on
+  the two external source types). That path is caught **only** by the surface chokepoint
+  (`aws_rolesanywhere_trust_anchor_write.yml`). It is loud and costly (ACM Private CA is
+  billed monthly and `CreateCertificateAuthority` is itself a logged management event), but
+  it is a real evasion of the graded grade — so "not spoofable" scopes to the
+  `source.sourceType` field, not to the whole technique.
 - **False positive (KTBD-RA1):** a legitimate external-PKI shop's `CERTIFICATE_BUNDLE` /
   `SELF_SIGNED_REPOSITORY` anchor fires the graded rule; triage against change tickets and
   the managing IAM principal.

@@ -25,31 +25,46 @@ description: |
     - CERTIFICATE_BUNDLE       -- a caller-supplied PEM bundle
                                   (requestParameters.source.sourceData.x509CertificateData).
     - SELF_SIGNED_REPOSITORY   -- a self-signed external repository.
-  The enum is set by the API server from the request, not by the caller's free text, so it
-  is not spoofable to evade: an attacker who wants an external CA must record one of the two
-  external values. The rule fires on the two external values and stays silent on AWS_ACM_PCA
-  -- the one field that separates a benign ACM-PCA anchor from an attacker's own CA.
+  The enum is set by the API server from the request, not by the caller's free text, so the
+  FIELD cannot be renamed to disguise external certificate data as AWS_ACM_PCA: an attacker
+  who supplies a PEM bundle or self-signed repository must record one of the two external
+  values. That bounds the field, not the whole technique: an attacker who controls an
+  in-account ACM Private CA (acm-pca:CreateCertificateAuthority) can CreateTrustAnchor with
+  sourceType=AWS_ACM_PCA pointing at that attacker-controlled CA and get the same
+  certificate-based persistence while this graded rule stays SILENT -- that path is caught
+  only by the surface chokepoint aws_rolesanywhere_trust_anchor_write.yml (it is loud and
+  costly: ACM Private CA is billed monthly and CreateCertificateAuthority is itself a logged
+  management event). The rule fires on the two external values and stays silent on
+  AWS_ACM_PCA -- the one field that separates a benign ACM-PCA anchor from an attacker's own
+  EXTERNAL CA.
 
   Covers CreateTrustAnchor (establish) and UpdateTrustAnchor (repoint an existing anchor's
   source to an external CA). Both calls carry the full source object under
   requestParameters.source, so a delta-style UpdateTrustAnchor that CHANGES sourceType to
-  an external value still records source.sourceType and still fires; an UpdateTrustAnchor
-  that edits only enabled or notificationSettings carries no source and correctly does not
-  fire (no CA change was made). EnableTrustAnchor and the profile writes carry no CA source
-  and are left to the companion surface chokepoint aws_rolesanywhere_trust_anchor_write.yml.
+  an external value still records source.sourceType and still fires. UpdateTrustAnchor takes
+  only trustAnchorId, name and source, so an UpdateTrustAnchor that changes only name carries
+  no source and correctly does not fire (no CA change was made). Enable/disable and
+  notification changes are SEPARATE operations that carry no CA source -- EnableTrustAnchor /
+  DisableTrustAnchor and PutNotificationSettings / ResetNotificationSettings; the enable leg
+  and the profile writes are left to the companion surface chokepoint
+  aws_rolesanywhere_trust_anchor_write.yml.
 
   Failed calls are excluded: CloudTrail writes errorCode only on an error, so the negation
   is null-safe ((sel_no_error_code or not filter_failed)) to keep every successful write on
   a three-valued backend (ES|QL and other SQL backends read NOT of a test on a missing field
   as NULL).
 
-  Field casing (lowerCamelCase: requestParameters.source.sourceType,
-  source.sourceData.x509CertificateData, source.sourceData.acmPcaArn) is taken from the
-  botocore/AWS CLI rolesanywhere model and the Elastic prebuilt rule, because the primary
-  AWS documentation hosts were unreachable from the build environment at build time; the
-  assumption is disclosed in the TRR9037 README and in detections/RULE_DEFECTS.md (KTBD-RA2).
+  Field casing and nesting (lowerCamelCase: requestParameters.source.sourceType,
+  source.sourceData.x509CertificateData, source.sourceData.acmPcaArn) are taken from the
+  botocore/AWS CLI rolesanywhere model, because the primary AWS documentation hosts were
+  unreachable from the build environment at build time. The Elastic prebuilt rule does NOT
+  corroborate the nested source.sourceType path: it matches a flattened request_parameters
+  STRING (stringContains(aws.cloudtrail.request_parameters, "sourceType=AWS_ACM_PCA")), which
+  confirms only the token sourceType and the enum values, not the JSON nesting under source.
   CloudTrail normalises requestParameters to lowerCamelCase regardless of the PascalCase API
-  model, so the lowerCamel paths are the expected shape.
+  model, so the lowerCamel casing is the expected shape; the exact nesting of a real
+  CreateTrustAnchor record is unverified and is disclosed in the TRR9037 README and in
+  detections/RULE_DEFECTS.md (KTBD-RA2).
 
   Prior art (named, differentiated): Elastic ships "AWS IAM Roles Anywhere Trust Anchor
   Created with External CA" (CreateTrustAnchor whose source type is not AWS_ACM_PCA; tagged
