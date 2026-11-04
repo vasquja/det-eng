@@ -209,7 +209,24 @@ Match Admin Activity events with `serviceName` `logging.googleapis.com` and a
 `.../sinks/_Default` or `.../buckets/_Default`, or (A) an `UpdateSink` sets
 `request.sink.disabled` true, or (C) it is any exclusion write; and the call did not
 error (`protoPayload.status.code` absent). A lifecycle op on a CUSTOM sink/bucket does
-not match.
+not match the `_Default`-target leg (it may still match the disable leg).
+
+**Coverage assumptions and known limits.** The `_Default` scope is a server-set,
+non-spoofable discriminator, but it is not by itself a clean attack/benign separator:
+
+- A benign `UpdateSink` that only edits the `_Default` sink's own inclusion filter or
+  description (GCP's documented cost-control knob; re-emitted by a logging-as-code
+  reconcile each run) also fires branch A — it targets `.../sinks/_Default`, carries no
+  error and is not a disable. One record cannot tell it from a malicious re-divert or
+  filter-narrowing of `_Default`; firing is defensible (narrowing the `_Default` filter
+  is itself a tamper) but it is a documented false positive — see
+  [`RULE_DEFECTS.md` KTBD-GL3](../../../detections/RULE_DEFECTS.md).
+- The delete-or-re-divert leg **assumes audit logs flow via `_Default`**. A `DeleteSink`
+  or destination re-divert of a CUSTOM aggregated audit-export sink (the GCP-CIS
+  pattern) is covered only if it uses the `disabled` flag (branch B); otherwise it is a
+  miss. Blanket-firing on custom-sink deletes would reintroduce the benign
+  custom-sink-decommission false positive, so the gap stays documented — see
+  [`RULE_DEFECTS.md` KTBD-GL4](../../../detections/RULE_DEFECTS.md).
 
 - Sensor: Cloud Audit Logs (Admin Activity).
 - Rule: [`detections/sigma/T1562.008/gcp_logging_sink_tampered.yml`](../../../detections/sigma/T1562.008/gcp_logging_sink_tampered.yml) (built).

@@ -34,7 +34,7 @@ case "$PROC" in
   b) echo "B: delete the _Default log bucket (drops the logs stored there)."
      echo "   gcloud logging buckets delete _Default --location=global --project=\$PROJECT" ;;
   c) echo "C: add a project-level exclusion that drops the audit-log stream."
-     echo "   gcloud logging sinks update _Default --add-exclusion=name=trr9038-drop-audit,filter='logName:\"cloudaudit.googleapis.com\"' --project=\$PROJECT" ;;
+     echo "   gcloud logging exclusions create trr9038-drop-audit --log-filter='logName:\"cloudaudit.googleapis.com\"' --project=\$PROJECT" ;;
   *) echo "usage: emulate_gcp_log_sink.sh {a|b|c} [--live|--show-fixture]"; exit 1 ;;
 esac
 
@@ -54,11 +54,11 @@ if [[ "${TRR9038_LIVE:-0}" == "1" || "${2:-}" == "--live" ]]; then
     gcloud logging buckets undelete "$TRR9038_CUSTOM_BUCKET" --location=global --project="$TRR9038_PROJECT" || \
       echo "[live] NOTE: a _Default bucket delete is not undeletable; use a throwaway custom bucket for this test."
   elif [[ "$PROC" == "c" ]]; then
-    echo "[live] adding exclusion trr9038-drop-audit to the _Default sink, then removing it..."
-    gcloud logging sinks update _Default \
-      --add-exclusion="name=trr9038-drop-audit,filter=logName:\"cloudaudit.googleapis.com\"" \
+    echo "[live] creating project exclusion trr9038-drop-audit, then deleting it..."
+    gcloud logging exclusions create trr9038-drop-audit \
+      --log-filter="logName:\"cloudaudit.googleapis.com\"" \
       --project="$TRR9038_PROJECT"
-    gcloud logging sinks update _Default --remove-exclusions=trr9038-drop-audit --project="$TRR9038_PROJECT"
+    gcloud logging exclusions delete trr9038-drop-audit --project="$TRR9038_PROJECT"
   fi
   echo "[live] done. Review the Admin Activity log ConfigServiceV2 event for the tamper."
 else

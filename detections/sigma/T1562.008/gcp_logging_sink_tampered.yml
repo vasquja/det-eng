@@ -38,7 +38,13 @@ description: |
   approximation -- one record cannot weigh whether an exclusion's filter is over-broad
   or which logs it drops (the attacker authors the filter text). The _Default-scope
   check is the server-set, non-spoofable discriminator this rule keys on; the
-  attacker-authored filter is not.
+  attacker-authored filter is not. The _Default scope is NOT by itself a clean
+  attack/benign separator for the UpdateSink leg: a benign UpdateSink that only edits
+  the _Default sink's own inclusion filter or description also fires branch A, and one
+  record cannot tell it from a malicious re-divert / filter-narrowing of _Default
+  (KTBD-GL3). The delete-or-re-divert leg assumes audit logs flow via _Default; a
+  DeleteSink or destination re-divert of a CUSTOM aggregated audit-export sink is a miss
+  unless it uses the disabled flag (branch B) -- KTBD-GL4.
 references:
   - https://attack.mitre.org/techniques/T1562/008/
   - https://cloud.google.com/logging/docs/audit
@@ -90,6 +96,17 @@ falsepositives:
   - A legitimate lifecycle change on a CUSTOM sink or bucket (CreateSink of a new
     analytics sink, UpdateSink keeping its destination, decommissioning a custom
     sink/bucket) does NOT match -- it is neither the _Default target nor a disable.
+    Corollary (KTBD-GL4) -- because this leg keys on the _Default scope, a DeleteSink or
+    destination re-divert of a CUSTOM aggregated audit-export sink is a MISS unless it
+    uses the disabled flag; it assumes audit logs flow via _Default.
+  - A benign UpdateSink that only edits the _Default sink's own inclusion/exclusion
+    filter or description (GCP's documented way to cut _Default-bucket ingestion cost,
+    and what a logging-as-code apply re-emits each run) also fires branch A -- it targets
+    .../sinks/_Default, carries no error and is not a disable. One record cannot tell it
+    from a malicious re-divert or filter-narrowing of _Default (same single-record limit
+    as the exclusion branch; KTBD-GL3). Allowlist on protoPayload.resourceName /
+    authenticationInfo.principalEmail + the updateMask and correlate with change
+    management.
   - A deliberate narrow exclusion that drops only noisy, non-security logs fires the
     exclusion branch; one record cannot tell it from an over-broad audit-dropping
     exclusion (documented limit). Allowlist on protoPayload.resourceName /

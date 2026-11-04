@@ -158,7 +158,7 @@
       },
       "requestMetadata": {
         "callerIp": "198.51.100.23",
-        "callerSuppliedUserAgent": "google-cloud-sdk gcloud/503.0.0 command/gcloud.logging.sinks.create",
+        "callerSuppliedUserAgent": "google-cloud-sdk gcloud/503.0.0 command/gcloud.logging.exclusions.create",
         "requestAttributes": {
           "time": "2026-11-04T15:14:51.330Z"
         },
