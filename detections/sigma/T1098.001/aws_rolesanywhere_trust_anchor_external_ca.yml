@@ -64,7 +64,7 @@ description: |
   CloudTrail normalises requestParameters to lowerCamelCase regardless of the PascalCase API
   model, so the lowerCamel casing is the expected shape; the exact nesting of a real
   CreateTrustAnchor record is unverified and is disclosed in the TRR9037 README and in
-  detections/RULE_DEFECTS.md (KTBD-RA2).
+  detections/RULE_DEFECTS.md (K64).
 
   Prior art (named, differentiated): Elastic ships "AWS IAM Roles Anywhere Trust Anchor
   Created with External CA" (CreateTrustAnchor whose source type is not AWS_ACM_PCA; tagged
@@ -120,7 +120,7 @@ falsepositives:
     does not use ACM Private CA). This is a policy-hygiene signal, not necessarily
     compromise -- triage the trust-anchor write against change tickets and the IAM principal
     (userIdentity.arn) that made it, as with TRR9015's repo:org/* grants. See
-    detections/RULE_DEFECTS.md (KTBD-RA1).
+    detections/RULE_DEFECTS.md (K63).
   - Development or test environments that temporarily use a self-signed certificate bundle
     while an ACM Private CA is being provisioned; confirm the external CA is authorised.
 level: high

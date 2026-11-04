@@ -60,7 +60,7 @@ description: |
   (detections/benign/slices/kubernetes/k8s-audit-gitops-ci.json), and a deletecollection
   removes addresses rather than repointing them.
 
-  Limit (detections/RULE_DEFECTS.md KTBD-EP1): a LEGITIMATE manual Endpoints or
+  Limit (detections/RULE_DEFECTS.md K69): a LEGITIMATE manual Endpoints or
   EndpointSlice write -- an admin or a GitOps tool pointing a selectorless Service at an
   external database, or an operator repointing one during a migration -- is a non-
   controller create/update/patch of exactly these objects, so on a single Metadata record
@@ -74,7 +74,7 @@ description: |
   theft evasion, the class of RULE_DEFECTS.md K37/K50/K51, not a reason to drop the filter
   (a controller's own continual writes would otherwise bury every real hit).
 
-  Gap (detections/RULE_DEFECTS.md KTBD-EP2): the rule does not grade the WRITTEN address,
+  Gap (detections/RULE_DEFECTS.md K70): the rule does not grade the WRITTEN address,
   so it does not raise severity for the CVE-2021-25737 node-local / link-local redirect
   (an Endpoints or EndpointSlice address in 127.0.0.0/8 or 169.254.0.0/16, which can reach
   a node's kubelet or cloud metadata). That overlay needs the addresses in the request
@@ -154,11 +154,11 @@ falsepositives:
     backend (a database, a legacy host) by hand, or an operator repointing one during a
     migration or fail-over. On one Metadata record this is indistinguishable from the
     attack (the written address, the only difference, is not in a Metadata record), so the
-    rule is a low-fidelity hunting / correlation anchor (RULE_DEFECTS.md KTBD-EP1).
+    rule is a low-fidelity hunting / correlation anchor (RULE_DEFECTS.md K69).
     Baseline those identities by user.username and user.groups; triage by whether the
     Service had a selector before and by the written address.
   - A write sent with a stolen endpoint-controller or kube-controller-manager token is
-    filtered by identity and missed (a credential-theft evasion, RULE_DEFECTS.md KTBD-EP1,
+    filtered by identity and missed (a credential-theft evasion, RULE_DEFECTS.md K69,
     the class of K37/K50/K51). The filter is kept because a controller rewrites these
     objects on every pod-readiness change, and without it every hit would be buried.
   - A CNI or service-mesh controller that manages EndpointSlices under its own service

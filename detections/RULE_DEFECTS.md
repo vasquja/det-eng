@@ -106,12 +106,16 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
 | [K56](#k56-aws_eks_access_entry_cluster_admin_policy-a-namespace-scoped-secrets-grant-is-missed) | `T1098.006/aws_eks_access_entry_cluster_admin_policy` | a reads-Secrets policy scoped to a sensitive namespace (`kube-system`) reads those Secrets but trips only the medium chokepoint, not the graded rule; one CloudTrail record cannot weigh one namespace against another | false negative | medium |
 | [K57](#k57-aws_eks_access_entry_cluster_admin_policy-no-safe-sigma-predicate-for-a-cross-account-grant) | `T1098.006/aws_eks_access_entry_cluster_admin_policy` | no safe Sigma predicate raises fidelity on a cross-account grant: `principalArn\|fieldref\|contains: recipientAccountId` goes quiet when the attacker names its role with the victim account ID | false negative (documented) | low |
-| [KTBD-AZ1](#ktbd-az1-azure_privileged_role_assignment-a-custom-role-with-owner-equivalent-permissions-evades-the-built-in-guid-allowlist) | `T1098.003/azure_privileged_role_assignment` (TRR9036 A, B) | a custom role definition with Owner-equivalent permissions carries a tenant-specific GUID that is not on the built-in-role allowlist, so the body grade does not fire; the fix is a per-tenant privileged-role-GUID list | evasion | medium |
-| [KTBD-AZ2](#ktbd-az2-azure_privileged_role_assignment-requestbody-can-be-absent-on-some-activity-log-exporters-and-the-grant-is-only-on-the-start-record) | `T1098.003/azure_privileged_role_assignment` (TRR9036 A, B) | the assigned role + scope are only in `properties.requestbody` on the Start record, and some Activity Log exporters / diagnostic settings omit or truncate it, so the body grade is a fixture-provable approximation that degrades to the surface chokepoint where the body is absent | portability, false negative | medium |
-| [KTBD-GL1](#ktbd-gl1-gcp_logging_sink_tampered-the-exclusionbucket-grade-is-a-filter-content-approximation) | `T1562.008/gcp_logging_sink_tampered`, the exclusion branch | one record cannot weigh whether an exclusion's filter is over-broad or which logs it drops (the attacker authors the filter text), so the exclusion branch fires on any `ConfigServiceV2` exclusion write; a deliberate narrow exclusion that drops only noisy non-security logs is a documented false positive. The non-spoofable `_Default`-scope check is the discriminator the rule keys on | false positive, description | medium |
-| [KTBD-GL2](#ktbd-gl2-gcp_logging_sink_tampered-methodname-casing-and-the-disabled-field-path-are-unverified-against-primary-docs) | `T1562.008/gcp_logging_sink_tampered` | the `methodName` casing (`...ConfigServiceV2.DeleteSink`) and the `request.sink.disabled` field path are assumptions: Google's primary audit-method docs were unreachable at build and the casing is taken from Elastic's query. Mitigated by a case- and version-tolerant `\|re\|i` regex and by the `_Default`-scope branch, which fires on a `_Default` disable independently of the `disabled` field path | portability, description | low |
-| [KTBD-GL3](#ktbd-gl3-gcp_logging_sink_tampered-a-benign-_default-sink-filter-or-description-edit-also-fires-branch-a) | `T1562.008/gcp_logging_sink_tampered`, the `_Default` sink/bucket branch | a benign `UpdateSink` that only edits the `_Default` sink's own inclusion filter or description (GCP's documented cost-control knob; re-emitted by a logging-as-code apply each run) targets `.../sinks/_Default`, carries no error and is not a disable, so it fires branch A. One record cannot tell it from a malicious re-divert / filter-narrowing of `_Default` (same single-record limit as KTBD-GL1). Firing is defensible (narrowing the `_Default` filter is itself a tamper); the `_Default` scope is not a clean benign/attack separator for the `UpdateSink` leg | false positive, description | medium |
-| [KTBD-GL4](#ktbd-gl4-gcp_logging_sink_tampered-delete-or-re-divert-of-a-custom-audit-export-sink-is-a-miss) | `T1562.008/gcp_logging_sink_tampered`, the `_Default`-target branch | the delete-or-re-divert leg keys on the `.../sinks/_Default` (or `.../buckets/_Default`) scope, so `DeleteSink` or a destination re-divert of a CUSTOM aggregated audit-export sink (the GCP-CIS pattern used in the repo's own `gcp-platform-ops` benign slice, `org-audit-to-siem`) is a miss. Covered only if the tamper uses the `disabled` flag (branch B). Coverage assumes audit logs flow via `_Default`; blanket-firing on custom-sink deletes would reintroduce the `delete-custom-sink-decommission` false positive, so it stays a documented gap | false negative | medium |
+| [K61](#k61-azure_privileged_role_assignment-a-custom-role-with-owner-equivalent-permissions-evades-the-built-in-guid-allowlist) | `T1098.003/azure_privileged_role_assignment` (TRR9036 A, B) | a custom role definition with Owner-equivalent permissions carries a tenant-specific GUID that is not on the built-in-role allowlist, so the body grade does not fire; the fix is a per-tenant privileged-role-GUID list | evasion | medium |
+| [K62](#k62-azure_privileged_role_assignment-requestbody-can-be-absent-on-some-activity-log-exporters-and-the-grant-is-only-on-the-start-record) | `T1098.003/azure_privileged_role_assignment` (TRR9036 A, B) | the assigned role + scope are only in `properties.requestbody` on the Start record, and some Activity Log exporters / diagnostic settings omit or truncate it, so the body grade is a fixture-provable approximation that degrades to the surface chokepoint where the body is absent | portability, false negative | medium |
+| [K63](#k63-aws_rolesanywhere_trust_anchor_external_ca-external-ca-grade-is-a-policy-hygiene-signal-a-legit-external-pki-shop-also-trips) | `T1098.001/aws_rolesanywhere_trust_anchor_external_ca` (TRR9037 A, B) | the external-CA-vs-ACM-PCA discriminator is a policy-hygiene signal a legitimate external-PKI shop also trips (triage against change tickets); a per-account anchor allowlist is operator-specific and not shipped | false positive | medium |
+| [K64](#k64-aws_rolesanywhere_trust_anchor_external_ca--_write-field-casingnesting-unverified-against-primary-aws-docs) | `T1098.001/aws_rolesanywhere_trust_anchor_external_ca`, `T1098.001/aws_rolesanywhere_trust_anchor_write` | the CloudTrail field casing/nesting (`requestParameters.source.sourceType`, `sourceData.{acmPcaArn,x509CertificateData}`) is taken from the botocore model + Elastic rule, not confirmed against primary AWS docs (unreachable at build) or a captured record; confirm before production | research gap, portability | medium |
+| [K65](#k65-gcp_logging_sink_tampered-the-exclusionbucket-grade-is-a-filter-content-approximation) | `T1562.008/gcp_logging_sink_tampered`, the exclusion branch | one record cannot weigh whether an exclusion's filter is over-broad or which logs it drops (the attacker authors the filter text), so the exclusion branch fires on any `ConfigServiceV2` exclusion write; a deliberate narrow exclusion that drops only noisy non-security logs is a documented false positive. The non-spoofable `_Default`-scope check is the discriminator the rule keys on | false positive, description | medium |
+| [K66](#k66-gcp_logging_sink_tampered-methodname-casing-and-the-disabled-field-path-are-unverified-against-primary-docs) | `T1562.008/gcp_logging_sink_tampered` | the `methodName` casing (`...ConfigServiceV2.DeleteSink`) and the `request.sink.disabled` field path are assumptions: Google's primary audit-method docs were unreachable at build and the casing is taken from Elastic's query. Mitigated by a case- and version-tolerant `\|re\|i` regex and by the `_Default`-scope branch, which fires on a `_Default` disable independently of the `disabled` field path | portability, description | low |
+| [K67](#k67-gcp_logging_sink_tampered-a-benign-_default-sink-filter-or-description-edit-also-fires-branch-a) | `T1562.008/gcp_logging_sink_tampered`, the `_Default` sink/bucket branch | a benign `UpdateSink` that only edits the `_Default` sink's own inclusion filter or description (GCP's documented cost-control knob; re-emitted by a logging-as-code apply each run) targets `.../sinks/_Default`, carries no error and is not a disable, so it fires branch A. One record cannot tell it from a malicious re-divert / filter-narrowing of `_Default` (same single-record limit as K65). Firing is defensible (narrowing the `_Default` filter is itself a tamper); the `_Default` scope is not a clean benign/attack separator for the `UpdateSink` leg | false positive, description | medium |
+| [K68](#k68-gcp_logging_sink_tampered-delete-or-re-divert-of-a-custom-audit-export-sink-is-a-miss) | `T1562.008/gcp_logging_sink_tampered`, the `_Default`-target branch | the delete-or-re-divert leg keys on the `.../sinks/_Default` (or `.../buckets/_Default`) scope, so `DeleteSink` or a destination re-divert of a CUSTOM aggregated audit-export sink (the GCP-CIS pattern used in the repo's own `gcp-platform-ops` benign slice, `org-audit-to-siem`) is a miss. Covered only if the tamper uses the `disabled` flag (branch B). Coverage assumes audit logs flow via `_Default`; blanket-firing on custom-sink deletes would reintroduce the `delete-custom-sink-decommission` false positive, so it stays a documented gap | false negative | medium |
+| [K69](#k69-k8s_service_endpoints_hijacked-a-benign-manual-write-looks-the-same-and-the-username-filter-trusts-the-token) | `T1557/k8s_service_endpoints_hijacked` (TRR9039 A, B) | a benign manual Endpoints/EndpointSlice write (a selectorless Service, an admin repoint) is byte-identical on a Metadata record, so the rule is a low-fidelity hunting anchor, and the controller username filter trusts the token (stolen-controller-token evasion) | false positive, evasion | medium |
+| [K70](#k70-k8s_service_endpoints_hijacked-the-written-address-grade-cve-2021-25737-ranges-is-a-documented-gap) | `T1557/k8s_service_endpoints_hijacked` | the written-address grade (CVE-2021-25737 ranges 127.0.0.0/8 + 169.254.0.0/16) is a documented gap: it needs costly endpoints request-body logging, so the shipped Metadata chokepoint does not read the target address | false negative | low |
 
 ## Linux (auditd and node file events)
 
@@ -2164,9 +2168,10 @@ the current ones.
 - **Then**: the rule stays the create/approve chokepoint; a human who accepts a
   non-portable rule can add the subject grader or the fieldref self-approval check.
 
-### KTBD-RA1. aws_rolesanywhere_trust_anchor_external_ca: external-CA grade is a policy-hygiene signal a legit external-PKI shop also trips
+### K63. aws_rolesanywhere_trust_anchor_external_ca: external-CA grade is a policy-hygiene signal a legit external-PKI shop also trips
 
 - **Rule**: [`sigma/T1098.001/aws_rolesanywhere_trust_anchor_external_ca.yml`](sigma/T1098.001/aws_rolesanywhere_trust_anchor_external_ca.yml) (level high).
+- **Procedures**: TRR9037.AWS.A, TRR9037.AWS.B.
 - **Kind**: false positive (documented). **Severity**: medium (an organisation that runs
   its own PKI trips the rule on every legitimate anchor).
 - **Problem**: the rule's discriminator is `requestParameters.source.sourceType` being an
@@ -2180,7 +2185,7 @@ the current ones.
   compromise.
 - **Evidence**: *source* — the IAM Roles Anywhere `Source` API model, `sourceType` enum
   `AWS_ACM_PCA | CERTIFICATE_BUNDLE | SELF_SIGNED_REPOSITORY` (botocore/AWS CLI model and
-  the Elastic prebuilt rule; AWS doc hosts unreachable at build, see KTBD-RA2). The hard
+  the Elastic prebuilt rule; AWS doc hosts unreachable at build, see K64). The hard
   benign fixture is an `AWS_ACM_PCA` anchor; the graded rule's `falsepositives` names the
   external-PKI shop. The benign corpus scores the rule 0 only because the committed AWS
   slices carry no Roles Anywhere traffic (untested by absence, stated in the TRR README).
@@ -2192,7 +2197,7 @@ the current ones.
   authorised trust-anchor sources (by `trustAnchorArn` or managing principal), with a
   positive for an unexpected external CA and a filtered case for the allowlisted one.
 
-### KTBD-RA2. aws_rolesanywhere_trust_anchor_external_ca / _write: field casing/nesting unverified against primary AWS docs
+### K64. aws_rolesanywhere_trust_anchor_external_ca / _write: field casing/nesting unverified against primary AWS docs
 
 - **Rule**: [`sigma/T1098.001/aws_rolesanywhere_trust_anchor_external_ca.yml`](sigma/T1098.001/aws_rolesanywhere_trust_anchor_external_ca.yml) (level high) and [`sigma/T1098.001/aws_rolesanywhere_trust_anchor_write.yml`](sigma/T1098.001/aws_rolesanywhere_trust_anchor_write.yml) (level medium).
 - **Kind**: research gap (field provenance). **Severity**: medium (if the real CloudTrail
@@ -2221,9 +2226,10 @@ the current ones.
   the lowerCamel nested path is the best-evidence assumption.
 - **Then**: once a captured record pins the path, this entry closes and the fixtures carry
   the confirmed shape.
-### KTBD-EP1. k8s_service_endpoints_hijacked: a benign manual write looks the same, and the username filter trusts the token
+### K69. k8s_service_endpoints_hijacked: a benign manual write looks the same, and the username filter trusts the token
 
 - **Rule**: [`sigma/T1557/k8s_service_endpoints_hijacked.yml`](sigma/T1557/k8s_service_endpoints_hijacked.yml) (level medium), TRR9039 Procedures A and B.
+- **Procedures**: TRR9039.K8S.A, TRR9039.K8S.B.
 - **Kind**: false positive, evasion. **Severity**: medium (a low-fidelity hunting /
   correlation anchor, as the service-exposure chokepoint K59 is).
 - **Problem**: two linked limits of an actor-class chokepoint read at Metadata.
@@ -2261,15 +2267,15 @@ the current ones.
 - **Fix**: none that one Metadata record supports. Baseline the identities that write
   selectorless-Service endpoints by design (`user.username`, `user.groups`); triage by
   whether the Service had a selector before and by the written address (which needs the
-  body, KTBD-EP2). For the evasion, correlate a controller-identity endpoints write with
+  body, K70). For the evasion, correlate a controller-identity endpoints write with
   the absence of the pod-readiness change that should drive it, or restrict who can obtain a
   controller token. If a benign slice of manual non-controller endpoints writes is added to
   the corpus, propose a budget (`enforce`, a human decision), as K59 notes for TRR9033.
 - **Then**: the rule stays the actor-class chokepoint; a correlation that pairs the write
   with the prior Service state or the triggering pod change, or an address grade
-  (KTBD-EP2), raises it above a hunting anchor.
+  (K70), raises it above a hunting anchor.
 
-### KTBD-EP2. k8s_service_endpoints_hijacked: the written-address grade (CVE-2021-25737 ranges) is a documented gap
+### K70. k8s_service_endpoints_hijacked: the written-address grade (CVE-2021-25737 ranges) is a documented gap
 
 - **Rule**: [`sigma/T1557/k8s_service_endpoints_hijacked.yml`](sigma/T1557/k8s_service_endpoints_hijacked.yml) (level medium).
 - **Kind**: false negative (documented gap). **Severity**: low (an enrichment not shipped;
@@ -2421,10 +2427,8 @@ the current ones.
   RE2 and `check_sigma_regex` reject. The org-account allowlist is operator-specific, so this
   form is documented, not shipped. Baseline external-account principal ARNs on access entries.
 
-### KTBD-AZ1. azure_privileged_role_assignment: a custom role with Owner-equivalent permissions evades the built-in-GUID allowlist
+### K61. azure_privileged_role_assignment: a custom role with Owner-equivalent permissions evades the built-in-GUID allowlist
 
-> Placeholder ID (KTBD-AZ1): the integrator renumbers it to the next free K-number
-> (last used is K60; KTBD-AZ1/KTBD-AZ2 are the next two).
 
 - **Rule**: [`sigma/T1098.003/azure_privileged_role_assignment.yml`](sigma/T1098.003/azure_privileged_role_assignment.yml) (level medium).
 - **Procedures**: TRR9036.AZR.A, TRR9036.AZR.B.
@@ -2455,10 +2459,8 @@ the current ones.
 - **Then**: with the per-tenant list configured, a sidecar positive whose `requestbody`
   carries a site custom-role GUID fires, and this entry closes.
 
-### KTBD-AZ2. azure_privileged_role_assignment: requestbody can be absent on some Activity Log exporters, and the grant is only on the Start record
+### K62. azure_privileged_role_assignment: requestbody can be absent on some Activity Log exporters, and the grant is only on the Start record
 
-> Placeholder ID (KTBD-AZ2): the integrator renumbers it to the next free K-number
-> (last used is K60; KTBD-AZ1/KTBD-AZ2 are the next two).
 
 - **Rule**: [`sigma/T1098.003/azure_privileged_role_assignment.yml`](sigma/T1098.003/azure_privileged_role_assignment.yml) (level medium).
 - **Procedures**: TRR9036.AZR.A, TRR9036.AZR.B.
@@ -2489,7 +2491,7 @@ the current ones.
   is a follow-up rule and an operator tuning step, not a change to this rule.
 - **Then**: a surface-fallback rule plus its cases, scored against the benign corpus, closes
   the exporter-absence half; the Start-record half is already proven by the fixtures.
-### KTBD-GL1. gcp_logging_sink_tampered: the exclusion/bucket grade is a filter-content approximation
+### K65. gcp_logging_sink_tampered: the exclusion/bucket grade is a filter-content approximation
 
 - **Rule**: [`sigma/T1562.008/gcp_logging_sink_tampered.yml`](sigma/T1562.008/gcp_logging_sink_tampered.yml) (level high).
 - **Kind**: false positive, description. **Severity**: medium. **Procedures**: TRR9038.GCP.C.
@@ -2517,7 +2519,7 @@ the current ones.
   management. **Then**: an allowlist filter proven by a filtered case, and a content overlay
   proven by a near-miss, close the branch.
 
-### KTBD-GL2. gcp_logging_sink_tampered: methodName casing and the disabled field path are unverified against primary docs
+### K66. gcp_logging_sink_tampered: methodName casing and the disabled field path are unverified against primary docs
 
 - **Rule**: [`sigma/T1562.008/gcp_logging_sink_tampered.yml`](sigma/T1562.008/gcp_logging_sink_tampered.yml) (level high).
 - **Kind**: portability, description. **Severity**: low.
@@ -2543,7 +2545,7 @@ the current ones.
   against a real Cloud Audit Log record and Google's docs when reachable; pin an exact-casing
   positive if confirmed.
 
-### KTBD-GL3. gcp_logging_sink_tampered: a benign _Default sink filter or description edit also fires branch A
+### K67. gcp_logging_sink_tampered: a benign _Default sink filter or description edit also fires branch A
 
 - **Rule**: [`sigma/T1562.008/gcp_logging_sink_tampered.yml`](sigma/T1562.008/gcp_logging_sink_tampered.yml) (level high).
 - **Kind**: false positive, description. **Severity**: medium. **Procedures**: TRR9038.GCP.A.
@@ -2553,9 +2555,9 @@ the current ones.
   inclusion/exclusion **filter** or **description** — GCP's documented way to cut `_Default`
   bucket ingestion cost, and what a logging-as-code (`terraform apply`, Config Connector)
   reconcile re-emits on every run — targets `.../sinks/_Default`, uses `UpdateSink`, carries
-  no error (`status.code` absent) and sets no `disabled` flag, so it fires. KTBD-GL1 covers
+  no error (`status.code` absent) and sets no `disabled` flag, so it fires. K65 covers
   the project-level **exclusion** API; this is the `_Default` sink's own embedded filter, a
-  different leg KTBD-GL1 does not reach. The rule's `falsepositives:` block previously named
+  different leg K65 does not reach. The rule's `falsepositives:` block previously named
   only custom-sink lifecycle as the non-firing benign case and framed every `_Default` write
   as attack; that overclaimed a clean `_Default`-vs-custom split for the `UpdateSink` leg.
 - **Evidence**: probe (`sigma_eval.py`) — a success `UpdateSink` of
@@ -2567,11 +2569,11 @@ the current ones.
   because narrowing the `_Default` inclusion filter is itself a logging tamper. This is a
   disclosure, not a bug: one record cannot tell a benign cost-control filter/description edit
   from a malicious re-divert or filter-narrowing of `_Default` (same single-record limit as
-  KTBD-GL1). Allowlist benign `_Default` edits by `protoPayload.resourceName` /
+  K65). Allowlist benign `_Default` edits by `protoPayload.resourceName` /
   `authenticationInfo.principalEmail` + the `updateMask`, and correlate with change
   management. **Then**: an allowlist filter proven by a filtered case closes the leg.
 
-### KTBD-GL4. gcp_logging_sink_tampered: delete or re-divert of a custom audit-export sink is a miss
+### K68. gcp_logging_sink_tampered: delete or re-divert of a custom audit-export sink is a miss
 
 - **Rule**: [`sigma/T1562.008/gcp_logging_sink_tampered.yml`](sigma/T1562.008/gcp_logging_sink_tampered.yml) (level high).
 - **Kind**: false negative. **Severity**: medium. **Procedures**: TRR9038.GCP.A.

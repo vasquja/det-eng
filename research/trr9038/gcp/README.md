@@ -106,7 +106,7 @@ rule matches `methodName` with a case-insensitive, version-tolerant regex
 (`google\.logging\.v*\.ConfigServiceV*\.<Method>`, `|re|i`). The `disabled`-flag
 branch is a bonus leg: even if its field path is wrong, disabling the `_Default` sink
 via `UpdateSink` still fires through the `_Default`-scope branch. See
-[`detections/RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) (the KTBD-GL2
+[`detections/RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) (the K66
 entry renumbered at integration).
 
 ### Provider-native coverage (apparent gap)
@@ -195,7 +195,7 @@ Source: [`ddms/trr9038_gcp_c.json`](ddms/trr9038_gcp_c.json) (Arrows app format)
 
 **DDM summary.** The shaded node is the exclusion write. The exclusion **filter** is
 attacker-authored, so one record cannot weigh whether it is over-broad or which logs
-it drops — the exclusion/bucket branch is a filter-content approximation (KTBD-GL1
+it drops — the exclusion/bucket branch is a filter-content approximation (K65
 below), not a precise grade.
 
 ## Detection Strategy
@@ -220,13 +220,13 @@ non-spoofable discriminator, but it is not by itself a clean attack/benign separ
   error and is not a disable. One record cannot tell it from a malicious re-divert or
   filter-narrowing of `_Default`; firing is defensible (narrowing the `_Default` filter
   is itself a tamper) but it is a documented false positive — see
-  [`RULE_DEFECTS.md` KTBD-GL3](../../../detections/RULE_DEFECTS.md).
+  [`RULE_DEFECTS.md` K67](../../../detections/RULE_DEFECTS.md).
 - The delete-or-re-divert leg **assumes audit logs flow via `_Default`**. A `DeleteSink`
   or destination re-divert of a CUSTOM aggregated audit-export sink (the GCP-CIS
   pattern) is covered only if it uses the `disabled` flag (branch B); otherwise it is a
   miss. Blanket-firing on custom-sink deletes would reintroduce the benign
   custom-sink-decommission false positive, so the gap stays documented — see
-  [`RULE_DEFECTS.md` KTBD-GL4](../../../detections/RULE_DEFECTS.md).
+  [`RULE_DEFECTS.md` K68](../../../detections/RULE_DEFECTS.md).
 
 - Sensor: Cloud Audit Logs (Admin Activity).
 - Rule: [`detections/sigma/T1562.008/gcp_logging_sink_tampered.yml`](../../../detections/sigma/T1562.008/gcp_logging_sink_tampered.yml) (built).
@@ -264,14 +264,14 @@ the `disabled` flag, with the exclusion content grade disclosed as an approximat
 
 ### Known limitations (tracked in RULE_DEFECTS.md)
 
-- **KTBD-GL1** — the exclusion/filter-content grade is an approximation: one record
+- **K65** — the exclusion/filter-content grade is an approximation: one record
   cannot weigh whether an exclusion's filter is over-broad or which logs it drops
   (the attacker authors the filter). The exclusion branch therefore fires on any
   `ConfigServiceV2` exclusion write; a deliberate narrow exclusion that drops only
   noisy non-security logs is a documented false positive, allowlisted by
   `resourceName` / `principalEmail`. The non-spoofable `_Default`-scope check is the
   discriminator the rule keys on.
-- **KTBD-GL2** — the `methodName` casing and the `request.sink.disabled` field path
+- **K66** — the `methodName` casing and the `request.sink.disabled` field path
   are assumptions: Google's primary audit-method docs were unreachable at build and
   the casing is taken from Elastic's query. Mitigated by the case- and
   version-tolerant `|re|i` regex and by the `_Default`-scope branch, which catches a

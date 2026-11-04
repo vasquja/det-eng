@@ -46,7 +46,7 @@ platform-admin form; a caller-supplied **certificate bundle** (`CERTIFICATE_BUND
 did not necessarily issue. Whether the external CA is authorised is a policy-hygiene
 question a legitimate external-PKI shop also raises (triage against change tickets, as with
 TRR9015's `repo:org/*`); the rule flags the external source type and leaves that triage to
-the responder (`detections/RULE_DEFECTS.md` **KTBD-RA1**).
+the responder (`detections/RULE_DEFECTS.md` **K63**).
 
 ## Technique Overview
 
@@ -114,7 +114,7 @@ The trust-anchor and profile writes are default-logged Roles Anywhere management
 > API model, so the lowerCamel paths are the expected shape, but the exact JSON **nesting**
 > of a real `CreateTrustAnchor` record was not confirmed against a captured event. This is
 > tracked in [`detections/RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md)
-> **KTBD-RA2**; confirm against a captured CloudTrail record before production use, and if the
+> **K64**; confirm against a captured CloudTrail record before production use, and if the
 > record flattens the source differently, the rule field path must be updated.
 
 ### Why `source.sourceType` is the discriminator, and why it is sound
@@ -151,7 +151,7 @@ this one field. That is why the graded rule's hard benign (`benign.json`) is the
   runs its own corporate or on-premises PKI (rather than ACM Private CA) trips it on every
   legitimate anchor. It is a finding to **triage against change tickets and the IAM
   principal** (`userIdentity.arn`), not a certain compromise — the same stance TRR9015
-  takes on an org-wide `repo:org/*` grant. Tracked as **KTBD-RA1**.
+  takes on an org-wide `repo:org/*` grant. Tracked as **K63**.
 
 ## Procedures
 
@@ -244,7 +244,7 @@ rule's threshold by design, and the external-PKI-shop false positive.
   billed monthly and `CreateCertificateAuthority` is itself a logged management event), but
   it is a real evasion of the graded grade — so "not spoofable" scopes to the
   `source.sourceType` field, not to the whole technique.
-- **False positive (KTBD-RA1):** a legitimate external-PKI shop's `CERTIFICATE_BUNDLE` /
+- **False positive (K63):** a legitimate external-PKI shop's `CERTIFICATE_BUNDLE` /
   `SELF_SIGNED_REPOSITORY` anchor fires the graded rule; triage against change tickets and
   the managing IAM principal.
 
@@ -257,7 +257,7 @@ Source: [`ddms/trr9037_aws_c.json`](ddms/trr9037_aws_c.json) (Arrows app format)
 **DDM summary.** The shaded node is a lower-tier / profile-only write that the surface
 chokepoint fires on (medium); the first grey node is the graded rule correctly staying
 silent (no external source type in the record); the second grey node is the benign
-AWS_ACM_PCA anchor and the legitimate external-PKI shop (the KTBD-RA1 hygiene limit).
+AWS_ACM_PCA anchor and the legitimate external-PKI shop (the K63 hygiene limit).
 
 ## Detection Strategy
 
@@ -357,7 +357,7 @@ not on the fixture's shape or marker.
 > contain **no** Roles Anywhere trust-anchor/profile traffic, so both rules score 0 by the
 > absence of representative activity, not by proven precision. The chokepoint fires on
 > **every** Roles Anywhere write by design, and the graded rule fires on a legitimate
-> external-PKI shop's anchor (KTBD-RA1). A realistic Roles Anywhere benign slice (IaC / console
+> external-PKI shop's anchor (K63). A realistic Roles Anywhere benign slice (IaC / console
 > operators, ACM-PCA anchors, profile edits) would measure the real precision; adding one is
 > a **human decision** (a benign-corpus change), so it is reported here, not added.
 > Baseline the IAM principals that manage Roles Anywhere (`userIdentity.arn`).
@@ -383,6 +383,6 @@ not on the fixture's shape or marker.
   from the botocore/AWS CLI `rolesanywhere` model and the Elastic rule above, because the
   AWS documentation hosts (`docs.aws.amazon.com`, `botocore.readthedocs.io`) were
   unreachable from the build environment at build time; the assumption is tracked in
-  [`detections/RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) **KTBD-RA2**.
+  [`detections/RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md) **K64**.
 - TRR method:
   <https://github.com/tired-labs/techniques/blob/main/docs/TECHNIQUE-RESEARCH-REPORT.md>

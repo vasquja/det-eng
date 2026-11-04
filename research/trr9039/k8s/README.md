@@ -38,14 +38,14 @@ Strategy):
   metadata) would raise severity, but the address is in the request body, which only a
   Request-level record holds; `endpoints` are among the highest-volume write objects in a
   cluster, so logging their bodies is costly and the shipped policies keep them at
-  Metadata. The address grade is a documented gap (RULE_DEFECTS.md **KTBD-EP2**), not
+  Metadata. The address grade is a documented gap (RULE_DEFECTS.md **K70**), not
   shipped; the actor-class chokepoint is what ships.
 - **Telling a malicious manual write from a legitimate one.** A legitimate manual
   `Endpoints` / `EndpointSlice` write (a selectorless Service pointed at an external
   database, an operator repointing one during a migration) is a non-controller
   create/update/patch of exactly these objects, so on one Metadata record it is
   indistinguishable from the attack minus the attacker-chosen address. The rule is a
-  low-fidelity hunting / correlation anchor (RULE_DEFECTS.md **KTBD-EP1**).
+  low-fidelity hunting / correlation anchor (RULE_DEFECTS.md **K69**).
 - **`spec.externalIPs` exposure or hijack** (CVE-2020-8554) and the exposing `spec.type`
   write (NodePort / LoadBalancer): those are a different chokepoint, TRR9033's
   (`spec.type`) and a separate `spec.externalIPs` field grade. A `ClusterIP` Service can
@@ -194,7 +194,7 @@ service-exposure chokepoint (TRR9033), the rule cannot tell a malicious manual w
 legitimate one on a single record, so it is an anchor to triage and correlate, not a
 high-confidence alert.
 
-**Accepted false positive (RULE_DEFECTS.md KTBD-EP1).** A legitimate manual `Endpoints` /
+**Accepted false positive (RULE_DEFECTS.md K69).** A legitimate manual `Endpoints` /
 `EndpointSlice` write — an admin or a GitOps / IaC tool (Argo CD, Flux, Terraform) pointing
 a selectorless Service at an out-of-cluster backend, or an operator repointing one during a
 migration or fail-over — is a non-controller create/update/patch of exactly these objects,
@@ -207,13 +207,13 @@ corpus scores the rule **0**: its `endpoints`/`endpointslices` writes are
 (filtered). A slice of benign manual non-controller Endpoints writes would score it above 0
 and need a budget — a human decision, not added here.
 
-**Accepted evasion (RULE_DEFECTS.md KTBD-EP1).** Because the filter trusts `user.username`,
+**Accepted evasion (RULE_DEFECTS.md K69).** Because the filter trusts `user.username`,
 a write sent with a **stolen** endpoint-controller (or `kube-controller-manager`) token is
 filtered and missed — a credential-theft evasion, the class of RULE_DEFECTS.md
 K37/K50/K51. The filter is kept because a controller rewrites these objects on every
 pod-readiness change; without it every real hit would be buried.
 
-**Gap: the address grade (RULE_DEFECTS.md KTBD-EP2).** The CVE-2021-25737 node-local /
+**Gap: the address grade (RULE_DEFECTS.md K70).** The CVE-2021-25737 node-local /
 link-local redirect overlay (an address in `127.0.0.0/8` or `169.254.0.0/16`) needs the
 addresses in the request body (`requestObject.subsets[].addresses[].ip` for a core
 `Endpoints`, `requestObject.endpoints[].addresses[]` for an `EndpointSlice`), which only a
@@ -234,7 +234,7 @@ narrower and from the CVE-2021-25737 angle:
   Falco default ruleset**, so it ships with no cluster unless an operator adds it. This TRR
   is the Sigma audit-layer counterpart, broadened to **any** non-controller write of
   `endpoints` or `endpointslices` (the chokepoint) and honest that the body-address grade
-  is a separate, costly overlay (KTBD-EP2) rather than the detection.
+  is a separate, costly overlay (K70) rather than the detection.
 - **Elastic `Kubectl Network Configuration Modification`** (`877cc04a-...`): a **process
   telemetry** rule (a `kubectl` command line that edits network objects), not an
   API-audit rule, so it sees only the `kubectl` client, not the audited write, and misses

@@ -41,7 +41,7 @@
       "position": {"x": 920, "y": 0},
       "caption": "Benign AWS_ACM_PCA anchor / legit external-PKI shop",
       "labels": [],
-      "properties": {"limit": "external-CA grade is a hygiene signal an external-PKI shop also trips (KTBD-RA1)"},
+      "properties": {"limit": "external-CA grade is a hygiene signal an external-PKI shop also trips (K63)"},
       "style": {"border-color": "#9f9f9f", "border-width": 3, "caption-font-size": 16, "label-position": "outside", "label-font-size": 14, "label-border-width": 2, "property-font-size": 14, "outside-position": "top"}
     }
   ],

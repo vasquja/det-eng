@@ -32,8 +32,8 @@ description: |
   Baseline the IaC / platform principals that legitimately grant privileged roles at
   subscription or management-group scope. Two limits are tracked in RULE_DEFECTS.md: a
   custom role with Owner-equivalent permissions evades the built-in-GUID allowlist
-  (KTBD-AZ1), and some Activity Log exporters omit or truncate requestbody so the
-  body-grade degrades to the surface chokepoint (KTBD-AZ2).
+  (K61), and some Activity Log exporters omit or truncate requestbody so the
+  body-grade degrades to the surface chokepoint (K62).
 references:
   - https://attack.mitre.org/techniques/T1098/003/
   - https://learn.microsoft.com/azure/role-based-access-control/built-in-roles

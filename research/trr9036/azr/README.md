@@ -31,7 +31,7 @@ chokepoint; this report states that prior art plainly below and positions the co
 as a **graded, scope-aware, fixture-proven** Sigma counterpart. It does **not** cover
 resource-group or single-resource grants (left to the hard-benign baseline as the
 discriminating non-fire), the `elevateAccess` tenant-root toggle (a separate activity), or
-custom roles with Owner-equivalent permissions (a disclosed evasion, KTBD-AZ1).
+custom roles with Owner-equivalent permissions (a disclosed evasion, K61).
 
 ## Technique Overview
 
@@ -97,10 +97,10 @@ TRR9013 rule's capture confirms UPPERCASE export forms.
 
 ### Known limits
 
-- **Custom-role evasion (KTBD-AZ1).** A custom role definition with Owner-equivalent
+- **Custom-role evasion (K61).** A custom role definition with Owner-equivalent
   permissions carries a tenant-specific GUID that is not on the built-in allowlist, so the
   rule misses it. The fix is a per-tenant privileged-role-GUID list, a human/site decision.
-- **requestbody absence (KTBD-AZ2).** Some Activity Log exporters / diagnostic settings omit
+- **requestbody absence (K62).** Some Activity Log exporters / diagnostic settings omit
   or truncate `properties.requestbody`; the role + scope are also only on the Start record.
   Where the body is absent the body-grade degrades to the surface chokepoint — the same
   fixture-provable approximation documented for TRR9011 and TRR9030. Both are tracked in
@@ -183,7 +183,7 @@ drops `properties.requestbody`.
 Source: [`ddms/trr9036_azr_c.json`](ddms/trr9036_azr_c.json) (Arrows app format).
 
 **DDM summary.** The grey nodes are the two disclosed gaps: the custom-role GUID
-(KTBD-AZ1) and the absent `requestbody` (KTBD-AZ2). Neither is covered by this portable
+(K61) and the absent `requestbody` (K62). Neither is covered by this portable
 rule.
 
 ## Detection Strategy
@@ -208,8 +208,8 @@ RE2/Lucene/KQL-safe).
   (built).
 
 **Demonstrated gaps (Procedure C).** A custom role with Owner-equivalent permissions evades
-the built-in-GUID allowlist (KTBD-AZ1); an exporter that drops `requestbody` degrades the
-body grade to the surface chokepoint (KTBD-AZ2). Both are tracked in
+the built-in-GUID allowlist (K61); an exporter that drops `requestbody` degrades the
+body grade to the surface chokepoint (K62). Both are tracked in
 [`RULE_DEFECTS.md`](../../../detections/RULE_DEFECTS.md).
 
 **Prior detection art (disclosed; this is a backstop).**
@@ -239,7 +239,7 @@ discriminator. No "first" or "only" is claimed. No built TRR covers this ARM-RBA
 |-----------|-----------|-----|
 | A | Strategy 1 | Activity Log roleAssignments/write Start, privileged `RoleDefinitionId`, subscription `Scope` |
 | B | Strategy 1 | same event; `Scope` begins `/providers/Microsoft.Management/managementGroups/` |
-| C | — (gap) | custom-role GUID (KTBD-AZ1) or absent `requestbody` (KTBD-AZ2) |
+| C | — (gap) | custom-role GUID (K61) or absent `requestbody` (K62) |
 
 ## Available Emulation Tests
 
@@ -263,7 +263,7 @@ where the rule scores **0**.
 |-----------|------|--------|
 | TRR9036.AZR.A | `emulate_azure.sh a` — assign Owner at subscription scope to a throwaway principal, then revoke. | **built** |
 | TRR9036.AZR.B | `emulate_azure.sh b` — assign User Access Administrator at management-group scope, then revoke. | **built** |
-| TRR9036.AZR.C | documented gap here — custom-role evasion (KTBD-AZ1) and `requestbody` absence (KTBD-AZ2). | gap |
+| TRR9036.AZR.C | documented gap here — custom-role evasion (K61) and `requestbody` absence (K62). | gap |
 
 ## Detections
 

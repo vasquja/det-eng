@@ -16,7 +16,7 @@
 # are SELECTORLESS (spec has no selector), so no endpoint controller manages their backing
 # objects -- the emulation writes them by hand, which is both the attack path and the
 # honest false positive this rule carries (a legitimate manual Endpoints write looks the
-# same on a Metadata record; see the TRR and RULE_DEFECTS.md KTBD-EP1).
+# same on a Metadata record; see the TRR and RULE_DEFECTS.md K69).
 #
 # Procedures:
 #   A  create a selectorless Service trr9039-ep and a core Endpoints trr9039-ep pointing at

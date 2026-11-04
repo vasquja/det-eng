@@ -40,7 +40,7 @@ case "$PROC" in
      echo "     --assignee-object-id <objectId> --assignee-principal-type User \\"
      echo "     --scope /providers/Microsoft.Management/managementGroups/<mgId>" ;;
   c) echo "C: custom-role / exporter evasion of the body grade — detection gap"
-     echo "   (KTBD-AZ1 custom role GUID not allowlisted; KTBD-AZ2 requestbody absent)." ;;
+     echo "   (K61 custom role GUID not allowlisted; K62 requestbody absent)." ;;
   *) echo "usage: emulate_azure.sh {a|b|c} [--live|--show-fixture]"; exit 1 ;;
 esac
 
