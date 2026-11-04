@@ -34,11 +34,11 @@
 <text x="800" y="212" fill="#9198a1" font-size="13" font-weight="400" text-anchor="end">36/78 proven</text>
 <text x="20" y="240" fill="#e6edf3" font-size="13" font-weight="400" text-anchor="start">AWS</text>
 <rect x="250" y="226" width="440" height="18" rx="4" fill="#21262d"/>
-<rect x="250.0" y="226" width="181.8" height="18" fill="#3fb950"/>
-<rect x="433.3" y="226" width="47.4" height="18" fill="#d29922"/>
-<rect x="482.2" y="226" width="71.8" height="18" fill="#6e7681"/>
-<rect x="555.6" y="226" width="132.9" height="18" fill="#f85149"/>
-<text x="800" y="240" fill="#9198a1" font-size="13" font-weight="400" text-anchor="end">15/36 proven</text>
+<rect x="250.0" y="226" width="190.3" height="18" fill="#3fb950"/>
+<rect x="441.8" y="226" width="43.6" height="18" fill="#d29922"/>
+<rect x="486.9" y="226" width="77.5" height="18" fill="#6e7681"/>
+<rect x="565.9" y="226" width="122.6" height="18" fill="#f85149"/>
+<text x="800" y="240" fill="#9198a1" font-size="13" font-weight="400" text-anchor="end">17/39 proven</text>
 <text x="20" y="268" fill="#e6edf3" font-size="13" font-weight="400" text-anchor="start">Azure</text>
 <rect x="250" y="254" width="440" height="18" rx="4" fill="#21262d"/>
 <rect x="250.0" y="254" width="191.0" height="18" fill="#3fb950"/>

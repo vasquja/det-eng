@@ -153,6 +153,7 @@ filing wave; ATT&CK revokes and renames IDs between releases.
 | TRR9034  | T1204.003 | Malicious Image Surfaced by an Admission-Policy Verdict | Kubernetes | [`trr9034/k8s`](trr9034/k8s/README.md) |
 | TRR9035  | T1098.006, T1136 | CSR Client-Certificate Persistence | Kubernetes | [`trr9035/k8s`](trr9035/k8s/README.md) |
 | TRR9036  | T1098.003 | Azure ARM RBAC Privileged Role Assignment at Subscription / Management-Group Scope | Azure | [`trr9036/azr`](trr9036/azr/README.md) |
+| TRR9037  | T1098.001, T1199 | IAM Roles Anywhere External-CA Trust Anchor | AWS | [`trr9037/aws`](trr9037/aws/README.md) |
 
 Which Kubernetes rule works on which platform (EKS, AKS, GKE, OpenShift, k3s): [`detections/k8s/PLATFORMS.md`](../detections/k8s/PLATFORMS.md).
 

@@ -311,6 +311,32 @@
         "aws-iac-admin-policy-changes": 13
       }
     },
+    "T1098.001/aws_rolesanywhere_trust_anchor_external_ca.yml": {
+      "actors": {},
+      "distinct_actors": 0,
+      "events": 4000,
+      "hits": 0,
+      "rate_per_10k": 0.0,
+      "slices": {
+        "aws-cicd-oidc-irsa": 0,
+        "aws-developer-iam-user-keys": 0,
+        "aws-ec2-service-roles": 0,
+        "aws-iac-admin-policy-changes": 0
+      }
+    },
+    "T1098.001/aws_rolesanywhere_trust_anchor_write.yml": {
+      "actors": {},
+      "distinct_actors": 0,
+      "events": 4000,
+      "hits": 0,
+      "rate_per_10k": 0.0,
+      "slices": {
+        "aws-cicd-oidc-irsa": 0,
+        "aws-developer-iam-user-keys": 0,
+        "aws-ec2-service-roles": 0,
+        "aws-iac-admin-policy-changes": 0
+      }
+    },
     "T1098.001/azure_managed_identity_federated_credential_backdoor.yml": {
       "actors": {
         "5e6f7a8b-0004-4c9d-8e0f-2a3b4c5d6e04": 11,
