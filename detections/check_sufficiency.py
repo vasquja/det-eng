@@ -455,6 +455,11 @@ CHOKEPOINT = {
     "T1552.007/k8s_secret_token_request.yml": Waiver(
         "TRR9006 fallback: the TokenRequest create itself; system minters are filtered",
         "9d42e65762b82781163a3f7d7c97d3413c450fa861ffa068b01a716898e54dcb"),
+    "T1557/k8s_service_endpoints_hijacked.yml": Waiver(
+        "TRR9039 chokepoint: a non-controller create/update/patch of a core Endpoints or a "
+        "discovery.k8s.io EndpointSlice is the Service-traffic hijack itself; the endpoint "
+        "controllers are filtered by identity",
+        "ebfb8836a996ac5910e9471b2f60327897ffcca7e87348d04abe7d7baeaf66ca"),
     "T1572/k8s_pod_portforward.yml": Waiver(
         "TRR9026 chokepoint: the pods/portforward subresource is the tunnel",
         "b3809fdd4a546ec9227d4ee21a639c67d110cf73ed7b965fbc63b6fa95150e2b"),

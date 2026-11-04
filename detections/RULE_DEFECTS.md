@@ -2221,6 +2221,84 @@ the current ones.
   the lowerCamel nested path is the best-evidence assumption.
 - **Then**: once a captured record pins the path, this entry closes and the fixtures carry
   the confirmed shape.
+### KTBD-EP1. k8s_service_endpoints_hijacked: a benign manual write looks the same, and the username filter trusts the token
+
+- **Rule**: [`sigma/T1557/k8s_service_endpoints_hijacked.yml`](sigma/T1557/k8s_service_endpoints_hijacked.yml) (level medium), TRR9039 Procedures A and B.
+- **Kind**: false positive, evasion. **Severity**: medium (a low-fidelity hunting /
+  correlation anchor, as the service-exposure chokepoint K59 is).
+- **Problem**: two linked limits of an actor-class chokepoint read at Metadata.
+  1. **A legitimate manual write is byte-identical to the attack.** For a selectorless
+     Service an operator supplies the backends by hand — a core `Endpoints` of the
+     Service's name, or an `EndpointSlice` labelled `kubernetes.io/service-name=<svc>`. An
+     admin, a GitOps / IaC tool (Argo CD, Flux, Terraform) pointing a Service at an
+     external database, or a fail-over that repoints one, is a non-controller
+     create/update/patch of exactly these objects. The only thing that separates it from a
+     hijack is the written address, which is in the request body — and the rule fires at
+     Metadata, which carries no body. So on one record the rule cannot tell them apart; it
+     is an anchor to triage and correlate, not a high-confidence alert.
+  2. **The filter trusts `user.username`.** The discriminator is "not an endpoint
+     controller", keyed on the caller's username. A write sent with a **stolen**
+     `endpoint-controller` / `endpointslice-controller` / `endpointslicemirroring-controller`
+     or `system:kube-controller-manager` token is filtered and missed — the credential-theft
+     evasion class of K37 / K50 / K51. The filter is kept because a controller rewrites
+     these objects on every pod-readiness change; without it every real hit would be buried
+     under the controllers' continual writes.
+- **Evidence**: *probe* (`sigma_eval.py` on the current rule): a non-controller endpoints
+  create / endpointslices patch fires; the same write under any of the four controller
+  identities does not. *cases* — the positives `endpoints-create-hijack-procA`,
+  `endpointslice-create-hijack-procB`, `endpoints-update-hijack`,
+  `endpointslice-patch-hijack` are each indistinguishable from a benign manual write of the
+  same shape; the confounder `endpoint-controller-token-stolen-known-miss` is a hijack sent
+  as the endpoint controller's identity that the filter suppresses (the evasion). *corpus*
+  — the benign corpus scores the rule **0** because its `endpoints`/`endpointslices` writes
+  are `deletecollection` namespace teardowns (outside the rule's verb set) or
+  controller-sourced (filtered), so the manual-write confounder is not represented today.
+  The corpus also contains no CNI or service-mesh EndpointSlice writer (Cilium's
+  `cilium-operator`, Istio, the MCS `mcs-controller`), so the **0** is a reference-platform
+  (kubeadm / kind) figure; on a cluster that runs such a controller its writes are the
+  dominant hit source and its identity must be baselined before the rule is deployed (noted
+  in the rule's third false positive).
+- **Fix**: none that one Metadata record supports. Baseline the identities that write
+  selectorless-Service endpoints by design (`user.username`, `user.groups`); triage by
+  whether the Service had a selector before and by the written address (which needs the
+  body, KTBD-EP2). For the evasion, correlate a controller-identity endpoints write with
+  the absence of the pod-readiness change that should drive it, or restrict who can obtain a
+  controller token. If a benign slice of manual non-controller endpoints writes is added to
+  the corpus, propose a budget (`enforce`, a human decision), as K59 notes for TRR9033.
+- **Then**: the rule stays the actor-class chokepoint; a correlation that pairs the write
+  with the prior Service state or the triggering pod change, or an address grade
+  (KTBD-EP2), raises it above a hunting anchor.
+
+### KTBD-EP2. k8s_service_endpoints_hijacked: the written-address grade (CVE-2021-25737 ranges) is a documented gap
+
+- **Rule**: [`sigma/T1557/k8s_service_endpoints_hijacked.yml`](sigma/T1557/k8s_service_endpoints_hijacked.yml) (level medium).
+- **Kind**: false negative (documented gap). **Severity**: low (an enrichment not shipped;
+  the actor-class chokepoint still fires on the write).
+- **Problem**: the rule does not grade the **written address**, so it does not raise
+  severity for the CVE-2021-25737 node-local / link-local redirect — an `Endpoints` or
+  `EndpointSlice` address in `127.0.0.0/8` or `169.254.0.0/16`, which can reach a node's
+  kubelet or the cloud metadata service. That grade (the Sysdig / Falco blog rule's angle)
+  needs the addresses in the request body (`requestObject.subsets[].addresses[].ip` for a
+  core `Endpoints`, `requestObject.endpoints[].addresses[]` for an `EndpointSlice`), which
+  only a Request-level (or higher) record holds. `endpoints` and `endpointslices` are among
+  the highest-volume write objects in a cluster — every pod-readiness change rewrites them —
+  so logging their bodies at Request is costly, and the shipped lab and recommended policies
+  keep these writes at the Metadata catch-all. The actor-class chokepoint is what ships; the
+  address grade is not.
+- **Evidence**: the audit policies log `endpoints`/`endpointslices` writes at Metadata (the
+  catch-all), with no body ([`k8s/audit-policy-apiserver.yaml`](k8s/audit-policy-apiserver.yaml),
+  [`k8s/audit-policy-recommended.yaml`](k8s/audit-policy-recommended.yaml)); the TRR Scope
+  Statement and Detection Strategy name the gap. The field paths are pinned to kubernetes
+  v1.36.4 (`staging/src/k8s.io/api/core/v1` `EndpointAddress.IP`,
+  `staging/src/k8s.io/api/discovery/v1` `Endpoint.Addresses`).
+- **Fix**: an operator who accepts the volume adds a Request-level (or RequestResponse)
+  audit-policy rule for `endpoints`/`endpointslices` writes and a branch (or a second rule)
+  that matches `requestObject.subsets[].addresses[].ip` / `requestObject.endpoints[].addresses[]`
+  with a portable `|cidr` on `127.0.0.0/8` and `169.254.0.0/16`. That is a per-cluster
+  opt-in, not a change to this portable Metadata rule.
+- **Then**: with the body logged, a shipped address-grade branch (and an
+  `EXPECTED_MISS`/`POLICY_GATES` wiring for the body policy) raises the node-local /
+  link-local redirect above the chokepoint.
 
 ## Cloud (AWS, Azure, GCP)
 
