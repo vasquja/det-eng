@@ -1,0 +1,192 @@
+[
+  {
+    "insertId": "trr9038pos1",
+    "logName": "projects/trr9038-demo-project/logs/cloudaudit.googleapis.com%2Factivity",
+    "resource": {
+      "type": "logging_sink",
+      "labels": {
+        "project_id": "trr9038-demo-project",
+        "name": "_Default",
+        "destination": ""
+      }
+    },
+    "protoPayload": {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      "status": {},
+      "authenticationInfo": {
+        "principalEmail": "trr9038-attacker@example.com"
+      },
+      "requestMetadata": {
+        "callerIp": "198.51.100.23",
+        "callerSuppliedUserAgent": "google-cloud-sdk gcloud/503.0.0 command/gcloud.logging.sinks.delete",
+        "requestAttributes": {
+          "time": "2026-11-04T15:10:02.512Z"
+        },
+        "destinationAttributes": {}
+      },
+      "serviceName": "logging.googleapis.com",
+      "methodName": "google.logging.v2.ConfigServiceV2.DeleteSink",
+      "authorizationInfo": [
+        {
+          "resource": "projects/trr9038-demo-project",
+          "permission": "logging.sinks.delete",
+          "granted": true,
+          "resourceAttributes": {}
+        }
+      ],
+      "resourceName": "projects/trr9038-demo-project/sinks/_Default",
+      "request": {
+        "@type": "type.googleapis.com/google.logging.v2.DeleteSinkRequest",
+        "sinkName": "projects/trr9038-demo-project/sinks/_Default"
+      }
+    },
+    "severity": "NOTICE",
+    "timestamp": "2026-11-04T15:10:02.498Z",
+    "receiveTimestamp": "2026-11-04T15:10:02.991Z"
+  },
+  {
+    "insertId": "trr9038pos2",
+    "logName": "projects/trr9038-demo-project/logs/cloudaudit.googleapis.com%2Factivity",
+    "resource": {
+      "type": "logging_sink",
+      "labels": {
+        "project_id": "trr9038-demo-project",
+        "name": "_Default",
+        "destination": ""
+      }
+    },
+    "protoPayload": {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      "status": {},
+      "authenticationInfo": {
+        "principalEmail": "trr9038-attacker@example.com"
+      },
+      "requestMetadata": {
+        "callerIp": "198.51.100.23",
+        "callerSuppliedUserAgent": "google-cloud-sdk gcloud/503.0.0 command/gcloud.logging.sinks.update",
+        "requestAttributes": {
+          "time": "2026-11-04T15:11:40.210Z"
+        },
+        "destinationAttributes": {}
+      },
+      "serviceName": "logging.googleapis.com",
+      "methodName": "google.logging.v2.ConfigServiceV2.UpdateSink",
+      "authorizationInfo": [
+        {
+          "resource": "projects/trr9038-demo-project",
+          "permission": "logging.sinks.update",
+          "granted": true,
+          "resourceAttributes": {}
+        }
+      ],
+      "resourceName": "projects/trr9038-demo-project/sinks/_Default",
+      "request": {
+        "@type": "type.googleapis.com/google.logging.v2.UpdateSinkRequest",
+        "sinkName": "projects/trr9038-demo-project/sinks/_Default",
+        "sink": {
+          "name": "_Default",
+          "destination": "logging.googleapis.com/projects/trr9038-demo-project/locations/global/buckets/_Default",
+          "disabled": true
+        },
+        "updateMask": "disabled"
+      }
+    },
+    "severity": "NOTICE",
+    "timestamp": "2026-11-04T15:11:40.190Z",
+    "receiveTimestamp": "2026-11-04T15:11:40.771Z"
+  },
+  {
+    "insertId": "trr9038pos3",
+    "logName": "projects/trr9038-demo-project/logs/cloudaudit.googleapis.com%2Factivity",
+    "resource": {
+      "type": "logging_bucket",
+      "labels": {
+        "project_id": "trr9038-demo-project",
+        "name": "_Default",
+        "location": "global"
+      }
+    },
+    "protoPayload": {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      "status": {},
+      "authenticationInfo": {
+        "principalEmail": "trr9038-attacker@example.com"
+      },
+      "requestMetadata": {
+        "callerIp": "198.51.100.23",
+        "callerSuppliedUserAgent": "google-cloud-sdk gcloud/503.0.0 command/gcloud.logging.buckets.delete",
+        "requestAttributes": {
+          "time": "2026-11-04T15:13:05.004Z"
+        },
+        "destinationAttributes": {}
+      },
+      "serviceName": "logging.googleapis.com",
+      "methodName": "google.logging.v2.ConfigServiceV2.DeleteBucket",
+      "authorizationInfo": [
+        {
+          "resource": "projects/trr9038-demo-project/locations/global/buckets/_Default",
+          "permission": "logging.buckets.delete",
+          "granted": true,
+          "resourceAttributes": {}
+        }
+      ],
+      "resourceName": "projects/trr9038-demo-project/locations/global/buckets/_Default",
+      "request": {
+        "@type": "type.googleapis.com/google.logging.v2.DeleteBucketRequest",
+        "name": "projects/trr9038-demo-project/locations/global/buckets/_Default"
+      }
+    },
+    "severity": "NOTICE",
+    "timestamp": "2026-11-04T15:13:04.980Z",
+    "receiveTimestamp": "2026-11-04T15:13:05.552Z"
+  },
+  {
+    "insertId": "trr9038pos4",
+    "logName": "projects/trr9038-demo-project/logs/cloudaudit.googleapis.com%2Factivity",
+    "resource": {
+      "type": "logging_exclusion",
+      "labels": {
+        "project_id": "trr9038-demo-project",
+        "name": "trr9038-drop-audit"
+      }
+    },
+    "protoPayload": {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      "status": {},
+      "authenticationInfo": {
+        "principalEmail": "trr9038-attacker@example.com"
+      },
+      "requestMetadata": {
+        "callerIp": "198.51.100.23",
+        "callerSuppliedUserAgent": "google-cloud-sdk gcloud/503.0.0 command/gcloud.logging.sinks.create",
+        "requestAttributes": {
+          "time": "2026-11-04T15:14:51.330Z"
+        },
+        "destinationAttributes": {}
+      },
+      "serviceName": "logging.googleapis.com",
+      "methodName": "google.logging.v2.ConfigServiceV2.CreateExclusion",
+      "authorizationInfo": [
+        {
+          "resource": "projects/trr9038-demo-project",
+          "permission": "logging.exclusions.create",
+          "granted": true,
+          "resourceAttributes": {}
+        }
+      ],
+      "resourceName": "projects/trr9038-demo-project/exclusions/trr9038-drop-audit",
+      "request": {
+        "@type": "type.googleapis.com/google.logging.v2.CreateExclusionRequest",
+        "parent": "projects/trr9038-demo-project",
+        "exclusion": {
+          "name": "trr9038-drop-audit",
+          "filter": "logName:\"cloudaudit.googleapis.com\" OR protoPayload.@type=\"type.googleapis.com/google.cloud.audit.AuditLog\"",
+          "disabled": false
+        }
+      }
+    },
+    "severity": "NOTICE",
+    "timestamp": "2026-11-04T15:14:51.300Z",
+    "receiveTimestamp": "2026-11-04T15:14:51.880Z"
+  }
+]

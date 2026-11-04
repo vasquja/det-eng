@@ -152,6 +152,7 @@ filing wave; ATT&CK revokes and renames IDs between releases.
 | TRR9033  | T1133  | Service Exposure Through a NodePort or LoadBalancer Service | Kubernetes | [`trr9033/k8s`](trr9033/k8s/README.md) |
 | TRR9034  | T1204.003 | Malicious Image Surfaced by an Admission-Policy Verdict | Kubernetes | [`trr9034/k8s`](trr9034/k8s/README.md) |
 | TRR9035  | T1098.006, T1136 | CSR Client-Certificate Persistence | Kubernetes | [`trr9035/k8s`](trr9035/k8s/README.md) |
+| TRR9038  | T1562.008 | Cloud Logging Sink/Bucket/Exclusion Tamper | GCP | [`trr9038/gcp`](trr9038/gcp/README.md) |
 
 Which Kubernetes rule works on which platform (EKS, AKS, GKE, OpenShift, k3s): [`detections/k8s/PLATFORMS.md`](../detections/k8s/PLATFORMS.md).
 

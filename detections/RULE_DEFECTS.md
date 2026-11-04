@@ -106,6 +106,8 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
 | [K56](#k56-aws_eks_access_entry_cluster_admin_policy-a-namespace-scoped-secrets-grant-is-missed) | `T1098.006/aws_eks_access_entry_cluster_admin_policy` | a reads-Secrets policy scoped to a sensitive namespace (`kube-system`) reads those Secrets but trips only the medium chokepoint, not the graded rule; one CloudTrail record cannot weigh one namespace against another | false negative | medium |
 | [K57](#k57-aws_eks_access_entry_cluster_admin_policy-no-safe-sigma-predicate-for-a-cross-account-grant) | `T1098.006/aws_eks_access_entry_cluster_admin_policy` | no safe Sigma predicate raises fidelity on a cross-account grant: `principalArn\|fieldref\|contains: recipientAccountId` goes quiet when the attacker names its role with the victim account ID | false negative (documented) | low |
+| [KTBD-GL1](#ktbd-gl1-gcp_logging_sink_tampered-the-exclusionbucket-grade-is-a-filter-content-approximation) | `T1562.008/gcp_logging_sink_tampered`, the exclusion branch | one record cannot weigh whether an exclusion's filter is over-broad or which logs it drops (the attacker authors the filter text), so the exclusion branch fires on any `ConfigServiceV2` exclusion write; a deliberate narrow exclusion that drops only noisy non-security logs is a documented false positive. The non-spoofable `_Default`-scope check is the discriminator the rule keys on | false positive, description | medium |
+| [KTBD-GL2](#ktbd-gl2-gcp_logging_sink_tampered-methodname-casing-and-the-disabled-field-path-are-unverified-against-primary-docs) | `T1562.008/gcp_logging_sink_tampered` | the `methodName` casing (`...ConfigServiceV2.DeleteSink`) and the `request.sink.disabled` field path are assumptions: Google's primary audit-method docs were unreachable at build and the casing is taken from Elastic's query. Mitigated by a case- and version-tolerant `\|re\|i` regex and by the `_Default`-scope branch, which fires on a `_Default` disable independently of the `disabled` field path | portability, description | low |
 
 ## Linux (auditd and node file events)
 
@@ -2278,6 +2280,60 @@ the current ones.
   and compile under Python `re` and RE2 — unlike a `(?!...)` negative-lookahead anchor, which
   RE2 and `check_sigma_regex` reject. The org-account allowlist is operator-specific, so this
   form is documented, not shipped. Baseline external-account principal ARNs on access entries.
+
+### KTBD-GL1. gcp_logging_sink_tampered: the exclusion/bucket grade is a filter-content approximation
+
+- **Rule**: [`sigma/T1562.008/gcp_logging_sink_tampered.yml`](sigma/T1562.008/gcp_logging_sink_tampered.yml) (level high).
+- **Kind**: false positive, description. **Severity**: medium. **Procedures**: TRR9038.GCP.C.
+- **Problem**: the exclusion branch fires on any `ConfigServiceV2` exclusion write
+  (`CreateExclusion` / `UpdateExclusion` / `DeleteExclusion`). Whether an exclusion is a
+  tamper depends on its **filter text** — a filter that matches the audit-log stream drops
+  security logs, while a filter that matches only noisy debug/health-check logs is a routine
+  cost-control measure. The filter is **attacker-authored free text**, and one audit record
+  cannot weigh whether it is over-broad or which logs it drops. So a deliberate narrow
+  exclusion is a documented false positive, and `DeleteExclusion` (which *restores* logging)
+  is included only to make exclusion churn / replacement visible. The non-spoofable
+  discriminator the rule keys on is the `_Default`-scope check on the sink/bucket branches,
+  not the exclusion content.
+- **Evidence**: probe (`sigma_eval.py`) — the positive `create-exclusion-drop-audit` (filter
+  `logName:"cloudaudit.googleapis.com"`) and a crafted narrow exclusion (filter
+  `resource.type="k8s_container" severity<WARNING`) both fire the rule, because the branch
+  reads only `methodName`, not the filter. Same shape as the AWS CloudTrail
+  selector-narrowing limit (a single record carries the new state, not the prior state).
+- **Fix**: no portable Sigma predicate grades free-text filter breadth; raising fidelity
+  needs enrichment one record cannot carry (does the filter match the audit `logName` /
+  `protoPayload.@type`; is the exclusion `disabled`; the prior exclusion set). A content
+  overlay that flags a filter referencing `cloudaudit.googleapis.com` or the AuditLog
+  `@type` is a severity hint, not a clean discriminator. Allowlist benign exclusions by
+  `protoPayload.resourceName` / `authenticationInfo.principalEmail` and correlate with change
+  management. **Then**: an allowlist filter proven by a filtered case, and a content overlay
+  proven by a near-miss, close the branch.
+
+### KTBD-GL2. gcp_logging_sink_tampered: methodName casing and the disabled field path are unverified against primary docs
+
+- **Rule**: [`sigma/T1562.008/gcp_logging_sink_tampered.yml`](sigma/T1562.008/gcp_logging_sink_tampered.yml) (level high).
+- **Kind**: portability, description. **Severity**: low.
+- **Problem**: Google's audit-method reference (`docs.cloud.google.com`) was **unreachable**
+  from the build environment, so two shapes could not be re-verified against primary docs:
+  (1) the exact `methodName` casing — `google.logging.v2.ConfigServiceV2.DeleteSink` /
+  `UpdateSink` / `CreateExclusion` / `UpdateBucket` / `DeleteBucket` — taken from Elastic's
+  published GCP Logging Sink rules; and (2) the location of the sink `disabled` flag in the
+  request body, modelled as `protoPayload.request.sink.disabled` (the `LogSink` inside
+  `UpdateSinkRequest`). If either is wrong against real logs, the affected branch is a silent
+  dead match.
+- **Evidence**: source — Elastic `defense_evasion_gcp_logging_sink_deletion`
+  (id `51859fa0-d86b-4214-bf48-ebb30ed91305`) uses `event.action`
+  `google.logging.v*.ConfigServiceV*.DeleteSink`; the repo benign slice
+  `gcp-platform-ops` carries a real `google.logging.v2.ConfigServiceV2.UpdateSink` on a custom
+  sink. No primary-doc or live-record confirmation was possible this build (**unverified**).
+- **Fix (mitigations shipped)**: `methodName` is matched with a case- and version-tolerant
+  regex (`google\.logging\.v[0-9]+[a-z0-9]*\.configservicev[0-9]+\.<method>$`, `|re|i`), so
+  the casing and the API version do not have to be exact. The `disabled`-flag branch is a
+  bonus leg: disabling the `_Default` sink via `UpdateSink` also fires the `_Default`-scope
+  branch (which does not read `disabled`), so a wrong `disabled` path only loses the
+  disable-a-custom-sink case. **Then**: re-verify `methodName` casing and the `disabled` path
+  against a real Cloud Audit Log record and Google's docs when reachable; pin an exact-casing
+  positive if confirmed.
 
 ## Checks to add
 

@@ -1384,6 +1384,44 @@
           "url": "../atomics/T1098.006/src/emulate_csr.sh"
         }
       }
+    },
+    {
+      "name": "GCP Cloud Logging Sink, Bucket and Exclusion Tamper (GCP)",
+      "id": "TRR9038",
+      "tactics": [
+        "Defense Evasion"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1562.008"
+      ],
+      "platforms": [
+        "GCP"
+      ],
+      "procedures": {
+        "A": "Delete / disable / re-divert the _Default sink",
+        "B": "Delete a log bucket (or cut retention)",
+        "C": "Add / broaden an audit-dropping exclusion"
+      },
+      "pub_date": "2026-11-04",
+      "last_update": "2026-11-04",
+      "path": "trr9038/gcp/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1562.008/src/emulate_gcp_log_sink.sh"
+        },
+        "B": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1562.008/src/emulate_gcp_log_sink.sh"
+        },
+        "C": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1562.008/src/emulate_gcp_log_sink.sh"
+        }
+      }
     }
   ]
 }

@@ -902,6 +902,17 @@
         "linux-k8s-node-file-events": 251
       }
     },
+    "T1562.008/gcp_logging_sink_tampered.yml": {
+      "actors": {},
+      "distinct_actors": 0,
+      "events": 1000,
+      "hits": 0,
+      "rate_per_10k": 0.0,
+      "slices": {
+        "gcp-iam-federation-admin": 0,
+        "gcp-platform-ops": 0
+      }
+    },
     "T1565.001/k8s_coredns_configmap_modified.yml": {
       "actors": {
         "system:serviceaccount:argocd:argocd-application-controller": 4

@@ -225,6 +225,19 @@ MANIFEST = [
      "trr9032/attack.json", "trr9032/benign_chokepoint.json", "AWS",
      "any EKS access-entry / access-policy write (surface chokepoint)",
      marker("trr9032", "requestParameters.principalArn", "requestParameters.name")),
+    # --- TRR9038: GCP Cloud Logging sink / bucket / exclusion tamper (T1562.008).
+    #     The first GCP defense-evasion TRR. The chokepoint fires on a ConfigServiceV2
+    #     write that disrupts logging: delete/disable/re-divert of the _Default sink,
+    #     delete of the _Default log bucket, or any exclusion write. The hard benign
+    #     is a lifecycle op on a CUSTOM sink/bucket (CreateSink / UpdateSink keeping
+    #     destination / DeleteSink of a decommissioned sink), differing only on the
+    #     _Default scope (resourceName) and the disable flag. marker() is on the
+    #     server-set resourceName, which the rule does NOT key on (it keys on the
+    #     _Default suffix / the method / the disable flag), so the rename test holds.
+    ("TRR9038", "T1562.008", "gcp_logging_sink_tampered.yml",
+     "trr9038/attack.json", "trr9038/benign.json", "GCP",
+     "GCP Cloud Logging _Default sink/bucket delete-or-disable + exclusion tamper",
+     marker("trr9038-", "protoPayload.resourceName")),
 ]
 
 FOLDERS = sorted({folder for _, folder, *_ in MANIFEST})
