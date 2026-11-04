@@ -1384,6 +1384,41 @@
           "url": "../atomics/T1098.006/src/emulate_csr.sh"
         }
       }
+    },
+    {
+      "name": "Azure ARM RBAC Privileged Role Assignment at Subscription or Management-Group Scope (Azure)",
+      "id": "TRR9036",
+      "tactics": [
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1098.003"
+      ],
+      "platforms": [
+        "Azure"
+      ],
+      "procedures": {
+        "A": "Privileged built-in role at subscription scope",
+        "B": "Privileged built-in role at management-group scope",
+        "C": "Custom-role / exporter evasion of the body grade"
+      },
+      "pub_date": "2026-11-04",
+      "last_update": "2026-11-04",
+      "path": "trr9036/azr/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.003/src/emulate_azure.sh"
+        },
+        "B": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.003/src/emulate_azure.sh"
+        }
+      }
     }
   ]
 }
