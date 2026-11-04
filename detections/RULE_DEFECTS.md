@@ -2190,6 +2190,11 @@ the current ones.
   — the benign corpus scores the rule **0** because its `endpoints`/`endpointslices` writes
   are `deletecollection` namespace teardowns (outside the rule's verb set) or
   controller-sourced (filtered), so the manual-write confounder is not represented today.
+  The corpus also contains no CNI or service-mesh EndpointSlice writer (Cilium's
+  `cilium-operator`, Istio, the MCS `mcs-controller`), so the **0** is a reference-platform
+  (kubeadm / kind) figure; on a cluster that runs such a controller its writes are the
+  dominant hit source and its identity must be baselined before the rule is deployed (noted
+  in the rule's third false positive).
 - **Fix**: none that one Metadata record supports. Baseline the identities that write
   selectorless-Service endpoints by design (`user.username`, `user.groups`); triage by
   whether the Service had a selector before and by the written address (which needs the

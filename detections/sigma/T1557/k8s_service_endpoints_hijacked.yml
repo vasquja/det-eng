@@ -15,7 +15,9 @@ description: |
   selectorless Service's core Endpoints) and Procedure B (manually create/repoint a
   discovery.k8s.io EndpointSlice).
 
-  Endpoints and EndpointSlice are normally written only by the control plane: for a
+  Endpoints and EndpointSlice are normally written only by the control plane (plus any CNI
+  or service-mesh controller that manages EndpointSlices under its own service account; see
+  the false positives): for a
   Service WITH a selector, the endpoint controller writes its Endpoints and the
   endpointslice controller writes its EndpointSlices from the Ready pods; for a
   selectorless Service with a hand-written Endpoints, the endpointslicemirroring
@@ -159,9 +161,16 @@ falsepositives:
     filtered by identity and missed (a credential-theft evasion, RULE_DEFECTS.md KTBD-EP1,
     the class of K37/K50/K51). The filter is kept because a controller rewrites these
     objects on every pod-readiness change, and without it every hit would be buried.
-  - A managed platform that runs a different controller identity for these objects than
-    the four filtered here would see that controller's own writes fire; baseline that
-    identity (as for the CSI provisioner in RULE_DEFECTS.md K50).
+  - A CNI or service-mesh controller that manages EndpointSlices under its own service
+    account. On a cluster that runs one this is the DOMINANT hit source, not an edge case --
+    Cilium (cilium-operator, in particular when it replaces kube-proxy), service meshes such
+    as Istio (ambient and multi-cluster modes), and the Multi-Cluster Services EndpointSlice
+    import controller (mcs-controller) each create and update EndpointSlices continuously
+    under an identity that is not one of the four filtered here, so every one of their
+    writes fires. Baseline that controller's identity (user.username, user.groups) before
+    you deploy, as for the CSI provisioner in RULE_DEFECTS.md K50. The benign corpus
+    (detections/benign/) contains no such writer, so the rule's 0 hits there is a reference-
+    platform (kubeadm / kind, the TRR9039 lab) figure, not a production one.
   - A denied (403) or unauthenticated (401) create/update/patch attempt that changed
     nothing. The rule is a pure-surface actor-class chokepoint with no response-code gate,
     so it alerts on an attempted-but-blocked write as well as a successful one. Scope by
