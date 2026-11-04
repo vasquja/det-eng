@@ -1,0 +1,50 @@
+[
+  {
+    "eventVersion": "1.09",
+    "userIdentity": {
+      "type": "IAMUser",
+      "principalId": "AIDA1EXAMPLETRR90372",
+      "arn": "arn:aws:iam::123456789012:user/trr9037-platform-admin",
+      "accountId": "123456789012",
+      "accessKeyId": "AKIA1EXAMPLETRR9037B",
+      "userName": "trr9037-platform-admin"
+    },
+    "eventTime": "2026-11-04T16:20:11Z",
+    "eventSource": "rolesanywhere.amazonaws.com",
+    "eventName": "CreateTrustAnchor",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "203.0.113.37",
+    "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.9.5 terraform-provider-aws/5.70.0",
+    "requestParameters": {
+      "name": "trr9037-corp-pca-anchor",
+      "enabled": true,
+      "source": {
+        "sourceType": "AWS_ACM_PCA",
+        "sourceData": {
+          "acmPcaArn": "arn:aws:acm-pca:us-east-1:123456789012:certificate-authority/trr9037-aaaa-bbbb-cccc-ddddeeeeffff"
+        }
+      },
+      "tags": []
+    },
+    "responseElements": {
+      "trustAnchor": {
+        "trustAnchorId": "ta-111122223333444490371",
+        "trustAnchorArn": "arn:aws:rolesanywhere:us-east-1:123456789012:trust-anchor/ta-111122223333444490371",
+        "name": "trr9037-corp-pca-anchor",
+        "enabled": true,
+        "source": {
+          "sourceType": "AWS_ACM_PCA"
+        },
+        "createdAt": "2026-11-04T16:20:11Z",
+        "updatedAt": "2026-11-04T16:20:11Z"
+      }
+    },
+    "requestID": "aaaa0000-9037-4aaa-bbbb-0000000000b1",
+    "eventID": "cccc0000-9037-4ccc-dddd-0000000000b1",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management"
+  }
+]

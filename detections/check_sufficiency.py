@@ -419,6 +419,13 @@ CHOKEPOINT = {
         "the Activity Log carries no issuer/subject, so the FIC write operation is the "
         "whole signal (TRR9013 procedure C)",
         "bc64702280f8f8d1b71ea1f889322e6456424efe71995da8d9cb1589931e2229"),
+    "T1098.001/aws_rolesanywhere_trust_anchor_write.yml": Waiver(
+        "TRR9037 surface chokepoint: every Roles Anywhere certificate-persistence procedure "
+        "passes through a trust-anchor/profile write (eventName in the write set); the record "
+        "kind itself is the technique. The graded sibling "
+        "aws_rolesanywhere_trust_anchor_external_ca.yml carries the discriminating "
+        "source.sourceType (external CA)",
+        "57c5fbbded866e16f64acd7127b716d37b71357eb0f642dff652a1373b3df88b"),
     "T1098.006/k8s_rbac_write.yml": Waiver(
         "TRR9004 chokepoint: every RBAC-object grant passes through an RBAC write",
         "2298ffb181b03dc759985927b5a45d711cde1417342620a9670780fd8eb1c7ce"),

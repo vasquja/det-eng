@@ -2158,6 +2158,64 @@ the current ones.
 - **Then**: the rule stays the create/approve chokepoint; a human who accepts a
   non-portable rule can add the subject grader or the fieldref self-approval check.
 
+### KTBD-RA1. aws_rolesanywhere_trust_anchor_external_ca: external-CA grade is a policy-hygiene signal a legit external-PKI shop also trips
+
+- **Rule**: [`sigma/T1098.001/aws_rolesanywhere_trust_anchor_external_ca.yml`](sigma/T1098.001/aws_rolesanywhere_trust_anchor_external_ca.yml) (level high).
+- **Kind**: false positive (documented). **Severity**: medium (an organisation that runs
+  its own PKI trips the rule on every legitimate anchor).
+- **Problem**: the rule's discriminator is `requestParameters.source.sourceType` being an
+  external CA (`CERTIFICATE_BUNDLE` / `SELF_SIGNED_REPOSITORY`) rather than an AWS-internal
+  ACM Private CA (`AWS_ACM_PCA`). That is a sound, non-spoofable field, but "external CA"
+  is not the same as "malicious": an organisation whose corporate or on-premises PKI issues
+  the Roles Anywhere client certificates legitimately uses `CERTIFICATE_BUNDLE` /
+  `SELF_SIGNED_REPOSITORY` on **every** anchor, so the graded rule fires on routine
+  administration there. The external-vs-ACM-PCA split is a policy-hygiene signal, like
+  TRR9015's org-wide `repo:org/*` grant (K-equivalent): a finding to triage, not a certain
+  compromise.
+- **Evidence**: *source* — the IAM Roles Anywhere `Source` API model, `sourceType` enum
+  `AWS_ACM_PCA | CERTIFICATE_BUNDLE | SELF_SIGNED_REPOSITORY` (botocore/AWS CLI model and
+  the Elastic prebuilt rule; AWS doc hosts unreachable at build, see KTBD-RA2). The hard
+  benign fixture is an `AWS_ACM_PCA` anchor; the graded rule's `falsepositives` names the
+  external-PKI shop. The benign corpus scores the rule 0 only because the committed AWS
+  slices carry no Roles Anywhere traffic (untested by absence, stated in the TRR README).
+- **Fix**: none at one record. Triage the external-CA anchor against change tickets and the
+  managing IAM principal (`userIdentity.arn`), and allowlist the known corporate-CA
+  anchor(s) per deployment (an operator-specific allowlist, not shipped). The surface
+  chokepoint `aws_rolesanywhere_trust_anchor_write.yml` is the broad backstop.
+- **Then**: a deployment with a known external PKI ships a per-account allowlist of its
+  authorised trust-anchor sources (by `trustAnchorArn` or managing principal), with a
+  positive for an unexpected external CA and a filtered case for the allowlisted one.
+
+### KTBD-RA2. aws_rolesanywhere_trust_anchor_external_ca / _write: field casing/nesting unverified against primary AWS docs
+
+- **Rule**: [`sigma/T1098.001/aws_rolesanywhere_trust_anchor_external_ca.yml`](sigma/T1098.001/aws_rolesanywhere_trust_anchor_external_ca.yml) (level high) and [`sigma/T1098.001/aws_rolesanywhere_trust_anchor_write.yml`](sigma/T1098.001/aws_rolesanywhere_trust_anchor_write.yml) (level medium).
+- **Kind**: research gap (field provenance). **Severity**: medium (if the real CloudTrail
+  record nests the source differently, the graded rule's discriminator field path is wrong
+  and the rule silently does not fire).
+- **Problem**: the graded rule keys on `requestParameters.source.sourceType` (lowerCamel,
+  nested under `source`), and the TRR documents `source.sourceData.x509CertificateData` /
+  `source.sourceData.acmPcaArn`. These paths were taken from the **botocore / AWS CLI**
+  `rolesanywhere` model and the **Elastic** prebuilt rule, because every primary AWS
+  documentation host (`docs.aws.amazon.com`, `botocore.readthedocs.io`, `docs.amazonaws.cn`)
+  and the Elastic / detection.fyi hosts were **unreachable** from the build environment at
+  build time (ENOTFOUND, outside the session's allowed network domains). CloudTrail
+  normalises `requestParameters` to lowerCamelCase, so the casing is the expected shape, but
+  the exact JSON **nesting** of a real `CreateTrustAnchor` record (is `sourceType` under a
+  `source` object, or flattened?) was **not** confirmed against a captured event. The
+  chokepoint rule keys only on `eventSource` + `eventName`, which are CloudTrail-set and not
+  at risk; only the graded rule's `source.sourceType` path carries this risk.
+- **Evidence**: *search* — botocore/CLI `create_trust_anchor` request schema (a `source`
+  object with `sourceType` enum and a `sourceData` tagged union of `x509CertificateData` /
+  `acmPcaArn`); the Elastic rule tests `aws.cloudtrail.request_parameters` contains
+  `sourceType=AWS_ACM_PCA` (its own ECS-flattened representation, not raw CloudTrail). No
+  captured raw `CreateTrustAnchor` CloudTrail record was reachable to confirm the nesting.
+- **Fix**: capture a real `CreateTrustAnchor` event (CloudTrail Event history or an S3
+  trail) in a sandbox account and confirm the path; if the record flattens `source`
+  differently, update the graded rule's field and the sidecar/fixtures to match. Until then
+  the lowerCamel nested path is the best-evidence assumption.
+- **Then**: once a captured record pins the path, this entry closes and the fixtures carry
+  the confirmed shape.
+
 ## Cloud (AWS, Azure, GCP)
 
 ### C6. gcp_workforce_principalset_privileged_binding: where the privileged-role tier ends

@@ -1384,6 +1384,42 @@
           "url": "../atomics/T1098.006/src/emulate_csr.sh"
         }
       }
+    },
+    {
+      "name": "IAM Roles Anywhere External-CA Trust Anchor (AWS)",
+      "id": "TRR9037",
+      "tactics": [
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1098.001",
+        "T1199"
+      ],
+      "platforms": [
+        "AWS"
+      ],
+      "procedures": {
+        "A": "External-CA trust anchor",
+        "B": "Repoint an existing anchor to an external CA",
+        "C": "Grading boundary and residual"
+      },
+      "pub_date": "2026-11-04",
+      "last_update": "2026-11-04",
+      "path": "trr9037/aws/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures (CreateTrustAnchor CERTIFICATE_BUNDLE + CreateProfile)",
+          "url": "../atomics/T1098.001/src/emulate_rolesanywhere.sh"
+        },
+        "B": {
+          "text": "det-eng behavioral emulation / recorded fixtures (external source type SELF_SIGNED_REPOSITORY; UpdateTrustAnchor repoint by sidecar positive)",
+          "url": "../atomics/T1098.001/src/emulate_rolesanywhere.sh"
+        }
+      }
     }
   ]
 }

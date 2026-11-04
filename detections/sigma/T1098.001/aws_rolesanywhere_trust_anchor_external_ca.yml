@@ -1,0 +1,111 @@
+title: AWS IAM Roles Anywhere Trust Anchor Backed by an External CA
+id: 3764671a-3f78-4658-98a6-1c7d42ef418a
+status: experimental
+description: |
+  Detects an IAM Roles Anywhere trust-anchor write (CloudTrail management event,
+  eventSource rolesanywhere.amazonaws.com) that establishes or repoints the anchor on an
+  EXTERNAL certificate authority -- a PEM certificate bundle (CERTIFICATE_BUNDLE) or a
+  self-signed repository (SELF_SIGNED_REPOSITORY) -- rather than an AWS-internal ACM
+  Private CA (AWS_ACM_PCA). A trust anchor tells IAM Roles Anywhere which CA may vouch for
+  the X.509 client certificates that are then exchanged for temporary AWS credentials
+  (CreateSession / rolesanywhere:CreateSession). An adversary who can call
+  rolesanywhere:CreateTrustAnchor (or UpdateTrustAnchor) can register a CA THEY control as
+  a trusted root; any client certificate that CA signs then exchanges for credentials of
+  whatever role the attacker also attaches a profile to -- standing, certificate-based
+  persistence that survives IAM user/role and access-key clean-up (T1098.001; secondary
+  T1199, because the external CA is an outside trust relationship brought into the account).
+
+  This is the high-fidelity TRR9037 signal. The chokepoint is the trust-anchor write
+  itself, which is an unavoidable, default-logged CloudTrail management event (no data-event
+  or logging change is needed). The DISCRIMINATOR is requestParameters.source.sourceType,
+  a server-recorded API enum with exactly three values:
+    - AWS_ACM_PCA              -- the anchor validates against an AWS ACM Private CA
+                                  (requestParameters.source.sourceData.acmPcaArn); the
+                                  common, benign platform-admin form. NOT flagged.
+    - CERTIFICATE_BUNDLE       -- a caller-supplied PEM bundle
+                                  (requestParameters.source.sourceData.x509CertificateData).
+    - SELF_SIGNED_REPOSITORY   -- a self-signed external repository.
+  The enum is set by the API server from the request, not by the caller's free text, so it
+  is not spoofable to evade: an attacker who wants an external CA must record one of the two
+  external values. The rule fires on the two external values and stays silent on AWS_ACM_PCA
+  -- the one field that separates a benign ACM-PCA anchor from an attacker's own CA.
+
+  Covers CreateTrustAnchor (establish) and UpdateTrustAnchor (repoint an existing anchor's
+  source to an external CA). Both calls carry the full source object under
+  requestParameters.source, so a delta-style UpdateTrustAnchor that CHANGES sourceType to
+  an external value still records source.sourceType and still fires; an UpdateTrustAnchor
+  that edits only enabled or notificationSettings carries no source and correctly does not
+  fire (no CA change was made). EnableTrustAnchor and the profile writes carry no CA source
+  and are left to the companion surface chokepoint aws_rolesanywhere_trust_anchor_write.yml.
+
+  Failed calls are excluded: CloudTrail writes errorCode only on an error, so the negation
+  is null-safe ((sel_no_error_code or not filter_failed)) to keep every successful write on
+  a three-valued backend (ES|QL and other SQL backends read NOT of a test on a missing field
+  as NULL).
+
+  Field casing (lowerCamelCase: requestParameters.source.sourceType,
+  source.sourceData.x509CertificateData, source.sourceData.acmPcaArn) is taken from the
+  botocore/AWS CLI rolesanywhere model and the Elastic prebuilt rule, because the primary
+  AWS documentation hosts were unreachable from the build environment at build time; the
+  assumption is disclosed in the TRR9037 README and in detections/RULE_DEFECTS.md (KTBD-RA2).
+  CloudTrail normalises requestParameters to lowerCamelCase regardless of the PascalCase API
+  model, so the lowerCamel paths are the expected shape.
+
+  Prior art (named, differentiated): Elastic ships "AWS IAM Roles Anywhere Trust Anchor
+  Created with External CA" (CreateTrustAnchor whose source type is not AWS_ACM_PCA; tagged
+  T1098.003 + T1556, create-only). Amazon GuardDuty's opt-in Optional/Custom Detection Rules
+  ship a prebuilt Persistence:RolesAnywhere/AccountManipulation finding on the bare signal
+  RolesAnywhereTrustAnchorCreated (any create, no external-CA grade). Datadog Cloud SIEM
+  ships def-000-bf8 (trust anchor created). SigmaHQ, Splunk ESCU, Falco and Panther ship
+  none. Stratus Red Team emulates aws.persistence.rolesanywhere-create-trust-anchor. This
+  rule's differentiation is the external-CA grade ABOVE GuardDuty's bare-create signal, the
+  UpdateTrustAnchor repoint leg that a create-only rule misses, and being the open-Sigma
+  counterpart.
+references:
+  - https://attack.mitre.org/techniques/T1098/001/
+  - https://attack.mitre.org/techniques/T1199/
+  - https://docs.aws.amazon.com/rolesanywhere/latest/APIReference/API_Source.html
+  - https://docs.aws.amazon.com/rolesanywhere/latest/userguide/logging-using-cloudtrail.html
+  - https://github.com/elastic/detection-rules/blob/main/rules/integrations/aws/persistence_iam_roles_anywhere_trusted_anchor_created_with_external_ca.toml
+  - https://github.com/DataDog/stratus-red-team/blob/main/v2/internal/attacktechniques/aws/persistence/rolesanywhere-create-trust-anchor/main.go
+author: det-eng
+date: 2026/11/04
+tags:
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1098.001
+  - attack.t1199
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_api:
+    eventSource: 'rolesanywhere.amazonaws.com'
+    eventName:
+      - 'CreateTrustAnchor'
+      - 'UpdateTrustAnchor'
+  # The discriminator: an external CA source type. AWS_ACM_PCA (the internal ACM Private CA
+  # form) is deliberately absent, so a benign ACM-PCA anchor does not fire. The enum is
+  # recorded by the API server from the request, not renamable free text, so it is a sound,
+  # non-spoofable discriminator (outside the surface-field set).
+  selection_external_ca:
+    requestParameters.source.sourceType:
+      - 'CERTIFICATE_BUNDLE'
+      - 'SELF_SIGNED_REPOSITORY'
+  filter_failed:
+    errorCode: '*'
+  # Null-safe negation: CloudTrail writes errorCode only on an error, so a bare
+  # `not filter_failed` would drop every successful (fired) call on a three-valued backend.
+  sel_no_error_code:
+    errorCode: null
+  condition: selection_api and selection_external_ca and (sel_no_error_code or not filter_failed)
+falsepositives:
+  - A platform or PKI administrator legitimately registering an external corporate or
+    private CA as a Roles Anywhere trust anchor (an on-premises or third-party PKI shop that
+    does not use ACM Private CA). This is a policy-hygiene signal, not necessarily
+    compromise -- triage the trust-anchor write against change tickets and the IAM principal
+    (userIdentity.arn) that made it, as with TRR9015's repo:org/* grants. See
+    detections/RULE_DEFECTS.md (KTBD-RA1).
+  - Development or test environments that temporarily use a self-signed certificate bundle
+    while an ACM Private CA is being provisioned; confirm the external CA is authorised.
+level: high

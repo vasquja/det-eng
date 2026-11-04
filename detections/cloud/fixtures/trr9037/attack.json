@@ -1,0 +1,95 @@
+[
+  {
+    "eventVersion": "1.09",
+    "userIdentity": {
+      "type": "IAMUser",
+      "principalId": "AIDA1EXAMPLETRR90371",
+      "arn": "arn:aws:iam::123456789012:user/trr9037-attacker",
+      "accountId": "123456789012",
+      "accessKeyId": "AKIA1EXAMPLETRR9037A",
+      "userName": "trr9037-attacker"
+    },
+    "eventTime": "2026-11-04T16:20:11Z",
+    "eventSource": "rolesanywhere.amazonaws.com",
+    "eventName": "CreateTrustAnchor",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "198.51.100.37",
+    "userAgent": "aws-cli/2.15.30 Python/3.11.6 Linux/6.1.0 command/rolesanywhere.create-trust-anchor",
+    "requestParameters": {
+      "name": "trr9037-ext-ca-anchor",
+      "enabled": true,
+      "source": {
+        "sourceType": "CERTIFICATE_BUNDLE",
+        "sourceData": {
+          "x509CertificateData": "-----BEGIN CERTIFICATE-----\nMIIBtrr9037FAKEEXTERNALCABUNDLEplaceholdercertdataonly==\n-----END CERTIFICATE-----"
+        }
+      },
+      "tags": []
+    },
+    "responseElements": {
+      "trustAnchor": {
+        "trustAnchorId": "ta-aaaabbbbccccdddd9037",
+        "trustAnchorArn": "arn:aws:rolesanywhere:us-east-1:123456789012:trust-anchor/ta-aaaabbbbccccdddd9037",
+        "name": "trr9037-ext-ca-anchor",
+        "enabled": true,
+        "source": {
+          "sourceType": "CERTIFICATE_BUNDLE"
+        },
+        "createdAt": "2026-11-04T16:20:11Z",
+        "updatedAt": "2026-11-04T16:20:11Z"
+      }
+    },
+    "requestID": "aaaa0000-9037-4aaa-bbbb-000000000001",
+    "eventID": "cccc0000-9037-4ccc-dddd-000000000001",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management"
+  },
+  {
+    "eventVersion": "1.09",
+    "userIdentity": {
+      "type": "IAMUser",
+      "principalId": "AIDA1EXAMPLETRR90371",
+      "arn": "arn:aws:iam::123456789012:user/trr9037-attacker",
+      "accountId": "123456789012",
+      "accessKeyId": "AKIA1EXAMPLETRR9037A",
+      "userName": "trr9037-attacker"
+    },
+    "eventTime": "2026-11-04T16:20:14Z",
+    "eventSource": "rolesanywhere.amazonaws.com",
+    "eventName": "CreateProfile",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "198.51.100.37",
+    "userAgent": "aws-cli/2.15.30 Python/3.11.6 Linux/6.1.0 command/rolesanywhere.create-profile",
+    "requestParameters": {
+      "name": "trr9037-persist-profile",
+      "roleArns": [
+        "arn:aws:iam::123456789012:role/trr9037-backdoor"
+      ],
+      "durationSeconds": 3600,
+      "enabled": true,
+      "tags": []
+    },
+    "responseElements": {
+      "profile": {
+        "profileId": "pr-eeeeffff000011119037",
+        "profileArn": "arn:aws:rolesanywhere:us-east-1:123456789012:profile/pr-eeeeffff000011119037",
+        "name": "trr9037-persist-profile",
+        "roleArns": [
+          "arn:aws:iam::123456789012:role/trr9037-backdoor"
+        ],
+        "enabled": true,
+        "createdAt": "2026-11-04T16:20:14Z"
+      }
+    },
+    "requestID": "aaaa0000-9037-4aaa-bbbb-000000000002",
+    "eventID": "cccc0000-9037-4ccc-dddd-000000000002",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management"
+  }
+]

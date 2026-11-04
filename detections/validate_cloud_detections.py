@@ -225,6 +225,27 @@ MANIFEST = [
      "trr9032/attack.json", "trr9032/benign_chokepoint.json", "AWS",
      "any EKS access-entry / access-policy write (surface chokepoint)",
      marker("trr9032", "requestParameters.principalArn", "requestParameters.name")),
+    # --- TRR9037: IAM Roles Anywhere trust-anchor abuse in CloudTrail (T1098.001, secondary
+    #     T1199). A trust anchor names the CA whose X.509 client certificates exchange for
+    #     temporary AWS credentials; registering an EXTERNAL CA (CERTIFICATE_BUNDLE /
+    #     SELF_SIGNED_REPOSITORY, not AWS_ACM_PCA) is certificate-based persistence. The
+    #     graded rule's hard benign (benign.json) is the SAME CreateTrustAnchor differing only
+    #     on the discriminator requestParameters.source.sourceType (AWS_ACM_PCA, an internal
+    #     ACM Private CA by a platform admin). The surface chokepoint fires on any trust-anchor
+    #     / profile write, so its baseline (benign_chokepoint.json) is Roles Anywhere READ
+    #     calls on the same eventSource -- the two rules cannot share one benign file (the
+    #     chokepoint would fire on the ACM-PCA create in benign.json, which is expected).
+    ("TRR9037", "T1098.001", "aws_rolesanywhere_trust_anchor_external_ca.yml",
+     "trr9037/attack.json", "trr9037/benign.json", "AWS",
+     "Roles Anywhere trust anchor backed by an external CA (graded)",
+     marker("trr9037", "responseElements.trustAnchor.trustAnchorArn",
+            "requestParameters.name", "userIdentity.arn")),
+    ("TRR9037", "T1098.001", "aws_rolesanywhere_trust_anchor_write.yml",
+     "trr9037/attack.json", "trr9037/benign_chokepoint.json", "AWS",
+     "any Roles Anywhere trust-anchor / profile write (surface chokepoint)",
+     marker("trr9037", "responseElements.trustAnchor.trustAnchorArn",
+            "responseElements.profile.profileArn", "requestParameters.name",
+            "userIdentity.arn")),
 ]
 
 FOLDERS = sorted({folder for _, folder, *_ in MANIFEST})
