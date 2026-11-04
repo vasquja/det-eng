@@ -1384,6 +1384,42 @@
           "url": "../atomics/T1098.006/src/emulate_csr.sh"
         }
       }
+    },
+    {
+      "name": "Service Traffic Hijack Through Endpoints or EndpointSlice Manipulation (Kubernetes)",
+      "id": "TRR9039",
+      "tactics": [
+        "Credential Access",
+        "Collection",
+        "Impact"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1557",
+        "T1565"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "Hijack a Service with a manual core Endpoints",
+        "B": "Hijack a Service with a manual EndpointSlice"
+      },
+      "pub_date": "2026-11-03",
+      "last_update": "2026-11-03",
+      "path": "trr9039/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng manual core Endpoints hijack behavioral emulation (inert selectorless Service, kind)",
+          "url": "../atomics/T1557/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng manual EndpointSlice hijack behavioral emulation (inert selectorless Service, kind)",
+          "url": "../atomics/T1557/src/emulate.sh"
+        }
+      }
     }
   ]
 }

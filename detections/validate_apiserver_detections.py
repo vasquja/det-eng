@@ -35,6 +35,9 @@ key on the same API server audit log (plus one node runtime sensor rule):
   * TRR9034 (T1204.003, malicious image via admission-policy verdict) - the reference
                                            ValidatingAdmissionPolicy verdict marker
                                            (validation_failure annotation / deny message)
+  * TRR9039 (T1557, secondary T1565, Service traffic hijack) - a non-controller
+                                        create/update/patch of a core Endpoints or a
+                                        discovery.k8s.io EndpointSlice -> audit -> Sigma
   * TRR9035 (T1098.006/T1136, CSR client-cert persistence) - a kube-apiserver-client CSR
                                            create (scoped by signerName) + its approval
 
@@ -1242,6 +1245,22 @@ MANIFEST = [
         ("B", rec(verb="update", resource="certificatesigningrequests", sub="approval",
                   name="trr9035-persist", also=apigroup("certificates.k8s.io"),
                   window=("9035", "b")))]),
+    # TRR9039 (T1557, secondary T1565): Service traffic hijack by a non-controller write of a
+    # core Endpoints (A) or a discovery.k8s.io EndpointSlice (B) in the trr9039 namespace. The
+    # endpoint controllers the rule filters are system identities, so non_system means a
+    # controller's own continual write cannot stand in for the emulation. Metadata is enough
+    # (the rule reads no body), so the gate keys on verb, resource, the API group and a
+    # non-system identity in the procedure's ledger window; core_group pins A to the core
+    # Endpoints (apiGroup absent), apigroup to the discovery EndpointSlice for B. No positive
+    # names the object, so the mirroring controller's own mirror EndpointSlice (a system
+    # identity) is excluded by non_system, and the rule must stay quiet on it (filtered).
+    ("T1557", "k8s_service_endpoints_hijacked.yml", "audit", "9039 A-B",
+     "Endpoints/EndpointSlice hijack chokepoint (non-controller create/update/patch)", [
+        ("A", rec(verb=("create", "update", "patch"), resource="endpoints", sub=None,
+                  ns="trr9039", user=non_system, also=core_group, window=("9039", "a"))),
+        ("B", rec(verb=("create", "update", "patch"), resource="endpointslices", sub=None,
+                  ns="trr9039", user=non_system, also=apigroup("discovery.k8s.io"),
+                  window=("9039", "b")))]),
 ]
 
 
@@ -1283,6 +1302,13 @@ ABSENCE = [
     # Either way the rule must match nothing here.
     ("9033 E status", "T1133",
      ["k8s_service_exposed_nodeport_loadbalancer.yml"], ("9033", "e"), non_system),
+    # TRR9039 C: a non-controller deletecollection of the trr9039 namespace's endpoints
+    # (the verb a namespace teardown uses). The rule deliberately matches only
+    # create/update/patch, so it must stay quiet here -- the verb exclusion proven live,
+    # not only in the sidecar near-miss. The gate is any non-system caller, so the
+    # mirroring controller's own reaction (a system identity) cannot flake it.
+    ("9039 C deletecollection", "T1557",
+     ["k8s_service_endpoints_hijacked.yml"], ("9039", "c"), non_system),
 ]
 
 

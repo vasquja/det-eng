@@ -888,6 +888,33 @@
     }
    }
   },
+  "T1557/k8s_service_endpoints_hijacked.yml": {
+   "list_text_items": [],
+   "loses_positive_without_reads": {
+    "aksauditadmin": false,
+    "gke_admin_activity": false
+   },
+   "providers": {
+    "aks": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    },
+    "exploded": {
+     "loses_positive": false,
+     "status": "same"
+    },
+    "gke": {
+     "errors": [],
+     "expected_loss": {},
+     "not_portable": {},
+     "status": "same",
+     "unexpected": {}
+    }
+   }
+  },
   "T1565.001/k8s_coredns_configmap_modified.yml": {
    "list_text_items": [],
    "loses_positive_without_reads": {
@@ -2018,7 +2045,7 @@
    "diverges": 0,
    "expected_loss": 1,
    "not_portable": 2,
-   "same": 36
+   "same": 37
   },
   "aksauditadmin": {
    "rules_losing_a_positive": 8
@@ -2027,13 +2054,13 @@
    "diverges": 19,
    "expected_loss": 0,
    "not_portable": 0,
-   "same": 20
+   "same": 21
   },
   "gke": {
    "diverges": 0,
    "expected_loss": 5,
    "not_portable": 18,
-   "same": 16
+   "same": 17
   },
   "gke_admin_activity": {
    "rules_losing_a_positive": 8
