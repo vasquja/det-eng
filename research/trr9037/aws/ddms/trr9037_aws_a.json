@@ -1,0 +1,66 @@
+{
+  "style": {
+    "font-family": "sans-serif",
+    "background-color": "#ffffff",
+    "node-color": "#ffffff",
+    "border-width": 4,
+    "border-color": "#000000",
+    "radius": 50,
+    "outside-position": "auto",
+    "caption-font-size": 16,
+    "label-font-size": 14,
+    "label-border-width": 2,
+    "property-font-size": 14,
+    "arrow-width": 5,
+    "arrow-color": "#000000",
+    "type-font-size": 16
+  },
+  "nodes": [
+    {
+      "id": "n0",
+      "position": {"x": 0, "y": 0},
+      "caption": "IAM principal with rolesanywhere:CreateTrustAnchor + CreateProfile",
+      "labels": [],
+      "properties": {"Attacker CA": "a self-signed / external CA the attacker holds"},
+      "style": {"border-color": "#9f9f9f", "border-width": 3, "caption-font-size": 16, "label-position": "outside", "label-font-size": 14, "label-border-width": 2, "property-font-size": 14, "outside-position": "top"}
+    },
+    {
+      "id": "n1",
+      "position": {"x": 400, "y": 0},
+      "caption": "CreateTrustAnchor (CloudTrail)",
+      "labels": ["CloudTrail"],
+      "properties": {
+        "eventSource": "rolesanywhere.amazonaws.com",
+        "eventName": "CreateTrustAnchor",
+        "source.sourceType": "CERTIFICATE_BUNDLE (external)",
+        "errorCode": "absent (success)"
+      },
+      "style": {"border-color": "#0062b1", "border-width": 3, "caption-font-size": 16, "label-position": "outside", "label-font-size": 14, "label-border-width": 2, "property-font-size": 14, "outside-position": "bottom", "node-color": "#fff2a8"}
+    },
+    {
+      "id": "n2",
+      "position": {"x": 800, "y": 0},
+      "caption": "CreateProfile (CloudTrail)",
+      "labels": ["CloudTrail"],
+      "properties": {
+        "eventName": "CreateProfile",
+        "roleArns": "role the session may assume",
+        "graded by": "surface chokepoint (not the external-CA rule)"
+      },
+      "style": {"border-color": "#0062b1", "border-width": 3, "caption-font-size": 16, "label-position": "outside", "label-font-size": 14, "label-border-width": 2, "property-font-size": 14, "outside-position": "bottom", "node-color": "#fff2a8"}
+    },
+    {
+      "id": "n3",
+      "position": {"x": 1220, "y": 0},
+      "caption": "Attacker CA trusted; certs exchange for role credentials",
+      "labels": [],
+      "properties": {"persists": "survives IAM user / role / access-key clean-up"},
+      "style": {"border-color": "#000000", "border-width": 3, "caption-font-size": 16, "label-position": "outside", "label-font-size": 14, "label-border-width": 2, "property-font-size": 14, "outside-position": "top"}
+    }
+  ],
+  "relationships": [
+    {"id": "r0", "fromId": "n0", "toId": "n1", "type": "register external CA as trust anchor", "properties": {}, "style": {}},
+    {"id": "r1", "fromId": "n1", "toId": "n2", "type": "then attach a profile", "properties": {}, "style": {}},
+    {"id": "r2", "fromId": "n2", "toId": "n3", "type": "CreateSession with a signed cert", "properties": {}, "style": {}}
+  ]
+}

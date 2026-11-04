@@ -26,6 +26,7 @@ on:
       - 'detections/sigma/T1537/**'
       - 'detections/sigma/T1199/**'
       - 'detections/sigma/T1550.001/**'
+      - 'detections/sigma/T1562.008/**'
       - 'detections/validate_cloud_detections.py'
       - 'detections/sigma_eval.py'
       - 'detections/sigma_explain.py'
@@ -39,6 +40,7 @@ on:
       - 'atomics/T1537/**'
       - 'atomics/T1199/**'
       - 'atomics/T1550.001/**'
+      - 'atomics/T1562.008/**'
       - '.github/workflows/validate-cloud-detections.yml'
   # PRs always trigger (no paths: filter) so the required `validate-cloud` check
   # ALWAYS reports. The `changes` job decides from the diff whether the heavy job
@@ -88,6 +90,7 @@ jobs:
             'detections/sigma/T1537/' \
             'detections/sigma/T1199/' \
             'detections/sigma/T1550.001/' \
+            'detections/sigma/T1562.008/' \
             'detections/validate_cloud_detections.py' \
             'detections/sigma_eval.py' \
             'detections/sigma_explain.py' \
@@ -101,6 +104,7 @@ jobs:
             'atomics/T1537/' \
             'atomics/T1199/' \
             'atomics/T1550.001/' \
+            'atomics/T1562.008/' \
             '.github/workflows/validate-cloud-detections.yml')
           if ! changed="$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}" 2>/dev/null)"; then
             echo "git diff failed; running the validator to be safe."

@@ -532,6 +532,9 @@ SELECTION_RESOURCES = {  # resource: (the groups that serve it, namespaced)
     "backupstoragelocations": (("velero.io",), True),
     "deletebackuprequests": (("velero.io",), True),
     "certificatesigningrequests": (("certificates.k8s.io",), False),
+    # TRR9039 (T1557): Service backend objects (Endpoints is core; EndpointSlice is discovery.k8s.io).
+    "endpoints": (("",), True),
+    "endpointslices": (("discovery.k8s.io",), True),
     "clusterrolebindings": ((_RBAC,), False), "clusterroles": ((_RBAC,), False),
     "rolebindings": ((_RBAC,), True), "roles": ((_RBAC,), True),
     **{r: ((_ADM,), False) for r in SELECTION_GROUP_RESOURCES[_ADM]},

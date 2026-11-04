@@ -1,14 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="820" height="322" viewBox="0 0 820 322" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" role="img" aria-label="Procedure coverage: 66 of 146 procedures proven in CI">
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="322" viewBox="0 0 820 322" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" role="img" aria-label="Procedure coverage: 66 of 157 procedures proven in CI">
 <rect width="820" height="322" rx="8" fill="#ffffff"/>
 <text x="20" y="28" fill="#1f2328" font-size="15" font-weight="600" text-anchor="start">Two ways to count the same repository</text>
 <text x="20" y="68" fill="#1f2328" font-size="13" font-weight="400" text-anchor="start">ATT&amp;CK techniques with a rule</text>
 <rect x="250" y="54" width="440" height="18" rx="4" fill="#eef1f4"/>
-<rect x="250.0" y="54" width="423.8" height="18" fill="#8c959f"/>
-<text x="800" y="68" fill="#1f2328" font-size="13" font-weight="600" text-anchor="end">29/30 · 97%</text>
+<rect x="250.0" y="54" width="425.2" height="18" fill="#8c959f"/>
+<text x="800" y="68" fill="#1f2328" font-size="13" font-weight="600" text-anchor="end">32/33 · 97%</text>
 <text x="20" y="98" fill="#1f2328" font-size="13" font-weight="400" text-anchor="start">Procedures proven in CI</text>
 <rect x="250" y="84" width="440" height="18" rx="4" fill="#eef1f4"/>
-<rect x="250.0" y="84" width="197.4" height="18" fill="#1a7f37"/>
-<text x="800" y="98" fill="#1f2328" font-size="13" font-weight="600" text-anchor="end">66/146 · 45%</text>
+<rect x="250.0" y="84" width="183.5" height="18" fill="#1a7f37"/>
+<text x="800" y="98" fill="#1f2328" font-size="13" font-weight="600" text-anchor="end">66/157 · 42%</text>
 <text x="20" y="130" fill="#1f2328" font-size="15" font-weight="600" text-anchor="start">Procedures by platform and status</text>
 <rect x="20" y="144" width="10" height="10" rx="2" fill="#1a7f37"/>
 <text x="35" y="153.5" fill="#59636e" font-size="12" font-weight="400" text-anchor="start">Proven</text>
@@ -27,29 +27,30 @@
 <text x="800" y="184" fill="#59636e" font-size="13" font-weight="400" text-anchor="end">5/7 proven</text>
 <text x="20" y="212" fill="#1f2328" font-size="13" font-weight="400" text-anchor="start">Kubernetes</text>
 <rect x="250" y="198" width="440" height="18" rx="4" fill="#eef1f4"/>
-<rect x="250.0" y="198" width="201.6" height="18" fill="#1a7f37"/>
-<rect x="453.1" y="198" width="207.2" height="18" fill="#bf8700"/>
-<rect x="661.8" y="198" width="9.8" height="18" fill="#0969da"/>
-<rect x="673.1" y="198" width="15.4" height="18" fill="#cf222e"/>
-<text x="800" y="212" fill="#59636e" font-size="13" font-weight="400" text-anchor="end">36/78 proven</text>
+<rect x="250.0" y="198" width="196.5" height="18" fill="#1a7f37"/>
+<rect x="448.0" y="198" width="213.0" height="18" fill="#bf8700"/>
+<rect x="662.5" y="198" width="9.5" height="18" fill="#0969da"/>
+<rect x="673.5" y="198" width="15.0" height="18" fill="#cf222e"/>
+<text x="800" y="212" fill="#59636e" font-size="13" font-weight="400" text-anchor="end">36/80 proven</text>
 <text x="20" y="240" fill="#1f2328" font-size="13" font-weight="400" text-anchor="start">AWS</text>
 <rect x="250" y="226" width="440" height="18" rx="4" fill="#eef1f4"/>
-<rect x="250.0" y="226" width="181.8" height="18" fill="#1a7f37"/>
-<rect x="433.3" y="226" width="47.4" height="18" fill="#bf8700"/>
-<rect x="482.2" y="226" width="71.8" height="18" fill="#8c959f"/>
-<rect x="555.6" y="226" width="132.9" height="18" fill="#cf222e"/>
-<text x="800" y="240" fill="#59636e" font-size="13" font-weight="400" text-anchor="end">15/36 proven</text>
+<rect x="250.0" y="226" width="167.7" height="18" fill="#1a7f37"/>
+<rect x="419.2" y="226" width="66.2" height="18" fill="#bf8700"/>
+<rect x="486.9" y="226" width="77.5" height="18" fill="#8c959f"/>
+<rect x="565.9" y="226" width="122.6" height="18" fill="#cf222e"/>
+<text x="800" y="240" fill="#59636e" font-size="13" font-weight="400" text-anchor="end">15/39 proven</text>
 <text x="20" y="268" fill="#1f2328" font-size="13" font-weight="400" text-anchor="start">Azure</text>
 <rect x="250" y="254" width="440" height="18" rx="4" fill="#eef1f4"/>
-<rect x="250.0" y="254" width="167.7" height="18" fill="#1a7f37"/>
-<rect x="419.2" y="254" width="133.9" height="18" fill="#8c959f"/>
-<rect x="554.6" y="254" width="133.9" height="18" fill="#cf222e"/>
-<text x="800" y="268" fill="#59636e" font-size="13" font-weight="400" text-anchor="end">5/13 proven</text>
+<rect x="250.0" y="254" width="136.0" height="18" fill="#1a7f37"/>
+<rect x="387.5" y="254" width="53.5" height="18" fill="#bf8700"/>
+<rect x="442.5" y="254" width="108.5" height="18" fill="#8c959f"/>
+<rect x="552.5" y="254" width="136.0" height="18" fill="#cf222e"/>
+<text x="800" y="268" fill="#59636e" font-size="13" font-weight="400" text-anchor="end">5/16 proven</text>
 <text x="20" y="296" fill="#1f2328" font-size="13" font-weight="400" text-anchor="start">GCP</text>
 <rect x="250" y="282" width="440" height="18" rx="4" fill="#eef1f4"/>
-<rect x="250.0" y="282" width="181.8" height="18" fill="#1a7f37"/>
-<rect x="433.3" y="282" width="35.2" height="18" fill="#bf8700"/>
-<rect x="470.0" y="282" width="71.8" height="18" fill="#8c959f"/>
-<rect x="543.3" y="282" width="145.2" height="18" fill="#cf222e"/>
-<text x="800" y="296" fill="#59636e" font-size="13" font-weight="400" text-anchor="end">5/12 proven</text>
+<rect x="250.0" y="282" width="145.2" height="18" fill="#1a7f37"/>
+<rect x="396.7" y="282" width="115.8" height="18" fill="#bf8700"/>
+<rect x="514.0" y="282" width="57.2" height="18" fill="#8c959f"/>
+<rect x="572.7" y="282" width="115.8" height="18" fill="#cf222e"/>
+<text x="800" y="296" fill="#59636e" font-size="13" font-weight="400" text-anchor="end">5/15 proven</text>
 </svg>

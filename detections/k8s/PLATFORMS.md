@@ -194,6 +194,7 @@ Columns (each is one policy and one record shape):
 | [`T1546/k8s_malicious_admission_webhook_created`](../sigma/T1546/k8s_malicious_admission_webhook_created.yml) L | **full** 3/3 `lab-apiserver` | **full** 3/3 | **not portable** (3/3 by policy and store); not-in-schema: `responseStatus.code` | **not portable** (3/3 by policy and store); not-in-schema: `responseStatus.code` | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **chokepoint only** 0/3; body-removed 3; chokepoint 3/3 | **full** 3/3 | **chokepoint only** 0/3; body-removed 3; chokepoint 3/3 | **full** 3/3 | **chokepoint only** 0/3; body-removed 3; chokepoint 3/3 | **full** 3/3 |
 | [`T1552.007/k8s_secret_access`](../sigma/T1552.007/k8s_secret_access.yml) | **full** 4/4 `lab-apiserver` | **full** 4/4 | **full** 4/4 | **blind** 0/4; reads-dropped 4 | **full** 4/4 | **partial** 1/4; reads-dropped 3 | **full** 4/4 | **partial** 1/4; reads-dropped 3 | **full** 4/4 | **full** 4/4 | **full** 4/4 | **full** 4/4 | **full** 4/4 | **full** 4/4 |
 | [`T1552.007/k8s_secret_token_request`](../sigma/T1552.007/k8s_secret_token_request.yml) | **full** 3/3 `lab-apiserver` | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 | **full** 3/3 |
+| [`T1557/k8s_service_endpoints_hijacked`](../sigma/T1557/k8s_service_endpoints_hijacked.yml) | **full** 5/5 `lab-apiserver` | **full** 5/5 | **full** 5/5 | **full** 5/5 | **full** 5/5 | **full** 5/5 | **full** 5/5 | **full** 5/5 | **full** 5/5 | **full** 5/5 | **full** 5/5 | **full** 5/5 | **full** 5/5 | **full** 5/5 |
 | [`T1565.001/k8s_coredns_configmap_modified`](../sigma/T1565.001/k8s_coredns_configmap_modified.yml) | **full** 18/18 `lab-apiserver` | **full** 18/18 | **full** 18/18 | **full** 18/18 | **full** 18/18 | **full** 18/18 | **full** 18/18 | **full** 18/18 | **full** 18/18 | **full** 18/18 | **full** 18/18 | **full** 18/18 | **full** 18/18 | **full** 18/18 |
 | [`T1565.001/k8s_coredns_corefile_poisoned`](../sigma/T1565.001/k8s_coredns_corefile_poisoned.yml) L | **full** 47/47 `lab-apiserver`; not-modeled 59 | **chokepoint partial** 0/47; body-removed 47; chokepoint 43/47 | **chokepoint partial** 0/47; body-removed 47; approved-diff 1; chokepoint 43/47 | **chokepoint partial** 0/47; body-removed 47; approved-diff 1; chokepoint 43/47 | **chokepoint partial** 0/47; body-removed 47; chokepoint 43/47 | **chokepoint partial** 0/47; body-removed 47; chokepoint 43/47 | **chokepoint partial** 0/47; body-removed 47; chokepoint 43/47 | **chokepoint partial** 0/47; body-removed 47; chokepoint 43/47 | **chokepoint partial** 0/47; body-removed 47; chokepoint 43/47 | **full** 47/47; not-modeled 63 | **chokepoint partial** 0/47; body-removed 47; chokepoint 43/47 | **full** 47/47; not-modeled 63 | **chokepoint partial** 0/47; body-removed 47; chokepoint 43/47 | **partial** 46/47; opt-in 1; not-modeled 58 |
 | [`T1572/k8s_node_proxy_portforward`](../sigma/T1572/k8s_node_proxy_portforward.yml) | **full** 4/4 `lab-apiserver` | **full** 4/4 | **not portable** (4/4 by policy and store); not-in-schema: `requestURI` | **not portable** (1/4 by policy and store); not-in-schema: `requestURI`; reads-dropped 3 | **full** 4/4 | **partial** 1/4; reads-dropped 3 | **full** 4/4 | **partial** 1/4; reads-dropped 3 | **full** 4/4 | **full** 4/4 | **full** 4/4 | **full** 4/4 | **full** 4/4 | **full** 4/4 |
@@ -214,38 +215,38 @@ Rules per support word (full, partial, chokepoint only, chokepoint partial, blin
 
 | Shape | full | partial | chokepoint only | chokepoint partial | blind | not portable |
 |---|---|---|---|---|---|---|
-| kind lab (home policy) | 39 | 0 | 0 | 0 | 0 | 0 |
-| EKS (CloudWatch) | 37 | 1 | 0 | 1 | 0 | 0 |
-| GKE, Data Access on | 15 | 5 | 0 | 1 | 0 | 18 |
-| GKE, Admin Activity only | 12 | 7 | 0 | 1 | 3 | 16 |
-| AKS AKSAudit | 34 | 2 | 0 | 1 | 0 | 2 |
-| AKS AKSAuditAdmin | 28 | 8 | 0 | 1 | 2 | 0 |
-| AKS raw Event, kube-audit | 37 | 1 | 0 | 1 | 0 | 0 |
-| AKS raw Event, kube-audit-admin | 29 | 7 | 0 | 1 | 2 | 0 |
-| OpenShift 4.18+ Default | 24 | 5 | 4 | 1 | 5 | 0 |
-| OpenShift 4.18+ WriteRequestBodies | 39 | 0 | 0 | 0 | 0 | 0 |
-| OpenShift 4.17 Default | 23 | 6 | 4 | 1 | 5 | 0 |
-| OpenShift 4.17 WriteRequestBodies | 38 | 1 | 0 | 0 | 0 | 0 |
-| k3s starter policy | 24 | 5 | 4 | 1 | 5 | 0 |
-| Self-managed, `recommended` | 38 | 1 | 0 | 0 | 0 | 0 |
+| kind lab (home policy) | 40 | 0 | 0 | 0 | 0 | 0 |
+| EKS (CloudWatch) | 38 | 1 | 0 | 1 | 0 | 0 |
+| GKE, Data Access on | 16 | 5 | 0 | 1 | 0 | 18 |
+| GKE, Admin Activity only | 13 | 7 | 0 | 1 | 3 | 16 |
+| AKS AKSAudit | 35 | 2 | 0 | 1 | 0 | 2 |
+| AKS AKSAuditAdmin | 29 | 8 | 0 | 1 | 2 | 0 |
+| AKS raw Event, kube-audit | 38 | 1 | 0 | 1 | 0 | 0 |
+| AKS raw Event, kube-audit-admin | 30 | 7 | 0 | 1 | 2 | 0 |
+| OpenShift 4.18+ Default | 25 | 5 | 4 | 1 | 5 | 0 |
+| OpenShift 4.18+ WriteRequestBodies | 40 | 0 | 0 | 0 | 0 | 0 |
+| OpenShift 4.17 Default | 24 | 6 | 4 | 1 | 5 | 0 |
+| OpenShift 4.17 WriteRequestBodies | 39 | 1 | 0 | 0 | 0 | 0 |
+| k3s starter policy | 25 | 5 | 4 | 1 | 5 | 0 |
+| Self-managed, `recommended` | 39 | 1 | 0 | 0 | 0 | 0 |
 
 Every policy, as the simulator reports it (no mapping): rules with every / some / no positive case firing, positive cases firing, negative cases that fire, and events whose missing body the rule reads (not proven):
 
 | Policy | Platform | What the column is | Rules every / some / none | Positives firing | Negatives firing | Not proven | What is verified |
 |---|---|---|---|---|---|---|---|
-| `lab-apiserver` | kind lab (CI) | API server lab policy (TRR9004-9010, TRR9025-9027) ([`audit-policy-apiserver.yaml`](audit-policy-apiserver.yaml)) | 39 / 0 / 0 | 470 of 470 | 0 | 143 | proven live in CI |
-| `lab-k8s` | kind lab (CI) | TRR9002 lab policy (exec, attach, node proxy) ([`audit-policy.yaml`](audit-policy.yaml)) | 24 / 5 / 10 | 155 of 470 | 16 | 0 | proven live in CI |
-| `lab-staticpod` | kind lab (CI) | TRR9003 lab policy (static pods) ([`audit-policy-staticpod.yaml`](audit-policy-staticpod.yaml)) | 13 / 12 / 14 | 96 of 470 | 14 | 0 | proven live in CI |
-| `recommended` | self-managed API server (--audit-policy-file: kubeadm, k3s, RKE2, kind) | this repository's recommended production policy (every Kubernetes audit rule; the TRR9027 D create needs its opt-in line) ([`audit-policy-recommended.yaml`](audit-policy-recommended.yaml)) | 38 / 1 / 0 | 469 of 470 | 0 | 142 | TRR9004-9010 and TRR9025-9027 rules proven live in CI by the non-required validate-apiserver-recommended job (validate_apiserver_detections.py --policy recommended); the TRR9002 and TRR9003 rules by this simulator only |
-| `eks` | Amazon EKS | EKS audit policy as the EKS Best Practices Guide publishes it ([`eks-bpg-audit-policy.yaml`](provider-policies/eks/eks-bpg-audit-policy.yaml)) | 37 / 1 / 1 | 417 of 470 | 1 | 95 | published text, a variant of the kube-up configure-helper.sh policy (it adds aws-auth writes at RequestResponse and serviceaccounts/token at Request, and drops a few kube-up identities); the EKS user guide (control-plane-logs) links that configure-helper.sh policy as its audit policy (the gce-kube-up column); neither text is verified on a live EKS cluster |
-| `gce-kube-up` | GCE kube-up (the policy the EKS user guide links; GKE unverified) | the policy kube-up's configure-helper.sh writes on GCE ([`gce-kube-up-audit-policy.yaml`](provider-policies/gce/gce-kube-up-audit-policy.yaml)) | 37 / 1 / 1 | 417 of 470 | 1 | 95 | the EKS user guide (control-plane-logs) links this configure-helper.sh policy as 'the audit policy', and the GKE audit-policy page names configure-helper.sh as the script that generates the policy; whether EKS or GKE runs this text unchanged, and GKE's Admin Activity / Data Access split of reads, are unverified (not modeled) |
-| `aks-kube-audit` | Azure AKS | AKS audit policy, kube-audit log category ([`aks-audit-policy.yaml`](provider-policies/aks/aks-audit-policy.yaml)) | 37 / 1 / 1 | 420 of 470 | 1 | 93 | published text; the page says the policy is managed by AKS and cannot be customized |
-| `aks-kube-audit-admin` | Azure AKS | AKS audit policy, kube-audit-admin log category (no get and list) ([`aks-audit-policy.yaml`](provider-policies/aks/aks-audit-policy.yaml)) | 29 / 7 / 3 | 385 of 470 | 1 | 86 | published text; whether kube-audit-admin also drops watch is unverified (the page names get and list only) |
-| `openshift-default` | Red Hat OpenShift | OpenShift 4.18 and later, Default audit profile ([`base-policy-release-4.18.yaml`](provider-policies/openshift/base-policy-release-4.18.yaml), [`default-rules-release-4.18.yaml`](provider-policies/openshift/default-rules-release-4.18.yaml)) | 24 / 5 / 10 | 155 of 470 | 16 | 0 | source text; the kube-apiserver operator release-4.18 vendors the same files |
-| `openshift-default-4.17` | Red Hat OpenShift | OpenShift 4.17 and earlier, Default audit profile (core Events at None) ([`base-policy-release-4.17.yaml`](provider-policies/openshift/base-policy-release-4.17.yaml), [`default-rules-release-4.17.yaml`](provider-policies/openshift/default-rules-release-4.17.yaml)) | 23 / 6 / 10 | 149 of 470 | 14 | 0 | source text; the kube-apiserver operator release-4.17 vendors the same files |
-| `openshift-wrb` | Red Hat OpenShift | OpenShift 4.18 and later, WriteRequestBodies audit profile ([`base-policy-release-4.18.yaml`](provider-policies/openshift/base-policy-release-4.18.yaml), [`writerequestbodies-rules-release-4.18.yaml`](provider-policies/openshift/writerequestbodies-rules-release-4.18.yaml)) | 39 / 0 / 0 | 470 of 470 | 0 | 158 | source text; an admin chooses this profile (the default is Default) |
-| `openshift-wrb-4.17` | Red Hat OpenShift | OpenShift 4.17 and earlier, WriteRequestBodies audit profile ([`base-policy-release-4.17.yaml`](provider-policies/openshift/base-policy-release-4.17.yaml), [`writerequestbodies-rules-release-4.17.yaml`](provider-policies/openshift/writerequestbodies-rules-release-4.17.yaml)) | 38 / 1 / 0 | 464 of 470 | 0 | 153 | source text; an admin chooses this profile (the default is Default) |
-| `k3s-starter` | k3s | k3s hardening-guide starter policy (k3s writes no audit log by default) ([`k3s-hardening-starter-audit-policy.yaml`](provider-policies/k3s/k3s-hardening-starter-audit-policy.yaml)) | 24 / 5 / 10 | 155 of 470 | 16 | 0 | published text; the guide calls it a starter policy, and a k3s cluster has no audit policy until the admin writes one |
+| `lab-apiserver` | kind lab (CI) | API server lab policy (TRR9004-9010, TRR9025-9027) ([`audit-policy-apiserver.yaml`](audit-policy-apiserver.yaml)) | 40 / 0 / 0 | 475 of 475 | 0 | 143 | proven live in CI |
+| `lab-k8s` | kind lab (CI) | TRR9002 lab policy (exec, attach, node proxy) ([`audit-policy.yaml`](audit-policy.yaml)) | 25 / 5 / 10 | 160 of 475 | 16 | 0 | proven live in CI |
+| `lab-staticpod` | kind lab (CI) | TRR9003 lab policy (static pods) ([`audit-policy-staticpod.yaml`](audit-policy-staticpod.yaml)) | 13 / 12 / 15 | 96 of 475 | 14 | 0 | proven live in CI |
+| `recommended` | self-managed API server (--audit-policy-file: kubeadm, k3s, RKE2, kind) | this repository's recommended production policy (every Kubernetes audit rule; the TRR9027 D create needs its opt-in line) ([`audit-policy-recommended.yaml`](audit-policy-recommended.yaml)) | 39 / 1 / 0 | 474 of 475 | 0 | 142 | TRR9004-9010 and TRR9025-9027 rules proven live in CI by the non-required validate-apiserver-recommended job (validate_apiserver_detections.py --policy recommended); the TRR9002 and TRR9003 rules by this simulator only |
+| `eks` | Amazon EKS | EKS audit policy as the EKS Best Practices Guide publishes it ([`eks-bpg-audit-policy.yaml`](provider-policies/eks/eks-bpg-audit-policy.yaml)) | 38 / 1 / 1 | 422 of 475 | 1 | 95 | published text, a variant of the kube-up configure-helper.sh policy (it adds aws-auth writes at RequestResponse and serviceaccounts/token at Request, and drops a few kube-up identities); the EKS user guide (control-plane-logs) links that configure-helper.sh policy as its audit policy (the gce-kube-up column); neither text is verified on a live EKS cluster |
+| `gce-kube-up` | GCE kube-up (the policy the EKS user guide links; GKE unverified) | the policy kube-up's configure-helper.sh writes on GCE ([`gce-kube-up-audit-policy.yaml`](provider-policies/gce/gce-kube-up-audit-policy.yaml)) | 38 / 1 / 1 | 422 of 475 | 1 | 95 | the EKS user guide (control-plane-logs) links this configure-helper.sh policy as 'the audit policy', and the GKE audit-policy page names configure-helper.sh as the script that generates the policy; whether EKS or GKE runs this text unchanged, and GKE's Admin Activity / Data Access split of reads, are unverified (not modeled) |
+| `aks-kube-audit` | Azure AKS | AKS audit policy, kube-audit log category ([`aks-audit-policy.yaml`](provider-policies/aks/aks-audit-policy.yaml)) | 38 / 1 / 1 | 425 of 475 | 1 | 93 | published text; the page says the policy is managed by AKS and cannot be customized |
+| `aks-kube-audit-admin` | Azure AKS | AKS audit policy, kube-audit-admin log category (no get and list) ([`aks-audit-policy.yaml`](provider-policies/aks/aks-audit-policy.yaml)) | 30 / 7 / 3 | 390 of 475 | 1 | 86 | published text; whether kube-audit-admin also drops watch is unverified (the page names get and list only) |
+| `openshift-default` | Red Hat OpenShift | OpenShift 4.18 and later, Default audit profile ([`base-policy-release-4.18.yaml`](provider-policies/openshift/base-policy-release-4.18.yaml), [`default-rules-release-4.18.yaml`](provider-policies/openshift/default-rules-release-4.18.yaml)) | 25 / 5 / 10 | 160 of 475 | 16 | 0 | source text; the kube-apiserver operator release-4.18 vendors the same files |
+| `openshift-default-4.17` | Red Hat OpenShift | OpenShift 4.17 and earlier, Default audit profile (core Events at None) ([`base-policy-release-4.17.yaml`](provider-policies/openshift/base-policy-release-4.17.yaml), [`default-rules-release-4.17.yaml`](provider-policies/openshift/default-rules-release-4.17.yaml)) | 24 / 6 / 10 | 154 of 475 | 14 | 0 | source text; the kube-apiserver operator release-4.17 vendors the same files |
+| `openshift-wrb` | Red Hat OpenShift | OpenShift 4.18 and later, WriteRequestBodies audit profile ([`base-policy-release-4.18.yaml`](provider-policies/openshift/base-policy-release-4.18.yaml), [`writerequestbodies-rules-release-4.18.yaml`](provider-policies/openshift/writerequestbodies-rules-release-4.18.yaml)) | 40 / 0 / 0 | 475 of 475 | 0 | 158 | source text; an admin chooses this profile (the default is Default) |
+| `openshift-wrb-4.17` | Red Hat OpenShift | OpenShift 4.17 and earlier, WriteRequestBodies audit profile ([`base-policy-release-4.17.yaml`](provider-policies/openshift/base-policy-release-4.17.yaml), [`writerequestbodies-rules-release-4.17.yaml`](provider-policies/openshift/writerequestbodies-rules-release-4.17.yaml)) | 39 / 1 / 0 | 469 of 475 | 0 | 153 | source text; an admin chooses this profile (the default is Default) |
+| `k3s-starter` | k3s | k3s hardening-guide starter policy (k3s writes no audit log by default) ([`k3s-hardening-starter-audit-policy.yaml`](provider-policies/k3s/k3s-hardening-starter-audit-policy.yaml)) | 25 / 5 / 10 | 160 of 475 | 16 | 0 | published text; the guide calls it a starter policy, and a k3s cluster has no audit policy until the admin writes one |
 
 Simulator warnings:
 
@@ -310,6 +311,7 @@ Lowest level: the lowest level that, given to every request of the rule's positi
 | `T1546/k8s_malicious_admission_webhook_created` | Request | `admissionregistration.k8s.io/mutatingwebhookconfigurations`: create<br>`admissionregistration.k8s.io/validatingwebhookconfigurations`: create, patch |  |
 | `T1552.007/k8s_secret_access` | Metadata | `core/secrets`: get, list, watch |  |
 | `T1552.007/k8s_secret_token_request` | Metadata | `core/serviceaccounts/token`: create |  |
+| `T1557/k8s_service_endpoints_hijacked` | Metadata | `core/endpoints`: create, update<br>`discovery.k8s.io/endpointslices`: create, patch |  |
 | `T1565.001/k8s_coredns_configmap_modified` | Metadata | `core/configmaps`: create, delete, patch, update<br>`operator.openshift.io/dnses`: delete, deletecollection, patch, update |  |
 | `T1565.001/k8s_coredns_corefile_poisoned` | RequestResponse | `core/configmaps`: create, patch, update | The lowest level differs per request: Request for create,update configmaps; RequestResponse for patch configmaps. |
 | `T1572/k8s_node_proxy_portforward` | Metadata | `core/nodes/proxy`: create, get |  |
@@ -423,7 +425,7 @@ No setting to change the EKS or GKE policy was found (**unverified**; see the
 
 **This repository's recommended production policy (every Kubernetes audit rule; the TRR9027 D create needs its opt-in line)**: [`detections/k8s/audit-policy-recommended.yaml`](audit-policy-recommended.yaml). Version: this repository (the opt-in kube-system ConfigMap-create line off).
 
-Simulator result: 38 of 39 rules fire on every positive case, 1 on some, 0 on none; 469 of 470 positive cases fire; 0 negative cases fire; 142 events are not proven (the policy logs a body that the case record lacks, and the rule reads it).
+Simulator result: 39 of 40 rules fire on every positive case, 1 on some, 0 on none; 474 of 475 positive cases fire; 0 negative cases fire; 142 events are not proven (the policy logs a body that the case record lacks, and the rule reads it).
 
 What is verified: TRR9004-9010 and TRR9025-9027 rules proven live in CI by the non-required validate-apiserver-recommended job (validate_apiserver_detections.py --policy recommended); the TRR9002 and TRR9003 rules by this simulator only.
 

@@ -1384,6 +1384,151 @@
           "url": "../atomics/T1098.006/src/emulate_csr.sh"
         }
       }
+    },
+    {
+      "name": "Azure ARM RBAC Privileged Role Assignment at Subscription or Management-Group Scope (Azure)",
+      "id": "TRR9036",
+      "tactics": [
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1098.003"
+      ],
+      "platforms": [
+        "Azure"
+      ],
+      "procedures": {
+        "A": "Privileged built-in role at subscription scope",
+        "B": "Privileged built-in role at management-group scope",
+        "C": "Custom-role / exporter evasion of the body grade"
+      },
+      "pub_date": "2026-11-04",
+      "last_update": "2026-11-04",
+      "path": "trr9036/azr/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.003/src/emulate_azure.sh"
+        },
+        "B": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1098.003/src/emulate_azure.sh"
+        }
+      }
+    },
+    {
+      "name": "IAM Roles Anywhere External-CA Trust Anchor (AWS)",
+      "id": "TRR9037",
+      "tactics": [
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1098.001",
+        "T1199"
+      ],
+      "platforms": [
+        "AWS"
+      ],
+      "procedures": {
+        "A": "External-CA trust anchor",
+        "B": "Repoint an existing anchor to an external CA",
+        "C": "Grading boundary and residual"
+      },
+      "pub_date": "2026-11-04",
+      "last_update": "2026-11-04",
+      "path": "trr9037/aws/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures (CreateTrustAnchor CERTIFICATE_BUNDLE + CreateProfile)",
+          "url": "../atomics/T1098.001/src/emulate_rolesanywhere.sh"
+        },
+        "B": {
+          "text": "det-eng behavioral emulation / recorded fixtures (external source type SELF_SIGNED_REPOSITORY; UpdateTrustAnchor repoint by sidecar positive)",
+          "url": "../atomics/T1098.001/src/emulate_rolesanywhere.sh"
+        }
+      }
+    },
+    {
+      "name": "GCP Cloud Logging Sink, Bucket and Exclusion Tamper (GCP)",
+      "id": "TRR9038",
+      "tactics": [
+        "Defense Evasion"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1562.008"
+      ],
+      "platforms": [
+        "GCP"
+      ],
+      "procedures": {
+        "A": "Delete / disable / re-divert the _Default sink",
+        "B": "Delete a log bucket (or cut retention)",
+        "C": "Add / broaden an audit-dropping exclusion"
+      },
+      "pub_date": "2026-11-04",
+      "last_update": "2026-11-04",
+      "path": "trr9038/gcp/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1562.008/src/emulate_gcp_log_sink.sh"
+        },
+        "B": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1562.008/src/emulate_gcp_log_sink.sh"
+        },
+        "C": {
+          "text": "det-eng behavioral emulation / recorded fixtures",
+          "url": "../atomics/T1562.008/src/emulate_gcp_log_sink.sh"
+        }
+      }
+    },
+    {
+      "name": "Service Traffic Hijack Through Endpoints or EndpointSlice Manipulation (Kubernetes)",
+      "id": "TRR9039",
+      "tactics": [
+        "Credential Access",
+        "Collection",
+        "Impact"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1557",
+        "T1565"
+      ],
+      "platforms": [
+        "Kubernetes"
+      ],
+      "procedures": {
+        "A": "Hijack a Service with a manual core Endpoints",
+        "B": "Hijack a Service with a manual EndpointSlice"
+      },
+      "pub_date": "2026-11-03",
+      "last_update": "2026-11-03",
+      "path": "trr9039/k8s/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng manual core Endpoints hijack behavioral emulation (inert selectorless Service, kind)",
+          "url": "../atomics/T1557/src/emulate.sh"
+        },
+        "B": {
+          "text": "det-eng manual EndpointSlice hijack behavioral emulation (inert selectorless Service, kind)",
+          "url": "../atomics/T1557/src/emulate.sh"
+        }
+      }
     }
   ]
 }

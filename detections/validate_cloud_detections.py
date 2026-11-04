@@ -225,6 +225,54 @@ MANIFEST = [
      "trr9032/attack.json", "trr9032/benign_chokepoint.json", "AWS",
      "any EKS access-entry / access-policy write (surface chokepoint)",
      marker("trr9032", "requestParameters.principalArn", "requestParameters.name")),
+    # --- Wave 6: TRR9036 -- Azure ARM RBAC privileged role assignment at subscription /
+    #     management-group scope (T1098.003, Azure Activity Log). A resource-plane grant:
+    #     it lands in the Azure Activity Log (Microsoft.Authorization/roleAssignments/write),
+    #     the same log as the TRR9013 managed-identity FIC rule above. The role + scope are
+    #     only on the START record, in properties.requestbody (a JSON string), so the rule
+    #     fires on resultType '^start' -- the opposite of TRR9013's filter_start. The hard
+    #     benign (benign.json) is a Terraform grant of the non-privileged Key Vault Secrets
+    #     User role at a Key Vault (resource-group) scope, differing from the attack only on
+    #     the requestbody RoleDefinitionId + Scope. The marker 'trr9036-attacker' sits in
+    #     identity.claims.name, which the rule does not read (the rule keys on requestbody).
+    ("TRR9036", "T1098.003", "azure_privileged_role_assignment.yml",
+     "trr9036/attack.json", "trr9036/benign.json", "Azure",
+     "privileged built-in role assigned at subscription / management-group scope",
+     marker("trr9036-attacker", "identity.claims.name")),
+    # --- TRR9037: IAM Roles Anywhere trust-anchor abuse in CloudTrail (T1098.001, secondary
+    #     T1199). A trust anchor names the CA whose X.509 client certificates exchange for
+    #     temporary AWS credentials; registering an EXTERNAL CA (CERTIFICATE_BUNDLE /
+    #     SELF_SIGNED_REPOSITORY, not AWS_ACM_PCA) is certificate-based persistence. The
+    #     graded rule's hard benign (benign.json) is the SAME CreateTrustAnchor differing only
+    #     on the discriminator requestParameters.source.sourceType (AWS_ACM_PCA, an internal
+    #     ACM Private CA by a platform admin). The surface chokepoint fires on any trust-anchor
+    #     / profile write, so its baseline (benign_chokepoint.json) is Roles Anywhere READ
+    #     calls on the same eventSource -- the two rules cannot share one benign file (the
+    #     chokepoint would fire on the ACM-PCA create in benign.json, which is expected).
+    ("TRR9037", "T1098.001", "aws_rolesanywhere_trust_anchor_external_ca.yml",
+     "trr9037/attack.json", "trr9037/benign.json", "AWS",
+     "Roles Anywhere trust anchor backed by an external CA (graded)",
+     marker("trr9037", "responseElements.trustAnchor.trustAnchorArn",
+            "requestParameters.name", "userIdentity.arn")),
+    ("TRR9037", "T1098.001", "aws_rolesanywhere_trust_anchor_write.yml",
+     "trr9037/attack.json", "trr9037/benign_chokepoint.json", "AWS",
+     "any Roles Anywhere trust-anchor / profile write (surface chokepoint)",
+     marker("trr9037", "responseElements.trustAnchor.trustAnchorArn",
+            "responseElements.profile.profileArn", "requestParameters.name",
+            "userIdentity.arn")),
+    # --- TRR9038: GCP Cloud Logging sink / bucket / exclusion tamper (T1562.008).
+    #     The first GCP defense-evasion TRR. The chokepoint fires on a ConfigServiceV2
+    #     write that disrupts logging: delete/disable/re-divert of the _Default sink,
+    #     delete of the _Default log bucket, or any exclusion write. The hard benign
+    #     is a lifecycle op on a CUSTOM sink/bucket (CreateSink / UpdateSink keeping
+    #     destination / DeleteSink of a decommissioned sink), differing only on the
+    #     _Default scope (resourceName) and the disable flag. marker() is on the
+    #     server-set resourceName, which the rule does NOT key on (it keys on the
+    #     _Default suffix / the method / the disable flag), so the rename test holds.
+    ("TRR9038", "T1562.008", "gcp_logging_sink_tampered.yml",
+     "trr9038/attack.json", "trr9038/benign.json", "GCP",
+     "GCP Cloud Logging _Default sink/bucket delete-or-disable + exclusion tamper",
+     marker("trr9038-", "protoPayload.resourceName")),
 ]
 
 FOLDERS = sorted({folder for _, folder, *_ in MANIFEST})

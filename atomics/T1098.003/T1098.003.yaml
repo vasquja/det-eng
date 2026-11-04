@@ -1,5 +1,5 @@
 attack_technique: T1098.003
-display_name: "Account Manipulation: Additional Cloud Roles (public IAM exposure, GCP)"
+display_name: "Account Manipulation: Additional Cloud Roles (public IAM exposure GCP; privileged RBAC role assignment Azure)"
 
 # Behavioral emulation for TRR9014. The live tests grant then REVOKE allUsers on a
 # throwaway bucket/service in your own GCP project (guarded by TRR9014_LIVE=1); NOT run
@@ -43,6 +43,54 @@ atomic_tests:
       elevation_required: false
       command: |
         bash #{source_dir}/emulate.sh b
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1098.003/src
+
+  # --- TRR9036 (Azure): ARM RBAC privileged built-in role assignment at subscription /
+  #     management-group scope. Dry by default; live run (assign + revoke a throwaway
+  #     grant in your OWN tenant) is guarded by TRR9036_LIVE=1 and never runs in CI.
+  #     CI proves the paired Sigma rule over detections/cloud/fixtures/trr9036/.
+  - name: "TRR9036.AZR.A — assign Owner at subscription scope (then revoke)"
+    auto_generated_guid: a4c5d6e0-9036-4a1b-9c2d-1e2f3a4b5c81
+    description: |
+      Assigns the Owner built-in role to a throwaway principal at SUBSCRIPTION scope,
+      then revokes it.
+      Chokepoint: Azure Activity Log Microsoft.Authorization/roleAssignments/write Start
+      record, properties.requestbody Properties.RoleDefinitionId = Owner and
+      Properties.Scope = /subscriptions/<guid>.
+      Rule: detections/sigma/T1098.003/azure_privileged_role_assignment.yml
+    supported_platforms:
+      - iaas:azure
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_azure.sh a
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1098.003/src
+
+  - name: "TRR9036.AZR.B — assign User Access Administrator at management-group scope (then revoke)"
+    auto_generated_guid: a4c5d6e0-9036-4b2c-8d3e-2f3a4b5c6d82
+    description: |
+      Assigns the User Access Administrator built-in role to a throwaway principal at
+      MANAGEMENT-GROUP scope, then revokes it. Broader than subscription scope and the
+      gap PIM's 'Roles assigned outside PIM' alert does not cover.
+      Chokepoint: Azure Activity Log Microsoft.Authorization/roleAssignments/write Start
+      record, Properties.Scope = /providers/Microsoft.Management/managementGroups/<id>.
+      Rule: detections/sigma/T1098.003/azure_privileged_role_assignment.yml
+    supported_platforms:
+      - iaas:azure
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate_azure.sh b
     input_arguments:
       source_dir:
         description: Path to the atomic source directory.

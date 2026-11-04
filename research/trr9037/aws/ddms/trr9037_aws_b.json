@@ -1,0 +1,53 @@
+{
+  "style": {
+    "font-family": "sans-serif",
+    "background-color": "#ffffff",
+    "node-color": "#ffffff",
+    "border-width": 4,
+    "border-color": "#000000",
+    "radius": 50,
+    "outside-position": "auto",
+    "caption-font-size": 16,
+    "label-font-size": 14,
+    "label-border-width": 2,
+    "property-font-size": 14,
+    "arrow-width": 5,
+    "arrow-color": "#000000",
+    "type-font-size": 16
+  },
+  "nodes": [
+    {
+      "id": "n0",
+      "position": {"x": 0, "y": 0},
+      "caption": "Existing trust anchor on an AWS_ACM_PCA source",
+      "labels": [],
+      "properties": {"state": "benign ACM Private CA anchor"},
+      "style": {"border-color": "#9f9f9f", "border-width": 3, "caption-font-size": 16, "label-position": "outside", "label-font-size": 14, "label-border-width": 2, "property-font-size": 14, "outside-position": "top"}
+    },
+    {
+      "id": "n1",
+      "position": {"x": 420, "y": 0},
+      "caption": "UpdateTrustAnchor (CloudTrail)",
+      "labels": ["CloudTrail"],
+      "properties": {
+        "eventSource": "rolesanywhere.amazonaws.com",
+        "eventName": "UpdateTrustAnchor",
+        "source.sourceType": "SELF_SIGNED_REPOSITORY (external)",
+        "note": "delta carries the full source object"
+      },
+      "style": {"border-color": "#0062b1", "border-width": 3, "caption-font-size": 16, "label-position": "outside", "label-font-size": 14, "label-border-width": 2, "property-font-size": 14, "outside-position": "bottom", "node-color": "#fff2a8"}
+    },
+    {
+      "id": "n2",
+      "position": {"x": 840, "y": 0},
+      "caption": "Anchor now validates against the attacker CA",
+      "labels": [],
+      "properties": {"effect": "existing profiles keep minting credentials via the new CA"},
+      "style": {"border-color": "#000000", "border-width": 3, "caption-font-size": 16, "label-position": "outside", "label-font-size": 14, "label-border-width": 2, "property-font-size": 14, "outside-position": "top"}
+    }
+  ],
+  "relationships": [
+    {"id": "r0", "fromId": "n0", "toId": "n1", "type": "repoint source to an external CA", "properties": {}, "style": {}},
+    {"id": "r1", "fromId": "n1", "toId": "n2", "type": "graded rule fires (external sourceType)", "properties": {}, "style": {}}
+  ]
+}

@@ -1,0 +1,91 @@
+attack_technique: T1557
+display_name: "Adversary-in-the-Middle (Kubernetes Service traffic hijack via Endpoints / EndpointSlice manipulation)"
+
+# Behavioral emulation for TRR9039. An Endpoints (core) or EndpointSlice
+# (discovery.k8s.io) object names the IP:port backends a Service routes to. An adversary
+# with write access who creates or repoints these objects for a selectorless Service sends
+# the Service's traffic to an attacker-chosen address (Adversary-in-the-Middle, T1557; the
+# traffic is also manipulated, T1565). The API server then writes an audit record the
+# paired Sigma rule (detections/sigma/T1557/k8s_service_endpoints_hijacked.yml) keys on:
+# objectRef.resource endpoints (core, so no objectRef.apiGroup) or endpointslices
+# (objectRef.apiGroup discovery.k8s.io), verb create/update/patch, by a principal that is
+# not an endpoint controller. Metadata level is enough (the rule reads no body), so these
+# writes fire the rule where the shipped audit policies keep endpoints/endpointslices
+# writes at the Metadata catch-all (detections/k8s/audit-policy-apiserver.yaml).
+#
+# Every object is INERT and SELECTORLESS: each Service has no selector, so no endpoint
+# controller manages its backing objects and it routes to no pod; the written address is
+# 198.51.100.10 (RFC 5737 TEST-NET-2, non-routable), so even the repointed Service reaches
+# a black hole. Objects live in the inert namespace trr9039 (created and labelled
+# app.kubernetes.io/part-of=trr9039 when absent, and deleted on cleanup only when the
+# emulation created it); a namespace trr9039 that exists WITHOUT that label is not touched.
+# The marker the validator gates read is the trr9039 namespace and name prefix.
+#
+# emulate.sh also runs one control that the paired rule MUST NOT fire on; it is not an
+# attack test, so it has no atomic_test entry here, but `emulate.sh all` runs it and the
+# validator asserts the rule stays quiet on it (validate_apiserver_detections.py ABSENCE
+# 9039 C):
+#   C  deletecollection the namespace's endpoints (the verb a namespace teardown uses; the
+#      rule matches only create/update/patch, so it stays quiet)
+#
+# These need a reachable cluster with rights to create a namespace, Services, Endpoints and
+# EndpointSlices in it, and audit logging (detections/k8s/audit-policy-apiserver.yaml; see
+# detections/k8s/kind-apiserver-cluster.yaml).
+
+atomic_tests:
+  - name: "TRR9039.K8S.A — hijack a Service with a manual core Endpoints"
+    auto_generated_guid: 60368377-b55c-482f-a306-7ecb07dce54d
+    description: |
+      Creates a selectorless Service trr9039-ep in namespace trr9039 and a core Endpoints
+      trr9039-ep (same name, as a core Endpoints binds to its Service by name) pointing at
+      the RFC 5737 address 198.51.100.10. The manual Endpoints write repoints the Service's
+      backends; the API server writes an endpoints create audit record a non-controller
+      identity made.
+      Chokepoint: verb=create, objectRef.resource=endpoints, core API group (no
+      objectRef.apiGroup), user.username not an endpoint controller.
+      Rule: detections/sigma/T1557/k8s_service_endpoints_hijacked.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh a
+      cleanup_command: |
+        kubectl -n trr9039 delete endpoints trr9039-ep --ignore-not-found
+        kubectl -n trr9039 delete service trr9039-ep --ignore-not-found
+        kubectl delete namespace trr9039 --ignore-not-found --wait=false
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1557/src
+
+  - name: "TRR9039.K8S.B — hijack a Service with a manual EndpointSlice"
+    auto_generated_guid: 168e3957-355c-4cdc-878b-290f4e17c21f
+    description: |
+      Creates a selectorless Service trr9039-slice in namespace trr9039 and a
+      discovery.k8s.io EndpointSlice trr9039-slice-manual (label
+      kubernetes.io/service-name=trr9039-slice) whose endpoints[].addresses holds the RFC
+      5737 address 198.51.100.10. The manual EndpointSlice write repoints the Service's
+      backends; the API server writes an endpointslices create audit record a non-controller
+      identity made.
+      Chokepoint: verb=create, objectRef.resource=endpointslices,
+      objectRef.apiGroup=discovery.k8s.io, user.username not an endpoint controller.
+      Rule: detections/sigma/T1557/k8s_service_endpoints_hijacked.yml
+    supported_platforms:
+      - containers
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh b
+      cleanup_command: |
+        kubectl -n trr9039 delete endpointslice trr9039-slice-manual --ignore-not-found
+        kubectl -n trr9039 delete service trr9039-slice --ignore-not-found
+        kubectl delete namespace trr9039 --ignore-not-found --wait=false
+    input_arguments:
+      source_dir:
+        description: Path to the atomic source directory.
+        type: string
+        default: PathToAtomicsFolder/T1557/src

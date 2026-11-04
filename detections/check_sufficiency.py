@@ -419,6 +419,13 @@ CHOKEPOINT = {
         "the Activity Log carries no issuer/subject, so the FIC write operation is the "
         "whole signal (TRR9013 procedure C)",
         "bc64702280f8f8d1b71ea1f889322e6456424efe71995da8d9cb1589931e2229"),
+    "T1098.001/aws_rolesanywhere_trust_anchor_write.yml": Waiver(
+        "TRR9037 surface chokepoint: every Roles Anywhere certificate-persistence procedure "
+        "passes through a trust-anchor/profile write (eventName in the write set); the record "
+        "kind itself is the technique. The graded sibling "
+        "aws_rolesanywhere_trust_anchor_external_ca.yml carries the discriminating "
+        "source.sourceType (external CA)",
+        "57c5fbbded866e16f64acd7127b716d37b71357eb0f642dff652a1373b3df88b"),
     "T1098.006/k8s_rbac_write.yml": Waiver(
         "TRR9004 chokepoint: every RBAC-object grant passes through an RBAC write",
         "2298ffb181b03dc759985927b5a45d711cde1417342620a9670780fd8eb1c7ce"),
@@ -448,6 +455,11 @@ CHOKEPOINT = {
     "T1552.007/k8s_secret_token_request.yml": Waiver(
         "TRR9006 fallback: the TokenRequest create itself; system minters are filtered",
         "9d42e65762b82781163a3f7d7c97d3413c450fa861ffa068b01a716898e54dcb"),
+    "T1557/k8s_service_endpoints_hijacked.yml": Waiver(
+        "TRR9039 chokepoint: a non-controller create/update/patch of a core Endpoints or a "
+        "discovery.k8s.io EndpointSlice is the Service-traffic hijack itself; the endpoint "
+        "controllers are filtered by identity",
+        "ebfb8836a996ac5910e9471b2f60327897ffcca7e87348d04abe7d7baeaf66ca"),
     "T1572/k8s_pod_portforward.yml": Waiver(
         "TRR9026 chokepoint: the pods/portforward subresource is the tunnel",
         "b3809fdd4a546ec9227d4ee21a639c67d110cf73ed7b965fbc63b6fa95150e2b"),

@@ -1,0 +1,178 @@
+title: Kubernetes Service Endpoints or EndpointSlice Hijacked
+id: 6b9261ae-352a-42d3-97bd-0f91082f0b22
+status: experimental
+description: |
+  Detects a write to a Service's backing addresses by a principal that is not one of the
+  endpoint controllers: an audit event whose objectRef is a core Endpoints object
+  (objectRef.resource == endpoints, core API group, so objectRef.apiGroup is absent) or a
+  discovery.k8s.io EndpointSlice (objectRef.resource == endpointslices, objectRef.apiGroup
+  == discovery.k8s.io), whose verb is create, update or patch, and whose user.username is
+  not an endpoint controller. This is the TRR9039 chokepoint for T1557 (Adversary-in-the-
+  Middle), secondary T1565 (Data Manipulation), on Kubernetes: an Endpoints/EndpointSlice
+  object names the IP:port backends a Service routes to, so a write that repoints them
+  sends the Service's traffic to an attacker-chosen address (a sniffer, a rogue pod, a
+  node-local or external host). It covers Procedure A (manually create/repoint a
+  selectorless Service's core Endpoints) and Procedure B (manually create/repoint a
+  discovery.k8s.io EndpointSlice).
+
+  Endpoints and EndpointSlice are normally written only by the control plane (plus any CNI
+  or service-mesh controller that manages EndpointSlices under its own service account; see
+  the false positives): for a
+  Service WITH a selector, the endpoint controller writes its Endpoints and the
+  endpointslice controller writes its EndpointSlices from the Ready pods; for a
+  selectorless Service with a hand-written Endpoints, the endpointslicemirroring
+  controller mirrors that Endpoints into an EndpointSlice. The discriminator is therefore
+  the actor class: the rule filters the controllers that own these objects by identity,
+  verified against kubernetes v1.36.4 source, and fires on every other identity's write:
+    - the endpoint controller
+      (system:serviceaccount:kube-system:endpoint-controller),
+    - the endpointslice controller
+      (system:serviceaccount:kube-system:endpointslice-controller),
+    - the endpointslicemirroring controller
+      (system:serviceaccount:kube-system:endpointslicemirroring-controller).
+  Each service-account name is the controller name a human reads in the RBAC bootstrap
+  policy (plugin/pkg/auth/authorizer/rbac/bootstrappolicy/controller_policy.go,
+  saRolePrefix "system:controller:" + the controller name), used when the controller
+  manager runs with --use-service-account-credentials=true (the kubeadm default, so the
+  kind lab and most managed clusters). When it runs with
+  --use-service-account-credentials=false, every controller acts as the controller
+  manager's own identity instead, system:kube-controller-manager, so that identity is
+  filtered too; the rule covers both modes. A write under impersonation does not bypass
+  the filter: the acting controller's token, not the impersonated user, is in
+  user.username (the impersonated identity goes to impersonatedUser), so an impersonated
+  endpoints write still carries the caller's own username and fires.
+
+  Null-safe negation: the record of a request that fails authentication (401) has no
+  user.username (apiserver v1.36.4 WithFailedAuthenticationAudit), so each identity filter
+  is ORed with a test that user.username is absent (sel_no_username). verb and
+  objectRef.resource are present on every record the rule matches, so the filters need no
+  further guard (detections/README.md, null safety).
+
+  Metadata level is enough to fire: the verb, the objectRef (resource, apiGroup,
+  namespace, name) and the identity are all in a Metadata record, and the rule reads no
+  object body. The shipped lab and recommended audit policies drop only get/list/watch of
+  endpoints/endpointslices (noise reduction) and keep every write at the Metadata
+  catch-all, so no policy change is needed for this rule
+  (detections/k8s/audit-policy-apiserver.yaml, audit-policy-recommended.yaml). verb
+  deletecollection is deliberately NOT matched: a namespace teardown deletecollections a
+  namespace's endpoints and endpointslices (the namespace controller,
+  pkg/controller/namespace), which is routine and appears in the benign corpus
+  (detections/benign/slices/kubernetes/k8s-audit-gitops-ci.json), and a deletecollection
+  removes addresses rather than repointing them.
+
+  Limit (detections/RULE_DEFECTS.md K69): a LEGITIMATE manual Endpoints or
+  EndpointSlice write -- an admin or a GitOps tool pointing a selectorless Service at an
+  external database, or an operator repointing one during a migration -- is a non-
+  controller create/update/patch of exactly these objects, so on a single Metadata record
+  it is byte-for-byte the attack minus the attacker-chosen target IP, which Metadata does
+  not even carry. The rule is therefore a LOW-FIDELITY hunting / correlation anchor
+  (medium), like the service-exposure chokepoint (TRR9033): baseline the identities that
+  write selectorless-Service endpoints by design (user.username, user.groups), and triage
+  by whether the Service previously had a selector and by the written address. A second
+  limit: because the filter trusts user.username, a write sent with a STOLEN endpoint-
+  controller (or kube-controller-manager) token is filtered and missed -- a credential-
+  theft evasion, the class of RULE_DEFECTS.md K37/K50/K51, not a reason to drop the filter
+  (a controller's own continual writes would otherwise bury every real hit).
+
+  Gap (detections/RULE_DEFECTS.md K70): the rule does not grade the WRITTEN address,
+  so it does not raise severity for the CVE-2021-25737 node-local / link-local redirect
+  (an Endpoints or EndpointSlice address in 127.0.0.0/8 or 169.254.0.0/16, which can reach
+  a node's kubelet or cloud metadata). That overlay needs the addresses in the request
+  body (requestObject.subsets[].addresses[].ip for core Endpoints,
+  requestObject.endpoints[].addresses[] for a discovery EndpointSlice), which only a
+  Request-level (or higher) record holds; endpoints are among the highest-volume write
+  objects in a cluster (every pod-readiness change rewrites them), so logging their bodies
+  at Request is costly, and the shipped policies keep them at Metadata. The address grade
+  is a documented gap, not shipped; the Metadata actor-class chokepoint is what ships.
+
+  Platform coverage: detections/k8s/PLATFORMS.md#rules-on-each-platform.
+references:
+  - https://attack.mitre.org/techniques/T1557/
+  - https://attack.mitre.org/techniques/T1565/
+  - https://kubernetes.io/docs/concepts/services-networking/service/#services-without-selectors
+  - https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+author: det-eng
+date: 2026/11/03
+tags:
+  - attack.credential-access
+  - attack.collection
+  - attack.t1557
+  - attack.impact
+  - attack.t1565
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  # The core Endpoints object. objectRef.apiGroup is absent for a core resource (the audit
+  # ObjectReference serializes APIGroup with omitempty, so "" is omitted), so a core
+  # Endpoints write is resource == endpoints with no apiGroup. The null test also keeps a
+  # CRD named "endpoints" in some other API group (apiGroup present) out of this branch.
+  sel_core_endpoints:
+    objectRef.resource: 'endpoints'
+    objectRef.apiGroup: null
+  # The discovery.k8s.io EndpointSlice object (apiGroup present and exact), so a CRD named
+  # "endpointslices" in another group does not match.
+  sel_discovery_endpointslices:
+    objectRef.resource: 'endpointslices'
+    objectRef.apiGroup: 'discovery.k8s.io'
+  # A write that sets addresses. deletecollection (namespace teardown) is excluded by not
+  # being in this list; delete removes the object rather than repointing it.
+  sel_write_verb:
+    verb:
+      - 'create'
+      - 'update'
+      - 'patch'
+  # The endpoint controller writes a selector Service's core Endpoints.
+  filter_endpoint_controller:
+    user.username: 'system:serviceaccount:kube-system:endpoint-controller'
+  # The endpointslice controller writes a selector Service's EndpointSlices.
+  filter_endpointslice_controller:
+    user.username: 'system:serviceaccount:kube-system:endpointslice-controller'
+  # The endpointslicemirroring controller mirrors a hand-written Endpoints into an
+  # EndpointSlice (so it writes endpointslices for a selectorless Service).
+  filter_endpointslicemirroring_controller:
+    user.username: 'system:serviceaccount:kube-system:endpointslicemirroring-controller'
+  # --use-service-account-credentials=false: every controller acts as the controller
+  # manager's own identity, so its endpoints/endpointslices writes carry this username.
+  filter_kube_controller_manager:
+    user.username: 'system:kube-controller-manager'
+  # Null guard: a 401 (failed authentication) record has no user.username, so a bare
+  # `not filter_*` would drop it on a three-valued SQL backend. verb and objectRef.resource
+  # are present on every matched record, so one guard on user.username covers all four
+  # identity filters.
+  sel_no_username:
+    user.username: null
+  condition: >-
+    (sel_core_endpoints or sel_discovery_endpointslices) and sel_write_verb
+    and (sel_no_username or not filter_endpoint_controller)
+    and (sel_no_username or not filter_endpointslice_controller)
+    and (sel_no_username or not filter_endpointslicemirroring_controller)
+    and (sel_no_username or not filter_kube_controller_manager)
+falsepositives:
+  - A legitimate manual Endpoints or EndpointSlice write by an admin or a GitOps / IaC tool
+    (Argo CD, Flux, Terraform) that points a selectorless Service at an out-of-cluster
+    backend (a database, a legacy host) by hand, or an operator repointing one during a
+    migration or fail-over. On one Metadata record this is indistinguishable from the
+    attack (the written address, the only difference, is not in a Metadata record), so the
+    rule is a low-fidelity hunting / correlation anchor (RULE_DEFECTS.md K69).
+    Baseline those identities by user.username and user.groups; triage by whether the
+    Service had a selector before and by the written address.
+  - A write sent with a stolen endpoint-controller or kube-controller-manager token is
+    filtered by identity and missed (a credential-theft evasion, RULE_DEFECTS.md K69,
+    the class of K37/K50/K51). The filter is kept because a controller rewrites these
+    objects on every pod-readiness change, and without it every hit would be buried.
+  - A CNI or service-mesh controller that manages EndpointSlices under its own service
+    account. On a cluster that runs one this is the DOMINANT hit source, not an edge case --
+    Cilium (cilium-operator, in particular when it replaces kube-proxy), service meshes such
+    as Istio (ambient and multi-cluster modes), and the Multi-Cluster Services EndpointSlice
+    import controller (mcs-controller) each create and update EndpointSlices continuously
+    under an identity that is not one of the four filtered here, so every one of their
+    writes fires. Baseline that controller's identity (user.username, user.groups) before
+    you deploy, as for the CSI provisioner in RULE_DEFECTS.md K50. The benign corpus
+    (detections/benign/) contains no such writer, so the rule's 0 hits there is a reference-
+    platform (kubeadm / kind, the TRR9039 lab) figure, not a production one.
+  - A denied (403) or unauthenticated (401) create/update/patch attempt that changed
+    nothing. The rule is a pure-surface actor-class chokepoint with no response-code gate,
+    so it alerts on an attempted-but-blocked write as well as a successful one. Scope by
+    responseStatus.code (a 2xx) if only a successful hijack is wanted.
+level: medium

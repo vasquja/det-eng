@@ -1,0 +1,70 @@
+title: AWS IAM Roles Anywhere Trust Anchor or Profile Written
+id: 16bdf3c3-380b-4993-980c-a35a3aa9c7e8
+status: experimental
+description: |
+  Low-fidelity TRR9037 backstop: any write to the IAM Roles Anywhere trust-anchor or
+  profile configuration (CloudTrail management event, eventSource
+  rolesanywhere.amazonaws.com) -- creating, updating or enabling a trust anchor, or
+  creating, updating or enabling a profile. Roles Anywhere lets an X.509 client certificate
+  that a trusted CA signs be exchanged for temporary AWS credentials; a trust anchor names
+  the trusted CA and a profile names the roles a session may assume and the session policy.
+  Every certificate-based persistence procedure passes through one of these writes
+  (T1098.001, secondary T1199), so this rule is the broad companion of the high-fidelity
+  external-CA rule aws_rolesanywhere_trust_anchor_external_ca.yml.
+
+  This is a pure-surface chokepoint: it keys only on the record kind (the trust-anchor /
+  profile write API names), not on a discriminating field, so it fires on every legitimate
+  Roles Anywhere configuration write as well. It exists to catch the legs the graded rule
+  deliberately does not -- EnableTrustAnchor (re-enabling a disabled anchor), the profile
+  writes (CreateProfile / UpdateProfile / EnableProfile, which attach the roles a session
+  may assume and can widen acceptedRoleArns or durationSeconds), and a trust-anchor write
+  that keeps an AWS_ACM_PCA source -- which a defender triages at a lower priority or feeds a
+  first-seen-principal overlay. Scope it with a baseline of the IAM principals
+  (userIdentity.arn) that manage Roles Anywhere, rather than treating every hit as an alert.
+
+  Failed calls are excluded (CloudTrail writes errorCode only on an error; the negation is
+  null-safe to keep every successful write on a three-valued backend).
+
+  Prior art: this is the open-Sigma counterpart of Amazon GuardDuty's opt-in
+  Persistence:RolesAnywhere/AccountManipulation finding (bare trust-anchor create) and of
+  Datadog Cloud SIEM's def-000-bf8. It adds the UpdateTrustAnchor / EnableTrustAnchor and
+  profile-write legs that a create-only signal misses. SigmaHQ, Splunk ESCU, Falco and
+  Panther ship no equivalent.
+references:
+  - https://attack.mitre.org/techniques/T1098/001/
+  - https://attack.mitre.org/techniques/T1199/
+  - https://docs.aws.amazon.com/rolesanywhere/latest/userguide/logging-using-cloudtrail.html
+  - https://docs.aws.amazon.com/rolesanywhere/latest/APIReference/Welcome.html
+author: det-eng
+date: 2026/11/04
+tags:
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1098.001
+  - attack.t1199
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventSource: 'rolesanywhere.amazonaws.com'
+    eventName:
+      - 'CreateTrustAnchor'
+      - 'UpdateTrustAnchor'
+      - 'EnableTrustAnchor'
+      - 'CreateProfile'
+      - 'UpdateProfile'
+      - 'EnableProfile'
+  filter_failed:
+    errorCode: '*'
+  # Null-safe negation: CloudTrail writes errorCode only on an error.
+  sel_no_error_code:
+    errorCode: null
+  condition: selection and (sel_no_error_code or not filter_failed)
+falsepositives:
+  - Routine IAM Roles Anywhere administration by Terraform (aws_rolesanywhere_trust_anchor /
+    aws_rolesanywhere_profile), the AWS console or operators creating, updating or enabling
+    trust anchors and profiles. This rule fires on all of them by design; baseline the IAM
+    principals (userIdentity.arn) that manage Roles Anywhere, and treat a write by an
+    unexpected principal as the signal.
+level: medium

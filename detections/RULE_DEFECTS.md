@@ -106,6 +106,16 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
 | [K56](#k56-aws_eks_access_entry_cluster_admin_policy-a-namespace-scoped-secrets-grant-is-missed) | `T1098.006/aws_eks_access_entry_cluster_admin_policy` | a reads-Secrets policy scoped to a sensitive namespace (`kube-system`) reads those Secrets but trips only the medium chokepoint, not the graded rule; one CloudTrail record cannot weigh one namespace against another | false negative | medium |
 | [K57](#k57-aws_eks_access_entry_cluster_admin_policy-no-safe-sigma-predicate-for-a-cross-account-grant) | `T1098.006/aws_eks_access_entry_cluster_admin_policy` | no safe Sigma predicate raises fidelity on a cross-account grant: `principalArn\|fieldref\|contains: recipientAccountId` goes quiet when the attacker names its role with the victim account ID | false negative (documented) | low |
+| [K61](#k61-azure_privileged_role_assignment-a-custom-role-with-owner-equivalent-permissions-evades-the-built-in-guid-allowlist) | `T1098.003/azure_privileged_role_assignment` (TRR9036 A, B) | a custom role definition with Owner-equivalent permissions carries a tenant-specific GUID that is not on the built-in-role allowlist, so the body grade does not fire; the fix is a per-tenant privileged-role-GUID list | evasion | medium |
+| [K62](#k62-azure_privileged_role_assignment-requestbody-can-be-absent-on-some-activity-log-exporters-and-the-grant-is-only-on-the-start-record) | `T1098.003/azure_privileged_role_assignment` (TRR9036 A, B) | the assigned role + scope are only in `properties.requestbody` on the Start record, and some Activity Log exporters / diagnostic settings omit or truncate it, so the body grade is a fixture-provable approximation that degrades to the surface chokepoint where the body is absent | portability, false negative | medium |
+| [K63](#k63-aws_rolesanywhere_trust_anchor_external_ca-external-ca-grade-is-a-policy-hygiene-signal-a-legit-external-pki-shop-also-trips) | `T1098.001/aws_rolesanywhere_trust_anchor_external_ca` (TRR9037 A, B) | the external-CA-vs-ACM-PCA discriminator is a policy-hygiene signal a legitimate external-PKI shop also trips (triage against change tickets); a per-account anchor allowlist is operator-specific and not shipped | false positive | medium |
+| [K64](#k64-aws_rolesanywhere_trust_anchor_external_ca--_write-field-casingnesting-unverified-against-primary-aws-docs) | `T1098.001/aws_rolesanywhere_trust_anchor_external_ca`, `T1098.001/aws_rolesanywhere_trust_anchor_write` | the CloudTrail field casing/nesting (`requestParameters.source.sourceType`, `sourceData.{acmPcaArn,x509CertificateData}`) is taken from the botocore model + Elastic rule, not confirmed against primary AWS docs (unreachable at build) or a captured record; confirm before production | research gap, portability | medium |
+| [K65](#k65-gcp_logging_sink_tampered-the-exclusionbucket-grade-is-a-filter-content-approximation) | `T1562.008/gcp_logging_sink_tampered`, the exclusion branch | one record cannot weigh whether an exclusion's filter is over-broad or which logs it drops (the attacker authors the filter text), so the exclusion branch fires on any `ConfigServiceV2` exclusion write; a deliberate narrow exclusion that drops only noisy non-security logs is a documented false positive. The non-spoofable `_Default`-scope check is the discriminator the rule keys on | false positive, description | medium |
+| [K66](#k66-gcp_logging_sink_tampered-methodname-casing-and-the-disabled-field-path-are-unverified-against-primary-docs) | `T1562.008/gcp_logging_sink_tampered` | the `methodName` casing (`...ConfigServiceV2.DeleteSink`) and the `request.sink.disabled` field path are assumptions: Google's primary audit-method docs were unreachable at build and the casing is taken from Elastic's query. Mitigated by a case- and version-tolerant `\|re\|i` regex and by the `_Default`-scope branch, which fires on a `_Default` disable independently of the `disabled` field path | portability, description | low |
+| [K67](#k67-gcp_logging_sink_tampered-a-benign-_default-sink-filter-or-description-edit-also-fires-branch-a) | `T1562.008/gcp_logging_sink_tampered`, the `_Default` sink/bucket branch | a benign `UpdateSink` that only edits the `_Default` sink's own inclusion filter or description (GCP's documented cost-control knob; re-emitted by a logging-as-code apply each run) targets `.../sinks/_Default`, carries no error and is not a disable, so it fires branch A. One record cannot tell it from a malicious re-divert / filter-narrowing of `_Default` (same single-record limit as K65). Firing is defensible (narrowing the `_Default` filter is itself a tamper); the `_Default` scope is not a clean benign/attack separator for the `UpdateSink` leg | false positive, description | medium |
+| [K68](#k68-gcp_logging_sink_tampered-delete-or-re-divert-of-a-custom-audit-export-sink-is-a-miss) | `T1562.008/gcp_logging_sink_tampered`, the `_Default`-target branch | the delete-or-re-divert leg keys on the `.../sinks/_Default` (or `.../buckets/_Default`) scope, so `DeleteSink` or a destination re-divert of a CUSTOM aggregated audit-export sink (the GCP-CIS pattern used in the repo's own `gcp-platform-ops` benign slice, `org-audit-to-siem`) is a miss. Covered only if the tamper uses the `disabled` flag (branch B). Coverage assumes audit logs flow via `_Default`; blanket-firing on custom-sink deletes would reintroduce the `delete-custom-sink-decommission` false positive, so it stays a documented gap | false negative | medium |
+| [K69](#k69-k8s_service_endpoints_hijacked-a-benign-manual-write-looks-the-same-and-the-username-filter-trusts-the-token) | `T1557/k8s_service_endpoints_hijacked` (TRR9039 A, B) | a benign manual Endpoints/EndpointSlice write (a selectorless Service, an admin repoint) is byte-identical on a Metadata record, so the rule is a low-fidelity hunting anchor, and the controller username filter trusts the token (stolen-controller-token evasion) | false positive, evasion | medium |
+| [K70](#k70-k8s_service_endpoints_hijacked-the-written-address-grade-cve-2021-25737-ranges-is-a-documented-gap) | `T1557/k8s_service_endpoints_hijacked` | the written-address grade (CVE-2021-25737 ranges 127.0.0.0/8 + 169.254.0.0/16) is a documented gap: it needs costly endpoints request-body logging, so the shipped Metadata chokepoint does not read the target address | false negative | low |
 
 ## Linux (auditd and node file events)
 
@@ -2158,6 +2168,144 @@ the current ones.
 - **Then**: the rule stays the create/approve chokepoint; a human who accepts a
   non-portable rule can add the subject grader or the fieldref self-approval check.
 
+### K63. aws_rolesanywhere_trust_anchor_external_ca: external-CA grade is a policy-hygiene signal a legit external-PKI shop also trips
+
+- **Rule**: [`sigma/T1098.001/aws_rolesanywhere_trust_anchor_external_ca.yml`](sigma/T1098.001/aws_rolesanywhere_trust_anchor_external_ca.yml) (level high).
+- **Procedures**: TRR9037.AWS.A, TRR9037.AWS.B.
+- **Kind**: false positive (documented). **Severity**: medium (an organisation that runs
+  its own PKI trips the rule on every legitimate anchor).
+- **Problem**: the rule's discriminator is `requestParameters.source.sourceType` being an
+  external CA (`CERTIFICATE_BUNDLE` / `SELF_SIGNED_REPOSITORY`) rather than an AWS-internal
+  ACM Private CA (`AWS_ACM_PCA`). That is a sound, non-spoofable field, but "external CA"
+  is not the same as "malicious": an organisation whose corporate or on-premises PKI issues
+  the Roles Anywhere client certificates legitimately uses `CERTIFICATE_BUNDLE` /
+  `SELF_SIGNED_REPOSITORY` on **every** anchor, so the graded rule fires on routine
+  administration there. The external-vs-ACM-PCA split is a policy-hygiene signal, like
+  TRR9015's org-wide `repo:org/*` grant (K-equivalent): a finding to triage, not a certain
+  compromise.
+- **Evidence**: *source* — the IAM Roles Anywhere `Source` API model, `sourceType` enum
+  `AWS_ACM_PCA | CERTIFICATE_BUNDLE | SELF_SIGNED_REPOSITORY` (botocore/AWS CLI model and
+  the Elastic prebuilt rule; AWS doc hosts unreachable at build, see K64). The hard
+  benign fixture is an `AWS_ACM_PCA` anchor; the graded rule's `falsepositives` names the
+  external-PKI shop. The benign corpus scores the rule 0 only because the committed AWS
+  slices carry no Roles Anywhere traffic (untested by absence, stated in the TRR README).
+- **Fix**: none at one record. Triage the external-CA anchor against change tickets and the
+  managing IAM principal (`userIdentity.arn`), and allowlist the known corporate-CA
+  anchor(s) per deployment (an operator-specific allowlist, not shipped). The surface
+  chokepoint `aws_rolesanywhere_trust_anchor_write.yml` is the broad backstop.
+- **Then**: a deployment with a known external PKI ships a per-account allowlist of its
+  authorised trust-anchor sources (by `trustAnchorArn` or managing principal), with a
+  positive for an unexpected external CA and a filtered case for the allowlisted one.
+
+### K64. aws_rolesanywhere_trust_anchor_external_ca / _write: field casing/nesting unverified against primary AWS docs
+
+- **Rule**: [`sigma/T1098.001/aws_rolesanywhere_trust_anchor_external_ca.yml`](sigma/T1098.001/aws_rolesanywhere_trust_anchor_external_ca.yml) (level high) and [`sigma/T1098.001/aws_rolesanywhere_trust_anchor_write.yml`](sigma/T1098.001/aws_rolesanywhere_trust_anchor_write.yml) (level medium).
+- **Kind**: research gap (field provenance). **Severity**: medium (if the real CloudTrail
+  record nests the source differently, the graded rule's discriminator field path is wrong
+  and the rule silently does not fire).
+- **Problem**: the graded rule keys on `requestParameters.source.sourceType` (lowerCamel,
+  nested under `source`), and the TRR documents `source.sourceData.x509CertificateData` /
+  `source.sourceData.acmPcaArn`. These paths were taken from the **botocore / AWS CLI**
+  `rolesanywhere` model and the **Elastic** prebuilt rule, because every primary AWS
+  documentation host (`docs.aws.amazon.com`, `botocore.readthedocs.io`, `docs.amazonaws.cn`)
+  and the Elastic / detection.fyi hosts were **unreachable** from the build environment at
+  build time (ENOTFOUND, outside the session's allowed network domains). CloudTrail
+  normalises `requestParameters` to lowerCamelCase, so the casing is the expected shape, but
+  the exact JSON **nesting** of a real `CreateTrustAnchor` record (is `sourceType` under a
+  `source` object, or flattened?) was **not** confirmed against a captured event. The
+  chokepoint rule keys only on `eventSource` + `eventName`, which are CloudTrail-set and not
+  at risk; only the graded rule's `source.sourceType` path carries this risk.
+- **Evidence**: *search* — botocore/CLI `create_trust_anchor` request schema (a `source`
+  object with `sourceType` enum and a `sourceData` tagged union of `x509CertificateData` /
+  `acmPcaArn`); the Elastic rule tests `aws.cloudtrail.request_parameters` contains
+  `sourceType=AWS_ACM_PCA` (its own ECS-flattened representation, not raw CloudTrail). No
+  captured raw `CreateTrustAnchor` CloudTrail record was reachable to confirm the nesting.
+- **Fix**: capture a real `CreateTrustAnchor` event (CloudTrail Event history or an S3
+  trail) in a sandbox account and confirm the path; if the record flattens `source`
+  differently, update the graded rule's field and the sidecar/fixtures to match. Until then
+  the lowerCamel nested path is the best-evidence assumption.
+- **Then**: once a captured record pins the path, this entry closes and the fixtures carry
+  the confirmed shape.
+### K69. k8s_service_endpoints_hijacked: a benign manual write looks the same, and the username filter trusts the token
+
+- **Rule**: [`sigma/T1557/k8s_service_endpoints_hijacked.yml`](sigma/T1557/k8s_service_endpoints_hijacked.yml) (level medium), TRR9039 Procedures A and B.
+- **Procedures**: TRR9039.K8S.A, TRR9039.K8S.B.
+- **Kind**: false positive, evasion. **Severity**: medium (a low-fidelity hunting /
+  correlation anchor, as the service-exposure chokepoint K59 is).
+- **Problem**: two linked limits of an actor-class chokepoint read at Metadata.
+  1. **A legitimate manual write is byte-identical to the attack.** For a selectorless
+     Service an operator supplies the backends by hand — a core `Endpoints` of the
+     Service's name, or an `EndpointSlice` labelled `kubernetes.io/service-name=<svc>`. An
+     admin, a GitOps / IaC tool (Argo CD, Flux, Terraform) pointing a Service at an
+     external database, or a fail-over that repoints one, is a non-controller
+     create/update/patch of exactly these objects. The only thing that separates it from a
+     hijack is the written address, which is in the request body — and the rule fires at
+     Metadata, which carries no body. So on one record the rule cannot tell them apart; it
+     is an anchor to triage and correlate, not a high-confidence alert.
+  2. **The filter trusts `user.username`.** The discriminator is "not an endpoint
+     controller", keyed on the caller's username. A write sent with a **stolen**
+     `endpoint-controller` / `endpointslice-controller` / `endpointslicemirroring-controller`
+     or `system:kube-controller-manager` token is filtered and missed — the credential-theft
+     evasion class of K37 / K50 / K51. The filter is kept because a controller rewrites
+     these objects on every pod-readiness change; without it every real hit would be buried
+     under the controllers' continual writes.
+- **Evidence**: *probe* (`sigma_eval.py` on the current rule): a non-controller endpoints
+  create / endpointslices patch fires; the same write under any of the four controller
+  identities does not. *cases* — the positives `endpoints-create-hijack-procA`,
+  `endpointslice-create-hijack-procB`, `endpoints-update-hijack`,
+  `endpointslice-patch-hijack` are each indistinguishable from a benign manual write of the
+  same shape; the confounder `endpoint-controller-token-stolen-known-miss` is a hijack sent
+  as the endpoint controller's identity that the filter suppresses (the evasion). *corpus*
+  — the benign corpus scores the rule **0** because its `endpoints`/`endpointslices` writes
+  are `deletecollection` namespace teardowns (outside the rule's verb set) or
+  controller-sourced (filtered), so the manual-write confounder is not represented today.
+  The corpus also contains no CNI or service-mesh EndpointSlice writer (Cilium's
+  `cilium-operator`, Istio, the MCS `mcs-controller`), so the **0** is a reference-platform
+  (kubeadm / kind) figure; on a cluster that runs such a controller its writes are the
+  dominant hit source and its identity must be baselined before the rule is deployed (noted
+  in the rule's third false positive).
+- **Fix**: none that one Metadata record supports. Baseline the identities that write
+  selectorless-Service endpoints by design (`user.username`, `user.groups`); triage by
+  whether the Service had a selector before and by the written address (which needs the
+  body, K70). For the evasion, correlate a controller-identity endpoints write with
+  the absence of the pod-readiness change that should drive it, or restrict who can obtain a
+  controller token. If a benign slice of manual non-controller endpoints writes is added to
+  the corpus, propose a budget (`enforce`, a human decision), as K59 notes for TRR9033.
+- **Then**: the rule stays the actor-class chokepoint; a correlation that pairs the write
+  with the prior Service state or the triggering pod change, or an address grade
+  (K70), raises it above a hunting anchor.
+
+### K70. k8s_service_endpoints_hijacked: the written-address grade (CVE-2021-25737 ranges) is a documented gap
+
+- **Rule**: [`sigma/T1557/k8s_service_endpoints_hijacked.yml`](sigma/T1557/k8s_service_endpoints_hijacked.yml) (level medium).
+- **Kind**: false negative (documented gap). **Severity**: low (an enrichment not shipped;
+  the actor-class chokepoint still fires on the write).
+- **Problem**: the rule does not grade the **written address**, so it does not raise
+  severity for the CVE-2021-25737 node-local / link-local redirect — an `Endpoints` or
+  `EndpointSlice` address in `127.0.0.0/8` or `169.254.0.0/16`, which can reach a node's
+  kubelet or the cloud metadata service. That grade (the Sysdig / Falco blog rule's angle)
+  needs the addresses in the request body (`requestObject.subsets[].addresses[].ip` for a
+  core `Endpoints`, `requestObject.endpoints[].addresses[]` for an `EndpointSlice`), which
+  only a Request-level (or higher) record holds. `endpoints` and `endpointslices` are among
+  the highest-volume write objects in a cluster — every pod-readiness change rewrites them —
+  so logging their bodies at Request is costly, and the shipped lab and recommended policies
+  keep these writes at the Metadata catch-all. The actor-class chokepoint is what ships; the
+  address grade is not.
+- **Evidence**: the audit policies log `endpoints`/`endpointslices` writes at Metadata (the
+  catch-all), with no body ([`k8s/audit-policy-apiserver.yaml`](k8s/audit-policy-apiserver.yaml),
+  [`k8s/audit-policy-recommended.yaml`](k8s/audit-policy-recommended.yaml)); the TRR Scope
+  Statement and Detection Strategy name the gap. The field paths are pinned to kubernetes
+  v1.36.4 (`staging/src/k8s.io/api/core/v1` `EndpointAddress.IP`,
+  `staging/src/k8s.io/api/discovery/v1` `Endpoint.Addresses`).
+- **Fix**: an operator who accepts the volume adds a Request-level (or RequestResponse)
+  audit-policy rule for `endpoints`/`endpointslices` writes and a branch (or a second rule)
+  that matches `requestObject.subsets[].addresses[].ip` / `requestObject.endpoints[].addresses[]`
+  with a portable `|cidr` on `127.0.0.0/8` and `169.254.0.0/16`. That is a per-cluster
+  opt-in, not a change to this portable Metadata rule.
+- **Then**: with the body logged, a shipped address-grade branch (and an
+  `EXPECTED_MISS`/`POLICY_GATES` wiring for the body policy) raises the node-local /
+  link-local redirect above the chokepoint.
+
 ## Cloud (AWS, Azure, GCP)
 
 ### C6. gcp_workforce_principalset_privileged_binding: where the privileged-role tier ends
@@ -2278,6 +2426,184 @@ the current ones.
   and compile under Python `re` and RE2 — unlike a `(?!...)` negative-lookahead anchor, which
   RE2 and `check_sigma_regex` reject. The org-account allowlist is operator-specific, so this
   form is documented, not shipped. Baseline external-account principal ARNs on access entries.
+
+### K61. azure_privileged_role_assignment: a custom role with Owner-equivalent permissions evades the built-in-GUID allowlist
+
+
+- **Rule**: [`sigma/T1098.003/azure_privileged_role_assignment.yml`](sigma/T1098.003/azure_privileged_role_assignment.yml) (level medium).
+- **Procedures**: TRR9036.AZR.A, TRR9036.AZR.B.
+- **Kind**: evasion. **Severity**: medium (misses a plausible, admin-equivalent variant).
+- **Problem**: `selection_privileged_role` matches only the four built-in privileged-role
+  GUIDs (Owner, Contributor, User Access Administrator, Role Based Access Control
+  Administrator). Azure lets a tenant define **custom roles**, and a custom role can carry
+  Owner-equivalent permissions — for example `Actions: ["*"]`, or
+  `Microsoft.Authorization/roleAssignments/write` plus broad data actions. A custom role
+  definition has a **tenant-specific GUID** (`/subscriptions/<sub>/providers/Microsoft.Authorization/roleDefinitions/<custom-guid>`
+  or `/providers/Microsoft.Management/managementGroups/<mg>/providers/Microsoft.Authorization/roleDefinitions/<custom-guid>`),
+  which is not on the built-in allowlist and is unknowable in a portable rule. So a grant of
+  such a custom role at subscription / management-group scope does not fire, although it is
+  the same privilege escalation.
+- **Evidence**: *source* — Microsoft, "Azure custom roles"
+  (<https://learn.microsoft.com/azure/role-based-access-control/custom-roles>): a custom role
+  may hold `Actions: ["*"]`, and its `name` (the role-definition GUID) is generated per
+  tenant. *probe* — a `roleAssignments/write` Start record whose `requestbody`
+  `Properties.RoleDefinitionId` ends with a non-built-in GUID does not fire
+  `azure_privileged_role_assignment.yml` (reproduce by changing the Owner GUID in
+  `detections/cloud/fixtures/trr9036/attack.json` to a random GUID and running
+  `sigma_eval.py`; see [Reproducing a probe](#reproducing-a-probe)).
+- **Fix**: a **per-tenant privileged-role-GUID list** — the operator enumerates the custom
+  roles that confer admin-equivalent permissions (via `az role definition list`) and extends
+  `selection_privileged_role` with their GUIDs. The list is site-specific, so it is a
+  documented operator step, not a change to the shipped rule. A complementary hunt grades the
+  `roleDefinitions/write` records that create or widen a custom role.
+- **Then**: with the per-tenant list configured, a sidecar positive whose `requestbody`
+  carries a site custom-role GUID fires, and this entry closes.
+
+### K62. azure_privileged_role_assignment: requestbody can be absent on some Activity Log exporters, and the grant is only on the Start record
+
+
+- **Rule**: [`sigma/T1098.003/azure_privileged_role_assignment.yml`](sigma/T1098.003/azure_privileged_role_assignment.yml) (level medium).
+- **Procedures**: TRR9036.AZR.A, TRR9036.AZR.B.
+- **Kind**: portability, false negative. **Severity**: medium.
+- **Problem**: the assigned role and scope are server-recorded **only** in
+  `properties.requestbody` (a JSON string), and the Activity Log attaches that body to the
+  **Start** record, not the completion record. Two consequences: (1) the rule must fire on
+  the Start record (it does — `resultType` starts `Start`), and a pipeline that keeps only
+  the completion record sees no body; (2) some Activity Log exporters and diagnostic-setting
+  configurations omit or truncate `requestbody`. Where the body is absent the body grade
+  cannot fire, and the rule degrades to the surface chokepoint
+  (`roleAssignments/write` at high scope). This is the same fixture-provable-approximation
+  shape documented for the TRR9011 IMDS off-source and TRR9030 off-source degrades.
+- **Evidence**: *source* — Microsoft, "Azure Activity Log event schema"
+  (<https://learn.microsoft.com/azure/azure-monitor/platform/activity-log-schema>): the
+  `properties` bag is free-form and not guaranteed to carry `requestbody` on every export
+  path; the completion record in this repo's own fixtures carries no `requestbody`. *case* —
+  the sidecar confounder `role-assignment-owner-subscription-completion` is the Success
+  completion record of the attack write; it carries no `requestbody` and does not fire, which
+  is correct here but is also the shape an exporter that drops the body produces for the Start
+  record. *probe* — deleting `properties.requestbody` from the attack Start record makes the
+  rule miss (reproduce with `sigma_eval.py`; see [Reproducing a probe](#reproducing-a-probe)).
+- **Fix**: where `requestbody` is reliably present (the default Azure Monitor / Event Hub
+  export), keep the body grade; where an exporter drops it, add a **surface fallback** rule —
+  `roleAssignments/write` at subscription / management-group scope keyed on
+  `identity.authorization.scope` (server-set), tuned by the baselined set of principals that
+  legitimately grant privileged roles. The fallback is noisier (no role discriminator), so it
+  is a follow-up rule and an operator tuning step, not a change to this rule.
+- **Then**: a surface-fallback rule plus its cases, scored against the benign corpus, closes
+  the exporter-absence half; the Start-record half is already proven by the fixtures.
+### K65. gcp_logging_sink_tampered: the exclusion/bucket grade is a filter-content approximation
+
+- **Rule**: [`sigma/T1562.008/gcp_logging_sink_tampered.yml`](sigma/T1562.008/gcp_logging_sink_tampered.yml) (level high).
+- **Kind**: false positive, description. **Severity**: medium. **Procedures**: TRR9038.GCP.C.
+- **Problem**: the exclusion branch fires on any `ConfigServiceV2` exclusion write
+  (`CreateExclusion` / `UpdateExclusion` / `DeleteExclusion`). Whether an exclusion is a
+  tamper depends on its **filter text** — a filter that matches the audit-log stream drops
+  security logs, while a filter that matches only noisy debug/health-check logs is a routine
+  cost-control measure. The filter is **attacker-authored free text**, and one audit record
+  cannot weigh whether it is over-broad or which logs it drops. So a deliberate narrow
+  exclusion is a documented false positive, and `DeleteExclusion` (which *restores* logging)
+  is included only to make exclusion churn / replacement visible. The non-spoofable
+  discriminator the rule keys on is the `_Default`-scope check on the sink/bucket branches,
+  not the exclusion content.
+- **Evidence**: probe (`sigma_eval.py`) — the positive `create-exclusion-drop-audit` (filter
+  `logName:"cloudaudit.googleapis.com"`) and a crafted narrow exclusion (filter
+  `resource.type="k8s_container" severity<WARNING`) both fire the rule, because the branch
+  reads only `methodName`, not the filter. Same shape as the AWS CloudTrail
+  selector-narrowing limit (a single record carries the new state, not the prior state).
+- **Fix**: no portable Sigma predicate grades free-text filter breadth; raising fidelity
+  needs enrichment one record cannot carry (does the filter match the audit `logName` /
+  `protoPayload.@type`; is the exclusion `disabled`; the prior exclusion set). A content
+  overlay that flags a filter referencing `cloudaudit.googleapis.com` or the AuditLog
+  `@type` is a severity hint, not a clean discriminator. Allowlist benign exclusions by
+  `protoPayload.resourceName` / `authenticationInfo.principalEmail` and correlate with change
+  management. **Then**: an allowlist filter proven by a filtered case, and a content overlay
+  proven by a near-miss, close the branch.
+
+### K66. gcp_logging_sink_tampered: methodName casing and the disabled field path are unverified against primary docs
+
+- **Rule**: [`sigma/T1562.008/gcp_logging_sink_tampered.yml`](sigma/T1562.008/gcp_logging_sink_tampered.yml) (level high).
+- **Kind**: portability, description. **Severity**: low.
+- **Problem**: Google's audit-method reference (`docs.cloud.google.com`) was **unreachable**
+  from the build environment, so two shapes could not be re-verified against primary docs:
+  (1) the exact `methodName` casing — `google.logging.v2.ConfigServiceV2.DeleteSink` /
+  `UpdateSink` / `CreateExclusion` / `UpdateBucket` / `DeleteBucket` — taken from Elastic's
+  published GCP Logging Sink rules; and (2) the location of the sink `disabled` flag in the
+  request body, modelled as `protoPayload.request.sink.disabled` (the `LogSink` inside
+  `UpdateSinkRequest`). If either is wrong against real logs, the affected branch is a silent
+  dead match.
+- **Evidence**: source — Elastic `defense_evasion_gcp_logging_sink_deletion`
+  (id `51859fa0-d86b-4214-bf48-ebb30ed91305`) uses `event.action`
+  `google.logging.v*.ConfigServiceV*.DeleteSink`; the repo benign slice
+  `gcp-platform-ops` carries a real `google.logging.v2.ConfigServiceV2.UpdateSink` on a custom
+  sink. No primary-doc or live-record confirmation was possible this build (**unverified**).
+- **Fix (mitigations shipped)**: `methodName` is matched with a case- and version-tolerant
+  regex (`google\.logging\.v[0-9]+[a-z0-9]*\.configservicev[0-9]+\.<method>$`, `|re|i`), so
+  the casing and the API version do not have to be exact. The `disabled`-flag branch is a
+  bonus leg: disabling the `_Default` sink via `UpdateSink` also fires the `_Default`-scope
+  branch (which does not read `disabled`), so a wrong `disabled` path only loses the
+  disable-a-custom-sink case. **Then**: re-verify `methodName` casing and the `disabled` path
+  against a real Cloud Audit Log record and Google's docs when reachable; pin an exact-casing
+  positive if confirmed.
+
+### K67. gcp_logging_sink_tampered: a benign _Default sink filter or description edit also fires branch A
+
+- **Rule**: [`sigma/T1562.008/gcp_logging_sink_tampered.yml`](sigma/T1562.008/gcp_logging_sink_tampered.yml) (level high).
+- **Kind**: false positive, description. **Severity**: medium. **Procedures**: TRR9038.GCP.A.
+- **Problem**: branch A fires on ANY successful `ConfigServiceV2` sink/bucket write whose
+  `resourceName` ends in `/sinks/_Default` or `/buckets/_Default`, regardless of what the
+  write changes. A legitimate `UpdateSink` that only edits the `_Default` sink's own
+  inclusion/exclusion **filter** or **description** — GCP's documented way to cut `_Default`
+  bucket ingestion cost, and what a logging-as-code (`terraform apply`, Config Connector)
+  reconcile re-emits on every run — targets `.../sinks/_Default`, uses `UpdateSink`, carries
+  no error (`status.code` absent) and sets no `disabled` flag, so it fires. K65 covers
+  the project-level **exclusion** API; this is the `_Default` sink's own embedded filter, a
+  different leg K65 does not reach. The rule's `falsepositives:` block previously named
+  only custom-sink lifecycle as the non-firing benign case and framed every `_Default` write
+  as attack; that overclaimed a clean `_Default`-vs-custom split for the `UpdateSink` leg.
+- **Evidence**: probe (`sigma_eval.py`) — a success `UpdateSink` of
+  `projects/trr9038-demo-project/sinks/_Default` with `disabled=false`, `updateMask=filter`,
+  `filter='NOT resource.type="gce_instance"'` → `FIRES (2VL) FIRES (3VL)`. A trivial benign
+  variant shares the `_Default` scope, the method and the no-error status, differing only in
+  the `updateMask` / `filter` / `destination` the `_Default` branch does not inspect.
+- **Fix**: no rule-logic change — firing on a `_Default` filter narrowing is **defensible**,
+  because narrowing the `_Default` inclusion filter is itself a logging tamper. This is a
+  disclosure, not a bug: one record cannot tell a benign cost-control filter/description edit
+  from a malicious re-divert or filter-narrowing of `_Default` (same single-record limit as
+  K65). Allowlist benign `_Default` edits by `protoPayload.resourceName` /
+  `authenticationInfo.principalEmail` + the `updateMask`, and correlate with change
+  management. **Then**: an allowlist filter proven by a filtered case closes the leg.
+
+### K68. gcp_logging_sink_tampered: delete or re-divert of a custom audit-export sink is a miss
+
+- **Rule**: [`sigma/T1562.008/gcp_logging_sink_tampered.yml`](sigma/T1562.008/gcp_logging_sink_tampered.yml) (level high).
+- **Kind**: false negative. **Severity**: medium. **Procedures**: TRR9038.GCP.A.
+- **Problem**: the sink/bucket delete-or-re-divert leg (branch A) keys on
+  `protoPayload.resourceName` ending in `/sinks/_Default` or `/buckets/_Default`. Deleting or
+  re-pointing a CUSTOM aggregated audit-export sink is therefore silent. That is the GCP CIS
+  pattern — and the repo's OWN benign corpus carries a real org-level custom audit sink
+  (`gcp-platform-ops` slice, `organizations/123456789012/sinks/org-audit-to-siem`, filter
+  `logName:"cloudaudit.googleapis.com"`, `includeChildren`) that routes all audit logs to a
+  SIEM. Many mature orgs disable `_Default` and rely on such a custom sink, so for them
+  `_Default` is irrelevant and the real tamper target is the custom sink. The rule's
+  description already argues that disabling a custom audit-export sink is as much a tamper as
+  disabling `_Default` and catches that via branch B (`request.sink.disabled` true); it does
+  not extend the same reasoning to `DeleteSink` or a destination re-divert of a custom sink,
+  which are strictly more destructive. An attacker who deletes or re-points the custom audit
+  sink instead of setting `disabled` evades.
+- **Evidence**: probe (`sigma_eval.py`) over three `organizations/123456789012/sinks/org-audit-to-siem`
+  records — `quiet` for `DeleteSink`, `quiet` for `UpdateSink` re-diverting the destination
+  (`disabled=false`), `FIRES` only for `UpdateSink` setting `disabled=true`. Confirms the
+  delete and re-divert of a custom audit sink are missed while the disable leg fires.
+- **Fix**: documented coverage assumption, not a rule change. The delete/re-divert leg
+  **assumes audit logs flow via `_Default`**; delete or re-divert of a custom
+  audit-aggregation sink is covered only if it uses the `disabled` flag (branch B).
+  Blanket-firing on every custom-sink `DeleteSink` would reintroduce the
+  `delete-custom-sink-decommission` false positive (near-miss `neg3`) — a single record
+  cannot tell a benign custom-sink decommission from a malicious custom-audit-sink delete —
+  so the gap stays documented rather than closed with a noisy predicate. **Then**: a
+  non-clean severity-hint overlay (an `UpdateSink` destination change away from a
+  `logging.googleapis.com/.../buckets/...` destination, proven by a near-miss) or correlation
+  with the sink's prior `logName:"cloudaudit.googleapis.com"` filter would raise fidelity.
 
 ## Checks to add
 

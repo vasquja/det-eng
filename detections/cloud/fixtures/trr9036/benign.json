@@ -1,0 +1,89 @@
+[
+  {
+    "time": "2026-11-03T18:02:41.330Z",
+    "resourceId": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/trr9036-rg/providers/Microsoft.KeyVault/vaults/trr9036-kv/providers/Microsoft.Authorization/roleAssignments/3a2b1c0d-4e5f-4061-8273-8495a6b7c8d9",
+    "operationName": "Microsoft.Authorization/roleAssignments/write",
+    "category": "Administrative",
+    "resultType": "Start",
+    "resultSignature": "Started.",
+    "durationMs": 0,
+    "callerIpAddress": "203.0.113.11",
+    "correlationId": "1f2e3d4c-5b6a-4790-8a1b-2c3d4e5f6a7b",
+    "identity": {
+      "authorization": {
+        "scope": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/trr9036-rg/providers/Microsoft.KeyVault/vaults/trr9036-kv",
+        "action": "Microsoft.Authorization/roleAssignments/write",
+        "evidence": {
+          "role": "Owner",
+          "roleAssignmentScope": "/subscriptions/11111111-2222-3333-4444-555555555555",
+          "roleAssignmentId": "9182a3b4c5d6e7f80192a3b4c5d6e7f8",
+          "principalId": "c8d9e0f1-0010-4a2b-9c3d-4e5f6a7b8c90",
+          "principalType": "ServicePrincipal"
+        }
+      },
+      "claims": {
+        "aud": "https://management.core.windows.net/",
+        "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+        "appid": "9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+        "appidacr": "2",
+        "idtyp": "app",
+        "http://schemas.microsoft.com/identity/claims/objectidentifier": "c8d9e0f1-0010-4a2b-9c3d-4e5f6a7b8c90",
+        "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+        "ver": "1.0"
+      }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+      "serviceRequestId": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+      "eventCategory": "Administrative",
+      "entity": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/trr9036-rg/providers/Microsoft.KeyVault/vaults/trr9036-kv/providers/Microsoft.Authorization/roleAssignments/3a2b1c0d-4e5f-4061-8273-8495a6b7c8d9",
+      "message": "Microsoft.Authorization/roleAssignments/write",
+      "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/11111111-2222-3333-4444-555555555555",
+      "requestbody": "{\"Id\":\"3a2b1c0d-4e5f-4061-8273-8495a6b7c8d9\",\"Properties\":{\"PrincipalId\":\"d1e2f3a4-0020-4b3c-8d4e-5f6a7b8c9d01\",\"PrincipalType\":\"ServicePrincipal\",\"RoleDefinitionId\":\"/subscriptions/11111111-2222-3333-4444-555555555555/providers/Microsoft.Authorization/roleDefinitions/4633458b-17de-408a-b874-0445c86b69e6\",\"Scope\":\"/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/trr9036-rg/providers/Microsoft.KeyVault/vaults/trr9036-kv\"}}"
+    }
+  },
+  {
+    "time": "2026-11-03T18:02:42.045Z",
+    "resourceId": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/trr9036-rg/providers/Microsoft.KeyVault/vaults/trr9036-kv/providers/Microsoft.Authorization/roleAssignments/3a2b1c0d-4e5f-4061-8273-8495a6b7c8d9",
+    "operationName": "Microsoft.Authorization/roleAssignments/write",
+    "category": "Administrative",
+    "resultType": "Success",
+    "resultSignature": "Succeeded.Created",
+    "durationMs": 715,
+    "callerIpAddress": "203.0.113.11",
+    "correlationId": "1f2e3d4c-5b6a-4790-8a1b-2c3d4e5f6a7b",
+    "identity": {
+      "authorization": {
+        "scope": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/trr9036-rg/providers/Microsoft.KeyVault/vaults/trr9036-kv",
+        "action": "Microsoft.Authorization/roleAssignments/write",
+        "evidence": {
+          "role": "Owner",
+          "roleAssignmentScope": "/subscriptions/11111111-2222-3333-4444-555555555555",
+          "principalId": "c8d9e0f1-0010-4a2b-9c3d-4e5f6a7b8c90",
+          "principalType": "ServicePrincipal"
+        }
+      },
+      "claims": {
+        "aud": "https://management.core.windows.net/",
+        "iss": "https://sts.windows.net/6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/",
+        "appid": "9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+        "appidacr": "2",
+        "idtyp": "app",
+        "http://schemas.microsoft.com/identity/claims/objectidentifier": "c8d9e0f1-0010-4a2b-9c3d-4e5f6a7b8c90",
+        "http://schemas.microsoft.com/identity/claims/tenantid": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b",
+        "ver": "1.0"
+      }
+    },
+    "level": "Information",
+    "location": "global",
+    "properties": {
+      "statusCode": "Created",
+      "serviceRequestId": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+      "eventCategory": "Administrative",
+      "entity": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/trr9036-rg/providers/Microsoft.KeyVault/vaults/trr9036-kv/providers/Microsoft.Authorization/roleAssignments/3a2b1c0d-4e5f-4061-8273-8495a6b7c8d9",
+      "message": "Microsoft.Authorization/roleAssignments/write",
+      "hierarchy": "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b/mg-platform/11111111-2222-3333-4444-555555555555"
+    }
+  }
+]

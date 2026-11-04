@@ -1,0 +1,117 @@
+title: GCP Cloud Logging Sink, Bucket or Exclusion Tampered
+id: 7c2f0e94-0a3b-4d5e-9c21-5f0b6a9d3e18
+status: experimental
+description: |
+  Detects an adversary disrupting GCP Cloud Logging -- deleting or disabling the
+  project's _Default log sink, deleting a log bucket, or adding/broadening a log
+  exclusion -- so that later activity is not recorded (ATT&CK T1562.008, Impair
+  Defenses: Disable or Modify Cloud Logs). This is the TRR9038 chokepoint across
+  the three Cloud Logging configuration tamper shapes in one rule.
+
+  It keys on Admin Activity (ADMIN_WRITE) Cloud Audit Log records, which are always
+  on and free, and which themselves route to the locked _Required bucket, so the
+  tamper is always recorded. serviceName is logging.googleapis.com and the server
+  set protoPayload.methodName is a ConfigServiceV2 write in one of three branches:
+
+    * A sink or log-bucket write (DeleteSink / UpdateSink / UpdateBucket /
+      DeleteBucket) whose protoPayload.resourceName is the reserved _Default sink
+      (.../sinks/_Default) or _Default bucket (.../buckets/_Default). Only the
+      _Default sink/bucket and custom sinks/buckets can change; the _Required
+      sink/bucket is LOCKED and cannot be disabled or deleted, so it is not a
+      target here. A lifecycle write on a CUSTOM sink/bucket is NOT this branch
+      (the benign baseline).
+    * An UpdateSink that sets protoPayload.request.disabled true, which turns off
+      an export route regardless of which sink it is (disabling a custom
+      audit-export sink is as much a tamper as disabling _Default).
+    * A log-exclusion write (CreateExclusion / UpdateExclusion / DeleteExclusion),
+      which changes which logs are stored. A project-level exclusion reduces what
+      reaches the _Default bucket, so any exclusion churn on the logging config is
+      flagged.
+
+  methodName is matched with a version- and case-tolerant regex
+  (google.logging.v*.ConfigServiceV*.<Method>), because the exact API-version
+  segment and the recorded casing were NOT verifiable against Google's primary
+  audit-method docs at build time (docs.cloud.google.com was unreachable); see the
+  TRR README and detections/RULE_DEFECTS.md.
+
+  Known limits (see RULE_DEFECTS.md): the exclusion/bucket branch is a filter-content
+  approximation -- one record cannot weigh whether an exclusion's filter is over-broad
+  or which logs it drops (the attacker authors the filter text). The _Default-scope
+  check is the server-set, non-spoofable discriminator this rule keys on; the
+  attacker-authored filter is not. The _Default scope is NOT by itself a clean
+  attack/benign separator for the UpdateSink leg: a benign UpdateSink that only edits
+  the _Default sink's own inclusion filter or description also fires branch A, and one
+  record cannot tell it from a malicious re-divert / filter-narrowing of _Default
+  (K67). The delete-or-re-divert leg assumes audit logs flow via _Default; a
+  DeleteSink or destination re-divert of a CUSTOM aggregated audit-export sink is a miss
+  unless it uses the disabled flag (branch B) -- K68.
+references:
+  - https://attack.mitre.org/techniques/T1562/008/
+  - https://cloud.google.com/logging/docs/audit
+  - https://cloud.google.com/logging/docs/export/configure_export_v2
+  - https://cloud.google.com/logging/docs/routing/overview
+  - https://cloud.google.com/logging/docs/exclusions
+author: det-eng
+date: 2026/11/04
+tags:
+  - attack.defense-evasion
+  - attack.t1562.008
+logsource:
+  product: gcp
+  service: gcp.audit
+detection:
+  selection_logging:
+    protoPayload.serviceName: 'logging.googleapis.com'
+  # (A) destructive / routing change on the reserved _Default sink or log bucket.
+  sel_sink_bucket_method:
+    protoPayload.methodName|re|i:
+      - '^google\.logging\.v[0-9]+[a-z0-9]*\.configservicev[0-9]+\.(deletesink|updatesink|updatebucket|deletebucket)$'
+  sel_reserved_target:
+    # The reserved, non-spoofable audit path. A custom /sinks/<name> or
+    # /buckets/<name> is the benign baseline and does not match.
+    protoPayload.resourceName|endswith:
+      - '/sinks/_Default'
+      - '/buckets/_Default'
+  # (B) disabling ANY log sink stops that export route. The disabled flag lives in
+  #     the LogSink carried by the UpdateSinkRequest (protoPayload.request.sink.disabled).
+  sel_sink_disabled:
+    protoPayload.methodName|re|i:
+      - '^google\.logging\.v[0-9]+[a-z0-9]*\.configservicev[0-9]+\.updatesink$'
+    protoPayload.request.sink.disabled: true
+  # (C) any log-exclusion write alters which logs are stored (filter-content
+  #     approximation -- see RULE_DEFECTS.md).
+  sel_exclusion:
+    protoPayload.methodName|re|i:
+      - '^google\.logging\.v[0-9]+[a-z0-9]*\.configservicev[0-9]+\.(createexclusion|updateexclusion|deleteexclusion)$'
+  # Drop failed / denied calls: GCP sets protoPayload.status.code only on error, so
+  # a successful tamper carries an empty status with no code. Null-safe negation:
+  # ORed with a test that the field is absent so a three-valued backend does not
+  # drop every successful call.
+  filter_failed:
+    protoPayload.status.code: '*'
+  sel_no_status_code:
+    protoPayload.status.code: null
+  condition: selection_logging and (sel_no_status_code or not filter_failed) and ((sel_sink_bucket_method and sel_reserved_target) or sel_sink_disabled or sel_exclusion)
+falsepositives:
+  - A legitimate lifecycle change on a CUSTOM sink or bucket (CreateSink of a new
+    analytics sink, UpdateSink keeping its destination, decommissioning a custom
+    sink/bucket) does NOT match -- it is neither the _Default target nor a disable.
+    Corollary (K68) -- because this leg keys on the _Default scope, a DeleteSink or
+    destination re-divert of a CUSTOM aggregated audit-export sink is a MISS unless it
+    uses the disabled flag; it assumes audit logs flow via _Default.
+  - A benign UpdateSink that only edits the _Default sink's own inclusion/exclusion
+    filter or description (GCP's documented way to cut _Default-bucket ingestion cost,
+    and what a logging-as-code apply re-emits each run) also fires branch A -- it targets
+    .../sinks/_Default, carries no error and is not a disable. One record cannot tell it
+    from a malicious re-divert or filter-narrowing of _Default (same single-record limit
+    as the exclusion branch; K67). Allowlist on protoPayload.resourceName /
+    authenticationInfo.principalEmail + the updateMask and correlate with change
+    management.
+  - A deliberate narrow exclusion that drops only noisy, non-security logs fires the
+    exclusion branch; one record cannot tell it from an over-broad audit-dropping
+    exclusion (documented limit). Allowlist on protoPayload.resourceName /
+    authenticationInfo.principalEmail and correlate with change management.
+  - DeleteExclusion RESTORES logging, but is included so exclusion replacement
+    (delete-narrow-then-create-broad) and exclusion churn on the logging config are
+    visible; triage by what follows.
+level: high

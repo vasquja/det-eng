@@ -36,6 +36,9 @@ run-name: ${{ inputs.label && format('{0} [{1}]', github.workflow, inputs.label)
 #                                         (validation_failure annotation / deny message) -> audit -> Sigma
 #   - TRR9035 (CSR client-cert persistence, T1098.006/T1136): a kube-apiserver-client CSR
 #                                         create (signerName) + its approval -> audit -> Sigma
+#   - TRR9039 (Service traffic hijack, T1557 / T1565): a non-controller create/update/patch
+#                                         of a core Endpoints or a discovery.k8s.io
+#                                         EndpointSlice -> audit -> Sigma
 #
 # A kind cluster runs on the ubuntu-latest runner with API server audit logging on
 # (pod creates, updates and patches; controller writes, deletes and deletecollections
@@ -98,6 +101,7 @@ on:
       - 'detections/sigma/T1036.005/**'
       - 'detections/sigma/T1133/**'
       - 'detections/sigma/T1204.003/**'
+      - 'detections/sigma/T1557/**'
       - 'detections/validate_apiserver_detections.py'
       - 'detections/sigma_eval.py'
       - 'detections/sigma_explain.py'
@@ -118,6 +122,7 @@ on:
       - 'atomics/T1036.005/**'
       - 'atomics/T1133/**'
       - 'atomics/T1204.003/**'
+      - 'atomics/T1557/**'
       - '.github/workflows/validate-apiserver-detections.yml'
   # PRs always trigger this workflow (no paths: filter) so the required
   # `validate-apiserver` check ALWAYS reports a status. The `changes` job below
@@ -237,6 +242,7 @@ jobs:
             'detections/sigma/T1036.005/' \
             'detections/sigma/T1133/' \
             'detections/sigma/T1204.003/' \
+            'detections/sigma/T1557/' \
             'detections/validate_apiserver_detections.py' \
             'detections/sigma_eval.py' \
             'detections/sigma_explain.py' \
@@ -257,6 +263,7 @@ jobs:
             'atomics/T1036.005/' \
             'atomics/T1133/' \
             'atomics/T1204.003/' \
+            'atomics/T1557/' \
             '.github/workflows/validate-apiserver-detections.yml')
           # Fail safe: if the diff cannot be computed, run the validator.
           if ! changed="$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}" 2>/dev/null)"; then
@@ -319,6 +326,7 @@ jobs:
             'detections/sigma/T1036.005/' \
             'detections/sigma/T1133/' \
             'detections/sigma/T1204.003/' \
+            'detections/sigma/T1557/' \
             'detections/validate_apiserver_detections.py' \
             'detections/sigma_eval.py' \
             'detections/sigma_explain.py' \
@@ -339,6 +347,7 @@ jobs:
             'atomics/T1036.005/' \
             'atomics/T1133/' \
             'atomics/T1204.003/' \
+            'atomics/T1557/' \
             '.github/workflows/validate-apiserver-detections.yml')
           range=""
           case "${EVENT_NAME}" in
@@ -782,6 +791,18 @@ jobs:
         # TRR9004 RBAC/aws-auth emulation in the same T1098.006 folder.
         run: bash atomics/T1098.006/src/emulate_csr.sh all
 
+      - &apiserver-emulate-9039
+        name: Emulate TRR9039 (Service traffic hijack, inert selectorless Endpoints/EndpointSlice)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        # Procedures A (manual core Endpoints) and B (manual discovery.k8s.io EndpointSlice)
+        # repoint an inert, selectorless Service at an RFC 5737 address (198.51.100.10,
+        # non-routable); C deletecollections the namespace's endpoints (a control the rule
+        # must stay quiet on, validate_apiserver_detections.py ABSENCE 9039 C). Everything is
+        # in the trr9039 namespace, which the emulation creates and deletes; no real Service,
+        # pod or host is touched.
+        run: bash atomics/T1557/src/emulate.sh all
+
       - &apiserver-collect
         name: Collect the audit log and the node sensor log
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
@@ -936,7 +957,7 @@ jobs:
         shell: bash
         run: |
           {
-            echo '## TRR9004-9010, 9025-9031, 9033-9035 API server detection validation (emulate -> audit + node sensor -> Sigma)'
+            echo '## TRR9004-9010, 9025-9031, 9033-9035, 9039 API server detection validation (emulate -> audit + node sensor -> Sigma)'
             echo ''
             echo '```'
             cat /tmp/apival.out 2>/dev/null || echo '(no validator output captured)'
@@ -1052,6 +1073,7 @@ jobs:
       - *apiserver-emulate-9033
       - *apiserver-emulate-9034
       - *apiserver-emulate-9035
+      - *apiserver-emulate-9039
       - *apiserver-collect
 
       - name: Validate detections under the recommended policy (expected misses named)
@@ -1123,7 +1145,7 @@ jobs:
         shell: bash
         run: |
           {
-            echo '## Recommended audit policy: TRR9004-9010, 9025-9031, 9033-9035 API server detection validation (--policy recommended)'
+            echo '## Recommended audit policy: TRR9004-9010, 9025-9031, 9033-9035, 9039 API server detection validation (--policy recommended)'
             echo ''
             echo '```'
             cat /tmp/apival.out 2>/dev/null || echo '(no validator output captured)'

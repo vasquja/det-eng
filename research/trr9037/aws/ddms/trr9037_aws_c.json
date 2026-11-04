@@ -1,0 +1,52 @@
+{
+  "style": {
+    "font-family": "sans-serif",
+    "background-color": "#ffffff",
+    "node-color": "#ffffff",
+    "border-width": 4,
+    "border-color": "#000000",
+    "radius": 50,
+    "outside-position": "auto",
+    "caption-font-size": 16,
+    "label-font-size": 14,
+    "label-border-width": 2,
+    "property-font-size": 14,
+    "arrow-width": 5,
+    "arrow-color": "#000000",
+    "type-font-size": 16
+  },
+  "nodes": [
+    {
+      "id": "n0",
+      "position": {"x": 0, "y": 0},
+      "caption": "Lower-tier / profile-only write (CloudTrail)",
+      "labels": ["CloudTrail"],
+      "properties": {
+        "eventName": "EnableTrustAnchor / CreateProfile / UpdateProfile",
+        "source.sourceType": "absent or AWS_ACM_PCA",
+        "coverage": "surface chokepoint fires (medium)"
+      },
+      "style": {"border-color": "#0062b1", "border-width": 3, "caption-font-size": 16, "label-position": "outside", "label-font-size": 14, "label-border-width": 2, "property-font-size": 14, "outside-position": "bottom", "node-color": "#fff2a8"}
+    },
+    {
+      "id": "n1",
+      "position": {"x": 460, "y": 0},
+      "caption": "External-CA graded rule stays silent",
+      "labels": [],
+      "properties": {"why": "no external source.sourceType in the record"},
+      "style": {"border-color": "#9f9f9f", "border-width": 3, "caption-font-size": 16, "label-position": "outside", "label-font-size": 14, "label-border-width": 2, "property-font-size": 14, "outside-position": "top"}
+    },
+    {
+      "id": "n2",
+      "position": {"x": 920, "y": 0},
+      "caption": "Benign AWS_ACM_PCA anchor / legit external-PKI shop",
+      "labels": [],
+      "properties": {"limit": "external-CA grade is a hygiene signal an external-PKI shop also trips (K63)"},
+      "style": {"border-color": "#9f9f9f", "border-width": 3, "caption-font-size": 16, "label-position": "outside", "label-font-size": 14, "label-border-width": 2, "property-font-size": 14, "outside-position": "top"}
+    }
+  ],
+  "relationships": [
+    {"id": "r0", "fromId": "n0", "toId": "n1", "type": "below the graded threshold", "properties": {}, "style": {}},
+    {"id": "r1", "fromId": "n0", "toId": "n2", "type": "triage vs change tickets", "properties": {}, "style": {}}
+  ]
+}

@@ -311,6 +311,32 @@
         "aws-iac-admin-policy-changes": 13
       }
     },
+    "T1098.001/aws_rolesanywhere_trust_anchor_external_ca.yml": {
+      "actors": {},
+      "distinct_actors": 0,
+      "events": 4000,
+      "hits": 0,
+      "rate_per_10k": 0.0,
+      "slices": {
+        "aws-cicd-oidc-irsa": 0,
+        "aws-developer-iam-user-keys": 0,
+        "aws-ec2-service-roles": 0,
+        "aws-iac-admin-policy-changes": 0
+      }
+    },
+    "T1098.001/aws_rolesanywhere_trust_anchor_write.yml": {
+      "actors": {},
+      "distinct_actors": 0,
+      "events": 4000,
+      "hits": 0,
+      "rate_per_10k": 0.0,
+      "slices": {
+        "aws-cicd-oidc-irsa": 0,
+        "aws-developer-iam-user-keys": 0,
+        "aws-ec2-service-roles": 0,
+        "aws-iac-admin-policy-changes": 0
+      }
+    },
     "T1098.001/azure_managed_identity_federated_credential_backdoor.yml": {
       "actors": {
         "5e6f7a8b-0004-4c9d-8e0f-2a3b4c5d6e04": 11,
@@ -358,6 +384,16 @@
       "slices": {
         "gcp-iam-federation-admin": 0,
         "gcp-platform-ops": 0
+      }
+    },
+    "T1098.003/azure_privileged_role_assignment.yml": {
+      "actors": {},
+      "distinct_actors": 0,
+      "events": 300,
+      "hits": 0,
+      "rate_per_10k": 0.0,
+      "slices": {
+        "azure-activity-mi-admin": 0
       }
     },
     "T1098.003/gcp_public_iam_member_grant.yml": {
@@ -900,6 +936,29 @@
       "rate_per_10k": 1672.22,
       "slices": {
         "linux-k8s-node-file-events": 251
+      }
+    },
+    "T1557/k8s_service_endpoints_hijacked.yml": {
+      "actors": {},
+      "distinct_actors": 0,
+      "events": 2666,
+      "hits": 0,
+      "rate_per_10k": 0.0,
+      "slices": {
+        "k8s-audit-control-plane": 0,
+        "k8s-audit-gitops-ci": 0,
+        "k8s-audit-human-operators": 0
+      }
+    },
+    "T1562.008/gcp_logging_sink_tampered.yml": {
+      "actors": {},
+      "distinct_actors": 0,
+      "events": 1000,
+      "hits": 0,
+      "rate_per_10k": 0.0,
+      "slices": {
+        "gcp-iam-federation-admin": 0,
+        "gcp-platform-ops": 0
       }
     },
     "T1565.001/k8s_coredns_configmap_modified.yml": {
