@@ -37,7 +37,18 @@ description: |
   kind lab and most managed clusters). When it runs with
   --use-service-account-credentials=false, every controller acts as the controller
   manager's own identity instead, system:kube-controller-manager, so that identity is
-  filtered too; the rule covers both modes. A write under impersonation does not bypass
+  filtered too; the rule covers both modes.
+
+  One filtered control-plane writer is not a controller: the selectorless default/kubernetes
+  Service is the one Service the endpoint / endpointslice / mirroring controllers do not
+  manage (it has no selector), so its core Endpoints and its EndpointSlice are written by the
+  kube-apiserver's own endpoint reconciler (the lease/EndpointReconciler) under the loopback
+  identity system:apiserver, which is filtered too (filter_apiserver_reconciler). Without it
+  every apiserver restart, HA lease change or apiserver IP change that rewrites
+  default/kubernetes would fire. Trusting the loopback identity is the K69 token-trust class
+  (K37 / K50 / K51): an attacker who holds the apiserver loopback credential has already won.
+
+  A write under impersonation does not bypass
   the filter: the acting controller's token, not the impersonated user, is in
   user.username (the impersonated identity goes to impersonatedUser), so an impersonated
   endpoints write still carries the caller's own username and fires.
@@ -136,9 +147,17 @@ detection:
   # manager's own identity, so its endpoints/endpointslices writes carry this username.
   filter_kube_controller_manager:
     user.username: 'system:kube-controller-manager'
+  # The API server's own endpoint reconciler (the lease/EndpointReconciler) writes the
+  # selectorless default/kubernetes Service's core Endpoints and its EndpointSlice -- the one
+  # selectorless Service no endpoint/endpointslice/mirroring controller manages -- under the
+  # loopback identity system:apiserver. Filtered like the controllers (its continual
+  # default/kubernetes writes on every apiserver restart / HA lease change would otherwise
+  # bury every real hit); trusting the loopback identity is the K69 token-trust class.
+  filter_apiserver_reconciler:
+    user.username: 'system:apiserver'
   # Null guard: a 401 (failed authentication) record has no user.username, so a bare
   # `not filter_*` would drop it on a three-valued SQL backend. verb and objectRef.resource
-  # are present on every matched record, so one guard on user.username covers all four
+  # are present on every matched record, so one guard on user.username covers all five
   # identity filters.
   sel_no_username:
     user.username: null
@@ -148,6 +167,7 @@ detection:
     and (sel_no_username or not filter_endpointslice_controller)
     and (sel_no_username or not filter_endpointslicemirroring_controller)
     and (sel_no_username or not filter_kube_controller_manager)
+    and (sel_no_username or not filter_apiserver_reconciler)
 falsepositives:
   - A legitimate manual Endpoints or EndpointSlice write by an admin or a GitOps / IaC tool
     (Argo CD, Flux, Terraform) that points a selectorless Service at an out-of-cluster
@@ -157,16 +177,19 @@ falsepositives:
     rule is a low-fidelity hunting / correlation anchor (RULE_DEFECTS.md K69).
     Baseline those identities by user.username and user.groups; triage by whether the
     Service had a selector before and by the written address.
-  - A write sent with a stolen endpoint-controller or kube-controller-manager token is
-    filtered by identity and missed (a credential-theft evasion, RULE_DEFECTS.md K69,
-    the class of K37/K50/K51). The filter is kept because a controller rewrites these
-    objects on every pod-readiness change, and without it every hit would be buried.
+  - A write sent with a stolen endpoint-controller, kube-controller-manager or
+    system:apiserver (the API server's loopback identity, which reconciles the selectorless
+    default/kubernetes Service's Endpoints and EndpointSlice) token is filtered by identity
+    and missed (a credential-theft evasion, RULE_DEFECTS.md K69, the class of K37/K50/K51).
+    The filter is kept because these identities rewrite these objects continually -- a
+    controller on every pod-readiness change, the API server on every restart / HA lease
+    change -- and without it every real hit would be buried.
   - A CNI or service-mesh controller that manages EndpointSlices under its own service
     account. On a cluster that runs one this is the DOMINANT hit source, not an edge case --
     Cilium (cilium-operator, in particular when it replaces kube-proxy), service meshes such
     as Istio (ambient and multi-cluster modes), and the Multi-Cluster Services EndpointSlice
     import controller (mcs-controller) each create and update EndpointSlices continuously
-    under an identity that is not one of the four filtered here, so every one of their
+    under an identity that is not one of the five filtered here, so every one of their
     writes fires. Baseline that controller's identity (user.username, user.groups) before
     you deploy, as for the CSI provisioner in RULE_DEFECTS.md K50. The benign corpus
     (detections/benign/) contains no such writer, so the rule's 0 hits there is a reference-

@@ -20,7 +20,7 @@ description: |
       sink/bucket is LOCKED and cannot be disabled or deleted, so it is not a
       target here. A lifecycle write on a CUSTOM sink/bucket is NOT this branch
       (the benign baseline).
-    * An UpdateSink that sets protoPayload.request.disabled true, which turns off
+    * An UpdateSink that sets protoPayload.request.sink.disabled true, which turns off
       an export route regardless of which sink it is (disabling a custom
       audit-export sink is as much a tamper as disabling _Default).
     * A log-exclusion write (CreateExclusion / UpdateExclusion / DeleteExclusion),

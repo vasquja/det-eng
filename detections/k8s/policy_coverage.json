@@ -1021,11 +1021,11 @@
    "case_counts": {
     "benign": 0,
     "confounder": 2,
-    "filtered": 4,
+    "filtered": 5,
     "near-miss": 1,
     "positive": 5
    },
-   "cases_sha256": "832cca8d1ccbdb45bdf5576f95bb640f358bac2e8e44c2ba2e005effa8fe7b38",
+   "cases_sha256": "86b8e3733e468d99f4fda21deb467defd0c3d41b3a1c02109917ec2f6fa8b18d",
    "home_policy": "lab-apiserver",
    "level": "medium",
    "needs": {
@@ -1034,21 +1034,21 @@
     "requests": [{"group": "", "resource": "endpoints", "subresource": null, "verbs": ["create", "update"]}, {"group": "discovery.k8s.io", "resource": "endpointslices", "subresource": null, "verbs": ["create", "patch"]}]
    },
    "results": {
-    "aks-kube-audit": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 6, "not_modeled_reads": 0, "positives": {"firing": 5, "lost": [], "total": 5}},
-    "aks-kube-audit-admin": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 6, "not_modeled_reads": 0, "positives": {"firing": 5, "lost": [], "total": 5}},
-    "eks": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 6, "not_modeled_reads": 0, "positives": {"firing": 5, "lost": [], "total": 5}},
-    "gce-kube-up": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 6, "not_modeled_reads": 0, "positives": {"firing": 5, "lost": [], "total": 5}},
+    "aks-kube-audit": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 7, "not_modeled_reads": 0, "positives": {"firing": 5, "lost": [], "total": 5}},
+    "aks-kube-audit-admin": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 7, "not_modeled_reads": 0, "positives": {"firing": 5, "lost": [], "total": 5}},
+    "eks": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 7, "not_modeled_reads": 0, "positives": {"firing": 5, "lost": [], "total": 5}},
+    "gce-kube-up": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 7, "not_modeled_reads": 0, "positives": {"firing": 5, "lost": [], "total": 5}},
     "k3s-starter": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 5, "lost": [], "total": 5}},
     "lab-apiserver": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 5, "lost": [], "total": 5}},
     "lab-k8s": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 5, "lost": [], "total": 5}},
     "lab-staticpod": {"near_misses": {"no_record": 1, "quiet": 0, "total": 1}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 0, "lost": [{"case": "endpoints-create-hijack-procA", "policy_rules": [2], "reason": "no-record"}, {"case": "endpointslice-create-hijack-procB", "policy_rules": [2], "reason": "no-record"}, {"case": "endpoints-update-hijack", "policy_rules": [2], "reason": "no-record"}, {"case": "endpointslice-patch-hijack", "policy_rules": [2], "reason": "no-record"}, {"case": "endpoints-create-failed-authentication", "policy_rules": [2], "reason": "no-record"}], "total": 5}},
     "openshift-default": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 5, "lost": [], "total": 5}},
     "openshift-default-4.17": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 5, "lost": [], "total": 5}},
-    "openshift-wrb": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 12, "not_modeled_reads": 0, "positives": {"firing": 5, "lost": [], "total": 5}},
-    "openshift-wrb-4.17": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 12, "not_modeled_reads": 0, "positives": {"firing": 5, "lost": [], "total": 5}},
+    "openshift-wrb": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 13, "not_modeled_reads": 0, "positives": {"firing": 5, "lost": [], "total": 5}},
+    "openshift-wrb-4.17": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 13, "not_modeled_reads": 0, "positives": {"firing": 5, "lost": [], "total": 5}},
     "recommended": {"near_misses": {"no_record": 0, "quiet": 1, "total": 1}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 5, "lost": [], "total": 5}}
    },
-   "rule_digest": "07bd7b263e7eba3c3d713445de6e2f15d9a7fcd2f4ed3f9932a9f7d3e86fcc91",
+   "rule_digest": "b4ec2dcb328d178167d861716f02106852565126936e29d6071f126e992fe7c3",
    "title": "Kubernetes Service Endpoints or EndpointSlice Hijacked"
   },
   "T1565.001/k8s_coredns_configmap_modified.yml": {
@@ -1567,7 +1567,7 @@
  "summary": {
   "aks-kube-audit": {
    "negatives_firing": 1,
-   "not_modeled": 674,
+   "not_modeled": 675,
    "not_modeled_reads": 93,
    "positives": 475,
    "positives_firing": 425,
@@ -1578,7 +1578,7 @@
   },
   "aks-kube-audit-admin": {
    "negatives_firing": 1,
-   "not_modeled": 606,
+   "not_modeled": 607,
    "not_modeled_reads": 86,
    "positives": 475,
    "positives_firing": 390,
@@ -1589,7 +1589,7 @@
   },
   "eks": {
    "negatives_firing": 1,
-   "not_modeled": 687,
+   "not_modeled": 688,
    "not_modeled_reads": 95,
    "positives": 475,
    "positives_firing": 422,
@@ -1600,7 +1600,7 @@
   },
   "gce-kube-up": {
    "negatives_firing": 1,
-   "not_modeled": 679,
+   "not_modeled": 680,
    "not_modeled_reads": 95,
    "positives": 475,
    "positives_firing": 422,
@@ -1677,7 +1677,7 @@
   },
   "openshift-wrb": {
    "negatives_firing": 0,
-   "not_modeled": 747,
+   "not_modeled": 748,
    "not_modeled_reads": 158,
    "positives": 475,
    "positives_firing": 475,
@@ -1688,7 +1688,7 @@
   },
   "openshift-wrb-4.17": {
    "negatives_firing": 0,
-   "not_modeled": 737,
+   "not_modeled": 738,
    "not_modeled_reads": 153,
    "positives": 475,
    "positives_firing": 469,
