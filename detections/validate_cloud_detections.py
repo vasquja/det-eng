@@ -267,8 +267,9 @@ MANIFEST = [
     #     is a lifecycle op on a CUSTOM sink/bucket (CreateSink / UpdateSink keeping
     #     destination / DeleteSink of a decommissioned sink), differing only on the
     #     _Default scope (resourceName) and the disable flag. marker() is on the
-    #     server-set resourceName, which the rule does NOT key on (it keys on the
-    #     _Default suffix / the method / the disable flag), so the rename test holds.
+    #     server-set resourceName; the marker sits in its project segment, which is
+    #     disjoint from the /sinks/_Default or /buckets/_Default suffix the rule keys on
+    #     (the method and the disable flag are other fields), so the rename test holds.
     ("TRR9038", "T1562.008", "gcp_logging_sink_tampered.yml",
      "trr9038/attack.json", "trr9038/benign.json", "GCP",
      "GCP Cloud Logging _Default sink/bucket delete-or-disable + exclusion tamper",
