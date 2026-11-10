@@ -1463,7 +1463,8 @@ The runnable emulations (`atomics/<TECH>/src/`) perform the real attack in **you
 cloud account, guarded by a `TRR90NN_LIVE=1` opt-in, and are **not run in CI** — they
 need credentials and, for the data-plane / off-instance cases, cloud resources. The
 committed fixtures are what CI validates, and each emulation can print its recorded
-fixture with `--show-fixture`.
+fixture with `--show-fixture`. To make an empty account for those runs, see
+[`docs/setup/cloud-sandbox.md`](../docs/setup/cloud-sandbox.md).
 
 Because the nested list fields in these logs (CloudTrail `sessionContext` aside —
 Azure `targetResources[]`, GCP `bindingDeltas[]`/`members[]`, and the URL-encoded AWS

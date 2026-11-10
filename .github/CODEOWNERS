@@ -1,0 +1,69 @@
+# .github/CODEOWNERS
+#
+# Who must approve a pull request that changes a path, when the `Main` ruleset has
+# "Require review from Code Owners" on. Until that setting is on, this file only
+# makes GitHub request a review; it blocks nothing. Read docs/setup/repository-settings.md
+# before you turn the setting on: with one owner who also opens the pull requests,
+# it blocks every pull request that touches an owned path.
+#
+# Rules of this file format: the LAST matching line wins. A line with a pattern
+# and no owner removes the owner. Paths are case sensitive. `!` and `[ ]` do not
+# work. A wrong or unknown owner name gives NO owner (it fails open), so check the
+# file after each edit:
+#   gh api repos/OWNER/REPO/codeowners/errors
+#
+# This file follows rail 8 of .github/workflows/automerge.yml (CONTENT / NOT_CONTENT).
+# Change the two together. They differ in two ways:
+#   - Stricter here: /docs/setup/ (commands that the owner runs as administrator)
+#     and /detections/sigma/LICENSE.md have an owner. Rail 8 treats them as content.
+#   - Weaker here: rail 8 matches its exclusions (Python files, research/tools/,
+#     .github/, a `.claude` entry, the agent-instruction files, docs/CODEOWNERS) in
+#     any letter case, and a technique directory as `T` and digits. This file can
+#     name exact spellings only. Block 4 names the usual ones. A different
+#     spelling (aGENTS.md) has NO owner here: only rail 8 holds it, and rail 8
+#     binds only the automerge workflow.
+#
+# In a fork: replace every @vasquja with your own login. The upstream owner has no
+# write access to your fork, so the upstream name protects nothing there.
+
+# 1. Default: every path has an owner. A new path that no later line names needs
+#    the owner's approval (fail closed).
+*                                    @vasquja
+
+# 2. Content: rules, cases, fixtures, TRRs and docs. No owner, so no review is needed.
+#    `T*` is the nearest pattern to a technique ID (T1537, T1552.005): a rule file in
+#    a directory that does not start with `T` keeps the owner.
+*.md
+/detections/sigma/T*/*.yml
+/detections/sigma/T*/*.cases.jsonl
+/detections/cloud/fixtures/*/*.json
+/detections/benign/scores.json
+/research/
+/docs/
+/upstream/
+
+# 3. Checking code, agent policy, setup guides and licence texts inside the content
+#    paths. These lines must stay below block 2.
+*.py                                 @vasquja
+/research/tools/                     @vasquja
+/.github/                            @vasquja
+.claude/                             @vasquja
+**/.claude                           @vasquja
+AGENTS.md                            @vasquja
+CLAUDE.md                            @vasquja
+CLAUDE.local.md                      @vasquja
+/docs/CODEOWNERS                     @vasquja
+/docs/setup/                         @vasquja
+/detections/sigma/LICENSE.md         @vasquja
+
+# 4. Usual other spellings of the agent policy names. On a file system that is not
+#    case sensitive (macOS, Windows) an agent reads them as the names in block 3.
+#    This list cannot be complete. These lines must stay below block 2.
+agents.md                            @vasquja
+Agents.md                            @vasquja
+claude.md                            @vasquja
+Claude.md                            @vasquja
+claude.local.md                      @vasquja
+Claude.local.md                      @vasquja
+.Claude/                             @vasquja
+**/.Claude                           @vasquja
