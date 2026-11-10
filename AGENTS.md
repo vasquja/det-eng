@@ -2,6 +2,12 @@
 
 Operating guide for AI agents in this repository. Humans: see [`README.md`](README.md).
 
+## Ownership
+
+This codebase is yours to own and maintain. What it is and how far it is built are
+your call. You will keep building on it, so take responsibility for its direction,
+architecture, implementation, and long-term maintenance.
+
 ## Purpose
 
 Detection engineering at scale. Turn one ATT&CK technique on one platform into
