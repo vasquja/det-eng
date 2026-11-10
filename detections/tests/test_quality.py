@@ -20,12 +20,12 @@ The docstring of each rejection test and known-gap test starts with its case id
 (`sb-over-budget`, ...).
 
 The slow gates (15 to 20 s for one run, whatever is planted) start their runs in
-setUpClass, on threads, so that the runs of a class overlap.
+setUpClass (cls.in_background(), in cls.good() and in cls.class_tree() copies), so
+that the runs of a class overlap.
 
     python3 -B -m unittest discover -s detections/tests -p 'test_quality.py' -v
 """
 
-import concurrent.futures
 import importlib.util
 import os
 import re
@@ -78,53 +78,6 @@ def assert_cases_hold(tree, rule):
     if len(held) != cases:
         raise AssertionError(f"rule_cases.py judged {len(held)} of the {cases} case(s) of "
                              f"{sidecar}:\n" + result.describe())
-
-
-def class_tree(cls):
-    """A private copy that lives as long as the test class: for a slow gate whose
-    runs start in setUpClass, so that they overlap. Never plant in cls.good()."""
-    tree = gatelib.Tree(cls.PARTS)
-    cls.addClassCleanup(tree.cleanup)
-    return tree
-
-
-def in_background(cls, call, *args):
-    """Start call(*args) on a thread and return its future; future.result() is the
-    Result. The class waits for the run before it deletes its copies (this cleanup
-    is registered after them, so it runs first), also when a test did not ask for
-    the result (`-k`)."""
-    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = pool.submit(call, *args)
-    cls.addClassCleanup(pool.shutdown, wait=True)
-    return future
-
-
-def step_running(workflow, job, command):
-    """The one step of `job` in `workflow` (a file name) with a line that holds
-    `command`, the start of a command line (`python3 <script> <flags>`). Unlike
-    gatelib.ci_step(), a step that only lists the script as a path does not count
-    (job platform-coverage has such a step for each of its scripts)."""
-    steps = [s for s in gatelib.ci_steps(command.split()[1])
-             if s.workflow == workflow and s.job == job
-             and any(command in " ".join(line.split()) for line in s.run.splitlines()
-                     if not line.strip().startswith("#"))]
-    if len(steps) != 1:
-        raise LookupError(f"{workflow}, job {job}: {len(steps)} step(s) run `{command}`; wanted 1")
-    return steps[0]
-
-
-def step_path_with_pip(tree):
-    """A PATH for Tree.run_step() where `pip`, `python3` and `python` are the tests'
-    Python. run_step() gives the step the tests' python3, but `pip` comes from the
-    machine's PATH and can belong to another Python: a step that runs
-    `pip install -r detections/requirements.txt` then fails before the gate runs."""
-    bin_dir = os.path.dirname(tree.out("quality-bin/pip"))
-    for name, arguments in (("pip", '-m pip "$@"'), ("python3", '"$@"'), ("python", '"$@"')):
-        shim = os.path.join(bin_dir, name)
-        with open(shim, "w", encoding="utf-8") as fh:
-            fh.write(f'#!/bin/sh\nexec "{gatelib.PYTHON}" {arguments}\n')
-        os.chmod(shim, 0o755)
-    return bin_dir + os.pathsep + os.environ.get("PATH", "")
 
 
 # ---------------------------------------------------------------------- score_benign.py
@@ -310,12 +263,11 @@ class BenignRatchet(gatelib.GateCase):
         self.assertIn("\nFAILED: 1 rule(s) raise more benign hits than on the base branch: "
                       f"{self.KEY}\n", result.stdout)
 
-    @unittest.skipUnless(importlib.util.find_spec("pip"), "the step runs `pip install`; the "
-                         "tests' Python has no pip")
     def test_ci_step_fails_on_a_rise(self):
         """The job's step saves the gate's exit code and ends with `exit "$rc"`. Run the
         step as GitHub Actions does, with a stand-in for the worktree of the base
-        commit ($RUNNER_TEMP/base-tree): the rise must fail the step."""
+        commit ($RUNNER_TEMP/base-tree): the rise must fail the step. (The step also
+        runs `pip install`; run_step() gives it a `pip` that installs nothing.)"""
         step = gatelib.ci_step("detection-quality.yml", "sufficiency-ratchet", self.GATE)
         tree = self.tree()
         worktree_mark = tree.out("ratchet-runner-temp/base-tree/.git")
@@ -326,8 +278,7 @@ class BenignRatchet(gatelib.GateCase):
         _hits, _budget, rise = self.expected_rise(tree)
         self.broaden(tree)
         result = tree.run_step(step, env={
-            "RUNNER_TEMP": os.path.dirname(os.path.dirname(worktree_mark)),
-            "PATH": step_path_with_pip(tree)})
+            "RUNNER_TEMP": os.path.dirname(os.path.dirname(worktree_mark))})
         self.assert_rejects(result, rise, exit_code=1)
 
 
@@ -484,14 +435,14 @@ class ProviderMappings(gatelib.GateCase):
         cls.ci_arguments = ("--check", "--require-re2") if importlib.util.find_spec("re2") \
             else ("--check",)
         # A full run takes about 18 s whatever is planted: start both now.
-        cls.full_run = in_background(cls, cls.good().run, cls.GATE, *cls.ci_arguments)
+        cls.full_run = cls.in_background(cls.good().run, cls.GATE, *cls.ci_arguments)
         # pm-one-json-serialisation: the planted rule matches the volumes list as the
         # text `"hostPath": {"path": "/"`, with the blank that json.dumps writes after
         # a colon. The native shape holds that text; the AKS and GKE shapes hold the
         # list without blanks, so the positive is silent there.
-        cls.bad = class_tree(cls)
+        cls.bad = cls.class_tree()
         cls.bad.plant("quality/one_json_serialisation_k8s", "detections/sigma/T9999")
-        cls.rejection = in_background(cls, cls.bad.run, cls.GATE, *cls.ci_arguments)
+        cls.rejection = cls.in_background(cls.bad.run, cls.GATE, *cls.ci_arguments)
 
     def test_ci_passes_check_and_require_re2(self):
         self.assert_ci_runs(self.GATE, "--check", "--require-re2")
@@ -576,8 +527,8 @@ class K8sPolicyCoverage(gatelib.GateCase):
     def setUpClass(cls):
         super().setUpClass()
         # Each run takes about 20 s whatever is planted: start both now.
-        cls.control = in_background(cls, cls.good().run, cls.GATE, "--self-test", "--check")
-        cls.bad = class_tree(cls)
+        cls.control = cls.in_background(cls.good().run, cls.GATE, "--self-test", "--check")
+        cls.bad = cls.class_tree()
         # pc-home-policy-loses-positives: the lab policy stops logging pods/exec and
         # pods/attach (level Metadata -> None), so the API server writes no record
         # of the requests that the exec rule's positives are.
@@ -587,8 +538,8 @@ class K8sPolicyCoverage(gatelib.GateCase):
                         '  - level: None\n    resources:\n      - group: ""\n'
                         '        resources: ["pods/exec", "pods/attach"]\n')
         # The rejection runs through the job's own step (`... | tee`, shell: bash).
-        step = step_running("detection-quality.yml", "platform-coverage", cls.COMMAND)
-        cls.rejection = in_background(cls, cls.bad.run_step, step)
+        step = gatelib.ci_step("detection-quality.yml", "platform-coverage", cls.COMMAND)
+        cls.rejection = cls.in_background(cls.bad.run_step, step)
 
     def test_ci_runs_self_test_and_check(self):
         self.assertIn(self.COMMAND + " | tee /tmp/platform-coverage.out",
@@ -685,8 +636,8 @@ class K8sPlatformsMdCheck(gatelib.GateCase):
     def test_ci_step_fails_when_the_gate_fails(self):
         """The step runs --self-test and then --check with no `shell:` (bash -e). Run it
         as GitHub Actions does: the exit code of --check must end the step."""
-        step = step_running("detection-quality.yml", "platform-coverage",
-                            "python3 detections/k8s_platforms_md.py --check")
+        step = gatelib.ci_step("detection-quality.yml", "platform-coverage",
+                               "python3 detections/k8s_platforms_md.py --check")
         tree = self.tree()
         self.hand_edit(tree)
         result = tree.run_step(step)
@@ -763,8 +714,8 @@ class K8sPlatformsMdAnchors(gatelib.GateCase):
         self.assertEqual(len(found(result, r"^BAD ANCHOR: .*$")), 1, result.describe())
 
     def test_ci_step_fails_when_the_gate_fails(self):
-        step = step_running("validate-detections.yml", "markdown-links",
-                            "python3 detections/k8s_platforms_md.py --anchors")
+        step = gatelib.ci_step("validate-detections.yml", "markdown-links",
+                               "python3 detections/k8s_platforms_md.py --anchors")
         tree = self.tree()
         tree.plant("quality/bad_anchor.md.txt", "PLANTED.md")
         self.assert_rejects(tree.run_step(step), self.expected_bad_anchor(), exit_code=1)
@@ -796,27 +747,27 @@ class CoverageReport(gatelib.GateCase):
         super().setUpClass()
         # Each run takes about 7 s (it runs check_sufficiency.py): start them all now,
         # one thread for each copy.
-        cls.control = in_background(cls, cls.good().run, cls.GATE, "--check")
+        cls.control = cls.in_background(cls.good().run, cls.GATE, "--check")
 
         # cr-emulation-not-built: the emulation of TRR9001.LIN.A is no longer `built`.
-        cls.not_built = class_tree(cls)
+        cls.not_built = cls.class_tree()
         cls.not_built.replace("research/trr9001/lin/README.md",
                               "afpacket_rawsocket_behavioral.c) | **built** |",
                               "afpacket_rawsocket_behavioral.c) | backlog |")
-        cls.not_built_runs = in_background(cls, cls.check_then_write, cls.not_built)
+        cls.not_built_runs = cls.in_background(cls.check_then_write, cls.not_built)
 
         # cr-defect-heading-without-summary-row: a new entry of the defect tracker
         # names a rule that proves TRR9001.LIN.A and B, and has no Summary row.
-        cls.no_row = class_tree(cls)
+        cls.no_row = cls.class_tree()
         cls.no_row.plant("quality/defect_without_summary_row/section.md.txt", cls.DEFECTS, append=True)
-        cls.no_row_run = in_background(cls, cls.no_row.run, cls.GATE, "--check")
+        cls.no_row_run = cls.in_background(cls.no_row.run, cls.GATE, "--check")
 
         # The same entry with its Summary row: what the gate does when it reads it.
-        cls.with_row = class_tree(cls)
+        cls.with_row = cls.class_tree()
         cls.with_row.plant("quality/defect_without_summary_row/section.md.txt", cls.DEFECTS, append=True)
         separator = "|----|------|---------|------|----------|\n"
         cls.with_row.replace(cls.DEFECTS, separator, separator + cls.SUMMARY_ROW)
-        cls.with_row_run = in_background(cls, cls.with_row.run, cls.GATE, "--check")
+        cls.with_row_run = cls.in_background(cls.with_row.run, cls.GATE, "--check")
 
     @classmethod
     def check_then_write(cls, tree):

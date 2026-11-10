@@ -20,7 +20,10 @@ What a test gets from this module:
                   the tests. It returns a Result (exit code, stdout, stderr).
   GateCase        the unittest.TestCase to derive from: good() is the unmodified
                   copy that the class shares (read-only: a change fails the class),
-                  tree() is a private copy for one test.
+                  tree() is a private copy for one test, class_tree() a private
+                  copy that lives as long as the class. in_background() and
+                  Tree.start() / Tree.start_step() overlap the runs of a slow gate;
+                  StartedTogether does that for a whole class.
   assert_rejects  the exit code is not 0 AND the output names the intended reason.
                   A Python traceback, a wrong command line and a timeout are not
                   rejections.
@@ -46,7 +49,8 @@ Rules that keep the suite hermetic:
 
 Run the suite from the repository root (README.md in this directory):
 
-    python3 -B -m unittest discover -s detections/tests -v
+    python3 -B detections/tests/gatelib.py --run             # in parallel, as CI does
+    python3 -B -m unittest discover -s detections/tests -v   # in sequence
 """
 
 import argparse
@@ -56,7 +60,6 @@ import concurrent.futures
 import dataclasses
 import functools
 import glob as _glob
-import hashlib
 import json
 import os
 import re
@@ -65,8 +68,13 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
+
+# No bytecode beside the tests, also when the suite runs without `python -B`: every
+# module imported after this one leaves no __pycache__/ in the repository.
+sys.dont_write_bytecode = True
 
 TESTS = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(TESTS))      # the checkout that holds this suite
@@ -90,20 +98,24 @@ _DROPPED_PREFIXES = ("GITHUB_", "GH_", "ACTIONS_", "RUNNER_", "TRR9", "DETENG_",
 _DROPPED_NAMES = frozenset({"no_proxy", "pip_index_url", "pip_extra_index_url"})
 # Nothing listens on the discard port: a gate that tries the network fails at once.
 _NO_NETWORK = "http://127.0.0.1:9"
+# `gatelib.py --run` gives this variable to each test process: the file where the
+# process writes the known gaps that its tests saw open. (Tree.env() drops it.)
+_OPEN_GAPS_FILE = "DETENG_GATES_OPEN_GAPS"
 
-# The roadmap items that can close a known gap: R<n> is item n of section 4
-# ("Trust architecture") of the operating design. "unplanned": no item closes it.
+# The roadmap items that can close a known gap: the IDs of section 1 ("Trust") of
+# docs/ROADMAP.md, without R2, which is this suite. test_suite.py proves that each
+# key is an item of that file and that no open gap names an item that is `done`.
+# "unplanned": no item closes the gap as the roadmap is written today.
 ROADMAP = {
-    "R1": "gate code runs from main, not from the pull request",
-    "R2": "the gates test themselves (this suite, and the gate defects it finds)",
+    "R1": "gate code from main, not from the pull request",
+    "R2b": "Linux controls are not vacuous",
     "R3": "external records that the agent did not write",
-    "R4": "CI captures harvested into committed evidence",
-    "R5": "provenance tiers read by the merge policy",
-    "R6": "mutation as a ratchet",
+    "R4": "the captures of CI, harvested into committed evidence",
+    "R5": "provenance tiers",
+    "R6": "mutation ratchet",
     "R7": "representation variants in the oracle (JSON text, letter case, RE2)",
-    "R8": "approvals as verifiable properties (waivers, budgets, expected losses)",
-    "R9": "sandbox cloud capture",
-    "R10": "deferred: blind cases, schema oracle",
+    "R8": "approvals as checked properties (waivers, budgets, expected losses)",
+    "R9": "live cloud capture",
     "unplanned": "no roadmap item closes it: a human decides",
 }
 
@@ -171,13 +183,42 @@ class Result:
 
 
 class Pending:
-    """A gate run that Tree.start() put in the background. result() waits for it."""
+    """A run in the background (Tree.start(), Tree.start_step(), background()).
+
+    result() waits for the run and returns what it returned, or raises what it
+    raised. wait() only waits. done() says if the run has ended."""
 
     def __init__(self, future):
         self._future = future
 
     def result(self):
         return self._future.result()
+
+    def wait(self):
+        concurrent.futures.wait([self._future])
+
+    def done(self):
+        return self._future.done()
+
+
+def background(call, *args, **kwargs):
+    """Start call(*args, **kwargs) on a thread of its own and return a Pending.
+
+    For the slow gates: a gate is a child process, so runs that start together use
+    the machine's cores together. Each run has its own thread, so a run can wait
+    for another one. The caller must collect the run, or wait for it, before it
+    deletes the copy that the run works in: Tree.start(), Tree.start_step() and
+    GateCase.in_background() do that for you."""
+    future = concurrent.futures.Future()
+
+    def work():
+        try:
+            future.set_result(call(*args, **kwargs))
+        except BaseException as error:      # noqa: BLE001 - result() raises it in the caller
+            future.set_exception(error)
+
+    threading.Thread(target=work, name="gatelib-background", daemon=True).start()
+    return Pending(future)
 
 
 class NotRejected(AssertionError):
@@ -278,6 +319,13 @@ def assert_saw(result, pattern):
     For a @known_gap test: an artifact that the gate never read (a wrong path, a
     file that it does not glob) is also `accepted`, and that would hide a real
     rejection for ever. This is a plain assertion: when it fails, the test fails.
+
+    Choose a pattern that holds today AND after the gate is fixed (a row that the
+    gate prints for a PASS and for a FAIL, a count of records that it loaded). A
+    pattern that holds only while the gate accepts (`... clean (0 record(s))`)
+    makes the test fail with this message, not with KNOWN GAP CLOSED, on the day
+    the gate starts to reject. Where the gate prints nothing about the artifact,
+    prove inside `if result.returncode == 0:` that the artifact is bad.
     """
     if not re.search(pattern, result.output, re.MULTILINE):
         raise AssertionError(f"the output does not hold /{pattern}/, so nothing shows that "
@@ -385,33 +433,57 @@ def known_gap(gap_id, *, gate, reason, closes, today="accepts", _registry=None):
     return decorate
 
 
-def gap_report(gaps=None, markdown=False):
-    """The list of known gaps as text (or a Markdown table)."""
-    gaps = sorted((KNOWN_GAPS if gaps is None else gaps).values(), key=lambda g: (g.gate, g.id))
+def _sorted_gaps(gaps=None):
+    return sorted((KNOWN_GAPS if gaps is None else gaps).values(), key=lambda g: (g.gate, g.id))
+
+
+def gap_report(gaps=None, markdown=False, states=False):
+    """The list of known gaps as text (or a Markdown table).
+
+    states  True after a run of the suite: say for each gap if its test saw the
+            gap open in that run (`open`), or did not run (`not run`)."""
+    gaps = _sorted_gaps(gaps)
     if markdown:
         lines = [f"### Known gaps of the gates ({len(gaps)})", "",
                  "A gate should reject the artifact and does not reject it today. Each test "
                  "passes while its gap exists and fails when the gate starts to reject.", "",
-                 "| Gap | Gate | Today | Closed by | What passes today |", "|---|---|---|---|---|"]
+                 "| Gap | Gate | Today | Closed by |" + (" This run |" if states else "")
+                 + " What passes today |", "|---|---|---|---|---|" + ("---|" if states else "")]
         lines += [f"| `{g.id}` | `{g.gate}` | {g.today} | {g.closes} | "
+                  + (f"{g.state} | " if states else "")
                   + g.reason.replace("|", "\\|") + " |" for g in gaps]
         return "\n".join(lines) + "\n"
     lines = [f"Known gaps of the gates: {len(gaps)} (a gate should reject the artifact, and "
              "does not reject it today)"]
     for g in gaps:
         lines += [f"  {g.id}", f"      gate:   {g.gate}", f"      today:  {g.today}",
-                  f"      closes: {g.closes} ({ROADMAP[g.closes]})",
-                  f"      reason: {g.reason}", f"      test:   {g.test}"]
+                  f"      closes: {g.closes} ({ROADMAP[g.closes]})"]
+        lines += [f"      state:  {g.state} in this run"] if states else []
+        lines += [f"      reason: {g.reason}", f"      test:   {g.test}"]
     return "\n".join(lines) + "\n"
+
+
+def gap_list(gaps=None):
+    """The known gaps as plain data (for JSON): one dictionary for each gap."""
+    return [{"id": g.id, "gate": g.gate, "today": g.today, "closes": g.closes,
+             "reason": g.reason, "test": g.test, "state": g.state} for g in _sorted_gaps(gaps)]
 
 
 @atexit.register
 def _say_open_gaps():
     still_open = sorted(g.id for g in KNOWN_GAPS.values() if g.state == "open")
-    if still_open:
-        print(f"\n{len(still_open)} known gap(s) still open (a gate should reject, and does "
-              "not): " + ", ".join(still_open)
-              + "\nDetails: python3 detections/tests/gatelib.py --gaps", file=sys.stderr)
+    if not still_open:
+        return
+    print(f"\n{len(still_open)} known gap(s) still open (a gate should reject, and does "
+          "not): " + ", ".join(still_open)
+          + "\nDetails: python3 detections/tests/gatelib.py --gaps", file=sys.stderr)
+    # For `gatelib.py --run`, which runs the tests in child processes.
+    if os.environ.get(_OPEN_GAPS_FILE):
+        try:
+            with open(os.environ[_OPEN_GAPS_FILE], "a", encoding="utf-8") as fh:
+                fh.write("".join(gap_id + "\n" for gap_id in still_open))
+        except OSError as error:
+            print(f"cannot record the open gaps: {error}", file=sys.stderr)
 
 
 # ------------------------------------------------------------------------------ trees
@@ -450,21 +522,22 @@ def _changes(before, after):
     return sorted(p for p in set(before) | set(after) if before.get(p) != after.get(p))
 
 
-_pool = None
-
-
-def _executor():
-    global _pool
-    if _pool is None:
-        _pool = concurrent.futures.ThreadPoolExecutor(max_workers=max(2, os.cpu_count() or 2))
-    return _pool
+# What Tree.run_step() puts first on the PATH of a workflow step, as shell lines.
+# pip does nothing: a test installs nothing, and the tests' Python already holds
+# detections/requirements.txt (every control fails when it does not).
+_STEP_PROGRAMS = {
+    "python3": f'exec "{PYTHON}" "$@"',
+    "python": f'exec "{PYTHON}" "$@"',
+    "pip": "exit 0",
+    "pip3": "exit 0",
+}
 
 
 class Tree:
     """A throwaway copy of parts of the repository, with a sandbox around it.
 
         <sandbox>/repo/   the copy: `root`, the working directory of every gate run
-        <sandbox>/tmp/    TMPDIR of the gate runs
+        <sandbox>/tmp/    TMPDIR of the gate runs; tmp_path(name) is a file in it
         <sandbox>/home/   HOME of the gate runs
         <sandbox>/out/    out(name): files beside the copy (--json, --baseline, ...)
 
@@ -474,10 +547,13 @@ class Tree:
             a gate must not reach the repository through the copy.
     source  the checkout to copy from (default: the one that holds this suite).
 
-    Call cleanup() when done; GateCase.tree() and GateCase.good() do that.
+    Call cleanup() when done; GateCase.tree(), GateCase.class_tree() and
+    GateCase.good() do that.
     """
 
     def __init__(self, parts=ALL, source=REPO):
+        self._pending = []                  # the runs of start() and start_step()
+        self._lock = threading.Lock()
         self.source = os.path.abspath(source)
         self.sandbox = os.path.realpath(tempfile.mkdtemp(prefix="deteng-gates-"))
         if os.path.commonpath([self.sandbox, os.path.realpath(self.source)]) \
@@ -489,7 +565,6 @@ class Tree:
         self.tmp = os.path.join(self.sandbox, "tmp")
         self.home = os.path.join(self.sandbox, "home")
         self._out = os.path.join(self.sandbox, "out")
-        self._bin = os.path.join(self.sandbox, "bin")
         self._steps = 0
         try:
             for directory in (self.root, self.tmp, self.home, self._out):
@@ -517,8 +592,15 @@ class Tree:
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 shutil.copy2(src, dst)
 
+    def wait(self):
+        """Wait for the runs that start() and start_step() put in the background."""
+        for pending in list(self._pending):
+            pending.wait()
+
     def cleanup(self):
-        """Delete the sandbox (the copy and everything the gate runs wrote)."""
+        """Delete the sandbox (the copy and everything the gate runs wrote). The
+        background runs of this tree end first: no copy is deleted under a gate."""
+        self.wait()
         shutil.rmtree(self.sandbox, ignore_errors=True)
 
     def __enter__(self):
@@ -551,6 +633,16 @@ class Tree:
         if os.path.isabs(name) or ".." in name.split("/"):
             raise ValueError(f"{name!r}: give a plain relative name")
         full = os.path.join(self._out, name)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        return full
+
+    def tmp_path(self, name):
+        """The path of <name> in the sandbox's tmp directory: $TMPDIR/<name> for a
+        gate run, and /tmp/<name> for a workflow step that run_step() runs. For an
+        input that a step reads from /tmp/ (a log that an earlier step captured)."""
+        if os.path.isabs(name) or ".." in name.split("/"):
+            raise ValueError(f"{name!r}: give a plain relative name")
+        full = os.path.join(self.tmp, name)
         os.makedirs(os.path.dirname(full), exist_ok=True)
         return full
 
@@ -675,11 +767,12 @@ class Tree:
     def env(self, extra=None):
         """The environment of a gate run: the test process's own, without tokens,
         GitHub variables, gate constants and Python settings; with a TMPDIR and a
-        HOME in the sandbox, no bytecode, and a proxy that refuses every connection."""
+        HOME in the sandbox, no bytecode, no colour in the output (the assertions
+        read it), and a proxy that refuses every connection."""
         env = {k: v for k, v in os.environ.items()
                if not k.startswith(_DROPPED_PREFIXES) and k.lower() not in _DROPPED_NAMES}
         env.update(PYTHONDONTWRITEBYTECODE="1", PYTHONUTF8="1", TMPDIR=self.tmp, HOME=self.home,
-                   PIP_NO_INDEX="1", PIP_DISABLE_PIP_VERSION_CHECK="1")
+                   PIP_NO_INDEX="1", PIP_DISABLE_PIP_VERSION_CHECK="1", NO_COLOR="1")
         for name in ("http_proxy", "https_proxy", "all_proxy"):
             env[name] = env[name.upper()] = _NO_NETWORK
         env.update({k: str(v) for k, v in (extra or {}).items()})
@@ -729,22 +822,37 @@ class Tree:
         """run() in the background; returns a Pending, and pending.result() waits.
 
         For the slow gates: start several runs (in setUpClass, or at the top of a
-        test), then collect them. The runs share the machine's cores.
+        test), then collect them. The runs share the machine's cores. cleanup()
+        waits for a run that nobody collected.
         """
         if not os.path.isfile(self.path(script)):
             raise FileNotFoundError(f"{script} is not in the copy; add its part to the Tree")
-        return Pending(_executor().submit(self.run, script, *args, env=env, timeout=timeout))
+        return self._background(self.run, script, *args, env=env, timeout=timeout)
 
-    def run_step(self, step, env=None, expressions=None, timeout=DEFAULT_TIMEOUT):
+    def start_step(self, step, **options):
+        """run_step() in the background (the same options); returns a Pending."""
+        return self._background(self.run_step, step, **options)
+
+    def _background(self, call, *args, **kwargs):
+        pending = background(call, *args, **kwargs)
+        self._pending.append(pending)
+        return pending
+
+    def run_step(self, step, env=None, expressions=None, timeout=DEFAULT_TIMEOUT, programs=None):
         """Run one workflow step (from ci_steps()) with the shell GitHub Actions uses.
 
         No `shell:` means `bash -e`; `shell: bash` means `bash --noprofile --norc -eo
         pipefail`. So a step that pipes a gate into `tee` without `shell: bash` loses
-        the gate's exit code here as it does in CI. `python3` and `python` are the
-        tests' Python. /tmp/ in the script is the sandbox's tmp directory, and
-        GITHUB_STEP_SUMMARY, GITHUB_OUTPUT, GITHUB_ENV and RUNNER_TEMP are files and a
-        directory in the sandbox. Give the value of each `${{ ... }}` expression in
-        `expressions` ({"github.event.pull_request.base.sha": "abc"}).
+        the gate's exit code here as it does in CI. /tmp/ in the script is the
+        sandbox's tmp directory (tmp_path()), and GITHUB_STEP_SUMMARY, GITHUB_OUTPUT,
+        GITHUB_ENV and RUNNER_TEMP are files and a directory in the sandbox. Give the
+        value of each `${{ ... }}` expression in `expressions`
+        ({"github.event.pull_request.base.sha": "abc"}).
+
+        First on the step's PATH (also before a PATH in `env`): `python3` and
+        `python`, which are the tests' Python, and `pip` and `pip3`, which do nothing
+        and exit 0 (a test installs nothing). programs={name: shell line} adds a
+        program there, or replaces one of these.
         """
         script = step.run
         for expression, value in (expressions or {}).items():
@@ -761,25 +869,26 @@ class Tree:
         else:
             raise ValueError(f"step {step.name!r} of {step.workflow}: shell {step.shell!r} "
                              "is not modelled")
-        if not os.path.isdir(self._bin):
-            os.makedirs(self._bin)
-            for name in ("python3", "python"):
-                shim = os.path.join(self._bin, name)
-                with open(shim, "w", encoding="utf-8") as fh:
-                    fh.write(f'#!/bin/sh\nexec "{PYTHON}" "$@"\n')
-                os.chmod(shim, 0o755)
-        self._steps += 1
-        path = self.out(f"steps/{self._steps}.sh")
+        with self._lock:        # steps of one tree can start together (start_step)
+            self._steps += 1
+            number = self._steps
+            step_env = {"RUNNER_TEMP": os.path.join(self._out, "runner-temp")}
+            os.makedirs(step_env["RUNNER_TEMP"], exist_ok=True)
+            for name in ("GITHUB_STEP_SUMMARY", "GITHUB_OUTPUT", "GITHUB_ENV"):
+                step_env[name] = self.out(f"github/{name.lower()}")
+                open(step_env[name], "a", encoding="utf-8").close()
+        path = self.out(f"steps/{number}/step.sh")
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(script if script.endswith("\n") else script + "\n")
-        runner_temp = os.path.join(self._out, "runner-temp")
-        os.makedirs(runner_temp, exist_ok=True)
-        step_env = {"PATH": self._bin + os.pathsep + os.environ.get("PATH", ""),
-                    "RUNNER_TEMP": runner_temp}
-        for name in ("GITHUB_STEP_SUMMARY", "GITHUB_OUTPUT", "GITHUB_ENV"):
-            step_env[name] = self.out(f"github/{name.lower()}")
-            open(step_env[name], "a", encoding="utf-8").close()
+        bin_dir = os.path.dirname(self.out(f"steps/{number}/bin/python3"))
+        for name, line in {**_STEP_PROGRAMS, **(programs or {})}.items():
+            if not re.fullmatch(r"[\w.+-]+", name):
+                raise ValueError(f"programs: {name!r} is not a program name")
+            with open(os.path.join(bin_dir, name), "w", encoding="utf-8") as fh:
+                fh.write(f"#!/bin/sh\n{line}\n")
+            os.chmod(os.path.join(bin_dir, name), 0o755)
         step_env.update(env or {})
+        step_env["PATH"] = bin_dir + os.pathsep + step_env.get("PATH", os.environ.get("PATH", ""))
         return self.run_command(shell + [path], env=step_env, timeout=timeout)
 
 
@@ -815,13 +924,41 @@ def ci_steps(script=None, root=REPO):
     return steps
 
 
-def ci_step(workflow, job, script, root=REPO):
-    """The one step of `job` in `workflow` (a file name) whose text holds `script`.
-    Fails when there is none, or more than one: the test must name the step it runs."""
-    found = [s for s in ci_steps(script, root) if s.workflow == workflow and s.job == job]
+def _command_lines(run):
+    """The command lines of a step's `run:` text: comments removed, lines that end in
+    a backslash joined, white space collapsed."""
+    logical, pending = [], ""
+    for line in run.splitlines():
+        line = line.strip()
+        if line.startswith("#"):
+            continue
+        if line.endswith("\\"):
+            pending += line[:-1] + " "
+            continue
+        logical.append(pending + line)
+        pending = ""
+    if pending:
+        logical.append(pending)
+    return [" ".join(line.split()) for line in logical if line.strip()]
+
+
+def ci_step(workflow, job, command, root=REPO):
+    """The one step of `job` in `workflow` (a file name) with a command line that
+    holds `command` (the lines as ci_commands() gives them).
+
+    command  the script (`detections/rule_cases.py`), or more of the line when two
+             steps of the job name the script: `python3 detections/k8s_platforms_md.py
+             --check`, `--expect-miss`. A step that names it only in a comment does
+             not count.
+
+    Fails when there is no such step, or more than one: the test must name the step
+    that it runs."""
+    wanted = " ".join(command.split())
+    found = [s for s in ci_steps(None, root) if s.workflow == workflow and s.job == job
+             and any(wanted in line for line in _command_lines(s.run))]
     if len(found) != 1:
-        raise LookupError(f"{workflow}, job {job}: {len(found)} step(s) run {script}; wanted 1"
-                          + "".join(f"\n  - {s.name}" for s in found))
+        raise LookupError(f"{workflow}, job {job}: {len(found)} step(s) have a command line "
+                          f"with `{wanted}`; wanted 1" + "".join(f"\n  - {s.name}" for s in found))
     return found[0]
 
 
@@ -831,22 +968,22 @@ def ci_commands(script, root=REPO):
     per command. A line that only names the script (a list of paths) is left out."""
     runs = re.compile(r"python[\d.]*\s+(?:-\S+\s+)*[\"']?(?:\S*/)?" + re.escape(script)
                       + r"(?![\w.-])")
-    commands = []
-    for step in ci_steps(script, root):
-        logical, pending = [], ""
-        for line in step.run.splitlines():
-            line = line.strip()
-            if line.startswith("#"):
-                continue
-            if line.endswith("\\"):
-                pending += line[:-1] + " "
-                continue
-            logical.append(pending + line)
-            pending = ""
-        if pending:
-            logical.append(pending)
-        commands += [" ".join(c.split()) for c in logical if runs.search(c)]
-    return commands
+    return [line for step in ci_steps(script, root) for line in _command_lines(step.run)
+            if runs.search(line)]
+
+
+def require_program(name, why):
+    """The path of the program `name` (gcc, git), which a test needs.
+
+    When it is not installed, the test (or, from setUpClass, the class) is skipped.
+    In CI (the environment variable CI is set) it fails: there the suite must run
+    every test, and a skipped test would look green."""
+    found = shutil.which(name)
+    if found:
+        return found
+    if os.environ.get("CI"):
+        raise AssertionError(f"{name} is not installed in CI: {why}")
+    raise unittest.SkipTest(f"{name} is not installed: {why}")
 
 
 # ----------------------------------------------------------------------------- GateCase
@@ -856,9 +993,14 @@ class GateCase(unittest.TestCase):
 
     PARTS  what a copy holds (Tree parts); the default is the whole checkout.
 
-    good()   the unmodified copy that the tests of the class share. It is read-only:
-             the class fails when a test or a gate changed a file in it.
-    tree()   a private copy for one test, deleted when the test ends.
+    good()        the unmodified copy that the tests of the class share. It is
+                  read-only: the class fails when a test or a gate changed a file
+                  in it.
+    tree()        a private copy for one test, deleted when the test ends.
+    class_tree()  a private copy that lives as long as the class (a classmethod):
+                  for a slow gate whose runs start in setUpClass.
+    in_background(call, *args)  start a run on a thread (a classmethod); the class
+                  waits for it before it deletes its copies.
 
     The class also fails when a file of the REPOSITORY changed while its tests ran
     (detections/tests/ and ignored files excepted): gates run only in copies.
@@ -894,6 +1036,8 @@ class GateCase(unittest.TestCase):
 
     @classmethod
     def _drop_good(cls, tree, before):
+        cls._wait_for_background()
+        tree.wait()             # a gate that still runs in it can still write in it
         changed = _changes(before, tree.fingerprint())
         tree.cleanup()
         del cls._good
@@ -909,10 +1053,58 @@ class GateCase(unittest.TestCase):
         self.addCleanup(tree.cleanup)
         return tree
 
+    @classmethod
+    def class_tree(cls, *parts):
+        """A private copy of `parts` (default: cls.PARTS) that lives as long as the
+        test class. For a slow gate: plant in it and start its run in setUpClass, so
+        that the runs of the class overlap. Never plant in good()."""
+        tree = Tree(parts or cls.PARTS)
+        cls.addClassCleanup(cls._drop_class_tree, tree)
+        return tree
+
+    @classmethod
+    def _drop_class_tree(cls, tree):
+        cls._wait_for_background()
+        tree.cleanup()
+
+    @classmethod
+    def in_background(cls, call, *args, **kwargs):
+        """Start call(*args, **kwargs) on a thread and return a Pending; .result() is
+        what the call returned. For a run that Tree.start() and Tree.start_step()
+        cannot start (several steps, one after the other). The class waits for the
+        run before it deletes good() and its class_tree() copies, also when no test
+        asked for the result (a `-k` filter)."""
+        if "_pending" not in cls.__dict__:
+            cls._pending = []
+            cls.addClassCleanup(cls._forget_background)
+        pending = background(call, *args, **kwargs)
+        cls._pending.append(pending)
+        return pending
+
+    @classmethod
+    def _wait_for_background(cls):
+        for pending in list(cls.__dict__.get("_pending", ())):
+            pending.wait()
+
+    @classmethod
+    def _forget_background(cls):
+        cls._wait_for_background()
+        del cls._pending
+
     # The module's assertions, as methods: self.assert_rejects(result, reason), ...
     assert_rejects = staticmethod(assert_rejects)
     assert_accepts = staticmethod(assert_accepts)
     assert_saw = staticmethod(assert_saw)
+
+    def assert_documented(self, command):
+        """AGENTS.md gives `command` as a command to run (a line of its Commands
+        block, without the comment). For a gate mode that no workflow runs (the
+        --dry-run of a validator): the documented command is then the command that
+        the tests must use."""
+        with open(os.path.join(REPO, "AGENTS.md"), encoding="utf-8") as fh:
+            documented = [" ".join(line.split("#")[0].split()) for line in fh]
+        if " ".join(command.split()) not in documented:
+            self.fail(f"AGENTS.md does not give the command `{command}`")
 
     def assert_ci_runs(self, script, *words):
         """A workflow runs `script` in one command line that holds every one of `words`
@@ -922,6 +1114,71 @@ class GateCase(unittest.TestCase):
         if not any(all(word in command for word in words) for command in commands):
             self.fail(f"no workflow step runs {script} with {' '.join(words) or '(any)'}; "
                       f"the workflows run: {commands or 'nothing that names it'}")
+
+
+class StartedTogether(GateCase):
+    """A GateCase for a gate that needs several seconds for one run.
+
+    unittest runs the tests of a class one after the other, so six runs of 6 s each
+    take 36 s. Here the slow runs of a class start together, in the background, when
+    the first test asks for one, and each test waits only for its own:
+
+        class CheckSufficiency(gatelib.StartedTogether):
+            RUNS = ("unregistered_rule", ...)   # one private copy and one run for each
+
+            @classmethod
+            def start_gate(cls, tree):          # the command of the class, started
+                return tree.start(cls.GATE, "--markdown", tree.out("summary.md"))
+
+            @classmethod
+            def begin_unregistered_rule(cls, tree):
+                tree.plant(...)                 # ONE artifact in that copy
+                return cls.start_gate(tree)     # a Pending
+
+            def test_rejects_...(self):
+                tree, result = self.started("unregistered_rule")
+
+    The control is the same command in good(): self.started() gives its result. A
+    begin_<name>() can return any Pending (Tree.start(), Tree.start_step(),
+    cls.in_background()). What it raises (also unittest.SkipTest) is raised in the
+    tests that ask for that run, and in no other test. A test filter (-k) that
+    selects no test of a slow run starts nothing; one that selects such a test
+    starts every run of the class.
+    """
+
+    RUNS = ()
+
+    @classmethod
+    def start_gate(cls, tree):
+        """Start the command of this class in `tree` (Tree.start); returns the Pending."""
+        raise NotImplementedError(f"{cls.__name__}.start_gate()")
+
+    @classmethod
+    def _start_all(cls):
+        if "_runs" in cls.__dict__:
+            return
+        cls._runs = {}
+        cls.addClassCleanup(delattr, cls, "_runs")
+        for name in cls.RUNS:
+            try:
+                tree = cls.class_tree()
+                cls._runs[name] = (tree, getattr(cls, "begin_" + name)(tree))
+            except Exception as error:      # noqa: BLE001 - the test that asks for it shows it
+                cls._runs[name] = error
+        try:
+            good = cls.good()
+            cls._runs[None] = (good, cls.start_gate(good))
+        except Exception as error:          # noqa: BLE001
+            cls._runs[None] = error
+
+    def started(self, name=None):
+        """(tree, result) of the run `name`; without a name, of the control in good()."""
+        cls = type(self)
+        cls._start_all()
+        run = cls._runs[name]
+        if isinstance(run, BaseException):
+            raise run
+        return run[0], run[1].result()
 
 
 # ---------------------------------------------------------------------------------- CLI
@@ -947,13 +1204,18 @@ def _discover():
     return classes
 
 
-def run_suite(jobs=None, only=(), timeout=1200, out=sys.stdout):
+def run_suite(jobs=None, only=(), timeout=1200, out=sys.stdout, no_skips=False, summary=None):
     """Run the suite with one `python -m unittest` process for each test class, `jobs`
     at a time, and print each class's output when it ends. The tests and their
     verdicts are those of `python -m unittest discover`; only the wall time differs,
     because the gates of different classes run at the same time.
 
-    Returns 0 only when every class ran all of its tests and none failed.
+    no_skips  a skipped test fails the run (for CI, where every tool is installed).
+    summary   a file: the verdict, the counts and the known gaps are added to it as
+              Markdown (the job summary of GitHub Actions).
+
+    Sets the state of each known gap that a test saw open in this run. Returns 0
+    only when every class ran all of its tests and none failed.
     """
     classes = collections.OrderedDict(
         (name, count) for name, count in _discover().items()
@@ -962,7 +1224,12 @@ def run_suite(jobs=None, only=(), timeout=1200, out=sys.stdout):
         print("no test class" + (f" matches {' '.join(only)}" if only else " found"), file=out)
         return 1
     jobs = max(1, jobs or os.cpu_count() or 2)
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    handle, open_gaps = tempfile.mkstemp(prefix="deteng-gates-open-gaps-")
+    os.close(handle)
+    # NO_COLOR: the lines `Ran N tests` and `OK (skipped=N)` are read below.
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", NO_COLOR="1", **{_OPEN_GAPS_FILE: open_gaps})
+    env.pop("FORCE_COLOR", None)
+    env.pop("PYTHON_COLORS", None)
 
     def run_class(name):
         start = time.monotonic()
@@ -975,48 +1242,90 @@ def run_suite(jobs=None, only=(), timeout=1200, out=sys.stdout):
             code = "timeout"
             text = (expired.stdout or b"").decode("utf-8", "replace")
         ran = re.search(r"^Ran (\d+) tests? in", text, re.MULTILINE)
-        return name, code, int(ran.group(1)) if ran else 0, time.monotonic() - start, text
+        skipped = re.search(r"^(?:OK|FAILED) \((?:[^)]*, )?skipped=(\d+)", text, re.MULTILINE)
+        return (name, code, int(ran.group(1)) if ran else 0,
+                int(skipped.group(1)) if skipped else 0, time.monotonic() - start, text)
 
     start = time.monotonic()
-    failed, total = [], 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-        for name, code, ran, seconds, text in pool.map(run_class, classes):
-            total += ran
-            verdict = "ok"
-            if code != 0:
-                verdict = f"FAILED (exit code {code})"
-            elif ran != classes[name]:
-                verdict = f"FAILED (ran {ran} of {classes[name]} test(s))"
-            if verdict != "ok":
-                failed.append(name)
-            print(f"===== {name}: {verdict}, {ran} test(s), {seconds:.1f} s", file=out)
-            print("".join(f"    {line}\n" for line in text.rstrip("\n").split("\n")), end="", file=out)
-            out.flush()
-    print(f"\n{len(classes)} test class(es), {total} test(s), {jobs} at a time, "
-          f"{time.monotonic() - start:.1f} s", file=out)
+    failed, skips, total = [], collections.OrderedDict(), 0
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+            for name, code, ran, skipped, seconds, text in pool.map(run_class, classes):
+                if code == 0 and ran == 0 and skipped:
+                    # unittest.SkipTest in setUpClass: every test of the class is skipped.
+                    ran = skipped = classes[name]
+                total += ran
+                verdict = "ok"
+                if code != 0:
+                    verdict = f"FAILED (exit code {code})"
+                elif ran != classes[name]:
+                    verdict = f"FAILED (ran {ran} of {classes[name]} test(s))"
+                if verdict != "ok":
+                    failed.append(name)
+                if skipped:
+                    skips[name] = skipped
+                print(f"===== {name}: {verdict}, {ran} test(s)"
+                      + (f" ({skipped} skipped)" if skipped else "") + f", {seconds:.1f} s", file=out)
+                print("".join(f"    {line}\n" for line in text.rstrip("\n").split("\n")), end="",
+                      file=out)
+                out.flush()
+        with open(open_gaps, encoding="utf-8") as fh:
+            for gap_id in fh.read().split():
+                if gap_id in KNOWN_GAPS:
+                    KNOWN_GAPS[gap_id].state = "open"
+    finally:
+        os.remove(open_gaps)
+
+    counts = (f"{len(classes)} test class(es), {total} test(s), {jobs} at a time, "
+              f"{time.monotonic() - start:.1f} s")
+    notes = []
+    if skips:
+        notes.append(f"{sum(skips.values())} test(s) skipped: "
+                     + ", ".join(f"{name} ({count})" for name, count in skips.items()))
     if failed:
-        print(f"FAILED: {len(failed)} test class(es): {', '.join(failed)}", file=out)
-        return 1
-    print("OK", file=out)
-    return 0
+        notes.append(f"FAILED: {len(failed)} test class(es): {', '.join(failed)}")
+    elif skips and no_skips:
+        notes.append("FAILED: --no-skips is set, and test(s) were skipped (the lines "
+                     "`skipped '...'` above give the reasons)")
+    code = 1 if failed or (skips and no_skips) else 0
+    print("\n" + "\n".join([counts] + notes + (["OK"] if code == 0 else [])), file=out)
+    if summary:
+        still_open = sum(1 for gap in KNOWN_GAPS.values() if gap.state == "open")
+        with open(summary, "a", encoding="utf-8") as fh:
+            fh.write(f"## Gate tests: {'passed' if code == 0 else 'FAILED'}\n\n{counts}; "
+                     f"{len(KNOWN_GAPS)} known gap(s), {still_open} seen open in this run.\n\n"
+                     + "".join(f"- {note}\n" for note in notes) + ("\n" if notes else "")
+                     + gap_report(markdown=True, states=True))
+    return code
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="The gate tests: list the known gaps, or run the suite in parallel.")
     ap.add_argument("--gaps", action="store_true", help="print every @known_gap of the suite")
-    ap.add_argument("--markdown", action="store_true", help="with --gaps: a Markdown table")
-    ap.add_argument("--json", action="store_true", help="with --gaps: JSON")
+    ap.add_argument("--markdown", action="store_true",
+                    help="print the known gaps as a Markdown table")
+    ap.add_argument("--json", action="store_true",
+                    help="print the known gaps as JSON on stdout (with --run: the run's "
+                         "output goes to stderr)")
     ap.add_argument("--run", action="store_true",
-                    help="run the suite, one process for each test class, in parallel")
+                    help="run the suite, one process for each test class, in parallel, "
+                         "then print the known gaps")
     ap.add_argument("--jobs", type=int, default=None,
                     help="with --run: classes at a time (default: the number of CPUs)")
+    ap.add_argument("--no-skips", action="store_true",
+                    help="with --run: a skipped test fails the run (for CI)")
+    ap.add_argument("--summary", metavar="PATH",
+                    help="with --run: add the verdict, the counts and the known gaps to "
+                         "PATH as Markdown (\"$GITHUB_STEP_SUMMARY\")")
     ap.add_argument("only", nargs="*",
                     help="with --run: only the classes whose `module.Class` holds one of these")
     args = ap.parse_args(argv)
     if not (args.gaps or args.run):
         ap.print_help()
         return 0
+    if not args.run and (args.only or args.no_skips or args.summary or args.jobs):
+        ap.error("--jobs, --no-skips, --summary and class names need --run")
     # The test modules import `gatelib`, not `__main__`: use the registry of that module.
     sys.path.insert(0, TESTS)
     import gatelib as lib
@@ -1024,18 +1333,18 @@ def main(argv=None):
     code = 0
     try:
         if args.run:
-            code = lib.run_suite(args.jobs, args.only)
+            code = lib.run_suite(args.jobs, args.only, out=sys.stderr if args.json else sys.stdout,
+                                 no_skips=args.no_skips, summary=args.summary)
         else:
             lib._discover()
     except ImportError as error:
         print(error, file=sys.stderr)
         return 1
     if args.json:
-        print(json.dumps([{"id": g.id, "gate": g.gate, "today": g.today, "closes": g.closes,
-                           "reason": g.reason, "test": g.test, "state": g.state} for g in
-                          sorted(lib.KNOWN_GAPS.values(), key=lambda g: (g.gate, g.id))], indent=2))
-    elif args.gaps or args.run:
-        print(("\n" if args.run else "") + lib.gap_report(markdown=args.markdown), end="")
+        print(json.dumps(lib.gap_list(), indent=2))
+    else:
+        print(("\n" if args.run else "")
+              + lib.gap_report(markdown=args.markdown, states=args.run), end="")
     return code
 
 

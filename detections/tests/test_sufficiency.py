@@ -17,7 +17,6 @@ How the harness works: gatelib.py and README.md in this directory.
     python3 -B -m unittest discover -s detections/tests -p 'test_sufficiency.py' -v
 """
 
-import concurrent.futures
 import json
 import os
 import re
@@ -58,86 +57,6 @@ def report_row(result, rule):
             return dict(zip(("rule", "platform", "positive", "cases", "neg", "items", "status"),
                             cells))
     raise AssertionError(f"check_sufficiency.py printed no row for {rule}:\n" + result.describe())
-
-
-_threads = None
-
-
-def background(function, *args):
-    """Run function(*args) in a thread; the returned object has result(), as the
-    Pending of Tree.start() has. For a run of several steps, which Tree.start()
-    cannot start."""
-    global _threads
-    if _threads is None:
-        _threads = concurrent.futures.ThreadPoolExecutor(max_workers=2)
-    return _threads.submit(function, *args)
-
-
-class StartedTogether(gatelib.GateCase):
-    """A GateCase for a gate that needs several seconds for one run.
-
-    unittest runs the tests of a class one after the other, so six runs of 6 s each
-    take 36 s. Here the slow runs of a class start together, in the background, when
-    the first test asks for one, and each test waits only for its own:
-
-        RUNS = ("unregistered_rule", ...)       # one private copy and one run for each
-
-        @classmethod
-        def begin_unregistered_rule(cls, tree):
-            tree.plant(...)                     # ONE artifact in that copy
-            return cls.start_gate(tree)         # the command of the class, started
-
-        def test_rejects_...(self):
-            tree, result = self.started("unregistered_rule")
-
-    The control is the same command in good(): self.started() gives its result. A
-    test filter (-k) that selects no test of a slow run starts nothing.
-    """
-
-    RUNS = ()
-
-    @classmethod
-    def start_gate(cls, tree):
-        """Start the command of this class in `tree` (Tree.start); returns the Pending."""
-        raise NotImplementedError
-
-    @classmethod
-    def _start_all(cls):
-        if "_runs" in cls.__dict__:
-            return
-        cls._runs = {}
-        for name in cls.RUNS:
-            tree = gatelib.Tree(cls.PARTS)
-            cls.addClassCleanup(tree.cleanup)
-            try:
-                cls._runs[name] = (tree, getattr(cls, "begin_" + name)(tree))
-            except (Exception, unittest.SkipTest) as error:
-                cls._runs[name] = error     # the test that asks for this run shows it
-        try:
-            good = cls.good()
-            cls._runs[None] = (good, cls.start_gate(good))
-        except Exception as error:
-            cls._runs[None] = error
-        # Registered last, so it runs first: no copy is deleted under a running gate.
-        cls.addClassCleanup(cls._wait_for_runs)
-
-    @classmethod
-    def _wait_for_runs(cls):
-        for run in cls.__dict__.get("_runs", {}).values():
-            if not isinstance(run, BaseException):
-                try:
-                    run[1].result()
-                except BaseException:   # noqa: BLE001 - the test of that run reports it
-                    pass
-        del cls._runs
-
-    def started(self, name=None):
-        """(tree, result) of the run `name`; without a name, of the control in good()."""
-        type(self)._start_all()
-        run = self._runs[name]
-        if isinstance(run, BaseException):
-            raise run
-        return run[0], run[1].result()
 
 
 class RuleCases(gatelib.GateCase):
@@ -343,10 +262,10 @@ class SigmaEvalImportGuard(gatelib.GateCase):
         self.assert_rejects(result, r"^  detections/glob\.py$|" + self.BAD_POSITIVE)
 
 
-class CheckSufficiency(StartedTogether):
+class CheckSufficiency(gatelib.StartedTogether):
     """detections/check_sufficiency.py, as the check-sufficiency job runs it: every
     rule, with --markdown. One full run takes about 6 s, so the full runs of the
-    class start together (StartedTogether)."""
+    class start together (gatelib.StartedTogether)."""
 
     GATE = "detections/check_sufficiency.py"
     PARTS = gatelib.DETECTIONS      # the gate and the validators it imports read only detections/
@@ -565,7 +484,7 @@ class CheckSufficiency(StartedTogether):
         self.assert_rejects(result, r"^  " + self.PURE_SURFACE[1:])
 
 
-class SufficiencyRatchet(StartedTogether):
+class SufficiencyRatchet(gatelib.StartedTogether):
     """The sufficiency-ratchet job of detection-quality.yml (pull requests only): the
     base tree's check_sufficiency.py writes a report with --json, and the head runs
     with --baseline on that report. Here the base is the unmodified copy and each
@@ -638,8 +557,7 @@ class SufficiencyRatchet(StartedTogether):
             # A gate run inherits these, and git would then work on that repository.
             raise unittest.SkipTest("the environment pins git to a repository: "
                                     + ", ".join(pinned))
-        if not shutil.which("git"):
-            raise unittest.SkipTest("git is not installed")
+        gatelib.require_program("git", "the job makes a worktree of the base commit")
         env = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
                "GIT_CEILING_DIRECTORIES": tree.sandbox,
                "GITHUB_OUTPUT": tree.out("github-output")}
@@ -659,18 +577,8 @@ class SufficiencyRatchet(StartedTogether):
         env["BASE_SHA"] = git("rev-parse", "HEAD")      # ${{ github.event.pull_request.base.sha }}
         cls.delete_one_near_miss(tree)
 
-        # The job installs the requirements of the base and of the head with pip. The
-        # tests' Python holds them already, and a test installs nothing: `pip` is a
-        # stub here. run_step() puts python3 on PATH in a directory of its own, which
-        # an env PATH replaces, so this directory holds python3 too.
-        programs = os.path.dirname(tree.out("ratchet-bin/pip"))
-        for name, line in (("pip", "exit 0"), ("python3", f'exec "{gatelib.PYTHON}" "$@"'),
-                           ("python", f'exec "{gatelib.PYTHON}" "$@"')):
-            with open(os.path.join(programs, name), "w", encoding="utf-8") as fh:
-                fh.write(f"#!/bin/sh\n{line}\n")
-            os.chmod(os.path.join(programs, name), 0o755)
-        env["PATH"] = programs + os.pathsep + os.environ.get("PATH", "")
-
+        # The job installs the requirements of the base and of the head with pip:
+        # run_step() gives the step a `pip` that installs nothing.
         steps = [step for step in gatelib.ci_steps()
                  if (step.workflow, step.job) == ("detection-quality.yml", "sufficiency-ratchet")]
         last = max(n for n, step in enumerate(steps) if "check_sufficiency.py --baseline" in step.run)
@@ -683,7 +591,7 @@ class SufficiencyRatchet(StartedTogether):
                     break       # GitHub Actions does not run the next step
             return ran
 
-        return background(job)
+        return cls.in_background(job)
 
     def test_ci_job_fails_when_a_near_miss_is_deleted(self):
         """The real steps of the job: `git worktree add` of the base commit, the base's
@@ -769,8 +677,9 @@ class SufficiencyRatchet(StartedTogether):
 
 class SigmaExplainSelfTest(gatelib.GateCase):
     """detections/sigma_explain.py --self-test: the grader that decides if a negative
-    is a near-miss, checked on constructed rules. No workflow runs this command, so
-    the control below is where CI runs the self-test of the grader."""
+    is a near-miss, checked on constructed rules. No workflow runs this command: the
+    gate tests are where CI runs it (test_suite.py, SelfTests, keeps the list of
+    such self-tests). The control below is the control of the planted grader."""
 
     GATE = "detections/sigma_explain.py"
     PARTS = gatelib.DETECTIONS      # the self-test also grades every rule under detections/sigma/

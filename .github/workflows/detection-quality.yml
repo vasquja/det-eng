@@ -103,6 +103,18 @@ name: detection-quality
 #                      one red run); the scheduled and manual runs fail. A fault in
 #                      the check itself (exit 2) fails a pull request too. Not run
 #                      on push.
+#   gate-tests         the gates test themselves (detections/tests/). Each test puts
+#                      one planted bad artifact (detections/tests/known_bad/) in a
+#                      throwaway copy of the checkout and runs a gate there, with the
+#                      command of its workflow step: the gate must reject the artifact
+#                      for the intended reason, and a control proves that the same
+#                      gate accepts the unmodified copy. It also runs the self-tests
+#                      that no other job runs (sigma_explain.py). A known gap (an
+#                      artifact that a gate should reject, and does not reject today)
+#                      passes while the gap is open and fails when the gate starts to
+#                      reject it; the job summary lists the known gaps. The gates
+#                      under test are those above and the validators and lints of the
+#                      other workflows, in their offline modes. Not a required check.
 #
 # No paths: filter on pull_request, so these checks ALWAYS report on a PR. None of
 # them is a required check in the main ruleset yet, and GitHub's native auto-merge
@@ -830,3 +842,38 @@ jobs:
             *) args+=(--self-workflow "$WORKFLOW_REF") ;;
           esac
           python3 .github/scripts/check_schedule_freshness.py "${args[@]}"
+
+  gate-tests:
+    # The gates test themselves (detections/tests/README.md). A change to a gate can
+    # stop it from rejecting bad work, and no other job sees that. Each test puts one
+    # planted bad artifact in a throwaway copy of the checkout and runs the gate
+    # there, as its workflow step runs it: the gate must reject the artifact for the
+    # intended reason. A control proves that the same gate accepts the unmodified
+    # copy. The gates run only in copies under the runner's temporary directory, with
+    # no token, no GitHub variable and a proxy setting that refuses every connection.
+    # This workflow has no paths filter, so the job runs on every pull request: when
+    # a gate, a test, a planted artifact or a workflow changes.
+    name: gate-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install requirements
+        run: pip install --quiet -r detections/requirements.txt
+
+      - name: Run the gate tests (each gate must reject its planted bad artifacts)
+        # One process for each test class, as many at a time as the runner has CPUs.
+        # --no-skips: gcc and git are on the runner, so a skipped test is lost
+        # coverage, and it fails the job. The script writes the job summary itself
+        # (the result and the list of known gaps), also when a test fails. No pipe:
+        # the step's exit code is the script's.
+        run: |
+          python3 -B detections/tests/gatelib.py --run --no-skips \
+            --summary "$GITHUB_STEP_SUMMARY"

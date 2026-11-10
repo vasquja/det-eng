@@ -28,7 +28,6 @@ import importlib.util
 import json
 import os
 import re
-import shutil
 import sys
 import unittest
 
@@ -56,10 +55,10 @@ def in_source(tree, script, pattern):
 def write_log(tree, name, sidecar=None, *cases):
     """Write a sensor log for a workflow step that reads /tmp/<name>.
 
-    Tree.run_step() gives the step the sandbox's tmp directory as /tmp/. The log
-    holds the events of the named cases of a rule sidecar of the copy, one JSON
-    object per line, as the capture steps write them. Without a sidecar the log is
-    an empty file. Returns the number of records."""
+    Tree.run_step() gives the step the sandbox's tmp directory as /tmp/
+    (Tree.tmp_path()). The log holds the events of the named cases of a rule
+    sidecar of the copy, one JSON object per line, as the capture steps write them.
+    Without a sidecar the log is an empty file. Returns the number of records."""
     events = []
     if sidecar:
         by_name = {case["name"]: case for case in tree.read_jsonl(sidecar)}
@@ -70,7 +69,7 @@ def write_log(tree, name, sidecar=None, *cases):
             events += by_name[case]["events"]
         if not events:
             raise AssertionError(f"write_log({name}): name at least one case")
-    with open(os.path.join(tree.tmp, name), "w", encoding="utf-8") as fh:
+    with open(tree.tmp_path(name), "w", encoding="utf-8") as fh:
         fh.write("".join(json.dumps(event) + "\n" for event in events))
     return len(events)
 
@@ -175,8 +174,9 @@ class CloudValidator(gatelib.GateCase):
         "cloud-benign-empty",
         gate="detections/validate_cloud_detections.py",
         reason="A benign baseline that holds no record passes as `benign baseline clean "
-               "(0 record(s))`: a negative control with nothing in it cannot fail, and "
-               "the validator does not say that it proves nothing.",
+               "(0 record(s))`: a negative control with nothing in it cannot fail. No other "
+               "gate reads the size of the baseline (check_sufficiency.py, rule_cases.py, "
+               "check_null_safety.py and score_benign.py accept the same tree).",
         closes="unplanned")
     def test_gap_empty_benign_baseline(self):
         """WANTED: a rule whose benign baseline holds no record fails, because its
@@ -209,10 +209,7 @@ class LinuxValidatorDryRun(gatelib.GateCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        if shutil.which("gcc") is None:
-            if os.environ.get("CI"):
-                raise AssertionError("gcc is missing in CI: the Linux dry run cannot be tested")
-            raise unittest.SkipTest("gcc is not installed: the Linux dry run compiles the atomics")
+        gatelib.require_program("gcc", "the Linux dry run compiles the atomics")
 
     def test_control_good_tree_compiles(self):
         """CONTROL: the counts are those of the rules and C sources that the
@@ -222,6 +219,7 @@ class LinuxValidatorDryRun(gatelib.GateCase):
         sources = set(in_source(good, self.GATE,
                                 r'"((?:atomics|detections/controls)/[^"]+\.c)"'))
         self.assertIn(self.ATOMIC, sources)
+        self.assert_documented(f"python3 {self.GATE} --dry-run")
         for path in sorted(rules | sources):
             self.assertTrue(good.exists(path), f"{path} is not in the copy")
         self.assert_accepts(
@@ -267,8 +265,7 @@ class LinuxValidatorOffline(gatelib.GateCase):
         super().setUpClass()
         # One copy with the driver for all tests: the validator writes nothing in it
         # (its build directory is under TMPDIR), and each run names its own defect.
-        cls.offline = gatelib.Tree(cls.PARTS)
-        cls.addClassCleanup(cls.offline.cleanup)
+        cls.offline = cls.class_tree()
         cls.offline.plant("validators/linux_offline_run_py.txt", cls.DRIVER)
 
     def canned_run(self, *scenario, report=None):
@@ -291,22 +288,32 @@ class LinuxValidatorOffline(gatelib.GateCase):
         rules = set(in_source(tree, self.GATE, r'"(detections/sigma/[^"]+\.yml)"'))
         mutants = set(in_source(tree, self.GATE, r'"(detections/controls/[^"]+\.c)"'))
         mutants.discard(self.NOOP)
-        result = self.canned_run()
+        report = tree.out("control.json")
+        result = self.canned_run(report=report)
         self.assert_accepts(
             result,
             rf"^{len(atomics)} passed, 0 skipped \(kernel feature missing\), 0 failed; "
             r"0 control\(s\) broken\.$")
-        rows = result.stdout
-        self.assertEqual(len(re.findall(r"^  \[ PASS \] ", rows, re.MULTILINE)), len(atomics))
-        self.assertEqual(len(re.findall(r"^  \[ held \] noop -> ", rows, re.MULTILINE)),
-                         len(rules))
+        self.assertEqual(len(re.findall(r"^  \[ PASS \] ", result.stdout, re.MULTILINE)),
+                         len(atomics))
+        with open(report, encoding="utf-8") as fh:
+            controls = json.load(fh)["controls"]
+        self.assertEqual({row["status"] for row in controls}, {"held"})
+        # The no-op ran on every rule; its window holds its own record and one of
+        # another process.
+        noop = [row for row in controls if row["control"].startswith("noop -> ")]
+        self.assertEqual(len(noop), len(rules))
+        self.assertEqual({row["detail"] for row in noop},
+                         {"no hit from the stimulus (2 events in window)"})
+        # Each mutant and each allowlisted re-run holds for the reason it is built for.
+        built = [row for row in controls if row not in noop]
+        stimuli = {row["control"].split(" -> ")[0] for row in built}
         for mutant in sorted(mutants):
-            self.assert_saw(result, rf"^  \[ held \] {re.escape(os.path.basename(mutant))} -> ")
-        # The mutants and the allowlisted re-runs hold for the reason they are built for.
-        self.assertNotIn("WARNING", rows)
-        self.assert_saw(result, r"^  \[ held \] afinet_raw_socket_behavioral\.c as 'ping' -> "
-                                r"afinet_raw_socket\.yml ")
-        self.assert_saw(result, r"^ +held: filtered on allowed_processes\.comm$")
+            self.assertIn(os.path.basename(mutant), stimuli)
+        self.assertIn("afinet_raw_socket_behavioral.c as 'ping'", stimuli)
+        for row in built:
+            self.assertEqual(sorted(row["graded"]), sorted(row["expected"]), row["control"])
+            self.assertFalse(row.get("warning"), row["control"])
 
     def test_rejects_detection_fired_by_another_process(self):
         """Definition of done 1 (fires on its own emulation). The records that fire
@@ -356,7 +363,7 @@ class LinuxValidatorOffline(gatelib.GateCase):
                "list (mutants and allowlisted re-runs). The real controls/noop.c makes no "
                "syscall that audit/atomic.rules audits, so on every real run the no-op "
                "rows cannot fail, and detections/README.md says such a control fails the run.",
-        closes="R2")
+        closes="R2b")
     def test_gap_noop_control_that_made_no_audited_syscall(self):
         """WANTED: the no-op is graded for vacuity as the mutants are. A no-op whose
         process tree made no audited syscall is a broken control, and the run fails."""
@@ -398,6 +405,7 @@ class K8sValidator(gatelib.GateCase):
         good = self.good()
         rules = set(in_source(good, self.GATE, r'^    \("(k8s_\w+\.yml)", "'))
         self.assertIn(os.path.basename(self.RULE), rules)
+        self.assert_documented(f"python3 {self.GATE} --dry-run")
         result = good.run(self.GATE, "--dry-run")
         self.assert_accepts(result, rf"^Dry run OK: {len(rules)} rule\(s\) compile with "
                                     r"pySigma\.$")
@@ -452,7 +460,7 @@ class K8sValidator(gatelib.GateCase):
         reason="The negative control holds on an empty pre-emulation audit log (`Loaded 0 "
                "audit event(s)`): no rule can match a log without records, so the control "
                "proves nothing, and the step passes.",
-        closes="R2")
+        closes="unplanned")
     def test_gap_negative_control_on_an_empty_log(self):
         """WANTED: a negative control that read no record fails as vacuous. The
         capture step always creates the file (a shell redirect), so an empty file
@@ -463,7 +471,7 @@ class K8sValidator(gatelib.GateCase):
         self.assert_saw(result, r"^Loaded 0 audit event\(s\) from ")
         self.assert_rejects(
             result,
-            r"(?i)^(NEGATIVE CONTROL FAILED|CONTROL FAILED|FAILED|ERROR)\b.*\b(empty|vacuous|"
+            r"(?i)^\s*(NEGATIVE CONTROL FAILED|CONTROL FAILED|FAILED|ERROR)\b.*\b(empty|vacuous|"
             r"proves nothing|(no|0) (audit )?(event|record))")
 
 
@@ -503,6 +511,7 @@ class StaticPodValidator(gatelib.GateCase):
         good = self.good()
         rules = set(in_source(good, self.GATE, r'^    \("(\w+\.yml)", "(?:cri|audit|file)", '))
         self.assertIn(os.path.basename(self.RULE), rules)
+        self.assert_documented(f"python3 {self.GATE} --dry-run")
         result = good.run(self.GATE, "--dry-run")
         self.assert_accepts(result, rf"^Dry run OK: {len(rules)} match-gated rule\(s\) compile "
                                     r"with pySigma\.$")
@@ -560,7 +569,7 @@ class StaticPodValidator(gatelib.GateCase):
                "(`Loaded 0 audit event(s)`): the validator fails an empty CRI log and a "
                "file log without a kubeadm write as vacuous, but it has no such check "
                "for the audit log.",
-        closes="R2")
+        closes="unplanned")
     def test_gap_negative_control_on_an_empty_audit_log(self):
         """WANTED: an audit log without records fails the negative control, as an
         empty CRI log does."""
@@ -570,8 +579,8 @@ class StaticPodValidator(gatelib.GateCase):
         self.assert_saw(result, r"^Loaded 0 audit event\(s\) from ")
         self.assert_rejects(
             result,
-            r"(?i)^\s*(NEGATIVE CONTROL FAILED|CONTROL FAILED|FAILED|ERROR)\b.*\baudit\b.*"
-            r"(empty|vacuous|proves nothing|no (event|record))")
+            r"(?i)^\s*(NEGATIVE CONTROL FAILED|CONTROL FAILED|FAILED|ERROR)\b.*(\baudit\b.*"
+            r"(empty|vacuous|proves nothing|no (event|record))|(no|0) audit (event|record))")
 
 
 class ApiserverValidator(gatelib.GateCase):
@@ -610,6 +619,7 @@ class ApiserverValidator(gatelib.GateCase):
         good = self.good()
         rules = set(in_source(good, self.GATE, r'^    \("(T[\d.]+)", "(\w+\.yml)", "'))
         self.assertIn(("T1098.006", "k8s_rbac_write.yml"), rules)
+        self.assert_documented(f"python3 {self.GATE} --dry-run")
         result = good.run(self.GATE, "--dry-run")
         self.assert_accepts(result, rf"^Dry run OK: {len(rules)} match-gated rule\(s\) compile "
                                     r"with pySigma\.$")
@@ -666,7 +676,7 @@ class ApiserverValidator(gatelib.GateCase):
         reason="The negative control holds when the three pre-emulation logs are empty "
                "files (`Loaded 0 audit event(s)`, 0 sandboxes, 0 file events): no rule can "
                "match, so the control proves nothing, and the step passes.",
-        closes="R2")
+        closes="unplanned")
     def test_gap_negative_control_on_empty_logs(self):
         """WANTED: a negative control that read no record fails as vacuous (variant of
         k8s-negative-control-empty-log, with the CRI and file logs empty too)."""

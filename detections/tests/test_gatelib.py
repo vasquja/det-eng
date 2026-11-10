@@ -4,13 +4,14 @@ green, so it is a gate too: these tests plant faults in constructed gates (small
 scripts in an empty tree) and prove that the assertions and the known-gap marker
 tell a rejection from an acceptance, a crash, a wrong reason and a broken test.
 
-No test here runs a gate of the repository; the whole file takes about a second.
+No test here runs a gate of the repository; the whole file takes about ten seconds.
 
     python3 -B -m unittest discover -s detections/tests -p 'test_gatelib.py' -v
 """
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import unittest
@@ -129,7 +130,7 @@ class KnownGap(unittest.TestCase):
     def marked(self, source, today="accepts", body=None):
         registry = {}
 
-        @gatelib.known_gap("constructed-gap", gate="gate.py", closes="R2", today=today,
+        @gatelib.known_gap("constructed-gap", gate="gate.py", closes="R7", today=today,
                            reason="A constructed gate accepts a trivial near-miss.",
                            _registry=registry)
         def test(case):
@@ -189,7 +190,7 @@ class KnownGap(unittest.TestCase):
 
     def test_marker_needs_a_reason_a_roadmap_item_and_a_unique_id(self):
         ok = dict(gate="gate.py", reason="A constructed gate accepts a trivial near-miss.",
-                  closes="R2", _registry={})
+                  closes="R7", _registry={})
         for change, message in (
                 (dict(closes="R99"), "not a roadmap item"),
                 (dict(closes=""), "not a roadmap item"),
@@ -208,7 +209,7 @@ class KnownGap(unittest.TestCase):
         """unittest can import one test module under two names; that is not a duplicate."""
         registry = {}
         ok = dict(gate="gate.py", reason="A constructed gate accepts a trivial near-miss.",
-                  closes="R2", _registry=registry)
+                  closes="R7", _registry=registry)
 
         def test(case):
             pass
@@ -353,7 +354,8 @@ class Trees(unittest.TestCase):
                               "                  'tmp': tempfile.gettempdir(), 'exe': sys.executable,\n"
                               "                  'bytecode': sys.dont_write_bytecode}))\n")
         leaked = {"GITHUB_ACTIONS": "true", "GITHUB_TOKEN": "t", "GH_TOKEN": "t",
-                  "GITHUB_REPOSITORY": "o/r", "TRR9002_POD": "x", "PYTHONPATH": "/nowhere"}
+                  "GITHUB_REPOSITORY": "o/r", "TRR9002_POD": "x", "PYTHONPATH": "/nowhere",
+                  "PYTHON_COLORS": "1", "DETENG_GATES_OPEN_GAPS": "/nowhere/gaps"}
         old = {name: os.environ.get(name) for name in leaked}
         os.environ.update(leaked)
         try:
@@ -369,6 +371,7 @@ class Trees(unittest.TestCase):
         self.assertEqual(seen["exe"], gatelib.PYTHON)
         self.assertTrue(seen["bytecode"])
         self.assertEqual(seen["env"]["HTTPS_PROXY"], "http://127.0.0.1:9")
+        self.assertEqual(seen["env"]["NO_COLOR"], "1")
         self.assertEqual(json.loads(tree.run("gate.py", env={"TRR9002_POD": "y"}).stdout)
                          ["env"]["TRR9002_POD"], "y")
 
@@ -387,10 +390,42 @@ class Trees(unittest.TestCase):
         self.addCleanup(tree.cleanup)
         tree.write("gate.py", ACCEPTING)
         pending = [tree.start("gate.py") for _ in range(3)]
+        pending.append(tree.start_step(gatelib.Step("w.yml", "job", "step", "bash",
+                                                    "python3 gate.py\n")))
         for run in pending:
             gatelib.assert_accepts(run.result(), r"All cases hold")
         with self.assertRaises(FileNotFoundError):
             tree.start("no_such_gate.py")
+        # What a background call raises comes out of result(), in the caller.
+        with self.assertRaisesRegex(ZeroDivisionError, "division"):
+            gatelib.background(lambda: 1 / 0).result()
+        self.assertEqual(gatelib.background(lambda a, b=0: a + b, 1, b=2).result(), 3)
+
+    def test_cleanup_waits_for_a_background_run(self):
+        """No copy is deleted under a running gate: cleanup() waits for the runs that
+        nobody collected."""
+        tree = gatelib.Tree(())
+        tree.write("gate.py", "import time\ntime.sleep(0.5)\n" + ACCEPTING)
+        slow = tree.start("gate.py")
+        self.assertFalse(slow.done())
+        tree.cleanup()
+        self.assertTrue(slow.done())
+        self.assertFalse(os.path.exists(tree.sandbox))
+        gatelib.assert_accepts(slow.result(), r"All cases hold")
+
+    def test_tmp_path_is_tmp_of_a_gate_and_of_a_step(self):
+        tree = gatelib.Tree(())
+        self.addCleanup(tree.cleanup)
+        with open(tree.tmp_path("captured.log"), "w", encoding="utf-8") as fh:
+            fh.write("one record\n")
+        tree.write("gate.py", "import os, tempfile\n"
+                              "print(open(os.path.join(tempfile.gettempdir(), 'captured.log')).read())\n")
+        gatelib.assert_accepts(tree.run("gate.py"), r"^one record$")
+        step = gatelib.Step("w.yml", "job", "step", "bash", "cat /tmp/captured.log\n")
+        gatelib.assert_accepts(tree.run_step(step), r"^one record$")
+        for name in ("/etc/passwd", "../x"):
+            with self.assertRaises(ValueError):
+                tree.tmp_path(name)
 
 
 class Workflows(unittest.TestCase):
@@ -427,11 +462,81 @@ class Workflows(unittest.TestCase):
         with open(tree.out("github/github_output"), encoding="utf-8") as fh:
             self.assertEqual(fh.read(), "base=abc123\n")
 
+    def test_step_programs(self):
+        """A step gets the tests' Python, and a `pip` that installs nothing. They stay
+        first on PATH when the test gives a PATH; programs= adds or replaces one."""
+        tree = gatelib.Tree(())
+        self.addCleanup(tree.cleanup)
+        tree.write("requirements.txt", "no-such-package-of-the-gate-tests==9.9\n")
+        step = gatelib.Step("w.yml", "job", "step", "bash",
+                            "pip install --quiet -r requirements.txt\n"
+                            "python3 -c 'import sys; print(sys.executable)'\n"
+                            "command -v python3 pip\n")
+        for env in (None, {"PATH": "/usr/bin:/bin"}):
+            result = tree.run_step(step, env=env)
+            self.assertEqual(result.returncode, 0, result.describe())
+            lines = result.stdout.splitlines()
+            self.assertEqual(lines[0], gatelib.PYTHON)
+            self.assertEqual({os.path.dirname(line) for line in lines[1:]},
+                             {os.path.dirname(lines[1])})
+            self.assertTrue(lines[1].startswith(tree.sandbox + os.sep), lines)
+        replaced = tree.run_step(step, programs={"pip": 'echo "pip $*"; exit 3'})
+        self.assertEqual(replaced.returncode, 3, replaced.describe())
+        self.assertEqual(replaced.stdout, "pip install --quiet -r requirements.txt\n")
+        added = tree.run_step(gatelib.Step("w.yml", "job", "step", None, "kubectl get pods\n"),
+                              programs={"kubectl": 'echo "kubectl $*"'})
+        self.assertEqual((added.returncode, added.stdout), (0, "kubectl get pods\n"))
+        with self.assertRaisesRegex(ValueError, "not a program name"):
+            tree.run_step(step, programs={"../pip": "exit 0"})
+
     def test_ci_step_finds_one_step(self):
         step = gatelib.ci_step("detection-quality.yml", "rule-cases", "detections/rule_cases.py")
         self.assertEqual(step.shell, "bash")
         with self.assertRaises(LookupError):
             gatelib.ci_step("detection-quality.yml", "rule-cases", "detections/no_such_gate.py")
+
+    def test_ci_step_is_chosen_by_a_command_line(self):
+        """Two steps of a job can name one script. More of the command line tells them
+        apart; a comment and a list of paths do not make a step `the step that runs`."""
+        tree = gatelib.Tree(())
+        self.addCleanup(tree.cleanup)
+        tree.write(".github/workflows/w.yml", """\
+name: w
+on: [push]
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide
+        run: |
+          patterns=$(printf '%s\\n' \\
+            'detections/gate.py' \\
+            'detections/sigma/')
+      - name: Self-test
+        run: python3 detections/gate.py --self-test
+      - name: Check
+        shell: bash
+        run: |
+          # python3 detections/gate.py --self-test runs in the step above.
+          python3 detections/gate.py --check \\
+            --markdown "$GITHUB_STEP_SUMMARY" | tee /tmp/gate.out
+""")
+
+        def step(command):
+            return gatelib.ci_step("w.yml", "job", command, root=tree.root)
+
+        with self.assertRaisesRegex(LookupError, r"3 step\(s\) have a command line"):
+            step("detections/gate.py")
+        self.assertEqual(step("python3 detections/gate.py --self-test").name, "Self-test")
+        check = step("python3   detections/gate.py --check --markdown")     # the joined line
+        self.assertEqual((check.name, check.shell), ("Check", "bash"))
+        self.assertEqual(step("tee /tmp/gate.out").name, "Check")
+        self.assertEqual(gatelib.ci_commands("detections/gate.py", root=tree.root), [
+            "python3 detections/gate.py --self-test",
+            'python3 detections/gate.py --check --markdown "$GITHUB_STEP_SUMMARY" '
+            "| tee /tmp/gate.out"])
+        with self.assertRaisesRegex(LookupError, r"0 step\(s\)"):
+            step("python3 detections/gate.py --update")
 
 
 class Runner(unittest.TestCase):
@@ -495,6 +600,108 @@ class Runner(unittest.TestCase):
                                    crash_ok=True)
             self.assertIn("no_such_module_of_the_suite", result.stderr)
 
+    def test_skipped_tests_are_counted_and_no_skips_fails_the_run(self):
+        """A skipped test is not a failure, and the run says how many were skipped. With
+        --no-skips (the CI job) a skipped test fails the run: in CI every tool is
+        installed, so a skip there is lost coverage that would look green."""
+        tree = self.suite()
+        tree.write("detections/tests/test_two.py",
+                   "import unittest\n\n\n"
+                   "class OneSkipped(unittest.TestCase):\n"
+                   "    def test_d(self):\n        pass\n\n"
+                   "    @unittest.skip('planted skip')\n"
+                   "    def test_e(self):\n        pass\n\n\n"
+                   "class AllSkipped(unittest.TestCase):\n"
+                   "    @classmethod\n"
+                   "    def setUpClass(cls):\n"
+                   "        raise unittest.SkipTest('gcc is not installed')\n\n"
+                   "    def test_f(self):\n        pass\n\n"
+                   "    def test_g(self):\n        pass\n")
+        result = tree.run("detections/tests/gatelib.py", "--run")
+        gatelib.assert_accepts(result, r"^4 test class\(es\), 7 test\(s\), ")
+        self.assertIn("===== test_two.OneSkipped: ok, 2 test(s) (1 skipped)", result.stdout)
+        self.assertIn("===== test_two.AllSkipped: ok, 2 test(s) (2 skipped)", result.stdout)
+        self.assertRegex(result.stdout, r"(?m)^3 test\(s\) skipped: test_two\.AllSkipped \(2\), "
+                                        r"test_two\.OneSkipped \(1\)$")
+        self.assertRegex(result.stdout, r"(?m)^OK$")
+        strict = tree.run("detections/tests/gatelib.py", "--run", "--no-skips")
+        gatelib.assert_rejects(strict, r"^FAILED: --no-skips is set, and test\(s\) were skipped",
+                               exit_code=1)
+        self.assertNotRegex(strict.stdout, r"(?m)^OK$")
+        # Without a skipped test, --no-skips changes nothing.
+        gatelib.assert_accepts(tree.run("detections/tests/gatelib.py", "--run", "--no-skips",
+                                        "test_one"), r"^2 test class\(es\), 3 test\(s\), ")
+
+    GAPPY = (
+        "import os, sys, unittest\n"
+        "sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))\n"
+        "import gatelib\n\n\n"
+        "class Gappy(unittest.TestCase):\n"
+        "    def run_gate(self, source):\n"
+        "        tree = gatelib.Tree(())\n"
+        "        self.addCleanup(tree.cleanup)\n"
+        "        tree.write('gate.py', source)\n"
+        "        return tree.run('gate.py')\n\n"
+        "    @gatelib.known_gap('constructed-open-gap', gate='gate.py', closes='R7',\n"
+        "                       reason='A constructed gate accepts every artifact.')\n"
+        "    def test_gap_open(self):\n"
+        "        gatelib.assert_rejects(self.run_gate('print(1)'), r'FAIL')\n\n"
+        "    @gatelib.known_gap('constructed-other-gap', gate='other.py', closes='unplanned',\n"
+        "                       reason='A second constructed gate accepts every artifact.')\n"
+        "    def test_gap_other(self):\n"
+        "        gatelib.assert_rejects(self.run_gate(GATE), r'FAIL  planted')\n\n\n"
+        "GATE = 'print(1)'\n")
+
+    def test_run_reports_the_known_gaps_and_their_state(self):
+        """The run prints the one list of known gaps, with the state that the tests of
+        this run gave each gap; --summary writes it as Markdown, --json as data."""
+        tree = self.suite()
+        tree.write("detections/tests/test_gappy.py", self.GAPPY)
+        summary = tree.out("summary.md")
+        result = tree.run("detections/tests/gatelib.py", "--run", "--summary", summary)
+        gatelib.assert_accepts(result, r"^3 test class\(es\), 5 test\(s\), ")
+        self.assertRegex(result.stdout, r"(?m)^Known gaps of the gates: 2 ")
+        self.assertRegex(result.stdout, r"(?s)\n  constructed-open-gap\n.*?closes: R7 \(.*?"
+                                        r"\n      state:  open in this run\n")
+        with open(summary, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertRegex(text, r"(?m)^## Gate tests: passed$")
+        self.assertIn("2 known gap(s), 2 seen open in this run.", text)
+        self.assertIn("| `constructed-open-gap` | `gate.py` | accepts | R7 | open | ", text)
+        # A class filter runs one module: the gaps of the other are `not run`.
+        partly = tree.run("detections/tests/gatelib.py", "--run", "--json", "test_one")
+        self.assertEqual(partly.returncode, 0, partly.describe())
+        self.assertEqual({gap["id"]: gap["state"] for gap in json.loads(partly.stdout)},
+                         {"constructed-open-gap": "not run", "constructed-other-gap": "not run"})
+        self.assertRegex(partly.stderr, r"(?m)^2 test class\(es\), 3 test\(s\), ")
+        everything = tree.run("detections/tests/gatelib.py", "--run", "--json")
+        self.assertEqual({gap["state"] for gap in json.loads(everything.stdout)}, {"open"})
+
+    def test_a_gap_that_closed_fails_the_run_and_the_summary_says_so(self):
+        """The loud end of a known gap: its gate starts to reject the artifact, the
+        test fails with KNOWN GAP CLOSED, and so does the run."""
+        tree = self.suite()
+        tree.write("detections/tests/test_gappy.py", self.GAPPY.replace(
+            "GATE = 'print(1)'", "GATE = 'import sys; print(\"FAIL  planted\"); sys.exit(1)'"))
+        summary = tree.out("summary.md")
+        result = tree.run("detections/tests/gatelib.py", "--run", "--summary", summary)
+        gatelib.assert_rejects(result, r"^FAILED: 1 test class\(es\): test_gappy\.Gappy$",
+                               exit_code=1, crash_ok=True)
+        self.assertIn("AssertionError: KNOWN GAP CLOSED: constructed-other-gap. other.py now "
+                      "rejects this artifact", result.stdout)
+        with open(summary, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertRegex(text, r"(?m)^## Gate tests: FAILED$")
+        self.assertIn("- FAILED: 1 test class(es): test_gappy.Gappy\n", text)
+        self.assertIn("| `constructed-other-gap` | `other.py` | accepts | unplanned | not run | ",
+                      text)
+        self.assertIn("| `constructed-open-gap` | `gate.py` | accepts | R7 | open | ", text)
+
+    def test_options_of_the_run_need_run(self):
+        result = self.suite().run("detections/tests/gatelib.py", "--gaps", "--no-skips")
+        self.assertEqual(result.returncode, 2, result.describe())
+        self.assertIn("need --run", result.stderr)
+
 
 class GateCaseGuards(unittest.TestCase):
     """GateCase fails a class that wrote into the shared good() tree, or into the
@@ -529,6 +736,60 @@ class GateCaseGuards(unittest.TestCase):
         self.assertIn("the shared good() tree was changed (new.txt)", result.errors[0][1])
 
 
+    def test_class_tree_lives_as_long_as_the_class(self):
+        seen = []
+
+        class Case(gatelib.GateCase):
+            PARTS = ("AGENTS.md",)
+
+            @classmethod
+            def setUpClass(cls):
+                super().setUpClass()
+                cls.planted = cls.class_tree()
+                cls.planted.write("gate.py", "import time\ntime.sleep(0.5)\n" + ACCEPTING)
+                cls.run_nobody_collects = cls.in_background(cls.planted.run, "gate.py")
+                cls.run_of_test_a = cls.planted.start("gate.py")
+
+            def test_a(self):
+                seen.append((self.planted, self.run_nobody_collects, self.run_of_test_a.result()))
+                self.assertTrue(self.planted.exists("AGENTS.md"))
+
+            def test_b(self):
+                self.assertIs(self.planted, seen[0][0])
+                self.assertIsNot(self.planted, self.good())
+
+        result = unittest.TestResult()
+        unittest.defaultTestLoader.loadTestsFromTestCase(Case).run(result)
+        self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
+        self.assertEqual(result.testsRun, 2)
+        planted, uncollected, collected = seen[0]
+        gatelib.assert_accepts(collected, r"All cases hold")
+        # The class waited for the run that no test collected, then deleted the copy.
+        self.assertTrue(uncollected.done())
+        gatelib.assert_accepts(uncollected.result(), r"All cases hold")
+        self.assertFalse(os.path.exists(planted.sandbox))
+
+    def test_assert_documented_reads_the_commands_of_agents_md(self):
+        class Case(gatelib.GateCase):
+            def runTest(self):
+                pass
+
+        case = Case()
+        case.assert_documented("python3 detections/rule_cases.py")
+        case.assert_documented("python3   detections/validate_detections.py --dry-run")
+        with self.assertRaisesRegex(AssertionError, "AGENTS.md does not give the command"):
+            case.assert_documented("python3 detections/rule_cases.py --no-such-flag")
+
+    def test_require_program_skips_here_and_fails_in_ci(self):
+        self.assertEqual(gatelib.require_program("sh", "x"), shutil.which("sh"))
+        with mock.patch.dict(os.environ, clear=False):
+            os.environ.pop("CI", None)
+            with self.assertRaisesRegex(unittest.SkipTest, "no-such-program-x is not installed"):
+                gatelib.require_program("no-such-program-x", "a test needs it")
+            os.environ["CI"] = "true"
+            with self.assertRaisesRegex(AssertionError, "is not installed in CI: a test needs it"):
+                gatelib.require_program("no-such-program-x", "a test needs it")
+
     def test_fingerprint_names_added_changed_and_removed_files(self):
         tree = gatelib.Tree(())
         self.addCleanup(tree.cleanup)
@@ -561,6 +822,93 @@ class GateCaseGuards(unittest.TestCase):
         self.assertFalse(loud.wasSuccessful())
         self.assertIn("file(s) of the repository changed while the tests ran", loud.errors[0][1])
         self.assertIn("detections/benign/scores.json", loud.errors[0][1])
+
+
+class StartedTogetherRuns(unittest.TestCase):
+    """gatelib.StartedTogether: the slow runs of a class start together, each test
+    gets its own run, and a run that cannot start fails only the tests that ask for
+    it."""
+
+    def run_class(self, **methods):
+        log = []
+
+        class Case(gatelib.StartedTogether):
+            PARTS = ("AGENTS.md",)
+            RUNS = ("rejecting", "broken", "skipped")
+
+            @classmethod
+            def start_gate(cls, tree):
+                log.append(("start", tree))
+                return tree.start("gate.py")
+
+            @classmethod
+            def begin_rejecting(cls, tree):
+                tree.write("gate.py", "import time\ntime.sleep(0.3)\n" + REJECTING)
+                return cls.start_gate(tree)
+
+            @classmethod
+            def begin_broken(cls, tree):
+                tree.plant("no/such/artifact.yml", "x.yml")
+
+            @classmethod
+            def begin_skipped(cls, tree):
+                raise unittest.SkipTest("git is not installed")
+
+            def test_rejecting(self):
+                tree, result = self.started("rejecting")
+                log.append(("rejecting", tree, result))
+                self.assert_rejects(result, REASON)
+
+            def test_rejecting_again(self):
+                self.assertIs(self.started("rejecting")[1], self.started("rejecting")[1])
+
+            def test_broken(self):
+                self.started("broken")
+
+            def test_skipped(self):
+                self.started("skipped")
+
+            def test_no_slow_run(self):
+                pass
+
+        for name, method in methods.items():
+            setattr(Case, name, method)
+        result = unittest.TestResult()
+        unittest.defaultTestLoader.loadTestsFromTestCase(Case).run(result)
+        return result, log
+
+    def test_each_test_gets_its_own_run(self):
+        result, log = self.run_class()
+        self.assertEqual(result.testsRun, 5)
+        self.assertEqual(result.failures, [])
+        # The run that could not start is an error of the test that asked for it only.
+        self.assertEqual([test.id().rsplit(".", 1)[1] for test, _ in result.errors], ["test_broken"])
+        self.assertIn("no planted artifact 'no/such/artifact.yml'", result.errors[0][1])
+        self.assertEqual([(test.id().rsplit(".", 1)[1], why) for test, why in result.skipped],
+                         [("test_skipped", "git is not installed")])
+        # One copy for the planted run and good() for the control: two starts, once.
+        starts = [entry[1] for entry in log if entry[0] == "start"]
+        self.assertEqual(len(starts), 2)
+        planted = next(entry for entry in log if entry[0] == "rejecting")
+        self.assertIs(planted[1], starts[0])
+        self.assertTrue(planted[1].root.startswith(planted[1].sandbox))
+        for tree in starts:
+            self.assertFalse(os.path.exists(tree.sandbox))      # deleted after the class
+
+    def test_the_control_runs_the_same_command_in_the_good_copy(self):
+        seen = []
+
+        def test_control(case):
+            good, result = case.started()
+            seen.append((good is case.good(), result.returncode, result.argv[-1]))
+
+        result, _log = self.run_class(test_control=test_control)
+        # good() has no gate.py: the start of the control fails, in the control only.
+        self.assertEqual(sorted(test.id().rsplit(".", 1)[1] for test, _ in result.errors),
+                         ["test_broken", "test_control"])
+        self.assertIn("gate.py is not in the copy", dict(
+            (test.id().rsplit(".", 1)[1], text) for test, text in result.errors)["test_control"])
+        self.assertEqual(seen, [])
 
 
 if __name__ == "__main__":
