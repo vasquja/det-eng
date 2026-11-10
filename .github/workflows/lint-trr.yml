@@ -31,6 +31,10 @@ jobs:
           python-version: '3.x'
 
       - name: Lint TRRs
+        # `shell: bash` is necessary. Without it GitHub runs `bash -e`, with no
+        # `pipefail`: the exit code of the step is that of `tee`, and a failed lint
+        # shows as a green check.
+        shell: bash
         run: python3 .github/scripts/trr_lint.py | tee /tmp/trr-lint.out
 
       - name: Publish results to job summary
