@@ -1,0 +1,30 @@
+title: PLANTED known-bad artifact - Pod With a hostPath Volume of the Node Root (one JSON serialisation)
+id: 8d2b7c40-1e5f-4a93-b6d7-4c0a9e3f1b28
+status: experimental
+description: |
+  PLANTED ARTIFACT of detections/tests. It is not a detection of this repository.
+  Derived from detections/sigma/T1611/k8s_podspec_host_access.yml (sel_hostpath).
+  The real rule reads the volumes list with a regular expression that accepts both
+  JSON forms ('\"hostPath\":\s*\{'). The defect: this rule matches the text
+  `"hostPath": {"path": "/"`, with the blank after each colon that json.dumps writes
+  by default. That is the text sigma_eval.flatten() gives every offline gate, so the
+  positive case fires there; a store that writes a JSON list without blanks (the AKS
+  dynamic column) never holds it, and the rule is silent on the same event.
+  detections/check_provider_mappings.py must reject the rule
+  (detections/tests/test_quality.py, case pm-one-json-serialisation).
+author: det-eng
+date: 2026/11/10
+tags:
+  - attack.privilege-escalation
+  - attack.t1611
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  selection_pod:
+    objectRef.resource: 'pods'
+    verb: 'create'
+  sel_hostpath_root:
+    requestObject.spec.volumes|contains: '"hostPath": {"path": "/"'
+  condition: selection_pod and sel_hostpath_root
+level: medium

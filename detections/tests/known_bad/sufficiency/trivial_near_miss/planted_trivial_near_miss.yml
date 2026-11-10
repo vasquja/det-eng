@@ -1,0 +1,26 @@
+title: PLANTED known-bad artifact - AF_PACKET Socket Created (trivial near-miss)
+id: 5b0c1e7a-2d44-4f0b-9a6e-0d1f3c5b7e91
+status: experimental
+description: |
+  PLANTED ARTIFACT of detections/tests. It is not a detection of this repository.
+  The rule is sound. The defect is in the sidecar beside it: the case
+  `unrelated-file-read` is declared a near-miss on `sel.a0`, but its only event
+  shares nothing with the rule. detections/rule_cases.py must reject that case as
+  trivial (detections/tests/test_sufficiency.py).
+author: det-eng
+date: 2026/11/10
+tags:
+  - attack.discovery
+  - attack.t1040
+logsource:
+  product: linux
+  service: auditd
+detection:
+  sel:
+    type: SYSCALL
+    syscall: socket
+    a0: '11'    # AF_PACKET = 17 = 0x11; auditd logs arguments in hex
+  allow:
+    comm: tcpdump
+  condition: sel and not allow
+level: low

@@ -1,0 +1,10 @@
+"""
+PLANTED ARTIFACT of detections/tests. It is not a module of this repository.
+
+A test plants this file as `detections/sigma/T1040/evil.py`
+(detections/tests/test_sufficiency.py). The rule directory detections/sigma/ is a
+portion of pySigma's `sigma` namespace package, ahead of site-packages, so a
+Python module under it is importable as part of pySigma. Rule material is only
+*.yml, *.cases.jsonl and *.md: the import guard of detections/sigma_eval.py and
+R0 of detections/check_sufficiency.py must each name this file.
+"""

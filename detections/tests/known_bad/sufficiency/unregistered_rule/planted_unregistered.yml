@@ -1,0 +1,41 @@
+title: PLANTED known-bad artifact - AF_INET Raw Socket Created (in no validator MANIFEST)
+id: 642ecc87-5eb6-48ae-8f02-c6d521930e66
+status: experimental
+description: |
+  PLANTED ARTIFACT of detections/tests. It is not a detection of this repository.
+  A copy of detections/sigma/T1040/afinet_raw_socket.yml: only the title, the id
+  and this description differ. The rule and the sidecar beside it are sound. The
+  defect is where the pair is NOT: a test plants it as
+  `detections/sigma/T1040/planted_unregistered.{yml,cases.jsonl}`, and no
+  validator MANIFEST names that file, so no emulation proves that the rule fires.
+  detections/check_sufficiency.py must fail it on R1
+  (detections/tests/test_sufficiency.py).
+author: det-eng
+date: 2026/11/10
+tags:
+  - attack.credential-access
+  - attack.discovery
+  - attack.t1040
+logsource:
+  product: linux
+  service: auditd
+detection:
+  afinet_raw_socket:
+    type: SYSCALL
+    syscall: socket
+    a0:
+      - '2'   # AF_INET  = 2  = 0x2  hex; auditd logs args in hex
+      - 'a'   # AF_INET6 = 10 = 0xa  hex
+    a1:
+      - '3'       # SOCK_RAW
+      - '803'     # SOCK_RAW | SOCK_NONBLOCK (0x800)
+      - '80003'   # SOCK_RAW | SOCK_CLOEXEC (0x80000)
+      - '80803'   # SOCK_RAW | SOCK_CLOEXEC | SOCK_NONBLOCK
+  allowed_processes:
+    comm:
+      - ping
+      - ping6
+      - traceroute
+      - traceroute6
+  condition: afinet_raw_socket and not allowed_processes
+level: medium

@@ -1,0 +1,36 @@
+title: PLANTED known-bad artifact - AF_PACKET Raw Socket Created (sound rule, defective sidecars)
+id: 4079fbd8-4c3c-4c9d-8651-1943aeae2868
+status: experimental
+description: |
+  PLANTED ARTIFACT of detections/tests. It is not a detection of this repository.
+  The rule is sound. It has two discriminating items (`sel.a0`, `sel.a1`) and one
+  filter. Each defect is in one of the sidecars beside this file. A test plants
+  this rule as `detections/sigma/T9999/planted_rule.yml` and ONE sidecar as
+  `planted_rule.cases.jsonl` (detections/tests/test_sufficiency.py):
+
+    near_miss_wrong_item.cases.jsonl    the near-miss breaks `sel.a1` and declares
+                                        `breaks: ["sel.a0"]`.
+    near_miss_two_items.cases.jsonl     the near-miss breaks `sel.a0` AND `sel.a1`,
+                                        so no single flip fires the rule (distant).
+    positive_does_not_fire.cases.jsonl  the positive has `a0: '2'`, and the rule
+                                        needs `'11'`.
+
+  detections/rule_cases.py must reject each one.
+author: det-eng
+date: 2026/11/10
+tags:
+  - attack.discovery
+  - attack.t1040
+logsource:
+  product: linux
+  service: auditd
+detection:
+  sel:
+    type: SYSCALL
+    syscall: socket
+    a0: '11'    # AF_PACKET = 17 = 0x11; auditd logs arguments in hex
+    a1: '3'     # SOCK_RAW
+  allow:
+    comm: tcpdump
+  condition: sel and not allow
+level: low
