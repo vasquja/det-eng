@@ -755,7 +755,7 @@ class CoverageReport(gatelib.GateCase):
         cls.not_built.replace("research/trr9001/lin/README.md",
                               "afpacket_rawsocket_behavioral.c) | **built** |",
                               "afpacket_rawsocket_behavioral.c) | backlog |")
-        cls.not_built_run = in_background(cls, cls.not_built.run, cls.GATE, "--check")
+        cls.not_built_runs = in_background(cls, cls.check_then_write, cls.not_built)
 
         # cr-defect-heading-without-summary-row: a new entry of the defect tracker
         # names a rule that proves TRR9001.LIN.A and B, and has no Summary row.
@@ -770,6 +770,28 @@ class CoverageReport(gatelib.GateCase):
         cls.with_row.replace(cls.DEFECTS, separator, separator + cls.SUMMARY_ROW)
         cls.with_row_run = in_background(cls, cls.with_row.run, cls.GATE, "--check")
 
+    @classmethod
+    def check_then_write(cls, tree):
+        """The gate's --check, and then the generator itself, in a private copy. The
+        STALE line of --check names a file and no reason; the report that the
+        generator writes next for the same copy shows what was stale."""
+        check = tree.run(cls.GATE, "--check")
+        return check, tree.run(cls.GATE)
+
+    def control_is_current(self):
+        """A STALE on a planted copy is a verdict on the artifact only when the same
+        gate finds the unmodified copy current. (A plain assertion: the control test
+        reports the same failure.)"""
+        self.assert_accepts(self.control.result(), r"^Coverage report is current\.$")
+
+    @staticmethod
+    def proven(report):
+        """(proven, all) procedures, from the first paragraph of a COVERAGE.md."""
+        counts = re.search(r"CI proves (\d+) of (\d+) procedures \(", report)
+        if not counts:
+            raise AssertionError("COVERAGE.md does not say `CI proves N of M procedures`")
+        return int(counts.group(1)), int(counts.group(2))
+
     def test_ci_runs_the_check(self):
         self.assertEqual(gatelib.ci_commands(self.GATE),
                          ["python3 research/tools/coverage_report.py --check"])
@@ -781,23 +803,34 @@ class CoverageReport(gatelib.GateCase):
         good = self.good()
         procedures = sum(len(t["procedures"]) for t in good.read_json("research/index.json")["trrs"])
         self.assertGreater(procedures, 0, "the index holds no procedure: the control is vacuous")
-        self.assert_accepts(self.control.result(), r"^Coverage report is current\.$")
-        self.assertRegex(good.read(self.REPORT),
-                         rf"CI proves [1-9]\d* of {procedures} procedures \(")
+        self.control_is_current()
+        proven, counted = self.proven(good.read(self.REPORT))
+        self.assertEqual(counted, procedures)
+        self.assertGreater(proven, 0, "the report proves no procedure: the control is vacuous")
 
     def test_rejects_proven_claim_for_an_emulation_that_is_not_built(self):
         """COVERAGE.md shows TRR9001.LIN.A as Proven. With its emulation in the
         backlog the generator writes Claimed, so the committed report (and the two
         charts, which draw the proven count) is stale."""
+        self.control_is_current()
         report = self.good().read(self.REPORT)
         # Proven today: the only way the edit can change the report is the status.
         self.assertRegex(report, r"(?m)^\| \[TRR9001\]\(trr9001/lin/README\.md\) \|.*\| A:P ")
         self.assertNotIn("`TRR9001.LIN.A`", report)
-        result = self.not_built_run.result()
-        self.assert_rejects(result, self.STALE, exit_code=1)
-        self.assertEqual(sorted(found(result, r"^STALE: (\S+) is not current; ")),
+        check, written = self.not_built_runs.result()
+        self.assert_rejects(check, self.STALE, exit_code=1)
+        self.assertEqual(sorted(found(check, r"^STALE: (\S+) is not current; ")),
                          ["docs/coverage/coverage-dark.svg", "docs/coverage/coverage-light.svg",
-                          self.REPORT], result.describe())
+                          self.REPORT], check.describe())
+        # The reason for STALE: the generator now writes one proven procedure fewer,
+        # and that procedure is TRR9001.LIN.A, Claimed, with its emulation in the backlog.
+        proven, counted = self.proven(report)
+        self.assert_accepts(written, rf"^{proven - 1}/{counted} procedures proven; wrote "
+                                     r"research/COVERAGE\.md, ")
+        now = self.not_built.read(self.REPORT)
+        self.assertEqual(self.proven(now), (proven - 1, counted))
+        self.assertRegex(now, r"(?m)^\| \[TRR9001\]\(trr9001/lin/README\.md\) \|.*\| A:\*\*C\*\* ")
+        self.assertRegex(now, r"(?m)^\| `TRR9001\.LIN\.A` \| [^|]+ \| Claimed \| backlog \| ")
 
     @gatelib.known_gap(
         "cr-defect-heading-without-summary-row",
@@ -811,7 +844,10 @@ class CoverageReport(gatelib.GateCase):
         """WANTED: the entry marks the procedures of its rule (COVERAGE.md is stale),
         or the gate refuses an entry that has no Summary row."""
         # The entry is effective when the gate reads it: with its Summary row the
-        # report is stale. (Plain assertions: they must not count as the gap.)
+        # report is stale, and the unmodified copy is current. (Plain assertions:
+        # they must not count as the gap, and a copy that is stale for another
+        # reason must not count as the gap closed.)
+        self.control_is_current()
         with_row = self.with_row_run.result()
         self.assertEqual(with_row.returncode, 1, with_row.describe())
         self.assertRegex(with_row.stdout, "(?m)" + self.STALE, with_row.describe())
