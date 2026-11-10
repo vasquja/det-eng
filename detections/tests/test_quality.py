@@ -16,6 +16,12 @@ changed value of a real file is an edit in the test (tree.replace, tree.edit_jso
 the test says what it changes and why that is bad.
 How the harness works: gatelib.py and README.md in this directory.
 
+The docstring of each rejection test and known-gap test starts with its case id
+(`sb-over-budget`, ...).
+
+The slow gates (15 to 20 s for one run, whatever is planted) start their runs in
+setUpClass, on threads, so that the runs of a class overlap.
+
     python3 -B -m unittest discover -s detections/tests -p 'test_quality.py' -v
 """
 
@@ -180,20 +186,22 @@ class ScoreBenign(gatelib.GateCase):
         self.assertEqual(len(found(result, r"^(?:FAILED|STALE|ERROR)\b.*$")), 1, result.describe())
 
     def plant_unclassed_budget(self, tree):
-        """sb-budget-why-no-class: the budget of a real rule is raised from 3 to 300
-        hits with a reason that names neither class (documented noise, or a defect
-        that detections/RULE_DEFECTS.md tracks)."""
+        """sb-budget-why-no-class: the reason of a real rule's budget is replaced by
+        one that names neither class (documented noise, or a defect that
+        detections/RULE_DEFECTS.md tracks). Its mode and max_hits stay as they are:
+        a raised max_hits is another defect (the known gap below)."""
         def change(doc):
-            doc["rules"][self.BUDGET_RULE] = {"mode": "enforce", "max_hits": 300,
-                                              "why": "raised so CI is green"}
+            entry = doc["rules"][self.BUDGET_RULE]
+            self.assertTrue(entry["why"].startswith("documented noise:"), entry)
+            entry["why"] = "raised so CI is green"
         tree.edit_json(self.BUDGETS, change)
 
     WHY_NO_CLASS = (r"^  T1014/bpf_prog_load\.yml: why must start 'documented noise:' or 'rule "
                     r"defect, tracked in detections/RULE_DEFECTS\.md <ID>:'$")
 
     def test_rejects_budget_whose_why_names_no_class(self):
-        """A budget needs a classed reason. The gate refuses the file before it
-        scores anything."""
+        """sb-budget-why-no-class. A budget needs a classed reason. The gate refuses
+        the file before it scores anything."""
         tree = self.tree()
         self.plant_unclassed_budget(tree)
         result = self.run_ci(tree)
@@ -220,9 +228,9 @@ class ScoreBenign(gatelib.GateCase):
                "branch, so the raise needs no defect, no evidence and no human.",
         closes="R8")
     def test_gap_budget_raised_as_documented_noise(self):
-        """WANTED: a budget far above what the rule raises (1 hit; at most 3 over the
-        reseeds) is refused, or sent to a human, in words that name the rule and its
-        budget."""
+        """sb-budget-raised-as-documented-noise. WANTED: a budget far above what the
+        rule raises (1 hit; at most 3 over the reseeds) is refused, or sent to a
+        human, in words that name the rule and its budget."""
         tree = self.tree()
 
         def change(doc):
@@ -283,6 +291,8 @@ class BenignRatchet(gatelib.GateCase):
                                     rf"\({compared} rule\(s\) compared\)\.$")
 
     def test_rejects_rise_inside_budget(self):
+        """rb-benign-rise-inside-budget. The base snapshot is the copy's committed
+        scores.json; the head is the copy with the broadened rule (see broaden())."""
         tree = self.tree()
         base = tree.out("base-scores.json")     # the base branch's snapshot: saved before the change
         shutil.copyfile(tree.path(self.SCORES), base)
@@ -292,7 +302,8 @@ class BenignRatchet(gatelib.GateCase):
         self.assert_rejects(result, rise, exit_code=1)
         now = int(re.search(rise, result.stdout, re.MULTILINE).group(1))
         self.assertTrue(hits < now <= budget,
-                        f"the planted rise must stay inside the budget: {hits} -> {now}, budget {budget}")
+                        "the planted rise must stay inside the budget: "
+                        f"{hits} -> {now}, budget {budget}")
         # The budget alone accepts it: the rule's row says `ok`.
         self.assertRegex(result.stdout, rf"(?m)^{re.escape(self.KEY)} +\S+ +enforce +\d+ +{now} "
                                         rf"+[\d.]+ +{budget}  ok\b")
@@ -435,8 +446,9 @@ class NullSafety(gatelib.GateCase):
                "check_provider_mappings.py varies the text, for Kubernetes audit rules.",
         closes="R7")
     def test_gap_one_json_serialisation_cloud(self):
-        """WANTED: the positive case is reported, because it fires for one JSON
-        serialisation of requestParameters.createVolumePermission.add.items only."""
+        """ns-one-json-serialisation. WANTED: the positive case is reported, because
+        it fires for one JSON serialisation of
+        requestParameters.createVolumePermission.add.items only."""
         tree = self.tree()
         tree.plant("quality/one_json_serialisation_cloud", "detections/sigma/T9999")
         # The positive fires offline (plain assertions: they must not count as the gap).
@@ -459,6 +471,7 @@ class ProviderMappings(gatelib.GateCase):
     # The gate loads .github/scripts/check_sigma_regex.py by path.
     PARTS = ("detections", ".github/scripts/check_sigma_regex.py")
     REAL = "T1611/k8s_podspec_host_access.yml"      # the rule the planted one is derived from
+    PLANTED = "T9999/planted_json_separator_k8s.yml"
     OK = (r"^OK: every mapped rule keeps its verdicts and block truth on every case, or the "
           r"difference is approved\.$")
 
@@ -470,8 +483,15 @@ class ProviderMappings(gatelib.GateCase):
         # pipelines' regular expressions runs with Python re only.
         cls.ci_arguments = ("--check", "--require-re2") if importlib.util.find_spec("re2") \
             else ("--check",)
-        # The full run takes about 18 s: start it now, the other tests overlap it.
+        # A full run takes about 18 s whatever is planted: start both now.
         cls.full_run = in_background(cls, cls.good().run, cls.GATE, *cls.ci_arguments)
+        # pm-one-json-serialisation: the planted rule matches the volumes list as the
+        # text `"hostPath": {"path": "/"`, with the blank that json.dumps writes after
+        # a colon. The native shape holds that text; the AKS and GKE shapes hold the
+        # list without blanks, so the positive is silent there.
+        cls.bad = class_tree(cls)
+        cls.bad.plant("quality/one_json_serialisation_k8s", "detections/sigma/T9999")
+        cls.rejection = in_background(cls, cls.bad.run, cls.GATE, *cls.ci_arguments)
 
     def test_ci_passes_check_and_require_re2(self):
         self.assert_ci_runs(self.GATE, "--check", "--require-re2")
@@ -505,23 +525,36 @@ class ProviderMappings(gatelib.GateCase):
             self.assertRegex(result.stdout, rf"(?m)^\[{provider}\] (SAME|EXPECTED LOSS) +"
                                             rf"{re.escape(self.REAL)} \({cases} cases")
 
+    def difference(self, provider):
+        """The problem line for the planted positive in the record shape of `provider`."""
+        return (rf"^  \[{provider}\] {re.escape(self.PLANTED)}: positive hostpath-root-pod: "
+                rf"unexpected difference: all: native fires, {provider} quiet; "
+                r"blocks sel_hostpath_root$")
+
     def test_rejects_match_on_one_json_serialisation(self):
-        """pm-one-json-serialisation. The planted rule matches the volumes list as the
-        text `"hostPath": {"path": "/"`, with the blank that json.dumps writes after a
-        colon. The native shape holds that text; the AKS and GKE shapes hold the list
-        without blanks, so the positive is silent there. rule_cases.py passes the pair."""
-        tree = self.tree()
-        tree.plant("quality/one_json_serialisation_k8s", "detections/sigma/T9999")
-        assert_cases_hold(tree, "T9999/planted_json_separator_k8s.yml")
-        result = tree.run(self.GATE, "detections/sigma/T9999/planted_json_separator_k8s.yml")
+        """pm-one-json-serialisation, with the command line of the job (the full run).
+        rule_cases.py passes the pair: only this gate varies the JSON text."""
+        assert_cases_hold(self.bad, self.PLANTED)
+        result = self.rejection.result()
         for provider in ("aks", "gke"):
-            self.assert_rejects(
-                result,
-                rf"^  \[{provider}\] T9999/planted_json_separator_k8s\.yml: positive hostpath-root-pod: "
-                rf"unexpected difference: all: native fires, {provider} quiet; blocks sel_hostpath_root$",
-                exit_code=1)
+            self.assert_rejects(result, self.difference(provider), exit_code=1)
         # One planted defect: one problem for each gating provider, on the positive
-        # only (the near-miss is quiet in every shape).
+        # only. The third problem of the full run is the results file, which has no
+        # entry for the new rule; it is not the reason.
+        listed = result.stdout.rstrip("\n").split("\nFAILED: 3 problem(s).\n")
+        self.assertEqual(len(listed), 2, result.describe())
+        others = [line for line in listed[1].splitlines() if self.PLANTED not in line]
+        self.assertEqual(len(listed[1].splitlines()), 3, result.describe())
+        self.assertEqual(len(others), 1, result.describe())
+        self.assertRegex(others[0], r"^  detections/pipelines/mapping_results\.json is stale: ")
+        self.assertNotIn("configmap-emptydir-volumes", result.stdout)
+
+    def test_rejects_match_on_one_json_serialisation_by_rule_path(self):
+        """The same pair with the rule-path form, which skips the results file: the
+        two differences are the only problems."""
+        result = self.bad.run(self.GATE, "detections/sigma/" + self.PLANTED)
+        for provider in ("aks", "gke"):
+            self.assert_rejects(result, self.difference(provider), exit_code=1)
         self.assertIn("\nFAILED: 2 problem(s).\n", result.stdout)
         self.assertNotIn("configmap-emptydir-volumes", result.stdout)
 
@@ -575,9 +608,10 @@ class K8sPolicyCoverage(gatelib.GateCase):
         self.assertRegex(result.stdout, r"(?m)^self-test: [1-9]\d* checks, 0 failed$")
 
     def test_rejects_lab_policy_that_drops_the_records_of_a_rule(self):
-        """The home check names the rule, its home policy and the lost positives. The
-        stale-file failure prints too (the policy file changed); it is not the reason.
-        The run is the workflow step itself, so the exit code must also pass `tee`."""
+        """pc-home-policy-loses-positives (planted in setUpClass). The home check
+        names the rule, its home policy and the lost positives. The stale-file
+        failure prints too (the policy file changed); it is not the reason. The run
+        is the workflow step itself, so the exit code must also pass `tee`."""
         sidecar = "detections/sigma/" + self.EXEC_RULE[:-len(".yml")] + ".cases.jsonl"
         positives = [c["name"] for c in self.bad.read_jsonl(sidecar) if c["kind"] == "positive"]
         self.assertGreater(len(positives), 0)
@@ -613,7 +647,8 @@ class K8sPlatformsMdCheck(gatelib.GateCase):
         def change(text):
             begin = text.index("<!-- platform-coverage:begin -->")
             end = text.index("<!-- platform-coverage:end -->")
-            return text[:begin] + text[begin:end].replace("| **partial** ", "| **full** ", 1) + text[end:]
+            block = text[begin:end].replace("| **partial** ", "| **full** ", 1)
+            return text[:begin] + block + text[end:]
         tree.edit(self.DOC, change)
 
     def test_ci_runs_self_test_then_check(self):
@@ -639,6 +674,7 @@ class K8sPlatformsMdCheck(gatelib.GateCase):
         self.assert_accepts(self.good().run(self.GATE, "--self-test"), r"^self-test passed$")
 
     def test_rejects_hand_edited_generated_block(self):
+        """md-stale-generated-block (see hand_edit())."""
         tree = self.tree()
         self.hand_edit(tree)
         result = tree.run(self.GATE, "--check")
@@ -701,16 +737,27 @@ class K8sPlatformsMdAnchors(gatelib.GateCase):
         self.assertEqual(self.anchored_links(tree), self.anchored_links(good) + 1)
 
     def expected_bad_anchor(self):
-        with open(os.path.join(gatelib.KNOWN_BAD, "quality", "bad_anchor.md.txt"), encoding="utf-8") as fh:
+        artifact = os.path.join(gatelib.KNOWN_BAD, "quality", "bad_anchor.md.txt")
+        with open(artifact, encoding="utf-8") as fh:
             line = next(n for n, text in enumerate(fh, 1) if "#no-such-heading)" in text)
         return (rf"^BAD ANCHOR: PLANTED\.md:{line}: detections/k8s/PLATFORMS\.md#no-such-heading "
                 r"\(no heading of detections/k8s/PLATFORMS\.md has the anchor #no-such-heading\)$")
 
+    LINKS_OK = r"^OK: (\d+) relative links across the repo all resolve\.$"
+
+    def relative_links(self, tree):
+        """The number of links that .github/scripts/check_md_links.py finds good in the
+        copy (the first step of the same job)."""
+        result = tree.run(".github/scripts/check_md_links.py")
+        self.assert_accepts(result, self.LINKS_OK)
+        return int(re.search(self.LINKS_OK, result.stdout, re.MULTILINE).group(1))
+
     def test_rejects_link_to_an_anchor_that_no_heading_has(self):
-        """an-bad-anchor. check_md_links.py passes this link: the file exists. Only
-        this gate reads the anchor."""
+        """an-bad-anchor. check_md_links.py reads the planted link and passes it: the
+        file exists. Only this gate reads the anchor."""
         tree = self.tree()
         tree.plant("quality/bad_anchor.md.txt", "PLANTED.md")
+        self.assertEqual(self.relative_links(tree), self.relative_links(self.good()) + 1)
         result = tree.run(self.GATE, "--anchors")
         self.assert_rejects(result, self.expected_bad_anchor(), exit_code=1)
         self.assertEqual(len(found(result, r"^BAD ANCHOR: .*$")), 1, result.describe())
@@ -747,7 +794,8 @@ class CoverageReport(gatelib.GateCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        # Each run takes about 7 s (it runs check_sufficiency.py): start all four now.
+        # Each run takes about 7 s (it runs check_sufficiency.py): start them all now,
+        # one thread for each copy.
         cls.control = in_background(cls, cls.good().run, cls.GATE, "--check")
 
         # cr-emulation-not-built: the emulation of TRR9001.LIN.A is no longer `built`.
@@ -809,9 +857,10 @@ class CoverageReport(gatelib.GateCase):
         self.assertGreater(proven, 0, "the report proves no procedure: the control is vacuous")
 
     def test_rejects_proven_claim_for_an_emulation_that_is_not_built(self):
-        """COVERAGE.md shows TRR9001.LIN.A as Proven. With its emulation in the
-        backlog the generator writes Claimed, so the committed report (and the two
-        charts, which draw the proven count) is stale."""
+        """cr-emulation-not-built (planted in setUpClass). COVERAGE.md shows
+        TRR9001.LIN.A as Proven. With its emulation in the backlog the generator
+        writes Claimed, so the committed report (and the two charts, which draw the
+        proven count) is stale."""
         self.control_is_current()
         report = self.good().read(self.REPORT)
         # Proven today: the only way the edit can change the report is the status.
@@ -841,8 +890,9 @@ class CoverageReport(gatelib.GateCase):
                "proves, and the gate says the report is current.",
         closes="unplanned")
     def test_gap_defect_section_without_summary_row(self):
-        """WANTED: the entry marks the procedures of its rule (COVERAGE.md is stale),
-        or the gate refuses an entry that has no Summary row."""
+        """cr-defect-heading-without-summary-row (planted in setUpClass). WANTED: the
+        entry marks the procedures of its rule (COVERAGE.md is stale), or the gate
+        refuses an entry that has no Summary row."""
         # The entry is effective when the gate reads it: with its Summary row the
         # report is stale, and the unmodified copy is current. (Plain assertions:
         # they must not count as the gap, and a copy that is stale for another

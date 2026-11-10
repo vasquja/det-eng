@@ -3,8 +3,9 @@ Gate tests, group `sufficiency`: the gates that decide if a rule's own cases are
 enough (detection-quality.yml jobs rule-cases, check-sufficiency and
 sufficiency-ratchet) and the libraries under them (sigma_eval, sigma_explain).
 
-    RuleCases             detections/rule_cases.py, and through it the import guard
-                          of detections/sigma_eval.py
+    RuleCases             detections/rule_cases.py
+    SigmaEvalImportGuard  the import guard of detections/sigma_eval.py, reached
+                          through detections/rule_cases.py
     CheckSufficiency      detections/check_sufficiency.py (R0, R1, R2, R4)
     SufficiencyRatchet    the sufficiency-ratchet job: check_sufficiency.py --json
                           for the base, --baseline for the head
@@ -26,6 +27,11 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gatelib  # noqa: E402  (the line above makes it importable with `-t .` too)
+
+# A @gatelib.known_gap test states the wanted behaviour in its LAST assertion, one
+# assert_rejects(). Every assertion before it is a plain one (assertEqual, assert_saw):
+# it proves that the planted artifact is bad, or that the gate read it, and when it
+# fails the test fails, whatever the gate does.
 
 # The real rule that several tests change in a copy, and its sidecar.
 AFINET_RULE = "detections/sigma/T1040/afinet_raw_socket.yml"
@@ -136,9 +142,7 @@ class StartedTogether(gatelib.GateCase):
 
 class RuleCases(gatelib.GateCase):
     """detections/rule_cases.py, as the rule-cases job runs it: no argument, every
-    sidecar under detections/sigma/. The last tests are for the import guard of
-    detections/sigma_eval.py: it runs when a gate imports sigma_eval, before any
-    rule is read, and this gate is where the tests reach it."""
+    sidecar under detections/sigma/."""
 
     GATE = "detections/rule_cases.py"
     PARTS = gatelib.DETECTIONS      # the gate reads nothing outside detections/
@@ -198,6 +202,14 @@ class RuleCases(gatelib.GateCase):
         tree.plant("sufficiency/hidden_rule/hidden.cases.jsonl",
                    "detections/sigma/T1040/.hidden.cases.jsonl")
         result = tree.run(self.GATE)
+        if result.returncode == 0:
+            # The gate accepted the copy, and it printed nothing about the pair. Prove
+            # that the pair it did not read is bad: the gate fails the positive when
+            # the hidden rule is its argument (then it does not need the glob).
+            named = tree.run(self.GATE, "detections/sigma/T1040/.hidden.yml")
+            self.assertEqual(named.returncode, 1, named.describe())
+            self.assertIn("FAIL  T1040/.hidden.yml :: positive   stream-socket-declared-positive: "
+                          "expected a match, got near-miss", named.stdout)
         self.assert_rejects(result, r"T1040/\.hidden\.(yml|cases\.jsonl)")
 
     # ---- more defects of a sidecar ------------------------------------------------
@@ -254,7 +266,26 @@ class RuleCases(gatelib.GateCase):
             exit_code=1)
         self.assertIn("\nFAILED: 1 case problem(s).\n", result.stdout)
 
-    # ---- the import guard of sigma_eval.py ------------------------------------------
+
+class SigmaEvalImportGuard(gatelib.GateCase):
+    """The import guard of detections/sigma_eval.py. It is no script: it runs when a
+    gate or a validator imports sigma_eval, before pySigma is imported and before
+    any rule is read, and it ends the process with a message on stderr. The tests
+    reach it through detections/rule_cases.py, with the command of the rule-cases
+    job. (The known gap hidden-rule-file, in RuleCases, is a gap of this guard too.)"""
+
+    GATE = "detections/rule_cases.py"
+    PARTS = gatelib.DETECTIONS
+
+    def test_control_good_tree_passes_the_guard(self):
+        """CONTROL: in the unmodified copy the guard refuses nothing: the same command
+        imports pySigma, runs every sidecar and prints nothing on stderr."""
+        good = self.good()
+        sidecars = good.glob("detections/sigma/*/*.cases.jsonl")
+        self.assertGreater(len(sidecars), 0, "the copy holds no sidecar: the control is vacuous")
+        result = good.run(self.GATE)
+        self.assert_accepts(result, rf"^All cases hold \({len(sidecars)} rule file\(s\)\)\.$")
+        self.assertEqual(result.stderr, "", "the guard (or the gate) wrote to stderr")
 
     def assert_guard_refuses(self, result, path):
         """The guard named `path`, and only it, before the gate read a rule."""
@@ -300,9 +331,8 @@ class RuleCases(gatelib.GateCase):
         tree.plant("sufficiency/shadow/glob_py.txt", "detections/glob.py")
         result = tree.run(self.GATE)
         if result.returncode == 0:
-            # The gate accepted the copy. Prove that this is the gap, with plain
-            # assertions (in a known-gap test only the last assertion may be an
-            # assert_rejects): the planted module hid one sidecar, ...
+            # The gate accepted the copy. Prove that this is the gap: the planted
+            # module hid one sidecar, ...
             sidecars = len(tree.glob("detections/sigma/*/*.cases.jsonl"))
             self.assert_saw(result, rf"^All cases hold \({sidecars - 1} rule file\(s\)\)\.$")
             # ... and the planted positive is bad: the gate fails it when the rule is
@@ -382,8 +412,8 @@ class CheckSufficiency(StartedTogether):
                       result.stdout)
 
     def test_rejects_module_in_a_rule_directory(self):
-        """R0 refuses a Python module among the rules (RuleCases plants the same file
-        for the import guard)."""
+        """R0 refuses a Python module among the rules (SigmaEvalImportGuard plants the
+        same file for the import guard)."""
         tree = self.tree()
         tree.plant("sufficiency/shadow/evil_py.txt", "detections/sigma/T1040/evil.py")
         result = tree.run(self.GATE, "--markdown", tree.out("summary.md"))
@@ -524,7 +554,7 @@ class CheckSufficiency(StartedTogether):
         not excuse it: the gate fails the rule as it does without the entry."""
         _, result = self.started("self_added_waiver")
         # Without the entry the gate fails the planted rule on R2 (a second copy, with
-        # the script unchanged). Plain assertions: see RuleCases.
+        # the script unchanged).
         plain = self.tree()
         plain.plant("sufficiency/self_added_waiver", "detections/sigma/T1040")
         before = plain.run_python(self.ONE_RULE, AFINET_RULE)
@@ -552,6 +582,7 @@ class SufficiencyRatchet(StartedTogether):
         if "_base" not in cls.__dict__:
             good = cls.good()
             cls._base = (good.out("base.json"), good.run(cls.GATE, "--json", good.out("base.json")))
+            cls.addClassCleanup(delattr, cls, "_base")      # the file goes with good()
         return cls._base[0]
 
     @classmethod
@@ -723,13 +754,16 @@ class SufficiencyRatchet(StartedTogether):
         """WANTED: a rule that detects less than on the base branch goes to a human: a
         [RATCHET] line names the rule."""
         tree, result = self.started("widened_allowlist")
-        # The planted rule detects less. Plain assertions: see RuleCases.
+        # The planted rule detects less than the rule of the base.
         on_base, on_head = self.probe(self.good()), self.probe(tree)
         self.assertEqual(on_base.returncode, 0, on_base.describe())
         self.assertIn(":: positive   nc-raw-socket: fires\n", on_base.stdout)
         self.assertEqual(on_head.returncode, 1, on_head.describe())
         self.assertIn(":: positive   nc-raw-socket: expected a match, got filtered (one flip "
                       "would fire it: allowed_processes.comm)\n", on_head.stdout)
+        # The head was compared with the base report (the gate prints nothing else
+        # about the planted line: the rule keeps its cases, negatives and items).
+        self.assert_saw(result, r"^Ratchet against .+ \(the base branch's report\):$")
         self.assert_rejects(result, r"^  \[RATCHET\] T1040/afinet_raw_socket\.yml: ")
 
 

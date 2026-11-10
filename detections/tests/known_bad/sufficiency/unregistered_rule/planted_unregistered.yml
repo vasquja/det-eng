@@ -3,8 +3,10 @@ id: 642ecc87-5eb6-48ae-8f02-c6d521930e66
 status: experimental
 description: |
   PLANTED ARTIFACT of detections/tests. It is not a detection of this repository.
-  A copy of detections/sigma/T1040/afinet_raw_socket.yml: only the title, the id
-  and this description differ. The rule and the sidecar beside it are sound. The
+  A copy of detections/sigma/T1040/afinet_raw_socket.yml with a new title, id,
+  date and description, and without its references and falsepositives: the
+  logsource and the detection are the same. The sidecar beside it holds three of
+  the real cases, unchanged. The rule and the sidecar are sound. The
   defect is where the pair is NOT: a test plants it as
   `detections/sigma/T1040/planted_unregistered.{yml,cases.jsonl}`, and no
   validator MANIFEST names that file, so no emulation proves that the rule fires.

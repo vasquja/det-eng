@@ -8,8 +8,10 @@ description: |
   arguments are gone (`a0`: AF_INET / AF_INET6, `a1`: SOCK_RAW), so the rule now
   fires on EVERY socket() call of a process that is not on the allowlist. Every
   positive item left is a surface field (type, syscall): this is the shape a rule
-  takes when it loses its argument. The sidecar beside it holds the cases that
-  still pass. detections/check_sufficiency.py fails this rule on R2, unless
+  takes when it loses its argument. (The description is this text, and the
+  references and falsepositives are left out; nothing else differs.) The sidecar
+  beside it holds the four real cases that still pass, unchanged.
+  detections/check_sufficiency.py fails this rule on R2, unless
   CHOKEPOINT in that script lists it (detections/tests/test_sufficiency.py).
 author: det-eng
 date: 2026/10/05

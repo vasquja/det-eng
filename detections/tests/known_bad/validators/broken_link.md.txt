@@ -1,0 +1,8 @@
+# Planted page (gate tests)
+
+Stored as `.md.txt`, because `check_md_links.py` reads every `.md` file of the
+repository. `test_validators.py` plants it as `docs/planted.md` in a copy.
+
+What is bad: the one relative link below names a file that does not exist.
+
+See [the missing file](no-such-file.md).
