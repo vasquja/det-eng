@@ -1,0 +1,218 @@
+name: sandbox-smoke
+
+# Manual test of the cloud federation that docs/setup/cloud-sandbox.md sets up.
+#
+# What it does, only when a person starts it (workflow_dispatch):
+#   - claims: prints the claims of the OIDC token that a job in the environment
+#     `sandbox` gets. Copy the `sub` value into the cloud trust. It prints the
+#     claims only, never the token, and it asks for an audience that no cloud
+#     trusts.
+#   - aws / azure / gcp: signs in to that cloud with the OIDC token and makes one
+#     read-only call. It changes nothing in the account. The cloud identity needs
+#     no more than that one call (see "The security rules" in the guide).
+#
+# It does not run an emulation. Live emulations stay out of CI (see AGENTS.md).
+#
+# There is no stored cloud key. Each job gets a short-lived token, and the cloud
+# accepts it only for the exact subject `...:environment:sandbox` of this
+# repository. The environment `sandbox` must permit the branch `main` only, and
+# it must have a required reviewer.
+#
+# Keep `workflow_dispatch` as the only trigger. A run from issue_comment or
+# workflow_run has the default branch as its ref, and a run from
+# pull_request_target has the base branch of the pull request. These runs thus
+# pass the branch rule of the environment, and a person with no write access
+# can cause some of them.
+#
+# `preflight` stops the run if the environment is missing, permits other
+# branches or has no required reviewer. Without it, a job that names a missing
+# environment makes GitHub create that environment with no protection rule.
+#
+# The cloud identifiers are environment secrets, so GitHub masks them in the log.
+# The log of a public repository is public.
+
+on:
+  workflow_dispatch:
+    inputs:
+      cloud:
+        description: "claims = print the token claims. aws, azure, gcp = sign in and make one read-only call."
+        type: choice
+        options:
+          - claims
+          - aws
+          - azure
+          - gcp
+        default: claims
+
+permissions: {}
+
+concurrency:
+  group: sandbox-smoke
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Check the environment sandbox
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read # read the environment, its branch rules and its reviewers; no write access
+    steps:
+      - name: Stop unless the environment exists, permits main only and has a reviewer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] \
+            || fail "This workflow must have workflow_dispatch as its only trigger. This run started from: $GITHUB_EVENT_NAME"
+          [ "$GITHUB_REF" = "refs/heads/main" ] || fail "Start this workflow from the branch main."
+          env_json="$(gh api "repos/$REPO/environments/sandbox")" \
+            || fail "The environment 'sandbox' does not exist, or this job cannot read it. Create it first: docs/setup/cloud-sandbox.md"
+          custom="$(jq -r '.deployment_branch_policy.custom_branch_policies // false' <<<"$env_json")"
+          [ "$custom" = "true" ] \
+            || fail "The environment 'sandbox' is not set to 'Selected branches and tags'. See docs/setup/cloud-sandbox.md"
+          rules="$(gh api "repos/$REPO/environments/sandbox/deployment-branch-policies" \
+            --jq '[.branch_policies[] | "\(.type // "branch"):\(.name)"] | sort | join(" ")')"
+          [ "$rules" = "branch:main" ] \
+            || fail "The environment 'sandbox' must permit the branch main only. It permits: ${rules:-nothing}"
+          reviewers="$(jq -r '[.protection_rules[]? | select(.type == "required_reviewers") | .reviewers[]?] | length' <<<"$env_json")"
+          [ "$reviewers" -ge 1 ] \
+            || fail "The environment 'sandbox' has no required reviewer. Add yourself: docs/setup/cloud-sandbox.md, 'Make yourself a required reviewer'"
+          echo "The environment 'sandbox' exists, permits the branch main only and has a required reviewer."
+
+  claims:
+    name: OIDC claims of a sandbox job
+    needs: preflight
+    if: inputs.cloud == 'claims'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: sandbox
+    permissions:
+      id-token: write # request the OIDC token; gives no write access to the repository
+    steps:
+      - name: Print the claims
+        run: |
+          set -euo pipefail
+          response="$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=oidc-claims-check")"
+          token="$(jq -r '.value // empty' <<<"$response")"
+          [ -n "$token" ] || { echo "::error::GitHub did not return an OIDC token."; exit 1; }
+          # Mask the token before a later line can print it. The claims are not secret.
+          echo "::add-mask::$token"
+          payload="$(cut -d. -f2 <<<"$token" | tr '_-' '/+')"
+          while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="${payload}="; done
+          printf '%s' "$payload" | base64 -d \
+            | jq '{sub, aud, iss, repository, repository_id, repository_owner_id, environment, ref, job_workflow_ref, event_name}'
+
+  aws:
+    name: AWS sign-in
+    needs: preflight
+    if: inputs.cloud == 'aws'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: sandbox
+    permissions:
+      id-token: write
+    steps:
+      - name: Check that the values are set
+        env:
+          ROLE: ${{ secrets.AWS_ROLE_ARN }}
+          REGION: ${{ vars.AWS_REGION }}
+        run: |
+          if [ -z "$ROLE" ] || [ -z "$REGION" ]; then
+            echo "::error::Set the secret AWS_ROLE_ARN and the variable AWS_REGION in the environment 'sandbox'. See docs/setup/cloud-aws.md"
+            exit 1
+          fi
+      - name: Sign in to AWS with OIDC
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          mask-aws-account-id: true
+      # With mask-aws-account-id, the sign-in action masks the account ID and also
+      # the full ARN of the identity. A line that prints the ARN shows only `***`.
+      # The role name and the session name are not masked, and they identify the
+      # role.
+      - name: Print the identity
+        run: |
+          set -euo pipefail
+          arn="$(aws sts get-caller-identity --query Arn --output text)"
+          if [[ "$arn" =~ ^arn:[a-z0-9-]+:sts::[0-9]+:assumed-role/([^/]+)/(.+)$ ]]; then
+            echo "assumed role: ${BASH_REMATCH[1]}  session: ${BASH_REMATCH[2]}"
+          else
+            echo "::error::The identity is not an assumed role."
+            exit 1
+          fi
+
+  azure:
+    name: Azure sign-in
+    needs: preflight
+    if: inputs.cloud == 'azure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: sandbox
+    permissions:
+      id-token: write
+    steps:
+      - name: Check that the values are set
+        env:
+          CLIENT: ${{ secrets.AZURE_CLIENT_ID }}
+          TENANT: ${{ secrets.AZURE_TENANT_ID }}
+          SUBSCRIPTION: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          if [ -z "$CLIENT" ] || [ -z "$TENANT" ] || [ -z "$SUBSCRIPTION" ]; then
+            echo "::error::Set the secrets AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_SUBSCRIPTION_ID in the environment 'sandbox'. See docs/setup/cloud-azure.md"
+            exit 1
+          fi
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Print the identity
+        run: az account show --query "{subscriptionState:state, signedInAs:user.type}" -o json
+
+  gcp:
+    name: Google Cloud sign-in
+    needs: preflight
+    if: inputs.cloud == 'gcp'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: sandbox
+    permissions:
+      contents: read # for actions/checkout
+      id-token: write
+    steps:
+      - name: Check that the values are set
+        env:
+          PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          if [ -z "$PROVIDER" ] || [ -z "$ACCOUNT" ] || [ -z "$PROJECT" ]; then
+            echo "::error::Set the secrets GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_SERVICE_ACCOUNT and GCP_PROJECT_ID in the environment 'sandbox'. See docs/setup/cloud-gcp.md"
+            exit 1
+          fi
+      # google-github-actions/auth documents that actions/checkout must run first.
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Sign in to Google Cloud with OIDC
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      # The auth step exchanges the GitHub token for a federated token at the
+      # Security Token Service. That tests the attribute condition of the provider:
+      # a wrong condition fails there. The auth step does not act as the service
+      # account. The call below does: a wrong binding or a missing role fails here.
+      - name: Make one read-only call
+        env:
+          PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+        run: gcloud projects describe "$PROJECT" --format="value(lifecycleState)"

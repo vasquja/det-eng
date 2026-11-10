@@ -1,0 +1,245 @@
+name: agent-identity-probe
+
+# Shows which GitHub account authors and pushes a pull request when the agent runs
+# in GitHub Actions through anthropics/claude-code-action.
+#
+# Why this exists: a Claude Code cloud session reaches GitHub through the
+# repository owner's own connected account, so GitHub cannot tell the agent from the
+# owner there. An agent that runs in GitHub Actions through this action acts as a
+# GitHub App (claude[bot] by default). This workflow proves it on this repository
+# before any ruleset setting depends on it. See docs/setup/agent-identity.md (the
+# identity gate) and docs/setup/repository-settings.md (tests T1 and T2).
+#
+# What it does, only when a person starts it (workflow_dispatch):
+#   1. `probe`: a shell step makes one small file. Claude then runs five fixed
+#      commands: it makes the branch `agent-identity-probe/<run id>`, commits the
+#      file, pushes the branch and opens one pull request.
+#      path_kind=content: the file is under docs/probe/ (no code owner).
+#      path_kind=owned: the file is under .github/ (owned by .github/CODEOWNERS).
+#   2. `report`: reads the pull request with this workflow's read-only token and
+#      writes to the run summary who authored it, who pushed the branch and whether
+#      the commit is verified. The job is green only for PASS.
+#        PASS    GitHub named the author and the pusher, and neither is the
+#                repository owner or the account that started this run.
+#        FAIL    No pull request, or the author or the pusher is one of those two.
+#        UNKNOWN The author or the pusher could not be read. This is not a pass.
+#      A person must start the run. If the agent's identity starts it, that
+#      identity is "the account that started this run", and the verdict is FAIL.
+# Close the throwaway pull request afterwards. Do not merge it.
+#
+# Needs the same two things as claude-code-review.yml: the Claude GitHub App
+# installed on this repository, and the CLAUDE_CODE_OAUTH_TOKEN secret.
+#
+# What the `probe` job holds:
+#   - Its GITHUB_TOKEN is read-only on purpose. A pull request can then appear only
+#     through the action's own identity, never through github-actions[bot].
+#   - The action gets a token of the Claude GitHub App for this repository. The
+#     action's documents say that it can write contents, pull requests and issues.
+#   - The secret CLAUDE_CODE_OAUTH_TOKEN (the owner's Claude subscription).
+#   The commands that Claude runs have the last two in their environment.
+#
+# What limits Claude here:
+#   - The input is a choice, and a shell step checks it again. The prompt is fixed
+#     and uses only the checked values.
+#   - --allowedTools permits five commands and no tool that writes a file. Three
+#     rules are exact: `git checkout -b <branch>`, `git add <file>` and
+#     `git push origin <branch>`. Two rules end in a wildcard, because the text that
+#     follows has quotes: `git commit -m ...` and
+#     `gh pr create --repo <this repository> --base main --head <branch> ...`. So
+#     the rules fix the branch, the file, and the target of the push and of the
+#     pull request. They do not fix the commit message, or the title, the body and
+#     further options of `gh pr create`.
+#   - Claude Code needs no rule to read a file or to run a read-only command.
+#   - A `permissions.allow` rule in a `.claude/settings.json` on `main` would add to
+#     this list. The repository has no such file today.
+#   If Claude writes a command in a different form, Claude Code refuses it and the
+#   probe fails. Then read the log of the `probe` job. If an exact rule refuses a
+#   command that is correct, widen only that rule: put `:*` at its end.
+#
+# The two actions are pinned to full commit IDs. A tag can move; a commit ID cannot.
+# To read the commit ID of a release:
+#   git ls-remote https://github.com/anthropics/claude-code-action 'refs/tags/v1.0.271*'
+# For an annotated tag, use the line that ends in ^{}.
+#
+# Not run yet. The file was checked on 2026-11-10 against the action source at the
+# pinned commit and the Claude Code documentation of permission rules. The first
+# run is the test.
+
+on:
+  workflow_dispatch:
+    inputs:
+      path_kind:
+        description: "content = a file under docs/probe/ (no code owner). owned = a file under .github/ (has a code owner)."
+        type: choice
+        options:
+          - content
+          - owned
+        default: content
+
+permissions: {}
+
+concurrency:
+  group: agent-identity-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # The prompt below uses only these checked values, never the raw input.
+      # This step also makes the file, so that Claude needs no tool that writes.
+      - name: Choose the branch, and make the file
+        id: plan
+        env:
+          KIND: ${{ inputs.path_kind }}
+        run: |
+          set -euo pipefail
+          case "$KIND" in
+            content) file="docs/probe/${GITHUB_RUN_ID}.md" ;;
+            owned)   file=".github/agent-identity-probe/${GITHUB_RUN_ID}.txt" ;;
+            *) echo "::error::path_kind must be content or owned"; exit 1 ;;
+          esac
+          mkdir -p "$(dirname "$file")"
+          printf 'Identity probe, run %s. Throwaway file. Do not merge.\n' "$GITHUB_RUN_ID" > "$file"
+          {
+            echo "kind=$KIND"
+            echo "file=$file"
+            echo "branch=agent-identity-probe/${GITHUB_RUN_ID}"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            This is an identity probe. Do exactly these steps, in this order, and nothing else.
+            Do not read, create or change any file. Do not add a label. Do not merge anything.
+            Run each command exactly as it is written here, in a call of its own. Do not add or
+            change an option. Do not join two commands. The permission rules refuse any other form.
+            The file ${{ steps.plan.outputs.file }} exists already.
+
+            1. Run: git checkout -b ${{ steps.plan.outputs.branch }}
+            2. Run: git add ${{ steps.plan.outputs.file }}
+            3. Run: git commit -m "Identity probe ${{ github.run_id }} (${{ steps.plan.outputs.kind }})"
+            4. Run: git push origin ${{ steps.plan.outputs.branch }}
+            5. Run: gh pr create --repo ${{ github.repository }} --base main --head ${{ steps.plan.outputs.branch }} --title "Identity probe ${{ github.run_id }} (${{ steps.plan.outputs.kind }}): do not merge" --body "Throwaway pull request from the agent-identity-probe workflow. Read the run summary, then close this pull request and delete its branch."
+            6. Print the pull request URL and stop.
+
+            If a command is refused, run it one more time exactly as it is written here.
+            If it is refused again, or if it fails, stop and say which command it was.
+          claude_args: |
+            --max-turns 20
+            --allowedTools "Bash(git checkout -b ${{ steps.plan.outputs.branch }}),Bash(git add ${{ steps.plan.outputs.file }}),Bash(git commit -m:*),Bash(git push origin ${{ steps.plan.outputs.branch }}),Bash(gh pr create --repo ${{ github.repository }} --base main --head ${{ steps.plan.outputs.branch }}:*)"
+
+  report:
+    needs: probe
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Report who authored and who pushed the probe pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          STARTER: ${{ github.actor }}
+          BRANCH: agent-identity-probe/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          # stop VERDICT TEXT: write the summary, fail the job.
+          stop() {
+            {
+              echo "## Identity probe: $1"
+              echo
+              echo "$2"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::identity probe $1: $2"
+            exit 1
+          }
+          # A GitHub login: letters, digits, hyphens and underscores, with [bot] for an App.
+          is_login() { [[ "$1" =~ ^[A-Za-z0-9_-]+(\[bot\])?$ ]]; }
+          # Logins are not case sensitive.
+          same() { [ -n "$1" ] && [ -n "$2" ] && [ "${1,,}" = "${2,,}" ]; }
+
+          pr="$(gh api "repos/$REPO/pulls?state=open&head=$OWNER:$BRANCH" --jq '.[0] // empty')" \
+            || stop UNKNOWN "The list of pull requests could not be read. Read the log of the \`report\` job."
+          [ -n "$pr" ] \
+            || stop FAIL "No open pull request exists for the branch \`$BRANCH\`. Read the log of the \`probe\` job."
+
+          number="$(jq -r '.number' <<<"$pr")"
+          url="$(jq -r '.html_url' <<<"$pr")"
+          sha="$(jq -r '.head.sha' <<<"$pr")"
+          author="$(jq -r '.user.login // empty' <<<"$pr")"
+          author_type="$(jq -r '.user.type // "not read"' <<<"$pr")"
+          is_login "$author" || author=""
+
+          # For information only. The verdict does not use these three values.
+          commit_author=""
+          committer=""
+          verified=""
+          if commit="$(gh api "repos/$REPO/commits/$sha")"; then
+            commit_author="$(jq -r '.author.login // "(no linked account)"' <<<"$commit" || true)"
+            committer="$(jq -r '.committer.login // "(no linked account)"' <<<"$commit" || true)"
+            verified="$(jq -r '.commit.verification.verified' <<<"$commit" || true)"
+          fi
+
+          # The repository activity list names the account that pushed the branch.
+          # The newest entry is first. The list can be late, so read it up to 5 times.
+          # When a call fails, gh prints the error text of the server in place of a
+          # login. is_login refuses that text.
+          pusher=""
+          for attempt in 1 2 3 4 5; do
+            pusher="$(gh api "repos/$REPO/activity?ref=refs/heads/$BRANCH&per_page=1" --jq '.[0].actor.login // empty' || true)"
+            if is_login "$pusher"; then break; fi
+            echo "attempt $attempt: the activity list did not name a pusher"
+            pusher=""
+            if [ "$attempt" != 5 ]; then sleep 6; fi
+          done
+
+          # An answer that could not be read is UNKNOWN, never PASS.
+          verdict=PASS
+          if [ -z "$author" ] || [ -z "$pusher" ]; then verdict=UNKNOWN; fi
+          for human in "$OWNER" "$STARTER"; do
+            if same "$author" "$human" || same "$pusher" "$human"; then verdict=FAIL; fi
+          done
+
+          {
+            echo "## Identity probe: $verdict"
+            echo
+            echo "Pull request: [#$number]($url)"
+            echo
+            echo "| Question | Answer |"
+            echo "|----------|--------|"
+            echo "| Pull request author | \`${author:-not read}\` (account type \`$author_type\`) |"
+            echo "| Account that pushed the branch | \`${pusher:-not read}\` |"
+            echo "| Commit author / committer | \`${commit_author:-not read}\` / \`${committer:-not read}\` |"
+            echo "| Commit signature verified | \`${verified:-not read}\` |"
+            echo "| Repository owner | \`$OWNER\` |"
+            echo "| Account that started this run | \`$STARTER\` |"
+            echo
+            echo "PASS means that GitHub named the author and the pusher, and that neither is the repository owner or the account that started this run. The owner can then approve this pull request."
+            echo
+            echo "FAIL means that the author or the pusher is the repository owner or the account that started this run. GitHub cannot tell the agent from that person."
+            echo
+            echo "UNKNOWN means that the author or the pusher could not be read. It is not a pass. Read who pushed the branch \`$BRANCH\` on the Activity page of the repository (https://github.com/$REPO/activity). Then start the probe again."
+            echo
+            echo "Close the pull request and delete its branch when you have read this. Do not merge it."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "author=${author:-not read} pusher=${pusher:-not read} verified=${verified:-not read} verdict=$verdict"
+          if [ "$verdict" != PASS ]; then
+            echo "::error::identity probe $verdict"
+            exit 1
+          fi

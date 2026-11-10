@@ -67,6 +67,7 @@ fails when the committed copy is stale, so the chart always matches the rules.
 | [`research/`](research/README.md) | The TRRs and their index. **Start here.** |
 | [`atomics/`](atomics/) | Safe emulations of each technique, by ATT&CK ID. |
 | [`detections/`](detections/README.md) | Sigma rules and the validators that prove them. |
+| [`docs/setup/`](docs/setup/README.md) | Setup guides for an owner or a fork: the agent's GitHub identity, repository settings, cloud sandbox accounts. |
 
 Which Kubernetes rule works on EKS, AKS, GKE, OpenShift or k3s: [`detections/k8s/PLATFORMS.md`](detections/k8s/PLATFORMS.md).
 
