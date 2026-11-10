@@ -60,6 +60,20 @@ def found(result, pattern):
     return re.findall(pattern, result.stdout, re.MULTILINE)
 
 
+def assert_cases_hold(tree, rule):
+    """detections/rule_cases.py accepts the planted pair `rule` (`T<id>/<file>.yml`):
+    its positive fires and each declared break is the single flip. So the pair has
+    the one defect that its test names; rule_cases.py does not see that defect."""
+    sidecar = "detections/sigma/" + rule[:-len(".yml")] + ".cases.jsonl"
+    cases = len(tree.read_jsonl(sidecar))
+    result = tree.run("detections/rule_cases.py", "detections/sigma/" + rule)
+    gatelib.assert_accepts(result, r"^All cases hold \(1 rule file\(s\)\)\.$")
+    held = found(result, rf"^ok    {re.escape(rule)} :: \S+ +\S+: ")
+    if len(held) != cases:
+        raise AssertionError(f"rule_cases.py judged {len(held)} of the {cases} case(s) of "
+                             f"{sidecar}:\n" + result.describe())
+
+
 def class_tree(cls):
     """A private copy that lives as long as the test class: for a slow gate whose
     runs start in setUpClass, so that they overlap. Never plant in cls.good()."""
@@ -367,6 +381,7 @@ class NullSafety(gatelib.GateCase):
         tree = self.tree()
         before = len(rule_keys(tree))
         tree.plant("quality/unsafe_not", "detections/sigma/T9999")
+        assert_cases_hold(tree, "T9999/planted_unsafe_not.yml")
         result = self.run_ci(tree)
         self.assert_rejects(
             result,
@@ -386,12 +401,19 @@ class NullSafety(gatelib.GateCase):
     def test_rejects_fixture_field_in_another_letter_case(self):
         """ns-field-case-cloud-fixture. The attack fixture of TRR9011 writes
         `SourceIPAddress`; the rule reads `sourceIPAddress`. SQLite matches column
-        names without regard to case, so the rule still fires offline (verified on
-        2026-11-10: validate_cloud_detections.py passes this tree), but Lucene,
-        Splunk and ES|QL would not read the field."""
+        names without regard to case, so the rule still fires offline (the cloud
+        validator passes this tree: asserted below), but Lucene, Splunk and ES|QL
+        would not read the field."""
         tree = self.tree()
-        tree.replace("detections/cloud/fixtures/trr9011/attack.json",
-                     '"sourceIPAddress"', '"SourceIPAddress"', count=0)
+        fixture = "detections/cloud/fixtures/trr9011/attack.json"
+        tree.replace(fixture, '"sourceIPAddress"', '"SourceIPAddress"', count=0)
+        records = len(tree.read_json(fixture))
+        self.assertGreater(records, 0)
+        # Only this gate sees the defect: every attack record still matches offline.
+        self.assert_accepts(
+            tree.run("detections/validate_cloud_detections.py"),
+            rf"^PASS  \[TRR9011 AWS\] aws_imds_creds_used_off_instance\.yml: {records}/{records} "
+            r"attack record\(s\) match; benign baseline clean ")
         result = tree.run(self.GATE, "detections/sigma/" + self.IMDS)
         self.assert_rejects(
             result,
@@ -417,6 +439,8 @@ class NullSafety(gatelib.GateCase):
         serialisation of requestParameters.createVolumePermission.add.items only."""
         tree = self.tree()
         tree.plant("quality/one_json_serialisation_cloud", "detections/sigma/T9999")
+        # The positive fires offline (plain assertions: they must not count as the gap).
+        assert_cases_hold(tree, "T9999/planted_json_separator_cloud.yml")
         result = tree.run(self.GATE, "detections/sigma/T9999/planted_json_separator_cloud.yml")
         self.assert_saw(result, r"^(ok   |FAIL ) T9999/planted_json_separator_cloud\.yml\b")
         self.assert_rejects(result, r"^FAIL  T9999/planted_json_separator_cloud\.yml :: case positive "
@@ -488,6 +512,7 @@ class ProviderMappings(gatelib.GateCase):
         without blanks, so the positive is silent there. rule_cases.py passes the pair."""
         tree = self.tree()
         tree.plant("quality/one_json_serialisation_k8s", "detections/sigma/T9999")
+        assert_cases_hold(tree, "T9999/planted_json_separator_k8s.yml")
         result = tree.run(self.GATE, "detections/sigma/T9999/planted_json_separator_k8s.yml")
         for provider in ("aks", "gke"):
             self.assert_rejects(
@@ -666,9 +691,9 @@ class K8sPlatformsMdAnchors(gatelib.GateCase):
         good = self.good()
         anchor = None
         for rel in good.glob("research/trr*/*/README.md"):
-            found = re.search(r"\]\(\S*detections/k8s/PLATFORMS\.md#([\w-]+)\)", good.read(rel))
-            if found:
-                anchor = found.group(1)
+            link = re.search(r"\]\(\S*detections/k8s/PLATFORMS\.md#([\w-]+)\)", good.read(rel))
+            if link:
+                anchor = link.group(1)
                 break
         self.assertIsNotNone(anchor, "no TRR links to a heading of the page: take another source")
         tree = self.tree()
