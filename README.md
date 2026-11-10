@@ -83,3 +83,22 @@ python3 detections/validate_cloud_detections.py
 > contribution upstream; see [`UPSTREAM.md`](UPSTREAM.md).
 
 AI agents working in this repository: read [`AGENTS.md`](AGENTS.md).
+
+## License
+
+Two licenses apply. The path of a file tells you which one.
+
+| Path | License | SPDX ID | License text |
+|------|---------|---------|--------------|
+| `detections/sigma/` (the Sigma rules and their case files) | Detection Rule License 1.1 | `DRL-1.1` | [`detections/sigma/LICENSE.md`](detections/sigma/LICENSE.md) |
+| All other files (validators, CI scripts, emulations, research reports, diagrams, fixtures) | Apache License 2.0 | `Apache-2.0` | [`LICENSE`](LICENSE) |
+
+Third-party files keep the license of their source. The `SOURCES.md` file next to
+them gives the source, the license and the changes:
+[provider audit policies](detections/k8s/provider-policies/SOURCES.md),
+[managed-cluster anchors](detections/pipelines/SOURCES.md),
+[OpenShift DNS CRD](atomics/T1565.001/src/SOURCES.md) and
+[snapshot and Velero CRDs](atomics/T1490/src/crds/SOURCES.md).
+
+If you share a rule, keep its `author` field and state that the rule is under the
+Detection Rule License 1.1.
