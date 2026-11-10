@@ -68,6 +68,7 @@ fails when the committed copy is stale, so the chart always matches the rules.
 | [`atomics/`](atomics/) | Safe emulations of each technique, by ATT&CK ID. |
 | [`detections/`](detections/README.md) | Sigma rules and the validators that prove them. |
 | [`docs/setup/`](docs/setup/README.md) | Setup guides for an owner or a fork: the agent's GitHub identity, repository settings, cloud sandbox accounts. |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | The ordered work, with its status, and the design records behind it. |
 
 Which Kubernetes rule works on EKS, AKS, GKE, OpenShift or k3s: [`detections/k8s/PLATFORMS.md`](detections/k8s/PLATFORMS.md).
 

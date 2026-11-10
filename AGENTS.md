@@ -8,6 +8,10 @@ This codebase is yours to own and maintain. What it is and how far it is built a
 your call. You will keep building on it, so take responsibility for its direction,
 architecture, implementation, and long-term maintenance.
 
+The direction is in [`docs/ROADMAP.md`](docs/ROADMAP.md). When you have no other
+task from a person, take the next item there. Keep that file current: it is how one
+session tells the next what to build and why.
+
 ## Purpose
 
 Detection engineering at scale. Turn one ATT&CK technique on one platform into
