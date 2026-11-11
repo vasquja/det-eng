@@ -14,6 +14,10 @@ network connection and no credentials. That confirms the spelling of a command,
 not the answer of Google. Each step has a check. If a check fails, stop and read
 the notes. Read the [Not verified](#not-verified) list.
 
+The text about the scripts for TRR9018, TRR9020 and TRR9038 (steps 5.4 to 5.6
+and section 7) was changed on 2026-11-11. It was compared with the scripts and
+with the same SDK.
+
 Time: about 45 minutes. Cost: 0 USD during the free trial. See [Costs](#costs).
 
 A word in capitals, such as `OWNER/REPO`, is a placeholder. Replace it before you
@@ -110,7 +114,7 @@ else
   export ORG_ID=$(gcloud projects describe "$PROJECT_ID" --format='value(parent.type,parent.id)' | awk '$1 == "organization" { print $2 }')
   export CI_SA="ci-sandbox@${PROJECT_ID}.iam.gserviceaccount.com"
   export TRR9014_BUCKET="trr9014-${PROJECT_ID}" TRR9014_SERVICE=trr9014-svc TRR9014_REGION=us-central1
-  export TRR9018_PROJECT="$PROJECT_ID" TRR9018_SA="trr9018-deployer@${PROJECT_ID}.iam.gserviceaccount.com"
+  export TRR9018_PROJECT="$PROJECT_ID"
   export TRR9038_PROJECT="$PROJECT_ID" TRR9038_CUSTOM_BUCKET=trr9038-custom
   echo "OK: project ${PROJECT_ID} (number ${PROJECT_NUMBER}), organization ${ORG_ID:-none}, billing account ${BILLING_ACCOUNT_ID}, account ${SANDBOX_ACCOUNT_EMAIL}, directory ${PWD}"
 fi
@@ -262,8 +266,8 @@ page in that list. `gcloud` 570.0.0 has no option for a spend cap: use the conso
 
 ## 4. Throwaway resources
 
-Each emulation script changes one small resource. Most scripts put it back. The
-TRR9018 script leaves one binding: step 5.4 removes it. Create these resources one
+Each emulation script changes one small resource and puts it back. Some scripts
+make the resource themselves. For the other scripts, create these resources one
 time. Keep them empty.
 
 ### 4.1 Only if the project is in an organization: permit a public grant
@@ -323,7 +327,9 @@ gcloud run deploy trr9014-svc --project="${PROJECT_ID:?run the session block fir
   --image=us-docker.pkg.dev/cloudrun/container/hello --no-allow-unauthenticated --max-instances=1 \
   --service-account="trr9014-run@$PROJECT_ID.iam.gserviceaccount.com"
 
-# TRR9018: a service account that has no roles.
+# TRR9018 (optional): a service account that has no roles. The script makes its own
+# throwaway service account when TRR9018_SA is not set, so this is needed only if you
+# set TRR9018_SA to this address in step 5.4 to bind an existing service account.
 gcloud iam service-accounts create trr9018-deployer --project="${PROJECT_ID:?run the session block first}" \
   --display-name="trr9018 target, no roles"
 
@@ -339,8 +345,10 @@ the service is private.
 Notes:
 
 - The names agree with the variables that the session block sets
-  (`$TRR9014_BUCKET`, `$TRR9014_SERVICE`, `$TRR9018_SA`, `$TRR9038_CUSTOM_BUCKET`).
-  The emulation scripts read those variables.
+  (`$TRR9014_BUCKET`, `$TRR9014_SERVICE`, `$TRR9038_CUSTOM_BUCKET`). The emulation
+  scripts read those variables. `trr9018-deployer` matches the address that you
+  would put in `TRR9018_SA` to bind an existing service account instead of a
+  throwaway one.
 - Bucket names are global. That is why the project ID is in the name.
 - The bucket must not have public access prevention set to `enforced`, or Google
   refuses the grant. The option `--no-public-access-prevention` sets the bucket to
@@ -368,6 +376,11 @@ The first line is a dry run: it changes nothing. The second line is the live run
 it gives `allUsers` read access to the bucket, then removes that access.
 
 Check: the output of the live run ends with a line that starts with `[live] done.`
+
+The TRR9014 script does not hold the undo block that
+[Problems in the live scripts](cloud-sandbox.md#problems-in-the-live-scripts)
+describes. If the run stops before that line, the grant to `allUsers` can stay.
+Then do step 5.5 immediately.
 
 ### 5.2 Read the record
 
@@ -443,32 +456,93 @@ your IP address.
 
 ### 5.4 The other emulations
 
-TRR9014 b (the Cloud Run service):
+Run one line at a time. Read the last lines of the output before you run the
+next line.
+
+**TRR9014 b** (the Cloud Run service):
 
 ```bash
 TRR9014_LIVE=1 bash atomics/T1098.003/src/emulate.sh b
 ```
 
-TRR9018 (a workload identity pool, a provider and a binding). The script deletes
-the pool and the provider. It does not remove the binding that it adds to
-`trr9018-deployer`. The last command of this block removes it:
+Check: the output ends with a line that starts with `[live] done.` If the run
+stops before that line, do step 5.5 immediately.
+
+**TRR9018** (a workload identity pool, a provider and a binding):
 
 ```bash
-export TRR9018_POOL="trr9018-$(date +%y%m%d%H%M%S)" TRR9018_PROVIDER=trr9018-oidc TRR9018_ISSUER="https://attacker.example.com"
 TRR9018_LIVE=1 bash atomics/T1098.001/src/emulate_gcp_wif.sh a
-gcloud iam service-accounts remove-iam-policy-binding "${TRR9018_SA:?run the session block first}" \
-  --project="${PROJECT_ID:?run the session block first}" --role=roles/iam.workloadIdentityUser \
-  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER:?run the session block first}/locations/global/workloadIdentityPools/${TRR9018_POOL:?set TRR9018_POOL first}/*"
 ```
 
-TRR9038 a (the `_Default` sink) and b (the spare log bucket):
+Check: the last line is `[live] done.`
+
+What the live run does:
+
+- It makes a throwaway service account, a pool and a provider. Then it gives the
+  role `roles/iam.workloadIdentityUser` on the service account to each identity
+  of the pool.
+- Then it removes the binding, the provider, the pool and the service account,
+  in that sequence.
+- The pool gets a different name for each run: `trr9018-`, the date and time,
+  and a random number. Google blocks the name of a deleted pool for 30 days.
+- The provider has the name `trr9018-oidc`, the issuer
+  `https://attacker.example.com` and no attribute condition. The SDK parsed the
+  command. That Google accepts it is in [Not verified](#not-verified).
+- The script needs `TRR9018_PROJECT`. The session block sets it. Without it,
+  the script stops before the first change with exit 2, and names the variable.
+- Do not set `TRR9018_POOL` or `TRR9018_PROVIDER`. A name that you set must
+  start with `trr9018-`. If it does not, the script stops with exit 2.
+- Procedures `a` and `c` make the same live run. Procedures `b`, `d` and `e`
+  have no live run. For them, the script prints `no record was caused` and
+  ends with exit 1.
+
+Optional: to bind the service account of step 4.2 in the place of a throwaway
+one, set `TRR9018_SA` before the run:
+
+```bash
+export TRR9018_SA="trr9018-deployer@${PROJECT_ID:?run the session block first}.iam.gserviceaccount.com"
+```
+
+The script then makes no service account. At the end it removes the binding, and
+it does not delete the account. The command `unset TRR9018_SA` goes back to the
+throwaway account.
+
+**TRR9038** a (the `_Default` sink), b (the spare log bucket) and c (a project
+exclusion):
 
 ```bash
 TRR9038_LIVE=1 bash atomics/T1562.008/src/emulate_gcp_log_sink.sh a
-CLOUDSDK_CORE_DISABLE_PROMPTS=1 TRR9038_LIVE=1 bash atomics/T1562.008/src/emulate_gcp_log_sink.sh b
+TRR9038_LIVE=1 bash atomics/T1562.008/src/emulate_gcp_log_sink.sh b
+TRR9038_LIVE=1 bash atomics/T1562.008/src/emulate_gcp_log_sink.sh c
 ```
 
 Check: each live run ends with a line that starts with `[live] done.`
+
+What each live run does:
+
+- **a** reads the state of the `_Default` sink first. If the sink is disabled
+  before the run, the script stops with exit 2 and changes nothing: see step
+  5.6. If not, it disables the sink and enables it again.
+- **b** deletes the spare log bucket `trr9038-custom` and gets it back with
+  `undelete`. The name in `TRR9038_CUSTOM_BUCKET` must start with `trr9038-`. If
+  it does not, the script stops with exit 2. Thus the script cannot delete
+  `_Default` or `_Required`.
+- **c** creates the exclusion `trr9038-drop-audit` and removes it. The script
+  creates the exclusion with `"disabled": true`. A disabled exclusion drops no
+  log. The attack leaves `"disabled"` out. The script also sends the delete
+  request when the create request gets no answer, an error of the server (a
+  status that is not 2xx and not 4xx), or the status 409. The delete request
+  accepts the answer "not found".
+- The Google Cloud SDK has no `gcloud logging exclusions` command. Thus
+  procedure c calls the Cloud Logging REST API with `curl`. It needs `curl` on
+  `PATH` and a `gcloud` that is signed in.
+- Procedure c reads the access token one time from
+  `gcloud auth print-access-token`. The token goes to `curl` on its standard
+  input. The script does not print the token, and does not put it on a command
+  line or in a file.
+- The script gives `--quiet` to `gcloud logging buckets delete`. Without that
+  option, the command asks a question. No `CLOUDSDK_CORE_DISABLE_PROMPTS=1`
+  prefix is necessary.
 
 Wait one or two minutes, then read the records. The function `read_record` is the
 command of step 5.2 with two parameters: the output file and the filter. Each
@@ -484,35 +558,57 @@ read_record live-trr9018-provider.json 'protoPayload.methodName:"CreateWorkloadI
 read_record live-trr9018-binding.json  'protoPayload.serviceName="iam.googleapis.com" AND protoPayload.methodName:"SetIAMPolicy"'
 read_record live-trr9038-a.json        'protoPayload.methodName:"UpdateSink"'
 read_record live-trr9038-b.json        'protoPayload.methodName:"DeleteBucket"'
+read_record live-trr9038-c.json        'protoPayload.methodName:"CreateExclusion"'
 ```
 
 Check: each file of a technique that you ran holds one or two records. A file of a
 technique that you did not run holds `[]`.
 
+The TRR9038 b record (`DeleteBucket` of the bucket `trr9038-custom`) does not
+fire the rule. That is by design. For a bucket, the rule reads only a resource
+name that ends with `/buckets/_Default`, and the script does not touch the
+`_Default` bucket. The script prints a note about this. Thus the b record is a
+benign baseline for the rule.
+
+The rule fires on the fixture records of procedure a (`UpdateSink` on
+`_Default`) and of procedure c (`CreateExclusion`). The rule does not read the
+field `disabled` of an exclusion. A live record of a or c must show the same
+result: see [Not verified](#not-verified).
+
 ### 5.5 After each live run: make sure that nothing stays behind
 
-Do this after each live run, and always after a run that stopped with an error.
+Do this after each live run, and always after a run whose last line does not
+start with `[live] done.` The block changes nothing.
 
 ```bash
 P=$(gcloud storage buckets get-iam-policy "gs://$TRR9014_BUCKET" --format=json) && echo "TRR9014 bucket: $(grep -c allUsers <<<"$P") public grant(s)"
 P=$(gcloud run services get-iam-policy trr9014-svc --region=us-central1 --project="$PROJECT_ID" --format=json) && echo "TRR9014 service: $(grep -c allUsers <<<"$P") public grant(s)"
-P=$(gcloud iam service-accounts get-iam-policy "$TRR9018_SA" --project="$PROJECT_ID" --format=json) && echo "TRR9018 service account: $(grep -c principalSet <<<"$P") pool binding(s)"
+P=$(gcloud iam service-accounts list --project="$PROJECT_ID" --filter='email~^trr9018-sa-' --format='value(email)') && echo "TRR9018 throwaway SAs:" $P
 P=$(gcloud iam workload-identity-pools list --location=global --project="$PROJECT_ID" --format='value(name.basename())') && echo "pools:" $P
 P=$(gcloud logging sinks describe _Default --project="$PROJECT_ID" --format='value(disabled)') && echo "TRR9038 _Default sink: disabled=${P:-False}"
 P=$(gcloud logging buckets describe trr9038-custom --location=global --project="$PROJECT_ID" --format='value(lifecycleState)') && echo "TRR9038 log bucket: $P"
+P=$(printf 'header = "Authorization: Bearer %s"\n' "$(gcloud auth print-access-token)" | curl -q -sS -f --config - "https://logging.googleapis.com/v2/projects/$PROJECT_ID/exclusions") && echo "TRR9038 exclusion: $(grep -c trr9038-drop-audit <<<"$P") found"
 ```
 
-Check: the block prints these six lines, and no line that starts with `ERROR:`.
-After section 6, the `pools:` line shows `ci-github`, and no other pool.
+Check: the block prints these seven lines, and no line that starts with `ERROR:`
+or with `curl:`. After section 6, the `pools:` line shows `ci-github`, and no
+other pool.
 
 ```text
 TRR9014 bucket: 0 public grant(s)
 TRR9014 service: 0 public grant(s)
-TRR9018 service account: 0 pool binding(s)
+TRR9018 throwaway SAs:
 pools:
 TRR9038 _Default sink: disabled=False
 TRR9038 log bucket: ACTIVE
+TRR9038 exclusion: 0 found
 ```
+
+The last line of the block uses the REST API, because `gcloud` has no command
+for exclusions. `printf` is a part of the shell, so the access token is not on
+the command line of a program. `curl` reads the token on its standard input
+(`--config -`). Keep `-q` as the first option: `curl` then does not read your
+own `.curlrc` file, which can hold an option that prints the token.
 
 If a line is different, run only the command for that line. Then run the check
 block again.
@@ -526,55 +622,102 @@ gcloud run services remove-iam-policy-binding trr9014-svc --region=us-central1 -
 gcloud logging sinks update _Default --no-disabled --project="${PROJECT_ID:?run the session block first}"
 # TRR9038 log bucket: DELETE_REQUESTED (Google keeps a deleted log bucket for 7 days)
 gcloud logging buckets undelete trr9038-custom --location=global --project="${PROJECT_ID:?run the session block first}"
+# TRR9038 exclusion: the number is not 0 (the exclusion is disabled, so it drops no log)
+printf 'header = "Authorization: Bearer %s"\n' "$(gcloud auth print-access-token)" \
+  | curl -q -sS -f --config - -X DELETE "https://logging.googleapis.com/v2/projects/${PROJECT_ID:?run the session block first}/exclusions/trr9038-drop-audit"
 ```
 
-TRR9018: the `pools:` line shows a name that starts with `trr9018-`, or the number
-of pool bindings is not 0. Replace `POOL_ID` with that name, and run the two
-commands. Never delete the pool `ci-github`.
+TRR9018: the script removes its binding, its provider, its pool and its
+throwaway service account. The commands below are for a run that did not
+complete its undo commands.
+
+If the `TRR9018 throwaway SAs:` line shows an email address, delete that service
+account. Replace `EMAIL` with the address:
 
 ```bash
-gcloud iam service-accounts remove-iam-policy-binding "${TRR9018_SA:?run the session block first}" \
-  --project="${PROJECT_ID:?run the session block first}" --role=roles/iam.workloadIdentityUser \
-  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER:?run the session block first}/locations/global/workloadIdentityPools/POOL_ID/*"
+gcloud iam service-accounts delete EMAIL --project="${PROJECT_ID:?run the session block first}" --quiet
+```
+
+If the `pools:` line shows a name that starts with `trr9018-`, delete that pool.
+Replace `POOL_ID` with the name. Never delete the pool `ci-github`:
+
+```bash
 gcloud iam workload-identity-pools delete POOL_ID --location=global --project="${PROJECT_ID:?run the session block first}" --quiet
 ```
 
-If the number of pool bindings is not 0 and the `pools:` line shows no `trr9018-`
-name, the pool is deleted and its binding stays. This command prints the member.
-The pool name is in it. Use that name as `POOL_ID` in the first command above.
+Only if you set `TRR9018_SA`: read the policy of that service account.
 
 ```bash
-gcloud iam service-accounts get-iam-policy "$TRR9018_SA" --project="$PROJECT_ID" \
+gcloud iam service-accounts get-iam-policy "${TRR9018_SA:?is not set}" --project="$PROJECT_ID" \
   --flatten='bindings[].members' --format='value(bindings.members)'
 ```
 
+Check: the command prints no line that starts with `principalSet://`. If it
+prints such a line, remove that binding. Replace `MEMBER` with the full line:
+
+```bash
+gcloud iam service-accounts remove-iam-policy-binding "${TRR9018_SA:?is not set}" --project="${PROJECT_ID:?run the session block first}" \
+  --role=roles/iam.workloadIdentityUser --member='MEMBER' --condition=None
+```
+
+If the output of a run has a line that starts with
+`[live] LEFT BEHIND, this command failed:`, that line shows the undo command
+that failed. You can also run that command again. For the exclusion of TRR9038
+c, the line shows the name of a function of the script: use the `curl` command
+above.
+
 ### 5.6 Things that can make a live run fail
 
-- **The variables.** Run the session block before each run. Without
-  `TRR9018_PROJECT`, the TRR9018 script uses the project `trr9018-prod`, which is
-  not yours.
+- **A necessary variable is not set.** Run the session block before each run.
+  Without `TRR9018_PROJECT` or `TRR9038_PROJECT`, the script stops before the
+  first change with exit 2, and names the variable. TRR9038 b does the same
+  without `TRR9038_CUSTOM_BUCKET`, and TRR9020 without `TRR9020_ORG` (section
+  7). These three scripts use no placeholder project and no placeholder
+  organization.
+- **A name without the prefix of the technique.** A value that you give to
+  `TRR9018_POOL`, `TRR9018_PROVIDER`, `TRR9020_POOL`, `TRR9020_PROVIDER` or
+  `TRR9038_CUSTOM_BUCKET` must start with `trr9018-`, `trr9020-` or `trr9038-`.
+  If it does not, the script stops with exit 2.
 - **TRR9014 in an organization.** See step 4.1.
-- **TRR9018, the issuer.** With the default issuer of the script (the GitHub
-  issuer) Google refuses the provider, because it requires an attribute condition
-  for an issuer that many customers share. `TRR9018_ISSUER` in step 5.4 prevents
-  that. It was not confirmed that Google accepts an issuer that does not answer.
-- **TRR9018, the provider name.** The default provider name of the script (`gh`)
-  has 2 characters. Google requires 4 to 32. `TRR9018_PROVIDER` in step 5.4
-  prevents that.
-- **TRR9018 and TRR9020, the pool name.** Google blocks the name of a deleted pool
-  for 30 days. The default names in the scripts thus work one time in 30 days. Set
-  `TRR9018_POOL` (or `TRR9020_POOL`) to a new name for each run, as step 5.4 shows.
-- **A run that stops.** The scripts stop at the first error and do not clean up
-  after it. Do step 5.5.
-- **TRR9038 b** asks `Really delete bucket?` in a terminal. A question in a block
-  that you paste takes the next line as its answer. `CLOUDSDK_CORE_DISABLE_PROMPTS=1`
-  in step 5.4 makes `gcloud` continue with no question.
-- **TRR9038 c** calls `gcloud logging exclusions create`. That command is not in
-  the Google Cloud SDK 570.0.0. Use the committed fixture until the script is
-  corrected.
+- **TRR9014 stops between the grant and the revoke.** The TRR9014 script stops
+  at the first error and does not clean up after it. The grant to `allUsers`
+  then stays. Do step 5.5 immediately.
+- **TRR9018 and TRR9020, the pool name.** Google blocks the name of a deleted
+  pool for 30 days. A workforce pool ID (TRR9020) must also be unique in all of
+  Google Cloud. If `TRR9018_POOL` or `TRR9020_POOL` is not set, the script makes
+  a different name for each run. Thus do not set these variables.
+- **TRR9038 a, the sink is disabled before the run.** The script stops with
+  exit 2 and changes nothing. Its undo command enables the sink, so it cannot
+  put a disabled sink back. Step 5.5 shows the state of the sink, and it has the
+  command that enables the sink.
+- **TRR9038 c, the exclusion is there before the run.** If Google answers with
+  the HTTP status 409, the script says that an earlier run left the exclusion.
+  The script removes the exclusion and ends with exit 1. That run caused no
+  record. Run procedure c again.
+- **TRR9038 c, Google refuses the create request.** For a 4xx status that is
+  not 409 (for example 403), the script prints the answer of the API and ends
+  with exit 1. It registers no undo command for the exclusion, and it names the
+  exclusion as a change that can stay. No exclusion is expected after a
+  refusal. Do step 5.5 to make sure.
+- **TRR9038 c, the create request gets an error of the server.** For a status
+  that is not 2xx and not 4xx (for example 500), the exclusion possibly exists.
+  The script prints the answer of the API and sends the delete request. The
+  delete request accepts the answer "not found". The script ends with exit 1.
+  Do step 5.5.
+- **TRR9038 c, no `curl` or no token.** The script needs `curl` on `PATH`, and a
+  `gcloud` that is signed in. If one is missing, it stops before the first
+  change.
+- **A run that stops.** The scripts for TRR9018, TRR9020 and TRR9038 run the
+  undo commands of the changes that they made, and print `[live] FAILED`. An
+  object can stay in two conditions. In the first, an undo command fails: the
+  script prints `[live] LEFT BEHIND`. In the second, the run stops during a
+  command that makes a change: the script prints
+  `[live] The run stopped before the undo of this change was registered:`. In
+  each condition, do step 5.5 (for TRR9020, step 7.1).
 
-The table [Problems in the live scripts](cloud-sandbox.md#problems-in-the-live-scripts)
-has the same defects for all providers.
+[Problems in the live scripts](cloud-sandbox.md#problems-in-the-live-scripts)
+describes the undo block and the exit codes, and lists what is open for all
+providers.
 
 ## 6. Let GitHub Actions act in the project
 
@@ -816,59 +959,154 @@ Check: the printed policy has `roles/owner` for `ci-sandbox@...`.
 ## 7. Optional: an organization for TRR9020
 
 Skip this section unless you want live records for TRR9020 (workforce identity
-pools). The committed fixtures cover it, and **the script cannot complete at this
-time**. Its defects, read against the built-in help of the Google Cloud SDK
-570.0.0:
+pools). The committed fixtures cover it.
 
-- The script gives `--organization` to three `gcloud iam workforce-pools`
-  commands: `providers create-oidc`, `providers delete` and `delete`. These three
-  commands do not have that option, and `gcloud` refuses each of them
-  (`unrecognized arguments`).
-- `providers create-oidc` requires `--client-id`. The script does not give it.
-- The script asks for the response type `code`. That type needs a client secret
-  (`--client-secret-value`). The script does not give it.
-
-Thus a live run makes the pool, stops at the provider and leaves the pool. The
-cleanup lines of the script cannot remove it. Do not start a live run until the
-script is corrected. If you started one, remove the pool. Without `TRR9020_POOL`,
-its name is `trr9020-ext-pool`.
-
-```bash
-TRR9020_POOL="${TRR9020_POOL:-trr9020-ext-pool}"
-gcloud iam workforce-pools delete "$TRR9020_POOL" --location=global --quiet
-gcloud iam workforce-pools list --organization="${ORG_ID:?is empty: run the session block first; the project must be in an organization}" \
-  --location=global --format='value(name.basename())'
-```
-
-Check: the last command prints no name that starts with `trr9020-`.
-
-When the script is corrected, TRR9020 needs an organization, because a workforce
-pool is a resource of an organization and its records are in the log of the
-organization:
+TRR9020 needs an organization, because a workforce pool is a resource of an
+organization and its records are in the log of the organization:
 
 - If step 2.4 showed an organization, use it. It was not confirmed that an
   organization that Google made automatically permits workforce pools.
 - If not, you need a domain name that you control, and Cloud Identity Free (0 USD)
   with a DNS record to prove the domain.
 
-The block below is for the corrected script. Do not run it now.
+What a live run of procedure `a` does:
 
-```bash
-export TRR9020_ORG="${ORG_ID:?the project is not in an organization}"
-export TRR9020_POOL="trr9020-$(date +%y%m%d%H%M%S)"
-gcloud organizations add-iam-policy-binding "$TRR9020_ORG" --condition=None \
-  --member="user:${SANDBOX_ACCOUNT_EMAIL:?run the session block first}" --role="roles/iam.workforcePoolAdmin"
-TRR9020_LIVE=1 bash atomics/T1199/src/emulate_gcp_workforce.sh a
-gcloud logging read 'logName:"cloudaudit.googleapis.com%2Factivity" AND protoPayload.methodName:"CreateWorkforcePoolProvider"' \
-  --organization="$TRR9020_ORG" --freshness=1h --limit=2 --format=json > live-trr9020.json
-```
+1. It makes a workforce pool. The pool gets a different name for each run:
+   `trr9020-`, the date and time, and a random number.
+2. It makes the OIDC provider `trr9020-idp` in the pool, with the issuer
+   `https://attacker.example.com` and no attribute condition.
+3. It gives a role on the organization to each identity of the pool. The
+   default role is `roles/viewer`.
+4. It removes the binding, the provider and the pool, in that sequence.
 
-A workforce pool name must be unique in all of Google Cloud, and Google blocks the
-name of a deleted pool for 30 days. That is why the block makes a new name for
-each run.
+The command lines of the script agree with the built-in help of the Google
+Cloud SDK 570.0.0:
+
+- Only `gcloud iam workforce-pools create` gets `--organization`. The commands
+  `providers create-oidc`, `providers delete` and `workforce-pools delete` do
+  not have that option.
+- `providers create-oidc` gets `--client-id` and the response type `id-token`.
+  The help says that a client secret is necessary only for the response type
+  `code`. Thus no secret is on a command line.
+- The script adds and removes the binding with `--condition=None`.
+
+The SDK parsed these command lines. Only a live run shows that Google accepts
+them: see [Not verified](#not-verified).
+
+The variables:
+
+- `TRR9020_ORG` is necessary. Without it, the script stops before the first
+  change with exit 2, and names the variable.
+- Do not set `TRR9020_POOL` or `TRR9020_PROVIDER`. A name that you set must
+  start with `trr9020-`, or the script stops with exit 2. A fixed pool name
+  fails on the second run: see step 5.6.
+- `TRR9020_ROLE` is the role of the binding. See "The record that fires the
+  binding rule" below.
+- Procedures `a` and `c` make the same live run. Procedures `b` and `d` have no
+  live run. For them, the script prints `no record was caused` and ends with
+  exit 1.
 
 Run it by hand as the administrator of the organization. Do not give the CI
 service account a role on an organization.
+
+First set the variable and give yourself the role for workforce pools:
+
+```bash
+export TRR9020_ORG="${ORG_ID:?the project is not in an organization}"
+gcloud organizations add-iam-policy-binding "$TRR9020_ORG" --condition=None \
+  --member="user:${SANDBOX_ACCOUNT_EMAIL:?run the session block first}" --role="roles/iam.workforcePoolAdmin"
+```
+
+Check: the printed policy has `roles/iam.workforcePoolAdmin` for your address.
+
+Then run the script with the default role:
+
+```bash
+TRR9020_LIVE=1 bash atomics/T1199/src/emulate_gcp_workforce.sh a
+```
+
+Check: the last line starts with `[live] done.` Before the undo lines, the
+script prints that the `SetIamPolicy` record is written for `roles/viewer`, but
+that the binding rule does not fire.
+
+Wait one or two minutes, then read the record of the provider:
+
+```bash
+gcloud logging read 'logName:"cloudaudit.googleapis.com%2Factivity" AND protoPayload.methodName:"CreateWorkforcePoolProvider"' \
+  --organization="${TRR9020_ORG:?set it first}" --freshness=1h --limit=2 --format=json > live-trr9020.json
+```
+
+Check: `live-trr9020.json` holds the `CreateWorkforcePoolProvider` record. If the
+file holds `[]`, wait one minute and run the command again.
+
+**The record that fires the binding rule.** The binding rule does not fire on
+the `SetIamPolicy` record of a binding to `roles/viewer`. That is by design. The
+rule fires for a binding to the full pool if the name of the role contains
+`owner`, `editor` or `admin`. It also fires for a `roles/iam.` role whose name
+ends with `Creator` or `User`, for example
+`roles/iam.serviceAccountTokenCreator`. The rule reads the name of the role, not
+its power, and the script prints what the rule does with the role that you set.
+`roles/owner` is the role of the attack. A role with less power is sufficient
+for the record, for example `roles/pubsub.editor`:
+
+```bash
+TRR9020_ROLE=roles/pubsub.editor TRR9020_LIVE=1 bash atomics/T1199/src/emulate_gcp_workforce.sh a
+```
+
+Check: the last line of the run starts with `[live] done.` Before the undo
+lines, the script prints
+`The role roles/pubsub.editor holds owner, editor or admin: the binding rule reads this record.`
+
+Wait one or two minutes, then read the records of the bindings:
+
+```bash
+gcloud logging read 'logName:"cloudaudit.googleapis.com%2Factivity" AND protoPayload.serviceName="cloudresourcemanager.googleapis.com" AND protoPayload.methodName:"SetIamPolicy"' \
+  --organization="${TRR9020_ORG:?set it first}" --freshness=1h --limit=10 --format=json > live-trr9020-binding.json
+```
+
+Check: `live-trr9020-binding.json` holds the record that adds
+`roles/pubsub.editor` for a `principalSet://` member with `workforcePools/trr9020-`
+in it. The file also holds the other `SetIamPolicy` records of the last hour.
+They are the record that removes the binding, the records of the first run, and
+the record of the role that you gave yourself.
+
+For some seconds, each identity that the provider accepts has that role on the
+organization. The issuer is a name under `example.com`, which no person can
+register. Do not use a role with more power than is necessary for the record.
+
+### 7.1 After each live run of TRR9020: make sure that nothing stays behind
+
+Do this after each live run of TRR9020, and always after a run whose last line
+does not start with `[live] done.` The script removes its binding, its provider
+and its pool. The commands below find what a run that did not complete its undo
+commands left behind:
+
+```bash
+gcloud iam workforce-pools list --organization="${TRR9020_ORG:?set it first}" \
+  --location=global --format='value(name.basename())'
+gcloud organizations get-iam-policy "${TRR9020_ORG:?set it first}" \
+  --flatten='bindings[].members' --filter='bindings.members:workforcePools/trr9020-' \
+  --format='value(bindings.role,bindings.members)'
+```
+
+Check: the two commands print nothing.
+
+If the second command prints a role and a member, remove that binding. Replace
+`ROLE` and `MEMBER` with the two values that it printed:
+
+```bash
+gcloud organizations remove-iam-policy-binding "${TRR9020_ORG:?set it first}" --condition=None \
+  --role=ROLE --member='MEMBER'
+```
+
+If the first command prints a name that starts with `trr9020-`, delete that pool.
+Replace `POOL_ID` with the name:
+
+```bash
+gcloud iam workforce-pools delete POOL_ID --location=global --quiet
+```
+
+Then run the two check commands again.
 
 ## 8. Teardown
 
@@ -959,6 +1197,19 @@ price for them could be opened.
   against the built-in reference (`gcloud help`) of the Google Cloud SDK 570.0.0,
   which is not the newest release. The output formats (`--format`, `--flatten`,
   `--filter`) were tested with that SDK on sample data, not on answers of Google.
+- The two `curl` lines of step 5.5. The paths and the methods (`GET` and `DELETE`
+  on `v2/projects/PROJECT/exclusions`) are in the API description of the SDK
+  570.0.0. The lines were run against a test server on the local computer, with
+  a stub in the place of `gcloud`. Not verified: that the Cloud Logging API
+  accepts the token of `gcloud auth print-access-token` with no
+  `X-Goog-User-Project` header, and the exact text of its answers.
+- That a live run of TRR9018, TRR9020 or TRR9038 causes the record that the
+  paired rule reads, and that each undo command reverts its change. The tests in
+  [`atomics/tests/`](../../atomics/tests/README.md) show the sequence of the
+  commands with stub programs. A stub accepts each command.
+- What stays in the project when Ctrl-C stops a `gcloud` command or a `curl`
+  request that makes a change. The script names that change. Steps 5.5 and 7.1
+  find it.
 - Console labels, the sign-up pages and the address of the account security page
   (step 1.2). The Google documentation host could not be opened.
 - What Cloud Shell keeps between sessions, which shell it starts, and which Python
@@ -978,15 +1229,46 @@ price for them could be opened.
 - Whether a bucket that `gcloud` makes has public access prevention off by
   default. The command sets it.
 - That Google accepts an issuer that does not answer (`https://attacker.example.com`)
-  for a workload identity pool provider. The TRR9018 run needs that.
+  for a workload identity pool provider (TRR9018) or a workforce pool provider
+  (TRR9020). Also not verified: that Google requires an attribute condition only
+  for an issuer that many customers share, such as the GitHub issuer. The
+  TRR9018 and TRR9020 runs need the two.
+- That Google accepts a workforce OIDC provider with the response type `id-token`
+  and no client secret. The help of the SDK says that the secret is necessary
+  for the response type `code`. TRR9020 uses `id-token`.
+- That the policy of the organization permits a binding for a workforce
+  `principalSet://` member (TRR9020).
+- That Google accepts the roles `roles/viewer` and `roles/pubsub.editor` in a
+  binding on an organization. The SDK names `roles/pubsub.editor` in the source
+  of a different command.
+- For TRR9038 c: that `CreateExclusion` with `"disabled": true` writes an Admin
+  Activity record, and that a second request with the same name gets the HTTP
+  status 409.
+- That the committed fixtures agree with the records of a live run. Four
+  differences are known. CI is not affected: the paired rules match these
+  records, or do not read the field that differs (the value of the issuer,
+  `webSsoConfig`, the user agent), and no check compares a fixture with what
+  Google writes. The roadmap lists them for the items R5 and R9.
+  - The TRR9018 fixture has the GitHub issuer and no attribute condition. A live
+    run writes the issuer `https://attacker.example.com`.
+  - The TRR9020 fixture has no `webSsoConfig`. The SDK sends one in the request
+    of a live run.
+  - The TRR9038 fixture has a successful delete of the `_Default` sink and of the
+    `_Default` bucket. The script does not delete them. It is not known if
+    Google permits these two deletes.
+  - The `CreateExclusion` record of the TRR9038 fixture names a
+    `gcloud logging exclusions` command. The SDK 570.0.0 does not have that
+    command. The record has `"disabled": false`. A live run of procedure c is a
+    `curl` request with `"disabled": true`.
 - That Google accepts the character `@` in the subject of a `principal://` member.
   A subject in the GitHub format with IDs has it. Google shows only `:` and `/` in
   its examples.
 - That the subject of an environment job in the GitHub format with IDs ends with
   `:environment:sandbox`. The check block of section 6 requires that ending. See
   step 3 of [`cloud-sandbox.md`](cloud-sandbox.md#3-find-your-exact-subject-string).
-- That the binding of a deleted pool can be removed with the member string that
-  step 5.4 uses. The check of step 5.5 shows it.
+- That Google lets you remove a `principalSet://` binding after its pool is
+  deleted. The TRR9018 script removes the binding before it deletes the pool.
+  The last command of step 5.5 is for a binding that stays.
 - The text that `gcloud` prints on the runner when the binding of step 6.3 is
   wrong. "Unable to acquire impersonated credentials" is the text in the SDK
   570.0.0. The runner has a newer SDK.

@@ -97,6 +97,7 @@ pip install -r detections/requirements.txt
 
 # Cloud (AWS / Azure / GCP): recorded attack + benign fixtures, pure Python
 python3 detections/validate_cloud_detections.py
+python3 -B -m unittest discover -s atomics/tests   # cloud emulation scripts: dry mode, live sequence and undo, with stub CLIs
 
 # Linux (auditd): compile only; a real run needs root + auditd
 python3 detections/validate_detections.py --dry-run

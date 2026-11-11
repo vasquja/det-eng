@@ -9,6 +9,13 @@ and the scripts in this repository. **No command on this page was run against a
 real tenant.** Each step has a check. If a check fails, stop and read the notes of
 that step. [Not verified](#not-verified) lists what no source confirmed.
 
+The text about the scripts for TRR9013, TRR9017 and TRR9023 was changed on
+2026-11-11: steps 5.2 and 5.4, section 6, step 7.5 and the subsection "Later".
+It was compared with the scripts and with Microsoft Learn. The Azure CLI was not
+available for that comparison. For one item, the Python library that formats
+the output of the Azure CLI (`knack` 0.14.0) was run on a local machine with no
+account: see [Not verified](#not-verified).
+
 Time: about 60 minutes. Then you wait for the first exported log record: some
 minutes for the Activity log, and up to three days for the Entra logs. Cost: 0 USD
 for the first 30 days. See [Costs](#costs).
@@ -375,15 +382,16 @@ is not kept: no person signs in as this user.
 
 ### 5.2 TRR9013 c: a managed identity
 
-The script only prints the command for procedure c. Create the identity one time:
+There is nothing to create by hand. In a live run, procedure c of the TRR9013
+script makes a resource group and a user-assigned managed identity. Their names
+are `trr9013-rg-` and `trr9013-mi-`, with the date and time of the run. The
+region is the value of `TRR9013_LOCATION`. If that variable is not set, the
+region is `eastus`. The script adds the federated credential to the managed
+identity. Then it removes the credential, the managed identity and the resource
+group.
 
-```bash
-az group create --name trr9013-rg --location "$LOCATION"
-az identity create --name trr9013-mi --resource-group trr9013-rg
-az identity show --name trr9013-mi --resource-group trr9013-rg --query name -o tsv
-```
-
-Check: the last command prints `trr9013-mi`.
+The script needs the permission to create and to delete a resource group in the
+subscription. The Owner role on the subscription has it.
 
 ### 5.3 Optional: a management group for TRR9036 b
 
@@ -403,8 +411,10 @@ subscription in the tenant, and this page does not need it.
 
 ### 5.4 The other techniques
 
-TRR9013 a and TRR9017 a, b, c, e register their own application and delete it.
-TRR9023 has no run by hand: see step 7.5.
+There is nothing to create by hand for TRR9013 a and for TRR9017. In a live
+run, each script makes its own throwaway objects in the tenant, and removes them
+at the end of the run. [The other emulations](#the-other-emulations) tells you
+how to run them. TRR9023 has no run by hand: see step 7.5.
 
 ## 6. Run one emulation by hand and read the record
 
@@ -415,19 +425,33 @@ TRR9036_LIVE=1 bash atomics/T1098.003/src/emulate_azure.sh a   # live: assign Ow
 
 Check: the live run prints `[live] assigning role ...` and then `[live] revoked.`
 
+The TRR9036 script stops at the first error and does not clean up after it. If
+the run stops before `[live] revoked.`, the Owner role of the test user can
+stay. Then do the check below immediately.
+
 ### Make sure that nothing stays behind
 
-Do this after each live run: the scripts stop at the first error and do not clean up
-after it.
+Do this after each live run. The TRR9036 script has no cleanup step for an
+error. The scripts for TRR9013 and TRR9017 run undo commands when a run stops.
+An object can stay in two conditions: an undo command fails, or the run stops
+during a command that makes a change.
+[Problems in the live scripts](cloud-sandbox.md#problems-in-the-live-scripts)
+describes the two conditions and the lines that the script prints for them.
 
 ```bash
 az role assignment list --assignee "${TRR9036_ASSIGNEE_OBJECT_ID:?is empty, run the session block first}" --all -o table
 az ad app list --display-name trr9013-victim-app --query "[].appId" -o tsv
-az ad app list --display-name trr9017-illicit-consent-app --query "[].appId" -o tsv
-az identity federated-credential list --identity-name trr9013-mi --resource-group trr9013-rg -o table
+az ad app list --filter "startswith(displayName,'trr9017-')" --query "[].appId" -o tsv
+az ad sp list --filter "startswith(displayName,'trr9017-')" --query "[].id" -o tsv
+az group list --query "[?starts_with(name,'trr9013-rg')].name" -o tsv
 ```
 
-Check: each command prints nothing. Only if you ran procedure b, do this check
+The two commands with `--filter` ask for each application and each service
+principal whose display name starts with `trr9017-`. The TRR9017 script accepts
+only such a name, so that includes an object that a run with `TRR9017_APP_NAME`
+made.
+
+Check: each command prints nothing. Only if you ran TRR9036 b, do this check
 also. `--all` shows the assignments under the subscription, and `trr9036-mg` is not
 under it:
 
@@ -451,18 +475,52 @@ az role assignment delete --assignee-object-id "${TRR9036_ASSIGNEE_OBJECT_ID:?is
   --scope /providers/Microsoft.Management/managementGroups/trr9036-mg
 ```
 
-An application. Replace `APP_ID_FOUND` with the ID that the list command printed:
+An application. Replace `APP_ID_FOUND` with the ID that the list command printed.
+Microsoft says that the delete of an application also deletes its service
+principal in the same tenant:
 
 ```bash
 az ad app delete --id APP_ID_FOUND
 ```
 
-A federated credential on the managed identity:
+A service principal that stays after its application is deleted. Replace
+`SP_ID_FOUND` with the ID that the `az ad sp list` command printed:
 
 ```bash
-az identity federated-credential delete --name trr9013-mi-backdoor --identity-name trr9013-mi \
-  --resource-group trr9013-rg --yes
+az ad sp delete --id SP_ID_FOUND
 ```
+
+A resource group of TRR9013 c. The script makes one resource group for each run
+and removes it. This block is for a run that did not complete its undo commands.
+The block deletes each resource group whose name starts with `trr9013-rg`, with
+its managed identity and its federated credential:
+
+```bash
+for rg in $(az group list --query "[?starts_with(name,'trr9013-rg')].name" -o tsv); do
+  az group delete --name "$rg" --yes
+done
+```
+
+A grant or an app role assignment of TRR9017. If the output of the run has a
+line that starts with `[live] LEFT BEHIND, this command failed:`, that line
+shows the undo command that failed. Run that command again. You can do this for
+each undo command of the TRR9013 and TRR9017 scripts.
+
+A line that has the text `LEFT BEHIND: the application` is different. The script
+has no ID for that application, only its display name, and `az ad app delete --id`
+does not accept a display name. The TRR9017 script prints the two commands for
+this condition: an `az ad app list` command that prints the object ID, and the
+delete command. For TRR9013, use the list commands and the delete command above.
+
+Notes:
+
+- The delete of an application is a soft delete. Entra keeps the application for
+  30 days. You find it in the Entra admin center: Entra ID > App registrations >
+  the tab "Deleted applications". The `az ad app list` commands above do not
+  show it. That is normal.
+- Do this check before the first live run of a session too. The header of the
+  TRR9013 script says that `az` uses an application with the same display name
+  again. The script then deletes that application at the end of the run.
 
 **Warning.** `az role assignment delete` removes each assignment that agrees with
 its arguments. An empty `--assignee-object-id` is not an error: the command then
@@ -513,12 +571,23 @@ For a different technique, change the first three lines of the block:
 | TRR9036 a | `insights-activity-logs` | `'roleassignments/write'` | `live-trr9036.json` |
 | TRR9013 a | `insights-logs-auditlogs` | `'update application'` | `live-trr9013.json` |
 | TRR9013 c | `insights-activity-logs` | `'federatedidentitycredentials/write'` | `live-trr9013-mi.json` |
+| TRR9017 a | `insights-logs-auditlogs` | `'consent to application'` | `live-trr9017-a.json` |
+| TRR9017 b and e | `insights-logs-auditlogs` | `'add delegated permission grant'` | `live-trr9017-grant.json` |
+| TRR9017 c | `insights-logs-auditlogs` | `'add app role assignment to service principal'` | `live-trr9017-c.json` |
+| TRR9017 d | `insights-logs-noninteractiveusersigninlogs` | `''` | `live-trr9017-d.json` |
 | The sign-in of the smoke test (step 7.5) | `insights-logs-serviceprincipalsigninlogs` | `''` | `live-trr9023.json` |
 
-For a record of the Entra logs (the rows TRR9013 a and the sign-in), the list in
-the last line shows `None`, for example `1 of 1 record(s) kept: [None]`. That is
-normal: those records have no `resultType` at the top level. The number of records
-that were kept is the check.
+For a record of the Entra logs (the rows TRR9013 a, TRR9017 and the sign-in), the
+list in the last line shows `None`, for example `1 of 1 record(s) kept: [None]`.
+That is normal: those records have no `resultType` at the top level. The number
+of records that were kept is the check. For TRR9017 a, b, c and e, the check is
+one record or more.
+
+The row TRR9017 d needs the licence of step 4.4, and a tenant that does not
+block the device code flow: see [The other emulations](#the-other-emulations).
+The file holds each sign-in of the blob. The record of procedure d has
+`"authenticationProtocol": "deviceCode"`. If the file does not have it, read
+the container `insights-logs-signinlogs` in the same way.
 
 Notes:
 
@@ -579,40 +648,176 @@ make a virtual environment and run the block again:
 
 ### The other emulations
 
+The scripts for TRR9013 and TRR9017 change the tenant that `az` is signed in to.
+The TRR9013 script has no variable for the tenant. The TRR9017 script requires
+`TRR9017_TENANT`, but it does not compare the value with the tenant of `az`.
+Thus compare them yourself. Run the session block, and then:
+
+```bash
+export TRR9017_TENANT="${TENANT_ID:?is empty, run the session block first}"
+az account show --query tenantId -o tsv
+echo "$TRR9017_TENANT"
+```
+
+Check: the two lines that the block prints are the same, and they show the
+tenant ID of step 1.3. If they do not, stop: the shell works in a different
+tenant.
+
+Run one line at a time. Read the last lines of the output before you run the
+next line.
+
+**TRR9013** a (an application) and c (a managed identity):
+
 ```bash
 TRR9013_LIVE=1 bash atomics/T1098.001/src/emulate_entra.sh a
+TRR9013_LIVE=1 bash atomics/T1098.001/src/emulate_entra.sh c
+```
+
+Check: the last line of each run is `[live] done.`
+
+- Procedure a registers the application `trr9013-victim-app`. It adds a
+  federated credential with the issuer
+  `https://oidc.trr9013-attacker.example.com`. Then it removes the credential
+  and the application.
+- Procedure c makes a resource group and a managed identity: see step 5.2. Its
+  last undo command deletes the resource group. `az` waits for that deletion.
+- The subject of the credential is an exact value. Microsoft documents that a
+  wildcard is not supported in a subject.
+
+**TRR9017** b, c and e. No person is necessary. Wait one minute between two
+runs: each run registers an application with the same name.
+
+```bash
+TRR9017_LIVE=1 bash atomics/T1528/src/emulate_entra_consent.sh b
+TRR9017_LIVE=1 bash atomics/T1528/src/emulate_entra_consent.sh c
+TRR9017_LIVE=1 bash atomics/T1528/src/emulate_entra_consent.sh e
+```
+
+Check: the last line of each run is `[live] done.`
+
+- Each run registers the application `trr9017-illicit-consent-app` and its
+  service principal. The application has no secret and no certificate.
+- Procedure b creates a delegated permission grant for all users of the tenant
+  (consent type `AllPrincipals`). Procedure e creates the same grant for the
+  user that `az` is signed in as (consent type `Principal`). The script calls
+  Microsoft Graph with `az rest`. The scopes are
+  `offline_access Mail.ReadWrite Mail.Send Files.ReadWrite.All`.
+- Procedure c gives the application permission `Mail.Read` of Microsoft Graph to
+  the service principal (an app role assignment).
+- Then each run removes the grant or the assignment, the service principal and
+  the application.
+
+**TRR9017 a.** A person must accept the consent in a browser. Run this line
+alone. Do not paste it together with a different line: the script waits for the
+Enter key, and a pasted line is an answer to it.
+
+```bash
 TRR9017_LIVE=1 bash atomics/T1528/src/emulate_entra_consent.sh a
+```
 
-# TRR9013 c: the script only prints the first command, with placeholders. Run these two commands yourself.
-az identity federated-credential create --name trr9013-mi-backdoor --identity-name trr9013-mi \
-  --resource-group trr9013-rg --issuer https://oidc.trr9013-attacker.example.com \
-  --subject 'repo:trr9013-attacker/*' --audiences api://AzureADTokenExchange
-az identity federated-credential delete --name trr9013-mi-backdoor --identity-name trr9013-mi \
-  --resource-group trr9013-rg --yes
+1. The script prints a URL. Open the URL in a private browser window.
+2. Sign in as the sandbox administrator. See the note about the user below.
+3. The page shows the permissions that the application requests. Do not select
+   "Consent on behalf of your organization". Select Accept.
+4. The browser goes to `http://localhost` and shows an error. That is normal.
+5. Go back to the terminal and press Enter.
 
-# TRR9036 b: needs steps 4.5 and 5.3.
+Check: the script prints `a delegated grant now exists`, and its last line is
+`[live] done.` If the script prints `no delegated grant was found`, it caused no
+record. It then removes its application and ends with exit 1.
+
+The note about the user. On a new tenant, a user who is not an administrator
+cannot accept the default scopes: the default consent policy of Microsoft
+refuses `Mail.ReadWrite` and `Files.ReadWrite.All` for such a user (Microsoft
+Learn, "Manage app consent policies"). The script prints this, and the two ways
+below. The sandbox of this page has no user who is not an administrator and that
+a person can sign in as. Thus use one of these two ways:
+
+- Sign in as the sandbox administrator, as the steps above tell you. An
+  administrator can accept the default scopes.
+- Or sign in as a user who is not an administrator, and give the script scopes
+  that such a user can accept. The rule reads `Mail.Send`. This page has no
+  step that makes such a user.
+
+  ```bash
+  TRR9017_SCOPES='offline_access Mail.Send' TRR9017_LIVE=1 bash atomics/T1528/src/emulate_entra_consent.sh a
+  ```
+
+**TRR9017 d.** Do not run procedure d in the sandbox of this page. Security
+defaults block the device code flow in each tenant that was created on
+2026-07-01 or later, and step 1.4 tells you to keep security defaults on. The
+script then ends with exit 1. Its message says that no sign-in was started, or
+that no successful sign-in was recorded. The rule reads only a sign-in that is
+successful. Use the committed fixture.
+
+On a tenant that does not block the flow, the line is the same as for the other
+procedures, with the letter `d`. The script uses `curl`, not `az`. It prints a
+URL and a code. A person opens the URL, types the code and signs in. The script
+does not print the token, and it does not change the account of the shell. The
+device code (the secret that the token request uses) goes to `curl` on its
+standard input, not on a command line, and the script does not print it. A
+good run prints `device-code sign-in SUCCEEDED`. It has no `[live] done.` line.
+If the person does not sign in during 60 requests (about 5 minutes), or if Entra
+refuses the sign-in, the script ends with exit 1. A refused sign-in can leave a
+sign-in record with an error code. The rule does not read that record.
+With `TRR9017_DEVICECODE_POLL=1`, the script also waits for the sign-in when it
+has no terminal. With no terminal and without that variable, the script prints
+the code, does not wait, and ends with exit 1.
+
+**TRR9036 b** needs steps 4.5 and 5.3:
+
+```bash
 TRR9036_LIVE=1 bash atomics/T1098.003/src/emulate_azure.sh b
 ```
+
+Check: the live run prints `[live] revoked.`
 
 Then do [Make sure that nothing stays behind](#make-sure-that-nothing-stays-behind)
 again.
 
 Things that can make a live run fail, or give no record:
 
-- **TRR9017 a, b, c, e.** The script registers the application and deletes it in
-  the same run. It does not grant consent. A live run thus gives the records "Add
-  application" and "Delete application", but not "Consent to application", which
-  is the record that the rule reads. Use the committed fixture until the script is
-  corrected.
-- **TRR9017 d.** A tenant that was created on 2026-07-01 or later blocks the
-  device code flow. The sign-in is refused, and the rule reads only a sign-in that
-  succeeds. Use the committed fixture. Never run procedure d in CI: it changes the
-  account that the shell is signed in as.
-- **TRR9013 a and c.** The subject has a `*`. Microsoft documents that a wildcard
-  is not supported in a federated credential. If the command is refused, the
-  script stops before its cleanup line: delete `trr9013-victim-app` as shown above.
-- **A second run after a failure.** `az ad app create` does not make a second
-  application with the same name. It changes the one that exists.
+- **`TRR9017_TENANT` is not set.** The TRR9017 script stops before the first
+  change with exit 2, and names the variable. It uses no placeholder tenant.
+- **`TRR9017_APP_NAME` does not start with `trr9017-`.** For a, b, c and e, the
+  script stops before the first change with exit 2. If an application with the
+  same display name is in the tenant, `az` uses it again, and the undo then
+  deletes it. Do not set this variable unless you need a second name.
+- **A create command does not give one ID.** If `az ad sp create` or one of the
+  two `POST` requests ends with exit 0 and its answer is not one ID (it is
+  empty, or it holds a blank or a line break), the script stops with exit 1. It
+  has no undo command for that change, and it names the change in the line
+  `[live] The run stopped before the undo of this change was registered:`. It
+  runs the undo commands of the earlier changes: it deletes the application,
+  and the service principal if the script has its ID. Do the check that
+  nothing stays behind. That check has no command for a grant or an app role
+  assignment: it is not verified that the delete of the service principal
+  removes them.
+- **Entra does not find a new object.** A new application can need some seconds
+  before the next `az` command finds it. That command then fails. The script
+  runs its undo commands and prints `[live] FAILED`. Do the check that nothing
+  stays behind, wait one minute, and run the line again.
+- **TRR9017 a, no acceptance.** If no person accepts, or if the script has no
+  terminal, the script says that no record was caused. It removes its
+  application and ends with exit 1.
+- **TRR9017 a, a user who is not an administrator.** See the note about the
+  user above.
+- **TRR9017 d, the device code flow is blocked.** See above.
+- **An application with the same name is there before the run.** Do the check
+  that nothing stays behind before the first run.
+- **A run that stops.** The scripts for TRR9013 and TRR9017 run the undo
+  commands of the changes that they made, and print `[live] FAILED`. An object
+  can stay in two conditions. In the first, an undo command fails: the script
+  prints `[live] LEFT BEHIND`. In the second, the run stops during a command
+  that makes a change: the script prints
+  `[live] The run stopped before the undo of this change was registered:`. In
+  each condition, do the check that nothing stays behind.
+- **TRR9036.** The script has no cleanup step for an error. A run that stops
+  between the assignment and the revoke leaves the role assignment.
+
+[Problems in the live scripts](cloud-sandbox.md#problems-in-the-live-scripts)
+describes the undo commands and the exit codes, and lists what is open for all
+providers.
 
 ## 7. Let GitHub Actions sign in to the subscription
 
@@ -767,6 +972,22 @@ has no such issuer, so you cannot run
 the repository runs it, and [`AGENTS.md`](../../AGENTS.md) keeps live emulations out
 of CI. Do not add a job that runs it.
 
+What a live run of procedure a of the script does:
+
+- It requires `TRR9023_TENANT`, `TRR9023_APPID` and `TRR9023_OIDC_TOKEN`. Without
+  one of them, it stops with exit 2 and makes no request. It uses no
+  placeholder ID.
+- It sends the OIDC token to `curl` on the standard input, not on a command
+  line. It does not print the Entra token.
+- It reads the HTTP status. If Entra refuses the request, the script prints the
+  error of Entra and ends with exit 1. It prints `[live] done.` only after a
+  successful sign-in.
+- It changes nothing in the tenant. Thus it does not hold the undo block.
+
+Procedures b, c and d have no live run. For them, a live run makes no request,
+prints `no record was caused` and ends with exit 1. The dry mode of b, c and d
+ends with exit 0, as for each valid letter.
+
 You do not need the script to get a real record. The `azure` run of the smoke test
 is a federated sign-in of the CI application. With the licence of step 4.4, Entra
 exports that sign-in in the category `ServicePrincipalSignInLogs`. Read it with the
@@ -786,8 +1007,9 @@ Reader role of step 7.3.
 This subsection is a record of what the identity of that workflow needs. Each item
 gives the CI application more power than it has now.
 
-**A role that can write role assignments (TRR9036), and the permission to change
-the managed identity (TRR9013 c).** The role Owner has both:
+**A role that can write role assignments (TRR9036), and the permission to make
+and to delete a resource group and a managed identity (TRR9013 c).** The role
+Owner has both:
 
 ```bash
 az role assignment create --assignee-object-id "$SP_OBJECT_ID" --assignee-principal-type ServicePrincipal \
@@ -800,10 +1022,13 @@ role on a management group or on `/`, with one exception: for TRR9036 b, give "U
 Access Administrator" on `trr9036-mg` only.
 
 A narrower choice than Owner is the role "Role Based Access Control Administrator"
-with a condition that permits only the role Owner for the user of step 5.1,
-together with the role "Managed Identity Contributor" on `trr9013-rg`. Microsoft
-shows such conditions in "Examples to delegate Azure role assignment management
-with conditions". This page has no tested command for that choice.
+with a condition that permits only the role Owner for the user of step 5.1.
+Microsoft shows such conditions in "Examples to delegate Azure role assignment
+management with conditions". TRR9013 c then needs a second role. That role must
+permit the workflow to make and to delete a resource group in the subscription,
+and a managed identity in that group. A role on one resource group is not
+sufficient: the script makes a resource group with a different name for each
+run. This page has no tested command for that choice.
 
 **Blob read, to collect the exported records:**
 
@@ -817,8 +1042,8 @@ Check: three rows. Reader and Owner on the subscription, and Storage Blob Data
 Reader on the storage account.
 
 **The Microsoft Graph permission `Application.ReadWrite.OwnedBy`, with admin
-consent (TRR9013 a, TRR9017).** To register and delete an application is a
-directory action. Azure roles do not cover it.
+consent (TRR9013 a).** To register and delete an application is a directory
+action. Azure roles do not cover it.
 
 ```bash
 # Microsoft Graph is 00000003-0000-0000-c000-000000000000.
@@ -841,6 +1066,16 @@ the status "Granted".
   your tenant, and confirm.
 - Do not give `Application.ReadWrite.All`. It can change each application in the
   tenant.
+- TRR9017 stays a run by hand. Procedures a and d need a person. Procedures b
+  and e create a delegated permission grant, and procedure c creates an app role
+  assignment. For these calls, Microsoft Graph requires the application
+  permissions `DelegatedPermissionGrant.ReadWrite.All` (b, e), and
+  `AppRoleAssignment.ReadWrite.All` with `Application.Read.All` (c).
+  `Application.ReadWrite.OwnedBy` does not cover them. Do not give these
+  permissions to the CI application. Microsoft says that an application with
+  `AppRoleAssignment.ReadWrite.All` can give more privileges to itself.
+- Procedure e of TRR9017 also reads the user that `az` is signed in as. A
+  workflow identity is not a user.
 
 ## 8. Teardown
 
@@ -868,7 +1103,9 @@ The test user, the log export and the resource groups:
 ```bash
 az ad user delete --id "${TRR9036_ASSIGNEE_OBJECT_ID:?is empty, run the session block first}"
 az monitor diagnostic-settings subscription delete --name trr-activity-to-storage --yes
-az group delete --name trr9013-rg --yes
+for rg in $(az group list --query "[?starts_with(name,'trr9013-rg')].name" -o tsv); do
+  az group delete --name "$rg" --yes
+done
 az group delete --name trr-sandbox-rg --yes
 ```
 
@@ -970,6 +1207,63 @@ opened.
 - For a management group: the path of the exported records, and whether the
   record has `properties.requestbody`.
 - Whether Microsoft Graph refuses a federated credential subject that has a `*`.
+  Microsoft documents that a wildcard is not supported in a property value of a
+  federated credential. It also documents that an incorrect subject is created
+  without an error and fails only at a token exchange. The TRR9013 script uses
+  an exact subject.
+- That a live run of TRR9013 or TRR9017 causes the record that the paired rule
+  reads, and that each undo command reverts its change. The tests in
+  [`atomics/tests/`](../../atomics/tests/README.md) show the sequence of the
+  commands with stub programs. A stub accepts each command. For TRR9017, a live
+  run must show these three records:
+  - "Add delegated permission grant" for the request
+    `POST /oauth2PermissionGrants` (b, e);
+  - "Add app role assignment to service principal" for the request
+    `POST .../appRoleAssignedTo` (c);
+  - "Consent to application" for the consent of a person in a browser (a).
+- That Microsoft Graph accepts the two `POST` requests of TRR9017 from the
+  sign-in of this sandbox. The Graph reference says "Not supported" for a
+  personal Microsoft account. The sandbox administrator is a personal Microsoft
+  account that signs in to its own tenant. It is not known if Graph treats that
+  sign-in differently. It is also not known if the token that `az rest` sends
+  has the permissions that the two requests need.
+- For TRR9017 a: what the consent page shows to the sandbox administrator, and
+  what it shows to a user who is not an administrator.
+- For TRR9017 a: that a personal Microsoft account can sign in at the consent
+  URL of the application.
+- That `az ad app create` uses an application with the same display name again.
+  The header of the TRR9013 script says so. The Microsoft Learn page of the
+  command does not.
+- How `az ad app create --query "[id, appId]" -o tsv` prints the two IDs, in a
+  run of `az`. The TRR9017 script reads the object ID and the application ID
+  from that one answer. Microsoft Learn ("Set shell variables from Azure CLI
+  output") says that the values of such a list are on separate lines, and it
+  reads them in Bash with `read -d ''`. The script uses that form. It accepts a
+  newline or a tab between the two IDs, and it stops with exit 1 if the answer
+  does not have two values. The Python library `knack` formats the output of the
+  Azure CLI: the package `azure-cli-core` 2.92.0 requires `knack` 0.14. That
+  library was run on a local machine with no account. For a list of two values,
+  its `tsv` format prints two lines. `az` itself was not run.
+- That the delete of a service principal also removes its delegated permission
+  grants and its app role assignments. The TRR9017 script removes them first.
+- The two list commands with `--filter "startswith(displayName,'trr9017-')"` in
+  [Make sure that nothing stays behind](#make-sure-that-nothing-stays-behind).
+  The reference of `az ad app list` and of `az ad sp list` has the option
+  `--filter` (an OData filter). No run against a tenant was done.
+- How frequently the next `az` command does not find a new application
+  (replication delay) in a real tenant. The script then runs its undo commands
+  and prints `[live] FAILED`.
+- For TRR9017 d: the error that a tenant with security defaults gives, and the
+  endpoint that gives it (the device code request or the token request). The
+  script prints its hint about security defaults only if the error description
+  has the text `blocked`, `security default` or `conditional access`. Also not
+  verified: the container that holds a device code sign-in. The research report
+  of TRR9017 says that most such sign-ins are in `NonInteractiveUserSignInLogs`.
+- What stays in the tenant when Ctrl-C stops an `az` command that makes a
+  change. The script names that change. The check that nothing stays behind
+  finds an application, a service principal and a resource group. It has no
+  command for a grant or an app role assignment of a service principal that
+  was deleted.
 - The length of the P2 trial and its number of users.
 - Whether the personal Microsoft account of step 1.1 can sign in to
   `admin.microsoft.com` for the licence (step 4.4 and Teardown). An answer on

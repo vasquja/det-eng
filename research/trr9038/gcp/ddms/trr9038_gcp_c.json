@@ -62,7 +62,7 @@
       "caption": "Add a log exclusion that drops audit logs",
       "labels": [],
       "properties": {
-        "tool": "gcloud logging exclusions create"
+        "tool": "Cloud Logging API: projects.exclusions.create"
       },
       "style": {
         "border-color": "#68bc00",

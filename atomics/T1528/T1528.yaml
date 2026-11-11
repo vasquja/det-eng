@@ -1,10 +1,21 @@
 attack_technique: T1528
 display_name: "Steal Application Access Token (Entra illicit OAuth consent + device-code phishing; Kubernetes pod-bound token used off-source)"
 
-# Behavioral emulation for TRR9017. The live tests register a throwaway Entra app and
-# request high-privilege delegated scopes (or run a device-code sign-in) in your own
-# tenant and clean up (guarded by TRR9017_LIVE=1); NOT run in CI. CI validation runs the
-# paired Sigma rules over the committed Entra audit/sign-in fixtures in
+# Behavioral emulation for TRR9017. In your own tenant (guarded by TRR9017_LIVE=1, NOT run
+# in CI), the live tests are written to cause the record that the paired rule reads, and
+# they run an undo command for each change. b and e create a delegated grant through
+# Microsoft Graph (POST /oauth2PermissionGrants, AllPrincipals and Principal), and c
+# assigns an app role (POST /servicePrincipals/{graph}/appRoleAssignedTo): b, c and e need
+# no person. a prints the end-user consent URL and needs a person who accepts in a browser.
+# d runs a device-code sign-in with curl and needs a person who signs in; security defaults
+# block that flow in each tenant that was created on 2026-07-01 or later. a and d end
+# with exit 1 when no record was caused. A run that stops in the middle of a command
+# that makes a change can leave that change. No live run against a tenant was done (see
+# docs/setup/cloud-azure.md, "Not verified"). The live run needs TRR9017_TENANT. It stops
+# before any change (exit 2) when that is not set, or when TRR9017_APP_NAME is set to a
+# name that does not start with trr9017-. A create command whose answer is not one ID
+# stops the run (exit 1). CI
+# validation runs the paired Sigma rules over the committed Entra audit/sign-in fixtures in
 # detections/cloud/fixtures/trr9017/ via detections/validate_cloud_detections.py.
 #
 # Novelty: neither Stratus Red Team nor Atomic Red Team ships an executable test for

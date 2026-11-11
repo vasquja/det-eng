@@ -340,10 +340,10 @@ TEST-NET address `203.0.113.66`, and the benign source IP is `198.51.100.23`.
 | Procedure | Test | Status |
 |-----------|------|--------|
 | TRR9017.AZR.A | `emulate_entra_consent.sh a` — end-user delegated consent to high-privilege scopes (fixtures: `attack.json` / `benign.json`). | **built** |
-| TRR9017.AZR.B | documented — admin tenant-wide (AllPrincipals) consent; same audit chokepoint, higher severity. | backlog |
-| TRR9017.AZR.C | documented — app-role (application permission) grant to a service principal; same audit chokepoint. | backlog |
+| TRR9017.AZR.B | `emulate_entra_consent.sh b` (live run by hand only; not run against a tenant; no fixture) — admin tenant-wide (AllPrincipals) consent; same audit chokepoint, higher severity. | backlog |
+| TRR9017.AZR.C | `emulate_entra_consent.sh c` (live run by hand only; not run against a tenant; no fixture) — app-role (application permission) grant to a service principal; same audit chokepoint. | backlog |
 | TRR9017.AZR.D | `emulate_entra_consent.sh d` — device-code sign-in (fixtures: `attack_signin.json` / `benign_signin.json`). | **built** |
-| TRR9017.AZR.E | documented — direct Graph creation of the grant; token use is an M365 data-plane gap. | backlog |
+| TRR9017.AZR.E | `emulate_entra_consent.sh e` (live run by hand only; not run against a tenant; no fixture) — direct Graph creation of the grant; token use is an M365 data-plane gap. | backlog |
 
 ## Detection Strategy
 

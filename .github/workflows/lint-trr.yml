@@ -47,3 +47,23 @@ jobs:
             cat /tmp/trr-lint.out 2>/dev/null || echo '(no output captured)'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # Proves the cloud emulation scripts with stub CLIs: dry mode makes no cloud call
+  # and exits 0 for each valid procedure letter, LIVE mode runs the exact command
+  # sequence the tests hold, and a failed command or a stop signal runs the undo
+  # command of each change made before it. A stub cannot prove what a provider accepts (that is
+  # checked against the provider reference when a script is written). No cloud
+  # account and no network: the stubs stand in for gcloud, az, aws and curl.
+  emulation-scripts:
+    name: emulation-scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Test the cloud emulation scripts (stub CLIs, no cloud call)
+        run: python3 -B -m unittest discover -s atomics/tests -v
