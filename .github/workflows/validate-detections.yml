@@ -143,3 +143,28 @@ jobs:
 
       - name: Check the anchors of the links into and out of detections/k8s/PLATFORMS.md
         run: python3 detections/k8s_platforms_md.py --anchors
+
+  # Proves on a runner the second way of .github/scripts/apt_install.sh: apt with public
+  # resolvers in a private mount namespace. A fault of the runner's resolver is rare, so
+  # without this job that way would run for the first time in a fault.
+  apt-install-fallback:
+    name: apt-install-fallback
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install a package with the public resolvers (forced), and see that the runner's resolver is not changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          before="$(sha256sum /etc/resolv.conf)"
+          APT_INSTALL_FORCE_PUBLIC=1 bash .github/scripts/apt_install.sh auditd
+          # The package is installed.
+          dpkg -s auditd >/dev/null
+          # The resolv.conf of the runner is as it was: the change was private to apt.
+          after="$(sha256sum /etc/resolv.conf)"
+          if [[ "$before" != "$after" ]]; then
+            echo "::error::/etc/resolv.conf of the runner changed"
+            exit 1
+          fi
