@@ -160,11 +160,12 @@ jobs:
           set -euo pipefail
           before="$(sha256sum /etc/resolv.conf)"
           APT_INSTALL_FORCE_PUBLIC=1 bash .github/scripts/apt_install.sh auditd 2>&1 | tee /tmp/apt-forced.out
-          # The script took the second way, and apt reached a package source in the
-          # namespace (a Get: or Hit: line). Without these lines the step proves nothing,
-          # for example when the package is in the runner image already.
+          # The script took the second way, and apt reached a package source on the
+          # network in the namespace (a Get: or Hit: line with an http address; the line
+          # of the local mirror list has a file: address). Without these lines the step
+          # proves nothing, for example when the package is in the runner image already.
           grep -q 'the public resolvers give a mirror; apt runs with them' /tmp/apt-forced.out
-          if ! grep -Eq '^(Get|Hit):[0-9]+ ' /tmp/apt-forced.out; then
+          if ! grep -Eq '^(Get|Hit):[0-9]+ https?://' /tmp/apt-forced.out; then
             echo "::error::apt reached no package source in the forced run"
             exit 1
           fi

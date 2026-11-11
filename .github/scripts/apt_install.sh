@@ -17,10 +17,12 @@
 #   1. If the resolver of the runner gives the first mirror, it runs apt as the two old
 #      lines did (apt-get update, apt-get install -y).
 #   2. If the resolver does not give the first mirror, or apt failed with a message about
-#      name resolution, apt gets one more run with two public resolvers. Only apt sees
-#      them: each apt-get of that run starts in a private mount namespace in which
-#      /etc/resolv.conf names the public resolvers. The resolver of the runner is not
-#      changed, so there is nothing to put back, also when the job is killed.
+#      name resolution, or the first mirror does not resolve after a failed run, apt gets
+#      one more run with two public resolvers. Only that run sees them: each apt-get of
+#      the run, and the question of the script to the public resolvers, starts in a
+#      private mount namespace in which /etc/resolv.conf names the public resolvers. The
+#      resolver of the runner is not changed, so there is nothing to put back, also when
+#      the job is killed.
 #   3. If that private namespace cannot be made, or the public resolvers give no mirror
 #      either, or apt fails with them, and apt had no run with the resolver of the runner
 #      yet, apt gets that run (apt goes to the next mirror of its list by itself).
@@ -110,7 +112,8 @@ apt_logged() { "${RUN[@]}" apt-get "$@" 2>&1 | tee -a "$LOG"; }   # pipefail kee
 install_all() {
   # Each necessary command has its own `|| return 1`: bash does not stop a function at a
   # failed command when the function is the condition of an `if`.
-  # `apt-get update` ends with 0 also when it fetched no index; the install then fails.
+  # `apt-get update` ends with 0 also when it fetched no index; the install then fails,
+  # if the package is not installed already.
   apt_logged update || return 1
   apt_logged install -y -- "$@" || return 1
   local pkg

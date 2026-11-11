@@ -47,7 +47,8 @@ REAL = ("bash", "sh", "cat", "grep", "tee", "mktemp", "rm", "chmod", "true")
 #     that `sh -c` text for real. `mount` works only in that namespace; a command in a
 #     namespace with the bind mount gets the answers of the public resolvers.
 #   - apt-get prints its messages on stderr, and `apt-get update` ends with 0 when it
-#     fetched no index (it prints a W: line).
+#     fetched no index (it prints a W: line). An update prints the line of the local
+#     mirror list (`Get:1 file:...`), and a `Hit:` line for a source that it reached.
 IN_THE_NAMESPACE = 'who=runner\n[ -n "${IN_NAMESPACE:-}" ] && [ -e "$STATE/mounted.$IN_NAMESPACE" ] && who=public\n'
 STUBS = {
     "sudo": r'''
@@ -102,7 +103,10 @@ echo "apt-get $* [$who]" >> "$STATE/calls"
 fault="$(cat "$STATE/fault")"
 if [ "$1" = update ]; then
   if grep -qx update "$STATE/fail"; then echo "E: The repository is not signed." >&2; exit 100; fi
-  if ! grep -qx "$who" "$STATE/apt_ok"; then
+  echo "Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]"
+  if grep -qx "$who" "$STATE/apt_ok"; then
+    echo "Hit:2 http://azure.archive.ubuntu.com/ubuntu noble InRelease"
+  else
     echo "W: Failed to fetch http://azure.archive.ubuntu.com/ubuntu/dists/noble/InRelease  $fault" >&2
   fi
   exit 0
@@ -183,7 +187,10 @@ class AptInstall(unittest.TestCase):
             if os.path.exists(link):
                 done.state["resolv_mode"] = stat.S_IMODE(os.stat(link).st_mode)
             done.calls = done.state["calls"].splitlines()
-            done.left = sorted(os.listdir(tmp_dir))
+            # In each run: the script leaves no temporary file, and writes nothing into
+            # the working directory.
+            self.assertEqual(sorted(os.listdir(tmp_dir)), [], "the script left a temporary file")
+            self.assertEqual(sorted(os.listdir(work)), ["make"], "the script wrote into the working directory")
             return done
 
     def assert_only_apt_had_the_public_resolvers(self, done, resolvers=("1.1.1.1", "8.8.8.8")):
@@ -192,7 +199,6 @@ class AptInstall(unittest.TestCase):
         apt that fetch run as the user _apt). Nothing stays behind."""
         self.assertEqual(done.state["resolv_seen"], "".join("nameserver %s\n" % r for r in resolvers))
         self.assertEqual(done.state["resolv_mode"], 0o644)
-        self.assertEqual(done.left, [], "the script left a temporary file")
 
     def test_a_runner_that_reaches_the_mirror_installs_as_the_two_old_lines_did(self):
         done = self.run_script("auditd", "gcc")
@@ -200,7 +206,6 @@ class AptInstall(unittest.TestCase):
         self.assertEqual(done.calls, [ASK_RUNNER] + apt("runner", "auditd", "gcc"))
         self.assertNotIn("::warning", done.stdout)
         self.assertNotIn("resolv_seen", done.state)      # no mount at all
-        self.assertEqual(done.left, [])
 
     def test_a_runner_that_cannot_resolve_the_mirror_gives_apt_the_public_resolvers_at_once(self):
         # No apt run with the resolver of the runner first: one such run takes about five minutes.
@@ -242,7 +247,6 @@ class AptInstall(unittest.TestCase):
                 self.assertEqual(done.calls, [ASK_RUNNER] + apt("runner", *packages) + [ASK_RUNNER])
                 self.assertIn("::error title=apt_install::apt failed, and not because of the resolver", done.stderr)
                 self.assertIn(message, done.stdout)
-                self.assertEqual(done.left, [])
 
     def test_a_runner_that_lost_the_mirror_in_the_failed_run_gets_the_public_resolvers(self):
         # apt gave no message about name resolution, but the second question to the
@@ -263,7 +267,6 @@ class AptInstall(unittest.TestCase):
                 self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
                 self.assertEqual(done.calls, before_apt + apt("runner", "auditd"))
                 self.assertIn("cannot give apt a private resolv.conf", done.stdout)
-                self.assertEqual(done.left, [])
 
     def test_public_resolvers_that_give_no_mirror_still_give_apt_its_run_with_the_resolver_of_the_runner(self):
         done = self.run_script("auditd", runner=(), public=())
@@ -289,7 +292,17 @@ class AptInstall(unittest.TestCase):
                                       "unshare: apt-get install -y -- auditd", "apt-get install -y -- auditd [public]",
                                       "apt-get update [runner]", "apt-get install -y -- auditd [runner]"])
         self.assertIn("::warning title=apt_install::apt failed also with the public resolvers", done.stdout)
-        self.assertEqual(done.left, [])
+
+    def test_the_last_run_with_the_resolver_of_the_runner_installs_the_optional_packages_too(self):
+        # The job benign-linux-live gives optional packages. Each way to the last run.
+        optional = ["apt-get install -y -- fio nosuch make [runner]", "apt-get install -y -- fio [runner]",
+                    "apt-get install -y -- nosuch [runner]", "apt-get install -y -- make [runner]"]
+        for state in (dict(fail=("unshare",)), dict(fail=("mount",)), dict(public=()), dict(apt_ok=("runner",))):
+            with self.subTest(state=state):
+                done = self.run_script("--optional", "fio nosuch make", "auditd", runner=(), missing=("nosuch",), **state)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertEqual(apt_calls(done)[-6:], apt("runner", "auditd") + optional)
+                self.assertEqual(done.stdout.count("::notice title=apt_install::optional package"), 1, done.stdout)
 
     def test_a_mirror_that_no_way_reaches_fails_the_step_after_one_run_for_each_way(self):
         runner, public = apt("runner", "auditd"), apt("public", "auditd")
@@ -305,7 +318,6 @@ class AptInstall(unittest.TestCase):
                 self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
                 self.assertIn("::error title=apt_install::apt failed with the resolver of the runner", done.stderr)
                 self.assertEqual(apt_calls(done), runs)
-                self.assertEqual(done.left, [])
 
     def test_an_update_that_fails_stops_before_the_install(self):
         # No install from an index that was not updated.
@@ -351,9 +363,13 @@ class AptInstall(unittest.TestCase):
         # name that ends with "-" as "remove this package" (and then ends with 0).
         bad = (("-oDPkg::Pre-Invoke::=id",), ("auditd", "--allow-unauthenticated"), ("Auditd",), ("a b",),
                ("auditd;id",), ("--optional", "fio -oAPT::Update::Pre-Invoke::=id", "auditd"), ("*",),
-               ("auditd-",), ("gcc", "auditd-"), ("--optional", "fio-", "auditd"),
-               # The text goes to the log of the step in one line: no second line that the runner reads as a command.
-               ("x\n::error title=planted::y",), ("x\x1b[31m",),
+               ("auditd-",), ("gcc", "auditd-"), ("--optional", "fio-", "auditd"), ("gcc=1.0-",),
+               # apt-get reads `*` as a file pattern and `~i` as a pattern of its own.
+               ("lib*",), ("--optional", "fio lib*", "auditd"), ("~i",), ("~nauditd",), ("+x",), (".x",), ("=x",),
+               (":x",), ("_x",),
+               # The text goes to the log of the step in one line: no second line that the runner reads as a
+               # command, also when the text has more than one control character.
+               ("x\n::error title=planted::y",), ("x\ny\n::error title=planted::z",), ("x\x1b[31m\x1b[0m",),
                # Not read as a file pattern: the working directory of the test holds the file `make`.
                ("--optional", "*", "auditd"), ("--optional", "mak?", "auditd"))
         for args in bad:
@@ -377,18 +393,39 @@ class AptInstall(unittest.TestCase):
         done = self.run_script("auditd", env={"APT_INSTALL_FORCE_PUBLIC": "1"})
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertEqual([c for c in done.calls if not c.startswith("unshare")], [ASK_PUBLIC] + apt("public", "auditd"))
-        # The CI job `apt-install-fallback` looks for this line.
-        self.assertIn("[apt_install] the public resolvers give a mirror; apt runs with them", done.stdout)
         self.assert_only_apt_had_the_public_resolvers(done)
+        # The forced step of the CI job `apt-install-fallback` reads the output of the
+        # script: the line of the second way, and a line of apt for a source on the network.
+        import gatelib
+        forced = [s.run for s in gatelib.ci_steps()
+                  if (s.workflow, s.job) == ("validate-detections.yml", "apt-install-fallback") and "CONTROL" not in s.name]
+        self.assertEqual(len(forced), 1)
+        step = "\n".join(gatelib._command_lines(forced[0]))
+        for text in ("APT_INSTALL_FORCE_PUBLIC=1 bash .github/scripts/apt_install.sh auditd 2>&1 | tee /tmp/apt-forced.out",
+                     "grep -q 'the public resolvers give a mirror; apt runs with them' /tmp/apt-forced.out",
+                     "dpkg -s auditd >/dev/null", 'if [[ "$before" != "$after" ]]; then'):
+            self.assertIn(text, step)
+        self.assertIn("[apt_install] the public resolvers give a mirror; apt runs with them", done.stdout)
+        fetched = re.search(r"if ! grep -Eq '([^']+)' /tmp/apt-forced\.out; then", step)
+        self.assertTrue(fetched, step)
+        fetched = re.compile(fetched.group(1), re.M)
+        self.assertRegex(done.stdout, fetched)
+        # An update that reached no source prints the line of the local mirror list only.
+        no_source = self.run_script("auditd", apt_ok=(), fail=("no-index",), env={"APT_INSTALL_FORCE_PUBLIC": "1"})
+        self.assertIn("Get:1 file:/etc/apt/apt-mirrors.txt", no_source.stdout)
+        self.assertNotRegex(no_source.stdout, fetched)
 
     def test_other_resolvers_can_be_given_and_a_text_that_is_not_an_address_is_refused(self):
-        for text in ("192.0.2.53  9.9.9.9", "192.0.2.53\n9.9.9.9\n"):
+        other = ("192.0.2.53", "9.9.9.9")
+        # An empty value is "not set": a workflow gives it when its variable has no value.
+        for text, resolvers in (("192.0.2.53  9.9.9.9", other), ("192.0.2.53\n9.9.9.9\n", other),
+                                ("", ("1.1.1.1", "8.8.8.8"))):
             with self.subTest(resolvers=text):
                 done = self.run_script("auditd", runner=(), env={"APT_INSTALL_RESOLVERS": text})
                 self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-                self.assert_only_apt_had_the_public_resolvers(done, resolvers=("192.0.2.53", "9.9.9.9"))
-        for text in ("dns.example.com", "1.1.1.1;id", "1.1.1.1 options", " ", "-o", "1.1.1", "1.1.1.1.1", "1111.1.1.1",
-                     "1.1.1.1\nnot-an-address", "1.1.1.1 x\x1by", "1.1.1.1 *"):
+                self.assert_only_apt_had_the_public_resolvers(done, resolvers=resolvers)
+        for text in ("dns.example.com", "1.1.1.1;id", "1.1.1.1 options", " ", "\n", "-o", "1.1.1", "1.1.1.1.1",
+                     "1111.1.1.1", "1x1y1z1", "1.1.1.1\nnot-an-address", "1.1.1.1 x\x1by\x1bz\r::error", "1.1.1.1 *"):
             with self.subTest(resolvers=text):
                 done = self.run_script("auditd", env={"APT_INSTALL_RESOLVERS": text})
                 self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
@@ -400,7 +437,7 @@ class AptInstall(unittest.TestCase):
     def test_the_force_value_is_0_or_1(self):
         # A value such as "true" must not give the normal way with no word: the CI job
         # that proves the second way would then prove nothing.
-        for value in ("true", "yes", "2", "01", " 1", "1\n1"):
+        for value in ("true", "yes", "2", "01", " 1", "1\n1", "1\n1\n::error title=planted::z"):
             with self.subTest(value=value):
                 done = self.run_script("auditd", env={"APT_INSTALL_FORCE_PUBLIC": value})
                 self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
@@ -447,11 +484,17 @@ class AptInstall(unittest.TestCase):
 
 
 class DirectInstalls(unittest.TestCase):
-    """No step of a workflow, and no shell script of the repository, runs a package
-    manager in a usual form but through apt_install.sh. The rule reads the parsed `run:`
-    text of each step (gatelib.ci_steps), so a folded scalar, a joined line and an alias
-    are read as the shell reads them. It is a rule on text: a command that is built at
-    run time (`$TOOL install`) is not seen."""
+    """No workflow, composite action or shell script of the repository runs a package
+    manager in a usual form but through apt_install.sh.
+
+    The rule reads the parsed `run:` text of each step (gatelib.ci_steps), so a folded
+    scalar, a joined line and an alias are read as the shell reads them. It also reads
+    each line of each workflow and action file as text, which finds a command in a
+    `with:` or `env:` value and in the `run:` of a composite action. Shell scripts are
+    the files with the name *.sh and the files with a shell on their first line.
+
+    It is a rule on text. It does not see a command that is built at run time
+    (`$TOOL install`), or one that a different program starts (a Python subprocess)."""
 
     SKIP = r"(?:[^\s;|&]+\s+)*?"         # options, option values and variables before the subcommand
     START = r"(?<![\w.-])(?:/\S*/)?[\"']?"
@@ -461,6 +504,7 @@ class DirectInstalls(unittest.TestCase):
         + "|" + START + r"dpkg[\"']?\s+" + SKIP + r"(?:-i|--install)(?![\w-])"
         + "|" + START + r"snap[\"']?\s+" + SKIP + r"install(?![\w-])")
     CALL = re.compile(r"(?<![\w./-])bash\s+(?:\"?\$\{?GITHUB_WORKSPACE\}?/|\./)?\.github/scripts/apt_install\.sh\"?\s")
+    SHELL_FIRST_LINE = re.compile(rb"^#![^\n]*\b(?:ba|da|z|k)?sh\b")
     # (workflow, job) of each step that installs packages today.
     USERS = [("detection-quality.yml", "benign-linux-live"),
              ("validate-apiserver-detections.yml", "validate"),
@@ -500,6 +544,51 @@ class DirectInstalls(unittest.TestCase):
         import gatelib
         return [line for line in gatelib._command_lines(run) if cls.INSTALLS.search(cls.no_comment(line))]
 
+    @classmethod
+    def workflow_hits(cls, root=REPO):
+        """(file, line) of each direct install in a workflow or a composite action."""
+        import glob
+        import gatelib
+        hits = {(".github/workflows/" + s.workflow, line) for s in gatelib.ci_steps(root=root) for line in cls.direct(s.run)}
+        files = glob.glob(os.path.join(root, ".github", "workflows", "*.y*ml"))
+        files += glob.glob(os.path.join(root, ".github", "actions", "**", "*.y*ml"), recursive=True)
+        for path in files:
+            rel = os.path.relpath(path, root).replace(os.sep, "/")
+            with open(path, encoding="utf-8") as fh:
+                for raw in fh:
+                    line = " ".join(raw.split())
+                    if not line.startswith("#") and cls.INSTALLS.search(cls.no_comment(line)):
+                        hits.add((rel, line))
+        return sorted(hits)
+
+    @classmethod
+    def shell_scripts(cls, root=REPO):
+        scripts = []
+        for folder, dirs, names in os.walk(root):
+            dirs[:] = [d for d in dirs if d not in (".git", ".kind", "known_bad")]
+            for name in names:
+                path = os.path.join(folder, name)
+                if not name.endswith(".sh"):
+                    try:
+                        with open(path, "rb") as fh:
+                            if not cls.SHELL_FIRST_LINE.match(fh.read(120)):
+                                continue
+                    except OSError:
+                        continue
+                scripts.append(os.path.relpath(path, root).replace(os.sep, "/"))
+        return sorted(scripts)
+
+    @classmethod
+    def script_hits(cls, root=REPO):
+        """{script: the lines with a direct install}, for each shell script but apt_install.sh."""
+        hits = {}
+        for rel in cls.shell_scripts(root):
+            with open(os.path.join(root, rel), encoding="utf-8", errors="replace") as fh:
+                lines = cls.direct(fh.read())
+            if lines and rel != cls.THE_SCRIPT:
+                hits[rel] = sorted(lines)
+        return hits
+
     def test_the_rule_finds_a_direct_install(self):
         """CONTROL of the rule, on constructed step texts."""
         found = ["sudo apt-get install -y auditd\n", "sudo apt install -y auditd\n",
@@ -522,32 +611,53 @@ class DirectInstalls(unittest.TestCase):
                      "dpkg -s auditd >/dev/null\n", "dpkg-query -W -f='${Status}' auditd\n"]
         self.assertEqual([run for run in found + not_found if self.direct(run)], found)
 
-    def test_no_step_installs_packages_directly(self):
+    def test_the_rule_reads_each_place_where_a_command_can_be(self):
+        """CONTROL of the places, on a constructed tree: a `with:` value, an `env:` value,
+        a composite action, and a shell script with no .sh in its name."""
+        files = {
+            ".github/workflows/a.yml": (
+                "on: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n"
+                "      - uses: example/retry@v3\n        with:\n"
+                "          command: sudo apt-get update && sudo apt-get install -y auditd\n"
+                "      - run: ${{ env.INSTALL }}\n        env:\n          INSTALL: sudo apt-get install -y gcc\n"
+                "      - run: |\n          # sudo apt-get install -y nothing\n          bash .github/scripts/apt_install.sh auditd\n"),
+            ".github/actions/tools/action.yml": (
+                "runs:\n  using: composite\n  steps:\n    - shell: bash\n      run: sudo apt-get install -y jq\n"),
+            ".github/scripts/apt_install.sh": "#!/usr/bin/env bash\nsudo apt-get install -y -- \"$@\"\n",
+            "tools/setup-runner": "#!/usr/bin/env bash\nsudo apt-get install -y auditd\n",
+            "tools/clean.sh": "#!/bin/sh\nrm -rf build\n",
+            "tools/report.py": "#!/usr/bin/env python3\nprint('sudo apt-get install -y auditd')\n",
+        }
+        with tempfile.TemporaryDirectory(prefix="deteng-direct-") as root:
+            for rel, text in files.items():
+                os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
+                with open(os.path.join(root, rel), "w", encoding="utf-8") as fh:
+                    fh.write(text)
+            self.assertEqual(self.workflow_hits(root), [
+                (".github/actions/tools/action.yml", "run: sudo apt-get install -y jq"),
+                (".github/workflows/a.yml", "INSTALL: sudo apt-get install -y gcc"),
+                (".github/workflows/a.yml", "command: sudo apt-get update && sudo apt-get install -y auditd")])
+            self.assertEqual(self.shell_scripts(root), [".github/scripts/apt_install.sh", "tools/clean.sh", "tools/setup-runner"])
+            self.assertEqual(self.script_hits(root), {"tools/setup-runner": ["sudo apt-get install -y auditd"]})
+
+    def test_no_workflow_installs_packages_directly(self):
         import gatelib
         steps = gatelib.ci_steps()
         users = sorted({(s.workflow, s.job) for s in steps
                         if any(self.CALL.search(line + " ") for line in gatelib._command_lines(s.run))})
         self.assertEqual(users, self.USERS)       # the workflows were read (not vacuous)
-        self.assertEqual([(s.workflow, s.job, s.name, line) for s in steps for line in self.direct(s.run)], [])
+        self.assertEqual(self.workflow_hits(), [])
 
     def test_no_shell_script_installs_packages_directly(self):
-        scripts = []
-        for folder, dirs, names in os.walk(REPO):
-            dirs[:] = [d for d in dirs if d not in (".git", ".kind", "known_bad")]
-            scripts += [os.path.relpath(os.path.join(folder, n), REPO).replace(os.sep, "/")
-                        for n in names if n.endswith(".sh")]
+        scripts = self.shell_scripts()
         self.assertGreater(len(scripts), 10, "the shell scripts were not read")
         self.assertIn(self.THE_SCRIPT, scripts)
-        direct = {}
-        for rel in sorted(scripts):
-            with open(os.path.join(REPO, rel), encoding="utf-8") as fh:
-                lines = self.direct(fh.read())
-            if rel == self.THE_SCRIPT:
-                self.assertTrue(lines, "the rule does not find the apt-get lines of the script itself")
-            elif lines:
-                direct[rel] = lines
+        # The rule finds the apt-get lines of the script itself (not vacuous).
+        with open(os.path.join(REPO, self.THE_SCRIPT), encoding="utf-8") as fh:
+            own = self.direct(fh.read())
+        self.assertTrue([line for line in own if line.startswith('"${RUN[@]}" apt-get install -y -- "$pkg"')], own)
         # Each direct line is one that ALLOWED names, and each line of ALLOWED is there.
-        self.assertEqual(direct, {rel: sorted(lines) for rel, lines in self.ALLOWED.items()})
+        self.assertEqual(self.script_hits(), {rel: sorted(lines) for rel, lines in self.ALLOWED.items()})
 
 
 if __name__ == "__main__":
