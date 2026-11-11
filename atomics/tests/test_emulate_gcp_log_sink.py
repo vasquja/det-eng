@@ -98,6 +98,7 @@ class Dry(unittest.TestCase):
                       run.stdout)
         self.assertIn("| curl -q --config - -X POST", run.stdout)
         self.assertNotRegex(run.stdout, r"curl[^\n|]*Authorization")
+        self.assertNotRegex(run.stdout, r"curl[^\n|]*(print-access-token|[Bb]earer)")
 
 
 class ShowFixture(unittest.TestCase):
@@ -226,13 +227,16 @@ class LiveHappyPath(unittest.TestCase):
 class LiveToken(unittest.TestCase):
     """The access token of procedure c: on the standard input of curl only."""
 
-    # Each way that a run of procedure c can end: stub rules -> exit code.
+    # The ways that a run of procedure c can end: stub rules -> exit code. A new end of
+    # the script must get a line here.
     ENDS = {
         "the happy path": (dict(outputs=OK_C), 0),
         "the create is refused": (dict(outputs=TOKEN_OUT + [answer("POST", 403), DELETE_OK]), 1),
         "the exclusion is there before the run": (dict(outputs=TOKEN_OUT + [answer("POST", 409), DELETE_OK]), 1),
         "the create gets a server error": (dict(outputs=TOKEN_OUT + [answer("POST", 500), DELETE_OK]), 1),
         "the create gets no answer": (dict(outputs=TOKEN_OUT + [DELETE_OK], fail=[(r"curl .*-X POST", 56)]), 1),
+        "the create answer has no HTTP status": (dict(outputs=TOKEN_OUT + [(r"curl .*-X POST", "ANSWER-WITH-NO-STATUS"),
+                                                                           DELETE_OK]), 1),
         "the delete is refused": (dict(outputs=TOKEN_OUT + [POST_OK, answer("DELETE", 500)]), 1),
         "the delete gets no answer": (dict(outputs=TOKEN_OUT + [POST_OK], fail=[(r"curl .*-X DELETE", 7)]), 1),
         "a stop signal during the create": (dict(outputs=OK_C, signals=[(r"curl .*-X POST", "TERM", "shell")]), 143),

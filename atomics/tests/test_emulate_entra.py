@@ -144,8 +144,8 @@ class LiveAppFic(unittest.TestCase):
     def test_app_create_with_no_object_id_stops_and_names_the_app(self):
         # az ad app create gave no object id: the app may exist, so the run stops, names it,
         # and makes no FIC. The guard prevents a FIC command with an empty --id.
-        # An answer that is not one word (two lines, a blank in it) is not an ID either.
-        for text in (None, "id-one\nid-two", "id one"):
+        # An answer that is not one word (two lines, a blank or a tab in it) is not an ID either.
+        for text in (None, "id-one\nid-two", "id one", "id-one\tid-two", "id-one\r", "../id-one"):
             with self.subTest(answer=text):
                 out = [] if text is None else [("ad app create", text)]
                 run = livetest.run_script(SCRIPT, "a", env=LIVE_A, outputs=out)
@@ -281,6 +281,71 @@ class LiveManagedIdentityFic(unittest.TestCase):
                 self.assertEqual(run.returncode, 7, run.text)
                 self.assertEqual(shapes(run.calls), expected, run.text)
                 self.assertNotIn("[live] done", run.stdout, run.text)
+
+
+class LiveManagedIdentityFicStopSignal(unittest.TestCase):
+    """A stop signal that comes while a change-making az command runs (procedure C)."""
+
+    GCREATE = ("az", "group", "create", "--name")
+    ICREATE = ("az", "identity", "create", "--name")
+    FCREATE = ("az", "identity", "federated-credential", "create")
+    FDEL = ("az", "identity", "federated-credential", "delete")
+    IDEL = ("az", "identity", "delete", "--name")
+    GDEL = ("az", "group", "delete", "--name")
+
+    @staticmethod
+    def shapes(calls):
+        return [tuple(c[:4]) for c in calls]
+
+    def test_a_signal_to_the_script_during_a_change_reverts_that_change_too(self):
+        # The command runs to its end, so the provider made the change. The run must
+        # register the undo of that change before it stops.
+        changes = {
+            r"group create": [self.GCREATE, self.GDEL],
+            r"identity create": [self.GCREATE, self.ICREATE, self.IDEL, self.GDEL],
+            r"identity federated-credential create":
+                [self.GCREATE, self.ICREATE, self.FCREATE, self.FDEL, self.IDEL, self.GDEL],
+        }
+        for name, code in (("HUP", 129), ("INT", 130), ("TERM", 143)):
+            for pattern, expected in changes.items():
+                with self.subTest(signal=name, during=pattern):
+                    run = livetest.run_script(SCRIPT, "c", env={"TRR9013_LIVE": "1"},
+                                              signals=[(pattern, name, "shell")])
+                    self.assertEqual(run.returncode, code, run.text)
+                    self.assertEqual(self.shapes(run.calls), expected, run.text)
+                    self.assertNotIn("[live] done", run.stdout, run.text)
+                    self.assertNotIn("has no undo", run.stderr, run.text)
+
+    def test_a_signal_that_stops_the_command_names_the_change_that_can_stay(self):
+        cases = {
+            r"group create": ([self.GCREATE], "the resource group trr9013-rg-"),
+            r"identity create": ([self.GCREATE, self.ICREATE, self.GDEL], "the managed identity trr9013-mi-"),
+            r"identity federated-credential create":
+                ([self.GCREATE, self.ICREATE, self.FCREATE, self.IDEL, self.GDEL],
+                 "the federated credential trr9013-mi-backdoor on the managed identity trr9013-mi-"),
+        }
+        for pattern, (expected, what) in cases.items():
+            with self.subTest(during=pattern):
+                run = livetest.run_script(SCRIPT, "c", env={"TRR9013_LIVE": "1"},
+                                          signals=[(pattern, "INT", "group")])
+                self.assertEqual(run.returncode, 130, run.text)
+                self.assertEqual(self.shapes(run.calls), expected, run.text)
+                self.assertIn("The run stopped before the undo of this change was registered: " + what,
+                              run.stderr)
+                self.assertIn("That change has no undo", run.stderr)
+                self.assertNotIn("[live] done", run.stdout, run.text)
+
+    def test_a_command_that_fails_names_the_change_that_can_stay(self):
+        cases = {r"group create": "the resource group trr9013-rg-",
+                 r"identity create": "the managed identity trr9013-mi-",
+                 r"identity federated-credential create":
+                     "the federated credential trr9013-mi-backdoor on the managed identity trr9013-mi-"}
+        for pattern, what in cases.items():
+            with self.subTest(fail=pattern):
+                run = livetest.run_script(SCRIPT, "c", env={"TRR9013_LIVE": "1"}, fail=[(pattern, 7)])
+                self.assertEqual(run.returncode, 7, run.text)
+                self.assertIn("The run stopped before the undo of this change was registered: " + what,
+                              run.stderr)
 
 
 if __name__ == "__main__":

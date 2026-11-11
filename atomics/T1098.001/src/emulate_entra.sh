@@ -138,9 +138,10 @@ if [[ "${TRR9013_LIVE:-0}" == "1" || "${2:-}" == "--live" ]]; then
     # the object ID avoids that lookup, which a just-created app may not yet answer.
     change_next "the throwaway application trr9013-victim-app"
     APP_ID=$(az ad app create --display-name trr9013-victim-app --query id -o tsv)
-    # The answer must be one word (the object ID). An answer that is empty, or that holds a
-    # blank, a tab or a line break, is not an ID: the run cannot register the undo.
-    [[ "$APP_ID" =~ ^[^[:space:]]+$ ]] || { echo "[live] az ad app create did not return one object ID. Do the check that nothing stays behind (LEFT BEHIND: the application trr9013-victim-app)." >&2; exit 1; }
+    # The answer must be the object ID: letters, digits, "-" and "_" only (it is a GUID). An
+    # answer that is empty, or that holds a blank, a tab, a line break or "/" is not an ID:
+    # the run cannot register the undo.
+    [[ "$APP_ID" =~ ^[A-Za-z0-9_-]{1,200}$ ]] || { echo "[live] az ad app create did not return one object ID. Do the check that nothing stays behind (LEFT BEHIND: the application trr9013-victim-app)." >&2; exit 1; }
     undo az ad app delete --id "$APP_ID"
     change_next "the federated credential trr9013-backdoor on the application trr9013-victim-app"
     az ad app federated-credential create --id "$APP_ID" --parameters \

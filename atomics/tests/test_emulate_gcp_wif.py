@@ -304,6 +304,7 @@ class Live(unittest.TestCase):
     def test_each_undo_command_that_fails_is_left_behind_and_fails_the_run(self):
         # A given service account: binding, provider, pool. A throwaway one: its delete too.
         self.assertEqual(livetest.each_undo_failure(self, SCRIPT, "a", env=LIVE_SA, outputs=PNUM_OUT), 3)
+        self.assertEqual(livetest.each_undo_failure(self, SCRIPT, "c", env=LIVE_SA, outputs=PNUM_OUT), 3)
         self.assertEqual(livetest.each_undo_failure(self, SCRIPT, "a", env=LIVE_THROWAWAY,
                                                     outputs=THROWAWAY_OUT), 4)
 

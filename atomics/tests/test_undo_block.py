@@ -196,6 +196,9 @@ class Behaviour(unittest.TestCase):
                     self.assertNotIn("not reached", done.stdout)
                     self.assertNotIn("has no undo", done.stderr)
                     self.assertIn(f"[live] FAILED (exit {code})", done.stderr)
+                    # The person is told that the signal came and why the run goes on.
+                    self.assertIn("[live] stop signal during a change: the run stops after this change",
+                                  done.stderr)
 
     def test_a_signal_that_stops_the_change_command_names_the_change(self):
         # The signal comes to the script and to the command (Ctrl-C). The command stops
@@ -383,6 +386,21 @@ class Behaviour(unittest.TestCase):
                 self.assertNotIn("[live] done.", done.stdout)
                 self.assertIn(f"[live] FAILED (exit {code})", done.stderr)
 
+    def test_an_undo_command_that_fails_with_no_signal_does_not_start_again_after_an_earlier_signal(self):
+        # A signal came while an earlier undo command ran (that command ran to its end). A
+        # later undo command fails, and no signal came during it: it must not start again.
+        done = self.run_body("undo sh -c 'echo run >> runs-1; exit 1'\n"
+                             "undo sh -c '%s'\n" % (TO_SHELL % "TERM") + "undo_now\necho '[live] done.'\n")
+        self.assertEqual(done.returncode, 143, done.stderr)
+        self.assertEqual(done.content, {"runs-1": "run\n"})
+        self.assertNotIn("starts again", done.stderr)
+        self.assertEqual(done.stderr.count("[live] LEFT BEHIND, this command failed: sh -c "), 1, done.stderr)
+
+    def test_a_signal_between_two_commands_prints_the_failed_line_one_time(self):
+        done = self.run_body("touch object\nundo rm object\nkill -TERM $$\nsleep 5\necho not reached\n")
+        self.assertEqual(done.returncode, 143, done.stderr)
+        self.assertEqual(done.stderr.count("[live] FAILED (exit 143)"), 1, done.stderr)
+
     def test_a_reader_of_the_output_that_is_gone_does_not_stop_the_undo(self):
         # `script | head -1`: after the first line the reader is gone. The next write of
         # the script fails. The undo must run all the same (a SIGPIPE must not end it).
@@ -441,7 +459,9 @@ class Scripts(unittest.TestCase):
                 with open(os.path.join(livetest.REPO, script), encoding="utf-8") as fh:
                     text = fh.read()
                 body = text[text.index(livetest.UNDO_END):]
-                words = re.findall(r"^\s*(change_next|undo)\s", body, flags=re.M)
+                # `change_next ""` says that no change is in progress: it closes like `undo`.
+                words = [("undo" if rest.startswith('""') else word) for word, rest in
+                         re.findall(r"^\s*(change_next|undo)\s+(.*)$", body, flags=re.M)]
                 self.assertTrue("change_next" in words, "the script has no change_next line")
                 open_change = False
                 for word in words:
@@ -489,6 +509,7 @@ class Scripts(unittest.TestCase):
                         if word == ";;" or len(line) - len(line.lstrip()) < depth:
                             break
                         self.assertRegex(word, r"^(echo |printf |exit \d|if \[|else$|fi$)", line)
+                        self.assertNotRegex(word, r"\$\(|`", line)     # no command in the text
 
     def test_no_script_checks_the_result_of_the_undo_itself(self):
         # undo_now stops the run when an undo command failed or a stop signal came. A

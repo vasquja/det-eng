@@ -785,7 +785,8 @@ Things that can make a live run fail, or give no record:
   deletes it. Do not set this variable unless you need a second name.
 - **A create command does not give one ID.** If `az ad sp create` or one of the
   two `POST` requests ends with exit 0 and its answer is not one ID (it is
-  empty, or it holds a blank or a line break), the script stops with exit 1. It
+  empty, or it holds a character that is not a letter, a digit, `-` or `_`),
+  the script stops with exit 1. It
   has no undo command for that change, and it names the change in the line
   `[live] The run stopped before the undo of this change was registered:`. It
   runs the undo commands of the earlier changes: it deletes the application,
@@ -800,6 +801,14 @@ Things that can make a live run fail, or give no record:
 - **TRR9017 a, no acceptance.** If no person accepts, or if the script has no
   terminal, the script says that no record was caused. It removes its
   application and ends with exit 1.
+- **TRR9017 a, a stop after you accepted.** After you accept the consent, press
+  Enter: the script then reads the grant that you made and removes it. If you
+  stop the run at the prompt (Ctrl-C) after you accepted, the grant has no undo
+  command, and the script cannot name it. If the read of the grant fails or is
+  stopped, the script names the grant in the line
+  `[live] The run stopped before the undo of this change was registered:`. In
+  each of these conditions the script deletes the service principal and the
+  application. It is not verified that this also removes the grant.
 - **TRR9017 a, a user who is not an administrator.** See the note about the
   user above.
 - **TRR9017 d, the device code flow is blocked.** See above.

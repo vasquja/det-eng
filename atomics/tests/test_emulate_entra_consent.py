@@ -515,7 +515,10 @@ class LiveKnownNoRecord(unittest.TestCase):
         # object id for the delete. It must stop after that one call, exit 1, and give the
         # person two commands that work (the delete does not take a display name).
         answers = {"nothing": "", "one value": APP_OBJECT,
-                   "three values": "%s\n%s\nmore" % (APP_OBJECT, APPID)}
+                   "three values": "%s\n%s\nmore" % (APP_OBJECT, APPID),
+                   # Windows line ends: each value then holds a carriage return.
+                   "carriage returns": "%s\r\n%s\r" % (APP_OBJECT, APPID),
+                   "a slash in the object id": "../%s\n%s" % (APP_OBJECT, APPID)}
         for proc in ("a", "b", "c", "e"):
             for what, text in answers.items():
                 with self.subTest(proc=proc, answer=what):
@@ -560,8 +563,12 @@ class LiveKnownNoRecord(unittest.TestCase):
                   "app role assignment": r"post .*appRoleAssignedTo"}
         # No answer, and answers that are not one word: only blanks, a tab in it, two
         # lines, a blank in it. None of them is an ID.
+        # And answers that are one word but not an ID: the text would go into the URL of
+        # a delete request.
         answers = {"nothing": None, "blanks": "   ", "a tab": "id-one\tid-two",
-                   "two lines": "id-one\nid-two", "a blank": "id one"}
+                   "two lines": "id-one\nid-two", "a blank": "id one",
+                   "a carriage return": "id-one\r", "a path": "../../servicePrincipals/zzz",
+                   "a query": "id-one?$filter=x"}
         for what, (proc, out, calls, change, message) in cases.items():
             for kind, text in answers.items():
                 with self.subTest(what=what, answer=kind):
@@ -588,7 +595,7 @@ class LiveWithAPerson(unittest.TestCase):
         self.assertIn("[live] done.", run.stdout)
 
     def test_a_grant_answer_that_is_not_one_id_stops_and_sends_no_delete_with_it(self):
-        for text in ("id-one\nid-two", "id one"):
+        for text in ("id-one\nid-two", "id one", "id-one\tid-two", "../../servicePrincipals/zzz"):
             with self.subTest(answer=text):
                 out = APP_SP_OUT + [(r"rest --method get", text)]
                 run = livetest.run_script(SCRIPT, "a", env=LIVE, outputs=out, tty=True)
@@ -600,6 +607,46 @@ class LiveWithAPerson(unittest.TestCase):
     def test_each_undo_command_that_fails_is_left_behind_and_fails_the_run(self):
         out = APP_SP_OUT + [(r"rest --method get", GRANT)]
         self.assertEqual(livetest.each_undo_failure(self, SCRIPT, "a", env=LIVE, outputs=out, tty=True), 3)
+
+    GRANT_NAMED = ("The run stopped before the undo of this change was registered: "
+                   "a delegated grant to the application %s, if a person accepted the consent" % APP)
+
+    def test_a_read_of_the_grants_that_fails_names_the_grant_that_can_stay(self):
+        # The person accepted and pressed Enter, and the read fails: the run has no id for
+        # the delete of the grant. It must say that a grant can stay.
+        run = livetest.run_script(SCRIPT, "a", env=LIVE, outputs=APP_SP_OUT,
+                                  fail=[(r"rest --method get", 4)], tty=True)
+        self.assertEqual(run.returncode, 4, run.text)
+        self.assertEqual(run.calls, [CREATE_APP, CREATE_SP, AZ_REST_GET, DEL_SP, DEL_APP], run.text)
+        self.assertIn(self.GRANT_NAMED, run.stderr)
+        self.assertNotIn("[live] done", run.stdout)
+
+    def test_a_signal_during_the_read_of_the_grants_does_not_leave_the_grant(self):
+        out = APP_SP_OUT + [(r"rest --method get", GRANT)]
+        for name, code in (("HUP", 129), ("INT", 130), ("TERM", 143)):
+            with self.subTest(signal=name, scope="shell"):
+                # The read runs to its end and gives the id: the grant must be removed.
+                run = livetest.run_script(SCRIPT, "a", env=LIVE, outputs=out, tty=True,
+                                          signals=[(r"rest --method get", name, "shell")])
+                self.assertEqual(run.returncode, code, run.text)
+                self.assertEqual(run.calls, [CREATE_APP, CREATE_SP, AZ_REST_GET, UNDO_GRANT, DEL_SP, DEL_APP],
+                                 run.text)
+                self.assertNotIn("[live] done", run.stdout)
+            with self.subTest(signal=name, scope="group"):
+                # The read stops in the middle: the run has no id. It must name the grant.
+                run = livetest.run_script(SCRIPT, "a", env=LIVE, outputs=out, tty=True,
+                                          signals=[(r"rest --method get", name, "group")])
+                self.assertEqual(run.returncode, code, run.text)
+                self.assertEqual(run.calls, [CREATE_APP, CREATE_SP, AZ_REST_GET, DEL_SP, DEL_APP], run.text)
+                self.assertIn(self.GRANT_NAMED, run.stderr)
+
+    def test_a_signal_during_a_read_that_finds_no_grant_stops_the_run_with_the_code_of_the_signal(self):
+        run = livetest.run_script(SCRIPT, "a", env=LIVE, outputs=APP_SP_OUT, tty=True,
+                                  signals=[(r"rest --method get", "TERM", "shell")])
+        self.assertEqual(run.returncode, 143, run.text)
+        self.assertEqual(run.calls, [CREATE_APP, CREATE_SP, AZ_REST_GET, DEL_SP, DEL_APP], run.text)
+        self.assertNotIn("has no undo", run.stderr)
+        self.assertNotIn("[live] done", run.stdout)
 
     def test_a_with_a_person_who_does_not_consent_reverts_and_exits_1(self):
         # The person pressed Enter but no grant exists: the consent was not caused.

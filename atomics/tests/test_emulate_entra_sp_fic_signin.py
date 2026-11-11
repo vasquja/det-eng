@@ -194,7 +194,7 @@ class LiveExchange(unittest.TestCase):
     def test_a_refused_exchange_prints_the_error_and_exits_nonzero(self):
         run = livetest.run_script(SCRIPT, "a", env=LIVE,
                                   outputs=[("login.microsoftonline", FAIL_BODY)])
-        self.assertNotEqual(run.returncode, 0, run.text)
+        self.assertEqual(run.returncode, 1, run.text)
         self.assertNotIn("done", run.stdout)
         self.assertIn("invalid_client", run.stderr)
         self.assertIn("AADSTS700213", run.stderr)
@@ -219,7 +219,7 @@ class LiveExchange(unittest.TestCase):
         # connection, so the message names the curl exit, not a status.
         run = livetest.run_script(SCRIPT, "a", env=LIVE,
                                   fail=[("login.microsoftonline", 7, "\n000")])
-        self.assertNotEqual(run.returncode, 0, run.text)
+        self.assertEqual(run.returncode, 1, run.text)
         self.assertNotIn("done", run.stdout)
         self.assertIn("curl exit 7", run.stderr)
         self.assertNotIn(TOKEN, run.stdout + run.stderr)
@@ -236,7 +236,7 @@ class LiveExchange(unittest.TestCase):
         no_status = '{"token_type":"Bearer","access_token":"%s"}' % SECRET
         run = livetest.run_script(SCRIPT, "a", env=LIVE,
                                   outputs=[("login.microsoftonline", no_status)])
-        self.assertNotEqual(run.returncode, 0, run.text)
+        self.assertEqual(run.returncode, 1, run.text)
         self.assertNotIn("done", run.stdout)
         self.assertNotIn(SECRET, run.stdout + run.stderr)
         self.assertIn("no HTTP status line", run.stderr)
@@ -246,7 +246,7 @@ class LiveExchange(unittest.TestCase):
         same_line = '{"access_token":"%s"}200' % SECRET
         run = livetest.run_script(SCRIPT, "a", env=LIVE,
                                   outputs=[("login.microsoftonline", same_line)])
-        self.assertNotEqual(run.returncode, 0, run.text)
+        self.assertEqual(run.returncode, 1, run.text)
         self.assertNotIn(SECRET, run.stdout + run.stderr)
         self.assertNotIn(TOKEN, run.stdout + run.stderr)
         self.assertNotIn("done", run.stdout)
@@ -258,7 +258,7 @@ class LiveExchange(unittest.TestCase):
             with self.subTest(body=body):
                 run = livetest.run_script(SCRIPT, "a", env=LIVE,
                                           outputs=[("login.microsoftonline", body)])
-                self.assertNotEqual(run.returncode, 0, run.text)
+                self.assertEqual(run.returncode, 1, run.text)
                 self.assertNotIn("done", run.stdout)
                 self.assertIn("no access_token", run.stderr)
                 self.assertNotIn(SECRET, run.stdout + run.stderr)

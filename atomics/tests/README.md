@@ -65,8 +65,18 @@ same command on each pull request. The command in the `Commands` block of
   the application, the service principal, the grant and the app role assignment
   of TRR9017; the service account of TRR9018), the script stops with exit 1,
   names the change as one that can stay, and sends no delete request with that
-  answer. For TRR9013 a and TRR9017, an ID is one word: an answer that is empty,
-  or that holds a blank, a tab or a line break, is not an ID.
+  answer. For TRR9013 a and TRR9017, an ID holds letters, digits, `-` and `_`
+  only, because it goes into the URL of a delete request: an answer that is
+  empty, or that holds a blank, a tab, a line break, a carriage return, `/`, `?`
+  or `.`, is not an ID.
+- **The grant that a person makes is not left without a word.** In TRR9017 a,
+  the person accepts the consent in a browser and presses Enter. From there to
+  the registration of its undo, the grant is a change in progress: a read of
+  the grants that fails, or a stop signal that stops that read, names the grant
+  as a change that can stay; a stop signal that comes while the read runs to
+  its end waits, and the run then removes the grant. A stop at the prompt
+  (Ctrl-C before Enter) cannot know if the person accepted: the script says so
+  before the prompt.
 - **No undo line hides the failure of its command.** A test reads each `undo`
   line of the five scripts: it has no `||`, no `;` and no `eval`. That text check
   does not see a helper function that returns 0, a pipe, or a variable. So a
@@ -74,6 +84,10 @@ same command on each pull request. The command in the `Commands` block of
   and makes each of its undo commands fail, one at a time: the run must end with
   exit 1, with one `LEFT BEHIND` line and no `[live] done.` line, and the other
   undo commands must run all the same.
+- **The harness sees the files that a run leaves.** `test_livetest.py` is the
+  positive control for `tmp_files` and `home_files`: a script that leaves a dot
+  file, a file in a subdirectory, a file in the working directory and a file in
+  `TMPDIR` gets each one listed.
 - **A stop signal reverts the changes that were made.** `livetest.run_script` can
   send HUP, INT or TERM while a command runs: to the script only (the command then
   runs to its end, so its change is made and its undo must run), or to the script
@@ -147,7 +161,7 @@ The block handles three things besides the planned end:
   when its third run fails in the same way, the block prints the `LEFT BEHIND`
   line for it and goes on with the other undo commands. So a person can stop an
   undo command that hangs (Ctrl-C three times) and still gets the command to run
-  by hand. A signal that comes when the run already ends (a command failed, the
+  by hand. The count starts again for each undo command. A signal that comes when the run already ends (a command failed, the
   script stopped itself) does not skip the undo. A reader of the output that is
   gone (`| head`, a `tee` that a Ctrl-C stopped) does not stop the undo (the block
   ignores `SIGPIPE`).
@@ -179,5 +193,8 @@ of command substitution gave that error some times (in an array assignment, in a
 function, at the top level), and `printf -v` gave it in none of 14 runs. So the block
 holds no command substitution (a test checks that), and a registration is not lost
 in this way. A script line such as `ID="$(az ... create ...)"` still can be hit: the
-run then names that change as one that can stay. Other versions of bash were not
+run then names that change as one that can stay. The fault has a second form: in
+a command substitution inside an undo command (the delete request of TRR9038 c),
+bash prints the same line and the signal is lost, so the undo command runs to its
+end and the run goes on as if no signal came. Other versions of bash were not
 tried.

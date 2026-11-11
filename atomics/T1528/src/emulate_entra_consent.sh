@@ -12,7 +12,9 @@
 #     any change (exit 2) when that is not set, and when TRR9017_APP_NAME is set to a name
 #     that does not start with trr9017- (a, b, c, e).
 #       A  browser consent screen (only a person can cause the record) -> audit
-#          "Consent to application".
+#          "Consent to application". After the person presses Enter, the run reads the
+#          grant that the person made and removes it; if the run stops before that, it
+#          names the grant as a change that can stay.
 #       B  POST /oauth2PermissionGrants, ConsentType AllPrincipals (tenant-wide) ->
 #          audit "Add delegated permission grant".
 #       C  POST /servicePrincipals/{graph}/appRoleAssignedTo -> audit "Add app role
@@ -30,8 +32,8 @@
 #     the record was not caused. When it knows that (a that no person accepted, an app role
 #     that Microsoft Graph does not have, d that did not record a successful sign-in), it
 #     reverts what it made, says so, and exits 1. A create command that does not give one
-#     ID stops the run (exit 1): the run sends no delete request with an ID that is empty or
-#     not one word, and it names the change that can stay. A stop signal (Ctrl-C) or a
+#     ID stops the run (exit 1): the run sends no delete request with an answer that is not
+#     an ID (letters, digits, "-" and "_" only), and it names the change that can stay. A stop signal (Ctrl-C) or a
 #     command that fails runs the undo command of each change that was made; a change whose
 #     command was stopped in the middle can stay, and an undo command that fails leaves its
 #     change.
@@ -196,9 +198,11 @@ trap '' PIPE                                    # a reader of the output that is
   # response only. Never used on a token value.
   json_get() { printf '%s' "$1" | sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1; }
   json_num() { printf '%s' "$1" | sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p" | head -n1; }
-  # An ID is one word. An answer that is empty, or that holds a blank, a tab or a line
-  # break, is not an ID: the run must not put it into a delete request.
-  is_id() { [[ "$1" =~ ^[^[:space:]]+$ ]]; }
+  # An ID goes into the URL of a delete request, so the run accepts only the characters of
+  # an Entra ID: letters, digits, "-" and "_" (an object ID is a GUID; the ID of a grant or
+  # of an app role assignment is base64url text). An answer that is empty, or that holds a
+  # blank, a tab, a line break, a carriage return, "/", "?" or "." is not an ID.
+  is_id() { [[ "$1" =~ ^[A-Za-z0-9_-]{1,200}$ ]]; }
 
   # Register the throwaway application and its service principal, and the undo of each.
   # Sets APPID (client appId) and CLIENT_SP_ID (client service-principal object id).
@@ -220,7 +224,7 @@ trap '' PIPE                                    # a reader of the output that is
     # read -d '' gives a non-zero status at the end of the text (the text has no NUL
     # character). That is normal, so the status is not a failure of the run.
     read -r -d '' _app_obj APPID _more <<< "$_ids" || true
-    if [[ -z "$_app_obj" || -z "$APPID" || -n "$_more" ]]; then
+    if ! is_id "$_app_obj" || ! is_id "$APPID" || [[ -n "$_more" ]]; then
       echo "[live] az ad app create did not return the object id and the appId (two values)." >&2
       echo "[live] LEFT BEHIND: the application '$APP'. Find its object id, then remove it:" >&2
       echo "[live]   az ad app list --display-name '$APP' --query \"[].id\" -o tsv" >&2
@@ -259,7 +263,13 @@ trap '' PIPE                                    # a reader of the output that is
       echo "[live] normal — the 'Consent to application' record is written when you Accept)."
       _caused=0
       if [ -t 0 ]; then
+        echo "[live] If you accept the consent and then stop the run at this prompt (Ctrl-C), the grant that"
+        echo "[live] you made has no undo. Press Enter: the run then finds the grant and removes it."
         read -r -p "[live] Press Enter after you accepted the consent (Ctrl-C to abort)... " _ignore || true
+        # From here to the `undo` line (or to the line that finds no grant), a grant of the
+        # person possibly exists and has no undo. If the read fails or a stop signal comes,
+        # the exit path names it; a stop signal waits for the registration of the undo.
+        change_next "a delegated grant to the application $APP, if a person accepted the consent"
         GRANT_ID="$(az rest --method get \
           --uri "https://graph.microsoft.com/v1.0/oauth2PermissionGrants?\$filter=clientId eq '${CLIENT_SP_ID}'" \
           --query "value[0].id" -o tsv)"
@@ -277,6 +287,7 @@ trap '' PIPE                                    # a reader of the output that is
           undo az rest --method delete \
             --uri "https://graph.microsoft.com/v1.0/oauth2PermissionGrants/${GRANT_ID}"
         else
+          change_next ""        # the read found no grant: no change is in progress
           echo "[live] no delegated grant was found. You did not accept, so no 'Consent to application' record was caused." >&2
         fi
       else

@@ -611,7 +611,7 @@ tests use stub programs in the place of the cloud CLIs, not a provider.
   fails in the same way, the script prints the `LEFT BEHIND` line for that
   command and continues with the other undo commands. Thus you can stop an undo
   command that hangs: press Ctrl-C three times, then run the printed command
-  yourself.
+  yourself. The count starts again for each undo command.
 - When the undo commands of the planned end are complete and each one was
   successful, the run is complete. From there the script ignores the stop
   signals: it only prints its last lines.
@@ -652,7 +652,7 @@ The exit codes of a live run of these five scripts:
 | 1 | An undo command failed. Or the script knows that the record was not caused: for example, no person accepted the consent, or the procedure has no live run. |
 | The exit code of a command | A command of the cloud CLI failed. The script ends with the exit code of that command (for example 1), after the undo commands. |
 | 2 | The script stopped before the first change. A necessary variable is not set, or a name that you set does not start with the prefix of the technique (`trr9017-`, `trr9018-`, `trr9020-`, `trr9038-`). TRR9038 a also stops with 2 if the `_Default` sink is disabled before the run. |
-| 129, 130, 143 | A signal stopped the run: `HUP`, `INT` or `TERM`. |
+| 129, 130, 143 | A signal stopped the run: `HUP`, `INT` or `TERM`. A signal that comes after a command failed does not change the exit code of that failure. |
 
 The exit code 2 thus can have more than one meaning. The last lines of the
 output show which one applies. A stop before the first change names the
@@ -751,8 +751,10 @@ sandbox when you do not use it, and to make it again with these pages.
   ``unexpected EOF while looking for matching `)'`` and the run ends with exit 2,
   not with the code of the signal. The undo commands of the registered changes
   run all the same, and the script names a change in progress as one that can
-  stay. This was seen in a test loop, not in a run of a script against a
-  provider. Other versions of bash were not tried.
+  stay. In an undo command that holds a command substitution (the delete request
+  of TRR9038 c), the same fault loses the signal: the undo command runs to its
+  end and the run goes on. This was seen in a test loop, not in a run of a
+  script against a provider. Other versions of bash were not tried.
 
 ## Sources
 
