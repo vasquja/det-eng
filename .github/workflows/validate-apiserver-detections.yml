@@ -543,8 +543,7 @@ jobs:
           # container on the runner's kernel and audit is not namespaced, so the
           # runner's auditd records the node's syscalls. Install it the same way
           # validate-detections.yml does on this runner image.
-          sudo apt-get update
-          sudo apt-get install -y auditd
+          bash .github/scripts/apt_install.sh auditd
           sudo systemctl start auditd || sudo service auditd start
           # The token is on a tmpfs that the kubelet mounts inside the node's own mount
           # namespace (a projected volume is a memory-backed emptyDir). A directory-tree

@@ -678,20 +678,13 @@ jobs:
       - name: Install audit, build tools, the workload's tools and the capture venv
         shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y auditd gcc python3-venv
-          # The workload's tools. A package this image lacks only skips its workload
-          # step (workload.sh checks for each tool), so a miss is a notice, not a failure.
+          # The workload's tools are optional. A package this image lacks only skips its
+          # workload step (workload.sh checks for each tool), so a miss is a notice from
+          # apt_install.sh, not a failure.
           tools="tcpdump gdb strace ltrace mtr-tiny iputils-arping iputils-tracepath
                  cryptsetup-bin keyutils fio make git curl linux-tools-common
                  linux-tools-$(uname -r)"
-          # shellcheck disable=SC2086  # word-split the package list on purpose
-          if ! sudo apt-get install -y $tools; then
-            for pkg in $tools; do
-              sudo apt-get install -y "$pkg" >/dev/null 2>&1 \
-                || echo "::notice title=benign-linux-live::package $pkg not installed; its workload step will skip"
-            done
-          fi
+          bash .github/scripts/apt_install.sh --optional "$tools" auditd gcc python3-venv
           # A venv on the SYSTEM Python runs cleanly under sudo (no LD_LIBRARY_PATH
           # needed, unlike the setup-python interpreter), as in validate-detections.
           /usr/bin/python3 -m venv /tmp/venv
