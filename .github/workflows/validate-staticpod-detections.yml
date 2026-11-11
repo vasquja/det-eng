@@ -38,6 +38,7 @@ on:
       - 'detections/k8s/audit-policy-staticpod.yaml'
       - 'detections/k8s/kind-staticpod-cluster.yaml'
       - 'detections/k8s/cri-pod-sensor.sh'
+      - '.github/scripts/apt_install.sh'
       - 'detections/k8s/auditd_file_events.py'
       - 'detections/sigma/T1543.005/**'
       - 'detections/validate_staticpod_detections.py'
@@ -136,6 +137,7 @@ jobs:
             'detections/k8s/audit-policy-staticpod.yaml' \
             'detections/k8s/kind-staticpod-cluster.yaml' \
             'detections/k8s/cri-pod-sensor.sh' \
+            '.github/scripts/apt_install.sh' \
             'detections/k8s/auditd_file_events.py' \
             'detections/sigma/T1543.005/' \
             'detections/validate_staticpod_detections.py' \

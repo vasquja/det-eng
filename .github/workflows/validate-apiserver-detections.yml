@@ -81,6 +81,7 @@ on:
       - 'detections/k8s/audit-policy-recommended.yaml'
       - 'detections/k8s/kind-apiserver-recommended-cluster.yaml'
       - 'detections/k8s/cri-pod-sensor.sh'
+      - '.github/scripts/apt_install.sh'
       - 'detections/k8s/auditd_file_events.py'
       - 'detections/benign/k8s/workload.sh'
       - 'detections/score_benign.py'
@@ -222,6 +223,7 @@ jobs:
             'detections/k8s/audit-policy-apiserver.yaml' \
             'detections/k8s/kind-apiserver-cluster.yaml' \
             'detections/k8s/cri-pod-sensor.sh' \
+            '.github/scripts/apt_install.sh' \
             'detections/k8s/auditd_file_events.py' \
             'detections/benign/k8s/workload.sh' \
             'detections/score_benign.py' \
@@ -308,6 +310,7 @@ jobs:
             'detections/k8s/audit-policy-recommended.yaml' \
             'detections/k8s/kind-apiserver-recommended-cluster.yaml' \
             'detections/k8s/cri-pod-sensor.sh' \
+            '.github/scripts/apt_install.sh' \
             'detections/k8s/auditd_file_events.py' \
             'detections/benign/k8s/workload.sh' \
             'detections/sigma/T1098.006/' \
