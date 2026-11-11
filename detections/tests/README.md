@@ -83,6 +83,7 @@ after each test or test class.
 | `test_quality.py` | `score_benign.py` and the benign ratchet, `check_null_safety.py`, `check_provider_mappings.py`, `k8s_policy_coverage.py`, `k8s_platforms_md.py`, `coverage_report.py`. |
 | `test_validators.py` | The cloud validator, the Linux validator (dry run, and its verdict code on canned results), the three Kubernetes validators (dry run and negative control), `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py`, `check_schedule_freshness.py`. |
 | `test_suite.py` | Rules of the suite as a whole: each self-test has a runner, the CI job runs every test on every pull request, no workflow step pipes a command into `tee` without pipefail, no step that runs a gate has `continue-on-error`, each known gap names a roadmap item, each planted artifact is used, this file agrees with the tests. |
+| `test_apt_install.py` | Tests of `.github/scripts/apt_install.sh`, the step that installs `auditd` in four workflows, with a stub for `sudo`, `apt-get` and `resolvectl`: when the runner cannot resolve the package mirror, the step tries again with public resolvers and puts the resolver back; a necessary package that is not installed fails the step; no workflow calls `apt-get` directly. |
 | `known_bad/<group>/` | The planted artifacts of that group. `known_bad/gatelib/` holds samples for `test_gatelib.py`. |
 
 The planted artifacts are outside `detections/sigma/`, the fixtures and the

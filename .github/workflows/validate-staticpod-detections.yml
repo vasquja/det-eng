@@ -240,8 +240,7 @@ jobs:
           # kind node is a container on the runner's kernel, and audit is not
           # namespaced, so the host auditd records the node's syscalls). Install it the
           # same way validate-detections.yml does on this runner image.
-          sudo apt-get update
-          sudo apt-get install -y auditd
+          bash .github/scripts/apt_install.sh auditd
           sudo systemctl start auditd || sudo service auditd start
           # The kubelet static-pod directory is bind-mounted from this host path
           # (kind-staticpod-cluster.yaml extraMount: the relative ./.kind/trr9003-manifests,

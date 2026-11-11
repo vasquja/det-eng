@@ -29,8 +29,7 @@ jobs:
 
       - name: Install audit, build tools and validator requirements
         run: |
-          sudo apt-get update
-          sudo apt-get install -y auditd gcc python3-venv
+          bash .github/scripts/apt_install.sh auditd gcc python3-venv
           # A venv on the system Python runs cleanly under sudo (no
           # LD_LIBRARY_PATH needed, unlike a setup-python interpreter).
           python3 -m venv /tmp/venv
