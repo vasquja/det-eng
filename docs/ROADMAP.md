@@ -115,6 +115,10 @@ What L7 did, and what it found for later items:
   documents of Google, as far as they were read, say that these cannot be deleted),
   and a `CreateExclusion` record whose user agent names `gcloud logging exclusions
   create`, a command that the Google Cloud SDK 570.0.0 does not have.
+  A fourth fixture differs from the live command, not from the provider:
+  `trr9013/attack.json` holds the subject `repo:trr9013-attacker/*` and a
+  description, and the script now sends an exact subject and no description (the
+  paired rule reads the issuer only).
   CI is green because the paired rules match these records, or do not read the
   field that differs (the value of the issuer, `webSsoConfig`, the user agent), and
   no gate compares a fixture with what the provider writes. The first live capture
