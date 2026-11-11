@@ -39,8 +39,8 @@ same command on each pull request. The command in the `Commands` block of
   successful sign-in, and an answer of a CLI or of an endpoint that the script
   cannot use each revert what they made and exit 1. A test holds each of these
   ends: in a scratch copy, a change of each `exit 1` and each `exit 2` (outside
-  the undo block) to `exit 0`, one at a time, made a test fail. That was done
-  for the six scripts and for the copy of the TRR9020 script for upstream filing. Two runs end with exit 0 and write a record that does not fire the
+  the undo block) to `exit 0`, one at a time, made a test fail. This check was done for the six scripts and for the copy of the TRR9020
+  script for upstream filing. Two runs end with exit 0 and write a record that does not fire the
   paired rule, by design: TRR9020 with a role that the rule does not match (the
   default `roles/viewer`), and TRR9038 b.
 - **A secret is on no command line and in no output.** The access token of
@@ -159,9 +159,9 @@ The block handles three things besides the planned end:
   run again. An undo command that fails while a signal comes starts again,
   because the signal possibly stopped it. It starts again two times at most:
   when its third run fails in the same way, the block prints the `LEFT BEHIND`
-  line for it and goes on with the other undo commands. So a person can stop an
-  undo command that hangs (Ctrl-C three times) and still gets the command to run
-  by hand. The count starts again for each undo command. A signal that comes when the run already ends (a command failed, the
+  line for it and continues with the other undo commands. So a person can stop an
+  undo command that hangs (Ctrl-C three times). The `LEFT BEHIND` line shows the
+  command: run it manually. The count starts again for each undo command. A signal that comes when the run already ends (a command failed, the
   script stopped itself) does not skip the undo. A reader of the output that is
   gone (`| head`, a `tee` that a Ctrl-C stopped) does not stop the undo (the block
   ignores `SIGPIPE`).
@@ -185,11 +185,11 @@ The block handles three things besides the planned end:
 
 One limit is known and is not closed. With bash 5.2.21, a stop signal that comes
 at the moment when bash starts a command substitution (`$( )`) makes bash print
-`unexpected EOF while looking for matching ')'`, and the trap of the signal does
+``unexpected EOF while looking for matching `)'``, and the trap of the signal does
 not run. In a script with `set -e` the run then ends with exit 2, not with the code
 of the signal. The exit path runs all the same: it reverts the registered changes
 and names a change in progress. In a test loop with a signal each 0.3 ms, each form
-of command substitution gave that error some times (in an array assignment, in a
+of command substitution gave that error in some runs (in an array assignment, in a
 function, at the top level), and `printf -v` gave it in none of 14 runs. So the block
 holds no command substitution (a test checks that), and a registration is not lost
 in this way. A script line such as `ID="$(az ... create ...)"` still can be hit: the

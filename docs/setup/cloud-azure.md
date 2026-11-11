@@ -780,9 +780,9 @@ Things that can make a live run fail, or give no record:
 - **`TRR9017_TENANT` is not set.** The TRR9017 script stops before the first
   change with exit 2, and names the variable. It uses no placeholder tenant.
 - **`TRR9017_APP_NAME` does not start with `trr9017-`.** For a, b, c and e, the
-  script stops before the first change with exit 2. If an application with the
+  script stops before the first change with exit 2. If one application with the
   same display name is in the tenant, `az` uses it again, and the undo then
-  deletes it. Do not set this variable unless you need a second name.
+  deletes it. (With two or more such applications, `az` stops with an error.) Do not set this variable unless you need a second name.
 - **A create command does not give one ID.** If `az ad sp create` or one of the
   two `POST` requests ends with exit 0 and its answer is not one ID (it is
   empty, or it holds a character that is not a letter, a digit, `-` or `_`),
@@ -792,8 +792,8 @@ Things that can make a live run fail, or give no record:
   runs the undo commands of the earlier changes: it deletes the application,
   and the service principal if the script has its ID. Do the check that
   nothing stays behind. That check has no command for a grant or an app role
-  assignment: it is not verified that the delete of the service principal
-  removes them.
+  assignment. It is not known if Entra removes them when the service principal
+  is deleted.
 - **Entra does not find a new object.** A new application can need some seconds
   before the next `az` command finds it. That command then fails. The script
   runs its undo commands and prints `[live] FAILED`. Do the check that nothing

@@ -12,7 +12,7 @@ display_name: "Steal Application Access Token (Entra illicit OAuth consent + dev
 # with exit 1 when no record was caused. A run that stops in the middle of a command
 # that makes a change can leave that change. No live run against a tenant was done (see
 # docs/setup/cloud-azure.md, "Not verified"). The live run needs TRR9017_TENANT. It stops
-# before any change (exit 2) when that is not set, or when TRR9017_APP_NAME is set to a
+# before any change (exit 2) when that is not set, or (a, b, c, e) when TRR9017_APP_NAME is set to a
 # name that does not start with trr9017-. A create command whose answer is not one ID
 # stops the run (exit 1). CI
 # validation runs the paired Sigma rules over the committed Entra audit/sign-in fixtures in

@@ -128,7 +128,7 @@ if [[ "${TRR9038_LIVE:-0}" == "1" || "${2:-}" == "--live" ]]; then
   }
   undo_now() {                                    # the planned end: revert each change, then go on only if all is good
     _undo_run
-    _UNDOING=0                                    # from here a stop signal stops the run at once
+    _UNDOING=0                                    # from here to the last line, a stop signal stops the run at once
     if [[ $_SIG -ne 0 ]]; then exit "$_SIG"; fi   # a stop signal came: do not print "done"
     if [[ $_LEFT -ne 0 ]]; then exit 1; fi        # an undo failed: do not print "done"
     trap '' HUP INT TERM                          # each change is reverted: a late stop signal must not fail a good run

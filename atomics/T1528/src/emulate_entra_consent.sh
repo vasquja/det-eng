@@ -112,8 +112,8 @@ if [[ "${TRR9017_LIVE:-0}" == "1" || "${2:-}" == "--live" ]]; then
   fi
   # The name of the throwaway application starts with trr9017-. The check for leftovers
   # (docs/setup/cloud-azure.md) looks for that start of the name. And the undo then never
-  # deletes an application of yours: if an application with the same display name is in
-  # the tenant, az uses it again. Stop before any change when a name that you set does not
+  # deletes an application of yours: if one application with the same display name is in
+  # the tenant, az uses it again (with two or more, az stops with an error). Stop before any change when a name that you set does not
   # start with trr9017-.
   if [[ "$PROC" != "d" && "$APP" != trr9017-* ]]; then
     echo "[live] TRR9017_APP_NAME must start with trr9017- (it is '$APP'). Stopping before any change." >&2
@@ -155,7 +155,7 @@ _undo_run() {                                   # run the registered commands, l
 }
 undo_now() {                                    # the planned end: revert each change, then go on only if all is good
   _undo_run
-  _UNDOING=0                                    # from here a stop signal stops the run at once
+  _UNDOING=0                                    # from here to the last line, a stop signal stops the run at once
   if [[ $_SIG -ne 0 ]]; then exit "$_SIG"; fi   # a stop signal came: do not print "done"
   if [[ $_LEFT -ne 0 ]]; then exit 1; fi        # an undo failed: do not print "done"
   trap '' HUP INT TERM                          # each change is reverted: a late stop signal must not fail a good run

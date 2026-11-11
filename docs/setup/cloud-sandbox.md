@@ -613,8 +613,8 @@ tests use stub programs in the place of the cloud CLIs, not a provider.
   command that hangs: press Ctrl-C three times, then run the printed command
   yourself. The count starts again for each undo command.
 - When the undo commands of the planned end are complete and each one was
-  successful, the run is complete. From there the script ignores the stop
-  signals: it only prints its last lines.
+  successful, the run is complete. After that, the script ignores the stop
+  signals. It only prints its last lines.
 - If the program that reads the output stops (for example `| head`), the undo
   commands run to their end.
 - If an undo command fails, the script prints
@@ -657,8 +657,9 @@ The exit codes of a live run of these five scripts:
 The exit code 2 thus can have more than one meaning. The last lines of the
 output show which one applies. A stop before the first change names the
 variable, the name or the state that stopped the run. A command that failed
-with the exit code 2 prints its own error message, and the script then prints
-`[live] FAILED (exit 2)`. A third cause is a fault of bash: see the last item of
+with the exit code 2 prints its own error message. The script prints
+`[live] FAILED (exit 2)` in each condition in which the undo block is in use, so
+read the lines before that line. A third cause is a fault of bash: see the last item of
 [Not verified](#not-verified).
 
 The TRR9023 script makes no change, so it has no undo commands. Its exit codes

@@ -60,7 +60,7 @@ The order matters. Tests for the gates come before each change to the gates.
 | R6 | **Mutation ratchet** (design 4.6). Build mutants of each rule. The count of surviving mutants for a rule must not rise. | not started | R2 | A pull request that adds a dead or over-broad item to a rule fails. |
 | R1 | **Gate code from `main`** (design 4.1). Each checking job runs the gate code of `main`, not of the pull request. | not started | T2, T5 | A pull request that changes a gate and a rule together cannot make its own rule pass. Until T2 and T5 are done, each technique pull request must edit the validators, so this item waits for them. |
 | R8 | **Approvals as checked properties** (design 4.8). A waiver or a budget is accepted only when a machine can check its conditions. | not started | R5 | A waiver that does not meet its conditions fails a check. |
-| R9 | **Live cloud capture** (design 4.9). | in progress | owner | The setup guides and the smoke test are merged (`docs/setup/`). Open: the owner creates the accounts; `atomics/lib/live.sh` with an undo stack; the capture workflow; one supervised run. No gate reads the live emulation scripts today. Thus a live script without an undo trap has no gate test until `atomics/lib/live.sh` and its lint exist. |
+| R9 | **Live cloud capture** (design 4.9). | in progress | owner | The setup guides and the smoke test are merged (`docs/setup/`). Open: the owner creates the accounts; `atomics/lib/live.sh` with an undo stack; the capture workflow; one supervised run. The job `emulation-scripts` (L7) tests six live scripts with stub CLIs; the other live scripts have no test. Thus a live script without an undo block has no test until `atomics/lib/live.sh` and its lint exist. |
 
 The gate tests (R2) record known gaps. A known gap is an artifact that a gate
 should reject and does not reject today. `python3 -B detections/tests/gatelib.py --gaps`
@@ -111,7 +111,7 @@ What L7 did, and what it found for later items:
 - R9 must keep these properties of the undo block. A script registers the undo
   after the command that makes the change, so a stop signal during that command
   must wait for the registration (`change_next`). An undo command that a signal
-  stops must start again, but not without end (two times at most), and one that
+  stops must start again, two times at most, and one that
   ran to its end must not run again. A stop signal that comes when the run already
   ends must not skip the undo: bash does not start the EXIT trap a second time, so
   the signal trap must not call a plain `exit`. A reader of the output that goes
@@ -120,14 +120,15 @@ What L7 did, and what it found for later items:
   substitution: with bash 5.2.21, a stop signal at the start of a `$( )` ends the
   run with a syntax error of bash (exit 2; the exit path runs all the same). The
   lines of a script that read the answer of a create command with `$( )` still
-  have that fault: R9 can read such an answer without a command substitution. The
+  have that fault: R9 can read such an answer from a file (a process substitution has the same fault). The
   table "What is open" in
   [`setup/cloud-sandbox.md`](setup/cloud-sandbox.md#problems-in-the-live-scripts)
   lists the scripts that do not have the block.
 - For R5 and R9, three fixtures hold a record that the provider possibly does not
   write. This is not confirmed, because no live record exists. `trr9018/attack.json`:
   a provider with the GitHub issuer and no attribute condition (Google requires a
-  condition for that issuer). `trr9020/attack.json`: a workforce provider with no
+  condition for that issuer), and with the provider ID `gh` (the SDK says that an ID
+  has 4 to 32 characters). `trr9020/attack.json`: a workforce provider with no
   `oidc.webSsoConfig` (the SDK makes that field necessary). `trr9038/attack.json`: a
   successful delete of the `_Default` sink and of the `_Default` bucket (the
   documents of Google, as far as they were read, say that these cannot be deleted),
