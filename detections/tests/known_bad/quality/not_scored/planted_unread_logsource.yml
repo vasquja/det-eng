@@ -1,0 +1,25 @@
+title: PLANTED known-bad artifact - Rule On A Log Source That No Benign Slice Reads
+id: 7a41c0de-3b5f-4e19-8c62-d0f9b2a6e358
+status: experimental
+description: |
+  PLANTED ARTIFACT of detections/tests. It is not a detection of this repository.
+  The defect: the log source of this rule (planted_product / planted_service) is
+  the log source of no slice of the benign corpus (detections/benign/slices/), so
+  detections/score_benign.py cannot score the rule: it has no false-positive
+  evidence. A rule that is not scored needs an entry under `unscored` in
+  detections/benign/budgets.json, with the reason, which a human approves. This
+  rule has none. detections/score_benign.py --check --enforce must reject it as
+  NOT EXEMPT (detections/tests/test_quality.py, case sb-rule-not-scored).
+author: det-eng
+date: 2026/11/11
+tags:
+  - attack.discovery
+  - attack.t1613
+logsource:
+  product: planted_product
+  service: planted_service
+detection:
+  selection:
+    verb: 'get'
+  condition: selection
+level: low

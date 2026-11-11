@@ -1,0 +1,12 @@
+"""
+PLANTED ARTIFACT of detections/tests. It is not a module of this repository.
+
+A test plants this file as `detections/sigma.py` (detections/tests/test_sufficiency.py).
+The gates run as `python3 detections/<script>.py`, so detections/ is first on
+sys.path, and a module named `sigma` there wins over pySigma's `sigma` namespace
+package: every gate and validator would compile its rules with this file, not
+with pySigma. The import guard of detections/sigma_eval.py must refuse to import
+pySigma while this file is there.
+"""
+
+raise ImportError("planted detections/sigma.py was imported in place of pySigma")

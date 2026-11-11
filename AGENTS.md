@@ -115,6 +115,8 @@ python3 detections/score_benign.py --check --enforce
 # Null safety: every rule gives the same hits in two- and three-valued logic
 python3 detections/check_null_safety.py
 
+python3 -B detections/tests/gatelib.py --run   # gate tests: each gate rejects its planted bad artifacts
+
 # Kubernetes platforms (offline): audit-policy simulator and provider field mappings.
 # After a Kubernetes rule, case, lab policy or MANIFEST change: --update / --write.
 python3 detections/k8s_policy_coverage.py --check

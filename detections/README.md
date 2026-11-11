@@ -643,6 +643,32 @@ A broken control prints the events behind its hit. A Linux case prints its
 kernel-probe result. `--json PATH` writes the same results machine-readably for an
 agent to parse.
 
+## Gate tests (the gates test themselves)
+
+The checks in this directory, the validators and the lints decide if a detection
+is done. A change to one of them can stop it from rejecting bad work, and the
+check then still passes. [`tests/`](tests/README.md) holds a test suite for them:
+
+- Each test puts one planted bad artifact (`tests/known_bad/`) in a throwaway copy
+  of the repository and runs a gate there, with the command of its CI step. The
+  gate must reject the artifact for the intended reason: a failure for another
+  reason does not count.
+- A control proves that the same gate accepts the unmodified copy.
+- A **known gap** is an artifact that a gate should reject and does not reject
+  today. Its test passes while the gap is open and fails when the gate starts to
+  reject the artifact. `python3 detections/tests/gatelib.py --gaps` lists the
+  known gaps, each with the roadmap item that closes it.
+
+```bash
+python3 -B detections/tests/gatelib.py --run     # all tests, in parallel (about four minutes in CI)
+```
+
+The `gate-tests` job of `.github/workflows/detection-quality.yml` runs this command
+on every pull request. When a change adds a check to a gate, add a planted
+artifact that the new check must reject. [`tests/README.md`](tests/README.md)
+tells you how to write a case. It also gives the rule for a known gap: the gap is
+closed by a change to the gate, and never by deleting its case.
+
 ## Continuous validation (CI)
 
 `.github/workflows/validate-detections.yml` runs this loop on every pull request,
@@ -661,6 +687,8 @@ It also runs `schedule-freshness` (not on push), which reads the Actions API; se
 below. It also runs `provider-mappings` (not a required check; on a pull request only
 when a rule, a sidecar, the pipelines or the harness change), which proves the
 managed-cluster field mappings ([Provider field mappings](#provider-field-mappings-aks-gke-eks)).
+Its `gate-tests` job (not a required check) runs the tests of the gates themselves
+([Gate tests](#gate-tests-the-gates-test-themselves)).
 
 The `platform-coverage` job of the same workflow runs
 `python3 detections/k8s_policy_coverage.py --self-test --check`, then
