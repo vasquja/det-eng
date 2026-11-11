@@ -6,7 +6,7 @@ detection-quality.yml job schedule-freshness).
     CloudValidator         detections/validate_cloud_detections.py (and --dry-run)
     LinuxValidatorDryRun   detections/validate_detections.py --dry-run (needs gcc)
     LinuxValidatorOffline  detections/validate_detections.py, real mode, with the
-                           host replaced by canned results (no root, no auditd)
+                           host replaced by canned events (no root, no auditd)
     K8sValidator           detections/validate_k8s_detections.py: --dry-run, and
                            the negative-control step (--expect-miss)
     StaticPodValidator     detections/validate_staticpod_detections.py: the same two
@@ -85,6 +85,8 @@ class CloudValidator(gatelib.GateCase):
     ATTACK = "detections/cloud/fixtures/trr9012/attack.json"
     BENIGN = "detections/cloud/fixtures/trr9012/benign.json"
     MARKER = "trr9012-leaked-key-user"
+
+    RULE = "detections/sigma/T1078.004/aws_leaked_access_key_recon.yml"
 
     def manifest_rules(self, tree):
         """The (folder, rule file) pairs of the gate's MANIFEST, read from its source."""
@@ -174,15 +176,20 @@ class CloudValidator(gatelib.GateCase):
         "cloud-benign-empty",
         gate="detections/validate_cloud_detections.py",
         reason="A benign baseline that holds no record passes as `benign baseline clean "
-               "(0 record(s))`: a negative control with nothing in it cannot fail. No other "
-               "gate reads the size of the baseline (check_sufficiency.py, rule_cases.py, "
-               "check_null_safety.py and score_benign.py accept the same tree).",
-        closes="unplanned")
+               "(0 record(s))`: a negative control with nothing in it cannot fail. "
+               "check_sufficiency.py, rule_cases.py, check_null_safety.py and score_benign.py "
+               "accept the same tree. The sufficiency-ratchet job rejects the planted change "
+               "on a pull request, because the records that are gone were verified negatives "
+               "of a rule of the base branch. So the gap is open for a new rule that comes "
+               "with an empty baseline, and on every push and weekly run.",
+        closes="R2c")
     def test_gap_empty_benign_baseline(self):
         """WANTED: a rule whose benign baseline holds no record fails, because its
         negative control is vacuous (definition of done 2 needs a hard baseline)."""
         tree = self.tree()
         tree.write(self.BENIGN, "[]\n")
+        # The artifact is bad: the negative control of the rule has no record.
+        self.assertEqual(tree.read_json(self.BENIGN), [])
         result = tree.run(self.GATE)
         # The gate read the planted file: it graded no benign record for this rule
         # (the grade line names no kind; it is printed for a PASS and for a FAIL).
@@ -193,6 +200,45 @@ class CloudValidator(gatelib.GateCase):
             result,
             r"^(FAIL|ERROR)\s+\[TRR9012 AWS\] aws_leaked_access_key_recon\.yml: .*benign.*"
             r"(empty|no record|0 record|vacuous|proves nothing)")
+
+    @gatelib.known_gap(
+        "cloud-fixture-missing-is-pending",
+        gate="detections/validate_cloud_detections.py",
+        reason="A rule of MANIFEST whose benign fixture is missing is `PENDING`, and the run "
+               "exits 0 with `All N-1 external-cloud detection(s) fired`: the rule has no "
+               "proof, and the validate job is green. A missing attack fixture takes the "
+               "same path. Other jobs still stop the planted change: null-safety fails, with "
+               "a FileNotFoundError traceback and no message that names the rule, and the "
+               "sufficiency-ratchet job fails on a pull request (verified negatives are "
+               "gone). check_sufficiency.py only warns (R2).",
+        closes="R2c")
+    def test_gap_missing_fixture_is_pending(self):
+        """WANTED: a rule of MANIFEST that exists, and whose fixture does not, fails.
+        PENDING is for a rule that is not built yet."""
+        tree = self.tree()
+        rules = self.manifest_rules(tree)
+        self.assertIn(tuple(self.RULE.split("/")[-2:]), rules)
+        tree.remove(self.BENIGN)
+        # The artifact is bad: the rule and its attack fixture are in the tree, and the
+        # baseline that MANIFEST names for its negative control is not.
+        self.assertTrue(tree.exists(self.RULE) and tree.exists(self.ATTACK))
+        self.assertFalse(tree.exists(self.BENIGN))
+        self.assertIn(f'"{self.BENIGN.split("fixtures/")[1]}"', tree.read(self.GATE))
+        result = tree.run(self.GATE)
+        # The gate reached the rule (it compiled it) and gave it no PASS: nothing in
+        # this run proved the rule. Both hold for a PENDING line and for a failure.
+        self.assert_saw(result, r"^OK \(compile\)  T1078\.004/aws_leaked_access_key_recon\.yml  "
+                                r"\[TRR9012\]$")
+        self.assertNotRegex(result.stdout, r"(?m)^PASS +\[TRR9012\b")
+        if result.returncode == 0:
+            # Today: a green run that counts one detection fewer than MANIFEST holds.
+            self.assert_saw(result, rf"^All {len(rules) - 1} external-cloud detection\(s\) "
+                                    r"fired on their recorded attack fixtures, and every "
+                                    r"negative control held\.$")
+        self.assert_rejects(
+            result,
+            r"^(FAIL|ERROR)\s+\[TRR9012[^\]]*\] aws_leaked_access_key_recon\.yml: .*"
+            r"(fixture|benign\.json)")
 
 
 class LinuxValidatorDryRun(gatelib.GateCase):
@@ -252,8 +298,9 @@ class LinuxValidatorOffline(gatelib.GateCase):
     It replaces the five functions that touch the host (audit_available,
     load_audit_rules, unload_audit_rules, compile_atomic, run) and takes the canned
     events from the rule sidecars of the copy. The verdict code is the validator's
-    own: judge(), the control table, grade_control() and the exit code. Without an
-    argument the canned run is healthy; one argument plants one defect in it."""
+    own: process_tree() (which records are the stimulus's own), judge(), the control
+    table, grade_control() and the exit code. Without an argument the canned run is
+    healthy; one argument plants one defect in it."""
 
     GATE = "detections/validate_detections.py"
     DRIVER = "linux_offline_run.py"
@@ -340,6 +387,48 @@ class LinuxValidatorOffline(gatelib.GateCase):
             result,
             r"^  \[BROKEN\] afinet_stream_socket\.c -> afinet_raw_socket\.yml +vacuous: the "
             r"control made no audited syscall$",
+            exit_code=1)
+        self.assert_saw(result, r"^\d+ passed, 0 skipped \(kernel feature missing\), 0 failed; "
+                                r"1 control\(s\) broken\.$")
+
+    def test_rejects_atomic_whose_syscalls_the_kernel_rejected(self):
+        """Definition of done 1 (fires). The logic of afinet_raw_socket.yml matches the
+        atomic's own record, but the kernel rejected the syscall (success=no, EPERM).
+        That is an attempt, not an execution: it does not prove the detection."""
+        result = self.canned_run("--rejected", "atomics/T1040/src/afinet_raw_socket_behavioral.c")
+        self.assert_rejects(
+            result,
+            r"^  \[ FAIL \] afinet_raw_socket\.yml +fired only on syscalls the kernel rejected "
+            r"\(socket: EPERM\): an attempt, not an execution$",
+            exit_code=1)
+        self.assert_saw(result, r"^\d+ passed, 0 skipped \(kernel feature missing\), 1 failed; "
+                                r"0 control\(s\) broken\.$")
+        # The rejected record is the stimulus's own: only the success gate fails it.
+        self.assert_saw(result, r"^ +audited syscalls from the tree: socket x1 \(EPERM\)$")
+
+    def test_rejects_mutant_control_that_fires_the_rule(self):
+        """Definition of done 2 (stays quiet). The process tree of a mutant makes the
+        events of the attack itself: the rule fires on its own negative control, so
+        the control is broken."""
+        result = self.canned_run("--fires", "detections/controls/afinet_stream_socket.c")
+        self.assert_rejects(
+            result,
+            r"^  \[BROKEN\] afinet_stream_socket\.c -> afinet_raw_socket\.yml +passed: the a1 "
+            r"\(SOCK_RAW\) argument constraint was not enforced$",
+            exit_code=1)
+        self.assert_saw(result, r"^\d+ passed, 0 skipped \(kernel feature missing\), 0 failed; "
+                                r"1 control\(s\) broken\.$")
+
+    def test_rejects_allowlisted_rerun_that_fires_the_rule(self):
+        """Definition of done 2 (stays quiet). The atomic runs again under a name of
+        the rule's allowlist (`ping`), and its records still fire the rule: the
+        allowlist filter does not suppress what it is written to suppress."""
+        result = self.canned_run("--fires",
+                                 "atomics/T1040/src/afinet_raw_socket_behavioral.c as ping")
+        self.assert_rejects(
+            result,
+            r"^  \[BROKEN\] afinet_raw_socket_behavioral\.c as 'ping' -> afinet_raw_socket\.yml "
+            r"+passed: the allowlist filter did not suppress an allowlisted process$",
             exit_code=1)
         self.assert_saw(result, r"^\d+ passed, 0 skipped \(kernel feature missing\), 0 failed; "
                                 r"1 control\(s\) broken\.$")
@@ -460,14 +549,16 @@ class K8sValidator(gatelib.GateCase):
         reason="The negative control holds on an empty pre-emulation audit log (`Loaded 0 "
                "audit event(s)`): no rule can match a log without records, so the control "
                "proves nothing, and the step passes.",
-        closes="unplanned")
+        closes="R2c")
     def test_gap_negative_control_on_an_empty_log(self):
         """WANTED: a negative control that read no record fails as vacuous. The
         capture step always creates the file (a shell redirect), so an empty file
         is what a capture that recorded nothing leaves."""
         good = self.good()
-        write_log(good, self.LOG)
+        # The artifact is bad: the log of the negative control holds no record.
+        self.assertEqual(write_log(good, self.LOG), 0)
         result = good.run_step(self.negative_control_step())
+        # The gate read that log (the line is printed before any verdict).
         self.assert_saw(result, r"^Loaded 0 audit event\(s\) from ")
         self.assert_rejects(
             result,
@@ -569,14 +660,21 @@ class StaticPodValidator(gatelib.GateCase):
                "(`Loaded 0 audit event(s)`): the validator fails an empty CRI log and a "
                "file log without a kubeadm write as vacuous, but it has no such check "
                "for the audit log.",
-        closes="unplanned")
+        closes="R2c")
     def test_gap_negative_control_on_an_empty_audit_log(self):
         """WANTED: an audit log without records fails the negative control, as an
         empty CRI log does."""
         good = self.good()
-        self.write_logs(good, audit=False)
+        # The artifact is bad: the audit log holds no record. The other two logs
+        # hold the records of the control, so this is the one defect.
+        audit, cri, files = self.write_logs(good, audit=False)
+        self.assertEqual(audit, 0)
+        self.assertGreater(min(cri, files), 0)
         result = good.run_step(self.negative_control_step())
+        # The gate read the three logs (the lines are printed before any verdict).
         self.assert_saw(result, r"^Loaded 0 audit event\(s\) from ")
+        self.assert_saw(result, rf"^Loaded {cri} pod sandbox\(es\) from ")
+        self.assert_saw(result, rf"^Loaded {files} file event\(s\) from ")
         self.assert_rejects(
             result,
             r"(?i)^\s*(NEGATIVE CONTROL FAILED|CONTROL FAILED|FAILED|ERROR)\b.*(\baudit\b.*"
@@ -676,13 +774,15 @@ class ApiserverValidator(gatelib.GateCase):
         reason="The negative control holds when the three pre-emulation logs are empty "
                "files (`Loaded 0 audit event(s)`, 0 sandboxes, 0 file events): no rule can "
                "match, so the control proves nothing, and the step passes.",
-        closes="unplanned")
+        closes="R2c")
     def test_gap_negative_control_on_empty_logs(self):
         """WANTED: a negative control that read no record fails as vacuous (variant of
         k8s-negative-control-empty-log, with the CRI and file logs empty too)."""
         good = self.good()
-        self.write_logs(good, empty=True)
+        # The artifact is bad: no log of the negative control holds a record.
+        self.assertEqual(self.write_logs(good, empty=True), (0, 0, 0))
         result = good.run_step(self.negative_control_step())
+        # The gate read the three logs (the lines are printed before any verdict).
         self.assert_saw(result, r"^Loaded 0 audit event\(s\) from ")
         self.assert_saw(result, r"^Loaded 0 pod sandbox\(es\) from ")
         self.assert_saw(result, r"^Loaded 0 file event\(s\) from ")
@@ -744,19 +844,15 @@ class TrrLint(gatelib.GateCase):
             good.run_step(self.step()),
             rf"^TRR lint passed: {len(self.reports(good))} report\(s\) conform\.$")
 
-    @gatelib.known_gap(
-        "trr-ci-exit-code-masked",
-        gate="lint-trr.yml, job trr-lint, step `Lint TRRs`",
-        reason="The step pipes trr_lint.py into `tee` and sets no `shell: bash`, so GitHub "
-               "runs it with `bash -e` and no pipefail: the step takes the exit code of "
-               "`tee`, and a failed lint (`TRR lint failed: 1 issue(s)`) leaves the job green.",
-        closes="unplanned")
-    def test_gap_ci_step_passes_when_the_lint_fails(self):
-        """WANTED: the step fails when the lint fails (the other gates' steps set
-        `shell: bash`, which enables pipefail)."""
+    def test_ci_step_fails_when_the_lint_fails(self):
+        """The step pipes the lint into `tee`. Run it as GitHub Actions does: the exit
+        code of the lint must reach the step. The step sets `shell: bash`, which
+        enables pipefail; without it the step takes the exit code of `tee`, and a
+        failed lint leaves the job green. (This was the known gap
+        trr-ci-exit-code-masked until the step got `shell: bash`.)"""
         tree = self.without_a_required_section()
         result = tree.run_step(self.step())
-        # The lint ran in the step and failed: only the step's exit code is wrong.
+        # The lint ran in the step and named the planted defect.
         self.assert_saw(result, r"^    - missing required section: ## Technical Background$")
         self.assert_rejects(result, r"^TRR lint failed: 1 issue\(s\) across \d+ report\(s\)\.$",
                             exit_code=1)
@@ -810,8 +906,9 @@ class SigmaRegexLint(gatelib.GateCase):
 
     The sigma-lint job passes --require-re2, and google-re2 is not in
     detections/requirements.txt. With the re2 module the tests pass the argument of
-    CI; without it they run the default path, and one test proves that the
-    argument of CI fails closed."""
+    CI; without it they run the default path. One test proves that the argument of
+    CI fails closed: it hides the module from the gate, so it runs with and
+    without google-re2."""
 
     GATE = ".github/scripts/check_sigma_regex.py"
     PARTS = (".github", "detections/sigma")
@@ -851,13 +948,28 @@ class SigmaRegexLint(gatelib.GateCase):
             exit_code=1)
         self.assert_saw(result, r"^check_sigma_regex: 1 problem\(s\) in \d+ \|re value\(s\) ")
 
-    @unittest.skipIf(RE2, "the re2 module is installed: --require-re2 has its engine")
     def test_rejects_require_re2_without_the_re2_module(self):
         """The argument of CI fails closed when the second engine is missing: the
-        lint does not pass on Python `re` alone."""
+        lint does not pass on Python `re` alone.
+
+        A module `re2` that cannot be imported is planted beside the gate. Python
+        looks in the directory of the script first, so the gate gets an ImportError
+        for `import re2`, as on a machine without google-re2, also when the tests'
+        Python has the package."""
+        tree = self.tree()
+        self.assertFalse(tree.exists(".github/scripts/re2.py"))
+        tree.write(".github/scripts/re2.py",
+                   "raise ImportError('PLANTED by detections/tests: no module named re2')\n")
+        result = tree.run(self.GATE, "--require-re2")
         self.assert_rejects(
-            self.good().run(self.GATE, "--require-re2"),
-            r"^ERROR: --require-re2 given but the re2 module is missing", exit_code=1)
+            result, r"^ERROR: --require-re2 given but the re2 module is missing", exit_code=1)
+        self.assertNotIn("check_sigma_regex: OK", result.stdout)
+        # CONTROL of the planted module: without the argument of CI the same copy
+        # passes on Python `re` alone, so the argument is what rejects.
+        self.assert_accepts(
+            tree.run(self.GATE),
+            r"^check_sigma_regex: OK, \d+ \|re value\(s\) across \d+ rule file\(s\) are "
+            r"portable; compiled with Python re only \(RE2 not installed\)$")
 
 
 class ScheduleFreshness(gatelib.GateCase):

@@ -81,6 +81,11 @@ REPO = os.path.dirname(os.path.dirname(TESTS))      # the checkout that holds th
 KNOWN_BAD = os.path.join(TESTS, "known_bad")        # the planted artifacts
 PYTHON = sys.executable                             # the gates run with the tests' Python
 DEFAULT_TIMEOUT = 300                               # seconds, for one gate run
+# Seconds for the tests of one class in `gatelib.py --run`. It is shorter than the
+# timeout of the gate-tests job (15 minutes; test_suite.py compares the two): the
+# runner, not GitHub, ends a class that hangs, so the log still holds the output of
+# every class and the job summary is written.
+CLASS_TIMEOUT = 600
 
 # Parts of the repository for Tree(parts) and GateCase.PARTS. A part is a path
 # relative to the repository root (a file, a directory, or a glob pattern).
@@ -103,12 +108,16 @@ _NO_NETWORK = "http://127.0.0.1:9"
 _OPEN_GAPS_FILE = "DETENG_GATES_OPEN_GAPS"
 
 # The roadmap items that can close a known gap: the IDs of section 1 ("Trust") of
-# docs/ROADMAP.md, without R2, which is this suite. test_suite.py proves that each
-# key is an item of that file and that no open gap names an item that is `done`.
-# "unplanned": no item closes the gap as the roadmap is written today.
+# docs/ROADMAP.md, without R2, which is this suite. Every known gap names one of
+# them: a gap that no item closes is a gap that nobody will close, so `unplanned`
+# is not a value (add the item to docs/ROADMAP.md and to this table first).
+# test_suite.py proves that the keys are the items of that file and that no open
+# gap names an item that is `done`.
 ROADMAP = {
     "R1": "gate code from main, not from the pull request",
     "R2b": "Linux controls are not vacuous",
+    "R2c": "negative controls and baselines cannot be empty",
+    "R2d": "hygiene and report truth",
     "R3": "external records that the agent did not write",
     "R4": "the captures of CI, harvested into committed evidence",
     "R5": "provenance tiers",
@@ -116,7 +125,6 @@ ROADMAP = {
     "R7": "representation variants in the oracle (JSON text, letter case, RE2)",
     "R8": "approvals as checked properties (waivers, budgets, expected losses)",
     "R9": "live cloud capture",
-    "unplanned": "no roadmap item closes it: a human decides",
 }
 
 _TRACEBACK = "Traceback (most recent call last)"
@@ -354,18 +362,26 @@ def known_gap(gap_id, *, gate, reason, closes, today="accepts", _registry=None):
 
     Write the test body as the wanted behaviour, ending in one assert_rejects():
 
-        @gatelib.known_gap("hidden-rule-file", gate="detections/rule_cases.py",
-                           reason="a rule in a dotfile is never read", closes="unplanned")
-        def test_gap_hidden_rule_file(self):
-            tree = self.tree()
-            tree.plant("sufficiency/hidden_rule/hidden.yml", "detections/sigma/T1040/.hidden.yml")
-            self.assert_rejects(tree.run("detections/rule_cases.py"), r"\\.hidden\\.yml")
+        @gatelib.known_gap("k8s-negative-control-empty-log",
+                           gate="detections/validate_k8s_detections.py --expect-miss",
+                           reason="The negative control holds on a log with no record.",
+                           closes="R2c")
+        def test_gap_negative_control_on_an_empty_log(self):
+            good = self.good()
+            write_log(good, "pre-emulation-audit.log")      # the artifact: an empty log
+            result = good.run_step(self.negative_control_step())
+            self.assert_saw(result, r"^Loaded 0 audit event\\(s\\) from ")
+            self.assert_rejects(result, r"^NEGATIVE CONTROL FAILED: .*no audit event")
 
     gap_id  unique in the suite (the case id).
-    gate    the script (or workflow job) that should reject the artifact.
-    reason  one sentence: what passes today, and why that is wrong.
-    closes  the roadmap item that closes the gap: a key of ROADMAP (`R7`), or
-            `unplanned` when no item does.
+    gate    the script (or workflow job) that should reject the artifact. Plain
+            text, without a backtick and without `|`: the Markdown list of the gaps
+            puts it in a code span of a table cell.
+    reason  what passes today, and why that is wrong. Say only what is true for the
+            planted artifact and for the repository: where another job or the merge
+            policy still stops the planted change, say so.
+    closes  the roadmap item that closes the gap: a key of ROADMAP (`R7`). Every gap
+            names one; `unplanned` is refused.
     today   what the gate does today, a NotRejected kind: `accepts` (exit 0, the
             default), `wrong-reason` (it fails, but not for this reason) or `crash`
             (it fails with a traceback only).
@@ -383,13 +399,18 @@ def known_gap(gap_id, *, gate, reason, closes, today="accepts", _registry=None):
         raise ValueError(f"known_gap id {gap_id!r}: use lower-case letters, digits and hyphens")
     if closes not in ROADMAP:
         raise ValueError(f"known_gap {gap_id}: closes={closes!r} is not a roadmap item "
-                         f"({', '.join(ROADMAP)})")
+                         f"({', '.join(ROADMAP)}). Every known gap names the item of "
+                         "docs/ROADMAP.md that closes it; `unplanned` is not a value")
     if today not in GAP_KINDS:
         raise ValueError(f"known_gap {gap_id}: today={today!r} is not one of {GAP_KINDS}")
     if not (isinstance(reason, str) and len(reason.strip()) >= 20):
         raise ValueError(f"known_gap {gap_id}: give a reason (one full sentence)")
     if not (isinstance(gate, str) and gate.strip()):
         raise ValueError(f"known_gap {gap_id}: name the gate")
+    if re.search(r"[`|\n]", gate):
+        raise ValueError(f"known_gap {gap_id}: gate={gate!r} holds a backtick, a `|` or a new "
+                         "line; the Markdown list of the gaps puts the gate in a code span "
+                         "of a table cell, so write it as plain text on one line")
 
     def decorate(fn):
         where = f"{fn.__module__}.{fn.__qualname__}"
@@ -1204,12 +1225,15 @@ def _discover():
     return classes
 
 
-def run_suite(jobs=None, only=(), timeout=1200, out=sys.stdout, no_skips=False, summary=None):
+def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skips=False,
+              summary=None):
     """Run the suite with one `python -m unittest` process for each test class, `jobs`
     at a time, and print each class's output when it ends. The tests and their
     verdicts are those of `python -m unittest discover`; only the wall time differs,
     because the gates of different classes run at the same time.
 
+    timeout   seconds for one class. A class that needs more is stopped and fails
+              the run; the output that it gave until then is printed.
     no_skips  a skipped test fails the run (for CI, where every tool is installed).
     summary   a file: the verdict, the counts and the known gaps are added to it as
               Markdown (the job summary of GitHub Actions).
@@ -1241,6 +1265,9 @@ def run_suite(jobs=None, only=(), timeout=1200, out=sys.stdout, no_skips=False, 
         except subprocess.TimeoutExpired as expired:
             code = "timeout"
             text = (expired.stdout or b"").decode("utf-8", "replace")
+            text += ("" if not text or text.endswith("\n") else "\n") + (
+                f"(stopped: the class did not end in {timeout:g} s; the output above is "
+                "what it gave until then)\n")
         ran = re.search(r"^Ran (\d+) tests? in", text, re.MULTILINE)
         skipped = re.search(r"^(?:OK|FAILED) \((?:[^)]*, )?skipped=(\d+)", text, re.MULTILINE)
         return (name, code, int(ran.group(1)) if ran else 0,
@@ -1256,7 +1283,9 @@ def run_suite(jobs=None, only=(), timeout=1200, out=sys.stdout, no_skips=False, 
                     ran = skipped = classes[name]
                 total += ran
                 verdict = "ok"
-                if code != 0:
+                if code == "timeout":
+                    verdict = f"FAILED (stopped after {timeout:g} s)"
+                elif code != 0:
                     verdict = f"FAILED (exit code {code})"
                 elif ran != classes[name]:
                     verdict = f"FAILED (ran {ran} of {classes[name]} test(s))"
@@ -1313,6 +1342,9 @@ def main(argv=None):
                          "then print the known gaps")
     ap.add_argument("--jobs", type=int, default=None,
                     help="with --run: classes at a time (default: the number of CPUs)")
+    ap.add_argument("--class-timeout", type=float, default=None, metavar="SECONDS",
+                    help="with --run: stop a class that needs more time, and fail the run "
+                         f"(default: {CLASS_TIMEOUT})")
     ap.add_argument("--no-skips", action="store_true",
                     help="with --run: a skipped test fails the run (for CI)")
     ap.add_argument("--summary", metavar="PATH",
@@ -1324,8 +1356,11 @@ def main(argv=None):
     if not (args.gaps or args.run):
         ap.print_help()
         return 0
-    if not args.run and (args.only or args.no_skips or args.summary or args.jobs):
-        ap.error("--jobs, --no-skips, --summary and class names need --run")
+    if not args.run and (args.only or args.no_skips or args.summary or args.jobs
+                         or args.class_timeout is not None):
+        ap.error("--jobs, --class-timeout, --no-skips, --summary and class names need --run")
+    if args.class_timeout is not None and args.class_timeout <= 0:
+        ap.error("--class-timeout: give a number of seconds above 0")
     # The test modules import `gatelib`, not `__main__`: use the registry of that module.
     sys.path.insert(0, TESTS)
     import gatelib as lib
@@ -1334,6 +1369,7 @@ def main(argv=None):
     try:
         if args.run:
             code = lib.run_suite(args.jobs, args.only, out=sys.stderr if args.json else sys.stdout,
+                                 timeout=args.class_timeout or lib.CLASS_TIMEOUT,
                                  no_skips=args.no_skips, summary=args.summary)
         else:
             lib._discover()

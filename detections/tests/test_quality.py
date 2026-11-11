@@ -839,7 +839,7 @@ class CoverageReport(gatelib.GateCase):
                "is not an open defect for the report: open_defects() reads only the Summary "
                "table, so COVERAGE.md keeps `Proven` for the procedures that the named rule "
                "proves, and the gate says the report is current.",
-        closes="unplanned")
+        closes="R2d")
     def test_gap_defect_section_without_summary_row(self):
         """cr-defect-heading-without-summary-row (planted in setUpClass). WANTED: the
         entry marks the procedures of its rule (COVERAGE.md is stale), or the gate

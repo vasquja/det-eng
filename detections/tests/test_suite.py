@@ -6,8 +6,10 @@ Gate tests, group `suite`: rules that hold for the gates and the suite as a whol
                       workflow runs
     GateTestsJob      the gate-tests job of detection-quality.yml runs every test of
                       this suite, on every pull request, and fails when a test fails
-    KnownGapList      every @known_gap names a roadmap item of docs/ROADMAP.md, and
-                      no open gap names an item that is `done`
+    PipedSteps        no step of any workflow pipes a command into `tee` with a
+                      shell that loses the exit code of the command
+    KnownGapList      every @known_gap names an item of section 1 of docs/ROADMAP.md,
+                      and no open gap names an item that is `done`
     PlantedArtifacts  every file under known_bad/ is planted by a test, and none has
                       a name that a gate or a lint of the repository reads
 
@@ -101,15 +103,18 @@ class GateTestsJob(gatelib.GateCase):
         # The same command, without the two options of CI, is the documented one.
         self.assert_documented("python3 -B detections/tests/gatelib.py --run")
 
-    def test_job_runs_on_every_pull_request(self):
-        """A path filter or a condition could skip the job on the change that breaks a
-        gate. The workflow has none for pull requests, and the job and its steps
-        have no `if:` and no `continue-on-error:`."""
+    def workflow(self):
         import yaml     # PyYAML: in detections/requirements.txt
 
         path = os.path.join(gatelib.REPO, ".github", "workflows", self.WORKFLOW)
         with open(path, encoding="utf-8") as fh:
-            doc = yaml.safe_load(fh)
+            return yaml.safe_load(fh)
+
+    def test_job_runs_on_every_pull_request(self):
+        """A path filter or a condition could skip the job on the change that breaks a
+        gate. The workflow has none for pull requests, and the job and its steps
+        have no `if:` and no `continue-on-error:`."""
+        doc = self.workflow()
         triggers = doc.get("on", doc.get(True))     # YAML 1.1 reads the key `on` as true
         self.assertIn("pull_request", triggers)
         self.assertIsNone(triggers["pull_request"], "pull_request has a filter")
@@ -118,6 +123,20 @@ class GateTestsJob(gatelib.GateCase):
         for node in [job] + job["steps"]:
             self.assertNotIn("if", node)
             self.assertNotIn("continue-on-error", node)
+
+    def test_runner_stops_a_class_that_hangs_before_github_stops_the_job(self):
+        """When GitHub stops the job at `timeout-minutes`, the log holds no output of
+        the classes after the one that hangs, and no job summary. So the runner's
+        timeout for one class (the step gives no --class-timeout, so it is
+        gatelib.CLASS_TIMEOUT) must end first, with time left for the other classes
+        (about two minutes) and for the steps before the tests."""
+        job_seconds = self.workflow()["jobs"]["gate-tests"]["timeout-minutes"] * 60
+        self.assertNotIn("--class-timeout", gatelib.ci_commands(self.COMMAND)[0])
+        self.assertGreaterEqual(job_seconds - gatelib.CLASS_TIMEOUT, 240,
+                                "the class timeout of the runner is not well below the "
+                                "timeout of the gate-tests job")
+        # One gate run that hangs is reported by its own test, with the gate's output.
+        self.assertLess(gatelib.DEFAULT_TIMEOUT, gatelib.CLASS_TIMEOUT)
 
     def test_ci_step_passes_and_writes_the_summary(self):
         """CONTROL of the step: a suite that passes."""
@@ -138,16 +157,90 @@ class GateTestsJob(gatelib.GateCase):
             self.assertRegex(fh.read(), r"(?m)^## Gate tests: FAILED$")
 
 
-class KnownGapList(unittest.TestCase):
-    """gatelib.KNOWN_GAPS is the one list of the known gaps. Each gap names what
-    closes it: an item of section 1 of docs/ROADMAP.md, or `unplanned`."""
+class PipedSteps(unittest.TestCase):
+    """`command | tee file` has the exit code of `tee`. GitHub Actions runs a step
+    that has no `shell:` with `bash -e`, without pipefail, so a gate that fails in
+    such a step leaves the job green (test_gatelib.py proves that Tree.run_step()
+    models this). The rule has no exception: every step that pipes into `tee` has
+    `shell: bash` (which sets pipefail) or sets pipefail itself."""
 
+    TEE = re.compile(r"\|&?\s*tee\b")
+    PIPEFAIL = re.compile(r"^set\s+(?:-\w+\s+)*-\w*o\s+pipefail\b")
+
+    @classmethod
+    def loses_the_exit_code(cls, step):
+        """True when a command line of the step pipes into `tee` while the shell of
+        the step does not have pipefail."""
+        pipefail = step.shell == "bash" or "pipefail" in (step.shell or "")
+        for line in gatelib._command_lines(step.run):
+            if cls.PIPEFAIL.search(line):
+                pipefail = True
+            elif re.search(r"^set\s+\+o\s+pipefail\b", line):
+                pipefail = False
+            elif cls.TEE.search(line) and not pipefail:
+                return True
+        return False
+
+    def test_the_rule_finds_a_step_that_loses_the_exit_code(self):
+        """CONTROL of the rule, on constructed steps: it names the steps that lose
+        the exit code, and no other step."""
+        def step(name, shell, run):
+            return gatelib.Step("w.yml", "job", name, shell, run)
+
+        gate = "python3 detections/gate.py --check"
+        loses = [
+            step("no shell", None, f"{gate} | tee /tmp/gate.out\n"),
+            step("no shell, joined line", None, f"{gate} \\\n  | tee /tmp/gate.out\n"),
+            step("no shell, stderr too", None, f"{gate} 2>&1 |tee -a /tmp/gate.out\n"),
+            step("sh", "sh", f"{gate} | tee /tmp/gate.out\n"),
+            step("pipefail after the pipe", None, f"{gate} | tee /tmp/gate.out\nset -o pipefail\n"),
+            step("pipefail switched off", "bash", f"set +o pipefail\n{gate} | tee /tmp/gate.out\n"),
+            step("pipefail in a comment", None, f"# set -o pipefail\n{gate} | tee /tmp/gate.out\n")]
+        keeps = [
+            step("shell: bash", "bash", f"{gate} | tee /tmp/gate.out\n"),
+            step("set -o pipefail", None, f"set -o pipefail\n{gate} | tee /tmp/gate.out\n"),
+            step("set -euo pipefail", None, f"set -euo pipefail\n{gate} | tee /tmp/gate.out\n"),
+            step("explicit shell", "bash --noprofile --norc -eo pipefail {0}",
+                 f"{gate} | tee /tmp/gate.out\n"),
+            step("no pipe", None, f"{gate} > /tmp/gate.out\n"),
+            step("tee in a comment", None, f"# {gate} | tee /tmp/gate.out\n{gate}\n")]
+        self.assertEqual([s.name for s in loses + keeps if self.loses_the_exit_code(s)],
+                         [s.name for s in loses])
+
+    def test_no_step_pipes_into_tee_without_pipefail(self):
+        steps = gatelib.ci_steps()
+        piped = [step for step in steps
+                 if any(self.TEE.search(line) for line in gatelib._command_lines(step.run))]
+        # The search finds the steps of the gates (not vacuous): today more than ten
+        # steps pipe a gate into `tee`, and the lint of the TRRs is one of them.
+        self.assertGreater(len(piped), 10, "the workflows were not read")
+        self.assertIn(("lint-trr.yml", "trr-lint", "Lint TRRs"),
+                      [(step.workflow, step.job, step.name) for step in piped])
+        self.assertEqual(
+            [(step.workflow, step.job, step.name) for step in piped
+             if self.loses_the_exit_code(step)], [],
+            "these steps pipe a command into `tee` and have no pipefail, so the step takes "
+            "the exit code of `tee`: a gate that fails there leaves the job green. Add "
+            "`shell: bash` to the step")
+
+
+class KnownGapList(unittest.TestCase):
+    """gatelib.KNOWN_GAPS is the one list of the known gaps. Each gap names the item
+    of section 1 ("Trust") of docs/ROADMAP.md that closes it. A gap without an item
+    is a gap that nobody will close, so there is no value for `no item`."""
+
+    SECTION = re.compile(r"^## 1\. [^\n]*\n(.*?)^## ", re.MULTILINE | re.DOTALL)
     ITEM = re.compile(r"^\| ([A-Z]\d+[a-z]?) \| \*\*[^|]+ \| ([^|]+?) \| ", re.MULTILINE)
+    STATUS = ("done", "in progress", "not started", "owner", "blocked")    # of ROADMAP.md
+    SUITE = "R2"        # the item that is this suite: no gap can name it
 
     @classmethod
     def setUpClass(cls):
         with open(os.path.join(gatelib.REPO, "docs", "ROADMAP.md"), encoding="utf-8") as fh:
-            cls.items = dict(cls.ITEM.findall(fh.read()))       # ID -> status
+            section = cls.SECTION.search(fh.read())
+        if not section:
+            raise AssertionError("docs/ROADMAP.md: section 1 was not found")
+        cls.items = dict(cls.ITEM.findall(section.group(1)))    # ID -> status, section 1
         # Every test module's markers, from a process that imported nothing else.
         listed = subprocess.run(
             [gatelib.PYTHON, "-B", os.path.join(gatelib.TESTS, "gatelib.py"), "--gaps", "--json"],
@@ -156,24 +249,32 @@ class KnownGapList(unittest.TestCase):
             raise AssertionError("gatelib.py --gaps --json failed:\n" + listed.stderr)
         cls.gaps = json.loads(listed.stdout)
 
-    def test_roadmap_table_names_items_of_the_roadmap(self):
-        self.assertGreater(len(self.items), 10, "docs/ROADMAP.md: the item tables were not read")
-        planned = sorted(set(gatelib.ROADMAP) - {"unplanned"})
-        self.assertEqual([item for item in planned if item not in self.items], [],
-                         "gatelib.ROADMAP holds an ID that docs/ROADMAP.md does not have")
+    def test_roadmap_table_holds_the_items_of_section_1(self):
+        """gatelib.ROADMAP holds exactly the items of section 1 that a gap can name:
+        every item but the suite itself. `unplanned` is not an item."""
+        self.assertGreater(len(self.items), 10, "docs/ROADMAP.md: section 1 was not read")
+        self.assertIn(self.SUITE, self.items)
+        for item, status in self.items.items():
+            self.assertIn(status, self.STATUS, f"docs/ROADMAP.md: the status of {item}")
+        self.assertEqual(sorted(gatelib.ROADMAP), sorted(set(self.items) - {self.SUITE}),
+                         "gatelib.ROADMAP and section 1 of docs/ROADMAP.md do not hold the "
+                         "same items")
 
     def test_every_gap_names_an_open_item(self):
-        """A gap whose roadmap item is `done` is a contradiction: the item did not
-        close it. Close the gap (fix the gate, remove the marker) or name another
-        item."""
+        """Each gap names an item of the roadmap, and that item is not `done`. A gap
+        whose item is `done` is a contradiction: the item did not close it. Close
+        the gap (fix the gate, remove the marker) or name another item."""
         self.assertGreater(len(self.gaps), 0, "the suite has no known gap: check the list")
         for gap in self.gaps:
             with self.subTest(gap=gap["id"]):
-                self.assertIn(gap["closes"], gatelib.ROADMAP)
-                if gap["closes"] != "unplanned":
-                    self.assertNotEqual(self.items[gap["closes"]].lower(), "done",
-                                        f"{gap['closes']} is done in docs/ROADMAP.md, and the "
-                                        f"gap {gap['id']} is still recorded as open")
+                self.assertIn(gap["closes"], gatelib.ROADMAP,
+                              f"the gap {gap['id']} names no item of gatelib.ROADMAP")
+                self.assertIn(gap["closes"], self.items,
+                              f"the gap {gap['id']} names no item of section 1 of "
+                              "docs/ROADMAP.md")
+                self.assertNotEqual(self.items[gap["closes"]], "done",
+                                    f"{gap['closes']} is done in docs/ROADMAP.md, and the "
+                                    f"gap {gap['id']} is still recorded as open")
 
     def test_every_gap_test_is_named_as_a_gap(self):
         """`test_gap_...`: a reader of a test run can tell a gap from a rejection."""

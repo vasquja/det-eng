@@ -7,15 +7,20 @@ test_validators.py plants it at the root of a copy of the repository as
 linux_offline_run.py and runs it there.
 
 The real mode needs root, a running auditd and gcc, and it runs the atomics. This
-driver lets the same verdict code run with none of them: judge(), stimulus_hits(),
-the control table, grade_control() and the exit code are the validator's own. Only
-the five functions that touch the host are replaced:
+driver lets the same verdict code run with none of them: process_tree(), judge(),
+stimulus_hits(), the control table, grade_control() and the exit code are the
+validator's own. Only the five functions that touch the host are replaced:
 
     audit_available       -> (True, ""), or (False, WHY) with --no-audit
     load_audit_rules      -> nothing
     unload_audit_rules    -> nothing
     compile_atomic        -> a label for the binary (no gcc)
     run                   -> canned (events of the window, process tree, stderr)
+
+The canned run() gives the events of the window and the pid of the stimulus. The
+process tree is not canned: run() calls the validator's process_tree() on them, as
+the real run() does. So the validator, not this driver, decides which records are
+the stimulus's own.
 
 The kernel-feature probes are removed from MANIFEST (they would open sockets and
 call `ausyscall`). A probe only turns a miss into a SKIP; no canned stimulus misses.
@@ -39,6 +44,11 @@ argument plants ONE defect in it:
                     for the no-op). A control like that proves nothing.
     --foreign SRC   the records of the stimulus SRC are in the window, but they
                     carry the pid of another process, not of the stimulus tree.
+    --rejected SRC  the kernel rejected every syscall of the stimulus SRC (success=no,
+                    EPERM): for an atomic, an attempt and not an execution.
+    --fires SRC     the control SRC (a mutant of CONTROLS, or an allowlisted re-run
+                    `ATOMIC as NAME`) makes the events of its rule's positive case:
+                    the rule fires on its own negative control.
     --no-audit WHY  audit_available() answers (False, WHY): the host cannot audit
                     (`auditd is not running`), so nothing can be validated.
 
@@ -62,7 +72,6 @@ sys.path.insert(0, os.path.join(HERE, "detections"))
 import validate_detections as v  # noqa: E402
 
 FOREIGN_PID = 700000    # a process that is not in any stimulus tree
-IDLE_PID = 600000       # the pid of a stimulus whose tree made no audited syscall
 SHIFT = 100000          # --foreign: added to the pids of the stimulus's records
 
 # A record of another process, in every window (a shell's TCGETS ioctl on its tty).
@@ -114,42 +123,70 @@ def label(src, name=None):
 
 
 def canned_stimuli():
-    """{binary label: the audited events of that stimulus's own process tree}."""
-    own = {v.NOOP: [dict(NOOP_EVENT)]}
+    """({binary label: the audited events of that stimulus's own process tree},
+    {label of a control that is built for one rule: that rule})."""
+    own, rule_of = {v.NOOP: [dict(NOOP_EVENT)]}, {}
     for rule, src, _args, _probes in v.MANIFEST:
         own[label(src)] = positive(rule)
         _block, comm = v.allowlist(rule)
         if comm:
             own[label(src, comm)] = [dict(event, comm=comm) for event in positive(rule)]
+            rule_of[label(src, comm)] = rule
     for rule, src, _args, _meaning, expected in v.CONTROLS:
         own[label(src)] = mutant(rule, expected)
-    return own
+        rule_of[label(src)] = rule
+    return own, rule_of
+
+
+def stimulus_pid(events):
+    """The pid that the validator would start for these canned events: the one
+    process among them whose parent is not among them. process_tree() adds its
+    descendants from the window."""
+    pids = {event["pid"] for event in events}
+    top = sorted({event["pid"] for event in events if event["ppid"] not in pids})
+    if len(top) != 1:
+        stop(f"the canned events have {len(top)} top processes ({top}); the pid of the "
+             "stimulus is not clear")
+    return top[0]
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--vacuous", metavar="SRC")
     ap.add_argument("--foreign", metavar="SRC")
+    ap.add_argument("--rejected", metavar="SRC")
+    ap.add_argument("--fires", metavar="SRC")
     ap.add_argument("--no-audit", metavar="WHY")
     args, validator_args = ap.parse_known_args()
 
-    own = canned_stimuli()
-    for src in (args.vacuous, args.foreign):
+    own, rule_of = canned_stimuli()
+    for src in (args.vacuous, args.foreign, args.rejected):
         if src is not None and src not in own:
             stop(f"{src} is not a stimulus of the validator ({', '.join(sorted(own))})")
+    atomics = [src for _rule, src, _args, _probes in v.MANIFEST]
+    if args.rejected is not None and args.rejected not in atomics:
+        stop(f"{args.rejected} is not an atomic of MANIFEST ({', '.join(atomics)})")
+    if args.fires is not None:
+        if args.fires not in rule_of:
+            stop(f"{args.fires} is not a control that is built for one rule "
+                 f"({', '.join(sorted(rule_of))})")
+        own[args.fires] = positive(rule_of[args.fires])
 
     def compile_atomic(src, _workdir, name=None):
         return label(src, name)
 
     def run(binary, _args):
         events = [dict(event) for event in own[binary]]
-        tree = {event["pid"] for event in events} or {IDLE_PID}
+        root = stimulus_pid(events)
         if binary == args.vacuous:
-            events, tree = [], {IDLE_PID}
+            events = []
         elif binary == args.foreign:
             events = [dict(event, pid=event["pid"] + SHIFT, ppid=event["ppid"] + SHIFT)
                       for event in events]
-        return [dict(BACKGROUND)] + events, tree, ""
+        elif binary == args.rejected:
+            events = [dict(event, success="no", exit="-1") for event in events]
+        window = [dict(BACKGROUND)] + events
+        return window, v.process_tree(root, window), ""     # the validator's own tree
 
     v.MANIFEST = [(rule, src, run_args, []) for rule, src, run_args, _probes in v.MANIFEST]
     v.audit_available = lambda: (False, args.no_audit) if args.no_audit else (True, "")

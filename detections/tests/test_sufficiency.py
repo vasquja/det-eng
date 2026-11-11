@@ -112,7 +112,7 @@ class RuleCases(gatelib.GateCase):
                "import guard, and the gates' `*/*.yml` globs skip them, so rule_cases.py "
                "(and every gate but check_sufficiency.py R0) accepts a tree with a rule "
                "that nothing checked.",
-        closes="unplanned")
+        closes="R2d")
     def test_gap_hidden_rule_file(self):
         """WANTED: a rule file that the gates do not read is refused (as R0 refuses it),
         or it is read, and then its positive that cannot fire fails."""
