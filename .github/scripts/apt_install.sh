@@ -22,8 +22,12 @@
 #      /etc/resolv.conf names the public resolvers. The resolver of the runner is not
 #      changed, so there is nothing to put back, also when the job is killed.
 #   3. If that private namespace cannot be made, or the public resolvers give no mirror
-#      either, and apt had no run yet, apt gets its run with the resolver of the runner
-#      (apt goes to the next mirror of its list by itself).
+#      either, or apt fails with them, and apt had no run with the resolver of the runner
+#      yet, apt gets that run (apt goes to the next mirror of its list by itself).
+#
+# So the script fails only after apt failed in a run with the resolver of the runner,
+# as the two old lines would. The exceptions are an input that is refused (exit 2) and
+# the forced way below.
 #
 # A different resolver cannot make apt install a package that the Ubuntu archive key did
 # not sign: apt checks the signature of the package index and the hash of each package.
@@ -33,7 +37,8 @@
 # runner that the second way works; with it, the script fails if that way cannot be used.
 # APT_INSTALL_RESOLVERS="<address> ..." gives other resolvers than the two public ones.
 # The same CI job uses it for its control: with a resolver that does not answer, the
-# forced way must fail, which shows that the lookups of apt use the private resolv.conf.
+# forced way must fail, which shows that a lookup in the namespace uses the private
+# resolv.conf (the lookup of `getent` as root; apt uses the same resolver library).
 set -euo pipefail
 set -f   # the lists hold package names, not file patterns
 
@@ -49,18 +54,20 @@ if [[ "${1:-}" == "--optional" ]]; then
   shift 2
 fi
 [[ $# -gt 0 ]] || usage
-# A name goes to apt-get that runs as root: refuse what is not a package name (for
-# example a name that starts with "-", which apt-get reads as an option).
+# A name goes to apt-get that runs as root: refuse what is not a package name. A name
+# that starts with "-" is an option for apt-get. A name that ends with "-" tells apt-get
+# to remove that package, and apt-get then ends with 0.
 # shellcheck disable=SC2086  # the list of optional packages is split on purpose
 for name in "$@" $OPTIONAL; do
-  if [[ ! "$name" =~ ^[a-z0-9][a-z0-9+.:=~_-]*$ ]]; then
+  if [[ ! "$name" =~ ^[a-z0-9][a-z0-9+.:=~_-]*$ || "$name" == *- ]]; then
     echo "::error title=apt_install::not a package name: '${name//[^[:print:]]/?}'" >&2
     exit 2
   fi
 done
 
 MIRROR_HOSTS=(azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com)
-read -r -a PUBLIC_RESOLVERS <<< "${APT_INSTALL_RESOLVERS:-1.1.1.1 8.8.8.8}"
+# shellcheck disable=SC2206  # split on purpose; `set -f` is on, so no word is a file pattern
+PUBLIC_RESOLVERS=(${APT_INSTALL_RESOLVERS:-1.1.1.1 8.8.8.8})
 if [[ ${#PUBLIC_RESOLVERS[@]} -eq 0 ]]; then
   echo "::error title=apt_install::APT_INSTALL_RESOLVERS holds no address" >&2
   exit 2
@@ -71,8 +78,13 @@ for name in "${PUBLIC_RESOLVERS[@]}"; do
     exit 2
   fi
 done
-RESOLVER_FAULT='Temporary failure resolving|Could not resolve|Temporary failure in name resolution'
+# The four messages of apt (methods/connect.cc) for a name that it could not resolve.
+RESOLVER_FAULT='Temporary failure resolving|Could not resolve|System error resolving|Something wicked happened resolving'
 FORCE_PUBLIC="${APT_INSTALL_FORCE_PUBLIC:-0}"
+if [[ "$FORCE_PUBLIC" != "0" && "$FORCE_PUBLIC" != "1" ]]; then
+  echo "::error title=apt_install::APT_INSTALL_FORCE_PUBLIC must be 0 or 1, not '${FORCE_PUBLIC//[^[:print:]]/?}'" >&2
+  exit 2
+fi
 RUN=(sudo)        # how each apt-get starts; the second way adds the private namespace
 LOG="$(mktemp)"   # the output of apt, to see why it failed
 RESOLV=""
@@ -113,6 +125,7 @@ install_all() {
 }
 
 RUNNER_RUN=0      # 1 after apt had a run with the resolver of the runner
+PUBLIC_RUN=0      # 1 after apt had a run with the public resolvers
 if [[ "$FORCE_PUBLIC" == "1" ]]; then
   echo "[apt_install] APT_INSTALL_FORCE_PUBLIC=1: apt runs with the public resolvers, with no fault (a test of that way)"
 elif resolves runner "${MIRROR_HOSTS[0]}"; then
@@ -138,30 +151,35 @@ if "${PRIVATE[@]}" true; then
   RUN=("${PRIVATE[@]}")
   if resolves apt "${MIRROR_HOSTS[@]}"; then
     echo "[apt_install] the public resolvers give a mirror; apt runs with them"
-    : > "$LOG"
+    PUBLIC_RUN=1
     if install_all "$@"; then
       exit 0
     fi
-    echo "::error title=apt_install::apt failed also with the public resolvers ${PUBLIC_RESOLVERS[*]}. See the E: lines of apt above." >&2
-    exit 1
+    echo "::warning title=apt_install::apt failed also with the public resolvers ${PUBLIC_RESOLVERS[*]}. See the E: lines of apt above."
+  else
+    echo "::warning title=apt_install::the public resolvers ${PUBLIC_RESOLVERS[*]} give no mirror of the list either."
   fi
-  echo "::warning title=apt_install::the public resolvers ${PUBLIC_RESOLVERS[*]} give no mirror of the list either."
 else
   echo "::warning title=apt_install::cannot give apt a private resolv.conf (unshare or mount failed)."
 fi
 
 RUN=(sudo)
 if [[ "$FORCE_PUBLIC" == "1" ]]; then
-  echo "::error title=apt_install::APT_INSTALL_FORCE_PUBLIC=1, and the way with the public resolvers cannot be used on this runner." >&2
+  if [[ "$PUBLIC_RUN" == "1" ]]; then
+    echo "::error title=apt_install::APT_INSTALL_FORCE_PUBLIC=1, and apt failed with the public resolvers." >&2
+  else
+    echo "::error title=apt_install::APT_INSTALL_FORCE_PUBLIC=1, and the way with the public resolvers cannot be used on this runner." >&2
+  fi
   exit 1
 fi
 if [[ "$RUNNER_RUN" == "1" ]]; then
-  echo "::error title=apt_install::apt failed with the resolver of the runner, and the public resolvers cannot help." >&2
+  echo "::error title=apt_install::apt failed with the resolver of the runner, and the public resolvers gave no install." >&2
   exit 1
 fi
+# apt had no run with the resolver of the runner yet. The two old lines were that run.
 echo "[apt_install] one run with the resolver of the runner: apt can go to the next mirror of its list"
 if install_all "$@"; then
   exit 0
 fi
-echo "::error title=apt_install::apt failed with the resolver of the runner, and the public resolvers cannot help." >&2
+echo "::error title=apt_install::apt failed with the resolver of the runner, and the public resolvers gave no install." >&2
 exit 1
