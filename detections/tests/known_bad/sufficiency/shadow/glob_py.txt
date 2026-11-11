@@ -1,0 +1,26 @@
+"""
+PLANTED ARTIFACT of detections/tests. It is not a module of this repository.
+
+A test plants this file as `detections/glob.py` (detections/tests/test_sufficiency.py).
+The gates run as `python3 detections/<script>.py`, so detections/ is first on
+sys.path and `import glob` in a gate loads this file, not the standard library.
+It loads the real module, exports all of it again, and replaces glob() with a
+copy that leaves out every path that holds `afinet_raw_socket`. So a gate that
+finds its inputs with glob.glob() does not see that rule or its sidecar, and
+says nothing about the one it skipped.
+"""
+
+import importlib.util as _util
+import os as _os
+
+_spec = _util.spec_from_file_location(
+    "_stdlib_glob", _os.path.join(_os.path.dirname(_os.__file__), "glob.py"))
+_real = _util.module_from_spec(_spec)
+_spec.loader.exec_module(_real)
+globals().update({name: value for name, value in vars(_real).items()
+                  if not name.startswith("__")})
+
+
+def glob(pathname, *args, **kwargs):
+    return [path for path in _real.glob(pathname, *args, **kwargs)
+            if "afinet_raw_socket" not in path]

@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""
+Offline driver for the REAL mode of detections/validate_detections.py (gate tests).
+
+Stored as .txt, so that nothing in the repository imports or runs it.
+test_validators.py plants it at the root of a copy of the repository as
+linux_offline_run.py and runs it there.
+
+The real mode needs root, a running auditd and gcc, and it runs the atomics. This
+driver lets the same verdict code run with none of them: process_tree(), judge(),
+stimulus_hits(), the control table, grade_control() and the exit code are the
+validator's own. Only the five functions that touch the host are replaced:
+
+    audit_available       -> (True, ""), or (False, WHY) with --no-audit
+    load_audit_rules      -> nothing
+    unload_audit_rules    -> nothing
+    compile_atomic        -> a label for the binary (no gcc)
+    run                   -> canned (events of the window, process tree, stderr)
+
+The canned run() gives the events of the window and the pid of the stimulus. The
+process tree is not canned: run() calls the validator's process_tree() on them, as
+the real run() does. So the validator, not this driver, decides which records are
+the stimulus's own.
+
+The kernel-feature probes are removed from MANIFEST (they would open sockets and
+call `ausyscall`). A probe only turns a miss into a SKIP; no canned stimulus misses.
+
+The canned events are not written here. They come from the rule sidecars of the
+copy, so they stay in step with the rules:
+
+    an atomic                 the events of the first `positive` case of its rule
+    a mutant (CONTROLS)       the events of the first `near-miss` case whose `breaks`
+                              is the item the mutant is built to break; for the
+                              `success` gate, the positive with success=no (EPERM)
+    an allowlisted re-run     the positive, with the allowlisted name as `comm`
+    the no-op                 one audited syscall that no rule reads: socket(AF_UNIX)
+    every window              one record of another process (an ioctl of a shell)
+
+That canned run is the CONTROL: every atomic passes and every control holds. One
+argument plants ONE defect in it:
+
+    --vacuous SRC   the process tree of the stimulus SRC made no audited syscall
+                    (SRC as MANIFEST / CONTROLS name it; `detections/controls/noop.c`
+                    for the no-op). A control like that proves nothing.
+    --foreign SRC   the records of the stimulus SRC are in the window, but they
+                    carry the pid of another process, not of the stimulus tree.
+    --rejected SRC  the kernel rejected every syscall of the stimulus SRC (success=no,
+                    EPERM): for an atomic, an attempt and not an execution.
+    --fires SRC     the control SRC (a mutant of CONTROLS, or an allowlisted re-run
+                    `ATOMIC as NAME`) makes the events of its rule's positive case:
+                    the rule fires on its own negative control.
+    --no-audit WHY  audit_available() answers (False, WHY): the host cannot audit
+                    (`auditd is not running`), so nothing can be validated.
+
+NOTE on the no-op: the real detections/controls/noop.c makes no syscall that
+detections/audit/atomic.rules audits (its only syscalls are those of process
+start and exit). So `--vacuous detections/controls/noop.c` is what every real run
+looks like today. The control run gives the no-op one audited syscall, so that the
+control stays valid when the validator starts to grade the no-op for vacuity.
+
+Every other argument goes to the validator: use the arguments of the CI step
+(`--require-audit`).
+"""
+
+import argparse
+import json
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, "detections"))
+import validate_detections as v  # noqa: E402
+
+FOREIGN_PID = 700000    # a process that is not in any stimulus tree
+SHIFT = 100000          # --foreign: added to the pids of the stimulus's records
+
+# A record of another process, in every window (a shell's TCGETS ioctl on its tty).
+BACKGROUND = {"type": "SYSCALL", "syscall": "ioctl", "success": "yes", "exit": "0",
+              "a0": "0", "a1": "5401", "a2": "7ffc0a1b2c30", "a3": "0",
+              "pid": FOREIGN_PID, "ppid": 1, "uid": "1000", "euid": "1000", "auid": "1000",
+              "comm": "bash", "exe": "/usr/bin/bash", "timestamp": "2026-10-04 11:59:58.000"}
+# The control run's no-op: one audited syscall of its own, which no rule reads.
+NOOP_EVENT = {"type": "SYSCALL", "syscall": "socket", "success": "yes", "exit": "3",
+              "a0": "1", "a1": "1", "a2": "0", "a3": "0",
+              "pid": 4301, "ppid": 4300, "uid": "0", "euid": "0", "auid": "4294967295",
+              "comm": "deteng_noop", "exe": "/tmp/deteng_val_x/deteng_noop",
+              "timestamp": "2026-10-04 11:59:59.000"}
+
+
+def stop(message):
+    """A fault of the canned data, not a verdict of the validator: exit code 3."""
+    print(f"linux_offline_run: {message}", file=sys.stderr)
+    sys.exit(3)
+
+
+def cases(rule):
+    path = os.path.join(v.REPO, rule[:-len(".yml")] + ".cases.jsonl")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return [json.loads(line) for line in fh if line.strip()]
+    except OSError as error:
+        stop(f"{rule} has no readable sidecar ({error})")
+
+
+def positive(rule):
+    for case in cases(rule):
+        if case.get("kind") == "positive":
+            return [dict(event) for event in case["events"]]
+    stop(f"the sidecar of {rule} holds no positive case")
+
+
+def mutant(rule, expected):
+    if expected == [v.SUCCESS_GATE]:    # the kernel rejected the syscall: EPERM
+        return [dict(event, success="no", exit="-1") for event in positive(rule)]
+    for case in cases(rule):
+        if case.get("kind") == "near-miss" and case.get("breaks") == expected:
+            return [dict(event) for event in case["events"]]
+    stop(f"the sidecar of {rule} holds no near-miss that breaks {expected}")
+
+
+def label(src, name=None):
+    return f"{src} as {name}" if name else src
+
+
+def canned_stimuli():
+    """({binary label: the audited events of that stimulus's own process tree},
+    {label of a control that is built for one rule: that rule})."""
+    own, rule_of = {v.NOOP: [dict(NOOP_EVENT)]}, {}
+    for rule, src, _args, _probes in v.MANIFEST:
+        own[label(src)] = positive(rule)
+        _block, comm = v.allowlist(rule)
+        if comm:
+            own[label(src, comm)] = [dict(event, comm=comm) for event in positive(rule)]
+            rule_of[label(src, comm)] = rule
+    for rule, src, _args, _meaning, expected in v.CONTROLS:
+        own[label(src)] = mutant(rule, expected)
+        rule_of[label(src)] = rule
+    return own, rule_of
+
+
+def stimulus_pid(events):
+    """The pid that the validator would start for these canned events: the one
+    process among them whose parent is not among them. process_tree() adds its
+    descendants from the window."""
+    pids = {event["pid"] for event in events}
+    top = sorted({event["pid"] for event in events if event["ppid"] not in pids})
+    if len(top) != 1:
+        stop(f"the canned events have {len(top)} top processes ({top}); the pid of the "
+             "stimulus is not clear")
+    return top[0]
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--vacuous", metavar="SRC")
+    ap.add_argument("--foreign", metavar="SRC")
+    ap.add_argument("--rejected", metavar="SRC")
+    ap.add_argument("--fires", metavar="SRC")
+    ap.add_argument("--no-audit", metavar="WHY")
+    args, validator_args = ap.parse_known_args()
+
+    own, rule_of = canned_stimuli()
+    for src in (args.vacuous, args.foreign, args.rejected):
+        if src is not None and src not in own:
+            stop(f"{src} is not a stimulus of the validator ({', '.join(sorted(own))})")
+    atomics = [src for _rule, src, _args, _probes in v.MANIFEST]
+    if args.rejected is not None and args.rejected not in atomics:
+        stop(f"{args.rejected} is not an atomic of MANIFEST ({', '.join(atomics)})")
+    if args.fires is not None:
+        if args.fires not in rule_of:
+            stop(f"{args.fires} is not a control that is built for one rule "
+                 f"({', '.join(sorted(rule_of))})")
+        own[args.fires] = positive(rule_of[args.fires])
+
+    def compile_atomic(src, _workdir, name=None):
+        return label(src, name)
+
+    def run(binary, _args):
+        events = [dict(event) for event in own[binary]]
+        root = stimulus_pid(events)
+        if binary == args.vacuous:
+            events = []
+        elif binary == args.foreign:
+            events = [dict(event, pid=event["pid"] + SHIFT, ppid=event["ppid"] + SHIFT)
+                      for event in events]
+        elif binary == args.rejected:
+            events = [dict(event, success="no", exit="-1") for event in events]
+        window = [dict(BACKGROUND)] + events
+        return window, v.process_tree(root, window), ""     # the validator's own tree
+
+    v.MANIFEST = [(rule, src, run_args, []) for rule, src, run_args, _probes in v.MANIFEST]
+    v.audit_available = lambda: (False, args.no_audit) if args.no_audit else (True, "")
+    v.load_audit_rules = lambda: None
+    v.unload_audit_rules = lambda: None
+    v.compile_atomic = compile_atomic
+    v.run = run
+    sys.argv = [os.path.join(HERE, "detections", "validate_detections.py")] + validator_args
+    return v.main()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

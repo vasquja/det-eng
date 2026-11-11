@@ -1,0 +1,1 @@
+{"name": "planted-case", "kind": "benign", "why": "sample artifact for the tests of gatelib.py (Tree.plant); no gate reads it", "events": [{"type": "SYSCALL", "syscall": "ioctl"}]}

@@ -1,0 +1,23 @@
+title: PLANTED known-bad artifact - Any Kubernetes Get (over its benign budget)
+id: 0c7e4b52-6a1d-4f38-9b20-5d8e1f3a7c64
+status: experimental
+description: |
+  PLANTED ARTIFACT of detections/tests. It is not a detection of this repository.
+  The defect: the rule matches every `get` request in a Kubernetes audit log, so it
+  raises hundreds of hits on the benign corpus (detections/benign/slices/k8s/). It
+  has no entry in detections/benign/budgets.json, so the default budget governs it:
+  enforce at 0 hits. detections/score_benign.py --check --enforce must reject it as
+  OVER its budget (detections/tests/test_quality.py, case sb-over-budget).
+author: det-eng
+date: 2026/11/10
+tags:
+  - attack.discovery
+  - attack.t1613
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  selection:
+    verb: 'get'
+  condition: selection
+level: low

@@ -1,0 +1,30 @@
+title: PLANTED known-bad artifact - Kubernetes Namespace Deleted (filter not null-safe)
+id: 3f9a6d18-7b25-4c0e-8e41-2a6c9d0b5f73
+status: experimental
+description: |
+  PLANTED ARTIFACT of detections/tests. It is not a detection of this repository.
+  Derived from detections/sigma/T1070/k8s_namespace_deleted.yml: its selection and
+  the body form of its dry-run filter, WITHOUT the guard that the real rule has
+  (sel_no_dry_run_body). The defect: `not filter_dry_run_body` reads
+  requestObject.dryRun, which a delete without a DeleteOptions body and every
+  Metadata-level record lack. In two-valued logic (the validators' SQLite query)
+  the positive case fires; on a three-valued backend (ES|QL and other SQL backends)
+  NOT of a test on the missing field is NULL and the record is lost.
+  detections/check_null_safety.py must reject the rule
+  (detections/tests/test_quality.py, case ns-unsafe-not).
+author: det-eng
+date: 2026/11/10
+tags:
+  - attack.stealth
+  - attack.t1070
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  select_namespace_delete:
+    objectRef.resource: 'namespaces'
+    verb: 'delete'
+  filter_dry_run_body:
+    requestObject.dryRun|contains: 'All'
+  condition: select_namespace_delete and not filter_dry_run_body
+level: low

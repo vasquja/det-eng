@@ -1,0 +1,11 @@
+/*
+ * Gate tests, validate_detections.py --dry-run: an atomic that does not compile.
+ *
+ * Stored as .txt, so that no build reads it. test_validators.py plants it over
+ * atomics/T1622/src/ptrace_traceme_behavioral.c in a copy of the repository.
+ *
+ * What is bad: `undeclared_symbol` is declared nowhere, so gcc refuses the file.
+ * An emulation that does not build can produce no telemetry: the validator must
+ * print `[ERROR ] ptrace_traceme_behavioral.c  compile failed for ...` and exit 1.
+ */
+int main(void) { return undeclared_symbol; }

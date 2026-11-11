@@ -1,0 +1,14 @@
+
+### L99. PLANTED known-bad artifact: afpacket_raw_socket has an open defect with no Summary row
+
+- **Rule**: [`sigma/T1040/afpacket_raw_socket.yml`](sigma/T1040/afpacket_raw_socket.yml) (level medium).
+- **Kind**: evasion. **Severity**: medium.
+- **Problem**: PLANTED ARTIFACT of detections/tests. It is not a defect of this
+  repository. The test appends this section to detections/RULE_DEFECTS.md in a
+  throwaway copy. The section names a rule that proves TRR9001.LIN.A and
+  TRR9001.LIN.B, so research/COVERAGE.md must no longer show those procedures as
+  Proven. The defect: the Summary table has no row for L99, and
+  research/tools/coverage_report.py reads only the Summary table, so the report
+  stays "current" (detections/tests/test_quality.py, known gap
+  cr-defect-heading-without-summary-row).
+- **Fix options**: none; this is a planted artifact.

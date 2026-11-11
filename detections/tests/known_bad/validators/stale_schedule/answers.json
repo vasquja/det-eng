@@ -1,0 +1,57 @@
+{
+  "/repos/example/det-eng/actions/workflows?per_page=100&page=1": {
+    "status": 200,
+    "body": {
+      "total_count": 1,
+      "workflows": [
+        {
+          "id": 9001,
+          "name": "weekly-validation",
+          "path": ".github/workflows/weekly-validation.yml",
+          "state": "active",
+          "created_at": "2026-09-01T10:00:00.000Z"
+        }
+      ]
+    }
+  },
+  "/repos/example/det-eng/actions/workflows/9001/runs?event=schedule&status=success&exclude_pull_requests=true&per_page=1&page=1": {
+    "status": 200,
+    "body": {
+      "total_count": 1,
+      "workflow_runs": [
+        {
+          "id": 9001005,
+          "workflow_id": 9001,
+          "event": "schedule",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "dc92c159482bb1202694b756be3acb538e2d4a97",
+          "run_attempt": 1,
+          "created_at": "2026-10-05T06:17:00Z",
+          "run_started_at": "2026-10-05T06:17:00Z",
+          "html_url": "https://github.com/example/det-eng/actions/runs/9001005"
+        }
+      ]
+    }
+  },
+  "/repos/example/det-eng/actions/workflows/9001/runs?event=schedule&exclude_pull_requests=true&per_page=10&page=1": {
+    "status": 200,
+    "body": {
+      "total_count": 1,
+      "workflow_runs": [
+        {
+          "id": 9001005,
+          "workflow_id": 9001,
+          "event": "schedule",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "dc92c159482bb1202694b756be3acb538e2d4a97",
+          "run_attempt": 1,
+          "created_at": "2026-10-05T06:17:00Z",
+          "run_started_at": "2026-10-05T06:17:00Z",
+          "html_url": "https://github.com/example/det-eng/actions/runs/9001005"
+        }
+      ]
+    }
+  }
+}

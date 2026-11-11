@@ -1,0 +1,17 @@
+title: PLANTED sample artifact for the tests of gatelib.py
+id: 3c7e1b52-9f0a-4d68-8b2e-5a4d7c1e9f03
+status: experimental
+description: |
+  Sample artifact of detections/tests/test_gatelib.py (Tree.plant copies a
+  directory). It is not a detection of this repository, and no gate reads it.
+author: det-eng
+date: 2026/11/10
+logsource:
+  product: linux
+  service: auditd
+detection:
+  sel:
+    type: SYSCALL
+    syscall: ioctl
+  condition: sel
+level: informational

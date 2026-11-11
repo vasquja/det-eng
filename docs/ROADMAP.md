@@ -21,18 +21,27 @@ The reasons for each item are in two design records:
 
 ## How to use this file
 
+- First read each item that is `in progress`. If its acceptance check is true on
+  `main`, set it to `done` in your pull request.
 - When you have no other task from a person, take the first item below that is
   `not started` and whose "needs" are `done`. Work top to bottom.
 - One item for each pull request. Keep the pull request small enough to review.
 - Change the status of the item in the same pull request. Add what you learned
   under the item if it changes a later item.
 - An item is `done` only when its acceptance check is true on `main`.
+- Do not set an item to `done` while
+  `python3 -B detections/tests/gatelib.py --gaps` lists a gap that it closes.
+- The gate tests read section 1 of this file (`detections/tests/test_suite.py`,
+  class `KnownGapList`). When you add, remove or rename an item of section 1,
+  change the table `ROADMAP` in `detections/tests/gatelib.py` in the same pull
+  request. Write only a status word in the Status cell, and put a reason in the
+  Needs cell.
 - If you find that an item is wrong, change the item and say why in the pull
   request. The direction is yours to correct.
 - Do not start an item marked `owner`. Tell the owner what it waits for.
 
 Status words: `done`, `in progress`, `not started`, `owner` (only the owner can do
-it), `blocked` (with the reason).
+it), `blocked` (with the reason in the Needs cell).
 
 ## 1. Trust: make a green run mean something
 
@@ -40,16 +49,25 @@ The order matters. Tests for the gates come before each change to the gates.
 
 | ID | Item | Status | Needs | Acceptance check |
 |----|------|--------|-------|------------------|
-| R2 | **The gates test themselves** (design 4.2). A set of planted bad artifacts that each gate must reject, and a CI job that runs it with the self-tests that no workflow runs today. | not started | | A job on each pull request fails when a gate stops rejecting a planted artifact. Each planted artifact is rejected for its intended reason, not for a side effect. |
+| R2 | **The gates test themselves** (design 4.2). A set of planted bad artifacts that each gate must reject, and a CI job that runs it with the self-tests that no workflow runs today. | in progress | | A job on each pull request fails when a gate stops rejecting a planted artifact. Each planted artifact is rejected for its intended reason, not for a side effect. The suite is `detections/tests/` and the job is `gate-tests`. The item is `done` when that job is green on `main`. |
 | R2b | **Linux controls are not vacuous** (design 4.2). Grade vacuity for each control. Replace the no-op control with a wrong-argument control for the rules that have no other live negative. | not started | R2 | For each Linux rule, one live negative control would fire the rule if one required argument changed. |
-| R7 | **Representation variants in the oracle** (design 4.7). Run each case as compact JSON, sorted JSON, a multi-valued list model, case-sensitive `LIKE` and RE2. Correct the two GCP rules that lose their hit under compact JSON. Write `detections/SEMANTICS.md`. | not started | R2 | A check fails on a new divergence between variants. The known losses are listed as expected, each with a reason. |
+| R2c | **Negative controls and baselines cannot be empty** (design 4.2). A negative control that read no record cannot fail. Each Kubernetes validator fails `--expect-miss` when a pre-emulation log holds no record. The cloud validator fails a benign baseline that holds no record, and a rule of its `MANIFEST` whose fixture is missing. | not started | R2 | Its known-gap tests are rejection tests. Each validator exits with an error that names the empty log, the empty baseline or the missing fixture. |
+| R2d | **Hygiene and report truth** (design 4.2). No rule file is hidden from the gates: a rule in a dotfile under `detections/sigma/` fails. The coverage report counts an entry of `detections/RULE_DEFECTS.md` that has a section and no Summary row. `rule_cases.py` names the rule and the case when two keys of an event differ only in letter case, and does not stop with a traceback. | not started | R2 | Its known-gap tests are rejection tests. Each gate exits with an error that names the hidden file, the defect entry or the case. |
+| R7 | **Representation variants in the oracle** (design 4.7). Run each case as compact JSON, sorted JSON, a multi-valued list model, case-sensitive `LIKE` and RE2. Correct the two GCP rules that lose their hit under compact JSON. Write `detections/SEMANTICS.md`. | not started | R2 | A check fails on a new divergence between variants. The known losses are listed as expected, each with a reason. Two rules lose their hit under compact JSON today: `T1199/gcp_workforce_principalset_privileged_binding.yml` and `T1098.001/gcp_workload_identity_federation_sa_binding.yml`. This item records both in `detections/RULE_DEFECTS.md` and corrects them. |
 | R3 | **External records** (design 4.3). Records that the agent did not write, from `splunk/attack_data` (Apache-2.0), pinned by hash. A same-technique record must fire the rule unless a protected file says why not. | not started | R2 | The check runs in CI in shadow mode and reports each rule's result on each same-technique dataset. The first real-record miss has a defect entry. |
 | R4 | **Harvest the captures of CI** (design 4.4). The lab validators write the records that the kernel or the API server produced. A scheduled job commits them as evidence. | not started | R2, T8 | A Linux or Kubernetes rule has a committed captured positive that the agent did not write by hand. |
 | R5 | **Provenance tiers** (design 4.5). Each case and fixture says where it came from. The coverage report shows `proven-live`, `proven-recorded`, `proven-synthetic` and `claimed`. Stop calling a hand-written fixture "recorded". | not started | R3 | The coverage report does not call a cloud procedure Proven when its only evidence is a fixture that the agent wrote. |
 | R6 | **Mutation ratchet** (design 4.6). Build mutants of each rule. The count of surviving mutants for a rule must not rise. | not started | R2 | A pull request that adds a dead or over-broad item to a rule fails. |
 | R1 | **Gate code from `main`** (design 4.1). Each checking job runs the gate code of `main`, not of the pull request. | not started | T2, T5 | A pull request that changes a gate and a rule together cannot make its own rule pass. Until T2 and T5 are done, each technique pull request must edit the validators, so this item waits for them. |
 | R8 | **Approvals as checked properties** (design 4.8). A waiver or a budget is accepted only when a machine can check its conditions. | not started | R5 | A waiver that does not meet its conditions fails a check. |
-| R9 | **Live cloud capture** (design 4.9). | in progress | owner | The setup guides and the smoke test are merged (`docs/setup/`). Open: the owner creates the accounts; `atomics/lib/live.sh` with an undo stack; the capture workflow; one supervised run. |
+| R9 | **Live cloud capture** (design 4.9). | in progress | owner | The setup guides and the smoke test are merged (`docs/setup/`). Open: the owner creates the accounts; `atomics/lib/live.sh` with an undo stack; the capture workflow; one supervised run. No gate reads the live emulation scripts today. Thus a live script without an undo trap has no gate test until `atomics/lib/live.sh` and its lint exist. |
+
+The gate tests (R2) record known gaps. A known gap is an artifact that a gate
+should reject and does not reject today. `python3 -B detections/tests/gatelib.py --gaps`
+lists them, each with the item of this table that closes it. To close an item,
+correct the gate and, in the same pull request, change each of its known-gap tests
+into a rejection test (see [`detections/tests/README.md`](../detections/tests/README.md),
+"Known gaps"). The gate tests also read this table: see "How to use this file".
 
 ## 2. Throughput: many builders, no hand integration
 

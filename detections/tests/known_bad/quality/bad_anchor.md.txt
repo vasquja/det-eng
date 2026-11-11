@@ -1,0 +1,9 @@
+# PLANTED known-bad artifact: a link to an anchor that does not exist
+
+PLANTED ARTIFACT of detections/tests. It is not a page of this repository. The
+test plants it as `PLANTED.md` at the root of a throwaway copy. The defect: the
+link below names an anchor that no heading of detections/k8s/PLATFORMS.md has.
+`detections/k8s_platforms_md.py --anchors` must reject it
+(detections/tests/test_quality.py, case an-bad-anchor).
+
+See the [platforms](detections/k8s/PLATFORMS.md#no-such-heading) page.

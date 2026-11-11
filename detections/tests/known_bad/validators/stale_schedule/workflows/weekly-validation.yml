@@ -1,0 +1,9 @@
+# Gate tests, check_schedule_freshness.py: a workflow with a weekly schedule.
+# It is not under .github/workflows/, so GitHub never runs it. The test passes
+# this directory as --workflows-dir, with the recorded answers in ../answers.json.
+name: weekly-validation
+on:
+  pull_request:
+  schedule:
+    - cron: '17 6 * * 1'
+jobs: {}
