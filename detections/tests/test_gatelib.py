@@ -583,10 +583,59 @@ jobs:
         with self.assertRaisesRegex(LookupError, r"0 step\(s\)"):
             step("python3 detections/gate.py --update")
 
+    def test_ci_step_refuses_a_step_that_cannot_fail_its_job(self):
+        """`continue-on-error` on a step leaves its job green when the step fails, and
+        on a job it leaves the workflow run green. Tree.run_step() runs only the
+        text of the step, so ci_step() does not give such a step to a test."""
+        tree = gatelib.Tree(())
+        self.addCleanup(tree.cleanup)
+        tree.write(".github/workflows/w.yml", """\
+name: w
+on: [push]
+jobs:
+  hard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check
+        run: python3 detections/gate.py --check
+      - name: Shadow
+        continue-on-error: true
+        run: python3 detections/gate.py --shadow
+      - name: Strict
+        continue-on-error: false
+        run: python3 detections/gate.py --strict
+  soft:
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.experimental }}
+    steps:
+      - name: Check
+        run: python3 detections/gate.py --check
+""")
+        self.assertEqual([(step.job, step.name, step.soft)
+                          for step in gatelib.ci_steps(root=tree.root)],
+                         [("hard", "Check", False), ("hard", "Shadow", True),
+                          ("hard", "Strict", False), ("soft", "Check", True)])
+        # A Step that a test constructs with five values is not soft.
+        self.assertFalse(gatelib.Step("w.yml", "job", "step", None, "true\n").soft)
+
+        def step(job, command):
+            return gatelib.ci_step("w.yml", job, command, root=tree.root)
+
+        # CONTROL: the steps of the same file that can fail their job are found.
+        self.assertEqual(step("hard", "--check").name, "Check")
+        self.assertEqual(step("hard", "--strict").name, "Strict")
+        for job, command, name in (("hard", "--shadow", "Shadow"), ("soft", "--check", "Check")):
+            with self.assertRaisesRegex(
+                    LookupError, rf"^w\.yml, job {job}, step '{name}': the step or its job has "
+                                 r"`continue-on-error`, so a gate that fails there leaves the "
+                                 r"job \(for a step\) or the workflow run \(for a job\) green$"):
+                step(job, command)
+
 
 class Runner(unittest.TestCase):
     """`gatelib.py --run`: the parallel runner must fail when any class fails, when a
-    class did not run all of its tests, and when a test module does not import."""
+    class did not run all of its tests, when a test module does not import, and when
+    a run of the whole suite did not run the test of a known gap."""
 
     def suite(self):
         tree = gatelib.Tree(("detections/tests/gatelib.py",))
@@ -653,10 +702,42 @@ class Runner(unittest.TestCase):
         self.assertIn("===== test_two.Shrinks: FAILED (ran 1 of 2 test(s)), 1 test(s)",
                       result.stdout)
         # CONTROL: the class's own process is green, so only the count fails the run.
-        alone = tree.run_command([gatelib.PYTHON, "-m", "unittest", "test_two.Shrinks"],
-                                 cwd="detections/tests", env={gatelib._OPEN_GAPS_FILE: os.devnull})
+        counts = tree.out("counts.json")
+        alone = tree.run_command(
+            [gatelib.PYTHON, "-c", gatelib._ONE_CLASS, "test_two.Shrinks", counts],
+            cwd="detections/tests", env={gatelib._OPEN_GAPS_FILE: os.devnull})
         self.assertEqual(alone.returncode, 0, alone.describe())
-        self.assertRegex(alone.stderr, r"(?m)^Ran 1 test in ")
+        with open(counts, encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh), {"ran": 1, "skipped": 0})
+
+    def test_counts_come_from_the_result_of_a_class_and_not_from_its_output(self):
+        """The runner reads no line of the text that unittest prints: the format of
+        that text differs between Python versions, and a test can print such a line
+        itself. The counts are those of the TestResult of the class."""
+        tree = self.suite()
+        tree.write("detections/tests/test_two.py",
+                   "import sys\nimport unittest\n\n\n"
+                   "class Prints(unittest.TestCase):\n"
+                   "    def test_d(self):\n"
+                   "        print('\\nRan 7 tests in 0.001s\\n\\nOK (skipped=3)', file=sys.stderr)\n")
+        result = tree.run("detections/tests/gatelib.py", "--run", "--no-skips")
+        gatelib.assert_accepts(result, r"^3 test class\(es\), 4 test\(s\), ")
+        self.assertRegex(result.stdout, r"(?m)^===== test_two\.Prints: ok, 1 test\(s\), ")
+        self.assertRegex(result.stdout, r"(?m)^OK$")
+        # The lines of the test are in the output of its class (not vacuous).
+        self.assertIn("\n    Ran 7 tests in 0.001s\n", result.stdout)
+        self.assertIn("\n    OK (skipped=3)\n", result.stdout)
+        # The process of a class that ends without its counts did not run its tests.
+        tree.write("detections/tests/test_two.py",
+                   "import os\nimport unittest\n\n\n"
+                   "class Leaves(unittest.TestCase):\n"
+                   "    def test_d(self):\n"
+                   f"        if os.environ.get({gatelib._OPEN_GAPS_FILE!r}):\n"
+                   "            os._exit(0)\n")
+        left = tree.run("detections/tests/gatelib.py", "--run")
+        gatelib.assert_rejects(left, r"^FAILED: 1 test class\(es\): test_two\.Leaves$",
+                               exit_code=1)
+        self.assertIn("===== test_two.Leaves: FAILED (ran 0 of 1 test(s)), 0 test(s)", left.stdout)
 
     def test_a_class_that_hangs_is_stopped_and_fails_the_run(self):
         """A class that does not end is stopped after --class-timeout seconds. The run
@@ -675,7 +756,9 @@ class Runner(unittest.TestCase):
                                exit_code=1)
         self.assertLess(result.seconds, 40)
         self.assertIn("===== test_hang.Hangs: FAILED (stopped after 3 s), 0 test(s)", result.stdout)
-        self.assertRegex(result.stdout, r"(?m)^    test_d \(test_hang\.Hangs\.test_d\) \.\.\. ok$")
+        # The line of unittest for the test that passed: Python 3.10 prints
+        # `test_d (test_hang.Hangs) ... ok`, later versions add `.test_d` to the class.
+        self.assertRegex(result.stdout, r"(?m)^    test_d \(test_hang\.Hangs\b[^)\n]*\) \.\.\. ok$")
         self.assertIn("    (stopped: the class did not end in 3 s; the output above is what it "
                       "gave until then)", result.stdout)
         self.assertIn("===== test_one.Good: ok, 2 test(s)", result.stdout)
@@ -693,11 +776,17 @@ class Runner(unittest.TestCase):
     def test_a_module_that_does_not_import_fails_the_run_and_the_gap_list(self):
         tree = self.suite()
         tree.write("detections/tests/test_two.py", "import no_such_module_of_the_suite\n")
-        for arguments in (("--run",), ("--gaps",)):
+        summary = tree.out("summary.md")
+        for arguments in (("--run", "--summary", summary), ("--gaps",)):
             result = tree.run("detections/tests/gatelib.py", *arguments)
             gatelib.assert_rejects(result, r"^a test module does not import:", exit_code=1,
                                    crash_ok=True)
             self.assertIn("no_such_module_of_the_suite", result.stderr)
+        # No test ran, so run_suite() wrote no summary: the job summary still says
+        # that the run failed, and why.
+        with open(summary, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), "## Gate tests: FAILED\n\nA test module does not "
+                             "import, so no test ran. The log of the step holds the error.\n")
 
     def test_skipped_tests_are_counted_and_no_skips_fails_the_run(self):
         """A skipped test is not a failure, and the run says how many were skipped. With
@@ -795,6 +884,87 @@ class Runner(unittest.TestCase):
         self.assertIn("| `constructed-other-gap` | `other.py` | accepts | R2d | not run | ",
                       text)
         self.assertIn("| `constructed-open-gap` | `gate.py` | accepts | R7 | open | ", text)
+
+    NOT_COLLECTED = (
+        "import os, sys, unittest\n"
+        "sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))\n"
+        "import gatelib\n\n\n"
+        "def accepted(case):\n"
+        "    tree = gatelib.Tree(())\n"
+        "    case.addCleanup(tree.cleanup)\n"
+        "    tree.write('gate.py', 'print(1)')\n"
+        "    return tree.run('gate.py')\n\n\n"
+        "class Collected(unittest.TestCase):\n"
+        "    def test_a(self):\n        pass\n\n"
+        "    @gatelib.known_gap('gap-on-a-method-that-is-no-test', gate='gate.py', closes='R7',\n"
+        "                       reason='A constructed gate accepts every artifact.')\n"
+        "    def check_gap_never_collected(self):\n"
+        "        gatelib.assert_rejects(accepted(self), r'FAIL')\n\n\n"
+        "class Mixin:\n"
+        "    @gatelib.known_gap('gap-in-a-class-that-is-no-testcase', gate='gate.py', closes='R7',\n"
+        "                       reason='A constructed gate accepts every artifact.')\n"
+        "    def test_gap_never_loaded(self):\n"
+        "        gatelib.assert_rejects(accepted(self), r'FAIL')\n")
+    # The same two markers, on tests that unittest collects.
+    COLLECTED = NOT_COLLECTED.replace("def check_gap_never_collected(", "def test_gap_collected(") \
+        .replace("class Mixin:\n", "class Mixin(unittest.TestCase):\n")
+
+    def test_a_known_gap_whose_test_did_not_run_fails_a_full_run(self):
+        """A marker registers its gap when the module is imported. When unittest does
+        not collect the marked method (its name is not `test_...`, or its class is no
+        TestCase), no test tests the gap, and the list would still show it. A run of
+        the whole suite fails then; every class of it passed."""
+        tree = self.suite()
+        tree.write("detections/tests/test_gappy.py", self.NOT_COLLECTED)
+        summary = tree.out("summary.md")
+        result = tree.run("detections/tests/gatelib.py", "--run", "--no-skips",
+                          "--summary", summary)
+        gatelib.assert_rejects(
+            result, r"^FAILED: the test of these known gap\(s\) did not run: "
+                    r"gap-in-a-class-that-is-no-testcase, gap-on-a-method-that-is-no-test$",
+            exit_code=1)
+        self.assertRegex(result.stdout, r"(?m)^3 test class\(es\), 4 test\(s\), ")
+        self.assertNotIn("test class(es): ", result.stdout)     # no class failed
+        self.assertNotRegex(result.stdout, r"(?m)^OK$")
+        self.assertEqual(result.stdout.count("      state:  not run in this run\n"), 2)
+        with open(summary, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertRegex(text, r"(?m)^## Gate tests: FAILED$")
+        self.assertIn("- FAILED: the test of these known gap(s) did not run: "
+                      "gap-in-a-class-that-is-no-testcase, gap-on-a-method-that-is-no-test\n", text)
+        # A class filter runs a part of the suite: a gap that did not run is no failure.
+        gatelib.assert_accepts(tree.run("detections/tests/gatelib.py", "--run", "test_one"),
+                               r"^2 test class\(es\), 3 test\(s\), ")
+        # CONTROL: the same markers on tests that unittest collects. The run passes
+        # and saw both gaps open.
+        tree.write("detections/tests/test_gappy.py", self.COLLECTED)
+        collected = tree.run("detections/tests/gatelib.py", "--run", "--no-skips")
+        gatelib.assert_accepts(collected, r"^4 test class\(es\), 6 test\(s\), ")
+        self.assertEqual(collected.stdout.count("      state:  open in this run\n"), 2)
+
+    def test_a_known_gap_whose_test_was_skipped_is_a_skipped_test(self):
+        """A skipped test is not a failure outside CI (--no-skips makes it one). So the
+        gap of a test that was skipped is `not run`, and the run does not fail for it
+        a second time."""
+        tree = self.suite()
+        tree.write("detections/tests/test_gappy.py", self.COLLECTED.replace(
+            "class Mixin(unittest.TestCase):\n",
+            "class Mixin(unittest.TestCase):\n"
+            "    @classmethod\n"
+            "    def setUpClass(cls):\n"
+            "        raise unittest.SkipTest('gcc is not installed')\n\n"))
+        result = tree.run("detections/tests/gatelib.py", "--run")
+        gatelib.assert_accepts(result, r"^4 test class\(es\), 6 test\(s\), ")
+        self.assertRegex(result.stdout, r"(?m)^1 test\(s\) skipped: test_gappy\.Mixin \(1\)$")
+        self.assertRegex(result.stdout, r"(?s)\n  gap-in-a-class-that-is-no-testcase\n.*?"
+                                        r"\n      state:  not run in this run\n")
+        self.assertRegex(result.stdout, r"(?s)\n  gap-on-a-method-that-is-no-test\n.*?"
+                                        r"\n      state:  open in this run\n")
+        self.assertNotIn("did not run", result.stdout)
+        strict = tree.run("detections/tests/gatelib.py", "--run", "--no-skips")
+        gatelib.assert_rejects(strict, r"^FAILED: --no-skips is set, and test\(s\) were skipped",
+                               exit_code=1)
+        self.assertNotIn("did not run", strict.stdout)
 
     def test_options_of_the_run_need_run(self):
         tree = self.suite()

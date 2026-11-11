@@ -8,6 +8,9 @@ Gate tests, group `suite`: rules that hold for the gates and the suite as a whol
                       this suite, on every pull request, and fails when a test fails
     PipedSteps        no step of any workflow pipes a command into `tee` with a
                       shell that loses the exit code of the command
+    SoftSteps         no step that runs a script of the repository has
+                      `continue-on-error` (on the step or on its job), but the
+                      shadow steps that the class lists
     KnownGapList      every @known_gap names an item of section 1 of docs/ROADMAP.md,
                       and no open gap names an item that is `done`
     PlantedArtifacts  every file under known_bad/ is planted by a test, and none has
@@ -116,13 +119,15 @@ class GateTestsJob(gatelib.GateCase):
     def test_job_runs_on_every_pull_request(self):
         """A path filter or a condition could skip the job on the change that breaks a
         gate. The workflow has none for pull requests, and the job and its steps
-        have no `if:` and no `continue-on-error:`."""
+        have no `if:` and no `continue-on-error:`. The job has no `needs:`: GitHub
+        skips a job when a job that it needs failed."""
         doc = self.workflow()
         triggers = doc.get("on", doc.get(True))     # YAML 1.1 reads the key `on` as true
         self.assertIn("pull_request", triggers)
         self.assertIsNone(triggers["pull_request"], "pull_request has a filter")
         self.assertEqual(triggers["push"], {"branches": ["main"]})
         job = doc["jobs"]["gate-tests"]
+        self.assertNotIn("needs", job)
         for node in [job] + job["steps"]:
             self.assertNotIn("if", node)
             self.assertNotIn("continue-on-error", node)
@@ -132,10 +137,11 @@ class GateTestsJob(gatelib.GateCase):
         the classes after the one that hangs, and no job summary. So the runner's
         timeout for one class (the step gives no --class-timeout, so it is
         gatelib.CLASS_TIMEOUT) must end first, with time left for the other classes
-        (about two minutes) and for the steps before the tests."""
+        (the suite must run in less than four minutes on a GitHub runner; today it
+        takes about three and a half) and one minute for the steps before the tests."""
         job_seconds = self.workflow()["jobs"]["gate-tests"]["timeout-minutes"] * 60
         self.assertNotIn("--class-timeout", gatelib.ci_commands(self.COMMAND)[0])
-        self.assertGreaterEqual(job_seconds - gatelib.CLASS_TIMEOUT, 240,
+        self.assertGreaterEqual(job_seconds - gatelib.CLASS_TIMEOUT, 300,
                                 "the class timeout of the runner is not well below the "
                                 "timeout of the gate-tests job")
         # One gate run that hangs is reported by its own test, with the gate's output.
@@ -227,6 +233,57 @@ class PipedSteps(unittest.TestCase):
             "`shell: bash` to the step")
 
 
+class SoftSteps(unittest.TestCase):
+    """A step with `continue-on-error` leaves its job green when it fails, and a job
+    with it leaves its workflow run green. A gate in such a step gates nothing.
+    gatelib.ci_step() refuses such a step, but only for the steps that a test asks
+    for. The rule here is for every step of every workflow: no step that runs a
+    script of the repository with Python is soft, but the shadow steps of SHADOW (a
+    check that must not block yet)."""
+
+    RUNS = re.compile(r"python[\d.]*\s+(?:-\S+\s+)*[\"']?\S*(?:detections|\.github/scripts|"
+                      r"research/tools)/\S+\.py\b")
+    SHADOW = [("validate-apiserver-detections.yml", "validate",
+               "Score the pre-emulation log as a live benign slice (shadow)")]
+
+    @classmethod
+    def soft_gate_steps(cls, steps):
+        """(workflow, job, step name) of the soft steps that run a script of the
+        repository."""
+        return [(step.workflow, step.job, step.name) for step in steps if step.soft
+                and any(cls.RUNS.search(line) for line in gatelib._command_lines(step.run))]
+
+    def test_the_rule_finds_a_soft_step_that_runs_a_gate(self):
+        """CONTROL of the rule, on constructed steps: it names the soft steps that run
+        a script of the repository, and no other step."""
+        def step(name, run, soft):
+            return gatelib.Step("w.yml", "job", name, "bash", run, soft)
+
+        found = [
+            step("gate", "python3 detections/gate.py --check | tee /tmp/gate.out\n", True),
+            step("lint", "python3 -B .github/scripts/lint.py\n", True),
+            step("report, base tree", 'python3 "$base/research/tools/report.py" --check\n', True),
+            step("joined line", "python3 \\\n  detections/gate.py --check\n", True)]
+        not_found = [
+            step("the same gate, not soft", "python3 detections/gate.py --check\n", False),
+            step("no script", "sudo systemctl start auditd\nkubectl get pods\n", True),
+            step("in a comment", "# python3 detections/gate.py --check\ntrue\n", True),
+            step("a list of paths", "patterns='detections/gate.py'\n", True)]
+        self.assertEqual(self.soft_gate_steps(found + not_found),
+                         [("w.yml", "job", s.name) for s in found])
+
+    def test_no_gate_step_has_continue_on_error(self):
+        steps = gatelib.ci_steps()
+        # The workflows have soft steps today (the search is not vacuous).
+        self.assertGreater(sum(1 for step in steps if step.soft), 0, "no soft step was read")
+        self.assertEqual(
+            self.soft_gate_steps(steps), self.SHADOW,
+            "these steps run a script of the repository, and the step or its job has "
+            "`continue-on-error`: a gate that fails there leaves the job (for a step) or "
+            "the workflow run (for a job) green. Remove `continue-on-error`; for a check "
+            "that must not block yet, add the step to SoftSteps.SHADOW")
+
+
 class KnownGapList(unittest.TestCase):
     """gatelib.KNOWN_GAPS is the one list of the known gaps. Each gap names the item
     of section 1 ("Trust") of docs/ROADMAP.md that closes it. A gap without an item
@@ -294,29 +351,55 @@ class PlantedArtifacts(unittest.TestCase):
         cls.files = sorted(
             os.path.relpath(os.path.join(directory, name), gatelib.KNOWN_BAD).replace(os.sep, "/")
             for directory, _dirs, names in os.walk(gatelib.KNOWN_BAD) for name in names)
+        # The text of the test modules that plant. This module plants nothing: it
+        # holds the rule and the names of its control, which must not count.
         cls.tests = ""
         for name in sorted(os.listdir(gatelib.TESTS)):
-            if re.fullmatch(r"test_\w+\.py", name):
+            if re.fullmatch(r"test_\w+\.py", name) and name != os.path.basename(__file__):
                 with open(os.path.join(gatelib.TESTS, name), encoding="utf-8") as fh:
                     cls.tests += fh.read()
 
     def planted(self, rel):
         """True when the text of a test module names the artifact: its path, a
-        directory above it (planted whole), or its directory and its name without
-        the extension (a name that a test puts together)."""
+        directory above it (planted whole), or a name that a test puts together. For
+        such a name the text holds an f-string that starts with the directory, and a
+        call of a helper `plant_...()` or `run_...()` with the name, without the
+        extension, as its first argument (`self.run_bad_cases("line_not_json")`)."""
         if rel in self.tests:
             return True
         directory, name = rel.rsplit("/", 1)
         parts = directory.split("/")
         if any(f'"{"/".join(parts[:n])}"' in self.tests for n in range(2, len(parts) + 1)):
             return True
-        return directory + "/" in self.tests and f'"{name.split(".")[0]}"' in self.tests
+        return (f'f"{directory}/{{' in self.tests and re.search(
+            rf'\b(?:plant|run)_\w+\("{re.escape(name.split(".")[0])}"[,)]', self.tests)
+            is not None)
 
     def test_every_artifact_is_planted_by_a_test(self):
         self.assertGreater(len(self.files), 20, "known_bad/ was not read")
         orphans = [rel for rel in self.files if not self.planted(rel)]
         self.assertEqual(orphans, [], "no test names these files of known_bad/: an artifact "
                          "that no test plants proves nothing. Plant it, or delete it")
+
+    def test_the_rule_finds_a_file_that_no_test_plants(self):
+        """CONTROL of the rule, on constructed names beside real ones. A name that is
+        a quoted word of some test (`positive`, a kind of case; `name_keyed`, a run of
+        CheckSufficiency) is not a planted artifact."""
+        for rel in ("sufficiency/bad_cases/line_not_json.cases.jsonl",      # put together
+                    "sufficiency/bad_cases/sound.cases.jsonl",              # named by its path
+                    "sufficiency/hidden_rule/hidden.yml",                   # named by its path
+                    "sufficiency/trivial_near_miss/planted_trivial_near_miss.yml"):    # whole
+            self.assertIn(rel, self.files)
+            self.assertTrue(self.planted(rel), rel)
+        for word in ("positive", "name_keyed"):
+            self.assertIn(f'"{word}"', self.tests)
+        for rel in ("sufficiency/bad_cases/positive.cases.jsonl",
+                    "sufficiency/bad_cases/name_keyed.cases.jsonl",
+                    "sufficiency/bad_cases/no_such_case.cases.jsonl",
+                    "sufficiency/hidden_rule/never_planted.yml",
+                    "quality/orphan_rule.yml"):
+            self.assertNotIn(rel, self.files)
+            self.assertFalse(self.planted(rel), rel)
 
     def test_no_artifact_has_a_name_that_the_repository_reads(self):
         """check_md_links.py, the anchors check and the merge policy read every .md

@@ -719,6 +719,21 @@ class CheckSufficiency(gatelib.StartedTogether):
                      "    recipientAccountId: '123456789012'\n")
         return cls.start_gate(tree)
 
+    # The positive cases of a rule's sidecar (argument 1: the rule) on which the rule
+    # fires when every event carries another account id, and the number of the cases.
+    IN_ANOTHER_ACCOUNT = (
+        "import json, sys\n"
+        "sys.path.insert(0, 'detections')\n"
+        "import sigma_eval\n"
+        "sql = sigma_eval.compile_rule(sys.argv[1])\n"
+        "with open(sys.argv[1][:-len('.yml')] + '.cases.jsonl', encoding='utf-8') as fh:\n"
+        "    cases = [json.loads(line) for line in fh if line.strip()]\n"
+        "positives = [case for case in cases if case['kind'] == 'positive']\n"
+        "fired = [bool(sigma_eval.evaluate(sql, [sigma_eval.flatten(\n"
+        "    dict(event, recipientAccountId='999999999999')) for event in case['events']]))\n"
+        "         for case in positives]\n"
+        "print(sum(fired), len(positives))\n")
+
     @gatelib.known_gap(
         "cs-rule-keyed-on-fixture-constant",
         gate="detections/check_sufficiency.py (R4)",
@@ -729,8 +744,18 @@ class CheckSufficiency(gatelib.StartedTogether):
         closes="R3")
     def test_gap_rule_keyed_on_a_constant_of_the_emulation_run(self):
         """WANTED: R4 names a rule that keys on a constant of the emulation run."""
-        _, result = self.started("fixture_constant")
+        tree, result = self.started("fixture_constant")
         _, control = self.started()
+        # The artifact is bad: with another account id in every event, the real rule
+        # fires on each positive case of its sidecar, and the planted rule on none.
+        fired = {}
+        for name, copy in (("real", self.good()), ("planted", tree)):
+            probe = copy.run_python(self.IN_ANOTHER_ACCOUNT, "detections/sigma/" + LEAKED_KEY)
+            self.assertEqual(probe.returncode, 0, probe.describe())
+            fired[name] = [int(count) for count in probe.stdout.split()]
+        self.assertGreater(fired["real"][1], 0)
+        self.assertEqual(fired["real"][0], fired["real"][1])
+        self.assertEqual(fired["planted"], [0, fired["real"][1]])
         items = int(report_row(control, LEAKED_KEY)["items"].split("/")[1])
         # The gate read the planted rule: it counts one item more than in the good copy.
         self.assert_saw(result, r"^  " + re.escape(LEAKED_KEY)

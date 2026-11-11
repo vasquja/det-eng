@@ -37,7 +37,8 @@ What a test gets from this module:
                       python3 detections/tests/gatelib.py --gaps
   ci_steps        the `run:` steps of the workflows, to prove that the command a
                   test runs is the command CI runs. Tree.run_step() runs one step
-                  with the shell that GitHub Actions would use.
+                  with the shell that GitHub Actions would use. ci_step() gives
+                  one step, and refuses a step that has `continue-on-error`.
 
 Rules that keep the suite hermetic:
 
@@ -880,6 +881,12 @@ class Tree:
         `python`, which are the tests' Python, and `pip` and `pip3`, which do nothing
         and exit 0 (a test installs nothing). programs={name: shell line} adds a
         program there, or replaces one of these.
+
+        Not modelled: the `if:` of the step or of its job (the step always runs
+        here), its `env:` (give the values in `env`), its `working-directory:`
+        (the step runs at the root of the copy) and `continue-on-error`
+        (ci_step() refuses a step that has it). A shell other than the two above
+        is refused.
         """
         script = step.run
         for expression, value in (expressions or {}).items():
@@ -921,15 +928,22 @@ class Tree:
 
 # --------------------------------------------------------------------------- workflows
 
-Step = collections.namedtuple("Step", "workflow job name shell run")
+# soft: the step or its job has `continue-on-error`. A step that fails then leaves its
+# job green, and a job that fails leaves its workflow run green.
+Step = collections.namedtuple("Step", "workflow job name shell run soft", defaults=(False,))
 
 
 def ci_steps(script=None, root=REPO):
     """The `run:` steps of the workflows under .github/workflows/, as Step tuples
-    (workflow file, job id, step name, shell or None, run text).
+    (workflow file, job id, step name, shell or None, run text, soft).
 
     script  keep only the steps whose text holds this string (`detections/rule_cases.py`).
     shell   the step's `shell:`, or the job's or the workflow's `defaults.run.shell`.
+    soft    True when the step or its job has `continue-on-error` (any value but
+            false: an expression counts too).
+
+    A Step does not hold the `if:`, the `env:` or the `working-directory:` of the
+    step: Tree.run_step() does not model them.
     """
     import yaml     # PyYAML: in detections/requirements.txt
 
@@ -947,7 +961,9 @@ def ci_steps(script=None, root=REPO):
                 if isinstance(run, str) and (script is None or script in run):
                     steps.append(Step(os.path.basename(path), job_id, step.get("name") or "",
                                       step.get("shell") or default_shell(job)
-                                      or default_shell(doc), run))
+                                      or default_shell(doc), run,
+                                      bool(step.get("continue-on-error")
+                                           or job.get("continue-on-error"))))
     return steps
 
 
@@ -979,13 +995,20 @@ def ci_step(workflow, job, command, root=REPO):
              not count.
 
     Fails when there is no such step, or more than one: the test must name the step
-    that it runs."""
+    that it runs. Fails also when the step or its job has `continue-on-error`: a
+    gate that fails there leaves the job (for a step) or the workflow run (for a
+    job) green, so a test that runs the step with Tree.run_step() would prove
+    nothing about CI."""
     wanted = " ".join(command.split())
     found = [s for s in ci_steps(None, root) if s.workflow == workflow and s.job == job
              and any(wanted in line for line in _command_lines(s.run))]
     if len(found) != 1:
         raise LookupError(f"{workflow}, job {job}: {len(found)} step(s) have a command line "
                           f"with `{wanted}`; wanted 1" + "".join(f"\n  - {s.name}" for s in found))
+    if found[0].soft:
+        raise LookupError(f"{workflow}, job {job}, step {found[0].name!r}: the step or its job "
+                          "has `continue-on-error`, so a gate that fails there leaves the job "
+                          "(for a step) or the workflow run (for a job) green")
     return found[0]
 
 
@@ -1210,6 +1233,20 @@ class StartedTogether(GateCase):
 
 # ---------------------------------------------------------------------------------- CLI
 
+# What `gatelib.py --run` runs for one test class (argument 1), with `python -c`: the
+# call that `python -m unittest -v <class>` makes, and then the counts of its
+# TestResult as JSON in a file (argument 2). The runner takes the counts from that
+# file. It reads no line of the text that unittest prints: that text is for the log,
+# and its format differs between Python versions.
+_ONE_CLASS = (
+    "import json, sys, unittest\n"
+    "result = unittest.main(module=None, argv=['unittest', '-v', sys.argv[1]],\n"
+    "                       exit=False).result\n"
+    "with open(sys.argv[2], 'w', encoding='utf-8') as fh:\n"
+    "    json.dump({'ran': result.testsRun, 'skipped': len(result.skipped)}, fh)\n"
+    "sys.exit(0 if result.wasSuccessful() else 1)\n")
+
+
 def _discover():
     """{`module.Class`: number of tests} of every test class under TESTS. A test
     module that does not import is an error: its tests would silently not run."""
@@ -1233,10 +1270,11 @@ def _discover():
 
 def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skips=False,
               summary=None):
-    """Run the suite with one `python -m unittest` process for each test class, `jobs`
-    at a time, and print each class's output when it ends. The tests and their
-    verdicts are those of `python -m unittest discover`; only the wall time differs,
-    because the gates of different classes run at the same time.
+    """Run the suite with one Python process for each test class (_ONE_CLASS: what
+    `python -m unittest -v <class>` runs), `jobs` at a time, and print each class's
+    output when it ends. The tests and their verdicts are those of `python -m
+    unittest discover`; only the wall time differs, because the gates of different
+    classes run at the same time.
 
     timeout   seconds for one class. A class that needs more is stopped and fails
               the run; the output that it gave until then is printed.
@@ -1245,7 +1283,8 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
               Markdown (the job summary of GitHub Actions).
 
     Sets the state of each known gap that a test saw open in this run. Returns 0
-    only when every class ran all of its tests and none failed.
+    only when every class ran all of its tests and none failed, and, for a run of
+    the whole suite, when the test of every known gap ran.
     """
     classes = collections.OrderedDict(
         (name, count) for name, count in _discover().items()
@@ -1254,19 +1293,24 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
         print("no test class" + (f" matches {' '.join(only)}" if only else " found"), file=out)
         return 1
     jobs = max(1, jobs or os.cpu_count() or 2)
-    handle, open_gaps = tempfile.mkstemp(prefix="deteng-gates-open-gaps-")
-    os.close(handle)
-    # NO_COLOR: the lines `Ran N tests` and `OK (skipped=N)` are read below.
+    # The files of this run: the known gaps that the tests saw open, and the counts
+    # of each class.
+    run_dir = tempfile.mkdtemp(prefix="deteng-gates-run-")
+    open_gaps = os.path.join(run_dir, "open-gaps")
+    open(open_gaps, "w", encoding="utf-8").close()
+    # No colour: the output of the classes goes into the log as plain text.
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", NO_COLOR="1", **{_OPEN_GAPS_FILE: open_gaps})
     env.pop("FORCE_COLOR", None)
     env.pop("PYTHON_COLORS", None)
 
     def run_class(name):
         start = time.monotonic()
+        counts_file = os.path.join(run_dir, name + ".json")
         try:
-            done = subprocess.run([PYTHON, "-B", "-m", "unittest", "-v", name], cwd=TESTS, env=env,
-                                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                  stderr=subprocess.STDOUT, timeout=timeout)
+            done = subprocess.run([PYTHON, "-B", "-c", _ONE_CLASS, name, counts_file],
+                                  cwd=TESTS, env=env, stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                  timeout=timeout)
             code, text = done.returncode, done.stdout.decode("utf-8", "replace")
         except subprocess.TimeoutExpired as expired:
             code = "timeout"
@@ -1274,10 +1318,13 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
             text += ("" if not text or text.endswith("\n") else "\n") + (
                 f"(stopped: the class did not end in {timeout:g} s; the output above is "
                 "what it gave until then)\n")
-        ran = re.search(r"^Ran (\d+) tests? in", text, re.MULTILINE)
-        skipped = re.search(r"^(?:OK|FAILED) \((?:[^)]*, )?skipped=(\d+)", text, re.MULTILINE)
-        return (name, code, int(ran.group(1)) if ran else 0,
-                int(skipped.group(1)) if skipped else 0, time.monotonic() - start, text)
+        try:
+            with open(counts_file, encoding="utf-8") as fh:
+                found = json.load(fh)
+            ran, skipped = int(found["ran"]), int(found["skipped"])
+        except (OSError, ValueError, KeyError, TypeError):
+            ran = skipped = 0       # the process did not end its tests (stopped, or it died)
+        return (name, code, ran, skipped, time.monotonic() - start, text)
 
     start = time.monotonic()
     failed, skips, total = [], collections.OrderedDict(), 0
@@ -1309,7 +1356,7 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
                 if gap_id in KNOWN_GAPS:
                     KNOWN_GAPS[gap_id].state = "open"
     finally:
-        os.remove(open_gaps)
+        shutil.rmtree(run_dir, ignore_errors=True)
 
     counts = (f"{len(classes)} test class(es), {total} test(s), {jobs} at a time, "
               f"{time.monotonic() - start:.1f} s")
@@ -1322,7 +1369,16 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
     elif skips and no_skips:
         notes.append("FAILED: --no-skips is set, and test(s) were skipped (the lines "
                      "`skipped '...'` above give the reasons)")
-    code = 1 if failed or (skips and no_skips) else 0
+    # A run of the whole suite in which no class failed must see every known gap
+    # open. A gap whose test did not run is not tested at all: its marker is on a
+    # method that unittest does not collect, or in a class that is no TestCase. (A
+    # test that was skipped is counted above: its class is in `skips`.)
+    not_run = [] if only or failed else sorted(
+        gap.id for gap in KNOWN_GAPS.values()
+        if gap.state != "open" and gap.test.rsplit(".", 1)[0] not in skips)
+    if not_run:
+        notes.append("FAILED: the test of these known gap(s) did not run: " + ", ".join(not_run))
+    code = 1 if failed or not_run or (skips and no_skips) else 0
     print("\n" + "\n".join([counts] + notes + (["OK"] if code == 0 else [])), file=out)
     if summary:
         still_open = sum(1 for gap in KNOWN_GAPS.values() if gap.state == "open")
@@ -1381,6 +1437,11 @@ def main(argv=None):
             lib._discover()
     except ImportError as error:
         print(error, file=sys.stderr)
+        if args.run and args.summary:
+            # No test ran, and run_suite() wrote nothing: the job summary says why.
+            with open(args.summary, "a", encoding="utf-8") as fh:
+                fh.write("## Gate tests: FAILED\n\nA test module does not import, so no test "
+                         "ran. The log of the step holds the error.\n")
         return 1
     if args.json:
         print(json.dumps(lib.gap_list(), indent=2))

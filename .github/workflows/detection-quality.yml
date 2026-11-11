@@ -852,10 +852,12 @@ jobs:
     # copy. The gates run only in copies under the runner's temporary directory, with
     # no token, no GitHub variable and a proxy setting that refuses every connection.
     # This workflow has no paths filter, so the job runs on every pull request: when
-    # a gate, a test, a planted artifact or a workflow changes.
+    # a gate, a test, a planted artifact or a workflow changes. The job has no
+    # `needs:`, no `if:` and no `continue-on-error:`, so no other job can skip it and
+    # nothing hides its failure (test_suite.py checks that).
     name: gate-tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -880,7 +882,11 @@ jobs:
         # The runner stops a class that does not end in 10 minutes
         # (gatelib.CLASS_TIMEOUT), before timeout-minutes stops the job: the log
         # then holds the output of every class. The script writes the job summary
-        # itself (the result and the list of known gaps), also when a test fails.
+        # itself (the result and the list of known gaps), also when a test fails
+        # and when a test module does not import. A run also fails when the test
+        # of a known gap did not run. The counts of each class come from its
+        # TestResult, not from the text that unittest prints, so they do not
+        # depend on the Python version that `3.x` gives.
         # No pipe: the step's exit code is the script's.
         run: |
           python3 -B detections/tests/gatelib.py --run --no-skips \

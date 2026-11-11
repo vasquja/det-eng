@@ -25,19 +25,30 @@ python3 -B -m unittest discover -s detections/tests -k trivial -v               
 python3 -B detections/tests/gatelib.py --gaps                                    # the known gaps
 ```
 
-`gatelib.py --run` runs the same tests as `unittest discover`, with one
-`python -m unittest` process for each test class, as many at a time as the
-machine has CPUs. Then it prints the known gaps. It takes about two minutes on
-four CPUs; the tests in sequence take about four minutes. It fails when a class
-fails, when a class did not run all of its tests, when a class does not end in
-ten minutes (`--class-timeout SECONDS` changes the limit), and when a test module
-does not import. `--no-skips` also fails the run when a test was skipped, and
-`--summary PATH` adds the result and the known gaps to a file as Markdown. CI
-uses both.
+`gatelib.py --run` runs the same tests as `unittest discover`, with one Python
+process for each test class, as many at a time as the machine has CPUs. Then it
+prints the known gaps. It takes about 100 seconds on a development machine with four
+CPUs, and about three and a half minutes on a GitHub runner (four CPUs). The
+tests in sequence take about four minutes on the development machine. It fails:
+
+- when a class fails;
+- when a class did not run all of its tests;
+- when a class does not end in ten minutes (`--class-timeout SECONDS` changes
+  the limit);
+- when a test module does not import;
+- when a run of the whole suite did not run the test of a known gap (a marker
+  on a method that `unittest` does not collect).
+
+`--no-skips` also fails the run when a test was skipped, and `--summary PATH`
+adds the result and the known gaps to a file as Markdown. CI uses both.
+
+The runner takes the counts of a class (tests that ran, tests that were skipped)
+from the `TestResult` of the class. It reads no line of the text that `unittest`
+prints, because the format of that text differs between Python versions.
 
 `-B` stops Python from writing `__pycache__/` beside the tests. The suite uses
 only the standard library (`unittest`), PyYAML and pySigma. It needs no network
-and no root.
+and no root. It runs on Python 3.10 and later (3.10 is the minimum of pySigma).
 
 Three conditions skip a test:
 
@@ -71,7 +82,7 @@ after each test or test class.
 | `test_sufficiency.py` | `rule_cases.py` (and through it the event table of `sigma_eval.py`), the import guard of `sigma_eval.py`, `check_sufficiency.py` (R0 to R4 and the waiver digests), the sufficiency ratchet, the self-test of `sigma_explain.py`. |
 | `test_quality.py` | `score_benign.py` and the benign ratchet, `check_null_safety.py`, `check_provider_mappings.py`, `k8s_policy_coverage.py`, `k8s_platforms_md.py`, `coverage_report.py`. |
 | `test_validators.py` | The cloud validator, the Linux validator (dry run, and its verdict code on canned results), the three Kubernetes validators (dry run and negative control), `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py`, `check_schedule_freshness.py`. |
-| `test_suite.py` | Rules of the suite as a whole: each self-test has a runner, the CI job runs every test on every pull request, no workflow step pipes a command into `tee` without pipefail, each known gap names a roadmap item, each planted artifact is used, this file agrees with the tests. |
+| `test_suite.py` | Rules of the suite as a whole: each self-test has a runner, the CI job runs every test on every pull request, no workflow step pipes a command into `tee` without pipefail, no step that runs a gate has `continue-on-error`, each known gap names a roadmap item, each planted artifact is used, this file agrees with the tests. |
 | `known_bad/<group>/` | The planted artifacts of that group. `known_bad/gatelib/` holds samples for `test_gatelib.py`. |
 
 The planted artifacts are outside `detections/sigma/`, the fixtures and the
@@ -91,8 +102,12 @@ file of the repository, and Python can import a `.py` file. Name it `.md.txt` or
 3. `tree.run(script, *args)` runs the gate as the CI step does: the same command
    line, from the root of the copy, in a child process, with the Python that runs
    the tests. The child has no token, no GitHub variable and no network.
-   `tree.run_step(step)` runs a whole workflow step with the shell that GitHub
-   Actions uses, so a step that loses the exit code of a gate loses it here too.
+   `tree.run_step(step)` runs the text of a whole workflow step with the shell
+   that GitHub Actions uses, so a step that loses the exit code of a gate loses
+   it here too. `gatelib.ci_step()` gives the step. It refuses a step that has
+   `continue-on-error`, on the step or on its job: a gate that fails there
+   leaves the job (for a step) or the workflow run (for a job) green.
+   [Limits](#limits) says what `run_step()` does not model.
 4. `self.assert_rejects(result, reason)` needs a non-zero exit code and the
    intended reason in the output. A traceback, a wrong command line and a timeout
    are not rejections. `self.assert_accepts(result, proof)` needs exit code 0 and
@@ -155,7 +170,8 @@ class RuleCases(gatelib.GateCase):
   (`--update`, `--write`), uses `self.tree()`.
 - **Never weaken a test to get green.** When a gate does not reject an artifact
   that it should reject, the case is a known gap.
-- **Stay fast.** The suite must run in less than three minutes on a CI runner.
+- **Stay fast.** The suite must run in less than four minutes on a CI runner
+  (today: about three and a half).
   Give each gate its own test class: `gatelib.py --run` runs the classes at the
   same time. For a gate that needs several seconds for one run, start the runs
   of the class together (see below).
@@ -237,7 +253,9 @@ Rules for a known gap:
   [`docs/ROADMAP.md`](../../docs/ROADMAP.md) (the table `gatelib.ROADMAP`).
   `unplanned` is not a value. For a gap that no item closes, add an item to the
   roadmap and to the table first. `test_suite.py` fails when a gap names no item
-  of the roadmap, and when the item is `done` and the gap is still open.
+  of the roadmap, and when the item is `done` and the gap is still open. It also
+  fails when section 1 of the roadmap gets, loses or renames an item and the
+  table does not follow (see [Limits](#limits)).
 - **Say only what is true.** `reason=` says what passes today and why that is
   wrong, for the planted artifact and for the repository. Where another job or
   the merge policy still stops the planted change, say so. A test can prove
@@ -255,7 +273,9 @@ Rules for a known gap:
 `gatelib.KNOWN_GAPS` is the one list of all gaps; the markers are its source.
 `gatelib.py --gaps` prints it (`--markdown` for a table, `--json` for a script),
 and `gatelib.py --run` prints it after the tests, with the state that the run
-gave each gap.
+gave each gap: `open`, or `not run`. A run of the whole suite fails when the test
+of a gap did not run and was not skipped: the marker is then on a method that
+`unittest` does not collect, and nothing tests the gap.
 
 ## CI
 
@@ -264,13 +284,15 @@ The `gate-tests` job of `.github/workflows/detection-quality.yml` runs
 on each pull request, on each push to `main`, and weekly. The workflow has no
 path filter, so the job runs when a gate, a test, a planted artifact or a
 workflow changes. The job summary holds the result and the list of known gaps.
+When a test module does not import, no test runs: the summary says so, and the
+log of the step holds the error.
 
 The runner stops a test class after ten minutes (`gatelib.CLASS_TIMEOUT`). The
-job has 15 minutes. Thus a class that hangs fails the run, the log holds the
+job has 20 minutes. Thus a class that hangs fails the run, the log holds the
 output of every class, and the job summary is written. `test_suite.py` compares
 the two timeouts.
 
-`test_suite.py` keeps two more rules for the workflows:
+`test_suite.py` keeps three more rules for the workflows:
 
 - A script with a `--self-test` mode must have a runner. When no workflow step
   runs the self-test, the suite runs it (the table `SelfTests.RUN_HERE`; today
@@ -279,6 +301,15 @@ the two timeouts.
   step that has no `shell:` with `bash -e`, so `gate | tee file` takes the exit
   code of `tee`, and a gate that fails leaves the job green. Such a step needs
   `shell: bash`.
+- No step that runs a script of the repository with Python has
+  `continue-on-error`, on the step or on its job. A step that has it leaves its
+  job green when it fails, and a job that has it leaves its workflow run green.
+  The shadow steps are the exception, by name (the table `SoftSteps.SHADOW`;
+  today one step of `validate-apiserver-detections.yml`).
+
+The `gate-tests` job itself has no `if:`, no `continue-on-error` and no `needs:`
+(GitHub skips a job when a job that it needs failed), and its workflow has no
+path filter. `test_suite.py` checks that too.
 
 ## Limits
 
@@ -294,11 +325,19 @@ the two timeouts.
   for this suite, and the suite has no case for it: there is no gate to test.
   Roadmap item R9 adds `atomics/lib/live.sh` and its lint; the case comes with
   them.
-- `sigma check`, the RE2 branch of `check_sigma_regex.py` and
-  `check_provider_mappings.py --require-re2` need packages that are not in
-  `detections/requirements.txt`. The CI job does not run them.
 - The network fence of a gate run is a proxy setting. It does not stop a gate
   that opens a socket without the proxy.
+- `tree.run_step()` runs the `run:` text of a step. It models the shell of the
+  step: `bash -e` when the step has no `shell:`, and bash with `-eo pipefail`
+  for `shell: bash`. It also models `/tmp/`, the files behind
+  `GITHUB_STEP_SUMMARY`, `GITHUB_OUTPUT` and `GITHUB_ENV`, and the `${{ ... }}`
+  expressions whose values the test gives. It does not evaluate an `if:`
+  condition of the step or of its job: the step always runs here. So a step
+  that a condition switches off in CI still passes its step test. It does not
+  read the `env:` or the `working-directory:` of the step: the test gives the
+  values. It does not model `continue-on-error`: `gatelib.ci_step()` refuses a
+  step that has it, and `test_suite.py` (class `SoftSteps`) refuses it for each
+  step that runs a gate.
 - The tests depend on the text of real content files. A test changes a rule, a
   fixture or a report in its copy, and it finds the place of the change by an
   exact text (`tree.replace()`), by a JSON key or by the name of a case. A
@@ -316,7 +355,7 @@ the two timeouts.
   content is wrong. The repair is a change to the test, and a test module is not
   content for the merge policy (no `.py` file is): the maintainer merges the
   repair by hand. `gate-tests` is not a required check and is one of the slower
-  checks (about two minutes), so GitHub can merge a content-only pull request
+  checks (about four minutes), so GitHub can merge a content-only pull request
   before the job fails. The job is then red on `main` until the repair. Thus,
   before you change one of these files, run the suite.
 
@@ -359,9 +398,64 @@ the two timeouts.
 
   - `detections/sigma/T1537/aws_snapshot_or_ami_made_public.cases.jsonl`
 
+  `CheckSufficiency` (`test_sufficiency.py`) takes the positive cases of this
+  sidecar, for its proof that a rule that needs one account id is bad:
+
+  - `detections/sigma/T1078.004/aws_leaked_access_key_recon.cases.jsonl`
+
   The offline run of the Linux validator takes its canned events from the
   sidecar of each rule of the `MANIFEST` of `detections/validate_detections.py`:
   the first `positive` case and, for each mutant control, the `near-miss` case
   whose `breaks` is the item of that control.
 
+  `KnownGapList` (`test_suite.py`) reads section 1 of this file, the item IDs
+  and the Status cells:
+
+  - `docs/ROADMAP.md`
+
+  The IDs must be the keys of the table `ROADMAP` in `gatelib.py`, and `R2`,
+  which is this suite. Each Status cell must hold one status word and no other
+  text. An item that an open known gap names cannot be `done`. Thus a pull
+  request that changes only the roadmap can make `gate-tests` red. That failure
+  says nothing about a gate. It means one of three things. An item of section 1
+  is new, gone or renamed: make the same change to the table `ROADMAP` in
+  `gatelib.py`, in the same pull request. `gatelib.py` is not content, so the
+  maintainer merges that pull request by hand. A Status cell holds a reason:
+  move the reason to the Needs cell. An item is `done` while
+  `gatelib.py --gaps` lists a gap that it closes: the item is not done, so set
+  its status back, or close the gap (see [Known gaps](#known-gaps)).
+
   `test_suite.py` fails when a file of these lists is not in the repository.
+
+## Not covered yet
+
+These are facts for the next session. They are not known gaps: no run showed
+that a gate accepts a bad artifact here.
+
+These rejections have no planted artifact and no test:
+
+- `score_benign.py --check --enforce` has three of them: an `unscored` entry of
+  `budgets.json` for a rule that is scored now, an entry of `budgets.json` for
+  a rule that does not exist, and an `unscored` entry without a why.
+- The fail-closed errors of `score_benign.py --baseline-scores` and of
+  `check_sufficiency.py --baseline`: a base file that is missing, that is not a
+  report of the gate, or that holds no rule.
+- The digest check of the `COMPILE_ONLY` table of `check_sufficiency.py`. The
+  table is empty today, so there is no entry to make stale.
+
+The suite does not run these checks:
+
+- The RE2 branches of `check_sigma_regex.py` and `check_provider_mappings.py`.
+  google-re2 is not in `detections/requirements.txt`, so the `gate-tests` job
+  runs the default path. For `check_sigma_regex.py`, one test proves that
+  `--require-re2` fails when the module is missing.
+- `sigma check`. sigma-cli is not in `detections/requirements.txt`.
+- The live modes of the validators (auditd on a host, a kind cluster). They
+  stay in the `validate-*` workflows.
+
+One fault of the runner is open:
+
+- When the runner stops a class at its timeout, the gate processes of that
+  class continue, and their sandboxes stay under `TMPDIR`. Each gate run has a
+  session of its own, so the runner does not reach it. In CI the machine of
+  the job is deleted after the job.

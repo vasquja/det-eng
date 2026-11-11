@@ -226,12 +226,13 @@ class CloudValidator(gatelib.GateCase):
             (self.NULL_SAFETY, (self.RULE,)),
             ("detections/score_benign.py", ("--check", "--enforce")))}
         result = tree.run(self.GATE)
-        # The gate read the planted file: it graded no benign record for this rule
-        # (the grade line names no kind; it is printed for a PASS and for a FAIL).
-        self.assert_saw(result, r"^(?:PASS|FAIL)  \[TRR9012 AWS\] aws_leaked_access_key_recon"
-                                r"\.yml: .*\n(?: {8}.*\n)*? {8}benign baseline graded "
-                                r"\(informational\): ; atoms exercised 0/\d+$")
+        # The gate judged the rule: it prints this row for a PASS, a FAIL and an ERROR.
+        self.assert_saw(result, r"^(?:PASS|FAIL|ERROR)\s+\[TRR9012 AWS\] aws_leaked_access_key_recon"
+                                r"\.yml: ")
         if result.returncode == 0:
+            # Today the row shows that the gate read the planted file: no benign record.
+            self.assert_saw(result, r"^PASS  \[TRR9012 AWS\] aws_leaked_access_key_recon\.yml: "
+                                    r".*benign baseline clean \(0 record\(s\)\) ")
             # Today. The `reason` of the marker says what the other jobs do with the
             # planted tree; prove each sentence, so that the text cannot go out of
             # date. Three gates accept the tree (for the one rule: the faster path
