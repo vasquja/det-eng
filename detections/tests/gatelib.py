@@ -751,12 +751,18 @@ class Tree:
 
     def replace(self, rel, old, new, count=1):
         """Replace `count` occurrences of `old` in a file (count=0: every one). Fails
-        when the file holds fewer, so a planted edit cannot silently miss."""
+        when the file holds fewer, so a planted edit cannot silently miss.
+
+        `old` is an anchor in the file. For a real file of the repository, a later
+        change to that file can remove the anchor: the message says what to do."""
         text = self.read(rel)
         found = text.count(old)
         if found == 0 or found < count:
             raise ValueError(f"replace({rel!r}): {old!r} occurs {found} time(s), "
-                             f"wanted {count or 'at least 1'}")
+                             f"wanted {count or 'at least 1'}. The test finds the place of "
+                             "its change by this text. If a change to the file removed the "
+                             "text, the test is out of date: correct the test "
+                             "(detections/tests/README.md, Limits)")
         self.edit(rel, lambda t: t.replace(old, new, count) if count else t.replace(old, new))
 
     def read_json(self, rel):

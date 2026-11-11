@@ -344,7 +344,11 @@ class Trees(unittest.TestCase):
         tree.write("f.txt", "alpha beta alpha\n")
         with self.assertRaisesRegex(ValueError, "changed nothing"):
             tree.edit("f.txt", lambda text: text)
-        with self.assertRaisesRegex(ValueError, "occurs 0 time"):
+        # The text of a replace() is an anchor in the file. The message names the file
+        # and the text, and says what to do when a change to the file removed it.
+        with self.assertRaisesRegex(ValueError, r"^replace\('f\.txt'\): 'gamma' occurs 0 time\(s\), "
+                                    r"wanted 1\. .* the test is out of date: correct the test "
+                                    r"\(detections/tests/README\.md, Limits\)$"):
             tree.replace("f.txt", "gamma", "delta")
         with self.assertRaisesRegex(ValueError, "occurs 2 time"):
             tree.replace("f.txt", "alpha", "x", count=3)
@@ -832,7 +836,6 @@ class GateCaseGuards(unittest.TestCase):
         self.assertIn("the shared good() tree was changed (AGENTS.md)", result.errors[0][1])
         result = self.run_class(lambda case: case.good().write("new.txt", "x\n"))
         self.assertIn("the shared good() tree was changed (new.txt)", result.errors[0][1])
-
 
     def test_class_tree_lives_as_long_as_the_class(self):
         seen = []

@@ -8,14 +8,24 @@ description: |
   this rule as `detections/sigma/T9999/planted_rule.yml` and ONE sidecar as
   `planted_rule.cases.jsonl` (detections/tests/test_sufficiency.py):
 
+    sound.cases.jsonl                   no defect: the control. The gate accepts
+                                        the rule with it. Planted without the
+                                        rule, it is a sidecar that tests nothing.
     near_miss_wrong_item.cases.jsonl    the near-miss breaks `sel.a1` and declares
                                         `breaks: ["sel.a0"]`.
     near_miss_two_items.cases.jsonl     the near-miss breaks `sel.a0` AND `sel.a1`,
                                         so no single flip fires the rule (distant).
     positive_does_not_fire.cases.jsonl  the positive has `a0: '2'`, and the rule
                                         needs `'11'`.
+    benign_that_fires.cases.jsonl       the benign case holds the event of the
+                                        positive case, so the rule fires on it.
+    line_not_json.cases.jsonl           the second line is cut off in the middle
+                                        of its events: it is not JSON.
+    keys_differ_by_case.cases.jsonl     the event has the keys `comm` and `Comm`.
 
-  detections/rule_cases.py must reject each one.
+  detections/rule_cases.py must reject each one but the first. It does not reject
+  the last one with a message today: it ends with a traceback (the known gap
+  rc-case-clash-is-a-traceback).
 author: det-eng
 date: 2026/11/10
 tags:

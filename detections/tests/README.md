@@ -27,18 +27,37 @@ python3 -B detections/tests/gatelib.py --gaps                                   
 
 `gatelib.py --run` runs the same tests as `unittest discover`, with one
 `python -m unittest` process for each test class, as many at a time as the
-machine has CPUs. Then it prints the known gaps. It takes about 90 seconds on
+machine has CPUs. Then it prints the known gaps. It takes about two minutes on
 four CPUs; the tests in sequence take about four minutes. It fails when a class
-fails, when a class did not run all of its tests, and when a test module does
-not import. `--no-skips` also fails the run when a test was skipped, and
+fails, when a class did not run all of its tests, when a class does not end in
+ten minutes (`--class-timeout SECONDS` changes the limit), and when a test module
+does not import. `--no-skips` also fails the run when a test was skipped, and
 `--summary PATH` adds the result and the known gaps to a file as Markdown. CI
 uses both.
 
 `-B` stops Python from writing `__pycache__/` beside the tests. The suite uses
 only the standard library (`unittest`), PyYAML and pySigma. It needs no network
-and no root. Two test classes need a tool: `gcc` (the Linux dry run compiles the
-atomics) and `git` (the ratchet job makes a worktree). Without the tool those
-tests are skipped; in CI a missing tool fails them.
+and no root.
+
+Three conditions skip a test:
+
+- `gcc` is not installed. The class `LinuxValidatorDryRun` is skipped: the Linux
+  dry run compiles the atomics.
+- `git` is not installed. One test of `SufficiencyRatchet` is skipped: it runs
+  the steps of the sufficiency-ratchet job, which make a worktree of the base
+  commit.
+- The environment pins git to a repository: `GIT_DIR`, `GIT_WORK_TREE`,
+  `GIT_INDEX_FILE` or a variable like them is set (git sets them for a hook). The
+  same test is skipped, because the gate runs would work on that repository.
+
+In CI (the variable `CI` is set) each of these conditions fails the test in
+place of a skip, and `--no-skips` fails the run when a test was skipped. So no
+test is skipped in CI.
+
+The `re2` module (the package google-re2) skips no test. With it, the tests of
+`check_sigma_regex.py` and `check_provider_mappings.py` pass `--require-re2`, as
+their CI jobs do. Without it, they run the default path. The gate-tests job
+installs `detections/requirements.txt` only.
 
 The copies are made under the system temporary directory (`TMPDIR`) and deleted
 after each test or test class.
@@ -49,10 +68,10 @@ after each test or test class.
 |------|---------|
 | `gatelib.py` | The harness: `Tree`, `GateCase`, `StartedTogether`, `assert_rejects`, `assert_accepts`, `assert_saw`, `known_gap`, `ci_step`, `ci_commands`, and the parallel runner. |
 | `test_gatelib.py` | Tests of the harness, on constructed gates. |
-| `test_sufficiency.py` | `rule_cases.py`, the import guard of `sigma_eval.py`, `check_sufficiency.py`, the sufficiency ratchet, the self-test of `sigma_explain.py`. |
+| `test_sufficiency.py` | `rule_cases.py` (and through it the event table of `sigma_eval.py`), the import guard of `sigma_eval.py`, `check_sufficiency.py` (R0 to R4 and the waiver digests), the sufficiency ratchet, the self-test of `sigma_explain.py`. |
 | `test_quality.py` | `score_benign.py` and the benign ratchet, `check_null_safety.py`, `check_provider_mappings.py`, `k8s_policy_coverage.py`, `k8s_platforms_md.py`, `coverage_report.py`. |
 | `test_validators.py` | The cloud validator, the Linux validator (dry run, and its verdict code on canned results), the three Kubernetes validators (dry run and negative control), `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py`, `check_schedule_freshness.py`. |
-| `test_suite.py` | Rules of the suite as a whole: each self-test has a runner, the CI job runs every test on every pull request, each known gap names a roadmap item, each planted artifact is used. |
+| `test_suite.py` | Rules of the suite as a whole: each self-test has a runner, the CI job runs every test on every pull request, no workflow step pipes a command into `tee` without pipefail, each known gap names a roadmap item, each planted artifact is used, this file agrees with the tests. |
 | `known_bad/<group>/` | The planted artifacts of that group. `known_bad/gatelib/` holds samples for `test_gatelib.py`. |
 
 The planted artifacts are outside `detections/sigma/`, the fixtures and the
@@ -105,7 +124,8 @@ class RuleCases(gatelib.GateCase):
 2. Make the smallest artifact that has the defect. Put it under
    `known_bad/<group>/`. When the artifact is one changed value of a real file,
    make the change in the test (`tree.replace()`), with a comment that says what
-   is bad.
+   is bad. The text that the test replaces is then an anchor in a content file:
+   add the file to the list in [Limits](#limits).
 3. Write the test: plant the artifact in `self.tree()`, run the command of CI,
    and assert the reason with `self.assert_rejects()`.
 4. Run the test. Then prove that it is not vacuous: in a scratch copy of the
@@ -157,17 +177,37 @@ A gate is a child process, so runs that start together use the CPUs together.
 ## Known gaps
 
 A known gap is an artifact that a gate should reject and does not reject today.
-Its test states the wanted behaviour and carries the marker:
+Its test states the wanted behaviour and carries the marker. This is the test of
+the gap `hidden-rule-file` (`test_sufficiency.py`, class `RuleCases`):
 
 ```python
-@gatelib.known_gap("hidden-rule-file",
-                   gate="detections/sigma_eval.py import guard",
-                   reason="A rule in a dotfile under detections/sigma/ is never read.",
-                   closes="unplanned")          # or a roadmap item: "R7"
+@gatelib.known_gap(
+    "hidden-rule-file",
+    gate="detections/sigma_eval.py import guard (through detections/rule_cases.py)",
+    reason="A rule and its sidecar in dotfiles under detections/sigma/T<id>/ pass the "
+           "import guard, and the globs of the gates (`*/*.yml`, `*/*.cases.jsonl`) "
+           "skip them, so rule_cases.py accepts a tree with a rule that it did not "
+           "check. Only R0 of check_sufficiency.py refuses the two files: the "
+           "check-sufficiency, sufficiency-ratchet and coverage-report jobs, which run "
+           "that script, fail on the planted tree, and every other gate accepts it.",
+    closes="R2d")
 def test_gap_hidden_rule_file(self):
+    """WANTED: a rule file that the gates do not read is refused (as R0 refuses it),
+    or it is read, and then its positive that cannot fire fails."""
     tree = self.tree()
     tree.plant("sufficiency/hidden_rule/hidden.yml", "detections/sigma/T1040/.hidden.yml")
-    self.assert_rejects(tree.run(self.GATE), r"T1040/\.hidden\.yml")
+    tree.plant("sufficiency/hidden_rule/hidden.cases.jsonl",
+               "detections/sigma/T1040/.hidden.cases.jsonl")
+    result = tree.run(self.GATE)
+    if result.returncode == 0:
+        # The gate accepted the copy, and it printed nothing about the pair. Prove
+        # that the pair it did not read is bad: the gate fails the positive when
+        # the hidden rule is its argument (then it does not need the glob).
+        named = tree.run(self.GATE, "detections/sigma/T1040/.hidden.yml")
+        self.assertEqual(named.returncode, 1, named.describe())
+        self.assertIn("FAIL  T1040/.hidden.yml :: positive   stream-socket-declared-positive: "
+                      "expected a match, got near-miss", named.stdout)
+    self.assert_rejects(result, r"T1040/\.hidden\.(yml|cases\.jsonl)")
 ```
 
 The test passes while the gate accepts the artifact. It fails with `KNOWN GAP
@@ -180,21 +220,36 @@ Rules for a known gap:
 
 - **The last assertion is the wanted behaviour**: one `assert_rejects()`. Every
   assertion before it is a plain one.
+- **Prove that the artifact is bad**, with plain assertions (the planted baseline
+  holds no record; the gate fails the hidden rule when it gets the rule as an
+  argument). The gate has no check for the artifact, so without this proof the
+  test passes for a sound artifact too.
 - **Prove that the gate read the artifact**, with `self.assert_saw(result,
   pattern)` before the last assertion. An artifact that the gate never read is
   also accepted. The pattern must hold today and after the gate is fixed (a row
   that the gate prints for a pass and for a failure). Where the gate prints
   nothing about the artifact, prove inside `if result.returncode == 0:` that the
-  artifact is bad.
+  artifact is bad, as the example does.
+- **Prove the marker.** In a scratch copy of the repository, correct the gate
+  and run the test. It must fail with `KNOWN GAP CLOSED`, and not with a message
+  of an assertion before the last one.
 - **Name what closes it.** `closes=` is an item of section 1 of
-  [`docs/ROADMAP.md`](../../docs/ROADMAP.md) (the table `gatelib.ROADMAP`), or
-  `unplanned`. `test_suite.py` fails when the item is `done` and the gap is
-  still open.
+  [`docs/ROADMAP.md`](../../docs/ROADMAP.md) (the table `gatelib.ROADMAP`).
+  `unplanned` is not a value. For a gap that no item closes, add an item to the
+  roadmap and to the table first. `test_suite.py` fails when a gap names no item
+  of the roadmap, and when the item is `done` and the gap is still open.
+- **Say only what is true.** `reason=` says what passes today and why that is
+  wrong, for the planted artifact and for the repository. Where another job or
+  the merge policy still stops the planted change, say so. A test can prove
+  such a sentence with plain assertions inside `if result.returncode == 0:`, so
+  that the text cannot go out of date (the two known gaps of `CloudValidator`
+  do). `gate=` is plain text on one line, without a backtick and without `|`:
+  the Markdown list of the gaps puts it in a code span of a table cell.
 - **A gap is closed by a change to the gate, never by deleting the case.** Fix
-  the gate in a change of its own. The test then fails with `KNOWN GAP CLOSED`.
-  Remove the marker: the same test is then an ordinary rejection test, and it
-  keeps the gate from losing the check again. Do not delete the test, and do not
-  change its artifact or its reason to make it pass.
+  the gate, and in the same pull request remove the marker: the test fails with
+  `KNOWN GAP CLOSED` until you do. The same test is then an ordinary rejection
+  test, and it keeps the gate from losing the check again. Do not delete the
+  test, and do not change its artifact or its reason to make it pass.
 - **A gap is a finding.** Report it in the pull request that adds it.
 
 `gatelib.KNOWN_GAPS` is the one list of all gaps; the markers are its source.
@@ -210,9 +265,20 @@ on each pull request, on each push to `main`, and weekly. The workflow has no
 path filter, so the job runs when a gate, a test, a planted artifact or a
 workflow changes. The job summary holds the result and the list of known gaps.
 
-`test_suite.py` keeps one more rule: a script with a `--self-test` mode must have
-a runner. When no workflow step runs the self-test, the suite runs it (the table
-`SelfTests.RUN_HERE`; today `sigma_explain.py`).
+The runner stops a test class after ten minutes (`gatelib.CLASS_TIMEOUT`). The
+job has 15 minutes. Thus a class that hangs fails the run, the log holds the
+output of every class, and the job summary is written. `test_suite.py` compares
+the two timeouts.
+
+`test_suite.py` keeps two more rules for the workflows:
+
+- A script with a `--self-test` mode must have a runner. When no workflow step
+  runs the self-test, the suite runs it (the table `SelfTests.RUN_HERE`; today
+  `sigma_explain.py`).
+- No step pipes a command into `tee` without pipefail. GitHub Actions runs a
+  step that has no `shell:` with `bash -e`, so `gate | tee file` takes the exit
+  code of `tee`, and a gate that fails leaves the job green. Such a step needs
+  `shell: bash`.
 
 ## Limits
 
@@ -220,10 +286,82 @@ a runner. When no workflow step runs the self-test, the suite runs it (the table
   does not prove that a gate rejects every bad artifact.
 - A gate that needs a host or a cluster runs only in its offline modes: the dry
   runs, the negative-control steps on logs that the test writes, and the verdict
-  code of the Linux validator on canned results. The live runs stay in the
+  code of the Linux validator on canned events. The live runs stay in the
   `validate-*` workflows.
+- No gate reads the live emulation scripts (`atomics/*/src/emulate*.sh`, the
+  parts behind `TRR90NN_LIVE=1`). A live script that lost its undo trap
+  (`trap revert EXIT`) passes every gate. The design (4.2) names that artifact
+  for this suite, and the suite has no case for it: there is no gate to test.
+  Roadmap item R9 adds `atomics/lib/live.sh` and its lint; the case comes with
+  them.
 - `sigma check`, the RE2 branch of `check_sigma_regex.py` and
   `check_provider_mappings.py --require-re2` need packages that are not in
-  `detections/requirements.txt`. The suite does not run them.
+  `detections/requirements.txt`. The CI job does not run them.
 - The network fence of a gate run is a proxy setting. It does not stop a gate
   that opens a socket without the proxy.
+- The tests depend on the text of real content files. A test changes a rule, a
+  fixture or a report in its copy, and it finds the place of the change by an
+  exact text (`tree.replace()`), by a JSON key or by the name of a case. A
+  change to that text can pass every content gate and make `gate-tests` red,
+  with a message such as:
+
+  ```text
+  ValueError: replace('detections/sigma/T1040/afinet_raw_socket.yml'): '      - traceroute6\n'
+  occurs 0 time(s), wanted 1. The test finds the place of its change by this text. If a
+  change to the file removed the text, the test is out of date: correct the test
+  (detections/tests/README.md, Limits)
+  ```
+
+  That failure means that a test is out of date. It does not mean that the
+  content is wrong. The repair is a change to the test, and a test module is not
+  content for the merge policy (no `.py` file is): the maintainer merges the
+  repair by hand. `gate-tests` is not a required check and is one of the slower
+  checks (about two minutes), so GitHub can merge a content-only pull request
+  before the job fails. The job is then red on `main` until the repair. Thus,
+  before you change one of these files, run the suite.
+
+  A test changes these files in its copy:
+
+  - `detections/sigma/T1040/afinet_raw_socket.yml`
+  - `detections/sigma/T1040/afinet_raw_socket.cases.jsonl`
+  - `detections/sigma/T1040/afpacket_raw_socket.yml`
+  - `detections/sigma/T1040/afpacket_raw_socket.cases.jsonl`
+  - `detections/sigma/T1040/afxdp_socket.yml`
+  - `detections/sigma/T1040/afxdp_socket.cases.jsonl`
+  - `detections/sigma/T1078.004/aws_cognito_unauthenticated_identity_use.yml`
+  - `detections/sigma/T1078.004/aws_leaked_access_key_recon.yml`
+  - `detections/sigma/T1098.006/k8s_rbac_write.yml`
+  - `detections/sigma/T1537/aws_snapshot_or_ami_made_public.yml`
+  - `detections/sigma/T1543.005/k8s_cri_static_pod_start.yml`
+  - `detections/sigma/T1543.005/k8s_static_pod_mirror_create.yml`
+  - `detections/sigma/T1609/k8s_pod_exec_attach.yml`
+  - `detections/cloud/fixtures/trr9011/attack.json`
+  - `detections/cloud/fixtures/trr9012/attack.json`
+  - `detections/cloud/fixtures/trr9012/benign.json`
+  - `detections/RULE_DEFECTS.md`
+  - `detections/k8s/PLATFORMS.md`
+  - `research/trr9001/lin/README.md`
+  - `research/trr9012/aws/README.md`
+
+  A test of the validators takes cases by name from these sidecars, as the
+  records of a log:
+
+  - `detections/sigma/T1609/k8s_pod_exec_attach.cases.jsonl`
+  - `detections/sigma/T1543.005/k8s_static_pod_mirror_create.cases.jsonl`
+  - `detections/sigma/T1543.005/k8s_cri_static_pod_start.cases.jsonl`
+  - `detections/sigma/T1543.005/linux_static_pod_manifest_write.cases.jsonl`
+  - `detections/sigma/T1098.006/k8s_rbac_write.cases.jsonl`
+  - `detections/sigma/T1053.007/k8s_cri_job_pod.cases.jsonl`
+  - `detections/sigma/T1552.007/linux_k8s_sa_token_read.cases.jsonl`
+
+  `NullSafety` (`test_quality.py`) takes one case by name from this sidecar, for
+  its probe of the two JSON texts of a list:
+
+  - `detections/sigma/T1537/aws_snapshot_or_ami_made_public.cases.jsonl`
+
+  The offline run of the Linux validator takes its canned events from the
+  sidecar of each rule of the `MANIFEST` of `detections/validate_detections.py`:
+  the first `positive` case and, for each mutant control, the `near-miss` case
+  whose `breaks` is the item of that control.
+
+  `test_suite.py` fails when a file of these lists is not in the repository.

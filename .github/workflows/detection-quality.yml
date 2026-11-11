@@ -866,14 +866,22 @@ jobs:
           python-version: '3.x'
 
       - name: Install requirements
+        # detections/requirements.txt only: the suite needs no other package. With
+        # google-re2 the tests of the two regex lints pass --require-re2, as their
+        # jobs do; without it they run the default path. No test is skipped for it.
         run: pip install --quiet -r detections/requirements.txt
 
       - name: Run the gate tests (each gate must reject its planted bad artifacts)
         # One process for each test class, as many at a time as the runner has CPUs.
-        # --no-skips: gcc and git are on the runner, so a skipped test is lost
-        # coverage, and it fails the job. The script writes the job summary itself
-        # (the result and the list of known gaps), also when a test fails. No pipe:
-        # the step's exit code is the script's.
+        # --no-skips: a skipped test is lost coverage, and it fails the job. Outside
+        # CI a test is skipped when gcc or git is missing, or when a GIT_* variable
+        # pins git to a repository (detections/tests/README.md, "Run"). With CI set,
+        # as it is here, each of these fails the test. gcc and git are on the runner.
+        # The runner stops a class that does not end in 10 minutes
+        # (gatelib.CLASS_TIMEOUT), before timeout-minutes stops the job: the log
+        # then holds the output of every class. The script writes the job summary
+        # itself (the result and the list of known gaps), also when a test fails.
+        # No pipe: the step's exit code is the script's.
         run: |
           python3 -B detections/tests/gatelib.py --run --no-skips \
             --summary "$GITHUB_STEP_SUMMARY"

@@ -82,6 +82,18 @@ def assert_cases_hold(tree, rule):
 
 # ---------------------------------------------------------------------- score_benign.py
 
+RAW_SOCKET_RULE = "T1040/afinet_raw_socket.yml"     # a real rule with benign hits and a budget
+
+
+def broaden_raw_socket_rule(tree):
+    """SOCK_DGRAM ('2') is added to the socket types of the real raw-socket rule, so
+    the rule also fires on ordinary UDP sockets (the benign corpus has tracepath).
+    The rule raises more benign hits, and stays inside its budget of 13 hits."""
+    tree.replace("detections/sigma/" + RAW_SOCKET_RULE,
+                 "    a1:\n      - '3' ",
+                 "    a1:\n      - '2'       # SOCK_DGRAM: PLANTED, not a raw socket\n      - '3' ")
+
+
 class ScoreBenign(gatelib.GateCase):
     """detections/score_benign.py --check --enforce, as the benign-corpus job runs it:
     scores.json is current, every rule is scored or exempt, and no enforce-mode rule
@@ -89,6 +101,7 @@ class ScoreBenign(gatelib.GateCase):
 
     GATE = "detections/score_benign.py"
     PARTS = gatelib.DETECTIONS      # the gate reads nothing outside detections/
+    SCORES = "detections/benign/scores.json"
     BUDGETS = "detections/benign/budgets.json"
     BUDGET_RULE = "T1014/bpf_prog_load.yml"     # has a `documented noise:` budget today
 
@@ -138,6 +151,47 @@ class ScoreBenign(gatelib.GateCase):
         self.assertIn("\nscores.json is current.\n", result.stdout)
         self.assertEqual(len(found(result, r"^(?:FAILED|STALE|ERROR)\b.*$")), 1, result.describe())
 
+    def test_rejects_snapshot_that_is_not_current(self):
+        """sb-stale-snapshot (definition of done 4: `scores.json` is current). A rule
+        is broadened (see broaden_raw_socket_rule()) and the snapshot is not
+        regenerated, so the pull request does not show that the rule raises more
+        benign hits. The rule stays inside its budget: the snapshot is the one
+        reason."""
+        tree = self.tree()
+        hits = tree.read_json(self.SCORES)["rules"][RAW_SOCKET_RULE]["hits"]
+        budget = tree.read_json(self.BUDGETS)["rules"][RAW_SOCKET_RULE]["max_hits"]
+        broaden_raw_socket_rule(tree)
+        result = self.run_ci(tree)
+        # The difference holds one line, for the one rule, and no `corpus changed:`.
+        stale = (r"^STALE: detections/benign/scores\.json does not match the current rules and "
+                 rf"corpus:\n  {re.escape(RAW_SOCKET_RULE)}: hits {hits} -> (\d+), rate/10k \S+ -> "
+                 r"\S+, actors \d+ -> \d+\nRun `python3 detections/score_benign\.py --update` ")
+        self.assert_rejects(result, stale, exit_code=1)
+        now = int(re.search(stale, result.stdout, re.MULTILINE).group(1))
+        self.assertTrue(hits < now <= budget, "the planted rise must stay inside the budget: "
+                        f"{hits} -> {now}, budget {budget}")
+        self.assertEqual(len(found(result, r"^(?:FAILED|STALE|ERROR)\b.*$")), 1, result.describe())
+
+    def test_rejects_rule_that_no_slice_scores(self):
+        """sb-rule-not-scored. A new rule on a log source that no slice of the benign
+        corpus reads has no false-positive evidence. It needs an entry under
+        `unscored` in budgets.json, which a human approves; the planted rule has
+        none. The snapshot holds only the rules that are scored, so it stays
+        current: the rule that is not scored is the one reason."""
+        tree = self.tree()
+        tree.plant("quality/not_scored/planted_unread_logsource.yml",
+                   "detections/sigma/T9999/planted_unread_logsource.yml")
+        result = self.run_ci(tree)
+        self.assert_rejects(
+            result,
+            r"^FAILED: 1 rule\(s\) are not scored \(no benign slice reads their logsource\) and "
+            r"budgets\.json does not exempt them: T9999/planted_unread_logsource\.yml$",
+            exit_code=1)
+        self.assertIn("\n  T9999/planted_unread_logsource.yml  NOT EXEMPT (no `unscored` entry in "
+                      "budgets.json)\n", result.stdout)
+        self.assertIn("\nscores.json is current.\n", result.stdout)
+        self.assertEqual(len(found(result, r"^(?:FAILED|STALE|ERROR)\b.*$")), 1, result.describe())
+
     def plant_unclassed_budget(self, tree):
         """sb-budget-why-no-class: the reason of a real rule's budget is replaced by
         one that names neither class (documented noise, or a defect that
@@ -178,7 +232,9 @@ class ScoreBenign(gatelib.GateCase):
         reason="A budget raised from 3 to 300 hits passes when its `why` keeps the prefix "
                "`documented noise:`: the gate checks the form of the reason, and nothing "
                "compares max_hits with the hits that the rule raises or with the base "
-               "branch, so the raise needs no defect, no evidence and no human.",
+               "branch, so the raise needs no defect and no evidence. Every offline gate "
+               "accepts the planted tree. Only the merge policy stands behind this gate: "
+               "budgets.json is not content, so the pull request needs a human approval.",
         closes="R8")
     def test_gap_budget_raised_as_documented_noise(self):
         """sb-budget-raised-as-documented-noise. WANTED: a budget far above what the
@@ -210,18 +266,14 @@ class BenignRatchet(gatelib.GateCase):
     PARTS = gatelib.DETECTIONS
     SCORES = "detections/benign/scores.json"
     BUDGETS = "detections/benign/budgets.json"
-    KEY = "T1040/afinet_raw_socket.yml"
+    KEY = RAW_SOCKET_RULE
 
     def run_ratchet(self, tree, base):
         return tree.run(self.GATE, "--examples", "0", "--baseline-scores", base)
 
     def broaden(self, tree):
-        """rb-benign-rise-inside-budget: SOCK_DGRAM ('2') is added to the socket types
-        of the raw-socket rule, so the rule also fires on ordinary UDP sockets (the
-        corpus has tracepath). The rule stays inside its budget of 13 hits."""
-        tree.replace("detections/sigma/" + self.KEY,
-                     "    a1:\n      - '3' ",
-                     "    a1:\n      - '2'       # SOCK_DGRAM: PLANTED, not a raw socket\n      - '3' ")
+        """rb-benign-rise-inside-budget: see broaden_raw_socket_rule()."""
+        broaden_raw_socket_rule(tree)
 
     def expected_rise(self, tree):
         """The RISE line for KEY, with the base hits and the budget of the copy."""
@@ -386,28 +438,67 @@ class NullSafety(gatelib.GateCase):
         self.assertEqual(len(found(result, r"^FAIL .*$")), 1, result.describe())
         self.assertIn(f"\nFAILED: 1 of 1 rule(s) are not null-safe: {self.IMDS}.\n", result.stdout)
 
+    PUBLIC_SNAPSHOT = "T1537/aws_snapshot_or_ami_made_public.yml"
+    # The hits of a rule (argument 1) on one case (argument 3) of a sidecar (argument
+    # 2), with each list field as the JSON text that sigma_eval.flatten() writes
+    # (`default`), and as JSON text without blanks (`compact`).
+    HITS_BY_JSON_TEXT = (
+        "import json, sys\n"
+        "sys.path.insert(0, 'detections')\n"
+        "import sigma_eval\n"
+        "sql = sigma_eval.compile_rule(sys.argv[1])\n"
+        "with open(sys.argv[2], encoding='utf-8') as fh:\n"
+        "    cases = [json.loads(line) for line in fh if line.strip()]\n"
+        "case = next(c for c in cases if c['name'] == sys.argv[3])\n"
+        "for name, separators in (('default', None), ('compact', (',', ':'))):\n"
+        "    events = [{k: json.dumps(json.loads(v), separators=separators)\n"
+        "               if isinstance(v, str) and v[:1] == '[' else v\n"
+        "               for k, v in sigma_eval.flatten(e).items()} for e in case['events']]\n"
+        "    print(name, len(sigma_eval.evaluate(sql, events)))\n")
+
+    def hits_by_json_text(self, tree, rule, case):
+        probe = tree.run_python(self.HITS_BY_JSON_TEXT, "detections/sigma/" + rule,
+                                "detections/sigma/" + rule[:-len(".yml")] + ".cases.jsonl", case)
+        self.assertEqual(probe.returncode, 0, probe.describe())
+        return probe.stdout.split()
+
     @gatelib.known_gap(
         "ns-one-json-serialisation",
         gate="detections/check_null_safety.py (no gate varies the JSON text of a list for a rule "
              "that is not a Kubernetes audit rule)",
         reason="A cloud rule whose item matches the JSON text of a list with a blank after the "
-               "colon (`\"group\": \"all\"`, the form json.dumps writes by default) passes every "
-               "gate, because sigma_eval.flatten() gives each gate that one serialisation; a "
-               "store that writes the list without blanks never matches, and only "
-               "check_provider_mappings.py varies the text, for Kubernetes audit rules.",
+               "colon only (`\"group\": \"all\"`, the form json.dumps writes by default) passes "
+               "every offline gate, because sigma_eval.flatten() gives each gate that one "
+               "serialisation; a store that writes the list without blanks never matches. "
+               "Only check_provider_mappings.py varies the text, for Kubernetes audit rules. "
+               "The planted rule is the real T1537/aws_snapshot_or_ami_made_public.yml "
+               "without its second form: a content-only change that no job stops.",
         closes="R7")
     def test_gap_one_json_serialisation_cloud(self):
         """ns-one-json-serialisation. WANTED: the positive case is reported, because
         it fires for one JSON serialisation of
         requestParameters.createVolumePermission.add.items only."""
+        rule, case = self.PUBLIC_SNAPSHOT, "ebs-snapshot-made-public"
         tree = self.tree()
-        tree.plant("quality/one_json_serialisation_cloud", "detections/sigma/T9999")
-        # The positive fires offline (plain assertions: they must not count as the gap).
-        assert_cases_hold(tree, "T9999/planted_json_separator_cloud.yml")
-        result = tree.run(self.GATE, "detections/sigma/T9999/planted_json_separator_cloud.yml")
-        self.assert_saw(result, r"^(ok   |FAIL ) T9999/planted_json_separator_cloud\.yml\b")
-        self.assert_rejects(result, r"^FAIL  T9999/planted_json_separator_cloud\.yml :: case positive "
-                                    r"ebs-snapshot-made-public: ")
+        # The real rule lists two forms of the list's JSON text. The planted rule
+        # lost the form without blanks.
+        items = "    requestParameters.createVolumePermission.add.items|contains:\n"
+        tree.replace("detections/sigma/" + rule,
+                     items + "      - '\"group\": \"all\"'\n      - '\"group\":\"all\"'\n",
+                     items + "      - '\"group\": \"all\"'\n")
+        # The artifact is bad: the real rule fires on the positive case for both JSON
+        # texts of the list, and the planted rule is silent for the text without
+        # blanks. (Plain assertions: they hold whatever the gate does.)
+        self.assertEqual(self.hits_by_json_text(self.good(), rule, case),
+                         ["default", "1", "compact", "1"])
+        self.assertEqual(self.hits_by_json_text(tree, rule, case),
+                         ["default", "1", "compact", "0"])
+        # Every case of the real sidecar still holds offline: rule_cases.py does not
+        # see the defect.
+        assert_cases_hold(tree, rule)
+        result = tree.run(self.GATE, "detections/sigma/" + rule)
+        self.assert_saw(result, rf"^(ok   |FAIL ) {re.escape(rule)}\b")
+        self.assert_rejects(result, rf"^FAIL  {re.escape(rule)} :: case positive {case}: ")
 
 
 # ------------------------------------------------------------ check_provider_mappings.py

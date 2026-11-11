@@ -12,6 +12,9 @@ Gate tests, group `suite`: rules that hold for the gates and the suite as a whol
                       and no open gap names an item that is `done`
     PlantedArtifacts  every file under known_bad/ is planted by a test, and none has
                       a name that a gate or a lint of the repository reads
+    Readme            README.md of this directory agrees with the suite: its example
+                      of a known-gap test is a real test, and the content files that
+                      it lists are in the repository
 
 How the harness works: gatelib.py and README.md in this directory.
 
@@ -321,6 +324,119 @@ class PlantedArtifacts(unittest.TestCase):
         page as `.md.txt` and a planted module as `.txt`, and plant it under its
         real name."""
         self.assertEqual([rel for rel in self.files if rel.endswith((".md", ".py"))], [])
+
+
+class Readme(unittest.TestCase):
+    """detections/tests/README.md says how to write a test. A reader copies what it
+    shows, so where it shows a test or lists files, it must agree with the suite."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(gatelib.TESTS, "README.md"), encoding="utf-8") as fh:
+            cls.readme = fh.read()
+
+    @staticmethod
+    def section(readme, heading):
+        """The text of the section `## heading` of a README text, or None."""
+        found = re.search(rf"^## {re.escape(heading)}\n(.*?)(?=^## |\Z)", readme,
+                          re.MULTILINE | re.DOTALL)
+        return found.group(1) if found else None
+
+    @classmethod
+    def example_faults(cls, readme, modules):
+        """What is wrong with the example of a known-gap test in a README text, as a
+        list of sentences (empty: nothing). `modules` is {file name: text} of the
+        test modules.
+
+        The example must be the text of one test of the suite, word for word (a
+        method of a class, so with four more spaces in the module). It must also
+        show the rules that the section gives: the marker, the proof that the gate
+        read the artifact or that the artifact is bad, and one assert_rejects() as
+        its last statement."""
+        section = cls.section(readme, "Known gaps")
+        if section is None:
+            return ["README.md has no section `## Known gaps`"]
+        blocks = re.findall(r"^```python\n(.*?)^```$", section, re.MULTILINE | re.DOTALL)
+        if len(blocks) != 1:
+            return [f"the section `Known gaps` holds {len(blocks)} Python examples; wanted 1"]
+        example, faults = blocks[0], []
+        if not example.startswith("@gatelib.known_gap("):
+            faults.append("the example does not start with the @gatelib.known_gap marker")
+        in_module = "".join("    " + line if line.strip() else line
+                            for line in example.splitlines(keepends=True))
+        homes = [name for name, text in sorted(modules.items()) if in_module in text]
+        if len(homes) != 1:
+            faults.append(f"the example is the text of a test in {len(homes)} test module(s); "
+                          "wanted 1 (copy the test again: the marker and the whole body)")
+        if "self.assert_saw(" not in example and "if result.returncode == 0:" not in example:
+            faults.append("the example has no assert_saw() and no proof inside "
+                          "`if result.returncode == 0:`")
+        last = [line.strip() for line in example.splitlines() if line.strip()][-1:]
+        if not (last and last[0].startswith("self.assert_rejects(")):
+            faults.append("the last statement of the example is not self.assert_rejects()")
+        return faults
+
+    @staticmethod
+    def modules_of_the_suite():
+        modules = {}
+        for name in sorted(os.listdir(gatelib.TESTS)):
+            if re.fullmatch(r"test_\w+\.py", name):
+                with open(os.path.join(gatelib.TESTS, name), encoding="utf-8") as fh:
+                    modules[name] = fh.read()
+        return modules
+
+    def test_the_example_check_finds_an_example_that_is_not_a_real_test(self):
+        """CONTROL of the check, on constructed README texts and one constructed
+        test module."""
+        test = ('@gatelib.known_gap("constructed-gap", gate="gate.py", closes="R7",\n'
+                '                   reason="A constructed gate accepts every artifact.")\n'
+                "def test_gap_constructed(self):\n"
+                "    result = self.tree().run(self.GATE)\n"
+                '    self.assert_saw(result, r"^Loaded 0 record")\n\n'
+                '    self.assert_rejects(result, r"^FAIL  planted")\n')
+        modules = {"test_one.py": "class One(gatelib.GateCase):\n" + "".join(
+            "    " + line if line.strip() else line for line in test.splitlines(keepends=True))}
+
+        def readme(example, heading="Known gaps"):
+            return f"# Gate tests\n\n## {heading}\n\nText.\n\n```python\n{example}```\n\n## CI\n"
+
+        self.assertEqual(self.example_faults(readme(test), modules), [])
+        for example, fault in (
+                # The example of the first README: no proof that the gate read the artifact.
+                (test.replace('    self.assert_saw(result, r"^Loaded 0 record")\n\n', ""),
+                 "is the text of a test in 0 test module(s)"),
+                (test.replace('    self.assert_saw(result, r"^Loaded 0 record")\n\n', ""),
+                 "no assert_saw() and no proof inside"),
+                (test.replace("closes=\"R7\"", "closes=\"unplanned\""),
+                 "is the text of a test in 0 test module(s)"),
+                (test.replace("    self.assert_rejects(", "    self.assert_accepts("),
+                 "the last statement of the example is not self.assert_rejects()"),
+                (test.split("\n", 2)[2], "does not start with the @gatelib.known_gap marker")):
+            self.assertIn(fault, " / ".join(self.example_faults(readme(example), modules)))
+        self.assertIn("holds 2 Python examples",
+                      self.example_faults(readme(test + "```\n\n```python\n" + test), modules)[0])
+        self.assertIn("no section `## Known gaps`",
+                      self.example_faults(readme(test, "Gaps"), modules)[0])
+
+    def test_known_gap_example_is_a_real_test(self):
+        self.assertEqual(self.example_faults(self.readme, self.modules_of_the_suite()), [])
+
+    def test_content_files_that_limits_lists_are_in_the_repository(self):
+        """`Limits` lists the content files whose text the tests depend on. A file
+        that was renamed or deleted must leave the lists (the test that named it
+        was corrected in the same change)."""
+        limits = self.section(self.readme, "Limits")
+        self.assertIsNotNone(limits, "README.md has no section `## Limits`")
+        listed = re.findall(r"^  - `([^`\n]+)`$", limits, re.MULTILINE)
+        # The lists were read (not vacuous): today they hold more than 20 files, and
+        # the rule that most tests change is one of them.
+        self.assertGreater(len(listed), 20, "the lists of content files were not read")
+        self.assertIn("detections/sigma/T1040/afinet_raw_socket.yml", listed)
+        self.assertEqual(len(listed), len(set(listed)), "a file is listed twice")
+        self.assertEqual(
+            [rel for rel in listed if not os.path.isfile(os.path.join(gatelib.REPO, rel))], [],
+            "`Limits` of detections/tests/README.md lists these files, and the repository "
+            "does not have them: correct the lists")
 
 
 if __name__ == "__main__":

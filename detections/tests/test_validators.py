@@ -87,10 +87,40 @@ class CloudValidator(gatelib.GateCase):
     MARKER = "trr9012-leaked-key-user"
 
     RULE = "detections/sigma/T1078.004/aws_leaked_access_key_recon.yml"
+    # Other gates that read the rule or its fixtures. The `reason` of a known gap of
+    # this class says what they do with the planted tree, and the test proves it.
+    SUFFICIENCY = "detections/check_sufficiency.py"
+    NULL_SAFETY = "detections/check_null_safety.py"
+    RATCHET = (r"^  \[RATCHET\] T1078\.004/aws_leaked_access_key_recon\.yml: verified negatives "
+               r"(\d+) -> (\d+) \(gone: fixture:detections/cloud/fixtures/trr9012/benign\.json "
+               r"record #1 ")
 
     def manifest_rules(self, tree):
         """The (folder, rule file) pairs of the gate's MANIFEST, read from its source."""
         return set(in_source(tree, self.GATE, r'^\s+\("TRR\d+", "(T[\d.]+)", "([^"]+\.yml)",'))
+
+    @classmethod
+    def start_base_report(cls):
+        """Start, once for the class and in the background, the report that the
+        sufficiency-ratchet job makes for the base branch: check_sufficiency.py
+        --json on the unmodified copy. It is the report of RULE only (--rule), the
+        faster path of the same code. ratchet() waits for it."""
+        if "_base" not in cls.__dict__:
+            good = cls.good()
+            report = good.out("base-report.json")
+            cls._base = (report, good.start(cls.SUFFICIENCY, "--rule", cls.RULE,
+                                            "--json", report))
+            cls.addClassCleanup(delattr, cls, "_base")
+
+    def ratchet(self, tree):
+        """The last step of the sufficiency-ratchet job in a copy, for RULE: the head
+        against the report of the base (check_sufficiency.py --baseline). The run
+        prints the verdict of check_sufficiency.py first, then that of the ratchet."""
+        self.start_base_report()
+        report, base = self._base
+        self.assert_accepts(base.result(),
+                            r"^OK: 1 rule\(s\): 1 pass, 0 pass with warnings, 0 fail\. ")
+        return tree.run(self.SUFFICIENCY, "--rule", self.RULE, "--baseline", report)
 
     def test_ci_runs_the_dry_run_and_the_validation(self):
         """The commands of these tests are the two commands of the validate-cloud job."""
@@ -187,15 +217,38 @@ class CloudValidator(gatelib.GateCase):
         """WANTED: a rule whose benign baseline holds no record fails, because its
         negative control is vacuous (definition of done 2 needs a hard baseline)."""
         tree = self.tree()
+        self.start_base_report()        # for the proof of the `reason`, below
         tree.write(self.BENIGN, "[]\n")
         # The artifact is bad: the negative control of the rule has no record.
         self.assertEqual(tree.read_json(self.BENIGN), [])
+        others = {script: tree.start(script, *arguments) for script, arguments in (
+            ("detections/rule_cases.py", (self.RULE,)),
+            (self.NULL_SAFETY, (self.RULE,)),
+            ("detections/score_benign.py", ("--check", "--enforce")))}
         result = tree.run(self.GATE)
         # The gate read the planted file: it graded no benign record for this rule
         # (the grade line names no kind; it is printed for a PASS and for a FAIL).
         self.assert_saw(result, r"^(?:PASS|FAIL)  \[TRR9012 AWS\] aws_leaked_access_key_recon"
                                 r"\.yml: .*\n(?: {8}.*\n)*? {8}benign baseline graded "
                                 r"\(informational\): ; atoms exercised 0/\d+$")
+        if result.returncode == 0:
+            # Today. The `reason` of the marker says what the other jobs do with the
+            # planted tree; prove each sentence, so that the text cannot go out of
+            # date. Three gates accept the tree (for the one rule: the faster path
+            # of the same code).
+            for script, pending in others.items():
+                self.assertEqual(pending.result().returncode, 0,
+                                 f"{script} does not accept the tree any more: correct the "
+                                 "`reason` of the marker\n" + pending.result().describe())
+            # check_sufficiency.py accepts it too, and the ratchet of the pull request
+            # rejects it: the records of the good baseline were verified negatives.
+            ratchet = self.ratchet(tree)
+            self.assertRegex(ratchet.stdout,
+                             r"(?m)^OK: 1 rule\(s\): 1 pass, 0 pass with warnings, 0 fail\. ")
+            self.assertEqual(ratchet.returncode, 1, ratchet.describe())
+            gone = re.search(self.RATCHET, ratchet.stdout, re.MULTILINE)
+            self.assertIsNotNone(gone, ratchet.describe())
+            self.assertGreater(int(gone.group(1)), int(gone.group(2)))
         self.assert_rejects(
             result,
             r"^(FAIL|ERROR)\s+\[TRR9012 AWS\] aws_leaked_access_key_recon\.yml: .*benign.*"
@@ -210,15 +263,20 @@ class CloudValidator(gatelib.GateCase):
                "same path. Other jobs still stop the planted change: null-safety fails, with "
                "a FileNotFoundError traceback and no message that names the rule, and the "
                "sufficiency-ratchet job fails on a pull request (verified negatives are "
-               "gone). check_sufficiency.py only warns (R2).",
+               "gone). check_sufficiency.py passes with a warning (its check R2: the "
+               "records of the fixture cannot count as negatives).",
         closes="R2c")
     def test_gap_missing_fixture_is_pending(self):
         """WANTED: a rule of MANIFEST that exists, and whose fixture does not, fails.
         PENDING is for a rule that is not built yet."""
         tree = self.tree()
+        self.start_base_report()        # for the proof of the `reason`, below
         rules = self.manifest_rules(tree)
         self.assertIn(tuple(self.RULE.split("/")[-2:]), rules)
         tree.remove(self.BENIGN)
+        no_attack = self.tree()         # the same defect in the other fixture
+        no_attack.remove(self.ATTACK)
+        others = (no_attack.start(self.GATE), tree.start(self.NULL_SAFETY, self.RULE))
         # The artifact is bad: the rule and its attack fixture are in the tree, and the
         # baseline that MANIFEST names for its negative control is not.
         self.assertTrue(tree.exists(self.RULE) and tree.exists(self.ATTACK))
@@ -232,9 +290,35 @@ class CloudValidator(gatelib.GateCase):
         self.assertNotRegex(result.stdout, r"(?m)^PASS +\[TRR9012\b")
         if result.returncode == 0:
             # Today: a green run that counts one detection fewer than MANIFEST holds.
-            self.assert_saw(result, rf"^All {len(rules) - 1} external-cloud detection\(s\) "
-                                    r"fired on their recorded attack fixtures, and every "
-                                    r"negative control held\.$")
+            green = (rf"^All {len(rules) - 1} external-cloud detection\(s\) fired on their "
+                     r"recorded attack fixtures, and every negative control held\.$")
+            self.assert_saw(result, green)
+            # The `reason` of the marker says more; prove each sentence, so that the
+            # text cannot go out of date. A missing attack fixture takes the same path.
+            without_attack, null_safety = (pending.result() for pending in others)
+            self.assert_accepts(without_attack, green)
+            self.assert_saw(without_attack, r"^PENDING \[TRR9012\] aws_leaked_access_key_recon"
+                                            r"\.yml: fixtures not present -- skipped$")
+            # null-safety stops the planted tree, with a traceback that does not name
+            # the rule (for the one rule: the faster path of the same code).
+            self.assertEqual(null_safety.returncode, 1, null_safety.describe())
+            self.assertTrue(null_safety.crashed, null_safety.describe())
+            self.assertRegex(null_safety.stderr,
+                             r"(?m)^FileNotFoundError: .*/cloud/fixtures/trr9012/benign\.json'$")
+            self.assertNotIn("aws_leaked_access_key_recon", null_safety.output)
+            # check_sufficiency.py passes with a warning of its check R2, and the
+            # ratchet of the pull request rejects: verified negatives are gone.
+            ratchet = self.ratchet(tree)
+            self.assertRegex(ratchet.stdout,
+                             r"(?m)^  \[R2\] T1078\.004/aws_leaked_access_key_recon\.yml: benign "
+                             r"fixture detections/cloud/fixtures/trr9012/benign\.json is missing; "
+                             r"its records cannot count as negatives$")
+            self.assertRegex(ratchet.stdout,
+                             r"(?m)^OK: 1 rule\(s\): 0 pass, 1 pass with warnings, 0 fail\. ")
+            self.assertEqual(ratchet.returncode, 1, ratchet.describe())
+            gone = re.search(self.RATCHET, ratchet.stdout, re.MULTILINE)
+            self.assertIsNotNone(gone, ratchet.describe())
+            self.assertGreater(int(gone.group(1)), int(gone.group(2)))
         self.assert_rejects(
             result,
             r"^(FAIL|ERROR)\s+\[TRR9012[^\]]*\] aws_leaked_access_key_recon\.yml: .*"

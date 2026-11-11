@@ -660,7 +660,7 @@ check then still passes. [`tests/`](tests/README.md) holds a test suite for them
   known gaps, each with the roadmap item that closes it.
 
 ```bash
-python3 -B detections/tests/gatelib.py --run     # all tests, in parallel (about 90 s on four CPUs)
+python3 -B detections/tests/gatelib.py --run     # all tests, in parallel (about two minutes on four CPUs)
 ```
 
 The `gate-tests` job of `.github/workflows/detection-quality.yml` runs this command
