@@ -31,6 +31,9 @@
 #
 # APT_INSTALL_FORCE_PUBLIC=1 goes to step 2 with no fault. A CI job uses it to prove on a
 # runner that the second way works; with it, the script fails if that way cannot be used.
+# APT_INSTALL_RESOLVERS="<address> ..." gives other resolvers than the two public ones.
+# The same CI job uses it for its control: with a resolver that does not answer, the
+# forced way must fail, which shows that the lookups of apt use the private resolv.conf.
 set -euo pipefail
 set -f   # the lists hold package names, not file patterns
 
@@ -57,7 +60,17 @@ for name in "$@" $OPTIONAL; do
 done
 
 MIRROR_HOSTS=(azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com)
-PUBLIC_RESOLVERS=(1.1.1.1 8.8.8.8)
+read -r -a PUBLIC_RESOLVERS <<< "${APT_INSTALL_RESOLVERS:-1.1.1.1 8.8.8.8}"
+if [[ ${#PUBLIC_RESOLVERS[@]} -eq 0 ]]; then
+  echo "::error title=apt_install::APT_INSTALL_RESOLVERS holds no address" >&2
+  exit 2
+fi
+for name in "${PUBLIC_RESOLVERS[@]}"; do
+  if [[ ! "$name" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+    echo "::error title=apt_install::not an IPv4 address in APT_INSTALL_RESOLVERS: '${name//[^[:print:]]/?}'" >&2
+    exit 2
+  fi
+done
 RESOLVER_FAULT='Temporary failure resolving|Could not resolve|Temporary failure in name resolution'
 FORCE_PUBLIC="${APT_INSTALL_FORCE_PUBLIC:-0}"
 RUN=(sudo)        # how each apt-get starts; the second way adds the private namespace

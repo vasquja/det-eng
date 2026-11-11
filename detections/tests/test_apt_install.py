@@ -251,6 +251,17 @@ class AptInstall(unittest.TestCase):
         self.assertEqual([c for c in done.calls if not c.startswith("unshare")], [ASK_PUBLIC] + apt("public", "auditd"))
         self.assert_only_apt_had_the_public_resolvers(done)
 
+    def test_other_resolvers_can_be_given_and_a_text_that_is_not_an_address_is_refused(self):
+        done = self.run_script("auditd", runner=(), env={"APT_INSTALL_RESOLVERS": "192.0.2.53  9.9.9.9"})
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(done.state["resolv_seen"], "nameserver 192.0.2.53\nnameserver 9.9.9.9\n")
+        for text in ("dns.example.com", "1.1.1.1;id", "1.1.1.1 options", " ", "-o", "1.1.1"):
+            with self.subTest(resolvers=text):
+                done = self.run_script("auditd", env={"APT_INSTALL_RESOLVERS": text})
+                self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+                self.assertEqual(done.calls, [])
+                self.assertIn("APT_INSTALL_RESOLVERS", done.stderr)
+
     def test_the_forced_way_fails_when_the_public_resolvers_cannot_be_used(self):
         # The CI job that proves this way must not pass through the other way.
         for state in (dict(fail=("unshare",)), dict(public=())):

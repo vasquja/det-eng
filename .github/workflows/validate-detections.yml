@@ -168,3 +168,21 @@ jobs:
             echo "::error::/etc/resolv.conf of the runner changed"
             exit 1
           fi
+
+      - name: CONTROL - with a resolver that does not answer, the forced way fails
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 192.0.2.53 is a documentation address (RFC 5737): no resolver is there. If the
+          # forced way passes with it, the lookups of apt did not use the private
+          # resolv.conf, and the step above proved nothing about a fault.
+          if APT_INSTALL_FORCE_PUBLIC=1 APT_INSTALL_RESOLVERS=192.0.2.53 \
+               bash .github/scripts/apt_install.sh auditd > /tmp/apt-control.out 2>&1; then
+            sed 's/^/[control] /' /tmp/apt-control.out
+            echo "::error::the forced way passed with a resolver that does not answer"
+            exit 1
+          fi
+          # The lines of the script, with a prefix so that its ::error line is plain text here.
+          sed 's/^/[control] /' /tmp/apt-control.out
+          grep -q 'give no mirror of the list either' /tmp/apt-control.out
+          grep -q 'the way with the public resolvers cannot be used' /tmp/apt-control.out
