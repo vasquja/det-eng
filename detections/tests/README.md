@@ -50,7 +50,7 @@ prints, because the format of that text differs between Python versions.
 only the standard library (`unittest`), PyYAML and pySigma. It needs no network
 and no root. It runs on Python 3.10 and later (3.10 is the minimum of pySigma).
 
-Three conditions skip a test:
+Four conditions skip a test:
 
 - `gcc` is not installed. The class `LinuxValidatorDryRun` is skipped: the Linux
   dry run compiles the atomics.
@@ -60,6 +60,9 @@ Three conditions skip a test:
 - The environment pins git to a repository: `GIT_DIR`, `GIT_WORK_TREE`,
   `GIT_INDEX_FILE` or a variable like them is set (git sets them for a hook). The
   same test is skipped, because the gate runs would work on that repository.
+- The Python of the tests is older than 3.12. One test of `EmulationScriptsJob` is
+  skipped: it runs the step of the `emulation-scripts` job on a directory with no
+  test, and unittest ends with 5 there only from Python 3.12.
 
 In CI (the variable `CI` is set) each of these conditions fails the test in
 place of a skip, and `--no-skips` fails the run when a test was skipped. So no
@@ -318,16 +321,27 @@ cloud emulation scripts in [`atomics/tests/`](../../atomics/tests/README.md). Th
 gate tests do not run that suite. They hold the rules of its job (class
 `EmulationScriptsJob`): the same rules as for `gate-tests`, and these.
 
+- The job is one fixed form (`EmulationScriptsJob.JOB_FORM`): checkout, Python
+  3.12 or later, and one step with the one command. A step more, a line more in
+  that step, an `env:`, a different runner or a `concurrency:` group fails the
+  test. Change the form in the same pull request, and say why the job still runs
+  every test.
 - The step runs the discovery of unittest on the whole directory. The step fails
   when a test fails, when a test module does not load, and when the directory
   holds no test.
-- Each test is in a file that the discovery loads (`test*.py`, in the directory
-  itself).
+- Each file that holds a test method is a file from which the discovery loads a
+  test. No test is an `async def` (unittest does not wait for it).
 - No test is skipped, and none is an expected failure: unittest ends with 0 for
-  both.
+  both. The rule reads the names in each module, so an alias
+  (`import unittest as ut`) is found too.
 - The suite does not lose tests. The class holds the count
   (`EmulationScriptsJob.TESTS`). A lower count fails. Raise the number when the
-  suite grows.
+  suite grows. The count is the same with the variables of a GitHub runner.
+
+These rules do not see code that hides a failure when the tests run: a test that
+returns early, a decorator or a `run()` of a test class that swallows the
+failure, `os._exit(0)` in a test, a patched `TestResult`. The count is a floor:
+it does not see one test in the place of a different one.
 
 ## Limits
 

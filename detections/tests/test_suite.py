@@ -177,7 +177,12 @@ class EmulationScriptsJob(gatelib.GateCase):
     What the tests prove of a script is their own matter (atomics/tests/README.md).
     The rules here are for the job. It runs every test on every pull request. It
     fails when a test fails, when a test module does not load, and when it finds no
-    test. The suite does not lose tests, and no test is skipped."""
+    test. The suite does not lose tests, and no test is skipped.
+
+    Limits. These rules read the workflow and the names in the test modules. They do
+    not see code that hides a failure at run time: a test that returns early, a
+    decorator or a `run()` of a test class that swallows the failure, `os._exit(0)`
+    in a test, a patched TestResult."""
 
     WORKFLOW = "lint-trr.yml"
     JOB = "emulation-scripts"
@@ -188,12 +193,44 @@ class EmulationScriptsJob(gatelib.GateCase):
     # count fails: a test that goes away needs a reason in the pull request, and then
     # a lower number here. Raise the number when the suite grows.
     TESTS = 254
-    # What skips a test, or lets a failing test pass.
-    SKIPS = re.compile(r"unittest\.skip|@skip|\bskipTest\(|\bSkipTest\b|expectedFailure")
+    # The whole job: the version of each action, the names of the steps and the
+    # Python version (which has its own rule) are left out. A step more, a line more
+    # in the test step, an `env:`, a `working-directory:` or a different runner can
+    # make the job run fewer tests, or tests of a different tree.
+    JOB_FORM = {"name": "emulation-scripts", "runs-on": "ubuntu-latest", "timeout-minutes": 10,
+                "steps": [{"uses": "actions/checkout"},
+                          {"uses": "actions/setup-python", "with": {"python-version": "3.12 or later"}},
+                          {"run": COMMAND + " -v"}]}
+    # Names that skip a test or let a failing test pass: unittest ends with 0 for both.
+    SKIP_NAMES = {"skip", "skipIf", "skipUnless", "skipTest", "SkipTest", "expectedFailure"}
+    SKIP_TEXT = ("__unittest_skip__", "__unittest_expecting_failure__")
     ONE = "import unittest\n\n\nclass One(unittest.TestCase):\n    def test_a(self):\n        {}\n"
+    # What the discovery of the step loads. A module that did not load, and a module
+    # that is skipped as a whole, are one entry of the class unittest.loader gives.
+    LOADED = (
+        "import inspect, os, sys, unittest\n"
+        "def cases(suite):\n"
+        "    for item in suite:\n"
+        "        if isinstance(item, unittest.TestSuite):\n"
+        "            yield from cases(item)\n"
+        "        else:\n"
+        "            yield item\n"
+        "found = list(cases(unittest.defaultTestLoader.discover(sys.argv[1])))\n"
+        "real = [case for case in found if type(case).__module__ != 'unittest.loader']\n"
+        "print('tests loaded:', len(real))\n"
+        "print('modules that did not load:', len(found) - len(real))\n"
+        "for path in sorted({inspect.getfile(type(case)) for case in real}):\n"
+        "    print('file:', os.path.relpath(path, sys.argv[1]).replace(os.sep, '/'))\n")
 
     def step(self):
         return gatelib.ci_step(self.WORKFLOW, self.JOB, self.COMMAND)
+
+    def workflow(self):
+        import yaml     # PyYAML: in detections/requirements.txt
+
+        path = os.path.join(gatelib.REPO, ".github", "workflows", self.WORKFLOW)
+        with open(path, encoding="utf-8") as fh:
+            return yaml.safe_load(fh)
 
     def suite(self, **modules):
         """A constructed atomics/tests/ that holds the given modules, beside a copy of
@@ -214,79 +251,121 @@ class EmulationScriptsJob(gatelib.GateCase):
                     path = os.path.join(directory, name)
                     with open(path, encoding="utf-8") as fh:
                         found[os.path.relpath(path, root).replace(os.sep, "/")] = fh.read()
+        self.assertGreater(len(found), 5, "atomics/tests/ was not read")
         return found
 
-    def test_ci_runs_every_test_of_the_suite(self):
-        """One step runs the discovery of unittest on the whole directory: no pattern,
-        no name of one module. The same command, without `-v`, is the documented one."""
-        commands = [line for step in gatelib.ci_steps() for line in gatelib._command_lines(step.run)
-                    if "unittest" in line or self.SUITE in line]
-        self.assertEqual(commands, [self.COMMAND + " -v"])
-        self.assertEqual(self.step().name, "Test the cloud emulation scripts (stub CLIs, no cloud call)")
+    def loaded(self, env=None):
+        """(number of tests, files that hold them) that the discovery of the step loads
+        from a copy of the real suite. The tests do not run here: the job runs them."""
+        result = self.good().run_python(self.LOADED, self.SUITE, env=env)
+        gatelib.assert_accepts(result, r"^modules that did not load: 0$")
+        count = int(re.search(r"^tests loaded: (\d+)$", result.stdout, re.MULTILINE).group(1))
+        return count, re.findall(r"^file: (.+)$", result.stdout, re.MULTILINE)
+
+    @staticmethod
+    def the_tests_of(text):
+        """The test methods of a module: (name, is it `async def`), from its syntax tree."""
+        return [(item.name, isinstance(item, ast.AsyncFunctionDef))
+                for node in ast.walk(ast.parse(text)) if isinstance(node, ast.ClassDef)
+                for item in node.body
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name.startswith("test")]
+
+    @classmethod
+    def skips(cls, text):
+        """The names in a module that skip a test, from its syntax tree: also under an
+        alias (`import unittest as ut`, `from unittest import skip as later`)."""
+        names = set()
+        for node in ast.walk(ast.parse(text)):
+            if isinstance(node, ast.Attribute):
+                names.add(node.attr)
+            elif isinstance(node, ast.Name):
+                names.add(node.id)
+            elif isinstance(node, ast.alias):
+                names.add(node.name.rsplit(".", 1)[-1])
+        return sorted(names & cls.SKIP_NAMES) + [word for word in cls.SKIP_TEXT if word in text]
+
+    def test_ci_runs_the_documented_command(self):
+        """The step runs the discovery of unittest on the whole directory: no pattern,
+        no name of one module. The same command, without `-v`, is the documented
+        one. `python -m` reads modules from the root first: no file there may take
+        the place of unittest."""
+        self.assertEqual(gatelib._command_lines(self.step().run), [self.COMMAND + " -v"])
         self.assert_documented(self.COMMAND)
+        for name in ("unittest.py", "unittest"):
+            self.assertFalse(os.path.exists(os.path.join(gatelib.REPO, name)),
+                             f"{name} at the root of the repository takes the place of unittest")
 
     def test_job_runs_on_every_pull_request(self):
-        """As for the gate-tests job: no path filter for pull requests, no `if:`, no
-        `continue-on-error:` and no `needs:`. The job has a timeout: a script that
-        waits for input must not hold a runner for six hours."""
-        import yaml     # PyYAML: in detections/requirements.txt
-
-        path = os.path.join(gatelib.REPO, ".github", "workflows", self.WORKFLOW)
-        with open(path, encoding="utf-8") as fh:
-            doc = yaml.safe_load(fh)
+        """The workflow has no path filter for pull requests and no setting above its
+        jobs (a `concurrency:` group can cancel a run, `defaults:` and `env:` change
+        each step). The job is JOB_FORM and nothing more: no `if:`, no `needs:`
+        (GitHub skips a job when a job that it needs failed), no
+        `continue-on-error:`, no step that is not in the form."""
+        doc = self.workflow()
         triggers = doc.get("on", doc.get(True))     # YAML 1.1 reads the key `on` as true
         self.assertIn("pull_request", triggers)
         self.assertIsNone(triggers["pull_request"], "pull_request has a filter")
-        self.assertEqual(triggers["push"], {"branches": ["main"]})
-        job = doc["jobs"][self.JOB]
-        self.assertNotIn("needs", job)
-        self.assertLessEqual(job["timeout-minutes"], 15)
-        for node in [job] + job["steps"]:
-            self.assertNotIn("if", node)
-            self.assertNotIn("continue-on-error", node)
+        self.assertEqual({key for key in doc if key not in (True, "on")}, {"name", "permissions", "jobs"},
+                         f"{self.WORKFLOW} has a setting above its jobs that this test does not know")
+        job = json.loads(json.dumps(doc["jobs"][self.JOB]))      # a copy
+        for step in job["steps"]:
+            step.pop("name", None)
+            if "uses" in step:
+                step["uses"] = step["uses"].split("@")[0]
+            version = str((step.get("with") or {}).get("python-version", ""))
+            # unittest ends with 5 when it ran no test from Python 3.12; "3.x" is the newest.
+            if version == "3.x" or re.fullmatch(r"3\.(1[2-9]|[2-9]\d)", version):
+                step["with"]["python-version"] = "3.12 or later"
+        self.assertEqual(job, self.JOB_FORM,
+                         f"the job {self.JOB} is not the form that this test holds. Change the "
+                         "job back, or change JOB_FORM and say in the pull request why the job "
+                         "still runs every test of atomics/tests/ on every pull request")
 
     def test_every_test_is_in_a_module_that_the_discovery_loads(self):
-        """`unittest discover -s atomics/tests` loads the files `test*.py` of that
-        directory. It does not go into a directory below it that is not a package. So
-        a test in a file with a different name, or in such a directory, never runs."""
+        """A file under atomics/tests/ that holds a test method, and from which the
+        discovery of the step loads no test, holds tests that never run: a name that
+        is not `test*.py`, or a directory below that is not a package."""
         modules = self.modules()
-        loaded = sorted(name for name in modules if re.fullmatch(r"test\w*\.py", name))
-        self.assertGreater(len(loaded), 5, "atomics/tests/ was not read")
-        with_tests = sorted(
-            name for name, text in modules.items()
-            if any(isinstance(node, ast.ClassDef) and any(
-                isinstance(item, ast.FunctionDef) and item.name.startswith("test") for item in node.body)
-                for node in ast.walk(ast.parse(text))))
-        self.assertEqual(with_tests, loaded,
-                         "a file of atomics/tests/ holds a test and has a name that the "
-                         "discovery does not load, or a test module holds no test")
+        with_tests = sorted(name for name, text in modules.items() if self.the_tests_of(text))
+        self.assertEqual(with_tests, self.loaded()[1],
+                         "left: the files of atomics/tests/ that hold a test method; right: the "
+                         "files from which `unittest discover -s atomics/tests` loads a test")
+        # unittest does not wait for an `async def` test of a plain TestCase: it passes.
+        self.assertEqual({name: [test for test, is_async in self.the_tests_of(text) if is_async]
+                          for name, text in modules.items()
+                          if any(is_async for _test, is_async in self.the_tests_of(text))}, {})
 
     def test_no_test_of_the_suite_is_skipped(self):
         """unittest ends with 0 when it skipped a test, and the step has no option that
-        refuses a skip. So the suite holds no skip at all, and no expected failure."""
-        self.assertRegex("    @unittest.skipUnless(shutil.which('az'), 'no az')\n", self.SKIPS)   # CONTROL
-        self.assertRegex("        self.skipTest('no gcloud')\n", self.SKIPS)
-        self.assertNotRegex("    def test_a_signal_does_not_skip_the_undo(self):\n", self.SKIPS)
-        modules = self.modules()
-        self.assertGreater(len(modules), 5, "atomics/tests/ was not read")
-        self.assertEqual({name: self.SKIPS.findall(text) for name, text in modules.items()
-                          if self.SKIPS.search(text)}, {})
+        refuses a skip. So the suite holds no name that skips a test, and none that
+        makes a failure an expected one."""
+        skipped = {     # CONTROL: each form is found
+            "import unittest\n\n\nclass A(unittest.TestCase):\n    @unittest.skip('x')\n    def test_a(self): pass\n": ["skip"],
+            "import unittest as ut\n\n\nclass A(ut.TestCase):\n    @ut.skipUnless(False, 'x')\n    def test_a(self): pass\n": ["skipUnless"],
+            "from unittest import TestCase, skipIf as only_when\n\n\nclass A(TestCase):\n    @only_when(True, 'x')\n    def test_a(self): pass\n": ["skipIf"],
+            "import unittest\n\n\nclass A(unittest.TestCase):\n    def test_a(self):\n        self.skipTest('x')\n": ["skipTest"],
+            "import unittest\nraise unittest.SkipTest('x')\n": ["SkipTest"],
+            "import unittest\n\n\nclass A(unittest.TestCase):\n    @unittest.case.expectedFailure\n    def test_a(self): pass\n": ["expectedFailure"],
+            "import unittest\n\n\nclass A(unittest.TestCase):\n    def test_a(self): pass\nA.test_a.__unittest_skip__ = True\n": ["__unittest_skip__"],
+        }
+        not_skipped = [
+            "import unittest\n\n\nclass A(unittest.TestCase):\n    def test_a_signal_does_not_skip_the_undo(self): pass\n",
+            "# Do not add unittest.skip here.\nunexpectedFailure = None\nskipped = 'a skip in a text'\n"]
+        self.assertEqual({text: self.skips(text) for text in list(skipped) + not_skipped if self.skips(text)}, skipped)
+        self.assertEqual({name: self.skips(text) for name, text in self.modules().items() if self.skips(text)}, {})
 
     def test_the_suite_does_not_lose_tests(self):
-        """The count of the tests that the discovery of the step loads, in a copy of the
-        real suite. The tests do not run here: the job runs them."""
-        result = self.good().run_python(
-            "import sys, unittest\n"
-            "suite = unittest.defaultTestLoader.discover(sys.argv[1])\n"
-            "print('tests loaded:', suite.countTestCases())\n"
-            "print('modules that did not load:', len(unittest.defaultTestLoader.errors))\n",
-            self.SUITE)
-        gatelib.assert_accepts(result, r"^modules that did not load: 0$")
-        count = int(re.search(r"^tests loaded: (\d+)$", result.stdout, re.MULTILINE).group(1))
+        """The count of the tests that the discovery of the step loads. It is the same
+        with the variables of a GitHub runner: a test that is there only outside of
+        CI is not a test of the job."""
+        count, _files = self.loaded()
         self.assertGreaterEqual(count, self.TESTS,
                                 f"atomics/tests/ holds {count} test(s); it held {self.TESTS}. "
                                 "A test that goes away needs a reason in the pull request, "
                                 "and then a lower EmulationScriptsJob.TESTS")
+        on_a_runner = self.loaded(env={"CI": "true", "GITHUB_ACTIONS": "true", "RUNNER_OS": "Linux"})[0]
+        self.assertEqual(on_a_runner, count, "the discovery loads a different number of tests "
+                         "with the variables CI, GITHUB_ACTIONS and RUNNER_OS of a GitHub runner")
 
     def test_control_ci_step_passes_on_a_suite_that_passes(self):
         """CONTROL of the step, on a constructed suite of one test."""
@@ -308,15 +387,15 @@ class EmulationScriptsJob(gatelib.GateCase):
 
     def test_ci_step_fails_when_the_suite_holds_no_test(self):
         """unittest of Python 3.12 and later ends with 5 when it ran no test. An older
-        Python ends with 0 there: the job would pass on an empty directory. The
-        workflow asks for Python 3.x, which is the newest one."""
-        import yaml     # PyYAML: in detections/requirements.txt
-
-        path = os.path.join(gatelib.REPO, ".github", "workflows", self.WORKFLOW)
-        with open(path, encoding="utf-8") as fh:
-            steps = yaml.safe_load(fh)["jobs"][self.JOB]["steps"]
-        self.assertEqual([step["with"]["python-version"] for step in steps
-                          if str(step.get("uses", "")).startswith("actions/setup-python@")], ["3.x"])
+        Python ends with 0 there: the job would pass on an empty directory. The job
+        asks for Python 3.12 or later (test_job_runs_on_every_pull_request). This
+        test runs the step with the Python of the tests, so it needs 3.12 too."""
+        if sys.version_info < (3, 12):
+            why = ("the step is run with the Python of the tests, and unittest of Python "
+                   f"{sys.version_info.major}.{sys.version_info.minor} ends with 0 when it ran no test")
+            if os.environ.get("CI"):
+                self.fail("Python 3.12 or later is necessary in CI: " + why)
+            self.skipTest(why)
         tree = self.suite(helper="VALUE = 1\n")
         gatelib.assert_rejects(tree.run_step(self.step()), r"^NO TESTS RAN$", exit_code=5)
 
