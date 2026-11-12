@@ -8,7 +8,12 @@ atomic_tests:
       Generates the rare Linux syscall pattern characteristic of the CopyFail
       page-cache corruption primitive: AF_ALG socket bound to the
       `authencesn(hmac(sha256),cbc(aes))` AEAD, followed by
-      `sendmsg(MSG_MORE)` and `splice()`. The exploit primitive completes
+      `sendmsg(MSG_MORE)` and `splice()`. The test sets a dummy key on the
+      AEAD (`setsockopt(SOL_ALG, ALG_SET_KEY)`): without a key the kernel
+      rejects the `splice()` with ENOKEY. Where the kernel does not have that
+      AEAD, or refuses the key, the test binds the socket to `hash(sha256)`.
+      It ends with 1 when the kernel rejected the `splice()`. The exploit
+      primitive completes
       only when `recv()` triggers AEAD decryption that writes into the
       file-backed page cache; this atomic intentionally stops before
       `recv()`, so no page cache is corrupted. Target file is a throwaway
@@ -25,7 +30,7 @@ atomic_tests:
       - linux
     input_arguments:
       target_file:
-        description: Throwaway file to use as splice() target.
+        description: Throwaway file that the test creates. It is the splice() source where there is no AF_ALG operation socket.
         type: string
         default: /tmp/copyfail_atomic_target
       source_dir:

@@ -9,7 +9,7 @@
  * that specific algorithm fail the bind(), so to keep the full
  * socket(AF_ALG) + sendmsg(MSG_MORE) + splice() signature on stock kernels
  * this falls back to a universally-available transform (hash:sha256) for the
- * operation fd.
+ * operation fd. It also falls back when the kernel refuses the key (below).
  *
  * Where the AEAD is present, this program sets a key on it before accept(), as
  * the real primitive must. An AEAD operation socket with no key rejects
@@ -112,8 +112,13 @@ int main(int argc, char **argv)
         aead = 1;
     }
     /* A socket with no operation socket can be bound again. hash(sha256) needs no key. */
-    if (!aead && bind(alg_fd, (struct sockaddr *)&sa_hash, sizeof(sa_hash)) < 0)
-        fprintf(stderr, "bind(sha256): %s\n", strerror(errno));
+    int hash = 0;   /* 1 when the socket is bound to the hash */
+    if (!aead) {
+        if (bind(alg_fd, (struct sockaddr *)&sa_hash, sizeof(sa_hash)) < 0)
+            fprintf(stderr, "bind(sha256): %s\n", strerror(errno));
+        else
+            hash = 1;
+    }
 
     int op_fd = accept(alg_fd, NULL, NULL);
     if (op_fd >= 0) {
@@ -124,25 +129,29 @@ int main(int argc, char **argv)
             fprintf(stderr, "sendmsg(MSG_MORE): %s\n", strerror(errno));
     }
 
-    /* splice() is always issued. Prefer one end being the AF_ALG operation fd
-     * (as in the real primitive); otherwise splice file->pipe so the
-     * syscall-level signature (AF_ALG socket + splice) is still present. */
+    /* splice() is issued when the pipe exists. Prefer one end being the AF_ALG
+     * operation fd (as in the real primitive); otherwise splice file->pipe so
+     * the syscall-level signature (AF_ALG socket + splice) is still present. */
     const char *into = op_fd < 0 ? "a pipe (there is no AF_ALG operation socket)"
                      : aead ? "the authencesn operation socket"
-                     : "the sha256 operation socket";
+                     : hash ? "the sha256 operation socket"
+                     : "an AF_ALG operation socket whose transform has no key";
     int accepted = 0;   /* 1 when the kernel accepted the splice() */
     int pipefd[2];
     if (pipe(pipefd) == 0) {
-        ssize_t moved;
-        if (op_fd >= 0) {
-            (void)write(pipefd[1], pad, 16);
-            moved = splice(pipefd[0], NULL, op_fd, NULL, 16, 0);
+        ssize_t moved = -1;
+        /* No splice() from a pipe that holds nothing: it would wait for data. */
+        if (op_fd >= 0 && write(pipefd[1], pad, 16) != 16) {
+            fprintf(stderr, "write() to the pipe: %s\n", strerror(errno));
         } else {
-            moved = splice(target_fd, NULL, pipefd[1], NULL, 16, 0);
+            if (op_fd >= 0)
+                moved = splice(pipefd[0], NULL, op_fd, NULL, 16, 0);
+            else
+                moved = splice(target_fd, NULL, pipefd[1], NULL, 16, 0);
+            if (moved < 0)
+                fprintf(stderr, "splice() into %s: %s\n", into, strerror(errno));
         }
-        if (moved < 0)
-            fprintf(stderr, "splice() into %s: %s\n", into, strerror(errno));
-        else
+        if (moved >= 0)
             accepted = 1;
         close(pipefd[0]);
         close(pipefd[1]);
