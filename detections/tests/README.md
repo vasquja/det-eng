@@ -50,7 +50,7 @@ prints, because the format of that text differs between Python versions.
 only the standard library (`unittest`), PyYAML and pySigma. It needs no network
 and no root. It runs on Python 3.10 and later (3.10 is the minimum of pySigma).
 
-Three conditions skip a test:
+Four conditions skip a test:
 
 - `gcc` is not installed. The class `LinuxValidatorDryRun` is skipped: the Linux
   dry run compiles the atomics.
@@ -60,6 +60,9 @@ Three conditions skip a test:
 - The environment pins git to a repository: `GIT_DIR`, `GIT_WORK_TREE`,
   `GIT_INDEX_FILE` or a variable like them is set (git sets them for a hook). The
   same test is skipped, because the gate runs would work on that repository.
+- The Python of the tests is older than 3.12. One test of `EmulationScriptsJob` is
+  skipped: it runs the step of the `emulation-scripts` job on a directory with no
+  test, and unittest ends with 5 there only from Python 3.12.
 
 In CI (the variable `CI` is set) each of these conditions fails the test in
 place of a skip, and `--no-skips` fails the run when a test was skipped. So no
@@ -82,7 +85,7 @@ after each test or test class.
 | `test_sufficiency.py` | `rule_cases.py` (and through it the event table of `sigma_eval.py`), the import guard of `sigma_eval.py`, `check_sufficiency.py` (R0 to R4 and the waiver digests), the sufficiency ratchet, the self-test of `sigma_explain.py`. |
 | `test_quality.py` | `score_benign.py` and the benign ratchet, `check_null_safety.py`, `check_provider_mappings.py`, `k8s_policy_coverage.py`, `k8s_platforms_md.py`, `coverage_report.py`. |
 | `test_validators.py` | The cloud validator, the Linux validator (dry run, and its verdict code on canned results), the three Kubernetes validators (dry run and negative control), `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py`, `check_schedule_freshness.py`. |
-| `test_suite.py` | Rules of the suite as a whole: each self-test has a runner, the CI job runs every test on every pull request, no workflow step pipes a command into `tee` without pipefail, no step that runs a gate has `continue-on-error`, each known gap names a roadmap item, each planted artifact is used, this file agrees with the tests. |
+| `test_suite.py` | Rules of the suite as a whole: each self-test has a runner, the CI job runs every test on every pull request, the `emulation-scripts` job does the same for `atomics/tests/`, no workflow step pipes a command into `tee` without pipefail, no step that runs a gate or the unit tests has `continue-on-error`, each known gap names a roadmap item, each planted artifact is used, this file agrees with the tests. |
 | `test_apt_install.py` | Tests of `.github/scripts/apt_install.sh`, the step that installs `auditd`, with a stub for `sudo`, `apt-get`, `unshare`, `mount`, `getent` and `timeout`. When the runner cannot resolve the package mirror, or apt printed a message about name resolution, or the mirror does not resolve after a failed run, apt gets one run with public resolvers in a private mount namespace; the script fails only after apt failed in a run with the resolver of the runner (but in the forced way of the CI job); a necessary package that is not installed fails the step; a text that is not a package name (also a name that ends with `-`, which apt reads as a removal) or not an address is refused. The class `DirectInstalls` (with two CONTROLs) fails when a workflow (a `run:` text, a `with:` or `env:` value), a composite action or a shell script (`*.sh`, or a shell on its first line) installs packages in a usual form (`apt-get install`, `apt update`, `dpkg -i`, `snap install`, also with options, a path or quotes) without the script. The one line that is allowed is `apt-get update -qq` in `detections/benign/linux/workload.sh`. It is a rule on text: a command that is built at run time, or that a different program starts, is not seen. The stubs do not show that the namespace works on a runner: the CI job `apt-install-fallback` does. It forces that way, and its CONTROL step gives a resolver that does not answer (`APT_INSTALL_RESOLVERS`) and fails if the install then passes. |
 | `known_bad/<group>/` | The planted artifacts of that group. `known_bad/gatelib/` holds samples for `test_gatelib.py`. |
 
@@ -302,15 +305,43 @@ the two timeouts.
   step that has no `shell:` with `bash -e`, so `gate | tee file` takes the exit
   code of `tee`, and a gate that fails leaves the job green. Such a step needs
   `shell: bash`.
-- No step that runs a script of the repository with Python has
-  `continue-on-error`, on the step or on its job. A step that has it leaves its
-  job green when it fails, and a job that has it leaves its workflow run green.
+- No step that runs a script of the repository with Python, or its unit tests
+  (`python -m unittest`), has `continue-on-error`, on the step or on its job. A
+  step that has it leaves its job green when it fails, and a job that has it
+  leaves its workflow run green.
   The shadow steps are the exception, by name (the table `SoftSteps.SHADOW`;
   today one step of `validate-apiserver-detections.yml`).
 
 The `gate-tests` job itself has no `if:`, no `continue-on-error` and no `needs:`
 (GitHub skips a job when a job that it needs failed), and its workflow has no
 path filter. `test_suite.py` checks that too.
+
+The job `emulation-scripts` of `lint-trr.yml` runs a second suite: the tests of the
+cloud emulation scripts in [`atomics/tests/`](../../atomics/tests/README.md). The
+gate tests do not run that suite. They hold the rules of its job (class
+`EmulationScriptsJob`): the same rules as for `gate-tests`, and these.
+
+- The job is one fixed form (`EmulationScriptsJob.JOB_FORM`): checkout, Python
+  3.12 or later, and one step with the one command. A step more, a line more in
+  that step, an `env:`, a different runner or a `concurrency:` group fails the
+  test. Change the form in the same pull request, and say why the job still runs
+  every test.
+- The step runs the discovery of unittest on the whole directory. The step fails
+  when a test fails, when a test module does not load, and when the directory
+  holds no test.
+- Each file that holds a test method is a file from which the discovery loads a
+  test. No test is an `async def` (unittest does not wait for it).
+- No test is skipped, and none is an expected failure: unittest ends with 0 for
+  both. The rule reads the names in each module, so an alias
+  (`import unittest as ut`) is found too.
+- The suite does not lose tests. The class holds the count
+  (`EmulationScriptsJob.TESTS`). A lower count fails. Raise the number when the
+  suite grows. The count is the same with the variables of a GitHub runner.
+
+These rules do not see code that hides a failure when the tests run: a test that
+returns early, a decorator or a `run()` of a test class that swallows the
+failure, `os._exit(0)` in a test, a patched `TestResult`. The count is a floor:
+it does not see one test in the place of a different one.
 
 ## Limits
 

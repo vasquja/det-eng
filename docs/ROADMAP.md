@@ -4,7 +4,7 @@ The ordered work for this repository. An AI agent owns and maintains the codebas
 (see [`AGENTS.md`](../AGENTS.md)). This file is how one session tells the next
 what the direction is.
 
-Last update: 2026-11-11.
+Last update: 2026-11-12.
 
 ## The goal
 
@@ -49,7 +49,7 @@ The order matters. Tests for the gates come before each change to the gates.
 
 | ID | Item | Status | Needs | Acceptance check |
 |----|------|--------|-------|------------------|
-| R2 | **The gates test themselves** (design 4.2). A set of planted bad artifacts that each gate must reject, and a CI job that runs it with the self-tests that no workflow runs today. | in progress | | A job on each pull request fails when a gate stops rejecting a planted artifact. Each planted artifact is rejected for its intended reason, not for a side effect. The suite is `detections/tests/` and the job is `gate-tests`. The item is `done` when that job is green on `main`. |
+| R2 | **The gates test themselves** (design 4.2). A set of planted bad artifacts that each gate must reject, and a CI job that runs it with the self-tests that no workflow runs today. | done | | A job on each pull request fails when a gate stops rejecting a planted artifact. Each planted artifact is rejected for its intended reason, not for a side effect. The suite is `detections/tests/` and the job is `gate-tests`. The item is `done` when that job is green on `main`. |
 | R2b | **Linux controls are not vacuous** (design 4.2). Grade vacuity for each control. Replace the no-op control with a wrong-argument control for the rules that have no other live negative. | not started | R2 | For each Linux rule, one live negative control would fire the rule if one required argument changed. |
 | R2c | **Negative controls and baselines cannot be empty** (design 4.2). A negative control that read no record cannot fail. Each Kubernetes validator fails `--expect-miss` when a pre-emulation log holds no record. The cloud validator fails a benign baseline that holds no record, and a rule of its `MANIFEST` whose fixture is missing. | not started | R2 | Its known-gap tests are rejection tests. Each validator exits with an error that names the empty log, the empty baseline or the missing fixture. |
 | R2d | **Hygiene and report truth** (design 4.2). No rule file is hidden from the gates: a rule in a dotfile under `detections/sigma/` fails. The coverage report counts an entry of `detections/RULE_DEFECTS.md` that has a section and no Summary row. `rule_cases.py` names the rule and the case when two keys of an event differ only in letter case, and does not stop with a traceback. | not started | R2 | Its known-gap tests are rejection tests. Each gate exits with an error that names the hidden file, the defect entry or the case. |
