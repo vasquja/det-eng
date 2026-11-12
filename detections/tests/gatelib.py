@@ -83,7 +83,7 @@ KNOWN_BAD = os.path.join(TESTS, "known_bad")        # the planted artifacts
 PYTHON = sys.executable                             # the gates run with the tests' Python
 DEFAULT_TIMEOUT = 300                               # seconds, for one gate run
 # Seconds for the tests of one class in `gatelib.py --run`. It is shorter than the
-# timeout of the gate-tests job (15 minutes; test_suite.py compares the two): the
+# timeout of the gate-tests job (20 minutes; test_suite.py compares the two): the
 # runner, not GitHub, ends a class that hangs, so the log still holds the output of
 # every class and the job summary is written.
 CLASS_TIMEOUT = 600

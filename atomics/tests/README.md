@@ -23,6 +23,12 @@ The CI job `emulation-scripts` in
 same command on each pull request. The command in the `Commands` block of
 [`AGENTS.md`](../../AGENTS.md) is the short form.
 
+The gate tests hold the rules of that job
+([`detections/tests/test_suite.py`](../../detections/tests/test_suite.py), class
+`EmulationScriptsJob`): it runs on each pull request, it fails when a test fails
+or a test module does not load, no test is skipped, and the suite does not lose
+tests. When you add a test here, raise `EmulationScriptsJob.TESTS`.
+
 ## What they prove
 
 - **Dry mode keeps its contract.** Each valid procedure letter exits 0 and makes no

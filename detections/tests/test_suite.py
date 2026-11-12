@@ -6,10 +6,13 @@ Gate tests, group `suite`: rules that hold for the gates and the suite as a whol
                       workflow runs
     GateTestsJob      the gate-tests job of detection-quality.yml runs every test of
                       this suite, on every pull request, and fails when a test fails
+    EmulationScriptsJob  the emulation-scripts job of lint-trr.yml runs every test of
+                      atomics/tests/ on every pull request, fails when a test fails
+                      or a test module does not load, and the suite loses no test
     PipedSteps        no step of any workflow pipes a command into `tee` with a
                       shell that loses the exit code of the command
-    SoftSteps         no step that runs a script of the repository has
-                      `continue-on-error` (on the step or on its job), but the
+    SoftSteps         no step that runs a script or the unit tests of the repository
+                      has `continue-on-error` (on the step or on its job), but the
                       shadow steps that the class lists
     KnownGapList      every @known_gap names an item of section 1 of docs/ROADMAP.md,
                       and no open gap names an item that is `done`
@@ -24,6 +27,7 @@ How the harness works: gatelib.py and README.md in this directory.
     python3 -B -m unittest discover -s detections/tests -p 'test_suite.py' -v
 """
 
+import ast
 import json
 import os
 import re
@@ -166,6 +170,157 @@ class GateTestsJob(gatelib.GateCase):
             self.assertRegex(fh.read(), r"(?m)^## Gate tests: FAILED$")
 
 
+class EmulationScriptsJob(gatelib.GateCase):
+    """The emulation-scripts job of lint-trr.yml: the job that runs atomics/tests/, the
+    tests of the cloud emulation scripts with a stub in the place of each cloud CLI.
+
+    What the tests prove of a script is their own matter (atomics/tests/README.md).
+    The rules here are for the job. It runs every test on every pull request. It
+    fails when a test fails, when a test module does not load, and when it finds no
+    test. The suite does not lose tests, and no test is skipped."""
+
+    WORKFLOW = "lint-trr.yml"
+    JOB = "emulation-scripts"
+    SUITE = "atomics/tests"
+    COMMAND = "python3 -B -m unittest discover -s atomics/tests"
+    PARTS = (".github/workflows/lint-trr.yml", "atomics")
+    # The number of tests of the suite when this number was last changed. A lower
+    # count fails: a test that goes away needs a reason in the pull request, and then
+    # a lower number here. Raise the number when the suite grows.
+    TESTS = 254
+    # What skips a test, or lets a failing test pass.
+    SKIPS = re.compile(r"unittest\.skip|@skip|\bskipTest\(|\bSkipTest\b|expectedFailure")
+    ONE = "import unittest\n\n\nclass One(unittest.TestCase):\n    def test_a(self):\n        {}\n"
+
+    def step(self):
+        return gatelib.ci_step(self.WORKFLOW, self.JOB, self.COMMAND)
+
+    def suite(self, **modules):
+        """A constructed atomics/tests/ that holds the given modules, beside a copy of
+        the workflow."""
+        tree = gatelib.Tree((".github/workflows/" + self.WORKFLOW,))
+        self.addCleanup(tree.cleanup)
+        for name, text in modules.items():
+            tree.write(f"{self.SUITE}/{name}.py", text)
+        return tree
+
+    def modules(self):
+        """{file under atomics/tests/, relative to it: its text}, for each Python file."""
+        root = os.path.join(gatelib.REPO, *self.SUITE.split("/"))
+        found = {}
+        for directory, _dirs, names in os.walk(root):
+            for name in names:
+                if name.endswith(".py"):
+                    path = os.path.join(directory, name)
+                    with open(path, encoding="utf-8") as fh:
+                        found[os.path.relpath(path, root).replace(os.sep, "/")] = fh.read()
+        return found
+
+    def test_ci_runs_every_test_of_the_suite(self):
+        """One step runs the discovery of unittest on the whole directory: no pattern,
+        no name of one module. The same command, without `-v`, is the documented one."""
+        commands = [line for step in gatelib.ci_steps() for line in gatelib._command_lines(step.run)
+                    if "unittest" in line or self.SUITE in line]
+        self.assertEqual(commands, [self.COMMAND + " -v"])
+        self.assertEqual(self.step().name, "Test the cloud emulation scripts (stub CLIs, no cloud call)")
+        self.assert_documented(self.COMMAND)
+
+    def test_job_runs_on_every_pull_request(self):
+        """As for the gate-tests job: no path filter for pull requests, no `if:`, no
+        `continue-on-error:` and no `needs:`. The job has a timeout: a script that
+        waits for input must not hold a runner for six hours."""
+        import yaml     # PyYAML: in detections/requirements.txt
+
+        path = os.path.join(gatelib.REPO, ".github", "workflows", self.WORKFLOW)
+        with open(path, encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+        triggers = doc.get("on", doc.get(True))     # YAML 1.1 reads the key `on` as true
+        self.assertIn("pull_request", triggers)
+        self.assertIsNone(triggers["pull_request"], "pull_request has a filter")
+        self.assertEqual(triggers["push"], {"branches": ["main"]})
+        job = doc["jobs"][self.JOB]
+        self.assertNotIn("needs", job)
+        self.assertLessEqual(job["timeout-minutes"], 15)
+        for node in [job] + job["steps"]:
+            self.assertNotIn("if", node)
+            self.assertNotIn("continue-on-error", node)
+
+    def test_every_test_is_in_a_module_that_the_discovery_loads(self):
+        """`unittest discover -s atomics/tests` loads the files `test*.py` of that
+        directory. It does not go into a directory below it that is not a package. So
+        a test in a file with a different name, or in such a directory, never runs."""
+        modules = self.modules()
+        loaded = sorted(name for name in modules if re.fullmatch(r"test\w*\.py", name))
+        self.assertGreater(len(loaded), 5, "atomics/tests/ was not read")
+        with_tests = sorted(
+            name for name, text in modules.items()
+            if any(isinstance(node, ast.ClassDef) and any(
+                isinstance(item, ast.FunctionDef) and item.name.startswith("test") for item in node.body)
+                for node in ast.walk(ast.parse(text))))
+        self.assertEqual(with_tests, loaded,
+                         "a file of atomics/tests/ holds a test and has a name that the "
+                         "discovery does not load, or a test module holds no test")
+
+    def test_no_test_of_the_suite_is_skipped(self):
+        """unittest ends with 0 when it skipped a test, and the step has no option that
+        refuses a skip. So the suite holds no skip at all, and no expected failure."""
+        self.assertRegex("    @unittest.skipUnless(shutil.which('az'), 'no az')\n", self.SKIPS)   # CONTROL
+        self.assertRegex("        self.skipTest('no gcloud')\n", self.SKIPS)
+        self.assertNotRegex("    def test_a_signal_does_not_skip_the_undo(self):\n", self.SKIPS)
+        modules = self.modules()
+        self.assertGreater(len(modules), 5, "atomics/tests/ was not read")
+        self.assertEqual({name: self.SKIPS.findall(text) for name, text in modules.items()
+                          if self.SKIPS.search(text)}, {})
+
+    def test_the_suite_does_not_lose_tests(self):
+        """The count of the tests that the discovery of the step loads, in a copy of the
+        real suite. The tests do not run here: the job runs them."""
+        result = self.good().run_python(
+            "import sys, unittest\n"
+            "suite = unittest.defaultTestLoader.discover(sys.argv[1])\n"
+            "print('tests loaded:', suite.countTestCases())\n"
+            "print('modules that did not load:', len(unittest.defaultTestLoader.errors))\n",
+            self.SUITE)
+        gatelib.assert_accepts(result, r"^modules that did not load: 0$")
+        count = int(re.search(r"^tests loaded: (\d+)$", result.stdout, re.MULTILINE).group(1))
+        self.assertGreaterEqual(count, self.TESTS,
+                                f"atomics/tests/ holds {count} test(s); it held {self.TESTS}. "
+                                "A test that goes away needs a reason in the pull request, "
+                                "and then a lower EmulationScriptsJob.TESTS")
+
+    def test_control_ci_step_passes_on_a_suite_that_passes(self):
+        """CONTROL of the step, on a constructed suite of one test."""
+        tree = self.suite(test_one=self.ONE.format("pass"))
+        gatelib.assert_accepts(tree.run_step(self.step()), r"^Ran 1 test in ")
+
+    def test_ci_step_fails_when_a_test_fails(self):
+        tree = self.suite(test_one=self.ONE.format("self.fail('planted failure')"))
+        gatelib.assert_rejects(tree.run_step(self.step()), r"^AssertionError: planted failure$",
+                               exit_code=1, crash_ok=True)
+
+    def test_ci_step_fails_when_a_test_module_does_not_load(self):
+        """A module that does not import must not make the suite smaller with no word."""
+        tree = self.suite(test_one=self.ONE.format("pass"),
+                          test_two="import no_such_module_of_the_gate_tests\n")
+        gatelib.assert_rejects(tree.run_step(self.step()),
+                               r"^ImportError: Failed to import test module: test_two$",
+                               exit_code=1, crash_ok=True)
+
+    def test_ci_step_fails_when_the_suite_holds_no_test(self):
+        """unittest of Python 3.12 and later ends with 5 when it ran no test. An older
+        Python ends with 0 there: the job would pass on an empty directory. The
+        workflow asks for Python 3.x, which is the newest one."""
+        import yaml     # PyYAML: in detections/requirements.txt
+
+        path = os.path.join(gatelib.REPO, ".github", "workflows", self.WORKFLOW)
+        with open(path, encoding="utf-8") as fh:
+            steps = yaml.safe_load(fh)["jobs"][self.JOB]["steps"]
+        self.assertEqual([step["with"]["python-version"] for step in steps
+                          if str(step.get("uses", "")).startswith("actions/setup-python@")], ["3.x"])
+        tree = self.suite(helper="VALUE = 1\n")
+        gatelib.assert_rejects(tree.run_step(self.step()), r"^NO TESTS RAN$", exit_code=5)
+
+
 class PipedSteps(unittest.TestCase):
     """`command | tee file` has the exit code of `tee`. GitHub Actions runs a step
     that has no `shell:` with `bash -e`, without pipefail, so a gate that fails in
@@ -238,11 +393,12 @@ class SoftSteps(unittest.TestCase):
     with it leaves its workflow run green. A gate in such a step gates nothing.
     gatelib.ci_step() refuses such a step, but only for the steps that a test asks
     for. The rule here is for every step of every workflow: no step that runs a
-    script of the repository with Python is soft, but the shadow steps of SHADOW (a
+    script of the repository with Python, or its unit tests (`python -m unittest`:
+    the tests of the emulation scripts), is soft, but the shadow steps of SHADOW (a
     check that must not block yet)."""
 
-    RUNS = re.compile(r"python[\d.]*\s+(?:-\S+\s+)*[\"']?\S*(?:detections|\.github/scripts|"
-                      r"research/tools)/\S+\.py\b")
+    RUNS = re.compile(r"python[\d.]*\s+(?:-\S+\s+)*(?:[\"']?\S*(?:detections|\.github/scripts|"
+                      r"research/tools)/\S+\.py\b|unittest\b)")
     SHADOW = [("validate-apiserver-detections.yml", "validate",
                "Score the pre-emulation log as a live benign slice (shadow)")]
 
@@ -263,12 +419,15 @@ class SoftSteps(unittest.TestCase):
             step("gate", "python3 detections/gate.py --check | tee /tmp/gate.out\n", True),
             step("lint", "python3 -B .github/scripts/lint.py\n", True),
             step("report, base tree", 'python3 "$base/research/tools/report.py" --check\n', True),
-            step("joined line", "python3 \\\n  detections/gate.py --check\n", True)]
+            step("joined line", "python3 \\\n  detections/gate.py --check\n", True),
+            step("unit tests", "python3 -B -m unittest discover -s atomics/tests -v\n", True)]
         not_found = [
             step("the same gate, not soft", "python3 detections/gate.py --check\n", False),
             step("no script", "sudo systemctl start auditd\nkubectl get pods\n", True),
             step("in a comment", "# python3 detections/gate.py --check\ntrue\n", True),
-            step("a list of paths", "patterns='detections/gate.py'\n", True)]
+            step("a list of paths", "patterns='detections/gate.py'\n", True),
+            step("a module that is not unittest", "python3 -m pip install -r requirements.txt\n", True),
+            step("the unit tests, not soft", "python3 -B -m unittest discover -s atomics/tests\n", False)]
         self.assertEqual(self.soft_gate_steps(found + not_found),
                          [("w.yml", "job", s.name) for s in found])
 
