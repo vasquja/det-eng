@@ -84,7 +84,7 @@ after each test or test class.
 | `test_gatelib.py` | Tests of the harness, on constructed gates. |
 | `test_sufficiency.py` | `rule_cases.py` (and through it the event table of `sigma_eval.py`), the import guard of `sigma_eval.py`, `check_sufficiency.py` (R0 to R4 and the waiver digests), the sufficiency ratchet, the self-test of `sigma_explain.py`. |
 | `test_quality.py` | `score_benign.py` and the benign ratchet, `check_null_safety.py`, `check_provider_mappings.py`, `k8s_policy_coverage.py`, `k8s_platforms_md.py`, `coverage_report.py`. |
-| `test_validators.py` | The cloud validator, the Linux validator (dry run, and its verdict code on canned results), the three Kubernetes validators (dry run and negative control), `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py`, `check_schedule_freshness.py`. |
+| `test_validators.py` | The cloud validator, the Linux validator (dry run, and its verdict code on canned results: the detections; the no-op baseline, which must own a record; each mutant and each re-run, which must be held by the item it declares; a live negative control for each rule), the three Kubernetes validators (dry run and negative control), `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py`, `check_schedule_freshness.py`. |
 | `test_suite.py` | Rules of the suite as a whole: each self-test has a runner, the CI job runs every test on every pull request, the `emulation-scripts` job does the same for `atomics/tests/`, no workflow step pipes a command into `tee` without pipefail, no step that runs a gate or the unit tests has `continue-on-error`, each known gap names a roadmap item, each planted artifact is used, this file agrees with the tests. |
 | `test_apt_install.py` | Tests of `.github/scripts/apt_install.sh`, the step that installs `auditd`, with a stub for `sudo`, `apt-get`, `unshare`, `mount`, `getent` and `timeout`. When the runner cannot resolve the package mirror, or apt printed a message about name resolution, or the mirror does not resolve after a failed run, apt gets one run with public resolvers in a private mount namespace; the script fails only after apt failed in a run with the resolver of the runner (but in the forced way of the CI job); a necessary package that is not installed fails the step; a text that is not a package name (also a name that ends with `-`, which apt reads as a removal) or not an address is refused. The class `DirectInstalls` (with two CONTROLs) fails when a workflow (a `run:` text, a `with:` or `env:` value), a composite action or a shell script (`*.sh`, or a shell on its first line) installs packages in a usual form (`apt-get install`, `apt update`, `dpkg -i`, `snap install`, also with options, a path or quotes) without the script. The one line that is allowed is `apt-get update -qq` in `detections/benign/linux/workload.sh`. It is a rule on text: a command that is built at run time, or that a different program starts, is not seen. The stubs do not show that the namespace works on a runner: the CI job `apt-install-fallback` does. It forces that way, and its CONTROL step gives a resolver that does not answer (`APT_INSTALL_RESOLVERS`) and fails if the install then passes. |
 | `known_bad/<group>/` | The planted artifacts of that group. `known_bad/gatelib/` holds samples for `test_gatelib.py`. |
@@ -350,7 +350,10 @@ it does not see one test in the place of a different one.
 - A gate that needs a host or a cluster runs only in its offline modes: the dry
   runs, the negative-control steps on logs that the test writes, and the verdict
   code of the Linux validator on canned events. The live runs stay in the
-  `validate-*` workflows.
+  `validate-*` workflows. The canned events of a Linux control come from a rule
+  sidecar, not from the C source of the control. Thus only the job `validate`
+  (`validate-detections.yml`) shows that each program in `detections/controls/`
+  leaves the records that its row declares.
 - No gate reads the live emulation scripts (`atomics/*/src/emulate*.sh`, the
   parts behind `TRR90NN_LIVE=1`). A live script that lost its undo trap
   (`trap revert EXIT`) passes every gate. The design (4.2) names that artifact
@@ -437,8 +440,15 @@ it does not see one test in the place of a different one.
 
   The offline run of the Linux validator takes its canned events from the
   sidecar of each rule of the `MANIFEST` of `detections/validate_detections.py`:
-  the first `positive` case and, for each mutant control, the `near-miss` case
-  whose `breaks` is the item of that control.
+  the first `positive` case and, for each mutant control, the first `near-miss`
+  case whose `breaks` is the item that the control declares in the `CONTROLS`
+  table. For a control that declares one item of a base of a correlation
+  (`base:<name>/<item>`), that is the first `near-miss` case that breaks
+  `base:<name>`, and its event must miss the base by that item. A mutant that
+  declares `success` takes the first `positive` case, with each syscall
+  rejected. The validator must give each canned mutant the grade that it
+  declares: a change to one of these cases can make the control
+  `test_control_canned_run_is_accepted` fail.
 
   `KnownGapList` (`test_suite.py`) reads section 1 of this file, the item IDs
   and the Status cells:

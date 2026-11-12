@@ -101,28 +101,68 @@ AF_RXRPC, io_uring disabled, Yama ptrace_scope 3, ...). Every other miss is a
 
 ### Controls: testing the test
 
-After the detections, the validator runs stimuli that must **not** pass. If one
-does, the check above is unsound and the run fails:
+After the detections, the validator runs stimuli that must **not** pass. If the
+rule fires on one, the check above is unsound and the run fails:
 
-- **No-op** (`controls/noop.c`), evaluated against every rule.
-- **Mutants** (`controls/*.c`) that keep the surface of a technique but break
-  it: a pipe created in one process and spliced into by a forked child (two
-  pids), `memfd_create` and `fexecve` in different processes, a
-  `bpf(BPF_PROG_LOAD)` the kernel rejects, and a `SOCK_STREAM` socket against the
-  raw-socket rule.
+- **No-op baseline** (`controls/noop.c`), evaluated against every rule: a process
+  that is not a technique. It makes one audited syscall that no rule matches
+  (`socket(AF_UNIX, SOCK_STREAM, 0)`), so that the validator can show that it read
+  the records of this process. It is never the live negative control of a rule.
+- **Mutants** (`controls/*.c`, the `CONTROLS` table of the validator) that keep the
+  surface of a technique and break one thing:
+  - a wrong argument, in the same call as the atomic: `SOCK_STREAM` against the
+    raw-socket rule, `AF_NETLINK` against the AF_RXRPC rule and against the AF_XDP
+    rule, `PTRACE_ATTACH` against the `PTRACE_TRACEME` rule, an `AF_UNIX` socket
+    and a splice against the CopyFail correlation, and the two `unshare` calls
+    and a `NETLINK_ROUTE` socket against the DirtyFrag xfrm correlation;
+  - the two halves of a correlation in different pids: a pipe created in one
+    process and spliced into by a forked child, `memfd_create` and `fexecve` in
+    different processes;
+  - a call that the kernel rejects: `bpf(BPF_PROG_LOAD)` with no program,
+    `userfaultfd` with flag bits that the kernel rejects, `io_uring_setup` with 0
+    entries.
 - **Allowlisted names**: each atomic whose rule has a `not <allowlist>` filter
   is re-run under a process name from that allowlist (e.g. `tcpdump`), and the
   filter must suppress it.
 
-Each mutant also declares the condition item it is built to break: for example
-`afinet_raw_socket.a1`, `group-by` (both halves of a correlation in different
-pids), or `success` (the validator's own success=yes gate, for a syscall the
-kernel rejects). The validator grades the mutant's own succeeded syscalls against
-the rule (see [Explained failures](#explained-failures)). It warns when the mutant
-holds for a different reason than the one it claims, because a control that is
-`distant` from the rule does not test the rule. A mutant whose process tree made
-no audited syscall at all is **vacuous**: it proves nothing about the rule, so it
-counts as a broken control and fails the run.
+A mutant and a re-run are *built* controls: each declares what holds it. That is
+one required item of the rule, or the validator's own success gate:
+
+| Declared | Meaning |
+|----------|---------|
+| `afinet_raw_socket.a1` | one item of a plain rule: a wrong argument |
+| `base:<name>/<item>` | one item of one base of a correlation: a wrong argument in the call that would be that base's event |
+| `group-by` | both halves of a correlation, in different pids |
+| `<allowlist block>.comm` | the allowlist filter (a re-run) |
+| `success` | the validator's own success=yes gate, for a call that the kernel rejects |
+
+The validator grades the control's own succeeded syscalls against the rule (see
+[Explained failures](#explained-failures)), and the grade must be equal to what
+the control declares. So a built control that prints `held` is a **live negative
+control**: the rule would fire if the declared item changed. These conditions
+fail the run:
+
+- A control whose process tree made no audited syscall at all is **vacuous**: it
+  proves nothing about the rule. This holds for the no-op baseline too.
+- A built control that is held for another reason than the one it declares is
+  **broken**. A control that is `distant` from the rule, or one whose calls the
+  kernel rejected, does not test the item it names.
+- A rule of `MANIFEST` for which no control is built (no row of `CONTROLS` and no
+  allowlist to re-run) has **no live negative control**. A new rule cannot be
+  added without one.
+
+Two rules read no argument (`userfaultfd_syscall.yml`, `io_uring_setup.yml`), so no
+argument value can keep them quiet. Their control is the rule's own syscall with
+arguments that the kernel rejects, declared `success`. That control tests the
+success gate of the validator, not an item of the rule: the rule's logic matches
+the rejected call. No rule of this validator reads `success`, so each rule as
+written matches a rejected call too. Roadmap item R7 (`detections/SEMANTICS.md`)
+must say what a SIEM does with a rejected call.
+
+When the kernel-feature probe turned the emulation of a rule into a SKIP, the rule
+is not proven on that host, and its controls are not required there: its re-run
+does not run, and its mutant is `N/A` when it is not held as declared. A control
+on which the rule fires, or one that left no record, fails the run on every host.
 
 ### Event schema the rules assume
 
@@ -151,16 +191,23 @@ correlation rule: each file holds a `type: temporal` correlation grouped by
 `pid` plus the base rules it references. A backend without correlation support
 cannot run these four rules.
 
-### Two deliberate pass/fail changes
+### Deliberate pass/fail changes
 
-This validator's verdicts changed in two places against the base of this work
-(`ed8c3b6`), both on purpose:
+This validator's verdicts changed in four places against the base of this work
+(`ed8c3b6`), all on purpose:
 
 1. **A vacuous control fails the run.** At the base, a control whose process tree
    made no audited syscall counted as held, which is a pass. Now it counts as
    broken, because a control that never reached the audit log tests nothing (for
-   example, a mutant that crashes before its first syscall).
-2. **Hex-encoded `comm` and `exe` are decoded.** At the base, a rule or an
+   example, a mutant that crashes before its first syscall). Since roadmap item
+   R2b this holds for the no-op too: before, the no-op was not graded, and it
+   made no audited syscall, so its rows could not fail.
+2. **A built control that is not held as declared fails the run** (roadmap item
+   R2b). Before, a mutant or a re-run that was held for another reason than the
+   one it declares printed a warning, and the run passed.
+3. **A rule with no built control fails the run** (roadmap item R2b). Before, seven
+   rules had only the no-op.
+4. **Hex-encoded `comm` and `exe` are decoded.** At the base, a rule or an
    allowlist saw the hex string for any process name with a space (a JVM thread
    such as `Attach Listener`, a Firefox content process) or for runc's
    `/memfd:runc_cloned:/proc/self/exe (deleted)` image. Now it sees the decoded
@@ -639,8 +686,9 @@ A red run says *why* it failed. Every validator prints, under each failing line:
 - a hint when the rule reads a field that no event carries (an audit level or
   field-name problem rather than rule logic).
 
-A broken control prints the events behind its hit. A Linux case prints its
-kernel-probe result. `--json PATH` writes the same results machine-readably for an
+A broken control prints the events behind its hit. A Linux control that is not
+held as declared prints what it is built to break, its grade, and its nearest
+event, item by item. A Linux case prints its kernel-probe result. `--json PATH` writes the same results machine-readably for an
 agent to parse.
 
 ## Gate tests (the gates test themselves)
@@ -675,8 +723,9 @@ closed by a change to the gate, and never by deleting its case.
 on push to `main`, and weekly. A standard `ubuntu-latest` runner is a full VM, so
 the audit subsystem is available to root. The job installs auditd and the Python
 requirements, then runs the validator with `--require-audit`. It is strict: a
-detection FAIL, a broken control or a vacuous control fails the job; only a
-probe-confirmed SKIP does not. On a public repository the run is free.
+detection FAIL, a control on which its rule fires, a vacuous control, a mutant or
+a re-run that is not held as declared, or a rule with no built control fails the
+job; only a probe-confirmed SKIP does not. On a public repository the run is free.
 
 `.github/workflows/detection-quality.yml` runs the offline layers on every pull
 request, on push to `main`, and weekly: `rule-cases`, `null-safety`

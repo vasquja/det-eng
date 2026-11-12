@@ -100,10 +100,32 @@ occur proves nothing.
   each base on its own: a base with an argument needs a set in which the other base
   holds and this base's event keeps its surface but breaks that argument, in the
   right group and window (`ip netns add` then a `NETLINK_ROUTE` socket breaks the
-  `NETLINK_XFRM` base's `a2`). Add a live mutant in `detections/controls/` with its
-  expected atom in the `CONTROLS` entry. The validator grades it on every CI run and
-  warns if it misses the declared atom; a mutant that makes no audited syscall at all
-  is vacuous and fails the run.
+  `NETLINK_XFRM` base's `a2`).
+- **auditd, the live control** (every rule of the `MANIFEST` of
+  `detections/validate_detections.py` needs one; the no-op baseline does not
+  count). Bring a small C program in `detections/controls/` and a row in the
+  `CONTROLS` table that declares the ONE thing the program breaks:
+  - the atomic's own call with one argument wrong, declared as the item of the
+    rule (`afxdp_socket.a0`) or, for a correlation, as the item of one base
+    (`base:<name>/<item>`). The program makes the other calls that the rule
+    reads, and the kernel must accept every call;
+  - both halves of a correlation in different pids, declared `group-by`;
+  - only for a rule that reads no argument: the rule's own syscall with arguments
+    that the kernel rejects, declared `success`. That control tests the success
+    gate of the validator and no item of the rule. Say so in the header of the
+    program.
+
+  A plain rule with a `not <allowlist>` block that holds only `comm` gets a re-run
+  of its atomic under an allowlisted name without a row. The validator grades each
+  control on every CI run. The run fails when a control is not held by what it
+  declares, when a control makes no audited syscall (vacuous), and when a rule has
+  no built control. For a mutant that declares an item or `group-by`, the sidecar
+  needs a `near-miss` case with the same `breaks` (for `base:<name>/<item>`:
+  `breaks: ["base:<name>"]`): the gate tests run the validator on the events of
+  that case in the place of the program. The program must stop
+  before harm and leave nothing on the machine. Compile it with
+  `python3 detections/validate_detections.py --dry-run`, and run it under
+  `strace -f` to see its calls; only the CI job `validate` shows the audit records.
 - **Kubernetes audit**: same `verb` + `objectRef.resource`, with the dangerous
   `requestObject` field absent or safe (`hostPID: false`, `privileged: false`). Also a
   system controller identity the filter excludes, and a Request-level grader's input
@@ -222,9 +244,14 @@ what broke. Fix the cause the output names:
 - **No emulation event at all** (cluster validators): the emulation did not run,
   or its marker (name prefix, namespace) differs from the gate.
 - **A control passed.** The output prints the events behind the unexpected hit
-  (syscall, pid, comm, args) and which items held. A mutant that is graded
-  `distant` instead of `near-miss` on its declared atom does not test what it
-  claims, even while it holds.
+  (syscall, pid, comm, args) and which items held.
+- **A Linux control is not held as declared.** The rule stayed quiet, but for
+  another reason than the one in the `CONTROLS` row (or, for a re-run, than the
+  allowlist filter): the control is graded `distant`, or on another item, or
+  every call was rejected. The output prints what the control is built to break,
+  its grade, and its nearest event, item by item. That control does not test
+  what it claims, so the run fails. Correct the program or its row. Do not
+  change the declared item to the grade only to get green.
 - **Kernel probe.** Every Linux case prints its probe result. A miss is a SKIP only
   when the probe says the kernel lacks the feature.
 - **Benign fixture hit** (cloud): the benign record index and the items that held
