@@ -2,8 +2,9 @@
  * Control for the CopyFail correlation (copyfail_af_alg_authencesn.yml:
  * an AF_ALG socket and a splice in the same pid).
  *
- * The audited calls of the atomic are socket(AF_ALG, SOCK_SEQPACKET, 0), pipe()
- * and splice(). This control makes these three calls in one process with ONE
+ * The calls of the atomic that the rule reads are socket(AF_ALG,
+ * SOCK_SEQPACKET, 0) and splice(); the atomic makes a pipe() for the splice.
+ * This control makes these three calls in one process with ONE
  * argument changed: the socket family is AF_UNIX (1), not AF_ALG (38). All
  * three calls succeed, in the same pid and inside the time window, so only the
  * a0 (AF_ALG) item of the socket base keeps the rule quiet: the correlation
@@ -19,6 +20,10 @@
  *   - The numbers of the file descriptors, which the rule does not read.
  *   - The atomic also calls bind(), accept() and sendmsg(). They are not
  *     audited (detections/audit/atomic.rules), and no rule reads them.
+ *   - Where the kernel has the AEAD of the technique, the atomic sets a key on
+ *     its socket: setsockopt(SOL_ALG, ALG_SET_KEY). That call is audited, and
+ *     this rule does not read it. The control has no AF_ALG socket and makes
+ *     no such call.
  *
  * The pipe and the splice of this control, in one pid, also satisfy
  * dirtypipe_splice_readonly.yml (a pipe and a splice in the same pid). That
