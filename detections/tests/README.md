@@ -454,13 +454,15 @@ it does not see one test in the place of a different one.
   declares `success` takes the first `positive` case, with each syscall
   rejected. The validator must give each canned mutant the grade that it
   declares: a change to one of these cases can make the control
-  `test_control_canned_run_is_accepted` fail. Four tests also need one record
-  in such a case. The tests with `--split`, `--late` and `--without` need a
-  `socket` record in the case of the control of
+  `test_control_canned_run_is_accepted` fail. Six tests also need one record
+  in such a case. The two tests with `--split`, and the tests with `--late` and
+  `--without`, need a `socket` record in the case of the control of
   `copyfail_af_alg_authencesn.yml` (for `--split` and `--late`, with a record of
   another syscall). The test with `--refused ... unshare` needs an `unshare`
   record in the case of the control of `dirtyfrag_xfrm_unshare_netlink.yml`. The
-  driver stops with exit code 3 when the case holds no such record.
+  test with `--refused ... execveat` needs an `execveat` record in the case of
+  the control of `memfd_create_execveat.yml`. The driver stops with exit code 3
+  when the case holds no such record.
 
   `KnownGapList` (`test_suite.py`) reads section 1 of this file, the item IDs
   and the Status cells:

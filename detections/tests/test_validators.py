@@ -391,7 +391,7 @@ class LinuxValidatorDryRun(gatelib.GateCase):
         self.assertEqual(len(re.findall(r"^  \[ERROR \] ", result.stdout, re.MULTILINE)), 1)
         self.assertNotIn("atomics/controls compiled.", result.stdout)
 
-    # The four tests below plant one bad row in the CONTROLS table. The validator
+    # The five tests below plant one bad row in the CONTROLS table. The validator
     # checks the table before it compiles or runs anything, in every mode. The row
     # is the one of afxdp_socket.yml (its rule has no other built control).
     AFXDP_ROW = (r"^  \[ERROR \] CONTROLS row \d+ \({source} -> afxdp_socket\.yml\)  ")
@@ -422,6 +422,21 @@ class LinuxValidatorDryRun(gatelib.GateCase):
         self.rejects_the_table(
             tree, r"declares nothing: the fifth field must be a non-empty list of the "
                   r"item\(s\) that hold the control ")
+
+    def test_rejects_controls_row_whose_declaration_is_a_tuple(self):
+        """The declared items must be a list. A row that gives them as a tuple
+        declares an item, so `declares nothing` is not its fault: the message names
+        the value and says that it is a tuple. (At commit db11636 such a row got the
+        message of a row that declares nothing.)"""
+        tree = self.tree()
+        # BAD: the fifth field of the row is a tuple, not a list.
+        tree.replace(self.GATE, self.AFXDP_DECLARED,
+                     self.AFXDP_DECLARED.replace('["afxdp_socket.a0"]',
+                                                 '("afxdp_socket.a0",)'))
+        result = self.rejects_the_table(
+            tree, r"its declared items \(the fifth field\) are \('afxdp_socket\.a0',\), a "
+                  r"tuple and not a list: write the item\(s\) that hold the control as a list ")
+        self.assertNotIn("declares nothing", result.stdout)
 
     def test_rejects_controls_row_with_four_fields(self):
         """A row without its declaration (four fields) is refused with a message that
@@ -490,8 +505,16 @@ class LinuxValidatorOffline(gatelib.GateCase):
     PTRACE = "detections/controls/ptrace_attach_child.c"         # the only control
     PTRACE_ATOMIC = "atomics/T1622/src/ptrace_traceme_behavioral.c"
     COPYFAIL = "detections/controls/copyfail_unix_socket_splice.c"   # of a correlation
+    COPYFAIL_ATOMIC = "atomics/T1068/src/copyfail_behavioral.c"
     AFXDP = "detections/controls/afxdp_netlink_socket.c"         # an AF_NETLINK socket only
     AFXDP_ATOMIC = "atomics/T1040/src/afxdp_socket_behavioral.c"
+    # Two mutants of a correlation that make two syscalls of their rule: the memfd
+    # one in two pids (memfd_create, and execveat in a child), the DirtyFrag one in
+    # one pid (unshare and socket).
+    MEMFD = "detections/controls/memfd_fexecve_in_child.c"
+    MEMFD_ATOMIC = "atomics/T1620/src/memfd_exec_behavioral.c"
+    DIRTYFRAG = "detections/controls/dirtyfrag_netlink_route_socket.c"
+    DIRTYFRAG_ATOMIC = "atomics/T1068/src/dirtyfrag_xfrm_behavioral.c"
     USERFAULTFD = "detections/controls/userfaultfd_bad_flags.c"  # declares the success gate
     # setns_namespace_join.yml: its only built control is the re-run as `runc`.
     SETNS_RERUN = "atomics/T1611/src/setns_namespace_join_behavioral.c as runc"
@@ -501,6 +524,19 @@ class LinuxValidatorOffline(gatelib.GateCase):
     BROKEN_ROW = r"^  \[BROKEN\] "
     SUMMARY = (r"^{passed} passed, {skipped} skipped \(kernel feature missing\), 0 failed; "
                r"{broken} control\(s\) broken\.$")
+    # The row of the one exemption: a mutant of a skipped rule, not held as declared,
+    # of which the kernel rejected one or more calls that the rule reads. The row
+    # ends where this text ends.
+    NOT_APPLICABLE = (r"^  \[ N/A  \] {row} +not held as declared \(built to break {built}, "
+                      r"graded {graded}\)\. The emulation of this rule was SKIPPED \(kernel "
+                      r"feature missing\), and the kernel rejected one or more calls of the "
+                      r"control that the rule reads \({refused}\): the validator takes it that "
+                      r"this host cannot exercise the control")
+    # The line beneath a BROKEN row of a mutant of a skipped rule.
+    SKIP_EXPLAINS_NOTHING = (r"^ +the emulation of this rule was SKIPPED, but that does not "
+                             r"explain the grade: the kernel rejected no call of the control "
+                             r"that the rule reads \(it accepted each one, or the control made "
+                             r"none\)$")
 
     @classmethod
     def setUpClass(cls):
@@ -1017,9 +1053,11 @@ class LinuxValidatorOffline(gatelib.GateCase):
         """CONTROL of the one exemption. The kernel-feature probe turns the emulation
         of ptrace_traceme.yml into a SKIP, and the kernel rejects the one call of the
         rule's mutant too (the model: Yama refuses the PTRACE_ATTACH of
-        ptrace_attach_child.c). The mutant is not held as declared, and this host
-        cannot exercise it: its row is N/A, with the reason, and the run passes. The
-        rejection tests below hold the limits of the exemption."""
+        ptrace_attach_child.c). The mutant is not held as declared, and the validator
+        takes it that this host cannot exercise it: its row is N/A, with the reason,
+        and the run passes. The two CONTROLs below are mutants of which the kernel
+        rejects one call and accepts another. The rejection tests below them hold
+        the limits of the exemption."""
         atomics = in_source(self.offline, self.GATE, r'"(atomics/[^"]+\.c)"')
         report = self.offline.out("skipped-rule.json")
         result = self.canned_run("--missing", self.PTRACE_ATOMIC, "--refused", self.PTRACE,
@@ -1028,19 +1066,90 @@ class LinuxValidatorOffline(gatelib.GateCase):
                                                         broken=0))
         self.assert_saw(result, r"^  \[ SKIP \] ptrace_traceme\.yml +the kernel lacks the feature "
                                 r"\(canned\)$")
-        self.assert_saw(
-            result,
-            r"^  \[ N/A  \] ptrace_attach_child\.c -> ptrace_traceme\.yml +not held as declared "
-            r"\(built to break ptrace_traceme\.a0, graded all rejected\)\. The emulation of this "
-            r"rule was SKIPPED \(kernel feature missing\), and the kernel rejected every call of "
-            r"the control that the rule reads \(ptrace: EPERM\): this host cannot exercise the "
-            r"control$")
+        self.assert_saw(result, self.NOT_APPLICABLE.format(
+            row=r"ptrace_attach_child\.c -> ptrace_traceme\.yml", built=r"ptrace_traceme\.a0",
+            graded="all rejected", refused="ptrace: EPERM") + "$")
         self.assertNotRegex(result.stdout, re.compile(self.BROKEN_ROW, re.MULTILINE))
         self.assertEqual(self.control_row(report, self.PTRACE)["refused"], ["ptrace: EPERM"])
         self.assertEqual(self.negatives(report)["ptrace_traceme.yml"]["status"], "N/A")
         # The exemption is for that rule only: every other rule keeps its live control.
         self.assertEqual({name for name, entry in self.negatives(report).items()
                           if entry["status"] != "live"}, {"ptrace_traceme.yml"})
+
+    def test_control_mutant_of_a_skipped_rule_with_one_rejected_call_is_not_applicable(self):
+        """CONTROL. One rejected call of the rule is sufficient for the exemption.
+        The model is a host with vm.memfd_noexec = 2. The probe turns the emulation
+        of memfd_create_execveat.yml into a SKIP. The kernel accepts the memfd_create
+        of the rule's mutant (memfd_fexecve_in_child.c) and rejects its execveat, in
+        the forked child; the rule reads both syscalls. The mutant is not held by the
+        group-by that it declares. Its row is N/A, the line beneath the row names the
+        rejected call, and the run passes. (At commit db11636 one accepted call of
+        the rule refused the exemption: this row was BROKEN, and the run failed on a
+        host where the rule is not applicable. The canned rejection of the driver is
+        EPERM; on that host the errno is EACCES.)"""
+        atomics = in_source(self.offline, self.GATE, r'"(atomics/[^"]+\.c)"')
+        report = self.offline.out("skipped-memfd.json")
+        result = self.canned_run("--missing", self.MEMFD_ATOMIC, "--refused", self.MEMFD,
+                                 "execveat", report=report)
+        # The validator read the planted records: the accepted memfd_create matches
+        # its base, and the rejected execveat is the one refused call.
+        row = self.control_row(report, self.MEMFD)
+        self.assertEqual(row["expected"], ["group-by"])
+        self.assertEqual((row["kind"], row["graded"]), ("near-miss", ["base:memfd_exec_execveat"]))
+        self.assertEqual(row["refused"], ["execveat: EPERM"])
+        self.assertRegex("\n".join(row["verdict"]),
+                         r"(?m)^ +\+ base:memfd_exec_memfd_create matched 1 event\(s\)")
+        self.assertEqual((row["status"], row["live"]), ("N/A", False))
+        self.assert_accepts(result, self.SUMMARY.format(passed=len(atomics) - 1, skipped=1,
+                                                        broken=0))
+        self.assert_saw(result, r"^  \[ SKIP \] memfd_create_execveat\.yml +the kernel lacks the "
+                                r"feature \(canned\)$")
+        # The row, and the line beneath it.
+        self.assert_saw(result, self.NOT_APPLICABLE.format(
+            row=r"memfd_fexecve_in_child\.c -> memfd_create_execveat\.yml", built="group-by",
+            graded="base:memfd_exec_execveat", refused="execveat: EPERM")
+            + r"\n +the rule stayed quiet, but not for the declared reason: near-miss on "
+              r"base:memfd_exec_execveat \(rejected syscalls not graded: execveat: EPERM\)$")
+        self.assertNotRegex(result.stdout, re.compile(self.BROKEN_ROW, re.MULTILINE))
+        self.assertNotIn("does not explain the grade", result.stdout)
+        self.assertEqual(self.negatives(report)["memfd_create_execveat.yml"],
+                         {"rule": "detections/sigma/T1620/memfd_create_execveat.yml",
+                          "status": "N/A", "live": []})
+        self.assert_saw(result, r"^  none for memfd_create_execveat\.yml: not applicable on this "
+                                r"host ")
+        # The exemption is for that rule only: every other rule keeps its live control.
+        self.assertEqual({name for name, entry in self.negatives(report).items()
+                          if entry["status"] != "live"}, {"memfd_create_execveat.yml"})
+
+    def test_control_partly_refused_mutant_of_a_skipped_rule_is_not_applicable(self):
+        """CONTROL. The same for a mutant that makes its calls in one pid. The
+        emulation of dirtyfrag_xfrm_unshare_netlink.yml is SKIPPED (no NETLINK_XFRM).
+        The kernel rejects the unshare calls of the rule's mutant and accepts its
+        NETLINK_ROUTE socket call. The mutant is not held by the a2 item that it
+        declares, and one of its rule calls is rejected: its row is N/A, and the run
+        passes. (At commit db11636 this row was BROKEN.)"""
+        atomics = in_source(self.offline, self.GATE, r'"(atomics/[^"]+\.c)"')
+        report = self.offline.out("skipped-partly-refused.json")
+        result = self.canned_run("--missing", self.DIRTYFRAG_ATOMIC, "--refused",
+                                 self.DIRTYFRAG, "unshare", report=report)
+        # The validator read the planted records: a rejected unshare, an accepted socket.
+        row = self.control_row(report, self.DIRTYFRAG)
+        self.assertEqual(row["refused"], ["unshare: EPERM"])
+        self.assertEqual((row["kind"], row["graded"]), ("trivial", []))
+        self.assertRegex(row["explanation"][0], r"\(rejected syscalls not graded: unshare: "
+                                                r"EPERM\)$")
+        self.assertRegex("\n".join(row["verdict"]), r"(?m)^ +yes +syscall +syscall='socket'$")
+        self.assert_accepts(result, self.SUMMARY.format(passed=len(atomics) - 1, skipped=1,
+                                                        broken=0))
+        self.assert_saw(result, r"^  \[ SKIP \] dirtyfrag_xfrm_unshare_netlink\.yml +the kernel "
+                                r"lacks the feature \(canned\)$")
+        self.assert_saw(result, self.NOT_APPLICABLE.format(
+            row=r"dirtyfrag_netlink_route_socket\.c -> dirtyfrag_xfrm_unshare_netlink\.yml",
+            built=r"base:dirtyfrag_xfrm_netlink_xfrm_socket/netlink_xfrm_socket\.a2",
+            graded="trivial", refused="unshare: EPERM") + "$")
+        self.assertNotRegex(result.stdout, re.compile(self.BROKEN_ROW, re.MULTILINE))
+        self.assertEqual(
+            self.negatives(report)["dirtyfrag_xfrm_unshare_netlink.yml"]["status"], "N/A")
 
     def skipped_and_broken(self, result, skipped, broken):
         """The run failed with one emulation SKIPPED (`skipped`: its rule file name)
@@ -1055,8 +1164,9 @@ class LinuxValidatorOffline(gatelib.GateCase):
     def test_rejects_refused_mutant_of_a_rule_that_is_not_skipped(self):
         """The exemption is for a skipped rule only. The emulation of afxdp_socket.yml
         is SKIPPED, the emulation of ptrace_traceme.yml passes, and the kernel rejects
-        the call of the mutant of ptrace_traceme.yml: the artifact of the CONTROL
-        above, on a rule that the host proves. That mutant is BROKEN."""
+        the call of the mutant of ptrace_traceme.yml: the artifact of the first
+        CONTROL of the exemption, on a rule that the host proves. That mutant is
+        BROKEN."""
         report = self.offline.out("refused-not-skipped.json")
         result = self.canned_run("--missing", self.AFXDP_ATOMIC, "--refused", self.PTRACE,
                                  report=report)
@@ -1089,11 +1199,12 @@ class LinuxValidatorOffline(gatelib.GateCase):
             r"\(PTRACE_TRACEME\) argument constraint was not enforced$")
 
     def test_rejects_mutant_of_a_skipped_rule_that_made_no_call_of_the_rule(self):
-        """The exemption needs a call that the kernel rejected. The emulation of
-        afxdp_socket.yml is SKIPPED (no AF_XDP). The mutant of that rule opens only an
-        AF_NETLINK socket, which needs no AF_XDP; here it does not make that call, and
-        its one call is accepted. The missing feature does not explain that, so the
-        mutant is BROKEN. (At commit 95e3ddc it was N/A, and the run passed.)"""
+        """The exemption needs a call of the rule that the kernel rejected. The
+        emulation of afxdp_socket.yml is SKIPPED (no AF_XDP). The mutant of that rule
+        opens only an AF_NETLINK socket, which needs no AF_XDP; here it does not make
+        that call, and its one call (of a syscall that the rule does not read) is
+        accepted. The missing feature does not explain that, so the mutant is BROKEN.
+        (At commit 95e3ddc it was N/A, and the run passed.)"""
         report = self.offline.out("skipped-not-refused.json")
         result = self.canned_run("--missing", self.AFXDP_ATOMIC, "--distant", self.AFXDP,
                                  report=report)
@@ -1103,31 +1214,34 @@ class LinuxValidatorOffline(gatelib.GateCase):
             result, "afxdp_socket.yml",
             r"^  \[BROKEN\] afxdp_netlink_socket\.c -> afxdp_socket\.yml +not held as declared: "
             r"built to break afxdp_socket\.a0, but graded distant$")
-        self.assert_saw(result, r"^ +the emulation of this rule was SKIPPED, but that does not "
-                                r"explain the grade: ")
+        self.assert_saw(result, self.SKIP_EXPLAINS_NOTHING)
         self.assertEqual(self.negatives(report)["afxdp_socket.yml"]["status"], "BROKEN")
 
-    def test_rejects_mutant_of_a_skipped_rule_with_an_accepted_call_of_the_rule(self):
-        """The exemption needs that the kernel rejected EVERY call of the mutant that
-        the rule reads. The emulation of dirtyfrag_xfrm_unshare_netlink.yml is SKIPPED
-        (no NETLINK_XFRM). The kernel rejects the unshare call of the rule's mutant
-        and accepts its NETLINK_ROUTE socket call: the mutant is not held as declared,
-        and not because of the missing feature. It is BROKEN."""
-        dirtyfrag = "detections/controls/dirtyfrag_netlink_route_socket.c"
-        report = self.offline.out("skipped-partly-refused.json")
-        result = self.canned_run("--missing", "atomics/T1068/src/dirtyfrag_xfrm_behavioral.c",
-                                 "--refused", dirtyfrag, "unshare", report=report)
-        # The validator read the planted records: a rejected unshare, an accepted socket.
-        row = self.control_row(report, dirtyfrag)
-        self.assertEqual(row["refused"], [])
-        self.assertRegex(row["explanation"][0], r"\(rejected syscalls not graded: unshare: "
-                                                r"EPERM\)$")
+    def test_rejects_mutant_of_a_skipped_rule_whose_calls_the_kernel_accepted(self):
+        """The same when the mutant makes the calls of the rule and the kernel accepts
+        each one. The emulation of copyfail_af_alg_authencesn.yml is SKIPPED (no
+        AF_ALG). The rule's mutant makes its AF_UNIX socket call in a child process
+        and its splice in the parent, both accepted: it is not held by the a0 item
+        that it declares, and the kernel rejected nothing. The mutant is BROKEN."""
+        report = self.offline.out("skipped-all-accepted.json")
+        result = self.canned_run("--missing", self.COPYFAIL_ATOMIC, "--split", self.COPYFAIL,
+                                 "socket", report=report)
+        # The validator read the planted records: the socket call misses its base by
+        # a0 alone, in another pid than the splice, and no call is rejected.
+        row = self.control_row(report, self.COPYFAIL)
+        self.assertEqual((row["kind"], row["graded"], row["refused"]),
+                         ("near-miss", ["base:copyfail_af_alg_socket"], []))
+        self.assertNotIn("rejected syscalls not graded", row["explanation"][0])
         self.assertRegex("\n".join(row["verdict"]), r"(?m)^ +yes +syscall +syscall='socket'$")
         self.skipped_and_broken(
-            result, "dirtyfrag_xfrm_unshare_netlink.yml",
-            r"^  \[BROKEN\] dirtyfrag_netlink_route_socket\.c -> "
-            r"dirtyfrag_xfrm_unshare_netlink\.yml +not held as declared: built to break "
-            r"base:dirtyfrag_xfrm_netlink_xfrm_socket/netlink_xfrm_socket\.a2, but graded ")
+            result, "copyfail_af_alg_authencesn.yml",
+            r"^  \[BROKEN\] copyfail_unix_socket_splice\.c -> copyfail_af_alg_authencesn\.yml "
+            r"+not held as declared: built to break "
+            r"base:copyfail_af_alg_socket/af_alg_socket\.a0, but graded "
+            r"base:copyfail_af_alg_socket$")
+        self.assert_saw(result, self.SKIP_EXPLAINS_NOTHING)
+        self.assertEqual(
+            self.negatives(report)["copyfail_af_alg_authencesn.yml"]["status"], "BROKEN")
 
     def test_control_rerun_uses_an_emulation_that_passed(self):
         """CONTROL. afpacket_raw_socket.yml has two emulations. The first is SKIPPED
@@ -1204,36 +1318,110 @@ class LinuxValidatorOffline(gatelib.GateCase):
         self.assertEqual(row([], []), ["BROKEN", "declares nothing: a built control must "
                                                  "declare what holds it", False])
 
-    # refused_calls() on the records of one process tree (pid 10 and its child 11),
-    # for a rule that reads `ptrace`. Each record is [syscall, pid, accepted].
+    # ending() for one exit code and one stderr text, then control_row() for a control
+    # that is held as declared and that ended so. Prints the line of ending(), the
+    # status and `live` as JSON, then the row as the validator prints it.
+    ENDING_ROW = (
+        "import json, sys\n"
+        "sys.path.insert(0, 'detections')\n"
+        "import validate_detections as v\n"
+        "ended = v.ending(*json.loads(sys.argv[1]))\n"
+        "info = {'control': 'c -> r', 'rule': 'r', 'judge': 'FAIL', 'graded': ['x.a0'], "
+        "'expected': ['x.a0'], 'kind': 'near-miss', 'grade': 'near-miss on x.a0', 'verdict': [], "
+        "'explanation': [], 'ended': ended}\n"
+        "row = v.control_row('c -> r', 'no hit', 'meaning', info, set())\n"
+        "print(json.dumps([ended, row[0], info['live']]))\n"
+        "v.print_table('Controls:', [row])\n")
+
+    def test_control_row_shows_how_the_control_process_ended(self):
+        """Beneath the row of a control, the report shows the exit code of its process
+        (when that is not 0) and its last stderr line, for the reader. The canned
+        run() of the driver gives no ending, so no run of the validator here prints
+        that line; the test calls ending() and control_row(), and prints the row with
+        print_table(). The line changes no verdict: the control of the snippet is held
+        as declared with exit code 1 too, and when a signal ended it."""
+        def row(code, stderr):
+            result = self.offline.run_python(self.ENDING_ROW, json.dumps([code, stderr]))
+            self.assertEqual((result.returncode, result.stderr), (0, ""), result.describe())
+            first, _, table = result.stdout.partition("\n")
+            return json.loads(first), table
+
+        # The exit code, and the last line of two stderr lines.
+        last = "ptrace(PTRACE_ATTACH): Operation not permitted"
+        summary, table = row(1, f"the first line\n{last}\n")
+        self.assertEqual(summary, [f"exit code 1; stderr: {last}", "held", True])
+        self.assertRegex(table, r"(?m)^  \[ held \] c -> r  no hit\n"
+                                r" +held: near-miss on x\.a0\n"
+                                r" +the control process: exit code 1; stderr: "
+                                + re.escape(last) + "$")
+        self.assertNotIn("the first line", table)
+        # A signal, and no stderr.
+        summary, table = row(-9, "")
+        self.assertEqual(summary, ["ended by signal 9", "held", True])
+        self.assertRegex(table, r"(?m)^ +the control process: ended by signal 9$")
+        # Exit code 0 with a stderr line: only that line.
+        summary, table = row(0, "a warning\n")
+        self.assertEqual(summary, ["stderr: a warning", "held", True])
+        self.assertRegex(table, r"(?m)^ +the control process: stderr: a warning$")
+        # CONTROL of the snippet: exit code 0 and no stderr give no such line.
+        summary, table = row(0, "")
+        self.assertEqual(summary, ["", "held", True])
+        self.assertRegex(table, r"(?m)^  \[ held \] c -> r  no hit\n +held: near-miss on x\.a0$")
+        self.assertNotIn("the control process", table)
+
+    # refused_calls() on the records of one process tree (pid 10 and its child 11).
+    # The arguments: the syscalls that the rule reads, and the records. Each record
+    # is [syscall, pid, exit]. An exit below 0 is a call that the kernel rejected:
+    # -1 is EPERM, -13 is EACCES.
     REFUSED_CALLS = (
         "import json, sys\n"
         "sys.path.insert(0, 'detections')\n"
         "import validate_detections as v\n"
-        "events = [{'syscall': name, 'pid': pid, 'ppid': pid - 1, 'success': 'yes' if ok else "
-        "'no', 'exit': '0' if ok else '-1'} for name, pid, ok in json.loads(sys.argv[1])]\n"
-        "print(json.dumps(v.refused_calls({'ptrace'}, events, v.process_tree(10, events))))\n")
+        "events = [{'syscall': name, 'pid': pid, 'ppid': pid - 1, 'success': 'yes' if code >= 0 "
+        "else 'no', 'exit': str(code)} for name, pid, code in json.loads(sys.argv[2])]\n"
+        "print(json.dumps(v.refused_calls(set(json.loads(sys.argv[1])), events, "
+        "v.process_tree(10, events))))\n")
 
     def test_exemption_reads_only_the_calls_of_the_rule(self):
         """The exemption for a skipped rule asks one question of a mutant: did the
-        kernel reject EVERY call that the mutant made and that the rule reads, and did
-        the mutant make one? No canned control makes an audited call that its rule
-        does not read, so the driver cannot plant that state; the test calls
-        refused_calls(). An accepted call of another syscall does not change the
-        answer; an accepted call of the rule, or no call of the rule, gives `no`."""
-        def refused(*records):
-            result = self.offline.run_python(self.REFUSED_CALLS, json.dumps(records))
+        kernel reject one or more of the calls that the mutant made and that the rule
+        reads? refused_calls() gives those calls. No canned control makes an audited
+        call that its rule does not read, and the rejection of the driver is always
+        EPERM, so the driver cannot plant these states; the test calls the function.
+        One rejected call of the rule is sufficient: an accepted call of the rule
+        does not change the answer, and an accepted call of another syscall does not
+        change it. With no rejected call of the rule in the process tree, the answer
+        is `no`."""
+        def refused(reads, *records):
+            result = self.offline.run_python(self.REFUSED_CALLS, json.dumps(reads),
+                                             json.dumps(records))
             self.assertEqual((result.returncode, result.stderr), (0, ""), result.describe())
             return json.loads(result.stdout)
 
-        self.assertEqual(refused(["ptrace", 10, False]), ["ptrace: EPERM"])
+        ptrace = ["ptrace"]
+        self.assertEqual(refused(ptrace, ["ptrace", 10, -1]), ["ptrace: EPERM"])
         # An accepted ioctl, which the rule does not read, in the same tree.
-        self.assertEqual(refused(["ptrace", 10, False], ["ioctl", 10, True]), ["ptrace: EPERM"])
-        # One call of the rule is accepted (in a child of the stimulus): no.
-        self.assertEqual(refused(["ptrace", 10, False], ["ptrace", 11, True]), [])
+        self.assertEqual(refused(ptrace, ["ptrace", 10, -1], ["ioctl", 10, 0]),
+                         ["ptrace: EPERM"])
+        # One call of the rule is rejected and one is accepted (in a child of the
+        # stimulus): yes. (At commit db11636: no.)
+        self.assertEqual(refused(ptrace, ["ptrace", 10, -1], ["ptrace", 11, 0]),
+                         ["ptrace: EPERM"])
+        # The memfd model: an accepted memfd_create, and a rejected execveat in the
+        # child. The rule reads both.
+        memfd = ["memfd_create", "execveat"]
+        self.assertEqual(refused(memfd, ["memfd_create", 10, 4], ["execveat", 11, -13]),
+                         ["execveat: EACCES"])
+        # Each pair of syscall and errno is named once, in sorted order.
+        self.assertEqual(refused(memfd, ["memfd_create", 10, -13], ["execveat", 11, -13],
+                                 ["execveat", 11, -13], ["execveat", 10, -1]),
+                         ["execveat: EACCES", "execveat: EPERM", "memfd_create: EACCES"])
+        # No rejected call of the rule: the kernel accepted each one.
+        self.assertEqual(refused(ptrace, ["ptrace", 10, 0], ["ptrace", 11, 0]), [])
+        self.assertEqual(refused(memfd, ["memfd_create", 10, 4], ["execveat", 11, 0]), [])
         # No call of the rule at all: no. A rejected call of another process: no.
-        self.assertEqual(refused(["ioctl", 10, False]), [])
-        self.assertEqual(refused(["ptrace", 500, False], ["ioctl", 10, True]), [])
+        self.assertEqual(refused(ptrace, ["ioctl", 10, -1]), [])
+        self.assertEqual(refused(ptrace, ["ptrace", 500, -1], ["ioctl", 10, 0]), [])
 
     def test_rejects_controls_row_for_a_rule_that_is_not_in_manifest_before_a_stimulus(self):
         """The CONTROLS table is checked in the real mode too, before the first

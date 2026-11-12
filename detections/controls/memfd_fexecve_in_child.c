@@ -5,6 +5,14 @@
  * child: both syscalls succeed, but in different pids. The rule documents
  * this fork variant as a coverage gap, so it must not be reported as a pass.
  *
+ * On a host with vm.memfd_noexec = 2 the kernel accepts the memfd_create() and
+ * rejects the execveat() of the child with EACCES (seen on a 6.18 kernel). The
+ * control is then not held by the group-by that it declares, because it has no
+ * accepted execveat in a second pid. The atomic of the rule fails there in the
+ * same way, and the kernel-feature probe of the rule reads that setting, so the
+ * emulation is a SKIP. The validator then gives this control N/A, not BROKEN:
+ * the kernel rejected a call of the control that the rule reads.
+ *
  * Exit code: 1 when a write into the memfd failed, else 0 (also when the child
  * could not execute the memfd). The validator reads the audit records, not the
  * exit code.

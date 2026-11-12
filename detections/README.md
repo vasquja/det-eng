@@ -155,8 +155,9 @@ fail the run:
   allowlist to re-run) has **no live negative control**. A new rule cannot be
   added without one.
 - A row of `CONTROLS` that the validator cannot use: one that does not have its
-  five fields, one that declares nothing (an empty list), one for a rule that is
-  not in `MANIFEST`, one whose C source does not exist. The validator checks the
+  five fields, one that declares nothing (an empty list), one whose declared
+  items are not a list (a tuple, one text), one for a rule that is not in
+  `MANIFEST`, one whose C source does not exist. The validator checks the
   table before it compiles or runs anything, also with `--dry-run`, and ends with
   exit code 1 and a line that names the row.
 
@@ -179,16 +180,24 @@ emulation that passed, and it uses the first one of its rule that did
 broken, only when both of these hold:
 
 - it is not held as declared;
-- the kernel rejected every audited call that the mutant made and that the rule
-  reads, and the mutant made one or more. The validator takes such a mutant to
-  need the missing feature too. The model is `ptrace_attach_child.c` on a host
-  where Yama refuses each attach.
+- the kernel rejected one or more of the audited calls that the mutant made and
+  that the rule reads. The validator takes such a mutant to need the missing
+  feature too; it does not test why the kernel rejected the call. One rejected
+  call is sufficient: a call of the rule that the kernel accepted does not
+  change the result.
+
+The models are `ptrace_attach_child.c` on a host where Yama refuses each attach,
+and `memfd_fexecve_in_child.c` on a host with `vm.memfd_noexec = 2`. With that
+setting a 6.18 kernel accepts the `memfd_create` of the mutant and rejects its
+`execveat` (`EACCES`), and the rule reads both syscalls. The row prints the
+rejected call.
 
 A mutant of a skipped rule that is not held as declared is broken when the kernel
-accepted one of those calls, or when the mutant made none: the missing feature
-does not explain its grade. `rxrpc_netlink_socket.c` and `afxdp_netlink_socket.c`
-open only an `AF_NETLINK` socket, which needs no AF_RXRPC and no AF_XDP. A control
-on which the rule fires, or one that left no record, fails the run on every host.
+rejected no such call: it accepted each one, or the mutant made none. The missing
+feature does not explain its grade. `rxrpc_netlink_socket.c` and
+`afxdp_netlink_socket.c` open only an `AF_NETLINK` socket, which needs no AF_RXRPC
+and no AF_XDP. A control on which the rule fires, or one that left no record,
+fails the run on every host.
 
 ### Event schema the rules assume
 
@@ -232,8 +241,8 @@ changes of roadmap item R2b:
 2. **A built control that is not held as declared fails the run.** Before, a
    mutant or a re-run that was held for another reason than the one it declares
    printed a warning, and the run passed. One case does not fail: the mutant of a
-   rule whose every emulation is a SKIP, when the kernel rejected every call of
-   the mutant that the rule reads. Its row is `N/A` (see
+   rule whose every emulation is a SKIP, when the kernel rejected one or more of
+   the calls of the mutant that the rule reads. Its row is `N/A` (see
    [Controls](#controls-testing-the-test)).
 3. **A rule with no built control fails the run.** Before, seven rules had only
    the no-op.
@@ -249,7 +258,8 @@ changes of roadmap item R2b:
    control that no item of its rule holds. A row with four fields passed
    `--dry-run` and ended the real mode with a traceback after every atomic had
    run. Now each one ends the run with exit code 1 and a line that names the row,
-   also with `--dry-run`.
+   also with `--dry-run`. A row whose declared items are not a list (a tuple, one
+   text) ends the run in the same way.
 6. **The re-run under an allowlisted name uses an emulation that passed.** Before,
    the first emulation of a rule decided: when it did not pass and a later one
    did, the re-run did not run (`N/A`). Now the re-run runs with the first

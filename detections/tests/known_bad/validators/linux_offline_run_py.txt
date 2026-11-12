@@ -87,9 +87,13 @@ argument plants ONE defect in it:
                     success=no, EPERM. With SYSCALL: it rejected only the calls of
                     that syscall, and it accepted the other calls of SRC. (The
                     models are detections/controls/ptrace_attach_child.c on a host
-                    where the kernel refuses the attach, and
+                    where the kernel refuses the attach;
                     detections/controls/dirtyfrag_netlink_route_socket.c on a host
-                    where it refuses the unshare calls.)
+                    where it refuses the unshare calls; and, with SYSCALL
+                    `execveat`, detections/controls/memfd_fexecve_in_child.c on a
+                    host with vm.memfd_noexec = 2, where it accepts the
+                    memfd_create and refuses the execveat. There the errno is
+                    EACCES; the canned errno is always EPERM.)
 
 One more argument is not a defect. It is a host that lacks a kernel feature:
 
@@ -98,7 +102,8 @@ One more argument is not a defect. It is a host that lacks a kernel feature:
                     of SRC. The validator turns that miss into a SKIP. Give it with
                     a defect of a control of the same rule to see what the validator
                     does with that control on such a host (with --refused: a control
-                    that needs the missing feature too).
+                    that needs the missing feature too; one rejected call of the
+                    rule makes its row N/A).
 
 NOTE on the no-op: until roadmap item R2b, the real detections/controls/noop.c
 made no syscall that detections/audit/atomic.rules audits, and the validator did

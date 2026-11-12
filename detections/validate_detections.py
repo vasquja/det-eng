@@ -59,11 +59,14 @@ When the kernel-feature probe turned EVERY emulation of a rule into a SKIP, the
 rule is not proven on this host. Its re-run does not run (a re-run needs an
 emulation of the rule that passed; it uses the first one that did). Its mutant
 runs, and it is N/A, not BROKEN, only when both of these hold: it is not held as
-declared, and the kernel rejected every audited call it made that the rule
-reads (it made one or more). The validator takes such a mutant to need the
-missing feature too (the model is ptrace_attach_child.c on a host where Yama
-refuses each attach). A mutant of a skipped rule that is not held as declared
-after the kernel accepted one of those calls, or that made none of them, is
+declared, and the kernel rejected one or more of the audited calls it made that
+the rule reads. The validator takes such a mutant to need the missing feature
+too; it does not test why the kernel rejected the call. The models are
+ptrace_attach_child.c on a host where Yama refuses each attach, and
+memfd_fexecve_in_child.c on a host with vm.memfd_noexec = 2, where the kernel
+accepts the memfd_create and rejects the execveat (seen on a 6.18 kernel). A
+mutant of a skipped rule that is not held as declared, and of which the kernel
+rejected no such call (it accepted each one, or the mutant made none), is
 BROKEN: the missing feature does not explain its grade. On every host, a control
 on which the rule fires, or one that left no record, is BROKEN.
 
@@ -633,18 +636,23 @@ def rule_syscalls(rule_path):
 
 
 def refused_calls(syscalls, events, tree):
-    """The calls of a stimulus that the kernel rejected (`ptrace: EPERM`), when it
-    rejected EVERY call of the stimulus tree whose syscall is in `syscalls` (the
-    syscalls that the rule reads).
+    """The calls of a stimulus that the kernel rejected (`execveat: EACCES`): the
+    records of the stimulus tree whose syscall is in `syscalls` (the syscalls
+    that the rule reads) and that did not succeed. One name for each pair of
+    syscall and errno.
 
-    [] when the tree made no such call, or when the kernel accepted one of them:
-    a missing kernel feature is then not the reason that a mutant of a SKIPPED
-    rule is not held as declared (see control_row).
+    [] when the kernel rejected no such call: it accepted each one, or the tree
+    made none. A missing kernel feature is then not the reason that a mutant of
+    a SKIPPED rule is not held as declared (see control_row).
+
+    One rejected call is sufficient. A call of the rule that the kernel accepted
+    does not empty the list: for an accepted memfd_create and a rejected
+    execveat (memfd_fexecve_in_child.c on a host with vm.memfd_noexec = 2), the
+    result is [`execveat: EACCES`].
     """
-    read = [e for e in events if e["pid"] in tree and e["syscall"] in syscalls]
-    if not read or any(e["success"] == "yes" for e in read):
-        return []
-    return sorted({f"{e['syscall']}: {_errno_name(e['exit'])}" for e in read})
+    return sorted({f"{e['syscall']}: {_errno_name(e['exit'])}" for e in events
+                   if e["pid"] in tree and e["syscall"] in syscalls
+                   and e["success"] != "yes"})
 
 
 def controls_table_faults():
@@ -654,7 +662,9 @@ def controls_table_faults():
     rule must be a rule of MANIFEST: a control is graded against a rule that an
     atomic proves, and the live negative controls are counted for those rules
     only. The source must exist. The last field must be a non-empty list of
-    texts: a control that declares nothing can never be held as declared.
+    texts: a control that declares nothing can never be held as declared. A last
+    field that is not a list (a tuple, one text) gets a fault of its own, which
+    names the value: the row declares something, in a form that is not accepted.
     """
     proven = {m[0] for m in MANIFEST}
     faults = []
@@ -679,8 +689,13 @@ def controls_table_faults():
             faults.append((name, "its arguments (the third field) are not a list of texts"))
         if not isinstance(meaning, str) or not meaning.strip():
             faults.append((name, "the meaning of a pass (the fourth field) is not a text"))
-        if (not isinstance(expected, list) or not expected
-                or not all(isinstance(item, str) and item.strip() for item in expected)):
+        if not isinstance(expected, list):
+            faults.append((name, f"its declared items (the fifth field) are {expected!r}, a "
+                           f"{type(expected).__name__} and not a list: write the item(s) "
+                           "that hold the control as a list (for example "
+                           "['afxdp_socket.a0'], ['group-by'] or [SUCCESS_GATE])"))
+        elif not expected or not all(isinstance(item, str) and item.strip()
+                                     for item in expected):
             faults.append((name, "declares nothing: the fifth field must be a non-empty "
                            "list of the item(s) that hold the control (for example "
                            "['afxdp_socket.a0'], ['group-by'] or [SUCCESS_GATE])"))
@@ -855,9 +870,11 @@ def control_row(label, detail, meaning, info, skipped):
             not be made.
     N/A     the control is not held as declared, the kernel-feature probe turned
             every emulation of its rule into a SKIP (`skipped`), and the kernel
-            rejected every call of the control that the rule reads
-            (info["refused"], from refused_calls): this host cannot exercise the
-            control. Without the last condition the control is BROKEN.
+            rejected one or more of the calls of the control that the rule reads
+            (info["refused"], from refused_calls; an accepted call of the rule
+            does not change that). The validator then takes it that this host
+            cannot exercise the control. Without the last condition, or without
+            the SKIP, the control is BROKEN.
     """
     expected, kind, why = info["expected"], info.get("kind"), info.get("grade", "")
     more = [f"the control process: {info['ended']}"] if info.get("ended") else []
@@ -889,14 +906,15 @@ def control_row(label, detail, meaning, info, skipped):
         if info["rule"] in skipped and refused:
             row = ("N/A", label, f"not held as declared (built to break {', '.join(expected)}, "
                    f"graded {got}). The emulation of this rule was SKIPPED (kernel feature "
-                   "missing), and the kernel rejected every call of the control that the "
-                   f"rule reads ({'; '.join(refused)}): this host cannot exercise the "
-                   "control", lines)
+                   "missing), and the kernel rejected one or more calls of the control that "
+                   f"the rule reads ({'; '.join(refused)}): the validator takes it that "
+                   "this host cannot exercise the control", lines)
         else:
             if info["rule"] in skipped:
                 lines.append("the emulation of this rule was SKIPPED, but that does not "
-                             "explain the grade: the kernel accepted a call of the control "
-                             "that the rule reads, or the control made no such call")
+                             "explain the grade: the kernel rejected no call of the control "
+                             "that the rule reads (it accepted each one, or the control "
+                             "made none)")
             row = ("BROKEN", label, f"not held as declared: built to break "
                    f"{', '.join(expected)}, but graded {got}", lines)
     info["status"] = row[0]
