@@ -4,6 +4,10 @@
  * memfd_create() in the parent, fexecve() of a benign binary in a forked
  * child: both syscalls succeed, but in different pids. The rule documents
  * this fork variant as a coverage gap, so it must not be reported as a pass.
+ *
+ * Exit code: 1 when a write into the memfd failed, else 0 (also when the child
+ * could not execute the memfd). The validator reads the audit records, not the
+ * exit code.
  */
 #define _GNU_SOURCE
 #include <fcntl.h>

@@ -23,10 +23,10 @@ io_uring disabled, ...). Every other miss is a FAIL and fails the run.
 Controls then test the test. The rule must stay quiet on each control; a control
 on which its rule fires fails the run:
   * the no-op baseline (detections/controls/noop.c), evaluated against every
-    rule: a process that is not a technique. It makes one audited syscall that
-    no rule matches, and it must own a record: a baseline that left no record
-    proves nothing, and fails the run. It is never the live negative control of
-    a rule;
+    rule: a process that is not a technique. It makes one audited syscall, and
+    its record fires no rule. It must own that record: a baseline that left no
+    record proves nothing, and fails the run. It declares no item, so the
+    validator never counts it as the live negative control of a rule;
   * the mutants in detections/controls/ (the CONTROLS table), which keep the
     surface of a technique and break one thing: a wrong argument, the two
     halves of a correlation in different pids, or a call the kernel rejects;
@@ -44,16 +44,32 @@ control: the rule would fire if the declared item changed (for the success gate:
 if the kernel accepted the call). Each rule of MANIFEST needs a built control: a
 rule with none is BROKEN.
 
+The CONTROLS table is checked before anything is compiled or run, also with
+--dry-run. Each row must have five fields: a rule of MANIFEST, a C source that
+exists, the arguments, the meaning of a pass, and a non-empty list of the
+declared items. A bad row ends the run with exit code 1 and a line that names
+the row: a control that declares nothing can never be held as declared.
+
 Two rules read no argument (userfaultfd_syscall.yml, io_uring_setup.yml), so no
 argument value can keep them quiet. Their control is the rule's own syscall with
 arguments that the kernel rejects. It tests the success gate of this validator,
 not an item of the rule: the rule's logic matches the rejected call.
 
-When the kernel-feature probe turned the emulation of a rule into a SKIP, the
-rule is not proven on this host, and its controls are not required there. Its
-re-run does not run (as for each atomic that did not pass), and its mutant is
-N/A, not BROKEN, when it is not held as declared. On every host, a control on
-which the rule fires, or one that left no record, is BROKEN.
+When the kernel-feature probe turned EVERY emulation of a rule into a SKIP, the
+rule is not proven on this host. Its re-run does not run (a re-run needs an
+emulation of the rule that passed; it uses the first one that did). Its mutant
+runs, and it is N/A, not BROKEN, only when both of these hold: it is not held as
+declared, and the kernel rejected every audited call it made that the rule
+reads (it made one or more). The validator takes such a mutant to need the
+missing feature too (the model is ptrace_attach_child.c on a host where Yama
+refuses each attach). A mutant of a skipped rule that is not held as declared
+after the kernel accepted one of those calls, or that made none of them, is
+BROKEN: the missing feature does not explain its grade. On every host, a control
+on which the rule fires, or one that left no record, is BROKEN.
+
+No verdict reads the exit code or the stderr of a stimulus: the verdicts read
+the audit records only. The report shows the exit code (when it is not 0) and
+the last stderr line beneath the row of a control, for the reader.
 
 Event schema the rules assume (one event per auditd SYSCALL record):
   type=SYSCALL, syscall=<name>, success, exit, a0..a3 (raw hex, as auditd logs
@@ -77,7 +93,9 @@ be fixed without guessing:
     rule and why, with what a pass of that control means;
   * a held control prints its grade ("held: near-miss on afinet_raw_socket.a1");
   * a BROKEN control that is not held as declared prints what it is built to
-    break, its grade, and its nearest event graded item by item.
+    break, its grade, and its nearest event graded item by item;
+  * a control that exited with another code than 0, or that wrote to stderr,
+    prints that beneath its row.
 --json PATH also writes all of it as a machine-readable report (`controls`, and
 `negatives`: for each rule of MANIFEST, its live negative controls).
 
@@ -240,9 +258,9 @@ MANIFEST = [
 # ---- controls -----------------------------------------------------------------
 #
 # NOOP is the baseline, not a mutant: a process that is not a technique, with one
-# audited syscall that no rule matches. It runs against every rule. It must own a
-# record (else it is VACUOUS and the run fails), and it is never the live negative
-# control of a rule.
+# audited syscall. Its record fires no rule. It runs against every rule. It must
+# own a record (else it is VACUOUS and the run fails). It declares no item, so the
+# validator never counts it as the live negative control of a rule.
 #
 # CONTROLS holds the mutants. A mutant keeps the surface of a technique and breaks
 # ONE thing. A row is (rule, C source, arguments, what a PASS of the control would
@@ -268,6 +286,10 @@ MANIFEST = [
 # `<allowlist block>.comm`. Each rule of MANIFEST needs a row here or an allowlist
 # that allowlist() can re-run: a rule with no built control is BROKEN, so a new
 # rule cannot be added without one.
+#
+# controls_table_faults() checks the shape of each row before anything runs (also
+# with --dry-run): five fields, a rule of MANIFEST, a source that exists, and a
+# non-empty list in the last field. A bad row ends the run with exit code 1.
 SUCCESS_GATE = "success"
 VACUOUS = "vacuous"     # a control that made no audited syscall proves nothing
 BASELINE = "baseline"   # the grade of the no-op when it owns a record
@@ -492,8 +514,30 @@ def compile_atomic(src, workdir, name=None):
     return out
 
 
+def ending(returncode, stderr):
+    """How a stimulus ended, in one line for the report: `exit code N` when N is
+    not 0 (or the signal that ended it), and its last stderr line. "" when it
+    exited with 0 and wrote nothing to stderr.
+
+    No verdict reads this line. The verdicts read the audit records only: the
+    same records get the same verdict, whatever the exit code is.
+    """
+    tail = (stderr or "").strip().splitlines()
+    parts = []
+    if returncode and returncode < 0:
+        parts.append(f"ended by signal {-returncode}")
+    elif returncode:
+        parts.append(f"exit code {returncode}")
+    if tail:
+        parts.append(f"stderr: {tail[-1]}")
+    return "; ".join(parts)
+
+
 def run(binary, args):
-    """Run one stimulus: (events of its window, its process tree, stderr tail)."""
+    """Run one stimulus: (events of its window, its process tree, how it ended).
+
+    The last value is the line of ending(): text for the report, never a verdict.
+    """
     start = len(audit_log_lines())
     proc = subprocess.Popen([binary] + args, stdout=subprocess.DEVNULL,
                             stderr=subprocess.PIPE, text=True)
@@ -504,8 +548,7 @@ def run(binary, args):
         _, err = proc.communicate()
     time.sleep(1.5)  # let auditd flush to the log
     events = normalize(audit_log_lines()[start:])
-    tail = (err or "").strip().splitlines()
-    return events, process_tree(proc.pid, events), tail[-1] if tail else ""
+    return events, process_tree(proc.pid, events), ending(proc.returncode, err)
 
 
 def _errno_name(exit_code):
@@ -524,8 +567,12 @@ def stimulus_hits(sql, events, tree, succeeded_only=True):
     return [h for h in sigma_eval.evaluate(sql, pool) if all(e["pid"] in tree for e in h)]
 
 
-def judge(sql, events, tree, missing=None, stderr=""):
-    """PASS / SKIP / FAIL for one stimulus run, and why."""
+def judge(sql, events, tree, missing=None, ended=""):
+    """PASS / SKIP / FAIL for one stimulus run, and why.
+
+    `ended` (the line of ending()) is only added to the text of a FAIL that found
+    no hit; it changes no verdict.
+    """
     done = stimulus_hits(sql, events, tree)
     if done:
         calls = "+".join(dict.fromkeys(e["syscall"] for e in done[0]))
@@ -540,7 +587,7 @@ def judge(sql, events, tree, missing=None, stderr=""):
         return "FAIL", ("fired only on syscalls the kernel rejected "
                         f"({'; '.join(failed)}): an attempt, not an execution")
     detail = f"no hit from the stimulus ({len(events)} events in window)"
-    return "FAIL", detail + (f"; stderr: {stderr}" if stderr else "")
+    return "FAIL", detail + (f"; {ended}" if ended else "")
 
 
 def allowlist(rule_path):
@@ -565,6 +612,79 @@ def allowlist(rule_path):
 def allowlisted_comm(rule_path):
     """A process name the rule's `not <allowlist>` filter must suppress, or None."""
     return allowlist(rule_path)[1]
+
+
+def rule_syscalls(rule_path):
+    """The names of the syscalls that a rule reads: each value of a `syscall` item
+    in a detection block of each document of the rule file (a correlation file
+    holds its base rules)."""
+    names = set()
+    with open(os.path.join(REPO, rule_path), encoding="utf-8") as fh:
+        for doc in yaml.safe_load_all(fh):
+            for block in ((doc or {}).get("detection") or {}).values():
+                for part in block if isinstance(block, list) else [block]:
+                    if not isinstance(part, dict):
+                        continue
+                    for field, value in part.items():
+                        if field.split("|")[0] == "syscall":
+                            names.update(str(name) for name in
+                                         (value if isinstance(value, list) else [value]))
+    return names
+
+
+def refused_calls(syscalls, events, tree):
+    """The calls of a stimulus that the kernel rejected (`ptrace: EPERM`), when it
+    rejected EVERY call of the stimulus tree whose syscall is in `syscalls` (the
+    syscalls that the rule reads).
+
+    [] when the tree made no such call, or when the kernel accepted one of them:
+    a missing kernel feature is then not the reason that a mutant of a SKIPPED
+    rule is not held as declared (see control_row).
+    """
+    read = [e for e in events if e["pid"] in tree and e["syscall"] in syscalls]
+    if not read or any(e["success"] == "yes" for e in read):
+        return []
+    return sorted({f"{e['syscall']}: {_errno_name(e['exit'])}" for e in read})
+
+
+def controls_table_faults():
+    """The rows of CONTROLS that cannot be used: [(name of the row, the fault)].
+
+    A row is (rule, C source, arguments, meaning of a pass, declared items). The
+    rule must be a rule of MANIFEST: a control is graded against a rule that an
+    atomic proves, and the live negative controls are counted for those rules
+    only. The source must exist. The last field must be a non-empty list of
+    texts: a control that declares nothing can never be held as declared.
+    """
+    proven = {m[0] for m in MANIFEST}
+    faults = []
+    for number, row in enumerate(CONTROLS, 1):
+        fields = list(row) if isinstance(row, (tuple, list)) else []
+        name = f"CONTROLS row {number}"
+        if len(fields) >= 2 and all(isinstance(f, str) for f in fields[:2]):
+            name += f" ({os.path.basename(fields[1])} -> {os.path.basename(fields[0])})"
+        if len(fields) != 5:
+            faults.append((name, f"has {len(fields)} field(s), not five (rule, C source, "
+                           "arguments, meaning of a pass, declared items)"
+                           if fields else "is not a tuple of five fields"))
+            continue
+        rule, src, run_args, meaning, expected = fields
+        if not isinstance(rule, str) or rule not in proven:
+            faults.append((name, f"its rule {rule!r} is not a rule of MANIFEST: no atomic "
+                           "proves it, so the control cannot be the live negative control "
+                           "of a rule"))
+        if not isinstance(src, str) or not os.path.isfile(os.path.join(REPO, src)):
+            faults.append((name, f"its C source {src!r} does not exist"))
+        if not isinstance(run_args, list) or not all(isinstance(a, str) for a in run_args):
+            faults.append((name, "its arguments (the third field) are not a list of texts"))
+        if not isinstance(meaning, str) or not meaning.strip():
+            faults.append((name, "the meaning of a pass (the fourth field) is not a text"))
+        if (not isinstance(expected, list) or not expected
+                or not all(isinstance(item, str) and item.strip() for item in expected)):
+            faults.append((name, "declares nothing: the fifth field must be a non-empty "
+                           "list of the item(s) that hold the control (for example "
+                           "['afxdp_socket.a0'], ['group-by'] or [SUCCESS_GATE])"))
+    return faults
 
 
 # ---- explanations (sigma_explain) ------------------------------------------
@@ -731,35 +851,52 @@ def control_row(label, detail, meaning, info, skipped):
             is a live negative control of its rule.
     BROKEN  the rule fired on the control; or the control made no audited
             syscall; or the rule stayed quiet for another reason than the
-            declared one; or the grade could not be made.
-    N/A     the control is not held as declared, and the kernel-feature probe
-            turned the emulation of its rule into a SKIP (`skipped`): the rule is
-            not proven on this host, so its control is not required there.
+            declared one; or the control declares nothing; or the grade could
+            not be made.
+    N/A     the control is not held as declared, the kernel-feature probe turned
+            every emulation of its rule into a SKIP (`skipped`), and the kernel
+            rejected every call of the control that the rule reads
+            (info["refused"], from refused_calls): this host cannot exercise the
+            control. Without the last condition the control is BROKEN.
     """
     expected, kind, why = info["expected"], info.get("kind"), info.get("grade", "")
-    more = [f"stderr of the control: {info['stderr']}"] if info.get("stderr") else []
+    more = [f"the control process: {info['ended']}"] if info.get("ended") else []
     if info["judge"] == "PASS":
         row = ("BROKEN", label, f"passed: {meaning or 'the rule fired on the no-op baseline'}",
-               info["explanation"])
+               info["explanation"] + more)
     elif kind == VACUOUS:
         row = ("BROKEN", label, "vacuous: the control made no audited syscall", [why] + more)
-    elif kind == BASELINE or (expected is not None and kind != UNGRADED
+    elif kind == BASELINE or (expected and kind != UNGRADED
                               and sorted(info["graded"]) == sorted(expected)):
+        # `expected and`: an empty declaration is equal to the grade of a control
+        # that no item holds, and such a control must never be held.
         info["grade"] = f"held: {why}"
-        row = ("held", label, detail, [info["grade"]])
+        row = ("held", label, detail, [info["grade"]] + more)
     elif kind == UNGRADED:
         row = ("BROKEN", label, "not graded: nothing shows that the control is held as "
                "declared", [why] + more)
+    elif not expected:
+        # controls_table_faults() refuses such a row before any stimulus runs; this
+        # branch keeps the verdict closed if a control gets here another way.
+        row = ("BROKEN", label, "declares nothing: a built control must declare what "
+               "holds it", [f"the rule stayed quiet: {why}"] + more)
     else:
         got = ", ".join(info["graded"]) or kind
         lines = ([f"the rule stayed quiet, but not for the declared reason: {why}",
                   "meaning: the control does not test what its entry declares, so it is "
                   "not a live negative control of the rule"] + info.get("verdict", []) + more)
-        if info["rule"] in skipped:
+        refused = info.get("refused") or []
+        if info["rule"] in skipped and refused:
             row = ("N/A", label, f"not held as declared (built to break {', '.join(expected)}, "
-                   f"graded {got}), and the emulation of this rule was SKIPPED (kernel "
-                   "feature missing): the control is not exercised on this host", lines)
+                   f"graded {got}). The emulation of this rule was SKIPPED (kernel feature "
+                   "missing), and the kernel rejected every call of the control that the "
+                   f"rule reads ({'; '.join(refused)}): this host cannot exercise the "
+                   "control", lines)
         else:
+            if info["rule"] in skipped:
+                lines.append("the emulation of this rule was SKIPPED, but that does not "
+                             "explain the grade: the kernel accepted a call of the control "
+                             "that the rule reads, or the control made no such call")
             row = ("BROKEN", label, f"not held as declared: built to break "
                    f"{', '.join(expected)}, but graded {got}", lines)
     info["status"] = row[0]
@@ -827,6 +964,18 @@ def main():
 
 def validate(args, report):
     """The validation run behind main(); fills `report` for --json."""
+    # The CONTROLS table first, in every mode: nothing is compiled and no stimulus
+    # runs on a table with a bad row.
+    faults = controls_table_faults()
+    if faults:
+        for name, fault in faults:
+            print(f"  [ERROR ] {name}  {fault}")
+        print(f"ERROR: the CONTROLS table of {os.path.basename(__file__)} has "
+              f"{len(faults)} fault(s); nothing was compiled and no stimulus ran.")
+        report.update(mode="error", reason="bad CONTROLS table")
+        report["results"] = [{"rule": name, "status": "ERROR", "detail": fault,
+                              "explanation": []} for name, fault in faults]
+        return 1
     ok, why = (True, "") if args.dry_run else audit_available()
     if not ok and args.require_audit:
         print(f"ERROR: audit validation unavailable ({why}) and --require-audit set.")
@@ -879,6 +1028,7 @@ def validate(args, report):
                           for what, w in probes[i]) or "no probe (a miss is always a FAIL)"
         print(f"  {os.path.basename(rule)} <- {os.path.basename(src)}: {found}")
     rules = {path: load_rule(path) for path in rule_paths}
+    reads = {path: rule_syscalls(path) for path in rule_paths}
     results, controls = [], []
     load_audit_rules()
     try:
@@ -886,7 +1036,10 @@ def validate(args, report):
         for i, (rule, src, run_args, _probes) in enumerate(MANIFEST):
             events, tree, err = run(binaries[src], run_args)
             status, detail = judge(queries[rule], events, tree, missing[i], err)
-            positive.setdefault(rule, (src, run_args, status))
+            # The re-run under an allowlisted name needs an emulation that passed:
+            # keep the first emulation of the rule that did, else its first one.
+            if rule not in positive or (status == "PASS" and positive[rule][2] != "PASS"):
+                positive[rule] = (src, run_args, status)
             statuses.setdefault(rule, []).append(status)
             lines = (explained(explain_fail, rules[rule], events, tree)
                      if status == "FAIL" else [])
@@ -897,10 +1050,11 @@ def validate(args, report):
                 "explanation": lines})
 
         # Controls: the rule must stay quiet on every one.
-        def control(status, label, detail, meaning, rule, events, tree, expected, stderr=""):
+        def control(status, label, detail, meaning, rule, events, tree, expected, ended=""):
             """Record one control; explain a pass, grade a control that held."""
             info = {"control": label, "rule": rule, "judge": status, "detail": detail,
-                    "meaning": meaning, "expected": expected, "explanation": []}
+                    "meaning": meaning, "expected": expected, "explanation": [],
+                    "ended": ended}
             if status == "PASS":
                 info["explanation"] = explained(explain_broken, rules[rule], queries[rule],
                                                 events, tree, meaning)
@@ -912,7 +1066,7 @@ def validate(args, report):
                 except Exception as e:  # noqa: BLE001
                     grade = [], UNGRADED, f"not graded: {type(e).__name__}: {e}", []
                 info["graded"], info["kind"], info["grade"], info["verdict"] = grade
-                info["stderr"] = stderr
+                info["refused"] = refused_calls(reads[rule], events, tree)
             controls.append((label, detail, meaning, info))
 
         events, tree, err = run(binaries[NOOP], [])
@@ -931,8 +1085,8 @@ def validate(args, report):
                 continue
             label = f"{os.path.basename(src)} as '{comm}' -> {os.path.basename(rule)}"
             if pos_status != "PASS":
-                controls.append((label, "atomic did not pass under its own name, so the "
-                                 "allowlist is not exercised", "",
+                controls.append((label, "no atomic of this rule passed under its own name, "
+                                 "so the allowlist is not exercised", "",
                                  {"control": label, "rule": rule, "judge": "N/A",
                                   "expected": [f"{block}.comm"], "explanation": []}))
                 continue
@@ -946,7 +1100,8 @@ def validate(args, report):
         shutil.rmtree(workdir, ignore_errors=True)
 
     print_table("Detections (atomic -> auditd -> pySigma backend):", results)
-    # A rule is skipped when the probe turned each of its emulations into a SKIP.
+    # A rule is skipped when the probe turned each of its emulations into a SKIP. A
+    # rule with one emulation that passed is not skipped: its re-run ran.
     skipped = {rule for rule, seen in statuses.items() if set(seen) == {"SKIP"}}
     shown = []
     for label, detail, meaning, info in controls:

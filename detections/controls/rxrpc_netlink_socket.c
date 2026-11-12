@@ -8,6 +8,10 @@
  * The rule's a0 (AF_RXRPC) item must reject it.
  *
  * The socket is closed at once. Nothing is bound and nothing is sent.
+ *
+ * Exit code: 0 when the kernel accepted the socket call; 1, with the error on
+ * stderr, when it rejected the call. The validator reads the audit records, not
+ * the exit code.
  */
 #include <stdio.h>
 #include <sys/socket.h>

@@ -4,6 +4,9 @@
  * bpf(BPF_PROG_LOAD, NULL, 0): the right syscall and command, but the kernel
  * rejects it and loads nothing. An attempt the kernel refused is not an
  * execution of the technique.
+ *
+ * Exit code: always 0. The validator reads the audit records, not the exit
+ * code.
  */
 #include <sys/syscall.h>
 #include <unistd.h>

@@ -15,6 +15,11 @@
  * call: when the kernel refuses that one, no call of the control matches the
  * unshare base, and the validator reports that the control is not held by the
  * item it declares.
+ *
+ * Exit code: 0 when the kernel accepted the three calls; 1, with the error on
+ * stderr, when it rejected one of them. The validator reads the audit records,
+ * not the exit code: a control that exits with 1 because only the
+ * CLONE_NEWUSER call was refused is still held as declared.
  */
 #define _GNU_SOURCE
 #include <sched.h>

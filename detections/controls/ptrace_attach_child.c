@@ -15,8 +15,14 @@
  * the parent kills it and waits for it on every path.
  *
  * When the kernel refuses the attach (for example with Yama ptrace_scope 3), the
- * only audited call is a rejected one. The control exits with 1, and the
- * validator reports that the control is not held by the item it declares.
+ * only audited call is a rejected one, and the validator reports that the
+ * control is not held by the item it declares. That row is BROKEN. It is N/A
+ * only when the kernel-feature probe turned the emulation of the rule into a
+ * SKIP (the probe reads Yama ptrace_scope 3 as "ptrace disabled").
+ *
+ * Exit code: 0 when the attach and the detach succeeded; 1, with the error on
+ * stderr, when the fork, the attach, the stop of the child or the detach
+ * failed. The validator reads the audit records, not the exit code.
  */
 #define _GNU_SOURCE
 #include <signal.h>

@@ -10,6 +10,11 @@
  * matches this rejected call. What holds the control is the success gate of the
  * validator (success=yes): a call that the kernel rejected is an attempt, not an
  * execution of the technique. The control must NOT count as a detection.
+ *
+ * Exit code: always 0, whether the kernel rejects the call (as it must) or
+ * accepts it. The validator reads the audit records, not the exit code: if the
+ * kernel accepted the call, the rule fires on its record, and the validator
+ * reports this control as BROKEN.
  */
 #define _GNU_SOURCE
 #include <sys/syscall.h>
