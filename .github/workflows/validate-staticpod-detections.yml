@@ -38,6 +38,7 @@ on:
       - 'detections/k8s/audit-policy-staticpod.yaml'
       - 'detections/k8s/kind-staticpod-cluster.yaml'
       - 'detections/k8s/cri-pod-sensor.sh'
+      - '.github/scripts/apt_install.sh'
       - 'detections/k8s/auditd_file_events.py'
       - 'detections/sigma/T1543.005/**'
       - 'detections/validate_staticpod_detections.py'
@@ -136,6 +137,7 @@ jobs:
             'detections/k8s/audit-policy-staticpod.yaml' \
             'detections/k8s/kind-staticpod-cluster.yaml' \
             'detections/k8s/cri-pod-sensor.sh' \
+            '.github/scripts/apt_install.sh' \
             'detections/k8s/auditd_file_events.py' \
             'detections/sigma/T1543.005/' \
             'detections/validate_staticpod_detections.py' \
@@ -240,8 +242,7 @@ jobs:
           # kind node is a container on the runner's kernel, and audit is not
           # namespaced, so the host auditd records the node's syscalls). Install it the
           # same way validate-detections.yml does on this runner image.
-          sudo apt-get update
-          sudo apt-get install -y auditd
+          bash .github/scripts/apt_install.sh auditd
           sudo systemctl start auditd || sudo service auditd start
           # The kubelet static-pod directory is bind-mounted from this host path
           # (kind-staticpod-cluster.yaml extraMount: the relative ./.kind/trr9003-manifests,

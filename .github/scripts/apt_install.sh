@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+# Install apt packages on a GitHub runner.
+#
+#   apt_install.sh [--optional "<package> <package> ..."] <package>...
+#
+# The packages after the options are necessary: the script fails if one of them is not
+# installed. A package of --optional that cannot be installed gives a notice only.
+#
+# Why this script: the runner image reads the Ubuntu packages from a mirror list
+# (/etc/apt/apt-mirrors.txt: azure.archive.ubuntu.com, then archive.ubuntu.com and
+# security.ubuntu.com). On 2026-11-11 the resolver of the runners (168.63.129.16) did not
+# give these names for more than three hours ("Temporary failure resolving
+# 'azure.archive.ubuntu.com'"), and each job that installs auditd failed before its
+# first test. Public resolvers gave the same names in that time.
+#
+# What it does:
+#   1. If the resolver of the runner gives the first mirror, it runs apt as the two old
+#      lines did (apt-get update, apt-get install -y).
+#   2. If the resolver does not give the first mirror, or apt failed with a message about
+#      name resolution, or the first mirror does not resolve after a failed run, apt gets
+#      one more run with two public resolvers. Only that run sees them: each apt-get of
+#      the run, and the question of the script to the public resolvers, starts in a
+#      private mount namespace in which /etc/resolv.conf names the public resolvers. The
+#      resolver of the runner is not changed, so there is nothing to put back, also when
+#      the job is killed.
+#   3. If that private namespace cannot be made, or the public resolvers give no mirror
+#      either, or apt fails with them, and apt had no run with the resolver of the runner
+#      yet, apt gets that run (apt goes to the next mirror of its list by itself).
+#
+# So the script fails only after apt failed in a run with the resolver of the runner,
+# as the two old lines would. The exceptions are an input that is refused (exit 2) and
+# the forced way below.
+#
+# A different resolver cannot make apt install a package that the Ubuntu archive key did
+# not sign: apt checks the signature of the package index and the hash of each package.
+# It can stop or slow the install.
+#
+# APT_INSTALL_FORCE_PUBLIC=1 goes to step 2 with no fault. A CI job uses it to prove on a
+# runner that the second way works; with it, the script fails if that way cannot be used.
+# APT_INSTALL_RESOLVERS="<address> ..." gives other resolvers than the two public ones.
+# The same CI job uses it for its control: with a resolver that does not answer, the
+# forced way must fail, which shows that a lookup in the namespace uses the private
+# resolv.conf (the lookup of `getent` as root; apt uses the same resolver library).
+set -euo pipefail
+set -f   # the lists hold package names, not file patterns
+
+usage() {
+  echo "usage: apt_install.sh [--optional \"<package> ...\"] <package>..." >&2
+  exit 2
+}
+
+OPTIONAL=""
+if [[ "${1:-}" == "--optional" ]]; then
+  [[ $# -ge 2 ]] || usage
+  OPTIONAL="$2"
+  shift 2
+fi
+[[ $# -gt 0 ]] || usage
+# A name goes to apt-get that runs as root: refuse what is not a package name. A name
+# that starts with "-" is an option for apt-get. A name that ends with "-" tells apt-get
+# to remove that package, and apt-get then ends with 0.
+# shellcheck disable=SC2086  # the list of optional packages is split on purpose
+for name in "$@" $OPTIONAL; do
+  if [[ ! "$name" =~ ^[a-z0-9][a-z0-9+.:=~_-]*$ || "$name" == *- ]]; then
+    echo "::error title=apt_install::not a package name: '${name//[^[:print:]]/?}'" >&2
+    exit 2
+  fi
+done
+
+MIRROR_HOSTS=(azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com)
+# shellcheck disable=SC2206  # split on purpose; `set -f` is on, so no word is a file pattern
+PUBLIC_RESOLVERS=(${APT_INSTALL_RESOLVERS:-1.1.1.1 8.8.8.8})
+if [[ ${#PUBLIC_RESOLVERS[@]} -eq 0 ]]; then
+  echo "::error title=apt_install::APT_INSTALL_RESOLVERS holds no address" >&2
+  exit 2
+fi
+for name in "${PUBLIC_RESOLVERS[@]}"; do
+  if [[ ! "$name" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+    echo "::error title=apt_install::not an IPv4 address in APT_INSTALL_RESOLVERS: '${name//[^[:print:]]/?}'" >&2
+    exit 2
+  fi
+done
+# The four messages of apt (methods/connect.cc) for a name that it could not resolve.
+RESOLVER_FAULT='Temporary failure resolving|Could not resolve|System error resolving|Something wicked happened resolving'
+FORCE_PUBLIC="${APT_INSTALL_FORCE_PUBLIC:-0}"
+if [[ "$FORCE_PUBLIC" != "0" && "$FORCE_PUBLIC" != "1" ]]; then
+  echo "::error title=apt_install::APT_INSTALL_FORCE_PUBLIC must be 0 or 1, not '${FORCE_PUBLIC//[^[:print:]]/?}'" >&2
+  exit 2
+fi
+RUN=(sudo)        # how each apt-get starts; the second way adds the private namespace
+LOG="$(mktemp)"   # the output of apt, to see why it failed
+RESOLV=""
+trap 'rm -f "$LOG" "$RESOLV"' EXIT
+
+# resolves <runner|apt> <host>...: 0 when the resolver gives one of the hosts. "apt" asks
+# as apt-get will run. A resolver that does not answer needs 10 seconds for each host.
+resolves() {
+  local how="$1" host
+  shift
+  for host in "$@"; do
+    if [[ "$how" == "apt" ]]; then
+      if "${RUN[@]}" timeout 10 getent ahosts "$host" >/dev/null 2>&1; then return 0; fi
+    else
+      if timeout 10 getent ahosts "$host" >/dev/null 2>&1; then return 0; fi
+    fi
+  done
+  return 1
+}
+
+apt_logged() { "${RUN[@]}" apt-get "$@" 2>&1 | tee -a "$LOG"; }   # pipefail keeps the status of apt-get
+
+install_all() {
+  # Each necessary command has its own `|| return 1`: bash does not stop a function at a
+  # failed command when the function is the condition of an `if`.
+  # `apt-get update` ends with 0 also when it fetched no index; the install then fails,
+  # if the package is not installed already.
+  apt_logged update || return 1
+  apt_logged install -y -- "$@" || return 1
+  local pkg
+  # shellcheck disable=SC2086  # the list of optional packages is split on purpose
+  if [[ -n "$OPTIONAL" ]] && ! apt_logged install -y -- $OPTIONAL; then
+    for pkg in $OPTIONAL; do
+      "${RUN[@]}" apt-get install -y -- "$pkg" >/dev/null 2>&1 \
+        || echo "::notice title=apt_install::optional package $pkg not installed; a step that needs it will skip"
+    done
+  fi
+  return 0
+}
+
+RUNNER_RUN=0      # 1 after apt had a run with the resolver of the runner
+PUBLIC_RUN=0      # 1 after apt had a run with the public resolvers
+if [[ "$FORCE_PUBLIC" == "1" ]]; then
+  echo "[apt_install] APT_INSTALL_FORCE_PUBLIC=1: apt runs with the public resolvers, with no fault (a test of that way)"
+elif resolves runner "${MIRROR_HOSTS[0]}"; then
+  RUNNER_RUN=1
+  if install_all "$@"; then
+    exit 0
+  fi
+  if ! grep -qE "$RESOLVER_FAULT" "$LOG" && resolves runner "${MIRROR_HOSTS[0]}"; then
+    echo "::error title=apt_install::apt failed, and not because of the resolver: the mirror name resolves and apt gave no message about name resolution. See the E: lines of apt above." >&2
+    exit 1
+  fi
+  echo "::warning title=apt_install::apt could not resolve a mirror with the resolver of the runner. One more run with public resolvers, for apt only."
+else
+  echo "::warning title=apt_install::the runner cannot resolve ${MIRROR_HOSTS[0]}. apt runs with public resolvers (for apt only)."
+fi
+
+RESOLV="$(mktemp)"
+printf 'nameserver %s\n' "${PUBLIC_RESOLVERS[@]}" > "$RESOLV"
+chmod 0644 "$RESOLV"   # the download methods of apt run as the user _apt
+# One private mount namespace for each command; in it /etc/resolv.conf is $RESOLV.
+PRIVATE=(sudo unshare --mount -- sh -c 'mount --bind "$0" /etc/resolv.conf && exec "$@"' "$RESOLV")
+if "${PRIVATE[@]}" true; then
+  RUN=("${PRIVATE[@]}")
+  if resolves apt "${MIRROR_HOSTS[@]}"; then
+    echo "[apt_install] the public resolvers give a mirror; apt runs with them"
+    PUBLIC_RUN=1
+    if install_all "$@"; then
+      exit 0
+    fi
+    echo "::warning title=apt_install::apt failed also with the public resolvers ${PUBLIC_RESOLVERS[*]}. See the E: lines of apt above."
+  else
+    echo "::warning title=apt_install::the public resolvers ${PUBLIC_RESOLVERS[*]} give no mirror of the list either."
+  fi
+else
+  echo "::warning title=apt_install::cannot give apt a private resolv.conf (unshare or mount failed)."
+fi
+
+RUN=(sudo)
+if [[ "$FORCE_PUBLIC" == "1" ]]; then
+  if [[ "$PUBLIC_RUN" == "1" ]]; then
+    echo "::error title=apt_install::APT_INSTALL_FORCE_PUBLIC=1, and apt failed with the public resolvers." >&2
+  else
+    echo "::error title=apt_install::APT_INSTALL_FORCE_PUBLIC=1, and the way with the public resolvers cannot be used on this runner." >&2
+  fi
+  exit 1
+fi
+if [[ "$RUNNER_RUN" == "1" ]]; then
+  echo "::error title=apt_install::apt failed with the resolver of the runner, and the public resolvers gave no install." >&2
+  exit 1
+fi
+# apt had no run with the resolver of the runner yet. The two old lines were that run.
+echo "[apt_install] one run with the resolver of the runner: apt can go to the next mirror of its list"
+if install_all "$@"; then
+  exit 0
+fi
+echo "::error title=apt_install::apt failed with the resolver of the runner, and the public resolvers gave no install." >&2
+exit 1

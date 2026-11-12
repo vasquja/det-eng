@@ -29,8 +29,7 @@ jobs:
 
       - name: Install audit, build tools and validator requirements
         run: |
-          sudo apt-get update
-          sudo apt-get install -y auditd gcc python3-venv
+          bash .github/scripts/apt_install.sh auditd gcc python3-venv
           # A venv on the system Python runs cleanly under sudo (no
           # LD_LIBRARY_PATH needed, unlike a setup-python interpreter).
           python3 -m venv /tmp/venv
@@ -144,3 +143,55 @@ jobs:
 
       - name: Check the anchors of the links into and out of detections/k8s/PLATFORMS.md
         run: python3 detections/k8s_platforms_md.py --anchors
+
+  # Proves on a runner the second way of .github/scripts/apt_install.sh: apt with public
+  # resolvers in a private mount namespace. A fault of the runner's resolver is rare, so
+  # without this job that way would run for the first time in a fault.
+  apt-install-fallback:
+    name: apt-install-fallback
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install a package with the public resolvers (forced), and see that the runner's resolver is not changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          before="$(sha256sum /etc/resolv.conf)"
+          APT_INSTALL_FORCE_PUBLIC=1 bash .github/scripts/apt_install.sh auditd 2>&1 | tee /tmp/apt-forced.out
+          # The script took the second way, and apt reached a package source on the
+          # network in the namespace (a Get: or Hit: line with an http address; the line
+          # of the local mirror list has a file: address). Without these lines the step
+          # proves nothing, for example when the package is in the runner image already.
+          grep -q 'the public resolvers give a mirror; apt runs with them' /tmp/apt-forced.out
+          if ! grep -Eq '^(Get|Hit):[0-9]+ https?://' /tmp/apt-forced.out; then
+            echo "::error::apt reached no package source in the forced run"
+            exit 1
+          fi
+          # The package is installed.
+          dpkg -s auditd >/dev/null
+          # The resolv.conf of the runner is as it was: the change was private to apt.
+          after="$(sha256sum /etc/resolv.conf)"
+          if [[ "$before" != "$after" ]]; then
+            echo "::error::/etc/resolv.conf of the runner changed"
+            exit 1
+          fi
+
+      - name: CONTROL - with a resolver that does not answer, the forced way fails
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 192.0.2.53 is a documentation address (RFC 5737): no resolver is there. If the
+          # forced way passes with it, the lookups of apt did not use the private
+          # resolv.conf, and the step above proved nothing about a fault.
+          if APT_INSTALL_FORCE_PUBLIC=1 APT_INSTALL_RESOLVERS=192.0.2.53 \
+               bash .github/scripts/apt_install.sh auditd > /tmp/apt-control.out 2>&1; then
+            sed 's/^/[control] /' /tmp/apt-control.out
+            echo "::error::the forced way passed with a resolver that does not answer"
+            exit 1
+          fi
+          # The lines of the script, with a prefix so that its ::error line is plain text here.
+          sed 's/^/[control] /' /tmp/apt-control.out
+          grep -q 'give no mirror of the list either' /tmp/apt-control.out
+          grep -q 'the way with the public resolvers cannot be used' /tmp/apt-control.out
