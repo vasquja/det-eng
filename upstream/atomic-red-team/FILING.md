@@ -50,6 +50,16 @@ T1199 specifics:
   role defaults to the low-privilege `roles/browser` (the detectable shape — external
   principalSet bound with no attribute condition — is identical to the `roles/owner` form a real
   intrusion uses).
+- The `workforce_pool` ID must be unique across all of Google Cloud, and Google blocks the ID of
+  a deleted pool for about 30 days. The default pool and provider IDs are left empty in the YAML;
+  the script then uses `atomic-ext-pool-<organization ID>` and `atomic-ext-idp-<organization ID>`,
+  which are unique for all of Google Cloud with no saved state, so two organizations do not
+  collide and `cleanup` finds what `create` made. A second run in the SAME organization within
+  30 days needs a new `workforce_pool` value. The organization binding is created and removed
+  with `--condition=None` (a non-interactive run cannot be prompted for a condition). `cleanup`
+  is idempotent: a revert that fails only because the object is already gone is silent, but a
+  revert that fails for another reason (for example no permission) prints one note and makes
+  `cleanup` exit non-zero, so a real leftover is visible and does not look like success.
 
 ## Before filing
 
@@ -60,9 +70,11 @@ T1199 specifics:
 - **Validate locally** (the actual CI gate) from a checkout of the fork:
   `cd atomic_red_team && PYTHONPATH=.. poetry run python runner.py validate`
 - **Smoke-test the T1199 detonation** on a Google Cloud organization you control before (or at)
-  PR time. It makes real `gcloud` calls that cannot run in this repo's CI, so it has not been
-  executed end-to-end here — only its YAML and shell syntax are checked. The T1098.006 tests run
-  against any cluster where you can write RBAC (a local kind/minikube cluster is enough).
+  PR time. It makes real `gcloud` calls that cannot run in this repo's CI, so no command ran
+  against Google Cloud here; its `create` and `cleanup` call sequences are tested with a stub
+  `gcloud` (atomics/tests/test_upstream_gcp_workforce.py, the `emulation-scripts` CI job), and
+  its YAML and shell syntax are checked. The T1098.006 tests run against any cluster where you
+  can write RBAC (a local kind/minikube cluster is enough).
 - **One PR per technique.** `.yaml` extension; only `src`/`bin` subdirectories alongside it.
 
 See [`../../UPSTREAM.md`](../../UPSTREAM.md) for the full three-project contribution plan.

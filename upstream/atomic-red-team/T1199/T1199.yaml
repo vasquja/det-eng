@@ -24,13 +24,20 @@ atomic_tests:
         type: string
         default: "0000000000"
       workforce_pool:
-        description: ID for the throwaway workforce identity pool to create.
+        description: >
+          ID for the throwaway workforce identity pool to create. It must be unique across all
+          of Google Cloud (6 to 63 lowercase letters, digits, or hyphens), and Google blocks the
+          ID of a deleted pool for about 30 days. Leave it empty (the default) and the script
+          uses atomic-ext-pool-<organization ID>, which is unique for all of Google Cloud with
+          no saved state; a second run in the SAME organization within 30 days needs a new value.
         type: string
-        default: atomic-ext-pool
+        default: ""
       provider_id:
-        description: ID for the external OIDC provider to create in the pool.
+        description: >
+          ID for the external OIDC provider to create in the pool. Leave it empty (the default)
+          and the script uses atomic-ext-idp-<organization ID>.
         type: string
-        default: atomic-ext-idp
+        default: ""
       issuer_uri:
         description: Issuer URI of the external IdP the provider trusts.
         type: url

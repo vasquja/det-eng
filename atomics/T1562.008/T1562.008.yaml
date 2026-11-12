@@ -3,11 +3,26 @@ display_name: "Impair Defenses: Disable or Modify Cloud Logs (GCP Cloud Logging 
 
 # Behavioral emulation for TRR9038. The live tests tamper with GCP Cloud Logging
 # config (disable the _Default sink, delete a throwaway custom log bucket, add an
-# audit-dropping exclusion) and then RESTORE it, in your own throwaway GCP project
-# (guarded by TRR9038_LIVE=1); NOT run in CI. CI validation runs the paired Sigma
-# rule over the committed Cloud Audit Log fixtures in
-# detections/cloud/fixtures/trr9038/ via detections/validate_cloud_detections.py.
+# exclusion for the audit-log stream) and then run the undo commands that RESTORE it, in
+# your own throwaway GCP project (guarded by TRR9038_LIVE=1); NOT run in CI. No live run
+# against a project was done (see docs/setup/cloud-gcp.md, "Not verified"). The live run
+# creates the exclusion with "disabled": true, so it drops no log; its audit record has
+# the method CreateExclusion, which is what the rule reads (the attack leaves "disabled"
+# out). The rule reads only the _Default bucket, so the record of the custom bucket of
+# procedure b does not fire it, by design. CI validation runs the paired Sigma rule over
+# the committed Cloud Audit Log fixtures in detections/cloud/fixtures/trr9038/ via
+# detections/validate_cloud_detections.py.
 # The _Required sink/bucket is LOCKED (cannot be disabled/deleted) and is never a target.
+#
+# Live-mode variables and prerequisites (dry mode needs none):
+#   * all procedures: TRR9038_PROJECT, a throwaway project you own (no placeholder; the run
+#     stops with exit 2 before any change if it is not set).
+#   * procedure b: TRR9038_CUSTOM_BUCKET, a throwaway custom log bucket whose name starts
+#     with trr9038- (so never _Default or _Required; the run stops with exit 2 before any
+#     change if it is not set or if the name does not start with trr9038-).
+#   * procedure c: `curl` on PATH and a signed-in gcloud (the exclusion is added through the
+#     Cloud Logging REST API; the access token comes from `gcloud auth print-access-token`,
+#     is kept off the command line, and is never printed).
 
 atomic_tests:
   - name: "TRR9038.GCP.A — delete or disable the _Default log sink"

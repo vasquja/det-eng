@@ -11,14 +11,19 @@ at the pinned commits. No command on this page was run against a real repository
 setting or a real cloud account. The provider pages say the same, and each one
 has a "Not verified" list.
 
+The section [Problems in the live scripts](#problems-in-the-live-scripts) was
+changed on 2026-11-11. It was compared with the scripts, with the tests in
+[`atomics/tests/`](../../atomics/tests/README.md), with the Google Cloud SDK
+570.0.0 and with Microsoft Learn.
+
 | Provider | Guide | Techniques that have a live script |
 |----------|-------|-------------------------------------|
 | AWS | [`cloud-aws.md`](cloud-aws.md) | TRR9011, TRR9012, TRR9015, TRR9016, TRR9019, TRR9021, TRR9022, TRR9032, TRR9037 |
 | Azure and Microsoft Entra | [`cloud-azure.md`](cloud-azure.md) | TRR9013, TRR9017, TRR9036. TRR9023 has a script, but no run by hand: see [step 7.5](cloud-azure.md#75-trr9023-read-the-sign-in-of-the-smoke-test) of the Azure page. |
-| Google Cloud | [`cloud-gcp.md`](cloud-gcp.md) | TRR9014, TRR9018, TRR9038. TRR9020 has a script that cannot complete at this time: see [section 7](cloud-gcp.md#7-optional-an-organization-for-trr9020) of the Google Cloud page. |
+| Google Cloud | [`cloud-gcp.md`](cloud-gcp.md) | TRR9014, TRR9018, TRR9038. TRR9020 needs an organization: see [section 7](cloud-gcp.md#7-optional-an-organization-for-trr9020) of the Google Cloud page. |
 
-You do not need all three. Start with one. Some of these scripts have defects:
-see [Problems in the live scripts](#problems-in-the-live-scripts).
+You do not need all three. Start with one. Some live scripts have limits or
+defects: see [Problems in the live scripts](#problems-in-the-live-scripts).
 
 ## What the sandbox is for
 
@@ -568,22 +573,123 @@ the teardown.
 ## Problems in the live scripts
 
 These problems were found when the scripts were read against the references of
-the providers. They were not found by a run. Until they are corrected, use the
-committed fixtures for the procedures that they stop.
+the providers. No problem was found by a run. No script was run against a cloud
+account: this project has no account and does not sign in to one.
+
+Roadmap item L7 corrected six scripts under `atomics/`, and the copy of the TRR9020
+script for upstream filing (`upstream/atomic-red-team/T1199/src/`). Five of the six
+make a change in a live run:
+
+- `atomics/T1098.001/src/emulate_entra.sh` (TRR9013),
+- `atomics/T1528/src/emulate_entra_consent.sh` (TRR9017),
+- `atomics/T1098.001/src/emulate_gcp_wif.sh` (TRR9018),
+- `atomics/T1199/src/emulate_gcp_workforce.sh` (TRR9020) and
+- `atomics/T1562.008/src/emulate_gcp_log_sink.sh` (TRR9038).
+
+The sixth script, `atomics/T1078.004/src/emulate_entra_sp_fic_signin.sh`
+(TRR9023), makes no change.
+
+### What the five scripts do when a run stops
+
+Each of the five scripts holds the same undo block. The tests in
+[`atomics/tests/`](../../atomics/tests/README.md) show what the block does. The
+tests use stub programs in the place of the cloud CLIs, not a provider.
+
+- Immediately after each change, the script registers the command that reverts
+  that change (the undo command).
+- At the planned end, the script runs the undo commands, the last change first.
+  The last line of the output starts with `[live] done.` only if each undo
+  command was successful.
+- If a command fails, the script runs the undo commands of the changes that it
+  made. Then it prints `[live] FAILED (exit N)`. `N` is the exit code.
+- If you stop the run with Ctrl-C, the script does the same. Ctrl-C sends the
+  signal `INT` (exit code 130). The signals `HUP` (129) and `TERM` (143) have the
+  same effect.
+- A signal that comes during the undo commands does not stop them. An undo
+  command that fails while a signal comes starts again, because the signal
+  possibly stopped it. It starts again two times at most. If its third run
+  fails in the same way, the script prints the `LEFT BEHIND` line for that
+  command and continues with the other undo commands. Thus you can stop an undo
+  command that hangs: press Ctrl-C three times, then run the printed command
+  yourself. The count starts again for each undo command.
+- When the undo commands of the planned end are complete and each one was
+  successful, the run is complete. After that, the script ignores the stop
+  signals. It only prints its last lines.
+- If the program that reads the output stops (for example `| head`), the undo
+  commands run to their end.
+- If an undo command fails, the script prints
+  `[live] LEFT BEHIND, this command failed:` and the command. That change stays.
+  The script continues with the other undo commands.
+- If the run stops during a command that makes a change, the script cannot know
+  if the provider made that change. It prints
+  `[live] The run stopped before the undo of this change was registered:` and
+  the name of the change. That change has no undo command. It can stay. The
+  script prints the same line when it stops itself after such a command: the
+  command did not give an ID, or the provider refused the request. TRR9038 c is
+  different: its undo request is safe when the exclusion does not exist, so the
+  script also sends it when the create request got no answer or an error of the
+  server. It does not send it after a refusal (a 4xx status that is not 409).
+
+Thus a run whose last line does not start with `[live] done.` can leave an
+object behind. After each such run, read the last lines of the output. Then do
+the check of the provider page:
+
+- [step 5.5](cloud-gcp.md#55-after-each-live-run-make-sure-that-nothing-stays-behind)
+  of the Google Cloud page, and
+  [step 7.1](cloud-gcp.md#71-after-each-live-run-of-trr9020-make-sure-that-nothing-stays-behind)
+  for TRR9020;
+- [Make sure that nothing stays behind](cloud-azure.md#make-sure-that-nothing-stays-behind)
+  on the Azure page.
+
+TRR9017 d is an exception. It makes no change, and a good run of it has no
+`[live] done.` line.
+
+The exit codes of a live run of these five scripts:
+
+| Exit code | Meaning |
+|-----------|---------|
+| 0 | Each command and each undo command was successful. The script does not know that the record was not caused. |
+| 1 | An undo command failed. Or the script knows that the record was not caused: for example, no person accepted the consent, or the procedure has no live run. |
+| The exit code of a command | A command of the cloud CLI failed. The script ends with the exit code of that command (for example 1), after the undo commands. |
+| 2 | The script stopped before the first change. A necessary variable is not set, or a name that you set does not start with the prefix of the technique (`trr9017-`, `trr9018-`, `trr9020-`, `trr9038-`). TRR9038 a also stops with 2 if the `_Default` sink is disabled before the run. |
+| 129, 130, 143 | A signal stopped the run: `HUP`, `INT` or `TERM`. A signal that comes after a command failed does not change the exit code of that failure. |
+
+The exit code 2 thus can have more than one meaning. The last lines of the
+output show which one applies. A stop before the first change names the
+variable, the name or the state that stopped the run. A command that failed
+with the exit code 2 prints its own error message. The script prints
+`[live] FAILED (exit 2)` in each condition in which the undo block is in use, so
+read the lines before that line. A third cause is a fault of bash: see the last item of
+[Not verified](#not-verified).
+
+The TRR9023 script makes no change, so it has no undo commands. Its exit codes
+0, 1 and 2 have the same meaning. A live run of its procedure b, c or d makes no
+request and ends with exit 1, because these procedures have no live run.
+
+Two live runs end with exit 0 and write a record that does not fire the paired
+rule. That is by design, and the script says so:
+
+- TRR9020 with the default role `roles/viewer`. See
+  [section 7](cloud-gcp.md#7-optional-an-organization-for-trr9020) of the Google
+  Cloud page.
+- TRR9038 b. The script deletes a spare log bucket, and the rule reads only the
+  `_Default` bucket. See
+  [step 5.4](cloud-gcp.md#54-the-other-emulations) of the Google Cloud page.
+
+### What is open
 
 | Script | Problem | Effect |
 |--------|---------|--------|
-| `atomics/T1199/src/emulate_gcp_workforce.sh` (TRR9020) | The script gives `--organization` to `gcloud iam workforce-pools providers create-oidc`, `providers delete` and `workforce-pools delete`. The Google Cloud SDK 570.0.0 does not have that option on these three commands. `providers create-oidc` also requires `--client-id`, and a client secret for the response type `code`. The script does not give them. | The live run cannot complete. It leaves the pool. |
-| `atomics/T1098.001/src/emulate_gcp_wif.sh` (TRR9018) | The default issuer is the GitHub issuer, with no attribute condition. Google requires a condition for that issuer. | The live run stops unless `TRR9018_ISSUER` is set. |
-| The same script | The default name of the provider is `gh`. It has 2 characters, and Google requires 4 to 32. | The live run stops unless `TRR9018_PROVIDER` is set. It leaves the pool. |
-| The same script | It adds the binding `roles/iam.workloadIdentityUser` for `principalSet://.../workloadIdentityPools/POOL/*` to the service account, and it does not remove it. `POOL` stands for the name of the pool. | Each run leaves one binding. [Step 5.4](cloud-gcp.md#54-the-other-emulations) of the Google Cloud page removes it, and step 5.5 checks it. |
-| The same script, and the TRR9020 script | The pool name is fixed. Google blocks the name of a deleted pool for 30 days. The name of a workforce pool (TRR9020) must also be unique in all of Google Cloud, so a different customer can have the default name `trr9020-ext-pool`. | The second run in 30 days fails unless `TRR9018_POOL` or `TRR9020_POOL` is set. The first TRR9020 run can fail for the same reason. |
-| `atomics/T1562.008/src/emulate_gcp_log_sink.sh` c (TRR9038) | `gcloud logging exclusions create` is not a command of the Google Cloud SDK 570.0.0. | Procedure c cannot run. |
-| `atomics/T1528/src/emulate_entra_consent.sh` a, b, c, e (TRR9017) | The script registers the application and deletes it. It does not grant consent. | No "Consent to application" record, which is the record that the rule reads. |
-| The same script, d | A tenant that was created on 2026-07-01 or later blocks the device code flow. | No sign-in that succeeds, so no record that the rule reads. |
-| `atomics/T1098.001/src/emulate_entra.sh` (TRR9013) | The subject has a `*`. Microsoft documents that a wildcard is not supported. | Not confirmed. The run can stop before its cleanup line. |
-| `atomics/T1078.004/src/emulate_entra_sp_fic_signin.sh` (TRR9023) | The script needs an OIDC token of a different issuer, so a person cannot run it by hand. It discards the answer of the token request and does not look at the HTTP status. If `TRR9023_TENANT` or `TRR9023_APPID` is not set, it uses a placeholder ID. | The script prints "done" also when Entra refuses the token. [Step 7.5](cloud-azure.md#75-trr9023-read-the-sign-in-of-the-smoke-test) of the Azure page tells you how to get a real record without the script. |
-| Most live scripts | The script stops at the first error, and has no cleanup step for that condition. | A run that fails can leave the change in place. Each provider page has a check that nothing stays behind, with the commands that put things back: [step 4.5](cloud-aws.md#45-after-each-live-run-make-sure-that-nothing-stays-behind) of the AWS page, [Make sure that nothing stays behind](cloud-azure.md#make-sure-that-nothing-stays-behind) on the Azure page, and [step 5.5](cloud-gcp.md#55-after-each-live-run-make-sure-that-nothing-stays-behind) of the Google Cloud page. |
+| `atomics/T1528/src/emulate_entra_consent.sh` d (TRR9017) | Security defaults block the device code flow in each tenant that was created on 2026-07-01 or later. A sandbox tenant that you make with these pages is such a tenant. This is a tenant setting, not a defect of the script. | The script ends with exit 1. Its message says that no sign-in was started, or that no successful sign-in was recorded. Use the committed fixture. The error text that such a tenant gives was not verified, so the script possibly does not print its hint about security defaults. |
+| The same script, a, b, c and e, and `atomics/T1098.001/src/emulate_entra.sh` (TRR9013) | These runs change the tenant that `az` is signed in to. The TRR9013 script has no variable for the tenant. The TRR9017 script requires `TRR9017_TENANT`, but it does not compare the value with that tenant. | If `az` is signed in to a different tenant, the changes go to that tenant. The Azure page tells you to compare the two tenant IDs before the run. |
+| `atomics/T1078.004/src/emulate_entra_sp_fic_signin.sh` (TRR9023) | The script needs an OIDC token of an external issuer that the federated credential of the application trusts. A person cannot easily make such a token. | No run by hand. [Step 7.5](cloud-azure.md#75-trr9023-read-the-sign-in-of-the-smoke-test) of the Azure page gives a real record without the script. |
+| TRR9014 (`atomics/T1098.003/src/emulate.sh`), TRR9036 (`atomics/T1098.003/src/emulate_azure.sh`), and on AWS TRR9015, TRR9016, TRR9019 and TRR9021 | These scripts do not hold the undo block. Each one stops at the first error, and has no cleanup step for that condition. | If a run fails or stops between the change and its revert, the change stays. For TRR9014, that is the public grant. For TRR9036, it is the role assignment. On AWS, it is the role, the identity pool or the public access. Each provider page has a check that nothing stays behind, with the commands that put things back. See [step 4.5](cloud-aws.md#45-after-each-live-run-make-sure-that-nothing-stays-behind) of the AWS page, [Make sure that nothing stays behind](cloud-azure.md#make-sure-that-nothing-stays-behind) on the Azure page, and [step 5.5](cloud-gcp.md#55-after-each-live-run-make-sure-that-nothing-stays-behind) of the Google Cloud page. |
+| TRR9037 (`atomics/T1098.001/src/emulate_rolesanywhere.sh`) and TRR9032 (`atomics/T1098.006/src/emulate_eks_access_entry.sh`) | The revert step hides the error of a delete command that fails. | The script prints `[live] revert done.` and ends with exit 0 also when the trust anchor, the profile or the access entry stays. For TRR9037, do step 4.5 of the AWS page after each run. For TRR9032, section 7 of the AWS page deletes the cluster after the run. |
+| TRR9015, TRR9019 and TRR9021 (AWS) | If the variable for the account or for the resource is not set, the live run uses a placeholder. For TRR9015, that is the account `123456789012`. For TRR9019 and TRR9021, it is a default name such as `trr9019-exposed-bucket`. | The run does not stop before the first command. The session block of the AWS page (step 2.2) sets the variables for TRR9019 and TRR9021, and step 4.4 of that page gives `TRR9015_ACCOUNT`. |
+| TRR9014 c, TRR9021 c and d, TRR9036 c | The procedure has no live run, but a live run ends with exit 0. | The exit code 0 does not mean that a record was caused. |
+
+Roadmap item R9 moves the undo block to a shared file and gives it to the other
+live scripts.
 
 ## Costs
 
@@ -629,6 +735,27 @@ sandbox when you do not use it, and to make it again with these pages.
   [Test the federation](#test-the-federation). They can change with a new release
   of an action or of a cloud service.
 - The exact label of the two-factor section on the GitHub settings page.
+- That a provider accepts each command of the six corrected scripts, and that
+  each undo command reverts its change in a real account. The command lines were
+  compared with the provider references. The tests in
+  [`atomics/tests/`](../../atomics/tests/README.md) show the sequence of the
+  commands and of the undo commands with stub programs. A stub accepts each
+  command. The provider pages list what a live run must show for each script.
+- What a cloud CLI does when a browser shell disconnects during the undo commands
+  and they have no terminal to write to. The tests send the signals to the
+  script. No test disconnects a terminal.
+- That the six corrected scripts run with bash 3.2, which is the `/bin/bash` of
+  macOS. The tests ran with bash 5.2.
+- A fault of bash 5.2.21 that the undo block cannot prevent in the lines of a
+  script. If a stop signal comes at the moment when bash starts a command
+  substitution (`$( )`), bash prints
+  ``unexpected EOF while looking for matching `)'`` and the run ends with exit 2,
+  not with the code of the signal. The undo commands of the registered changes
+  run all the same, and the script names a change in progress as one that can
+  stay. In an undo command that holds a command substitution (the delete request
+  of TRR9038 c), the same fault loses the signal: the undo command runs to its
+  end and the run goes on. This was seen in a test loop, not in a run of a
+  script against a provider. Other versions of bash were not tried.
 
 ## Sources
 

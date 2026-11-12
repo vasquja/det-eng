@@ -432,7 +432,9 @@ TRR9016_LIVE=1 bash atomics/T1078.004/src/emulate_aws_cognito.sh d
 ```
 
 Check: each run ends with a line that starts with `[live] done`. The TRR9037 run
-ends with `[live] revert done.`
+ends with `[live] revert done.` That line is not a sufficient check for TRR9037:
+the script prints it also when a delete command of its revert step fails. Do
+step 4.5 after the run.
 
 TRR9015 needs the identity provider from step 5.1. Run it after that step.
 
@@ -859,7 +861,12 @@ sleep 15
 TRR9032_LIVE=1 bash atomics/T1098.006/src/emulate_eks_access_entry.sh a
 ```
 
-Check: the run ends with `[live] revert done.` Then delete the cluster:
+Check: the run ends with `[live] revert done.` The script prints that line also
+when it cannot delete the access entry. The access entry is a part of the cluster
+`trr9032-cluster`, and the next block deletes that cluster. It is not verified
+that AWS removes each access entry together with its cluster.
+
+Delete the cluster:
 
 ```bash
 aws eks delete-cluster --region us-east-1 --name trr9032-cluster
