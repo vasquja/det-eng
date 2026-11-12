@@ -123,9 +123,19 @@ occur proves nothing.
   needs a `near-miss` case with the same `breaks` (for `base:<name>/<item>`:
   `breaks: ["base:<name>"]`): the gate tests run the validator on the events of
   that case in the place of the program. The program must stop
-  before harm and leave nothing on the machine. Compile it with
+  before harm and leave nothing on the machine. Its header says what the program
+  does, which ONE thing it breaks, and what its exit code means (the validator
+  reads the audit records, not the exit code). Compile it with
   `python3 detections/validate_detections.py --dry-run`, and run it under
   `strace -f` to see its calls; only the CI job `validate` shows the audit records.
+
+  The validator checks the `CONTROLS` table before it compiles, also in
+  `--dry-run`: a row needs five fields, a rule of the `MANIFEST`, a source that
+  exists and a non-empty list of declared items. One case is not applicable and
+  not a failure: every emulation of the rule is a SKIP on the host (its
+  kernel-feature probe), the mutant is not held as declared, and the kernel
+  rejected one or more of the mutant's calls that the rule reads. CI has no such
+  SKIP today, so in CI each control must be held as declared.
 - **Kubernetes audit**: same `verb` + `objectRef.resource`, with the dangerous
   `requestObject` field absent or safe (`hostPID: false`, `privileged: false`). Also a
   system controller identity the filter excludes, and a Request-level grader's input

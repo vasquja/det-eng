@@ -26,7 +26,10 @@ A detection change is done only when CI shows all of these:
    atomic's process tree, or a record carrying the emulation's marker), not
    just any matching event in the log.
 2. **Stays quiet.** The rule matches nothing in its controls:
-   - Linux (auditd): no-op, broken mutants, allowlisted process names.
+   - Linux (auditd): the no-op baseline, and for each rule a live negative
+     control: a wrong-argument mutant, another mutant, or a re-run under an
+     allowlisted process name. Each one must be held by the item that it declares
+     (`CONTROLS` in `detections/validate_detections.py`).
    - Kubernetes: the audit log captured before the emulation (`--expect-miss`).
    - Cloud: a hard benign baseline that differs from the attack only in the
      discriminating field.
