@@ -882,6 +882,20 @@ check the sha256 of both binaries, and fail when the cluster's server version di
 from the pin. The pin moves every quarter, and before the pinned minor reaches end of
 life; the `env` block of each workflow says how.
 
+Before the first lab pod is created, each job pulls its lab images (`LAB_IMAGES`)
+inside each node of the cluster: `docker exec <node> crictl pull <image>`, with three
+attempts for each image and node. `crictl` is in the kind node image, and it puts the
+image in the store that the kubelet reads. When the last attempt fails, the step fails
+and names the image and the node. Thus a slow registry stops the job at that step, and
+not later as a pod that does not start. The jobs do not use `kind load docker-image`.
+That command fails on a multi-platform tag (`ctr: content digest sha256:...: not found`)
+when Docker on the runner uses the containerd image store, which is the default of a
+new installation of Docker Engine 29
+([kind issue 3795](https://github.com/kubernetes-sigs/kind/issues/3795)). The jobs
+run on `ubuntu-latest`. On 2026-11-13 that label gave the `ubuntu-26.04` runner image
+(Docker Engine 29.4.2), and a `validate-k8s` run failed at `kind load`; the
+`ubuntu-24.04` image before it had Docker Engine 28.0.4.
+
 `.github/workflows/k8s-version-matrix.yml` runs the three Kubernetes workflows every
 week on the minors beside the pin: v1.35.8 and v1.37.0, the newest kindest/node images
 of those minors that kind v0.33.0 publishes. (v1.34 is not in the matrix: it reaches end
