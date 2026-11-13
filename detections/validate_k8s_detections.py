@@ -49,7 +49,8 @@ Modes:
         in kind is deterministic, so a miss is a real regression. Without
         --audit-log a strict run reads /tmp/kube-apiserver-audit.log. When the
         log does not exist, a strict run prints SKIP and exits 0 (for a local
-        run without a cluster).
+        run without a cluster). An empty value (--audit-log '') is a log that
+        does not exist: the default is only for a run without the option.
 
     ... --ledger PATH
         The emulation ledger (atomics/T1609/src/emulate.sh appends one JSON
@@ -68,11 +69,11 @@ Modes:
         emulation. It uses the field gates only (--ledger is ignored).
         A negative control that read no record cannot fail, so it proves
         nothing. Thus the run also exits 1, before it judges a rule, when
-        --audit-log is not given (this mode has no default log), when the log
-        does not exist, and when the log holds no audit event. The count is
-        the number that the `Loaded N audit event(s)` line prints: the JSON
-        objects of the lines that are not blank. A blank line and a line that
-        is not JSON are not records.
+        --audit-log is not given (this mode has no default log, and an empty
+        value counts as not given), when the log does not exist, and when the
+        log holds no audit event. The count is the number that the `Loaded N
+        audit event(s)` line prints: the JSON objects of the lines that are not
+        blank. A blank line and a line that is not JSON are not records.
 
     ... --report
         Report rule misses in the summary instead of failing on them. A rule
@@ -603,10 +604,14 @@ def validate(args, report):
         print(f"Dry run OK: {len(queries)} rule(s) compile with pySigma.")
         return 0
 
-    audit_log = args.audit_log or DEFAULT_AUDIT_LOG
+    # A strict run takes the default only when the option is absent. An empty value
+    # (--audit-log '') is then a log that does not exist, as it was before the
+    # negative control got its checks.
+    audit_log = DEFAULT_AUDIT_LOG if args.audit_log is None else args.audit_log
     if args.expect_miss:
         # A negative control must read the log that was captured before the
-        # emulation. Without that log it read no record: an error, not a SKIP.
+        # emulation. Without that log it read no record: an error, not a SKIP. An
+        # empty value counts as a log that is not given.
         why = ("no pre-emulation audit log was given (--audit-log)" if not args.audit_log
                else f"the pre-emulation audit log {audit_log} was not found"
                if not os.path.exists(audit_log) else None)

@@ -147,20 +147,23 @@ broken rule fails the run.
 Modes:
     --dry-run           Compile every rule; no cluster or log needed.
     --audit-log PATH    API server audit log (JSON lines). Default strict. Without it a
-                        strict run reads /tmp/kube-apiserver-audit.log.
+                        strict run reads /tmp/kube-apiserver-audit.log. An empty value
+                        (--audit-log '') is an audit log that does not exist: the
+                        default is only for a run without the option.
     --cri-log PATH      node runtime sensor log (crictl pods snapshots), optional in a
                         strict run.
     --file-log PATH     node file-event sensor log (linux/file_event JSON lines:
                         TargetFilename, Image, ProcessId, EventType, Timestamp), optional
                         in a strict run.
                         In a strict run a rule whose log is not given is skipped, and a
-                        run with no log at all prints SKIP and exits 0 (for a local run
-                        without a cluster).
+                        run that finds no log at all prints SKIP and exits 0 (for a
+                        local run without a cluster).
     --expect-miss       Negative control: fail if any gated rule passes. A negative
                         control that read no record cannot fail, so it proves nothing.
                         Thus the run also fails (exit 1) when one of the three logs is
-                        not given (--audit-log has no default in this mode), when the
-                        audit log does not exist, and when one of the three logs holds
+                        not given (--audit-log has no default in this mode, and an
+                        empty value of it counts as not given), when the audit log
+                        does not exist, and when one of the three logs holds
                         no record. The count is the number that the `Loaded N ...` line
                         prints: the JSON objects of the lines of the audit log or the
                         file log that are not blank, and one sandbox for each sandbox
@@ -2155,7 +2158,7 @@ def write_json(path, report):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Validate TRR9004-9010, 9025-9031, 9033-9035 K8s detections.")
+        description="Validate TRR9004-9010, 9025-9031, 9033-9035, 9039 K8s detections.")
     ap.add_argument("--audit-log",
                     help="Path to the API server audit log (JSON lines). A strict run "
                          f"without it reads {DEFAULT_AUDIT_LOG}; --expect-miss needs it.")
@@ -2282,8 +2285,14 @@ def validate(args, report):
 
     logs = {}
     # A negative control must name the log that was captured before the emulation:
-    # the default is the log of a live run.
-    audit_log = args.audit_log or (None if args.expect_miss else DEFAULT_AUDIT_LOG)
+    # the default is the log of a live run, and an empty value counts as a log that
+    # is not given. A strict run takes the default only when the option is absent:
+    # an empty value (--audit-log '') is then a log that does not exist, as it was
+    # before the negative control got its checks.
+    if args.expect_miss:
+        audit_log = args.audit_log or None
+    else:
+        audit_log = DEFAULT_AUDIT_LOG if args.audit_log is None else args.audit_log
     if audit_log is None:
         print("\nNo audit log given (--audit-log).")
     elif os.path.exists(audit_log):

@@ -69,8 +69,10 @@ Modes:
         Full validation. Default strict: a rule that misses a required
         emulation pod, or a failed control, fails the run (exit 1). In a strict
         run a rule whose log is not given is skipped; without --audit-log the
-        run reads /tmp/kube-apiserver-audit.log, and with no log at all it
-        prints SKIP and exits 0 (for a local run without a cluster).
+        run reads /tmp/kube-apiserver-audit.log, and when it finds no log at all
+        it prints SKIP and exits 0 (for a local run without a cluster). An empty
+        value (--audit-log '') is an audit log that does not exist: the default
+        is only for a run without the option.
 
     ... --ledger PATH
         The emulation ledger (atomics/T1543.005/src/emulate.sh appends one JSON
@@ -91,16 +93,16 @@ Modes:
         A negative control that read no record cannot fail, so it proves
         nothing. Thus each rule must have its pre-emulation log. A log that is
         not given is a failed control, and the run exits 1 (the row of its
-        rule is a SKIP; --audit-log has no default in this mode). An audit log
-        that does not exist and an audit log that holds no audit event are
-        failed controls too. The count is the number that the `Loaded N audit
-        event(s)` line prints: the JSON objects of the lines that are not
-        blank. The CRI control and the file control fail a CRI log without an
-        API-scheduled sandbox and a file log without a kubeadm write, so an
-        empty CRI or file log fails there; the line of that failure names the
-        log and the number of records that it holds. The run does not fail an
-        audit log whose records hold no mirror-pod create of the control-plane
-        baseline.
+        rule is a SKIP; --audit-log has no default in this mode, and an empty
+        value of it counts as not given). An audit log that does not exist and
+        an audit log that holds no audit event are failed controls too. The
+        count is the number that the `Loaded N audit event(s)` line prints: the
+        JSON objects of the lines that are not blank. The CRI control and the
+        file control fail a CRI log without an API-scheduled sandbox and a file
+        log without a kubeadm write, so an empty CRI or file log fails there;
+        the line of that failure names the log and the number of records that
+        it holds. The run does not fail an audit log whose records hold no
+        mirror-pod create of the control-plane baseline.
 
     ... --report
         Report misses in the summary instead of failing on them.
@@ -896,8 +898,14 @@ def validate(args, report):
 
     logs = {}
     # A negative control must name the log that was captured before the emulation:
-    # the default is the log of a live run.
-    audit_log = args.audit_log or (None if args.expect_miss else DEFAULT_AUDIT_LOG)
+    # the default is the log of a live run, and an empty value counts as a log that
+    # is not given. A strict run takes the default only when the option is absent:
+    # an empty value (--audit-log '') is then a log that does not exist, as it was
+    # before the negative control got its checks.
+    if args.expect_miss:
+        audit_log = args.audit_log or None
+    else:
+        audit_log = DEFAULT_AUDIT_LOG if args.audit_log is None else args.audit_log
     if audit_log is None:
         print("\nNo audit log given (--audit-log).")
     elif os.path.exists(audit_log):
