@@ -27,8 +27,8 @@ python3 -B detections/tests/gatelib.py --gaps                                   
 
 `gatelib.py --run` runs the same tests as `unittest discover`, with one Python
 process for each test class, as many at a time as the machine has CPUs. Then it
-prints the known gaps. It takes about two minutes on a development machine with four
-CPUs, and about three and a half minutes on a GitHub runner (four CPUs). The
+prints the known gaps. It takes about two and a half minutes on a development machine
+with four CPUs, and about three and a half minutes on a GitHub runner (four CPUs). The
 tests in sequence take about four minutes on the development machine. It fails:
 
 - when a class fails;
@@ -84,7 +84,7 @@ after each test or test class.
 | `test_gatelib.py` | Tests of the harness, on constructed gates. |
 | `test_sufficiency.py` | `rule_cases.py` (and through it the event table of `sigma_eval.py`), the import guard of `sigma_eval.py`, `check_sufficiency.py` (R0 to R4 and the waiver digests), the sufficiency ratchet, the self-test of `sigma_explain.py`. |
 | `test_quality.py` | `score_benign.py` and the benign ratchet, `check_null_safety.py`, `check_provider_mappings.py`, `k8s_policy_coverage.py`, `k8s_platforms_md.py`, `coverage_report.py`. |
-| `test_validators.py` | The cloud validator (a rule must fire on a marked record of its attack fixture and on no benign record; a fixture that is missing and a benign baseline without a record fail the run, also with `--report`), the Linux validator (dry run, with the check of its `CONTROLS` table; and its verdict code on canned results: the detections; the no-op baseline, which must own a record; each mutant and each re-run, which must be held by what it declares (an item of its rule, or the success gate); the limits of the exemption for a rule whose emulation is a SKIP; a live negative control for each rule), the three Kubernetes validators (dry run; the negative-control step, which fails when a rule passes on a pre-emulation log, when a pre-emulation log is not given or is missing, and when the audit log holds no record; for the API server validator, also when the CRI log or the file log holds no record; and the lines of the capture step of that validator's workflow that make the pre-emulation file log, on a constructed raw audit log), `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py`, `check_schedule_freshness.py`. |
+| `test_validators.py` | The cloud validator (a rule must fire on a marked record of its attack fixture and on no benign record; a fixture that is missing or is a directory, and a benign baseline without a record, fail the run, also with `--report`), the Linux validator (dry run, with the check of its `CONTROLS` table; and its verdict code on canned results: the detections; the no-op baseline, which must own a record; each mutant and each re-run, which must be held by what it declares (an item of its rule, or the success gate); the limits of the exemption for a rule whose emulation is a SKIP; a live negative control for each rule), the three Kubernetes validators (dry run; the negative-control step, which fails when a rule passes on a pre-emulation log, when a pre-emulation log is not given or is missing, and when the audit log holds no record; for `validate_k8s_detections.py`, also with `--report`, and its `--json` report says that the control failed; for the static pod validator, also when the CRI log holds no API-scheduled sandbox or the file log holds no `kubeadm` write, with a line that names the log and the number of its records; for the API server validator, also when the CRI log or the file log holds no record, and a CRI snapshot without a sandbox is no record; the lines of the capture step of that validator's workflow that make the pre-emulation file log, on a constructed raw audit log that holds the audit key of the canary watch of the file sensor step; and the strict run, which prints SKIP and exits 0 when it finds no log, and gets no check of the negative control), the converter of the node file sensor, `k8s/auditd_file_events.py` (one summary line on stderr for each run, only the JSON lines on stdout, and no workflow command that sends stderr to the file log), `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py`, `check_schedule_freshness.py`. |
 | `test_suite.py` | Rules of the suite as a whole: each self-test has a runner, the CI job runs every test on every pull request, the `emulation-scripts` job does the same for `atomics/tests/`, no workflow step pipes a command into `tee` without pipefail, no step that runs a gate or the unit tests has `continue-on-error`, each known gap names a roadmap item, each planted artifact is used, this file agrees with the tests. |
 | `test_apt_install.py` | Tests of `.github/scripts/apt_install.sh`, the step that installs `auditd`, with a stub for `sudo`, `apt-get`, `unshare`, `mount`, `getent` and `timeout`. When the runner cannot resolve the package mirror, or apt printed a message about name resolution, or the mirror does not resolve after a failed run, apt gets one run with public resolvers in a private mount namespace; the script fails only after apt failed in a run with the resolver of the runner (but in the forced way of the CI job); a necessary package that is not installed fails the step; a text that is not a package name (also a name that ends with `-`, which apt reads as a removal) or not an address is refused. The class `DirectInstalls` (with two CONTROLs) fails when a workflow (a `run:` text, a `with:` or `env:` value), a composite action or a shell script (`*.sh`, or a shell on its first line) installs packages in a usual form (`apt-get install`, `apt update`, `dpkg -i`, `snap install`, also with options, a path or quotes) without the script. The one line that is allowed is `apt-get update -qq` in `detections/benign/linux/workload.sh`. It is a rule on text: a command that is built at run time, or that a different program starts, is not seen. The stubs do not show that the namespace works on a runner: the CI job `apt-install-fallback` does. It forces that way, and its CONTROL step gives a resolver that does not answer (`APT_INSTALL_RESOLVERS`) and fails if the install then passes. |
 | `known_bad/<group>/` | The planted artifacts of that group. `known_bad/gatelib/` holds samples for `test_gatelib.py`. |
@@ -355,10 +355,19 @@ it does not see one test in the place of a different one.
 - The suite runs two lines of the capture step of
   `validate-apiserver-detections.yml`: the lines that convert the runner's audit
   log into the pre-emulation file log. It runs them on a raw audit log that the
-  test constructs (one record of the canary key, one record of another key). No
-  test shows that the runner's auditd records the canary read, or that the
-  capture of a real cluster holds it. Only the jobs `validate-apiserver` and
+  test constructs (one record of the canary key, one record of another key). The
+  canary key is the key of the `auditctl` line of the file sensor step: the test
+  reads that line, in the two jobs, and does not run the step. No test shows that
+  the runner's auditd records the canary read, or that the capture of a real
+  cluster holds it. Only the jobs `validate-apiserver` and
   `validate-apiserver-recommended` show that.
+- One run reads a path outside its sandbox. The control of a strict run of each
+  Kubernetes validator runs the validator without `--audit-log`, so the validator
+  looks for `/tmp/kube-apiserver-audit.log` on the machine of the test. A CI
+  runner of `gate-tests` does not have that file: the test asserts the SKIP line
+  and exit code 0. A machine that ran the lab can have it: the test then asserts
+  only that the run loads that log. A second run of the same test names a log in
+  the sandbox that does not exist, and it asserts the SKIP line on each machine.
 - No offline check compares the item that a row of the `CONTROLS` table of
   `detections/validate_detections.py` declares with the C program of that row.
   The canned events of a Linux control come from a rule sidecar, not from the C

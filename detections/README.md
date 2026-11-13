@@ -1130,17 +1130,20 @@ A negative control that read no record cannot fail, so it proves nothing. With
 - **A log does not exist.**
 - **A log holds no record.** A record is what the loader returns, which is what the
   rules are run on. The `Loaded N ...` line prints the number: the JSON objects of the
-  lines of an audit log or a file log, and one sandbox for each sandbox id of a CRI
-  log. A blank line and a line that is not JSON are not records. The message gives
-  the number of lines that are not blank, so a capture that recorded nothing (0
-  lines) is told from a capture that did not parse.
+  lines of an audit log or a file log, and one sandbox for each sandbox object of a
+  CRI log (by `id`: an object whose `id` the log held before is not counted again,
+  and the objects without an `id` count as one). A blank line and a line that is not
+  JSON are not records. The message gives the number of lines that are not blank, so
+  a capture that recorded nothing (0 lines) is told from a capture that did not
+  parse (N lines). For a CRI log, N lines with 0 records is also a capture of
+  snapshots that parsed and hold no sandbox (`{"items": []}`).
 
 What each validator prints:
 
 | Validator | A log without a record | A log that is not given or does not exist |
 |-----------|------------------------|-------------------------------------------|
 | `validate_k8s_detections.py` | `NEGATIVE CONTROL FAILED: the pre-emulation audit log <path> holds no audit event (0 records read from N non-blank line(s))`. No rule is judged. | `ERROR: no pre-emulation audit log was given (--audit-log)`, or `ERROR: the pre-emulation audit log <path> was not found`. |
-| `validate_staticpod_detections.py` | `CONTROL FAILED: no audit event in the pre-emulation audit log <path> ...`, then `FAILED: N control(s) failed.` The CRI control and the file control fail a CRI log without an API-scheduled sandbox and a file log without a `kubeadm` write, so they fail an empty CRI or file log. | A `CONTROL FAILED` line for each log that is not given, and for an audit log that does not exist. A CRI or file log that is given and does not exist is an `ERROR`. |
+| `validate_staticpod_detections.py` | `CONTROL FAILED: no audit event in the pre-emulation audit log <path> ...`, then `FAILED: N control(s) failed.` The CRI control and the file control fail a CRI log without an API-scheduled sandbox and a file log without a `kubeadm` write, so they fail an empty CRI or file log. The `CONTROL FAILED` line of each names the log and the number of records that it holds: `(the CRI log <path> holds N pod sandbox(es))`, `(the file log <path> holds N file event(s))`. | A `CONTROL FAILED` line for each log that is not given, and for an audit log that does not exist. A CRI or file log that is given and does not exist is an `ERROR`. |
 | `validate_apiserver_detections.py` | One `NEGATIVE CONTROL FAILED: the pre-emulation <log> <path> holds no <record> ...` line for each of the audit log, the CRI log and the file log. | One `NEGATIVE CONTROL FAILED` line for each log that is not given, and for an audit log that does not exist. A CRI or file log that is given and does not exist is an `ERROR`. |
 
 The file log of the API server lab is the audit trail of one watched token file, and
@@ -1149,12 +1152,18 @@ step of `validate-apiserver-detections.yml` also converts the canary read of the
 sensor step (audit key `k8s_node_canary`): a read of the public `ca.crt` beside the
 token. Such a record is a near-miss of the token rule: it is under
 `kubernetes.io~projected/`, and its name does not end in `/token`. The gate tests run
-the converter lines of the capture step on a constructed auditd record of the canary
-key; only the kind job shows the record that the runner's auditd writes.
+the converter lines of the capture step on a constructed auditd record. That record
+holds the key that the file sensor step gives to its canary watch, so a capture step
+that converts another key fails the tests. Only the kind job shows the record that
+the runner's auditd writes.
 
-The checks count records. They do not grade them: a log whose records are all far
-from the rules passes (a log of `{}` lines), and the static pod validator does not
-require a mirror-pod create of the control-plane baseline in the audit log.
+The checks count records. They do not grade them. A log of `{}` lines passes today:
+each loader counts a JSON object that is not a record of its log. Roadmap item R2d
+closes that (the known gap `k8s-log-object-not-an-audit-event` of the gate tests). How
+near the records of a live capture are to a rule is not a claim of the Kubernetes
+negative control: the near-miss of each rule is proven by its rule cases (item 3 of
+the definition of done). The static pod validator does not require a mirror-pod
+create of the control-plane baseline in the audit log.
 
 A strict run is not changed. Without `--audit-log` it reads
 `/tmp/kube-apiserver-audit.log`; a rule whose log is not given is skipped, and a run
@@ -1209,7 +1218,10 @@ source (`--file-log`), and each gates its rule on one marked emulation record (C
   `Timestamp`). The `exe` and the PATH `name` are the paths that the node process
   saw, so they are the values the rules read. A relative name of a `*at` syscall
   with a real directory fd cannot be placed; the converter skips it and counts it
-  on stderr.
+  on stderr. Each run also prints one summary line on stderr: the raw log, the
+  audit records and the events that it read, the events with the key, the file
+  events that it wrote and the PATH items that it skipped. Thus the log of a
+  capture step shows why a file log is empty. stdout holds only the JSON lines.
 - **Static-pod directory (TRR9003).** `k8s/kind-staticpod-cluster.yaml` bind-mounts
   `.kind/trr9003-manifests` in the checkout (a relative path, which kind resolves
   against the working directory, as it does the audit policy) at the node's
