@@ -52,6 +52,22 @@ def in_source(tree, script, pattern):
     return found
 
 
+def without_the_manifest_entry(test, tree, gate):
+    """Remove the MANIFEST entry of afxdp_socket.yml from the Linux validator of a
+    copy. Its CONTROLS row stays: a row for a rule that no atomic proves."""
+    def change(text):
+        # BAD: MANIFEST holds no atomic for afxdp_socket.yml; CONTROLS has its row.
+        text, found = re.subn(
+            r'    \("detections/sigma/T1040/afxdp_socket\.yml",\n'
+            r'     "atomics/T1040/src/afxdp_socket_behavioral\.c", \[\],\n'
+            r'     \[socket_family\(AF_XDP, socket\.SOCK_RAW, 0, "AF_XDP"\)\]\),\n', "", text)
+        test.assertEqual(found, 1, "the MANIFEST entry of afxdp_socket.yml was not found")
+        test.assertIn('"detections/controls/afxdp_netlink_socket.c"', text)
+        return text
+
+    tree.edit(gate, change)
+
+
 def write_log(tree, name, sidecar=None, *cases):
     """Write a sensor log for a workflow step that reads /tmp/<name>.
 
@@ -327,11 +343,13 @@ class CloudValidator(gatelib.GateCase):
 
 
 class LinuxValidatorDryRun(gatelib.GateCase):
-    """detections/validate_detections.py --dry-run: every rule of MANIFEST and
-    CONTROLS compiles with pySigma, and every atomic and control compiles with gcc.
+    """detections/validate_detections.py --dry-run: the CONTROLS table has no bad
+    row, every rule of MANIFEST and CONTROLS compiles with pySigma, and every atomic
+    and control compiles with gcc.
 
     No workflow runs --dry-run. The validate job (validate-detections.yml) runs the
-    real mode, which does the same compile step first and stops on its errors."""
+    real mode, which does the same check of the table and the same compile step
+    first, and stops on their errors."""
 
     GATE = "detections/validate_detections.py"
     PARTS = ("detections", "atomics")
@@ -373,6 +391,89 @@ class LinuxValidatorDryRun(gatelib.GateCase):
         self.assertEqual(len(re.findall(r"^  \[ERROR \] ", result.stdout, re.MULTILINE)), 1)
         self.assertNotIn("atomics/controls compiled.", result.stdout)
 
+    # The five tests below plant one bad row in the CONTROLS table. The validator
+    # checks the table before it compiles or runs anything, in every mode. The row
+    # is the one of afxdp_socket.yml (its rule has no other built control).
+    AFXDP_ROW = (r"^  \[ERROR \] CONTROLS row \d+ \({source} -> afxdp_socket\.yml\)  ")
+    AFXDP_DECLARED = '''"the a0 (AF_XDP) argument constraint was not enforced",
+     ["afxdp_socket.a0"]),'''
+
+    def rejects_the_table(self, tree, fault, source=r"afxdp_netlink_socket\.c"):
+        """The dry run of `tree` ends with exit code 1, one [ERROR ] line that names
+        the CONTROLS row of afxdp_socket.yml with `fault`, and nothing compiled."""
+        result = tree.run(self.GATE, "--dry-run")
+        self.assert_rejects(result, self.AFXDP_ROW.format(source=source) + fault, exit_code=1)
+        self.assertEqual(len(re.findall(r"^  \[ERROR \] ", result.stdout, re.MULTILINE)), 1)
+        self.assert_saw(result, r"^ERROR: the CONTROLS table of validate_detections\.py has "
+                                r"1 fault\(s\); nothing was compiled and no stimulus ran\.$")
+        self.assertNotIn("atomics/controls compiled.", result.stdout)
+        return result
+
+    def test_rejects_controls_row_that_declares_nothing(self):
+        """A built control must declare what holds it. A row whose declaration is an
+        empty list can never be held as declared: an empty list is equal to the grade
+        of a control that no item of the rule holds. (At commit 95e3ddc the real mode
+        printed `held` for such a control when no item of its rule held it, and
+        counted it as live.)"""
+        tree = self.tree()
+        # BAD: the row declares nothing.
+        tree.replace(self.GATE, self.AFXDP_DECLARED,
+                     self.AFXDP_DECLARED.replace('["afxdp_socket.a0"]', "[]"))
+        self.rejects_the_table(
+            tree, r"declares nothing: the fifth field must be a non-empty list of the "
+                  r"item\(s\) that hold the control ")
+
+    def test_rejects_controls_row_whose_declaration_is_a_tuple(self):
+        """The declared items must be a list. A row that gives them as a tuple
+        declares an item, so `declares nothing` is not its fault: the message names
+        the value and says that it is a tuple. (At commit db11636 such a row got the
+        message of a row that declares nothing.)"""
+        tree = self.tree()
+        # BAD: the fifth field of the row is a tuple, not a list.
+        tree.replace(self.GATE, self.AFXDP_DECLARED,
+                     self.AFXDP_DECLARED.replace('["afxdp_socket.a0"]',
+                                                 '("afxdp_socket.a0",)'))
+        result = self.rejects_the_table(
+            tree, r"its declared items \(the fifth field\) are \('afxdp_socket\.a0',\), a "
+                  r"tuple and not a list: write the item\(s\) that hold the control as a list ")
+        self.assertNotIn("declares nothing", result.stdout)
+
+    def test_rejects_controls_row_with_four_fields(self):
+        """A row without its declaration (four fields) is refused with a message that
+        names the row. (At commit 95e3ddc the dry run accepted the table, and the real
+        mode ended with a traceback after every atomic had run.)"""
+        tree = self.tree()
+        # BAD: the fifth field of the row is gone.
+        tree.replace(self.GATE, self.AFXDP_DECLARED,
+                     self.AFXDP_DECLARED.replace(',\n     ["afxdp_socket.a0"]', ""))
+        self.rejects_the_table(tree, r"has 4 field\(s\), not five \(rule, C source, arguments, "
+                                     r"meaning of a pass, declared items\)$")
+
+    def test_rejects_controls_row_for_a_rule_that_is_not_in_manifest(self):
+        """A control is graded against a rule that an atomic proves. The planted
+        MANIFEST has no entry for afxdp_socket.yml, and the CONTROLS row of that rule
+        stays: no emulation proves the rule, and the validator counts the live
+        negative controls for the rules of MANIFEST only."""
+        tree = self.tree()
+        without_the_manifest_entry(self, tree, self.GATE)
+        self.rejects_the_table(
+            tree, r"its rule 'detections/sigma/T1040/afxdp_socket\.yml' is not a rule of "
+                  r"MANIFEST: ")
+
+    def test_rejects_controls_row_whose_source_does_not_exist(self):
+        """A row that names a C source that is not in the repository is refused with
+        a message that names the row, before gcc runs. (Without the check the compile
+        step fails on that source, with the message of an atomic that does not
+        compile.)"""
+        tree = self.tree()
+        # BAD: the row names a control that does not exist.
+        tree.replace(self.GATE, '"detections/controls/afxdp_netlink_socket.c", [],',
+                     '"detections/controls/afxdp_no_such_control.c", [],')
+        result = self.rejects_the_table(
+            tree, r"its C source 'detections/controls/afxdp_no_such_control\.c' does not "
+                  r"exist$", source=r"afxdp_no_such_control\.c")
+        self.assertNotIn("compile failed", result.stdout)
+
 
 class LinuxValidatorOffline(gatelib.GateCase):
     """detections/validate_detections.py in its real mode (the validate job:
@@ -385,12 +486,57 @@ class LinuxValidatorOffline(gatelib.GateCase):
     events from the rule sidecars of the copy. The verdict code is the validator's
     own: process_tree() (which records are the stimulus's own), judge(), the control
     table, grade_control() and the exit code. Without an argument the canned run is
-    healthy; one argument plants one defect in it."""
+    healthy; one argument plants one defect in it (and `--missing` is a host that
+    lacks a kernel feature, which is not a defect).
+
+    What these tests cannot show: that a C program in detections/controls/ makes
+    the calls that its CONTROLS row declares. The canned events of a mutant come
+    from the sidecar case of the item that the row declares, so the grade follows
+    the row: no test here compares a row with its program. Only the job `validate`
+    grades the programs."""
 
     GATE = "detections/validate_detections.py"
     DRIVER = "linux_offline_run.py"
     PARTS = gatelib.DETECTIONS      # the driver compiles nothing: no atomics, no gcc
     NOOP = "detections/controls/noop.c"
+    # The mutants, the re-runs and the atomics in which a test plants a defect, and
+    # two lines of the validator's output.
+    AFINET = "detections/controls/afinet_stream_socket.c"        # a second control: `ping`
+    PTRACE = "detections/controls/ptrace_attach_child.c"         # the only control
+    PTRACE_ATOMIC = "atomics/T1622/src/ptrace_traceme_behavioral.c"
+    COPYFAIL = "detections/controls/copyfail_unix_socket_splice.c"   # of a correlation
+    COPYFAIL_ATOMIC = "atomics/T1068/src/copyfail_behavioral.c"
+    AFXDP = "detections/controls/afxdp_netlink_socket.c"         # an AF_NETLINK socket only
+    AFXDP_ATOMIC = "atomics/T1040/src/afxdp_socket_behavioral.c"
+    # Two mutants of a correlation that make two syscalls of their rule: the memfd
+    # one in two pids (memfd_create, and execveat in a child), the DirtyFrag one in
+    # one pid (unshare and socket).
+    MEMFD = "detections/controls/memfd_fexecve_in_child.c"
+    MEMFD_ATOMIC = "atomics/T1620/src/memfd_exec_behavioral.c"
+    DIRTYFRAG = "detections/controls/dirtyfrag_netlink_route_socket.c"
+    DIRTYFRAG_ATOMIC = "atomics/T1068/src/dirtyfrag_xfrm_behavioral.c"
+    USERFAULTFD = "detections/controls/userfaultfd_bad_flags.c"  # declares the success gate
+    # setns_namespace_join.yml: its only built control is the re-run as `runc`.
+    SETNS_RERUN = "atomics/T1611/src/setns_namespace_join_behavioral.c as runc"
+    # afpacket_raw_socket.yml: the one rule with two emulations (two MANIFEST entries).
+    AFPACKET_FIRST = "atomics/T1040/src/afpacket_rawsocket_behavioral.c"
+    AFPACKET_SECOND = "atomics/T1040/src/afpacket_mmap_ring_behavioral.c"
+    BROKEN_ROW = r"^  \[BROKEN\] "
+    SUMMARY = (r"^{passed} passed, {skipped} skipped \(kernel feature missing\), 0 failed; "
+               r"{broken} control\(s\) broken\.$")
+    # The row of the one exemption: a mutant of a skipped rule, not held as declared,
+    # of which the kernel rejected one or more calls that the rule reads. The row
+    # ends where this text ends.
+    NOT_APPLICABLE = (r"^  \[ N/A  \] {row} +not held as declared \(built to break {built}, "
+                      r"graded {graded}\)\. The emulation of this rule was SKIPPED \(kernel "
+                      r"feature missing\), and the kernel rejected one or more calls of the "
+                      r"control that the rule reads \({refused}\): the validator takes it that "
+                      r"this host cannot exercise the control")
+    # The line beneath a BROKEN row of a mutant of a skipped rule.
+    SKIP_EXPLAINS_NOTHING = (r"^ +the emulation of this rule was SKIPPED, but that does not "
+                             r"explain the grade: the kernel rejected no call of the control "
+                             r"that the rule reads \(it accepted each one, or the control made "
+                             r"none\)$")
 
     @classmethod
     def setUpClass(cls):
@@ -411,10 +557,40 @@ class LinuxValidatorOffline(gatelib.GateCase):
         Without --require-audit a host that cannot audit is a SKIP with exit 0."""
         self.assert_ci_runs(self.GATE, "--require-audit")
 
+    def negatives(self, report):
+        """{rule file name: its entry} of `negatives` in a --json report: for each
+        rule of MANIFEST, the built controls that are live, and a status."""
+        with open(report, encoding="utf-8") as fh:
+            return {os.path.basename(row["rule"]): row for row in json.load(fh)["negatives"]}
+
+    @staticmethod
+    def row_label(control):
+        """The start of the validator's label for a control that the driver names
+        `SRC` (a mutant) or `ATOMIC as NAME` (a re-run under an allowlisted name)."""
+        src, _, name = control.partition(" as ")
+        return os.path.basename(src) + (f" as '{name}'" if name else "") + " -> "
+
+    def control_row(self, report, control):
+        """The row of one built control in a --json report."""
+        with open(report, encoding="utf-8") as fh:
+            rows = [row for row in json.load(fh)["controls"]
+                    if row["control"].startswith(self.row_label(control))]
+        self.assertEqual(len(rows), 1, f"{control}: one row wanted in the report")
+        return rows[0]
+
+    def graded(self, report, control):
+        """What the validator read for one control, from a --json report: (the kind
+        of its grade, the items that hold it, the lines that grade its nearest event
+        item by item). The report holds them for a control that is held and for one
+        that is broken."""
+        row = self.control_row(report, control)
+        return row["kind"], row["graded"], "\n".join(row["verdict"])
+
     def test_control_canned_run_is_accepted(self):
         """CONTROL: every atomic passes on the records of its own process tree, and
         every control holds: the no-op on each rule, each mutant, and each re-run
-        under an allowlisted name."""
+        under an allowlisted name. Each mutant and each re-run is held by the item
+        that it declares, so each rule has a live negative control."""
         tree = self.offline
         atomics = in_source(tree, self.GATE, r'"(atomics/[^"]+\.c)"')      # one per entry
         rules = set(in_source(tree, self.GATE, r'"(detections/sigma/[^"]+\.yml)"'))
@@ -432,12 +608,14 @@ class LinuxValidatorOffline(gatelib.GateCase):
             controls = json.load(fh)["controls"]
         self.assertEqual({row["status"] for row in controls}, {"held"})
         # The no-op ran on every rule; its window holds its own record and one of
-        # another process.
+        # another process. It is graded (it owns a record), and it is never live.
         noop = [row for row in controls if row["control"].startswith("noop -> ")]
         self.assertEqual(len(noop), len(rules))
         self.assertEqual({row["detail"] for row in noop},
                          {"no hit from the stimulus (2 events in window)"})
-        # Each mutant and each allowlisted re-run holds for the reason it is built for.
+        self.assertEqual({(row["kind"], row["live"]) for row in noop}, {("baseline", False)})
+        # Each mutant and each allowlisted re-run holds for the reason it is built
+        # for, and so it is live.
         built = [row for row in controls if row not in noop]
         stimuli = {row["control"].split(" -> ")[0] for row in built}
         for mutant in sorted(mutants):
@@ -445,7 +623,20 @@ class LinuxValidatorOffline(gatelib.GateCase):
         self.assertIn("afinet_raw_socket_behavioral.c as 'ping'", stimuli)
         for row in built:
             self.assertEqual(sorted(row["graded"]), sorted(row["expected"]), row["control"])
-            self.assertFalse(row.get("warning"), row["control"])
+            self.assertTrue(row["expected"], row["control"])
+            self.assertIs(row["live"], True, row["control"])
+        # Each rule has a live negative control, and it is one of those rows.
+        negatives = self.negatives(report)
+        self.assertEqual(set(negatives), {os.path.basename(rule) for rule in rules})
+        labels = {row["control"] for row in built}
+        for name, entry in sorted(negatives.items()):
+            self.assertEqual(entry["status"], "live", name)
+            self.assertTrue(entry["live"], name)
+            self.assertLessEqual(set(entry["live"]), labels, name)
+            for label in entry["live"]:
+                self.assertTrue(label.endswith(f" -> {name}"), label)
+        self.assert_saw(result, r"^Live negative control \(a mutant or a re-run that is held as "
+                                rf"declared\): {len(rules)} of {len(rules)} rule\(s\)\.$")
 
     def test_rejects_detection_fired_by_another_process(self):
         """Definition of done 1 (fires on its own emulation). The records that fire
@@ -529,18 +720,12 @@ class LinuxValidatorOffline(gatelib.GateCase):
             exit_code=1)
         self.assertNotIn("[ PASS ]", result.stdout)
 
-    @gatelib.known_gap(
-        "linux-noop-control-vacuous",
-        gate="detections/validate_detections.py",
-        reason="The no-op control is `held` on every rule when its process tree made no "
-               "audited syscall: vacuity is graded only for a control with an `expected` "
-               "list (mutants and allowlisted re-runs). The real controls/noop.c makes no "
-               "syscall that audit/atomic.rules audits, so on every real run the no-op "
-               "rows cannot fail, and detections/README.md says such a control fails the run.",
-        closes="R2b")
-    def test_gap_noop_control_that_made_no_audited_syscall(self):
-        """WANTED: the no-op is graded for vacuity as the mutants are. A no-op whose
-        process tree made no audited syscall is a broken control, and the run fails."""
+    def test_rejects_noop_control_that_made_no_audited_syscall(self):
+        """The no-op is graded for vacuity as the mutants are. A no-op whose process
+        tree made no audited syscall is a broken control, and the run fails. (Until
+        roadmap item R2b this was the known gap linux-noop-control-vacuous: the
+        validator did not grade the no-op, and the real noop.c made no audited
+        syscall.)"""
         report = self.offline.out("noop-vacuous.json")
         result = self.canned_run("--vacuous", self.NOOP, report=report)
         # The validator read the canned no-op: on every rule, its window holds only
@@ -553,6 +738,711 @@ class LinuxValidatorOffline(gatelib.GateCase):
         self.assertEqual({row["detail"] for row in rows},
                          {"no hit from the stimulus (1 events in window)"})
         self.assert_rejects(result, r"^  \[BROKEN\] noop -> \S+\.yml +vacuous", exit_code=1)
+        # One defect: the no-op row of each rule is broken, and no other row is.
+        self.assertEqual({row["status"] for row in rows}, {"BROKEN"})
+        self.assertEqual(len(re.findall(self.BROKEN_ROW, result.stdout, re.MULTILINE)),
+                         len(rules))
+
+    def test_rejects_rule_that_has_no_built_control(self):
+        """Definition of done 2 (stays quiet). Each rule of MANIFEST needs a live
+        negative control: a mutant or a re-run that is held by the item it declares.
+        The no-op does not count. The planted validator has no CONTROLS row for
+        afxdp_socket.yml, and that rule has no allowlist to re-run (the state of seven
+        rules before roadmap item R2b)."""
+        tree = self.tree()
+        tree.plant("validators/linux_offline_run_py.txt", self.DRIVER)
+
+        def without_the_row(text):
+            # BAD: the row of CONTROLS for afxdp_socket.yml is gone.
+            text, found = re.subn(r'    \("detections/sigma/T1040/afxdp_socket\.yml",\n'
+                                  r'     "detections/controls/afxdp_netlink_socket\.c", .*?\]\),\n',
+                                  "", text, flags=re.DOTALL)
+            self.assertEqual(found, 1, "the CONTROLS row of afxdp_socket.yml was not found")
+            return text
+
+        tree.edit(self.GATE, without_the_row)
+        report = tree.out("no-control.json")
+        result = tree.run(self.DRIVER, "--require-audit", "--json", report)
+        # The validator read the rule (its atomic passes and the no-op holds on it),
+        # and it ran no built control for it.
+        self.assert_saw(result, r"^  \[ PASS \] afxdp_socket\.yml ")
+        self.assert_saw(result, r"^  \[ held \] noop -> afxdp_socket\.yml ")
+        with open(report, encoding="utf-8") as fh:
+            rows = [row for row in json.load(fh)["controls"]
+                    if row["rule"].endswith("/afxdp_socket.yml")]
+        self.assertEqual([row["control"] for row in rows], ["noop -> afxdp_socket.yml"])
+        self.assert_rejects(
+            result,
+            r"^  \[BROKEN\] afxdp_socket\.yml +no live negative control: no control is built "
+            r"for this rule ", exit_code=1)
+        self.assert_saw(result, self.SUMMARY.format(passed=r"\d+", skipped=0, broken=1))
+        self.assertEqual(len(re.findall(self.BROKEN_ROW, result.stdout, re.MULTILINE)), 1)
+        self.assertEqual(self.negatives(report)["afxdp_socket.yml"],
+                         {"rule": "detections/sigma/T1040/afxdp_socket.yml",
+                          "status": "BROKEN", "live": []})
+
+    def test_rejects_wrong_argument_control_that_no_longer_reaches_its_rule(self):
+        """Definition of done 2 (stays quiet). The only built control of
+        ptrace_traceme.yml does not make its ptrace call: its one record is far from
+        the rule. The rule stays quiet, but not for the reason that the control
+        declares (the a0 item), so the control is broken and the rule has no live
+        negative control. Before roadmap item R2b the validator printed a WARNING
+        for such a control and passed."""
+        report = self.offline.out("distant-only-control.json")
+        result = self.canned_run("--distant", self.PTRACE, report=report)
+        # The validator read the planted record: an ioctl call, not a ptrace call.
+        kind, items, nearest = self.graded(report, self.PTRACE)
+        self.assertEqual((kind, items), ("distant", []))
+        self.assertRegex(nearest,
+                         r"(?m)^ +no +syscall +syscall='ioctl' +\(rule wants: 'ptrace'\)$")
+        self.assert_rejects(
+            result,
+            r"^  \[BROKEN\] ptrace_attach_child\.c -> ptrace_traceme\.yml +not held as "
+            r"declared: built to break ptrace_traceme\.a0, but graded distant$", exit_code=1)
+        self.assert_saw(result, self.SUMMARY.format(passed=r"\d+", skipped=0, broken=1))
+        self.assertEqual(len(re.findall(self.BROKEN_ROW, result.stdout, re.MULTILINE)), 1)
+        self.assertEqual(self.negatives(report)["ptrace_traceme.yml"]["live"], [])
+        self.assertEqual(self.negatives(report)["ptrace_traceme.yml"]["status"], "BROKEN")
+        self.assert_saw(result, r"^  none for ptrace_traceme\.yml: see the BROKEN row\(s\) above$")
+
+    def test_rejects_control_held_for_another_reason_on_a_rule_with_a_second_control(self):
+        """EVERY built control must be held by the item it declares, not only one for
+        each rule. afinet_raw_socket.yml has two built controls. Its mutant does not
+        make its SOCK_STREAM call, and the re-run as `ping` is still live: the rule
+        has a live negative control, and the run fails all the same."""
+        report = self.offline.out("distant-second-control.json")
+        result = self.canned_run("--distant", self.AFINET, report=report)
+        # The validator read the planted record: an ioctl call, not a socket call.
+        kind, items, nearest = self.graded(report, self.AFINET)
+        self.assertEqual((kind, items), ("distant", []))
+        self.assertRegex(nearest,
+                         r"(?m)^ +no +syscall +syscall='ioctl' +\(rule wants: 'socket'\)$")
+        self.assert_rejects(
+            result,
+            r"^  \[BROKEN\] afinet_stream_socket\.c -> afinet_raw_socket\.yml +not held as "
+            r"declared: built to break afinet_raw_socket\.a1, but graded distant$", exit_code=1)
+        self.assert_saw(result, self.SUMMARY.format(passed=r"\d+", skipped=0, broken=1))
+        self.assertEqual(len(re.findall(self.BROKEN_ROW, result.stdout, re.MULTILINE)), 1)
+        # A verdict for each rule alone would pass: the rule keeps a live control.
+        self.assertEqual(self.negatives(report)["afinet_raw_socket.yml"],
+                         {"rule": "detections/sigma/T1040/afinet_raw_socket.yml",
+                          "status": "live",
+                          "live": ["afinet_raw_socket_behavioral.c as 'ping' -> "
+                                   "afinet_raw_socket.yml"]})
+
+    def test_rejects_correlation_control_that_lost_its_wrong_argument_call(self):
+        """A mutant of a correlation declares one argument item of one base
+        (`base:<name>/<item>`). The control of copyfail_af_alg_authencesn.yml makes
+        no socket call: its splice alone leaves the AF_ALG base missing, so the rule
+        stays quiet, but no call of the control is one argument away from that
+        base. The control is not held by the a0 item that it declares."""
+        report = self.offline.out("correlation-without-socket.json")
+        result = self.canned_run("--without", self.COPYFAIL, "socket", report=report)
+        # The validator read the planted records: the splice, and no socket call.
+        kind, items, nearest = self.graded(report, self.COPYFAIL)
+        self.assertEqual((kind, items), ("near-miss", ["base:copyfail_af_alg_socket"]))
+        self.assertRegex(nearest, r"(?m)^ +\+ base:copyfail_splice matched 1 event\(s\)")
+        self.assertRegex(nearest, r"(?m)^ +- base:copyfail_af_alg_socket matched 0 event\(s\)$")
+        self.assertRegex(nearest,
+                         r"(?m)^ +no +syscall +syscall='splice' +\(rule wants: 'socket'\)$")
+        self.assert_rejects(
+            result,
+            r"^  \[BROKEN\] copyfail_unix_socket_splice\.c -> copyfail_af_alg_authencesn\.yml "
+            r"+not held as declared: built to break "
+            r"base:copyfail_af_alg_socket/af_alg_socket\.a0, but graded "
+            r"base:copyfail_af_alg_socket$", exit_code=1)
+        self.assert_saw(result, self.SUMMARY.format(passed=r"\d+", skipped=0, broken=1))
+        self.assertEqual(len(re.findall(self.BROKEN_ROW, result.stdout, re.MULTILINE)), 1)
+
+    def test_rejects_built_control_that_cannot_be_graded(self):
+        """The grade of a built control is a verdict, not an explanation. In the
+        planted tree the grader (sigma_explain.py) does not load. The detections pass
+        as before, but nothing shows that a mutant or a re-run is held by the item it
+        declares, so each one that an item of its rule must hold is broken. The
+        controls that the success gate holds need no grader, and the no-op needs
+        none."""
+        tree = self.tree()
+        tree.plant("validators/linux_offline_run_py.txt", self.DRIVER)
+        # BAD: the module that grades the controls fails at import.
+        tree.write("detections/sigma_explain.py",
+                   "raise ImportError('planted: the grader does not load')\n")
+        atomics = in_source(tree, self.GATE, r'"(atomics/[^"]+\.c)"')
+        report = tree.out("no-grader.json")
+        result = tree.run(self.DRIVER, "--require-audit", "--json", report)
+        self.assert_saw(result, r"^\[diag\] sigma_explain failed to import \(ImportError: "
+                                r"planted: the grader does not load\)")
+        self.assert_rejects(
+            result,
+            r"^  \[BROKEN\] afinet_stream_socket\.c -> afinet_raw_socket\.yml +not graded: "
+            r"nothing shows that the control is held as declared$", exit_code=1)
+        with open(report, encoding="utf-8") as fh:
+            controls = json.load(fh)["controls"]
+        by_item = [row for row in controls if row["expected"] not in (None, ["success"])]
+        others = [row for row in controls if row not in by_item]
+        self.assertGreater(len(by_item), 10)
+        self.assertGreater(len(others), 15)
+        self.assertEqual({row["status"] for row in by_item}, {"BROKEN"})
+        self.assertEqual({row["kind"] for row in by_item}, {"not graded"})
+        self.assertEqual({row["status"] for row in others}, {"held"})
+        self.assert_saw(result, self.SUMMARY.format(passed=len(atomics), skipped=0,
+                                                    broken=len(by_item)))
+
+    def test_rejects_correlation_control_whose_wrong_argument_call_is_in_another_pid(self):
+        """`base:<name>/<item>` means more than a call that misses the base by that
+        item: the call must be in the group of the other calls. The control of
+        copyfail_af_alg_authencesn.yml makes its AF_UNIX socket call in a child
+        process and its splice in the parent. The correlation groups by pid, so the
+        rule would stay quiet with an AF_ALG socket in that child too: the a0 item
+        is not what holds the control."""
+        report = self.offline.out("correlation-split.json")
+        result = self.canned_run("--split", self.COPYFAIL, "socket", report=report)
+        # The validator read the planted records: the socket call is in the window
+        # (3 events, as in the control run) and it misses the base by a0 alone.
+        row = self.control_row(report, self.COPYFAIL)
+        self.assertEqual(row["detail"], "no hit from the stimulus (3 events in window)")
+        kind, items, nearest = self.graded(report, self.COPYFAIL)
+        self.assertEqual((kind, items), ("near-miss", ["base:copyfail_af_alg_socket"]))
+        self.assertRegex(nearest, r"(?m)^ +nearest event #0 for base:copyfail_af_alg_socket "
+                                  r"\(near-miss, one flip: af_alg_socket\.a0\):$")
+        self.assertRegex(nearest, r"(?m)^ +yes +syscall +syscall='socket'$")
+        self.assert_rejects(
+            result,
+            r"^  \[BROKEN\] copyfail_unix_socket_splice\.c -> copyfail_af_alg_authencesn\.yml "
+            r"+not held as declared: built to break "
+            r"base:copyfail_af_alg_socket/af_alg_socket\.a0, but graded "
+            r"base:copyfail_af_alg_socket$", exit_code=1)
+        self.assert_saw(result, self.SUMMARY.format(passed=r"\d+", skipped=0, broken=1))
+        self.assertEqual(len(re.findall(self.BROKEN_ROW, result.stdout, re.MULTILINE)), 1)
+
+    def test_rejects_correlation_control_whose_wrong_argument_call_is_outside_the_window(self):
+        """The same for the time window. The control of copyfail_af_alg_authencesn.yml
+        makes its AF_UNIX socket call 60 s after its splice, and the correlation has
+        a window of 5 s: the rule would stay quiet with an AF_ALG socket at that
+        time too."""
+        report = self.offline.out("correlation-late.json")
+        result = self.canned_run("--late", self.COPYFAIL, "socket", report=report)
+        row = self.control_row(report, self.COPYFAIL)
+        self.assertEqual(row["detail"], "no hit from the stimulus (3 events in window)")
+        kind, items, nearest = self.graded(report, self.COPYFAIL)
+        self.assertEqual((kind, items), ("near-miss", ["base:copyfail_af_alg_socket"]))
+        self.assertRegex(nearest, r"(?m)^ +nearest event #0 for base:copyfail_af_alg_socket "
+                                  r"\(near-miss, one flip: af_alg_socket\.a0\):$")
+        self.assert_rejects(
+            result,
+            r"^  \[BROKEN\] copyfail_unix_socket_splice\.c -> copyfail_af_alg_authencesn\.yml "
+            r"+not held as declared: built to break "
+            r"base:copyfail_af_alg_socket/af_alg_socket\.a0, but graded "
+            r"base:copyfail_af_alg_socket$", exit_code=1)
+        self.assert_saw(result, self.SUMMARY.format(passed=r"\d+", skipped=0, broken=1))
+        self.assertEqual(len(re.findall(self.BROKEN_ROW, result.stdout, re.MULTILINE)), 1)
+
+    def test_rejects_rerun_under_an_allowlisted_name_that_is_not_held_as_declared(self):
+        """A re-run under an allowlisted name declares the allowlist filter
+        (`<block>.comm`), and it must be held by that filter, as a mutant by its
+        item. The re-run of the atomic of setns_namespace_join.yml as `runc` does not
+        make its setns call. The rule stays quiet, but the filter is not what holds
+        the process. That re-run is the only built control of the rule, so the rule
+        has no live negative control."""
+        report = self.offline.out("distant-rerun.json")
+        result = self.canned_run("--distant", self.SETNS_RERUN, report=report)
+        # The validator read the planted record: an ioctl call under the name `runc`.
+        row = self.control_row(report, self.SETNS_RERUN)
+        self.assertEqual(row["expected"], ["runtime_processes.comm"])
+        kind, items, nearest = self.graded(report, self.SETNS_RERUN)
+        self.assertEqual((kind, items), ("distant", []))
+        self.assertRegex(nearest,
+                         r"(?m)^ +no +syscall +syscall='ioctl' +\(rule wants: 'setns'\)$")
+        self.assertRegex(nearest, r"(?m)^ +yes +comm +comm='runc' +\(rule wants: ")
+        # The rule has no other built control.
+        with open(report, encoding="utf-8") as fh:
+            built = [other["control"] for other in json.load(fh)["controls"]
+                     if other["rule"].endswith("/setns_namespace_join.yml")
+                     and other["expected"] is not None]
+        self.assertEqual(built, [row["control"]])
+        self.assert_rejects(
+            result,
+            r"^  \[BROKEN\] setns_namespace_join_behavioral\.c as 'runc' -> "
+            r"setns_namespace_join\.yml +not held as declared: built to break "
+            r"runtime_processes\.comm, but graded distant$", exit_code=1)
+        self.assert_saw(result, self.SUMMARY.format(passed=r"\d+", skipped=0, broken=1))
+        self.assertEqual(len(re.findall(self.BROKEN_ROW, result.stdout, re.MULTILINE)), 1)
+        self.assertEqual(self.negatives(report)["setns_namespace_join.yml"],
+                         {"rule": "detections/sigma/T1611/setns_namespace_join.yml",
+                          "status": "BROKEN", "live": []})
+
+    def test_rejects_success_gate_control_that_the_success_gate_does_not_hold(self):
+        """A control that declares `success` must be held by the success gate of the
+        validator: the logic of its rule matches a call of the control, and the
+        kernel rejected that call. The control of userfaultfd_syscall.yml does not
+        make its userfaultfd call, so nothing of it reaches that gate. The rule
+        reads only the name of the syscall, and the validator grades the planted
+        record as a near-miss on that item, which is not what the control declares."""
+        report = self.offline.out("distant-success-gate.json")
+        result = self.canned_run("--distant", self.USERFAULTFD, report=report)
+        row = self.control_row(report, self.USERFAULTFD)
+        self.assertEqual(row["expected"], ["success"])
+        # The validator read the planted record: an accepted ioctl call.
+        kind, items, nearest = self.graded(report, self.USERFAULTFD)
+        self.assertEqual((kind, items), ("near-miss", ["userfaultfd_syscall.syscall"]))
+        self.assertRegex(nearest,
+                         r"(?m)^ +no +syscall +syscall='ioctl' +\(rule wants: 'userfaultfd'\)$")
+        self.assert_rejects(
+            result,
+            r"^  \[BROKEN\] userfaultfd_bad_flags\.c -> userfaultfd_syscall\.yml +not held as "
+            r"declared: built to break success, but graded userfaultfd_syscall\.syscall$",
+            exit_code=1)
+        self.assert_saw(result, self.SUMMARY.format(passed=r"\d+", skipped=0, broken=1))
+        self.assertEqual(len(re.findall(self.BROKEN_ROW, result.stdout, re.MULTILINE)), 1)
+        self.assertEqual(self.negatives(report)["userfaultfd_syscall.yml"]["status"], "BROKEN")
+
+    def test_rejects_each_built_control_that_does_not_make_its_calls(self):
+        """No built control is held by a record that is not of its rule. For each
+        mutant of CONTROLS and each re-run of the control run, in a run of its own,
+        the process makes only an accepted ioctl call: a syscall that no rule of
+        MANIFEST reads. Each of these runs must fail with that control BROKEN, and
+        with no other row BROKEN."""
+        tree = self.offline
+        sources = {os.path.basename(path): path for path in in_source(
+            tree, self.GATE, r'"((?:atomics|detections/controls)/[^"]+\.c)"')}
+        healthy = tree.out("each-distant-healthy.json")
+        self.assert_accepts(self.canned_run(report=healthy), r"0 control\(s\) broken\.$")
+        with open(healthy, encoding="utf-8") as fh:
+            built = [row for row in json.load(fh)["controls"] if row["expected"] is not None]
+        mutants = set(in_source(tree, self.GATE, r'"(detections/controls/[^"]+\.c)"'))
+        mutants.discard(self.NOOP)
+        # The driver's name of each built control, from the validator's label.
+        names = {}
+        for row in built:
+            found = re.fullmatch(r"(\S+\.c)(?: as '([^']+)')? -> \S+\.yml", row["control"])
+            self.assertIsNotNone(found, row["control"])
+            names[row["control"]] = (sources[found.group(1)]
+                                     + (f" as {found.group(2)}" if found.group(2) else ""))
+        self.assertLessEqual(mutants, set(names.values()))      # each row of CONTROLS
+        self.assertGreater(len(names), len(mutants))            # and the re-runs
+        runs = {label: (tree.out(f"each-distant-{number}.json"),
+                        tree.start(self.DRIVER, "--distant", name, "--require-audit", "--json",
+                                   tree.out(f"each-distant-{number}.json")))
+                for number, (label, name) in enumerate(sorted(names.items()))}
+        for row in built:
+            label = row["control"]
+            report, pending = runs[label]
+            result = pending.result()
+            with self.subTest(control=label):
+                planted = self.control_row(report, names[label])
+                # The validator read the planted record: it is alone in the tree of
+                # the control, and no item that the control declares holds it.
+                self.assertEqual(planted["detail"],
+                                 "no hit from the stimulus (2 events in window)")
+                self.assertIn(planted["kind"], ("distant", "trivial", "near-miss"))
+                if planted["kind"] == "near-miss":      # a rule that reads only the name
+                    self.assertEqual(len(planted["graded"]), 1, label)
+                    self.assertTrue(planted["graded"][0].endswith(".syscall"), label)
+                else:
+                    self.assertEqual(planted["graded"], [], label)
+                self.assertNotEqual(sorted(planted["graded"]), sorted(planted["expected"]))
+                self.assert_rejects(
+                    result,
+                    rf"^  \[BROKEN\] {re.escape(label)} +not held as declared: built to break "
+                    rf"{re.escape(', '.join(row['expected']))}, but graded ", exit_code=1)
+                self.assert_saw(result, self.SUMMARY.format(passed=r"\d+", skipped=0, broken=1))
+                self.assertEqual(len(re.findall(self.BROKEN_ROW, result.stdout, re.MULTILINE)),
+                                 1)
+                self.assertIs(planted["live"], False)
+
+    def test_control_refused_mutant_of_a_skipped_rule_is_not_applicable(self):
+        """CONTROL of the one exemption. The kernel-feature probe turns the emulation
+        of ptrace_traceme.yml into a SKIP, and the kernel rejects the one call of the
+        rule's mutant too (the model: Yama refuses the PTRACE_ATTACH of
+        ptrace_attach_child.c). The mutant is not held as declared, and the validator
+        takes it that this host cannot exercise it: its row is N/A, with the reason,
+        and the run passes. The two CONTROLs below are mutants of which the kernel
+        rejects one call and accepts another. The rejection tests below them hold
+        the limits of the exemption."""
+        atomics = in_source(self.offline, self.GATE, r'"(atomics/[^"]+\.c)"')
+        report = self.offline.out("skipped-rule.json")
+        result = self.canned_run("--missing", self.PTRACE_ATOMIC, "--refused", self.PTRACE,
+                                 report=report)
+        self.assert_accepts(result, self.SUMMARY.format(passed=len(atomics) - 1, skipped=1,
+                                                        broken=0))
+        self.assert_saw(result, r"^  \[ SKIP \] ptrace_traceme\.yml +the kernel lacks the feature "
+                                r"\(canned\)$")
+        self.assert_saw(result, self.NOT_APPLICABLE.format(
+            row=r"ptrace_attach_child\.c -> ptrace_traceme\.yml", built=r"ptrace_traceme\.a0",
+            graded="all rejected", refused="ptrace: EPERM") + "$")
+        self.assertNotRegex(result.stdout, re.compile(self.BROKEN_ROW, re.MULTILINE))
+        self.assertEqual(self.control_row(report, self.PTRACE)["refused"], ["ptrace: EPERM"])
+        self.assertEqual(self.negatives(report)["ptrace_traceme.yml"]["status"], "N/A")
+        # The exemption is for that rule only: every other rule keeps its live control.
+        self.assertEqual({name for name, entry in self.negatives(report).items()
+                          if entry["status"] != "live"}, {"ptrace_traceme.yml"})
+
+    def test_control_mutant_of_a_skipped_rule_with_one_rejected_call_is_not_applicable(self):
+        """CONTROL. One rejected call of the rule is sufficient for the exemption.
+        The model is a host with vm.memfd_noexec = 2. The probe turns the emulation
+        of memfd_create_execveat.yml into a SKIP. The kernel accepts the memfd_create
+        of the rule's mutant (memfd_fexecve_in_child.c) and rejects its execveat, in
+        the forked child; the rule reads both syscalls. The mutant is not held by the
+        group-by that it declares. Its row is N/A, the line beneath the row names the
+        rejected call, and the run passes. (At commit db11636 one accepted call of
+        the rule refused the exemption: this row was BROKEN, and the run failed on a
+        host where the rule is not applicable. The canned rejection of the driver is
+        EPERM; on that host the errno is EACCES.)"""
+        atomics = in_source(self.offline, self.GATE, r'"(atomics/[^"]+\.c)"')
+        report = self.offline.out("skipped-memfd.json")
+        result = self.canned_run("--missing", self.MEMFD_ATOMIC, "--refused", self.MEMFD,
+                                 "execveat", report=report)
+        # The validator read the planted records: the accepted memfd_create matches
+        # its base, and the rejected execveat is the one refused call.
+        row = self.control_row(report, self.MEMFD)
+        self.assertEqual(row["expected"], ["group-by"])
+        self.assertEqual((row["kind"], row["graded"]), ("near-miss", ["base:memfd_exec_execveat"]))
+        self.assertEqual(row["refused"], ["execveat: EPERM"])
+        self.assertRegex("\n".join(row["verdict"]),
+                         r"(?m)^ +\+ base:memfd_exec_memfd_create matched 1 event\(s\)")
+        self.assertEqual((row["status"], row["live"]), ("N/A", False))
+        self.assert_accepts(result, self.SUMMARY.format(passed=len(atomics) - 1, skipped=1,
+                                                        broken=0))
+        self.assert_saw(result, r"^  \[ SKIP \] memfd_create_execveat\.yml +the kernel lacks the "
+                                r"feature \(canned\)$")
+        # The row, and the line beneath it.
+        self.assert_saw(result, self.NOT_APPLICABLE.format(
+            row=r"memfd_fexecve_in_child\.c -> memfd_create_execveat\.yml", built="group-by",
+            graded="base:memfd_exec_execveat", refused="execveat: EPERM")
+            + r"\n +the rule stayed quiet, but not for the declared reason: near-miss on "
+              r"base:memfd_exec_execveat \(rejected syscalls not graded: execveat: EPERM\)$")
+        self.assertNotRegex(result.stdout, re.compile(self.BROKEN_ROW, re.MULTILINE))
+        self.assertNotIn("does not explain the grade", result.stdout)
+        self.assertEqual(self.negatives(report)["memfd_create_execveat.yml"],
+                         {"rule": "detections/sigma/T1620/memfd_create_execveat.yml",
+                          "status": "N/A", "live": []})
+        self.assert_saw(result, r"^  none for memfd_create_execveat\.yml: not applicable on this "
+                                r"host ")
+        # The exemption is for that rule only: every other rule keeps its live control.
+        self.assertEqual({name for name, entry in self.negatives(report).items()
+                          if entry["status"] != "live"}, {"memfd_create_execveat.yml"})
+
+    def test_control_partly_refused_mutant_of_a_skipped_rule_is_not_applicable(self):
+        """CONTROL. The same for a mutant that makes its calls in one pid. The
+        emulation of dirtyfrag_xfrm_unshare_netlink.yml is SKIPPED (no NETLINK_XFRM).
+        The kernel rejects the unshare calls of the rule's mutant and accepts its
+        NETLINK_ROUTE socket call. The mutant is not held by the a2 item that it
+        declares, and one of its rule calls is rejected: its row is N/A, and the run
+        passes. (At commit db11636 this row was BROKEN.)"""
+        atomics = in_source(self.offline, self.GATE, r'"(atomics/[^"]+\.c)"')
+        report = self.offline.out("skipped-partly-refused.json")
+        result = self.canned_run("--missing", self.DIRTYFRAG_ATOMIC, "--refused",
+                                 self.DIRTYFRAG, "unshare", report=report)
+        # The validator read the planted records: a rejected unshare, an accepted socket.
+        row = self.control_row(report, self.DIRTYFRAG)
+        self.assertEqual(row["refused"], ["unshare: EPERM"])
+        self.assertEqual((row["kind"], row["graded"]), ("trivial", []))
+        self.assertRegex(row["explanation"][0], r"\(rejected syscalls not graded: unshare: "
+                                                r"EPERM\)$")
+        self.assertRegex("\n".join(row["verdict"]), r"(?m)^ +yes +syscall +syscall='socket'$")
+        self.assert_accepts(result, self.SUMMARY.format(passed=len(atomics) - 1, skipped=1,
+                                                        broken=0))
+        self.assert_saw(result, r"^  \[ SKIP \] dirtyfrag_xfrm_unshare_netlink\.yml +the kernel "
+                                r"lacks the feature \(canned\)$")
+        self.assert_saw(result, self.NOT_APPLICABLE.format(
+            row=r"dirtyfrag_netlink_route_socket\.c -> dirtyfrag_xfrm_unshare_netlink\.yml",
+            built=r"base:dirtyfrag_xfrm_netlink_xfrm_socket/netlink_xfrm_socket\.a2",
+            graded="trivial", refused="unshare: EPERM") + "$")
+        self.assertNotRegex(result.stdout, re.compile(self.BROKEN_ROW, re.MULTILINE))
+        self.assertEqual(
+            self.negatives(report)["dirtyfrag_xfrm_unshare_netlink.yml"]["status"], "N/A")
+
+    def skipped_and_broken(self, result, skipped, broken):
+        """The run failed with one emulation SKIPPED (`skipped`: its rule file name)
+        and one control BROKEN (`broken`: the row, as a regular expression)."""
+        self.assert_saw(result, rf"^  \[ SKIP \] {re.escape(skipped)} +the kernel lacks the "
+                                r"feature \(canned\)$")
+        self.assert_rejects(result, broken, exit_code=1)
+        self.assert_saw(result, self.SUMMARY.format(passed=r"\d+", skipped=1, broken=1))
+        self.assertEqual(len(re.findall(self.BROKEN_ROW, result.stdout, re.MULTILINE)), 1)
+        self.assertNotRegex(result.stdout, re.compile(r"^  \[ N/A  \] \S+\.c -> ", re.MULTILINE))
+
+    def test_rejects_refused_mutant_of_a_rule_that_is_not_skipped(self):
+        """The exemption is for a skipped rule only. The emulation of afxdp_socket.yml
+        is SKIPPED, the emulation of ptrace_traceme.yml passes, and the kernel rejects
+        the call of the mutant of ptrace_traceme.yml: the artifact of the first
+        CONTROL of the exemption, on a rule that the host proves. That mutant is
+        BROKEN."""
+        report = self.offline.out("refused-not-skipped.json")
+        result = self.canned_run("--missing", self.AFXDP_ATOMIC, "--refused", self.PTRACE,
+                                 report=report)
+        self.assert_saw(result, r"^  \[ PASS \] ptrace_traceme\.yml ")
+        self.assertEqual(self.control_row(report, self.PTRACE)["refused"], ["ptrace: EPERM"])
+        self.skipped_and_broken(
+            result, "afxdp_socket.yml",
+            r"^  \[BROKEN\] ptrace_attach_child\.c -> ptrace_traceme\.yml +not held as "
+            r"declared: built to break ptrace_traceme\.a0, but graded all rejected$")
+        self.assertEqual(self.negatives(report)["ptrace_traceme.yml"]["status"], "BROKEN")
+        self.assertEqual(self.negatives(report)["afxdp_socket.yml"]["status"], "live")
+
+    def test_rejects_vacuous_mutant_of_a_skipped_rule(self):
+        """A control that left no record is BROKEN on every host, also when the
+        emulation of its rule is SKIPPED: nothing shows that the kernel rejected a
+        call of it."""
+        result = self.canned_run("--missing", self.PTRACE_ATOMIC, "--vacuous", self.PTRACE)
+        self.skipped_and_broken(
+            result, "ptrace_traceme.yml",
+            r"^  \[BROKEN\] ptrace_attach_child\.c -> ptrace_traceme\.yml +vacuous: the control "
+            r"made no audited syscall$")
+
+    def test_rejects_mutant_of_a_skipped_rule_that_fires_the_rule(self):
+        """A control on which its rule fires is BROKEN on every host, also when the
+        emulation of the rule is SKIPPED."""
+        result = self.canned_run("--missing", self.PTRACE_ATOMIC, "--fires", self.PTRACE)
+        self.skipped_and_broken(
+            result, "ptrace_traceme.yml",
+            r"^  \[BROKEN\] ptrace_attach_child\.c -> ptrace_traceme\.yml +passed: the a0 "
+            r"\(PTRACE_TRACEME\) argument constraint was not enforced$")
+
+    def test_rejects_mutant_of_a_skipped_rule_that_made_no_call_of_the_rule(self):
+        """The exemption needs a call of the rule that the kernel rejected. The
+        emulation of afxdp_socket.yml is SKIPPED (no AF_XDP). The mutant of that rule
+        opens only an AF_NETLINK socket, which needs no AF_XDP; here it does not make
+        that call, and its one call (of a syscall that the rule does not read) is
+        accepted. The missing feature does not explain that, so the mutant is BROKEN.
+        (At commit 95e3ddc it was N/A, and the run passed.)"""
+        report = self.offline.out("skipped-not-refused.json")
+        result = self.canned_run("--missing", self.AFXDP_ATOMIC, "--distant", self.AFXDP,
+                                 report=report)
+        row = self.control_row(report, self.AFXDP)
+        self.assertEqual((row["kind"], row["graded"], row["refused"]), ("distant", [], []))
+        self.skipped_and_broken(
+            result, "afxdp_socket.yml",
+            r"^  \[BROKEN\] afxdp_netlink_socket\.c -> afxdp_socket\.yml +not held as declared: "
+            r"built to break afxdp_socket\.a0, but graded distant$")
+        self.assert_saw(result, self.SKIP_EXPLAINS_NOTHING)
+        self.assertEqual(self.negatives(report)["afxdp_socket.yml"]["status"], "BROKEN")
+
+    def test_rejects_mutant_of_a_skipped_rule_whose_calls_the_kernel_accepted(self):
+        """The same when the mutant makes the calls of the rule and the kernel accepts
+        each one. The emulation of copyfail_af_alg_authencesn.yml is SKIPPED (no
+        AF_ALG). The rule's mutant makes its AF_UNIX socket call in a child process
+        and its splice in the parent, both accepted: it is not held by the a0 item
+        that it declares, and the kernel rejected nothing. The mutant is BROKEN."""
+        report = self.offline.out("skipped-all-accepted.json")
+        result = self.canned_run("--missing", self.COPYFAIL_ATOMIC, "--split", self.COPYFAIL,
+                                 "socket", report=report)
+        # The validator read the planted records: the socket call misses its base by
+        # a0 alone, in another pid than the splice, and no call is rejected.
+        row = self.control_row(report, self.COPYFAIL)
+        self.assertEqual((row["kind"], row["graded"], row["refused"]),
+                         ("near-miss", ["base:copyfail_af_alg_socket"], []))
+        self.assertNotIn("rejected syscalls not graded", row["explanation"][0])
+        self.assertRegex("\n".join(row["verdict"]), r"(?m)^ +yes +syscall +syscall='socket'$")
+        self.skipped_and_broken(
+            result, "copyfail_af_alg_authencesn.yml",
+            r"^  \[BROKEN\] copyfail_unix_socket_splice\.c -> copyfail_af_alg_authencesn\.yml "
+            r"+not held as declared: built to break "
+            r"base:copyfail_af_alg_socket/af_alg_socket\.a0, but graded "
+            r"base:copyfail_af_alg_socket$")
+        self.assert_saw(result, self.SKIP_EXPLAINS_NOTHING)
+        self.assertEqual(
+            self.negatives(report)["copyfail_af_alg_authencesn.yml"]["status"], "BROKEN")
+
+    def test_control_rerun_uses_an_emulation_that_passed(self):
+        """CONTROL. afpacket_raw_socket.yml has two emulations. The first is SKIPPED
+        and the second passes: the rule is proven on this host, so its re-run under
+        an allowlisted name runs, with the emulation that passed, and the rule has a
+        live negative control. (At commit 95e3ddc the first emulation alone decided:
+        the re-run did not run, and the rule ended as not applicable. The two
+        emulations have the same kernel-feature probe in MANIFEST; the driver gives
+        the canned probe to the first one only.)"""
+        atomics = in_source(self.offline, self.GATE, r'"(atomics/[^"]+\.c)"')
+        self.assertEqual(self.offline.read(self.GATE).count(
+            '"detections/sigma/T1040/afpacket_raw_socket.yml"'), 2)
+        report = self.offline.out("second-emulation.json")
+        result = self.canned_run("--missing", self.AFPACKET_FIRST, report=report)
+        self.assert_accepts(result, self.SUMMARY.format(passed=len(atomics) - 1, skipped=1,
+                                                        broken=0))
+        with open(report, encoding="utf-8") as fh:
+            results = [(row["atomic"], row["status"]) for row in json.load(fh)["results"]
+                       if row["rule"].endswith("/afpacket_raw_socket.yml")]
+        self.assertEqual(results, [(self.AFPACKET_FIRST, "SKIP"), (self.AFPACKET_SECOND, "PASS")])
+        rerun = self.control_row(report, self.AFPACKET_SECOND + " as tcpdump")
+        self.assertEqual((rerun["status"], rerun["live"], rerun["graded"]),
+                         ("held", True, ["sniffer_processes.comm"]))
+        self.assertNotRegex(result.stdout, re.compile(r"^  \[ N/A  \] ", re.MULTILINE))
+        self.assertEqual(self.negatives(report)["afpacket_raw_socket.yml"],
+                         {"rule": "detections/sigma/T1040/afpacket_raw_socket.yml",
+                          "status": "live", "live": [rerun["control"]]})
+
+    def test_rejects_refused_rerun_of_a_rule_with_one_skipped_emulation(self):
+        """A rule is skipped only when EVERY emulation of it is SKIPPED. The first
+        emulation of afpacket_raw_socket.yml is SKIPPED and the second passes, and the
+        kernel rejects the socket call of the re-run as `tcpdump`. The rule is proven
+        on this host, so the exemption does not apply: the re-run is BROKEN."""
+        report = self.offline.out("second-emulation-refused.json")
+        result = self.canned_run("--missing", self.AFPACKET_FIRST, "--refused",
+                                 self.AFPACKET_SECOND + " as tcpdump", report=report)
+        self.assert_saw(result, r"^  \[ PASS \] afpacket_raw_socket\.yml ")
+        rerun = self.control_row(report, self.AFPACKET_SECOND + " as tcpdump")
+        self.assertEqual(rerun["refused"], ["socket: EPERM"])
+        self.skipped_and_broken(
+            result, "afpacket_raw_socket.yml",
+            r"^  \[BROKEN\] afpacket_mmap_ring_behavioral\.c as 'tcpdump' -> "
+            r"afpacket_raw_socket\.yml +not held as declared: built to break "
+            r"sniffer_processes\.comm, but graded all rejected$")
+        self.assertEqual(self.negatives(report)["afpacket_raw_socket.yml"]["status"], "BROKEN")
+
+    # control_row() with one control that no item of its rule holds (grade []), and
+    # the declaration that the test gives. Prints the status, the detail and `live`.
+    CONTROL_ROW = (
+        "import json, sys\n"
+        "sys.path.insert(0, 'detections')\n"
+        "import validate_detections as v\n"
+        "info = {'control': 'c -> r', 'rule': 'r', 'judge': 'FAIL', 'graded': json.loads("
+        "sys.argv[2]), 'expected': json.loads(sys.argv[1]), 'kind': 'distant', 'grade': "
+        "'distant', 'verdict': [], 'explanation': []}\n"
+        "row = v.control_row('c -> r', 'no hit', 'meaning', info, set())\n"
+        "print(json.dumps([row[0], row[2], info['live']]))\n")
+
+    def test_control_row_never_holds_a_control_that_declares_nothing(self):
+        """The second barrier against an empty declaration. The check of the CONTROLS
+        table refuses such a row before a stimulus runs, so no run of the validator
+        reaches control_row() with it; the test calls the function. A control that no
+        item of its rule holds has the grade [], which is equal to an empty
+        declaration: the function must say BROKEN, not `held`."""
+        def row(expected, graded):
+            result = self.offline.run_python(self.CONTROL_ROW, json.dumps(expected),
+                                             json.dumps(graded))
+            self.assertEqual((result.returncode, result.stderr), (0, ""), result.describe())
+            return json.loads(result.stdout)
+
+        # CONTROL of the snippet: a declaration that is equal to the grade is held.
+        self.assertEqual(row(["x.a0"], ["x.a0"]), ["held", "no hit", True])
+        self.assertEqual(row(["x.a0"], [])[0], "BROKEN")
+        self.assertEqual(row([], []), ["BROKEN", "declares nothing: a built control must "
+                                                 "declare what holds it", False])
+
+    # ending() for one exit code and one stderr text, then control_row() for a control
+    # that is held as declared and that ended so. Prints the line of ending(), the
+    # status and `live` as JSON, then the row as the validator prints it.
+    ENDING_ROW = (
+        "import json, sys\n"
+        "sys.path.insert(0, 'detections')\n"
+        "import validate_detections as v\n"
+        "ended = v.ending(*json.loads(sys.argv[1]))\n"
+        "info = {'control': 'c -> r', 'rule': 'r', 'judge': 'FAIL', 'graded': ['x.a0'], "
+        "'expected': ['x.a0'], 'kind': 'near-miss', 'grade': 'near-miss on x.a0', 'verdict': [], "
+        "'explanation': [], 'ended': ended}\n"
+        "row = v.control_row('c -> r', 'no hit', 'meaning', info, set())\n"
+        "print(json.dumps([ended, row[0], info['live']]))\n"
+        "v.print_table('Controls:', [row])\n")
+
+    def test_control_row_shows_how_the_control_process_ended(self):
+        """Beneath the row of a control, the report shows the exit code of its process
+        (when that is not 0) and its last stderr line, for the reader. The canned
+        run() of the driver gives no ending, so no run of the validator here prints
+        that line; the test calls ending() and control_row(), and prints the row with
+        print_table(). The line changes no verdict: the control of the snippet is held
+        as declared with exit code 1 too, and when a signal ended it."""
+        def row(code, stderr):
+            result = self.offline.run_python(self.ENDING_ROW, json.dumps([code, stderr]))
+            self.assertEqual((result.returncode, result.stderr), (0, ""), result.describe())
+            first, _, table = result.stdout.partition("\n")
+            return json.loads(first), table
+
+        # The exit code, and the last line of two stderr lines.
+        last = "ptrace(PTRACE_ATTACH): Operation not permitted"
+        summary, table = row(1, f"the first line\n{last}\n")
+        self.assertEqual(summary, [f"exit code 1; stderr: {last}", "held", True])
+        self.assertRegex(table, r"(?m)^  \[ held \] c -> r  no hit\n"
+                                r" +held: near-miss on x\.a0\n"
+                                r" +the control process: exit code 1; stderr: "
+                                + re.escape(last) + "$")
+        self.assertNotIn("the first line", table)
+        # A signal, and no stderr.
+        summary, table = row(-9, "")
+        self.assertEqual(summary, ["ended by signal 9", "held", True])
+        self.assertRegex(table, r"(?m)^ +the control process: ended by signal 9$")
+        # Exit code 0 with a stderr line: only that line.
+        summary, table = row(0, "a warning\n")
+        self.assertEqual(summary, ["stderr: a warning", "held", True])
+        self.assertRegex(table, r"(?m)^ +the control process: stderr: a warning$")
+        # CONTROL of the snippet: exit code 0 and no stderr give no such line.
+        summary, table = row(0, "")
+        self.assertEqual(summary, ["", "held", True])
+        self.assertRegex(table, r"(?m)^  \[ held \] c -> r  no hit\n +held: near-miss on x\.a0$")
+        self.assertNotIn("the control process", table)
+
+    # refused_calls() on the records of one process tree (pid 10 and its child 11).
+    # The arguments: the syscalls that the rule reads, and the records. Each record
+    # is [syscall, pid, exit]. An exit below 0 is a call that the kernel rejected:
+    # -1 is EPERM, -13 is EACCES.
+    REFUSED_CALLS = (
+        "import json, sys\n"
+        "sys.path.insert(0, 'detections')\n"
+        "import validate_detections as v\n"
+        "events = [{'syscall': name, 'pid': pid, 'ppid': pid - 1, 'success': 'yes' if code >= 0 "
+        "else 'no', 'exit': str(code)} for name, pid, code in json.loads(sys.argv[2])]\n"
+        "print(json.dumps(v.refused_calls(set(json.loads(sys.argv[1])), events, "
+        "v.process_tree(10, events))))\n")
+
+    def test_exemption_reads_only_the_calls_of_the_rule(self):
+        """The exemption for a skipped rule asks one question of a mutant: did the
+        kernel reject one or more of the calls that the mutant made and that the rule
+        reads? refused_calls() gives those calls. No canned control makes an audited
+        call that its rule does not read, and the rejection of the driver is always
+        EPERM, so the driver cannot plant these states; the test calls the function.
+        One rejected call of the rule is sufficient: an accepted call of the rule
+        does not change the answer, and an accepted call of another syscall does not
+        change it. With no rejected call of the rule in the process tree, the answer
+        is `no`."""
+        def refused(reads, *records):
+            result = self.offline.run_python(self.REFUSED_CALLS, json.dumps(reads),
+                                             json.dumps(records))
+            self.assertEqual((result.returncode, result.stderr), (0, ""), result.describe())
+            return json.loads(result.stdout)
+
+        ptrace = ["ptrace"]
+        self.assertEqual(refused(ptrace, ["ptrace", 10, -1]), ["ptrace: EPERM"])
+        # An accepted ioctl, which the rule does not read, in the same tree.
+        self.assertEqual(refused(ptrace, ["ptrace", 10, -1], ["ioctl", 10, 0]),
+                         ["ptrace: EPERM"])
+        # One call of the rule is rejected and one is accepted (in a child of the
+        # stimulus): yes. (At commit db11636: no.)
+        self.assertEqual(refused(ptrace, ["ptrace", 10, -1], ["ptrace", 11, 0]),
+                         ["ptrace: EPERM"])
+        # The memfd model: an accepted memfd_create, and a rejected execveat in the
+        # child. The rule reads both.
+        memfd = ["memfd_create", "execveat"]
+        self.assertEqual(refused(memfd, ["memfd_create", 10, 4], ["execveat", 11, -13]),
+                         ["execveat: EACCES"])
+        # Each pair of syscall and errno is named once, in sorted order.
+        self.assertEqual(refused(memfd, ["memfd_create", 10, -13], ["execveat", 11, -13],
+                                 ["execveat", 11, -13], ["execveat", 10, -1]),
+                         ["execveat: EACCES", "execveat: EPERM", "memfd_create: EACCES"])
+        # No rejected call of the rule: the kernel accepted each one.
+        self.assertEqual(refused(ptrace, ["ptrace", 10, 0], ["ptrace", 11, 0]), [])
+        self.assertEqual(refused(memfd, ["memfd_create", 10, 4], ["execveat", 11, 0]), [])
+        # No call of the rule at all: no. A rejected call of another process: no.
+        self.assertEqual(refused(ptrace, ["ioctl", 10, -1]), [])
+        self.assertEqual(refused(ptrace, ["ptrace", 500, -1], ["ioctl", 10, 0]), [])
+
+    def test_rejects_controls_row_for_a_rule_that_is_not_in_manifest_before_a_stimulus(self):
+        """The CONTROLS table is checked in the real mode too, before the first
+        stimulus runs. The planted MANIFEST has no entry for afxdp_socket.yml, and the
+        CONTROLS row of that rule stays. (At commit 95e3ddc the validator ran that
+        control, printed `held`, and gave the rule no entry in `negatives`.)"""
+        tree = self.tree()
+        tree.plant("validators/linux_offline_run_py.txt", self.DRIVER)
+        without_the_manifest_entry(self, tree, self.GATE)
+        result = tree.run(self.DRIVER, "--require-audit")
+        self.assert_rejects(
+            result,
+            r"^  \[ERROR \] CONTROLS row \d+ \(afxdp_netlink_socket\.c -> afxdp_socket\.yml\)  "
+            r"its rule 'detections/sigma/T1040/afxdp_socket\.yml' is not a rule of MANIFEST: ",
+            exit_code=1)
+        self.assert_saw(result, r"^ERROR: the CONTROLS table of validate_detections\.py has "
+                                r"1 fault\(s\); nothing was compiled and no stimulus ran\.$")
+        # No stimulus ran: no probe line, no detection row and no control row.
+        for line in ("Kernel-feature probes", "Detections (", "[ PASS ]", "Controls (",
+                     "[ held ]", "control(s) broken"):
+            self.assertNotIn(line, result.stdout)
 
 
 class K8sValidator(gatelib.GateCase):

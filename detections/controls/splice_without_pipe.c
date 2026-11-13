@@ -6,6 +6,10 @@
  * the stimulus tree, so only the rule's group-by (pid) keeps them apart: the
  * correlation must NOT fire. (A splice with no pipe at all is rejected by the
  * kernel with EINVAL and never reaches the rule, so it would test nothing.)
+ *
+ * Exit code: 0 when the pipe and the splice succeeded; 1, with the error on
+ * stderr, when a step failed. The validator reads the audit records, not the
+ * exit code.
  */
 #define _GNU_SOURCE
 #include <fcntl.h>

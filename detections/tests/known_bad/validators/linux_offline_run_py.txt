@@ -23,17 +23,22 @@ the real run() does. So the validator, not this driver, decides which records ar
 the stimulus's own.
 
 The kernel-feature probes are removed from MANIFEST (they would open sockets and
-call `ausyscall`). A probe only turns a miss into a SKIP; no canned stimulus misses.
+call `ausyscall`). A probe only turns a miss into a SKIP, and no canned stimulus
+misses. The one exception is --missing: it gives one atomic a canned probe that
+reports a missing feature.
 
 The canned events are not written here. They come from the rule sidecars of the
 copy, so they stay in step with the rules:
 
     an atomic                 the events of the first `positive` case of its rule
     a mutant (CONTROLS)       the events of the first `near-miss` case whose `breaks`
-                              is the item the mutant is built to break; for the
+                              is the item the mutant is built to break (for an item
+                              of a base of a correlation, `base:<name>/<item>`, the
+                              case declares the base, `base:<name>`); for the
                               `success` gate, the positive with success=no (EPERM)
     an allowlisted re-run     the positive, with the allowlisted name as `comm`
-    the no-op                 one audited syscall that no rule reads: socket(AF_UNIX)
+    the no-op                 one audited syscall whose record fires no rule:
+                              socket(AF_UNIX, SOCK_STREAM, 0)
     every window              one record of another process (an ioctl of a shell)
 
 That canned run is the CONTROL: every atomic passes and every control holds. One
@@ -51,18 +56,68 @@ argument plants ONE defect in it:
                     the rule fires on its own negative control.
     --no-audit WHY  audit_available() answers (False, WHY): the host cannot audit
                     (`auditd is not running`), so nothing can be validated.
+    --distant SRC   the control SRC (a mutant of CONTROLS, or an allowlisted re-run
+                    `ATOMIC as NAME`) does not make the calls it is built for: its
+                    process tree makes one accepted call of a syscall that no rule
+                    of MANIFEST reads, ioctl(1, TCGETS) (DISTANT_EVENT). The rule
+                    stays quiet, but not for the reason that the control declares:
+                    the validator grades the record `distant` or `trivial`, or, for
+                    a rule that reads only the name of the syscall, as a near-miss
+                    on its `syscall` item. No built control declares one of those.
+    --without SRC SYSCALL
+                    the mutant SRC of CONTROLS did not make the syscall SYSCALL:
+                    its records of that syscall are not in the window. For a
+                    mutant of a correlation that is built to break one argument
+                    of one call, without that call the rule stays quiet for
+                    another reason: the whole base is missing.
+    --split SRC SYSCALL
+                    the records of the syscall SYSCALL of the mutant SRC of CONTROLS
+                    carry the pid of a child of the stimulus: that call is in the
+                    process tree, but not in the pid of the other calls. For a
+                    mutant of a correlation that is built to break one argument of
+                    one call, that call is then in another group (the correlation
+                    groups by pid).
+    --late SRC SYSCALL
+                    the records of the syscall SYSCALL of the mutant SRC of CONTROLS
+                    are 60 s later than in the control run: for a mutant of a
+                    correlation, outside the time window of the other calls.
+    --refused SRC [SYSCALL]
+                    the kernel rejected every syscall of the control SRC (a mutant
+                    of CONTROLS, or an allowlisted re-run `ATOMIC as NAME`):
+                    success=no, EPERM. With SYSCALL: it rejected only the calls of
+                    that syscall, and it accepted the other calls of SRC. (The
+                    models are detections/controls/ptrace_attach_child.c on a host
+                    where the kernel refuses the attach;
+                    detections/controls/dirtyfrag_netlink_route_socket.c on a host
+                    where it refuses the unshare calls; and, with SYSCALL
+                    `execveat`, detections/controls/memfd_fexecve_in_child.c on a
+                    host with vm.memfd_noexec = 2, where it accepts the
+                    memfd_create and refuses the execveat. There the errno is
+                    EACCES; the canned errno is always EPERM.)
 
-NOTE on the no-op: the real detections/controls/noop.c makes no syscall that
-detections/audit/atomic.rules audits (its only syscalls are those of process
-start and exit). So `--vacuous detections/controls/noop.c` is what every real run
-looks like today. The control run gives the no-op one audited syscall, so that the
-control stays valid when the validator starts to grade the no-op for vacuity.
+One more argument is not a defect. It is a host that lacks a kernel feature:
+
+    --missing SRC   the kernel lacks what the atomic SRC needs. The kernel-feature
+                    probe of SRC reports that, and the kernel rejects every syscall
+                    of SRC. The validator turns that miss into a SKIP. Give it with
+                    a defect of a control of the same rule to see what the validator
+                    does with that control on such a host (with --refused: a control
+                    that needs the missing feature too; one rejected call of the
+                    rule makes its row N/A).
+
+NOTE on the no-op: until roadmap item R2b, the real detections/controls/noop.c
+made no syscall that detections/audit/atomic.rules audits, and the validator did
+not grade the no-op for vacuity. So `--vacuous detections/controls/noop.c` was
+what every real run looked like, and the validator accepted it. The real noop.c
+now makes the syscall of the control run here (NOOP_EVENT), and the validator
+fails a no-op that left no record.
 
 Every other argument goes to the validator: use the arguments of the CI step
 (`--require-audit`).
 """
 
 import argparse
+import datetime
 import json
 import os
 import sys
@@ -79,12 +134,23 @@ BACKGROUND = {"type": "SYSCALL", "syscall": "ioctl", "success": "yes", "exit": "
               "a0": "0", "a1": "5401", "a2": "7ffc0a1b2c30", "a3": "0",
               "pid": FOREIGN_PID, "ppid": 1, "uid": "1000", "euid": "1000", "auid": "1000",
               "comm": "bash", "exe": "/usr/bin/bash", "timestamp": "2026-10-04 11:59:58.000"}
-# The control run's no-op: one audited syscall of its own, which no rule reads.
+# The control run's no-op: one audited syscall of its own. Its record fires no rule
+# (some rules read `socket`, and none of them takes the AF_UNIX family).
 NOOP_EVENT = {"type": "SYSCALL", "syscall": "socket", "success": "yes", "exit": "3",
               "a0": "1", "a1": "1", "a2": "0", "a3": "0",
               "pid": 4301, "ppid": 4300, "uid": "0", "euid": "0", "auid": "4294967295",
               "comm": "deteng_noop", "exe": "/tmp/deteng_val_x/deteng_noop",
               "timestamp": "2026-10-04 11:59:59.000"}
+# --distant: one accepted call of a syscall that detections/audit/atomic.rules
+# audits and that no rule of MANIFEST reads (an isatty() on stdout). a0 is 1 and not
+# 0: ptrace_traceme.yml takes a0 = 0, and with 0 only the name of the syscall would
+# keep the record away from that rule. run() gives the record the pid, comm and exe
+# of the stimulus.
+DISTANT_EVENT = {"type": "SYSCALL", "syscall": "ioctl", "success": "yes", "exit": "0",
+                 "a0": "1", "a1": "5401", "a2": "7ffd3c5e9a10", "a3": "0",
+                 "uid": "0", "euid": "0", "auid": "4294967295",
+                 "timestamp": "2026-10-04 11:59:59.500"}
+LATE = 60               # --late: seconds added to the time of the records
 
 
 def stop(message):
@@ -112,10 +178,13 @@ def positive(rule):
 def mutant(rule, expected):
     if expected == [v.SUCCESS_GATE]:    # the kernel rejected the syscall: EPERM
         return [dict(event, success="no", exit="-1") for event in positive(rule)]
+    # An item of a base of a correlation (`base:<name>/<item>`): a sidecar case
+    # declares the base (`base:<name>`).
+    breaks = [item.split("/")[0] for item in expected]
     for case in cases(rule):
-        if case.get("kind") == "near-miss" and case.get("breaks") == expected:
+        if case.get("kind") == "near-miss" and case.get("breaks") == breaks:
             return [dict(event) for event in case["events"]]
-    stop(f"the sidecar of {rule} holds no near-miss that breaks {expected}")
+    stop(f"the sidecar of {rule} holds no near-miss that breaks {breaks}")
 
 
 def label(src, name=None):
@@ -150,6 +219,13 @@ def stimulus_pid(events):
     return top[0]
 
 
+def later(timestamp):
+    """A canned `timestamp` (`2026-10-12 14:00:11.300`), LATE seconds later."""
+    form = "%Y-%m-%d %H:%M:%S.%f"
+    moved = datetime.datetime.strptime(timestamp, form) + datetime.timedelta(seconds=LATE)
+    return moved.strftime(form)[:-3]
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--vacuous", metavar="SRC")
@@ -157,6 +233,12 @@ def main():
     ap.add_argument("--rejected", metavar="SRC")
     ap.add_argument("--fires", metavar="SRC")
     ap.add_argument("--no-audit", metavar="WHY")
+    ap.add_argument("--distant", metavar="SRC")
+    ap.add_argument("--without", metavar=("SRC", "SYSCALL"), nargs=2)
+    ap.add_argument("--missing", metavar="SRC")
+    ap.add_argument("--split", metavar=("SRC", "SYSCALL"), nargs=2)
+    ap.add_argument("--late", metavar=("SRC", "SYSCALL"), nargs=2)
+    ap.add_argument("--refused", metavar=("SRC", "SYSCALL"), nargs="+")
     args, validator_args = ap.parse_known_args()
 
     own, rule_of = canned_stimuli()
@@ -166,6 +248,42 @@ def main():
     atomics = [src for _rule, src, _args, _probes in v.MANIFEST]
     if args.rejected is not None and args.rejected not in atomics:
         stop(f"{args.rejected} is not an atomic of MANIFEST ({', '.join(atomics)})")
+    if args.missing is not None and args.missing not in atomics:
+        stop(f"{args.missing} is not an atomic of MANIFEST ({', '.join(atomics)})")
+    if args.distant is not None and args.distant not in rule_of:
+        stop(f"{args.distant} is not a control that is built for one rule "
+             f"({', '.join(sorted(rule_of))})")
+    without, dropped = args.without or (None, None)
+    if without is not None:
+        mutants = [src for _rule, src, _args, _meaning, _expected in v.CONTROLS]
+        if without not in mutants:
+            stop(f"{without} is not a mutant of CONTROLS ({', '.join(mutants)})")
+        if not any(event["syscall"] == dropped for event in own[without]):
+            stop(f"the canned events of {without} hold no {dropped} record")
+    split, moved = args.split or (None, None)
+    late, delayed = args.late or (None, None)
+    for src, syscall in ((split, moved), (late, delayed)):
+        if src is None:
+            continue
+        mutants = [source for _rule, source, _args, _meaning, _expected in v.CONTROLS]
+        if src not in mutants:
+            stop(f"{src} is not a mutant of CONTROLS ({', '.join(mutants)})")
+        if not any(event["syscall"] == syscall for event in own[src]):
+            stop(f"the canned events of {src} hold no {syscall} record")
+        if all(event["syscall"] == syscall for event in own[src]):
+            stop(f"each canned event of {src} is a {syscall} record: no other call stays "
+                 "in the pid and the time of the stimulus")
+    refused, refused_call = None, None
+    if args.refused is not None:
+        if len(args.refused) > 2:
+            stop(f"--refused takes SRC and at most one SYSCALL, not {args.refused}")
+        refused, refused_call = (args.refused + [None])[:2]
+        if refused not in rule_of:
+            stop(f"{refused} is not a control that is built for one rule "
+                 f"({', '.join(sorted(rule_of))})")
+        if refused_call is not None and not any(event["syscall"] == refused_call
+                                                for event in own[refused]):
+            stop(f"the canned events of {refused} hold no {refused_call} record")
     if args.fires is not None:
         if args.fires not in rule_of:
             stop(f"{args.fires} is not a control that is built for one rule "
@@ -185,10 +303,32 @@ def main():
                       for event in events]
         elif binary == args.rejected:
             events = [dict(event, success="no", exit="-1") for event in events]
+        elif binary == args.missing:
+            events = [dict(event, success="no", exit="-1") for event in events]
+        elif binary == args.distant:
+            events = [dict(DISTANT_EVENT, pid=root, ppid=root - 1, comm=events[0]["comm"],
+                           exe=events[0]["exe"])]
+        elif binary == without:
+            events = [event for event in events if event["syscall"] != dropped]
+        elif binary == split:
+            child = max(event["pid"] for event in events) + 1   # a pid of no canned event
+            events = [dict(event, pid=child, ppid=root) if event["syscall"] == moved
+                      else event for event in events]
+        elif binary == late:
+            events = [dict(event, timestamp=later(event["timestamp"]))
+                      if event["syscall"] == delayed else event for event in events]
+        elif binary == refused:
+            events = [dict(event, success="no", exit="-1")
+                      if refused_call in (None, event["syscall"]) else event
+                      for event in events]
         window = [dict(BACKGROUND)] + events
         return window, v.process_tree(root, window), ""     # the validator's own tree
 
-    v.MANIFEST = [(rule, src, run_args, []) for rule, src, run_args, _probes in v.MANIFEST]
+    def feature_missing():      # the probe of the atomic of --missing
+        return "the kernel lacks the feature (canned)"
+
+    v.MANIFEST = [(rule, src, run_args, [feature_missing] if src == args.missing else [])
+                  for rule, src, run_args, _probes in v.MANIFEST]
     v.audit_available = lambda: (False, args.no_audit) if args.no_audit else (True, "")
     v.load_audit_rules = lambda: None
     v.unload_audit_rules = lambda: None

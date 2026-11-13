@@ -20,12 +20,59 @@ A case is SKIPPED only when an independent kernel-feature probe, run before the
 test, shows the kernel lacks what the technique needs (no AF_ALG, no AF_RXRPC,
 io_uring disabled, ...). Every other miss is a FAIL and fails the run.
 
-Controls then test the test. Each must FAIL; one that passes fails the run:
-  * a no-op binary, evaluated against every rule;
-  * the mutants in detections/controls/, which keep the surface of a technique
-    but break it (half a correlation, a rejected syscall, a wrong argument);
+Controls then test the test. The rule must stay quiet on each control; a control
+on which its rule fires fails the run:
+  * the no-op baseline (detections/controls/noop.c), evaluated against every
+    rule: a process that is not a technique. It makes one audited syscall, and
+    its record fires no rule. It must own that record: a baseline that left no
+    record proves nothing, and fails the run. It declares no item, so the
+    validator never counts it as the live negative control of a rule;
+  * the mutants in detections/controls/ (the CONTROLS table), which keep the
+    surface of a technique and break one thing: a wrong argument, the two
+    halves of a correlation in different pids, or a call the kernel rejects;
   * each atomic re-run under a name from its rule's process allowlist, so the
     rule's `not <allowlist>` filter has to suppress it.
+
+A mutant and a re-run are BUILT controls: each declares what holds it. That is
+one required item of the rule (an argument item, the group-by of a correlation,
+the allowlist filter), or, for a call that the kernel rejects, the success gate
+of this validator. The validator grades each built control against its rule, and
+the control must be held by what it declares. One whose process tree made no
+audited syscall (vacuous), or that is held for another reason, is BROKEN and
+fails the run. So each built control that prints `held` is a LIVE negative
+control: the rule would fire if the declared item changed (for the success gate:
+if the kernel accepted the call). Each rule of MANIFEST needs a built control: a
+rule with none is BROKEN.
+
+The CONTROLS table is checked before anything is compiled or run, also with
+--dry-run. Each row must have five fields: a rule of MANIFEST, a C source that
+exists, the arguments, the meaning of a pass, and a non-empty list of the
+declared items. A bad row ends the run with exit code 1 and a line that names
+the row: a control that declares nothing can never be held as declared.
+
+Two rules read no argument (userfaultfd_syscall.yml, io_uring_setup.yml), so no
+argument value can keep them quiet. Their control is the rule's own syscall with
+arguments that the kernel rejects. It tests the success gate of this validator,
+not an item of the rule: the rule's logic matches the rejected call.
+
+When the kernel-feature probe turned EVERY emulation of a rule into a SKIP, the
+rule is not proven on this host. Its re-run does not run (a re-run needs an
+emulation of the rule that passed; it uses the first one that did). Its mutant
+runs, and it is N/A, not BROKEN, only when both of these hold: it is not held as
+declared, and the kernel rejected one or more of the audited calls it made that
+the rule reads. The validator takes such a mutant to need the missing feature
+too; it does not test why the kernel rejected the call. The models are
+ptrace_attach_child.c on a host where Yama refuses each attach, and
+memfd_fexecve_in_child.c on a host with vm.memfd_noexec = 2, where the kernel
+accepts the memfd_create and rejects the execveat (seen on a 6.18 kernel). A
+mutant of a skipped rule that is not held as declared, and of which the kernel
+rejected no such call (it accepted each one, or the mutant made none), is
+BROKEN: the missing feature does not explain its grade. On every host, a control
+on which the rule fires, or one that left no record, is BROKEN.
+
+No verdict reads the exit code or the stderr of a stimulus: the verdicts read
+the audit records only. The report shows the exit code (when it is not 0) and
+the last stderr line beneath the row of a control, for the reader.
 
 Event schema the rules assume (one event per auditd SYSCALL record):
   type=SYSCALL, syscall=<name>, success, exit, a0..a3 (raw hex, as auditd logs
@@ -45,12 +92,15 @@ be fixed without guessing:
   * a detection FAIL lists the audited syscalls the stimulus tree made (name,
     count, success or errno) and grades the tree's events against the rule, item
     by item (succeeded and rejected events alike; each is labelled);
-  * a BROKEN control shows the events that satisfied the rule and why, with what
-    a pass of that control means;
-  * a HELD mutant is graded against the rule ("held: near-miss on
-    afinet_raw_socket.a1"); a grade that differs from the atoms the mutant is
-    built to break (its CONTROLS entry) prints a WARNING, never a failure.
---json PATH also writes all of it as a machine-readable report.
+  * a BROKEN control on which the rule fired shows the events that satisfied the
+    rule and why, with what a pass of that control means;
+  * a held control prints its grade ("held: near-miss on afinet_raw_socket.a1");
+  * a BROKEN control that is not held as declared prints what it is built to
+    break, its grade, and its nearest event graded item by item;
+  * a control that exited with another code than 0, or that wrote to stderr,
+    prints that beneath its row.
+--json PATH also writes all of it as a machine-readable report (`controls`, and
+`negatives`: for each rule of MANIFEST, its live negative controls).
 
 Usage:
     sudo python3 detections/validate_detections.py                  # validate + controls
@@ -80,12 +130,16 @@ except ImportError:
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sigma_eval  # noqa: E402
-try:  # explanations are optional: a broken sigma_explain must never break a verdict
+try:
+    # sigma_explain explains a verdict, and it grades the built controls. Without it
+    # the verdict of a detection is the same (an explanation never changes it). But
+    # a built control that an item of the rule holds cannot be graded, so nothing
+    # shows that it is held as declared: it is BROKEN, and the run fails.
     import sigma_explain  # noqa: E402
 except Exception as _e:  # noqa: BLE001
     sigma_explain = None
-    print(f"[diag] no explanations: sigma_explain failed to import "
-          f"({type(_e).__name__}: {_e})")
+    print(f"[diag] sigma_explain failed to import ({type(_e).__name__}: {_e}): no "
+          "explanations, and the controls that an item of a rule holds cannot be graded")
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -204,13 +258,45 @@ MANIFEST = [
      []),
 ]
 
-# Mutants that keep the surface of a technique but break it. Each must FAIL;
-# the note says what a PASS would mean. The last field is what the mutant is
-# built to break: the rule's condition atoms (`rule_cases.py --atoms RULE`), or
-# SUCCESS_GATE for the validator's own success=yes check. Each held mutant is
-# graded against the rule; a different grade prints a WARNING (not a failure).
+# ---- controls -----------------------------------------------------------------
+#
+# NOOP is the baseline, not a mutant: a process that is not a technique, with one
+# audited syscall. Its record fires no rule. It runs against every rule. It must
+# own a record (else it is VACUOUS and the run fails). It declares no item, so the
+# validator never counts it as the live negative control of a rule.
+#
+# CONTROLS holds the mutants. A mutant keeps the surface of a technique and breaks
+# ONE thing. A row is (rule, C source, arguments, what a PASS of the control would
+# mean, what the mutant is built to break). The last field is a list in these
+# words:
+#   `<block>.<field>`         one item of a plain rule (`rule_cases.py --atoms RULE`
+#                             lists them): a wrong argument;
+#   `base:<name>/<item>`      one item of one base of a correlation: a wrong argument
+#                             in the call that would be that base's event (a control
+#                             that makes no such call is graded `base:<name>`);
+#   `group-by`                the halves of a correlation, in different pids;
+#   SUCCESS_GATE              a call that the kernel rejects. Such a mutant breaks NO
+#                             item of the rule: the rule's logic matches the call,
+#                             and only this validator's success=yes check holds it.
+#                             It is the only possible control for a rule that reads
+#                             no argument (userfaultfd_syscall.yml,
+#                             io_uring_setup.yml).
+#
+# The validator grades each mutant against its rule (grade_control), and the grade
+# must be equal to that field. A mutant that is held for another reason is BROKEN
+# and fails the run, as is one whose process tree made no audited syscall. The
+# same holds for the re-run of an atomic under an allowlisted name, which declares
+# `<allowlist block>.comm`. Each rule of MANIFEST needs a row here or an allowlist
+# that allowlist() can re-run: a rule with no built control is BROKEN, so a new
+# rule cannot be added without one.
+#
+# controls_table_faults() checks the shape of each row before anything runs (also
+# with --dry-run): five fields, a rule of MANIFEST, a source that exists, and a
+# non-empty list in the last field. A bad row ends the run with exit code 1.
 SUCCESS_GATE = "success"
-VACUOUS = "vacuous"  # a control that made no audited syscall proves nothing
+VACUOUS = "vacuous"     # a control that made no audited syscall proves nothing
+BASELINE = "baseline"   # the grade of the no-op when it owns a record
+UNGRADED = "not graded"  # the grade could not be made (sigma_explain failed)
 NOOP = "detections/controls/noop.c"
 CONTROLS = [
     ("detections/sigma/T1068/dirtypipe_splice_readonly.yml",
@@ -229,6 +315,38 @@ CONTROLS = [
      "detections/controls/afinet_stream_socket.c", [],
      "the a1 (SOCK_RAW) argument constraint was not enforced",
      ["afinet_raw_socket.a1"]),
+    ("detections/sigma/T1068/copyfail_af_alg_authencesn.yml",
+     "detections/controls/copyfail_unix_socket_splice.c", [],
+     "the a0 (AF_ALG) argument constraint of the socket base was not enforced",
+     ["base:copyfail_af_alg_socket/af_alg_socket.a0"]),
+    ("detections/sigma/T1068/dirtyfrag_xfrm_unshare_netlink.yml",
+     "detections/controls/dirtyfrag_netlink_route_socket.c", [],
+     "the a2 (NETLINK_XFRM) argument constraint of the socket base was not enforced",
+     ["base:dirtyfrag_xfrm_netlink_xfrm_socket/netlink_xfrm_socket.a2"]),
+    ("detections/sigma/T1068/dirtyfrag_rxrpc_socket.yml",
+     "detections/controls/rxrpc_netlink_socket.c", [],
+     "the a0 (AF_RXRPC) argument constraint was not enforced",
+     ["rxrpc_socket.a0"]),
+    ("detections/sigma/T1040/afxdp_socket.yml",
+     "detections/controls/afxdp_netlink_socket.c", [],
+     "the a0 (AF_XDP) argument constraint was not enforced",
+     ["afxdp_socket.a0"]),
+    ("detections/sigma/T1622/ptrace_traceme.yml",
+     "detections/controls/ptrace_attach_child.c", [],
+     "the a0 (PTRACE_TRACEME) argument constraint was not enforced",
+     ["ptrace_traceme.a0"]),
+    # The next two rules read no argument. Their control tests the success gate of
+    # this validator, not an item of the rule (see SUCCESS_GATE above).
+    ("detections/sigma/T1068/userfaultfd_syscall.yml",
+     "detections/controls/userfaultfd_bad_flags.c", [],
+     "a userfaultfd() that the kernel rejected counted as an execution (or the kernel "
+     "accepted the call of the control)",
+     [SUCCESS_GATE]),
+    ("detections/sigma/T1685/io_uring_setup.yml",
+     "detections/controls/io_uring_setup_zero_entries.c", [],
+     "an io_uring_setup() that the kernel rejected counted as an execution (or the "
+     "kernel accepted the call of the control)",
+     [SUCCESS_GATE]),
 ]
 
 AUDIT_RULES = os.path.join(REPO, "detections/audit/atomic.rules")
@@ -399,8 +517,30 @@ def compile_atomic(src, workdir, name=None):
     return out
 
 
+def ending(returncode, stderr):
+    """How a stimulus ended, in one line for the report: `exit code N` when N is
+    not 0 (or the signal that ended it), and its last stderr line. "" when it
+    exited with 0 and wrote nothing to stderr.
+
+    No verdict reads this line. The verdicts read the audit records only: the
+    same records get the same verdict, whatever the exit code is.
+    """
+    tail = (stderr or "").strip().splitlines()
+    parts = []
+    if returncode and returncode < 0:
+        parts.append(f"ended by signal {-returncode}")
+    elif returncode:
+        parts.append(f"exit code {returncode}")
+    if tail:
+        parts.append(f"stderr: {tail[-1]}")
+    return "; ".join(parts)
+
+
 def run(binary, args):
-    """Run one stimulus: (events of its window, its process tree, stderr tail)."""
+    """Run one stimulus: (events of its window, its process tree, how it ended).
+
+    The last value is the line of ending(): text for the report, never a verdict.
+    """
     start = len(audit_log_lines())
     proc = subprocess.Popen([binary] + args, stdout=subprocess.DEVNULL,
                             stderr=subprocess.PIPE, text=True)
@@ -411,8 +551,7 @@ def run(binary, args):
         _, err = proc.communicate()
     time.sleep(1.5)  # let auditd flush to the log
     events = normalize(audit_log_lines()[start:])
-    tail = (err or "").strip().splitlines()
-    return events, process_tree(proc.pid, events), tail[-1] if tail else ""
+    return events, process_tree(proc.pid, events), ending(proc.returncode, err)
 
 
 def _errno_name(exit_code):
@@ -431,8 +570,12 @@ def stimulus_hits(sql, events, tree, succeeded_only=True):
     return [h for h in sigma_eval.evaluate(sql, pool) if all(e["pid"] in tree for e in h)]
 
 
-def judge(sql, events, tree, missing=None, stderr=""):
-    """PASS / SKIP / FAIL for one stimulus run, and why."""
+def judge(sql, events, tree, missing=None, ended=""):
+    """PASS / SKIP / FAIL for one stimulus run, and why.
+
+    `ended` (the line of ending()) is only added to the text of a FAIL that found
+    no hit; it changes no verdict.
+    """
     done = stimulus_hits(sql, events, tree)
     if done:
         calls = "+".join(dict.fromkeys(e["syscall"] for e in done[0]))
@@ -447,7 +590,7 @@ def judge(sql, events, tree, missing=None, stderr=""):
         return "FAIL", ("fired only on syscalls the kernel rejected "
                         f"({'; '.join(failed)}): an attempt, not an execution")
     detail = f"no hit from the stimulus ({len(events)} events in window)"
-    return "FAIL", detail + (f"; stderr: {stderr}" if stderr else "")
+    return "FAIL", detail + (f"; {ended}" if ended else "")
 
 
 def allowlist(rule_path):
@@ -472,6 +615,91 @@ def allowlist(rule_path):
 def allowlisted_comm(rule_path):
     """A process name the rule's `not <allowlist>` filter must suppress, or None."""
     return allowlist(rule_path)[1]
+
+
+def rule_syscalls(rule_path):
+    """The names of the syscalls that a rule reads: each value of a `syscall` item
+    in a detection block of each document of the rule file (a correlation file
+    holds its base rules)."""
+    names = set()
+    with open(os.path.join(REPO, rule_path), encoding="utf-8") as fh:
+        for doc in yaml.safe_load_all(fh):
+            for block in ((doc or {}).get("detection") or {}).values():
+                for part in block if isinstance(block, list) else [block]:
+                    if not isinstance(part, dict):
+                        continue
+                    for field, value in part.items():
+                        if field.split("|")[0] == "syscall":
+                            names.update(str(name) for name in
+                                         (value if isinstance(value, list) else [value]))
+    return names
+
+
+def refused_calls(syscalls, events, tree):
+    """The calls of a stimulus that the kernel rejected (`execveat: EACCES`): the
+    records of the stimulus tree whose syscall is in `syscalls` (the syscalls
+    that the rule reads) and that did not succeed. One name for each pair of
+    syscall and errno.
+
+    [] when the kernel rejected no such call: it accepted each one, or the tree
+    made none. A missing kernel feature is then not the reason that a mutant of
+    a SKIPPED rule is not held as declared (see control_row).
+
+    One rejected call is sufficient. A call of the rule that the kernel accepted
+    does not empty the list: for an accepted memfd_create and a rejected
+    execveat (memfd_fexecve_in_child.c on a host with vm.memfd_noexec = 2), the
+    result is [`execveat: EACCES`].
+    """
+    return sorted({f"{e['syscall']}: {_errno_name(e['exit'])}" for e in events
+                   if e["pid"] in tree and e["syscall"] in syscalls
+                   and e["success"] != "yes"})
+
+
+def controls_table_faults():
+    """The rows of CONTROLS that cannot be used: [(name of the row, the fault)].
+
+    A row is (rule, C source, arguments, meaning of a pass, declared items). The
+    rule must be a rule of MANIFEST: a control is graded against a rule that an
+    atomic proves, and the live negative controls are counted for those rules
+    only. The source must exist. The last field must be a non-empty list of
+    texts: a control that declares nothing can never be held as declared. A last
+    field that is not a list (a tuple, one text) gets a fault of its own, which
+    names the value: the row declares something, in a form that is not accepted.
+    """
+    proven = {m[0] for m in MANIFEST}
+    faults = []
+    for number, row in enumerate(CONTROLS, 1):
+        fields = list(row) if isinstance(row, (tuple, list)) else []
+        name = f"CONTROLS row {number}"
+        if len(fields) >= 2 and all(isinstance(f, str) for f in fields[:2]):
+            name += f" ({os.path.basename(fields[1])} -> {os.path.basename(fields[0])})"
+        if len(fields) != 5:
+            faults.append((name, f"has {len(fields)} field(s), not five (rule, C source, "
+                           "arguments, meaning of a pass, declared items)"
+                           if fields else "is not a tuple of five fields"))
+            continue
+        rule, src, run_args, meaning, expected = fields
+        if not isinstance(rule, str) or rule not in proven:
+            faults.append((name, f"its rule {rule!r} is not a rule of MANIFEST: no atomic "
+                           "proves it, so the control cannot be the live negative control "
+                           "of a rule"))
+        if not isinstance(src, str) or not os.path.isfile(os.path.join(REPO, src)):
+            faults.append((name, f"its C source {src!r} does not exist"))
+        if not isinstance(run_args, list) or not all(isinstance(a, str) for a in run_args):
+            faults.append((name, "its arguments (the third field) are not a list of texts"))
+        if not isinstance(meaning, str) or not meaning.strip():
+            faults.append((name, "the meaning of a pass (the fourth field) is not a text"))
+        if not isinstance(expected, list):
+            faults.append((name, f"its declared items (the fifth field) are {expected!r}, a "
+                           f"{type(expected).__name__} and not a list: write the item(s) "
+                           "that hold the control as a list (for example "
+                           "['afxdp_socket.a0'], ['group-by'] or [SUCCESS_GATE])"))
+        elif not expected or not all(isinstance(item, str) and item.strip()
+                                     for item in expected):
+            faults.append((name, "declares nothing: the fifth field must be a non-empty "
+                           "list of the item(s) that hold the control (for example "
+                           "['afxdp_socket.a0'], ['group-by'] or [SUCCESS_GATE])"))
+    return faults
 
 
 # ---- explanations (sigma_explain) ------------------------------------------
@@ -524,7 +752,8 @@ def explain_fail(rule, events, tree):
 def explain_broken(rule, sql, events, tree, meaning):
     """A control PASSED: the events that satisfied the rule, why, and what that means."""
     hits = stimulus_hits(sql, events, tree)
-    noop = "the rule matched a no-op: something other than the technique satisfies it"
+    noop = ("the rule fired on the no-op baseline: something other than the technique "
+            "satisfies it")
     lines = [f"meaning: {meaning or noop}"]
     for hit in hits[:3]:
         for e in hit:
@@ -537,51 +766,161 @@ def explain_broken(rule, sql, events, tree, meaning):
     return lines
 
 
+def base_items(rule, events, atom):
+    """The items of one base of a correlation that an event set breaks.
+
+    `atom` is `base:<ref>`: a base that no event of the set matches, and whose
+    absence alone keeps the correlation quiet. Each event that no base matches and
+    that misses this base by one item (a near-miss or a filtered event of the base
+    rule) is marked as the base's match, and the compiled correlation runs on the
+    set. If it fires, that event is in the right group and window, and the item is
+    what holds the set: `base:<ref>/<item>`. The result is [] when no event of the
+    set is one item away from the base (for example, when the set holds no socket
+    call at all for a socket base).
+
+    check_sufficiency.py makes the same test on a sidecar case
+    (base_negative_items).
+    """
+    base = rule.bases[atom[len("base:"):]]
+    table = sigma_eval.EventTable(events)
+    matched = {i for other in rule.bases.values() for hit in table.hit_indices(other.sql)
+               for i in hit}
+    rows, _ = base.truth_table(table)
+    items = []
+    for i, event in enumerate(events):
+        if i in matched:
+            continue
+        v = base.verdict(event, rows[i], False)
+        if v.mismatch or v.kind not in sigma_explain.NON_TRIVIAL or not v.atoms:
+            continue
+        marked = [dict(e, **{sigma_explain.REPAIR_FIELD: atom}) if j == i else e
+                  for j, e in enumerate(events)]
+        if rule._fires(marked, rule._variant(atom)):
+            items += [f"{atom}/{a}" for a in v.atoms if f"{atom}/{a}" not in items]
+    return items
+
+
 def grade_control(rule, sql, events, tree, expected):
-    """Grade a held mutant against the rule: (graded atoms, summary, warning, lines).
+    """Grade a control on which its rule did not fire: (graded, kind, why, lines).
+
+    `graded` says what holds the control, in the words of a CONTROLS entry: the
+    items of the rule of which one flip fires it, or [SUCCESS_GATE]. It is [] when
+    no single item holds the control. `kind` names the grade, `why` is one line for
+    the report, and `lines` grade the nearest event item by item.
 
     The grade uses the control's own SUCCEEDED syscalls, the same pool judge()
     gates on: a syscall the kernel rejected never reaches the rule, so it cannot
     be what held the control. The closest event (or, for a correlation, the whole
-    set) says which part of the rule held it. A grade other than `expected` is a
-    WARNING: the mutant may no longer test what its CONTROLS entry says it does.
-    A control whose process tree made no audited syscall at all is VACUOUS.
+    set) says which part of the rule held it. For a correlation that lacks one
+    base, base_items() then names the item of that base that an event of the
+    control breaks.
+
+    A control whose process tree made no audited syscall at all is VACUOUS. The
+    no-op baseline (`expected` is None) declares no item: it is graded only for
+    that, and its grade is BASELINE when it owns a record.
     """
     own = [e for e in events if e["pid"] in tree]
+    if not own:
+        return [], VACUOUS, ("VACUOUS: the control's process tree made no audited syscall "
+                             "-- it proves nothing about the rule"), []
+    if expected is None:
+        return [], BASELINE, (f"the baseline owns {tree_syscalls(events, tree)}, and the "
+                              "rule stays quiet"), []
     accepted = [e for e in own if e["success"] == "yes"]
     rejected = sorted({f"{e['syscall']}: {_errno_name(e['exit'])}"
                        for e in own if e["success"] != "yes"})
-    lines = []
-    if not own:
-        graded, kind = [], VACUOUS
-        text = ("VACUOUS: the control's process tree made no audited syscall -- it proves "
-                "nothing about the rule")
-    elif stimulus_hits(sql, events, tree, succeeded_only=False):
-        graded, kind = [SUCCESS_GATE], "rejected"
-        text = ("held: the rule's logic matches, but only syscalls the kernel rejected "
-                f"({'; '.join(rejected)}); the success=yes gate held it")
-    elif not accepted:
-        graded, kind = [], "all rejected"
-        text = ("held, but every audited syscall the control made was rejected by the "
-                f"kernel ({'; '.join(rejected)}), so it never reaches the rule")
+    if stimulus_hits(sql, events, tree, succeeded_only=False):
+        return [SUCCESS_GATE], "rejected", (
+            "the rule's logic matches, but only syscalls the kernel rejected "
+            f"({'; '.join(rejected)}); the success=yes gate held it"), []
+    if not accepted:
+        return [], "all rejected", (
+            "every audited syscall the control made was rejected by the kernel "
+            f"({'; '.join(rejected)}), so it never reaches the rule"), []
+    if rule is None:
+        return [], UNGRADED, "not graded: sigma_explain could not load the rule", []
+    verdicts = sigma_explain.judge_events(rule, accepted)
+    v = min(verdicts, key=lambda x: (sigma_explain.KIND_RANK[x.kind], -x.closeness))
+    graded = list(v.atoms) if v.kind in sigma_explain.NON_TRIVIAL else []
+    if rule.is_correlation:
+        graded = [item for atom in graded
+                  for item in ((base_items(rule, accepted, atom) if atom.startswith("base:")
+                                else []) or [atom])]
+    why = {"near-miss": f"near-miss on {', '.join(graded)}",
+           "filtered": f"filtered on {', '.join(graded)}",
+           "distant": "distant -- no single item of the rule holds the control, so it "
+                      "does not exercise the chokepoint",
+           "trivial": "trivial -- the control does not reach the rule's surface",
+           }.get(v.kind, f"the rule's logic grades it {v.kind}")
+    if rejected:
+        why += f" (rejected syscalls not graded: {'; '.join(rejected)})"
+    return graded, v.kind, why, v.lines
+
+
+def control_row(label, detail, meaning, info, skipped):
+    """One row of the control table for a control that ran: (status, label, detail,
+    lines). Sets `status`, `live` and `explanation` in `info`.
+
+    held    the rule stayed quiet, and for the reason the control declares (for
+            the no-op baseline: it owns a record). A built control that is held
+            is a live negative control of its rule.
+    BROKEN  the rule fired on the control; or the control made no audited
+            syscall; or the rule stayed quiet for another reason than the
+            declared one; or the control declares nothing; or the grade could
+            not be made.
+    N/A     the control is not held as declared, the kernel-feature probe turned
+            every emulation of its rule into a SKIP (`skipped`), and the kernel
+            rejected one or more of the calls of the control that the rule reads
+            (info["refused"], from refused_calls; an accepted call of the rule
+            does not change that). The validator then takes it that this host
+            cannot exercise the control. Without the last condition, or without
+            the SKIP, the control is BROKEN.
+    """
+    expected, kind, why = info["expected"], info.get("kind"), info.get("grade", "")
+    more = [f"the control process: {info['ended']}"] if info.get("ended") else []
+    if info["judge"] == "PASS":
+        row = ("BROKEN", label, f"passed: {meaning or 'the rule fired on the no-op baseline'}",
+               info["explanation"] + more)
+    elif kind == VACUOUS:
+        row = ("BROKEN", label, "vacuous: the control made no audited syscall", [why] + more)
+    elif kind == BASELINE or (expected and kind != UNGRADED
+                              and sorted(info["graded"]) == sorted(expected)):
+        # `expected and`: an empty declaration is equal to the grade of a control
+        # that no item holds, and such a control must never be held.
+        info["grade"] = f"held: {why}"
+        row = ("held", label, detail, [info["grade"]] + more)
+    elif kind == UNGRADED:
+        row = ("BROKEN", label, "not graded: nothing shows that the control is held as "
+               "declared", [why] + more)
+    elif not expected:
+        # controls_table_faults() refuses such a row before any stimulus runs; this
+        # branch keeps the verdict closed if a control gets here another way.
+        row = ("BROKEN", label, "declares nothing: a built control must declare what "
+               "holds it", [f"the rule stayed quiet: {why}"] + more)
     else:
-        verdicts = sigma_explain.judge_events(rule, accepted)
-        v = min(verdicts, key=lambda x: (sigma_explain.KIND_RANK[x.kind], -x.closeness))
-        lines, kind = v.lines, v.kind
-        graded = list(v.atoms) if v.kind in sigma_explain.NON_TRIVIAL else []
-        text = {"near-miss": f"held: near-miss on {', '.join(v.atoms)}",
-                "filtered": f"held: filtered on {', '.join(v.atoms)}",
-                "distant": "held: distant -- the mutant may not exercise the chokepoint",
-                "trivial": "held: trivial -- the mutant does not reach the rule's surface",
-                }.get(v.kind, f"held, though the rule's logic grades it {v.kind}")
-        if rejected:
-            text += f" (rejected syscalls not graded: {'; '.join(rejected)})"
-    warning = None
-    if expected is not None and sorted(graded) != sorted(expected):
-        warning = (f"WARNING: built to break {', '.join(expected)}, but graded "
-                   f"{', '.join(graded) or kind}: the control may no longer test what its "
-                   "CONTROLS entry says (not a failure)")
-    return graded, text, warning, lines
+        got = ", ".join(info["graded"]) or kind
+        lines = ([f"the rule stayed quiet, but not for the declared reason: {why}",
+                  "meaning: the control does not test what its entry declares, so it is "
+                  "not a live negative control of the rule"] + info.get("verdict", []) + more)
+        refused = info.get("refused") or []
+        if info["rule"] in skipped and refused:
+            row = ("N/A", label, f"not held as declared (built to break {', '.join(expected)}, "
+                   f"graded {got}). The emulation of this rule was SKIPPED (kernel feature "
+                   "missing), and the kernel rejected one or more calls of the control that "
+                   f"the rule reads ({'; '.join(refused)}): the validator takes it that "
+                   "this host cannot exercise the control", lines)
+        else:
+            if info["rule"] in skipped:
+                lines.append("the emulation of this rule was SKIPPED, but that does not "
+                             "explain the grade: the kernel rejected no call of the control "
+                             "that the rule reads (it accepted each one, or the control "
+                             "made none)")
+            row = ("BROKEN", label, f"not held as declared: built to break "
+                   f"{', '.join(expected)}, but graded {got}", lines)
+    info["status"] = row[0]
+    info["live"] = row[0] == "held" and expected is not None
+    info["explanation"] = row[3]
+    return row
 
 
 def explained(fn, rule, *args):
@@ -598,7 +937,8 @@ def load_rule(rule_path):
     try:
         return sigma_explain.load(os.path.join(REPO, rule_path)).stripped()  # no null guards
     except Exception as e:  # noqa: BLE001
-        print(f"[diag] sigma_explain could not load {rule_path}: {e} (no explanations)")
+        print(f"[diag] sigma_explain could not load {rule_path}: {e} (no explanations, "
+              "and no grade by item for its controls)")
         return None
 
 
@@ -629,10 +969,10 @@ def main():
                     help="fail (instead of skip) when auditd is unavailable")
     ap.add_argument("--json", metavar="PATH",
                     help="also write a machine-readable report (results, controls, "
-                    "explanations) to PATH")
+                    "the live negative controls of each rule, explanations) to PATH")
     args = ap.parse_args()
     report = {"validator": "linux-auditd", "mode": "dry-run" if args.dry_run else "validate",
-              "results": [], "controls": []}
+              "results": [], "controls": [], "negatives": []}
     code = validate(args, report)
     if args.json:
         report["exit"] = code
@@ -642,6 +982,18 @@ def main():
 
 def validate(args, report):
     """The validation run behind main(); fills `report` for --json."""
+    # The CONTROLS table first, in every mode: nothing is compiled and no stimulus
+    # runs on a table with a bad row.
+    faults = controls_table_faults()
+    if faults:
+        for name, fault in faults:
+            print(f"  [ERROR ] {name}  {fault}")
+        print(f"ERROR: the CONTROLS table of {os.path.basename(__file__)} has "
+              f"{len(faults)} fault(s); nothing was compiled and no stimulus ran.")
+        report.update(mode="error", reason="bad CONTROLS table")
+        report["results"] = [{"rule": name, "status": "ERROR", "detail": fault,
+                              "explanation": []} for name, fault in faults]
+        return 1
     ok, why = (True, "") if args.dry_run else audit_available()
     if not ok and args.require_audit:
         print(f"ERROR: audit validation unavailable ({why}) and --require-audit set.")
@@ -694,14 +1046,19 @@ def validate(args, report):
                           for what, w in probes[i]) or "no probe (a miss is always a FAIL)"
         print(f"  {os.path.basename(rule)} <- {os.path.basename(src)}: {found}")
     rules = {path: load_rule(path) for path in rule_paths}
+    reads = {path: rule_syscalls(path) for path in rule_paths}
     results, controls = [], []
     load_audit_rules()
     try:
-        positive = {}
+        positive, statuses = {}, {}
         for i, (rule, src, run_args, _probes) in enumerate(MANIFEST):
             events, tree, err = run(binaries[src], run_args)
             status, detail = judge(queries[rule], events, tree, missing[i], err)
-            positive.setdefault(rule, (src, run_args, status))
+            # The re-run under an allowlisted name needs an emulation that passed:
+            # keep the first emulation of the rule that did, else its first one.
+            if rule not in positive or (status == "PASS" and positive[rule][2] != "PASS"):
+                positive[rule] = (src, run_args, status)
+            statuses.setdefault(rule, []).append(status)
             lines = (explained(explain_fail, rules[rule], events, tree)
                      if status == "FAIL" else [])
             results.append((status, os.path.basename(rule), detail, lines))
@@ -710,81 +1067,101 @@ def validate(args, report):
                 "probes": [{"what": what, "missing": w} for what, w in probes[i]],
                 "explanation": lines})
 
-        # Controls: every one must FAIL.
-        def control(status, label, detail, meaning, rule, events, tree, expected):
-            """Record one control; explain a pass, grade a held mutant."""
+        # Controls: the rule must stay quiet on every one.
+        def control(status, label, detail, meaning, rule, events, tree, expected, ended=""):
+            """Record one control; explain a pass, grade a control that held."""
             info = {"control": label, "rule": rule, "judge": status, "detail": detail,
-                    "meaning": meaning, "expected": expected, "explanation": []}
+                    "meaning": meaning, "expected": expected, "explanation": [],
+                    "ended": ended}
             if status == "PASS":
                 info["explanation"] = explained(explain_broken, rules[rule], queries[rule],
                                                 events, tree, meaning)
-            elif expected is not None:
-                graded = explained(grade_control, rules[rule], queries[rule], events, tree,
-                                   expected)
-                if isinstance(graded, tuple):
-                    info["graded"], info["grade"], info["warning"], info["verdict"] = graded
-                else:
-                    info["grade"] = graded[0]
-            controls.append((status, label, detail, meaning, info))
+            else:
+                # The grade is a verdict, not an explanation: a control that cannot be
+                # graded is not shown to be held as declared (UNGRADED is BROKEN).
+                try:
+                    grade = grade_control(rules[rule], queries[rule], events, tree, expected)
+                except Exception as e:  # noqa: BLE001
+                    grade = [], UNGRADED, f"not graded: {type(e).__name__}: {e}", []
+                info["graded"], info["kind"], info["grade"], info["verdict"] = grade
+                info["refused"] = refused_calls(reads[rule], events, tree)
+            controls.append((label, detail, meaning, info))
 
-        events, tree, _ = run(binaries[NOOP], [])
+        events, tree, err = run(binaries[NOOP], [])
         for rule in rule_paths:
             status, detail = judge(queries[rule], events, tree)
             control(status, f"noop -> {os.path.basename(rule)}", detail, "", rule, events,
-                    tree, None)
+                    tree, None, err)
         for rule, src, run_args, meaning, expected in CONTROLS:
-            events, tree, _ = run(binaries[src], run_args)
+            events, tree, err = run(binaries[src], run_args)
             status, detail = judge(queries[rule], events, tree)
             control(status, f"{os.path.basename(src)} -> {os.path.basename(rule)}", detail,
-                    meaning, rule, events, tree, expected)
+                    meaning, rule, events, tree, expected, err)
         for rule, (src, run_args, pos_status) in positive.items():
             block, comm = allowlist(rule)
             if not comm:
                 continue
             label = f"{os.path.basename(src)} as '{comm}' -> {os.path.basename(rule)}"
             if pos_status != "PASS":
-                controls.append(("N/A", label, "atomic did not pass under its own "
-                                 "name, so the allowlist is not exercised", "",
+                controls.append((label, "no atomic of this rule passed under its own name, "
+                                 "so the allowlist is not exercised", "",
                                  {"control": label, "rule": rule, "judge": "N/A",
-                                  "explanation": []}))
+                                  "expected": [f"{block}.comm"], "explanation": []}))
                 continue
             binary = compile_atomic(src, os.path.join(workdir, "allow"), name=comm)
-            events, tree, _ = run(binary, run_args)
+            events, tree, err = run(binary, run_args)
             status, detail = judge(queries[rule], events, tree)
             control(status, label, detail, "the allowlist filter did not suppress an "
-                    "allowlisted process", rule, events, tree, [f"{block}.comm"])
+                    "allowlisted process", rule, events, tree, [f"{block}.comm"], err)
     finally:
         unload_audit_rules()
         shutil.rmtree(workdir, ignore_errors=True)
 
     print_table("Detections (atomic -> auditd -> pySigma backend):", results)
-    shown, warnings = [], 0
-    for status, label, detail, meaning, info in controls:
-        if status == "PASS":
-            shown.append(("BROKEN", label, f"passed: {meaning or 'matched a no-op'}",
-                          info["explanation"]))
-        elif status == "N/A":
+    # A rule is skipped when the probe turned each of its emulations into a SKIP. A
+    # rule with one emulation that passed is not skipped: its re-run ran.
+    skipped = {rule for rule, seen in statuses.items() if set(seen) == {"SKIP"}}
+    shown = []
+    for label, detail, meaning, info in controls:
+        if info["judge"] == "N/A":      # a re-run that did not run
+            info.update(status="N/A", live=False)
             shown.append(("N/A", label, detail))
-        elif info.get("graded") == [] and str(info.get("grade", "")).startswith("VACUOUS"):
-            info["explanation"] = [info["grade"]]
-            shown.append(("BROKEN", label, "vacuous: the control made no audited syscall",
-                          info["explanation"]))
         else:
-            lines = [info["grade"]] if info.get("grade") else []
-            if info.get("warning"):
-                warnings += 1
-                lines += [info["warning"]] + info.get("verdict", [])
-            info["explanation"] = lines
-            shown.append(("held", label, detail, lines))
-        report["controls"].append(dict(info, status=shown[-1][0]))
-    print_table("Controls (each must FAIL; one that passes means the check is unsound):",
-                shown)
+            shown.append(control_row(label, detail, meaning, info, skipped))
+        report["controls"].append(info)
+
+    # Each rule of MANIFEST needs a live negative control: a built control (a mutant
+    # or a re-run; never the no-op) that is held by what it declares. A rule whose
+    # built controls are all BROKEN or N/A has its rows above. A rule for which no
+    # control is built at all has no row there, so it gets one here.
+    report["negatives"] = []
+    for rule in dict.fromkeys(m[0] for m in MANIFEST):
+        built = [info for _l, _d, _m, info in controls
+                 if info["rule"] == rule and info["expected"] is not None]
+        live = [info["control"] for info in built if info["live"]]
+        if live:
+            state = "live"
+        elif not built:
+            state = "BROKEN"
+            shown.append(("BROKEN", os.path.basename(rule), "no live negative control: no "
+                          "control is built for this rule (a row of CONTROLS that declares "
+                          "the item it breaks, or an allowlist to re-run)"))
+        else:
+            state = "BROKEN" if any(info["status"] == "BROKEN" for info in built) else "N/A"
+        report["negatives"].append({"rule": rule, "status": state, "live": live})
+    print_table("Controls (the rule must stay quiet on each one; a mutant or a re-run must be "
+                "held by what it declares):", shown)
+    without = [n for n in report["negatives"] if n["status"] != "live"]
+    print(f"\nLive negative control (a mutant or a re-run that is held as declared): "
+          f"{len(report['negatives']) - len(without)} of {len(report['negatives'])} rule(s).")
+    for n in without:
+        print(f"  none for {os.path.basename(n['rule'])}: "
+              + ("see the BROKEN row(s) above" if n["status"] == "BROKEN" else
+                 "not applicable on this host (its emulation did not pass; see the N/A "
+                 "row(s) above)"))
 
     count = {s: sum(1 for r in results if r[0] == s) for s in ("PASS", "SKIP", "FAIL")}
     broken = sum(1 for r in shown if r[0] == "BROKEN")
-    if warnings:
-        print(f"\n{warnings} held control(s) graded differently from what they are built "
-              "to break (WARNING above; not a failure).")
     print(f"\n{count['PASS']} passed, {count['SKIP']} skipped (kernel feature "
           f"missing), {count['FAIL']} failed; {broken} control(s) broken.")
     return 1 if (count["FAIL"] or broken) else 0
