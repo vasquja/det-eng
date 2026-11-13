@@ -32,6 +32,27 @@ jobs:
           findmnt -T "${GITHUB_WORKSPACE}" || true
           findmnt -T /tmp || true
 
+      - name: "Experiment 3: date and its fraction of a second"
+        shell: bash
+        run: |
+          date --version 2>&1 | head -2 || true
+          ls -l "$(command -v date)" || true
+          readlink -f "$(command -v date)" || true
+          dpkg -l 2>/dev/null | grep -E 'coreutils|uutils' | awk '{print $2, $3}' || true
+          echo "bash ${BASH_VERSION}"
+          for i in $(seq 1 60); do
+            e="${EPOCHREALTIME}"
+            a="$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)"
+            b="$(date -u +%N)"
+            c="$(date -u +%s.%N)"
+            d="$(date -u +%3N)"
+            echo "epochrealtime=${e} %6N=${a} %N=${b} %s.%N=${c} %3N=${d}"
+            sleep 0.011
+          done
+          echo "--- candidate without date:"
+          now_utc() { local t="${EPOCHREALTIME}"; TZ=UTC0 printf '%(%Y-%m-%dT%H:%M:%S)T.%sZ\n' "${t%[.,]*}" "${t#*[.,]}"; }
+          for i in 1 2 3 4 5; do now_utc; date -u +%Y-%m-%dT%H:%M:%SZ; done
+
       - name: Start auditd
         shell: bash
         run: |
