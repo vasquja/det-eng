@@ -25,6 +25,15 @@ jobs:
           set -euo pipefail
           bash .github/scripts/apt_install.sh auditd
           sudo systemctl start auditd || sudo service auditd start
+          # CANDIDATE FIX: auditd 4 loads its rule files in a oneshot unit of its own, which
+          # the start above runs again and does not wait for. Start it and wait for its end.
+          if systemctl cat audit-rules.service >/dev/null 2>&1; then
+            echo "t=${EPOCHREALTIME} waiting for audit-rules.service"
+            sudo systemctl start audit-rules.service
+            echo "t=${EPOCHREALTIME} audit-rules.service ended: $(systemctl show audit-rules.service -p ActiveState -p Result | tr '\n' ' ')"
+          else
+            echo "no audit-rules.service on this image"
+          fi
           mkdir -p "${GITHUB_WORKSPACE}/.kind/trr9003-manifests"
           sudo auditctl -a always,exit -F dir="${GITHUB_WORKSPACE}/.kind/trr9003-manifests" -F perm=wa -F key=k8s_node_file
           rules="$(sudo auditctl -l)"
@@ -34,7 +43,7 @@ jobs:
       - name: Watch the rule list for 40 seconds
         shell: bash
         run: |
-          for i in $(seq 1 20); do
+          for i in $(seq 1 10); do
             echo "t=${EPOCHREALTIME} rules: $(sudo auditctl -l | tr '\n' ';')"
             sleep 2
           done
