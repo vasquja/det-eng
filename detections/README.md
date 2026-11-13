@@ -1141,7 +1141,16 @@ What each validator prints:
 |-----------|------------------------|-------------------------------------------|
 | `validate_k8s_detections.py` | `NEGATIVE CONTROL FAILED: the pre-emulation audit log <path> holds no audit event (0 records read from N non-blank line(s))`. No rule is judged. | `ERROR: no pre-emulation audit log was given (--audit-log)`, or `ERROR: the pre-emulation audit log <path> was not found`. |
 | `validate_staticpod_detections.py` | `CONTROL FAILED: no audit event in the pre-emulation audit log <path> ...`, then `FAILED: N control(s) failed.` The CRI control and the file control fail a CRI log without an API-scheduled sandbox and a file log without a `kubeadm` write, so they fail an empty CRI or file log. | A `CONTROL FAILED` line for each log that is not given, and for an audit log that does not exist. A CRI or file log that is given and does not exist is an `ERROR`. |
-| `validate_apiserver_detections.py` | One `NEGATIVE CONTROL FAILED: the pre-emulation <log> <path> holds no <record> ...` line for each of the audit log and the CRI log. The file log is not counted: a file log without a file event does not fail the run. | One `NEGATIVE CONTROL FAILED` line for each log that is not given, and for an audit log that does not exist. A CRI or file log that is given and does not exist is an `ERROR`. |
+| `validate_apiserver_detections.py` | One `NEGATIVE CONTROL FAILED: the pre-emulation <log> <path> holds no <record> ...` line for each of the audit log, the CRI log and the file log. | One `NEGATIVE CONTROL FAILED` line for each log that is not given, and for an audit log that does not exist. A CRI or file log that is given and does not exist is an `ERROR`. |
+
+The file log of the API server lab is the audit trail of one watched token file, and
+a healthy capture can hold no read of that file before the emulation. So the capture
+step of `validate-apiserver-detections.yml` also converts the canary read of the file
+sensor step (audit key `k8s_node_canary`): a read of the public `ca.crt` beside the
+token. Such a record is a near-miss of the token rule: it is under
+`kubernetes.io~projected/`, and its name does not end in `/token`. The gate tests run
+the converter lines of the capture step on a constructed auditd record of the canary
+key; only the kind job shows the record that the runner's auditd writes.
 
 The checks count records. They do not grade them: a log whose records are all far
 from the rules passes (a log of `{}` lines), and the static pod validator does not
@@ -1223,11 +1232,14 @@ source (`--file-log`), and each gates its rule on one marked emulation record (C
   watch through `/proc/<node pid>/root`, checks with a canary read of the `ca.crt`
   beside it that auditd records reads there, and passes the file to Procedure E
   (`TRR9006_TOKEN_FILE`). E reads it through a marked copy of cat
-  (`/usr/local/bin/trr9006-reader`). The negative control for this gate can fail
-  only on a stray marked-reader event. The validator prints how many file events
-  the log holds (E's marked read, and any read of the watched file by the kubelet or
-  by kube-proxy, when one occurs) and how many the rule matches (the kubelet is
-  filtered). A false-positive control runs in the validate and the negative-control
+  (`/usr/local/bin/trr9006-reader`). For the pre-emulation file log, the capture
+  step also converts the records of the canary key `k8s_node_canary`, and the
+  negative control fails when that log holds no file event (see
+  [A negative control must read a record](#a-negative-control-must-read-a-record)).
+  The validator prints how many file events the log holds (E's marked read, the
+  canary read in the pre-emulation log, and any read of the watched file by the
+  kubelet or by kube-proxy, when one occurs) and how many the rule matches (the
+  kubelet is filtered). A false-positive control runs in the validate and the negative-control
   runs: the rule must match none of the kubelet's own token reads (an `Image` whose
   file name is `kubelet`, in any directory). Live CI has recorded no kubelet read of
   the watched token in any run so far (3 of 3 runs to 2026-10-23, each watched for
@@ -1330,8 +1342,7 @@ namespace and a `dns-default` ConfigMap, and the vendored DNS Operator CRD and a
 is why these two gates read only the request body and need a patch or update, so the
 setup creates cannot pass them. The cleanup deletes only the labelled objects, the CRD
 included. The negative control proves a pass depends on the emulation, not the
-baseline. It fails when one of its three logs is not given, and when the audit log or
-the CRI log holds no record (see
+baseline. It fails when one of its three logs is not given or holds no record (see
 [A negative control must read a record](#a-negative-control-must-read-a-record)).
 
 **Per-procedure gates and the emulation ledger.** A `MANIFEST` entry's gate is either

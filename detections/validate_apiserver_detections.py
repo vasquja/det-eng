@@ -127,8 +127,13 @@ is on a tmpfs that the kubelet mounts inside the node's own mount namespace, whi
 host-side directory-tree watch cannot see. E reads that same file through a marked
 copy of cat (/usr/local/bin/trr9006-reader), so the file-event rule has a live gate.
 The records are linux/file_event JSON lines from detections/k8s/auditd_file_events.py;
-a file gate places a record in its ledger window by its Timestamp field. A
-false-positive control runs on the file log in strict and --expect-miss runs: the
+a file gate places a record in its ledger window by its Timestamp field. A healthy
+capture can hold no read of the watched token before the emulation, so the capture
+step of the workflow also converts the canary read of the file sensor step into the
+pre-emulation file log (audit key k8s_node_canary: a read of the public ca.crt beside
+the token, which the token rule does not match). The negative control fails a
+pre-emulation file log that holds no file event.
+A false-positive control runs on the file log in strict and --expect-miss runs: the
 token rule must match none of the kubelet's own reads of the watched token (an Image
 whose file name is kubelet, in any directory). A log with no kubelet read gets a
 notice, not a failure. Live CI has recorded no kubelet read of the watched token in
@@ -155,12 +160,11 @@ Modes:
                         control that read no record cannot fail, so it proves nothing.
                         Thus the run also fails (exit 1) when one of the three logs is
                         not given (--audit-log has no default in this mode), when the
-                        audit log does not exist, and when the audit log or the CRI log
-                        holds no record. The count is the number that the `Loaded N ...`
-                        line prints: the JSON objects of the lines of the audit log that
-                        are not blank, and one sandbox for each sandbox id of the CRI
-                        log. The file log is not counted: a file log without a file
-                        event does not fail the run.
+                        audit log does not exist, and when one of the three logs holds
+                        no record. The count is the number that the `Loaded N ...` line
+                        prints: the JSON objects of the lines of the audit log or the
+                        file log that are not blank, and one sandbox for each sandbox id
+                        of the CRI log.
     --report            Report misses instead of failing on them.
     --json PATH         Also write a machine-readable report (status, detail and the
                         explanation lines of every rule) to PATH.
@@ -1855,13 +1859,12 @@ DEFAULT_AUDIT_LOG = "/tmp/kube-apiserver-audit.log"
 
 # --expect-miss: why a pre-emulation log that gave the rules no record fails the run.
 VACUOUS = "A negative control that read no record cannot fail, so it proves nothing."
-# The log of each source of MANIFEST, and what a record of it is.
+# The log of each source of MANIFEST, and what a record of it is. The pre-emulation
+# log of each source must hold a record. For the file log, which is the audit trail
+# of one watched token file, the capture step of the workflow adds the canary read
+# of ca.crt (see the docstring of this module).
 LOG_NAME = {"audit": "audit log", "cri": "CRI log", "file": "file log"}
 RECORD_NAME = {"audit": "audit event", "cri": "pod sandbox", "file": "file event"}
-# The sources whose pre-emulation log must hold a record. The file log is not one of
-# them: it is the audit trail of one watched token file, and the capture of a healthy
-# cluster can hold no read of that file.
-MUST_HOLD_A_RECORD = ("audit", "cri")
 
 
 def negative_control_inputs(args, logs):
@@ -1869,10 +1872,10 @@ def negative_control_inputs(args, logs):
     as a list of sentences (empty when each source of MANIFEST had a log to run on).
 
     A log is named when it was not given, when it does not exist (the audit log: a CRI
-    or file log that is given and does not exist ended the run before this point), and,
-    for a source of MUST_HOLD_A_RECORD, when it holds no record. The count is what the
-    loader returned, which is what each rule of that source is run on: the JSON objects
-    of the lines of the audit log, and one sandbox for each sandbox id of the CRI log.
+    or file log that is given and does not exist ended the run before this point), and
+    when it holds no record. The count is what the loader returned, which is what each
+    rule of that source is run on: the JSON objects of the lines of the audit log or
+    the file log, and one sandbox for each sandbox id of the CRI log.
     """
     paths = {"audit": args.audit_log, "cri": args.cri_log, "file": args.file_log}
     failures = []
@@ -1884,7 +1887,7 @@ def negative_control_inputs(args, logs):
             failures.append(f"no pre-emulation {name} was given (--{source}-log)")
         elif source not in logs:
             failures.append(f"the pre-emulation {name} {path} was not found")
-        elif not logs[source] and source in MUST_HOLD_A_RECORD:
+        elif not logs[source]:
             failures.append(f"the pre-emulation {name} {path} holds no {RECORD_NAME[source]} "
                             f"(0 records read from {nonblank_lines(path)} non-blank line(s))")
     return failures
@@ -2158,8 +2161,8 @@ def main():
                     help="Compile rules only; no cluster or log needed.")
     ap.add_argument("--expect-miss", action="store_true",
                     help="Negative control: fail if any gated rule passes, if a log is "
-                         "not given, if the audit log is missing, or if the audit log or "
-                         "the CRI log holds no record.")
+                         "not given, if the audit log is missing, or if a log holds no "
+                         "record.")
     ap.add_argument("--report", action="store_true",
                     help="Report misses instead of failing on them.")
     ap.add_argument("--json", metavar="PATH",
@@ -2430,13 +2433,11 @@ def validate(args, report):
         for line in explanation:
             print("        " + line)
         if source == "file" and args.expect_miss:
-            # Say what the file log holds, so that an empty log is not read as
-            # selectivity evidence: the gate selects the marked reader only (the file
-            # control below tests the rule on the kubelet's reads).
-            n = len(logs[source])
-            print(f"        file log: {n} file event(s), the rule matches {len(matched)}"
-                  + ("; the log is empty, so this negative control can only fail on a "
-                     "stray marked-reader event" if n == 0 else ""))
+            # Say what the file log holds: the gate selects the marked reader only (the
+            # file control below tests the rule on the kubelet's reads). A log without
+            # a file event fails the run at the verdict.
+            print(f"        file log: {len(logs[source])} file event(s), the rule matches "
+                  f"{len(matched)}")
         results.append({"rule": f"{folder}/{fname}", "label": label, "source": source,
                         "status": status, "detail": detail,
                         "policy_gate": pentry is not None,
@@ -2517,9 +2518,7 @@ def validate(args, report):
     vacuous = negative_control_inputs(args, logs) if args.expect_miss else []
     if args.expect_miss:
         report.setdefault("controls", []).append({
-            "control": "each pre-emulation log is given, and the "
-                       + " and the ".join(LOG_NAME[s] for s in MUST_HOLD_A_RECORD)
-                       + " hold a record",
+            "control": "each pre-emulation log is given and holds a record",
             "status": "FAILED" if vacuous else "held",
             "records": {source: len(events) for source, events in logs.items()},
             "detail": "; ".join(vacuous), "explanation": []})

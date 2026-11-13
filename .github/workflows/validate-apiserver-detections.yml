@@ -633,13 +633,19 @@ jobs:
           echo "Captured $(wc -l < /tmp/pre-emulation-audit.log) pre-emulation audit lines."
           # Node file-event baseline (negative control): the watched token file's own
           # readers (the kubelet's volume resync, kube-proxy) may be in it, but the
-          # marked reader has not run, so the 9006 E gate must stay quiet here. The
-          # validator prints how many file events this capture holds; with none, the
-          # gate can fail only on a stray marked-reader event. Its file control checks
-          # that the rule matches none of the kubelet's reads (a notice when none).
+          # marked reader has not run, so the 9006 E gate must stay quiet here. A
+          # healthy capture can hold no read of the token (key k8s_node_file), and a
+          # negative control that read no record proves nothing. So the capture also
+          # converts the canary read of the file sensor step (key k8s_node_canary):
+          # a read of the public ca.crt beside the token, which the token rule must
+          # not match. The negative-control step fails when this log holds no file
+          # event. The validator's file control checks that the rule matches none of
+          # the kubelet's reads (a notice when none).
           sudo cat /var/log/audit/audit.log 2>/dev/null | sudo tee /tmp/pre-audit-raw.log >/dev/null || true
           python3 detections/k8s/auditd_file_events.py /tmp/pre-audit-raw.log \
             --key k8s_node_file > /tmp/pre-emulation-file.jsonl || true
+          python3 detections/k8s/auditd_file_events.py /tmp/pre-audit-raw.log \
+            --key k8s_node_canary >> /tmp/pre-emulation-file.jsonl || true
           echo "Captured $(wc -l < /tmp/pre-emulation-file.jsonl) pre-emulation file event(s)."
 
       - &apiserver-emulate-9004

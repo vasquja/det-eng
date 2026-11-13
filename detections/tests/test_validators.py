@@ -1951,8 +1951,10 @@ class ApiserverValidator(gatelib.GateCase):
 
     --dry-run, and the negative-control step of the two jobs of
     validate-apiserver-detections.yml (validate, and validate-recommended with
-    --policy recommended) on the three pre-emulation logs. Each log must be given,
-    and the audit log and the CRI log must hold a record."""
+    --policy recommended) on the three pre-emulation logs. Each log must be given
+    and must hold a record. For the file log, the capture step of the two jobs
+    converts the canary read of the file sensor step; the tests run those lines
+    of the step on a constructed raw audit log."""
 
     GATE = "detections/validate_apiserver_detections.py"
     PARTS = gatelib.DETECTIONS
@@ -1966,9 +1968,46 @@ class ApiserverValidator(gatelib.GateCase):
                 + VACUOUS)
     NO_CRI = (r"^NEGATIVE CONTROL FAILED: the pre-emulation CRI log \S+/pre-emulation-cri\.jsonl "
               r"holds no pod sandbox \(0 records read from 0 non-blank line\(s\)\)\. " + VACUOUS)
+    NO_FILE = (r"^NEGATIVE CONTROL FAILED: the pre-emulation file log \S+/pre-emulation-file"
+               r"\.jsonl holds no file event \(0 records read from 0 non-blank line\(s\)\)\. "
+               + VACUOUS)
+    # A raw audit log (/var/log/audit/audit.log of the runner) with two events, in the
+    # record format of auditd. It is constructed: no kind run wrote it. The first event
+    # is the canary read of the file sensor step: `cat` in the node opens the ca.crt
+    # beside the watched token, and the SYSCALL record holds the key of that watch. The
+    # second event holds the key of another watch.
+    RAW_AUDIT = (
+        'type=SYSCALL msg=audit(1793902558.512:4711): arch=c000003e syscall=257 success=yes '
+        'exit=3 a0=ffffff9c a1=7ffc8d2e4f52 a2=0 a3=0 items=1 ppid=4170 pid=4188 '
+        'auid=4294967295 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) '
+        'ses=4294967295 comm="cat" exe="/usr/bin/cat" subj=unconfined key="k8s_node_canary"\n'
+        'type=CWD msg=audit(1793902558.512:4711): cwd="/"\n'
+        'type=PATH msg=audit(1793902558.512:4711): item=0 name="/var/lib/kubelet/pods/'
+        '4f1c2d3e-6a7b-48c9-90de-1122334455aa/volumes/kubernetes.io~projected/'
+        'kube-api-access-7x9kz/ca.crt" inode=57 dev=00:4c mode=0100644 ouid=0 ogid=0 '
+        'rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0\n'
+        'type=PROCTITLE msg=audit(1793902558.512:4711): proctitle=636174002F7661722F6C6962\n'
+        'type=SYSCALL msg=audit(1793902559.101:4712): arch=c000003e syscall=257 success=yes '
+        'exit=3 a0=ffffff9c a1=7ffe01b6ef60 a2=0 a3=0 items=1 ppid=1 pid=612 auid=4294967295 '
+        'uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 '
+        'comm="cat" exe="/usr/bin/cat" subj=unconfined key="another_watch"\n'
+        'type=CWD msg=audit(1793902559.101:4712): cwd="/"\n'
+        'type=PATH msg=audit(1793902559.101:4712): item=0 name="/etc/hostname" inode=12 '
+        'dev=08:01 mode=0100644 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 '
+        'cap_fe=0 cap_fver=0 cap_frootid=0\n')
 
     def negative_control_step(self, job="validate"):
         return gatelib.ci_step("validate-apiserver-detections.yml", job, "--expect-miss")
+
+    def file_capture_step(self, job="validate"):
+        """The lines of the capture step of `job` that make the pre-emulation file log
+        from /tmp/pre-audit-raw.log, as a step of their own. The other lines of that
+        step need a cluster and root."""
+        step = gatelib.ci_step("validate-apiserver-detections.yml", job,
+                               "> /tmp/pre-emulation-file.jsonl")
+        lines = [line for line in gatelib._command_lines(step.run)
+                 if "/tmp/pre-emulation-file.jsonl" in line and "wc -l" not in line]
+        return step._replace(run="\n".join(lines) + "\n")
 
     def vacuous_lines(self, result):
         """The number of logs that the run names as a log that gave no record."""
@@ -2047,6 +2086,36 @@ class ApiserverValidator(gatelib.GateCase):
         self.assert_saw(result, rf"^Loaded {cri} pod sandbox\(es\) from ")
         self.assert_saw(result, rf"^Loaded {files} file event\(s\) from ")
 
+    def test_control_negative_control_holds_on_the_file_log_of_the_canary_read(self):
+        """CONTROL of the file log, as the capture step makes it on a cluster on which
+        nothing read the watched token before the emulation: the one file event is the
+        canary read of ca.crt. The token rule must not match it, the validator counts
+        it, and the negative control holds. The two jobs run the same lines."""
+        capture = self.file_capture_step()
+        self.assertEqual(capture.run, self.file_capture_step("validate-recommended").run)
+        self.assertEqual(
+            [line.split("--key ")[1] for line in capture.run.splitlines()],
+            ["k8s_node_file > /tmp/pre-emulation-file.jsonl || true",
+             "k8s_node_canary >> /tmp/pre-emulation-file.jsonl || true"])
+        good = self.good()
+        audit, cri, _ = self.write_logs(good)
+        os.remove(good.tmp_path(self.FILE))
+        write_text_log(good, "pre-audit-raw.log", self.RAW_AUDIT)
+        captured = good.run_step(capture)
+        self.assertEqual((captured.returncode, captured.stderr), (0, ""), captured.describe())
+        with open(good.tmp_path(self.FILE), encoding="utf-8") as fh:
+            events = [json.loads(line) for line in fh]
+        self.assertEqual([(os.path.basename(event["TargetFilename"]), event["Image"])
+                          for event in events], [("ca.crt", "/usr/bin/cat")])
+        self.assertIn("/kubernetes.io~projected/", events[0]["TargetFilename"])
+        result = good.run_step(self.negative_control_step())
+        self.assert_accepts(result, r"^Negative control held: the baseline alone does not pass "
+                                    r"any rule\.$")
+        self.assert_saw(result, rf"^Loaded {audit} audit event\(s\) from ")
+        self.assert_saw(result, rf"^Loaded {cri} pod sandbox\(es\) from ")
+        self.assert_saw(result, r"^Loaded 1 file event\(s\) from ")
+        self.assert_saw(result, r"^        file log: 1 file event\(s\), the rule matches 0$")
+
     def test_rejects_pre_emulation_log_that_holds_an_emulation_record(self):
         """Definition of done 2 for Kubernetes. The audit log captured before the
         emulation already holds the ClusterRoleBinding create of Procedure A."""
@@ -2062,8 +2131,8 @@ class ApiserverValidator(gatelib.GateCase):
 
     def test_rejects_negative_control_on_empty_logs(self):
         """A negative control that read no record fails as vacuous: the three logs are
-        empty files, and the run names the audit log and the CRI log. (This was the
-        known gap apiserver-negative-control-empty-logs.)"""
+        empty files, and the run names each of them. (This was the known gap
+        apiserver-negative-control-empty-logs.)"""
         good = self.good()
         # The artifact is bad: no log of the negative control holds a record.
         self.assertEqual(self.write_logs(good, empty=True), (0, 0, 0))
@@ -2074,6 +2143,8 @@ class ApiserverValidator(gatelib.GateCase):
         self.assert_saw(result, r"^Loaded 0 file event\(s\) from ")
         self.assert_saw(result, self.NO_AUDIT)
         self.assert_saw(result, self.NO_CRI)
+        self.assert_saw(result, self.NO_FILE)
+        self.assertEqual(self.vacuous_lines(result), 3)
         self.assert_rejects(
             result,
             r"(?i)^\s*(NEGATIVE CONTROL FAILED|CONTROL FAILED|FAILED|ERROR)\b.*\b(empty|vacuous|"
@@ -2088,6 +2159,7 @@ class ApiserverValidator(gatelib.GateCase):
         result = good.run_step(self.negative_control_step("validate-recommended"))
         self.assert_saw(result, r"^Audit policy: recommended\. ")
         self.assert_saw(result, self.NO_CRI)
+        self.assert_saw(result, self.NO_FILE)
         self.assert_rejects(result, self.NO_AUDIT, exit_code=1)
 
     def test_rejects_negative_control_on_an_empty_audit_log(self):
@@ -2112,6 +2184,20 @@ class ApiserverValidator(gatelib.GateCase):
         self.assert_saw(result, rf"^Loaded {audit} audit event\(s\) from ")
         self.assert_saw(result, r"^Loaded 0 pod sandbox\(es\) from ")
         self.assert_rejects(result, self.NO_CRI, exit_code=1)
+        self.assertEqual(self.vacuous_lines(result), 1)
+
+    def test_rejects_negative_control_on_an_empty_file_log(self):
+        """One defect: only the file log holds no file event. That is what the capture
+        step leaves when auditd recorded no read under the two watch keys (a file
+        sensor that did not start). Before, the control held on it."""
+        good = self.good()
+        audit, cri, _ = self.write_logs(good)
+        self.assertEqual(write_log(good, self.FILE), 0)
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {audit} audit event\(s\) from ")
+        self.assert_saw(result, rf"^Loaded {cri} pod sandbox\(es\) from ")
+        self.assert_saw(result, r"^Loaded 0 file event\(s\) from ")
+        self.assert_rejects(result, self.NO_FILE, exit_code=1)
         self.assertEqual(self.vacuous_lines(result), 1)
 
     def test_rejects_negative_control_on_a_missing_audit_log(self):
