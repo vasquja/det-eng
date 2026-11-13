@@ -141,11 +141,26 @@ broken rule fails the run.
 
 Modes:
     --dry-run           Compile every rule; no cluster or log needed.
-    --audit-log PATH    API server audit log (JSON lines). Default strict.
-    --cri-log PATH      node runtime sensor log (crictl pods snapshots), optional.
+    --audit-log PATH    API server audit log (JSON lines). Default strict. Without it a
+                        strict run reads /tmp/kube-apiserver-audit.log.
+    --cri-log PATH      node runtime sensor log (crictl pods snapshots), optional in a
+                        strict run.
     --file-log PATH     node file-event sensor log (linux/file_event JSON lines:
-                        TargetFilename, Image, ProcessId, EventType, Timestamp), optional.
-    --expect-miss       Negative control: fail if any gated rule passes.
+                        TargetFilename, Image, ProcessId, EventType, Timestamp), optional
+                        in a strict run.
+                        In a strict run a rule whose log is not given is skipped, and a
+                        run with no log at all prints SKIP and exits 0 (for a local run
+                        without a cluster).
+    --expect-miss       Negative control: fail if any gated rule passes. A negative
+                        control that read no record cannot fail, so it proves nothing.
+                        Thus the run also fails (exit 1) when one of the three logs is
+                        not given (--audit-log has no default in this mode), when the
+                        audit log does not exist, and when the audit log or the CRI log
+                        holds no record. The count is the number that the `Loaded N ...`
+                        line prints: the JSON objects of the lines of the audit log that
+                        are not blank, and one sandbox for each sandbox id of the CRI
+                        log. The file log is not counted: a file log without a file
+                        event does not fail the run.
     --report            Report misses instead of failing on them.
     --json PATH         Also write a machine-readable report (status, detail and the
                         explanation lines of every rule) to PATH.
@@ -1825,6 +1840,56 @@ def load_cri(path):
     return sandboxes
 
 
+def nonblank_lines(path):
+    """The number of lines of a log that are not blank. The message about a log
+    without a record gives it: 0 records from 0 lines is a capture that recorded
+    nothing, and 0 records from N lines is a capture that did not parse."""
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        return sum(1 for line in fh if line.strip())
+
+
+# The audit log of a strict run that names none (the path where the workflow and
+# detections/README.md put the log of a live run). --expect-miss has no default:
+# this log is the one that holds the emulation.
+DEFAULT_AUDIT_LOG = "/tmp/kube-apiserver-audit.log"
+
+# --expect-miss: why a pre-emulation log that gave the rules no record fails the run.
+VACUOUS = "A negative control that read no record cannot fail, so it proves nothing."
+# The log of each source of MANIFEST, and what a record of it is.
+LOG_NAME = {"audit": "audit log", "cri": "CRI log", "file": "file log"}
+RECORD_NAME = {"audit": "audit event", "cri": "pod sandbox", "file": "file event"}
+# The sources whose pre-emulation log must hold a record. The file log is not one of
+# them: it is the audit trail of one watched token file, and the capture of a healthy
+# cluster can hold no read of that file.
+MUST_HOLD_A_RECORD = ("audit", "cri")
+
+
+def negative_control_inputs(args, logs):
+    """--expect-miss: the pre-emulation logs that gave the negative control no record,
+    as a list of sentences (empty when each source of MANIFEST had a log to run on).
+
+    A log is named when it was not given, when it does not exist (the audit log: a CRI
+    or file log that is given and does not exist ended the run before this point), and,
+    for a source of MUST_HOLD_A_RECORD, when it holds no record. The count is what the
+    loader returned, which is what each rule of that source is run on: the JSON objects
+    of the lines of the audit log, and one sandbox for each sandbox id of the CRI log.
+    """
+    paths = {"audit": args.audit_log, "cri": args.cri_log, "file": args.file_log}
+    failures = []
+    for source in ("audit", "cri", "file"):
+        if not any(entry[2] == source for entry in MANIFEST):
+            continue
+        name, path = LOG_NAME[source], paths[source]
+        if not path:
+            failures.append(f"no pre-emulation {name} was given (--{source}-log)")
+        elif source not in logs:
+            failures.append(f"the pre-emulation {name} {path} was not found")
+        elif not logs[source] and source in MUST_HOLD_A_RECORD:
+            failures.append(f"the pre-emulation {name} {path} holds no {RECORD_NAME[source]} "
+                            f"(0 records read from {nonblank_lines(path)} non-blank line(s))")
+    return failures
+
+
 def dedup_by_audit_id(matches):
     seen, out = set(), []
     for e in matches:
@@ -2081,8 +2146,9 @@ def write_json(path, report):
 def main():
     ap = argparse.ArgumentParser(
         description="Validate TRR9004-9010, 9025-9031, 9033-9035 K8s detections.")
-    ap.add_argument("--audit-log", default="/tmp/kube-apiserver-audit.log",
-                    help="Path to the API server audit log (JSON lines).")
+    ap.add_argument("--audit-log",
+                    help="Path to the API server audit log (JSON lines). A strict run "
+                         f"without it reads {DEFAULT_AUDIT_LOG}; --expect-miss needs it.")
     ap.add_argument("--cri-log",
                     help="Path to the node runtime sensor log (crictl pods snapshots).")
     ap.add_argument("--file-log",
@@ -2091,7 +2157,9 @@ def main():
     ap.add_argument("--dry-run", action="store_true",
                     help="Compile rules only; no cluster or log needed.")
     ap.add_argument("--expect-miss", action="store_true",
-                    help="Negative control: fail if any gated rule passes.")
+                    help="Negative control: fail if any gated rule passes, if a log is "
+                         "not given, if the audit log is missing, or if the audit log or "
+                         "the CRI log holds no record.")
     ap.add_argument("--report", action="store_true",
                     help="Report misses instead of failing on them.")
     ap.add_argument("--json", metavar="PATH",
@@ -2203,11 +2271,16 @@ def validate(args, report):
         return 0
 
     logs = {}
-    if os.path.exists(args.audit_log):
-        logs["audit"] = load_events(args.audit_log)
-        print(f"\nLoaded {len(logs['audit'])} audit event(s) from {args.audit_log}")
+    # A negative control must name the log that was captured before the emulation:
+    # the default is the log of a live run.
+    audit_log = args.audit_log or (None if args.expect_miss else DEFAULT_AUDIT_LOG)
+    if audit_log is None:
+        print("\nNo audit log given (--audit-log).")
+    elif os.path.exists(audit_log):
+        logs["audit"] = load_events(audit_log)
+        print(f"\nLoaded {len(logs['audit'])} audit event(s) from {audit_log}")
     else:
-        print(f"\nAudit log not found: {args.audit_log}")
+        print(f"\nAudit log not found: {audit_log}")
     if args.cri_log:
         if not os.path.exists(args.cri_log):
             print(f"ERROR: CRI sensor log not found: {args.cri_log}")
@@ -2220,7 +2293,7 @@ def validate(args, report):
             return 1
         logs["file"] = load_events(args.file_log)
         print(f"Loaded {len(logs['file'])} file event(s) from {args.file_log}")
-    if not logs:
+    if not logs and not args.expect_miss:
         print("SKIP: no log to validate against (exit 0).")
         return 0 if not parse_errors else 1
     print()
@@ -2440,10 +2513,23 @@ def validate(args, report):
 
     quiet_fail = must_not_match(args, logs, ledger, queries, results)
 
+    # Negative control: each source of MANIFEST had a pre-emulation log to run on.
+    vacuous = negative_control_inputs(args, logs) if args.expect_miss else []
+    if args.expect_miss:
+        report.setdefault("controls", []).append({
+            "control": "each pre-emulation log is given, and the "
+                       + " and the ".join(LOG_NAME[s] for s in MUST_HOLD_A_RECORD)
+                       + " hold a record",
+            "status": "FAILED" if vacuous else "held",
+            "records": {source: len(events) for source, events in logs.items()},
+            "detail": "; ".join(vacuous), "explanation": []})
+
     print()
     if parse_errors:
         print(f"FAILED: {parse_errors} compile, EXPECTED_MISS or POLICY_GATES error(s).")
         return 1
+    for why in vacuous:
+        print(f"NEGATIVE CONTROL FAILED: {why}. {VACUOUS}")
     if file_controls:
         print(f"FAILED: {len(file_controls)} file control(s) failed (see CONTROL FAILED "
               "above).")
@@ -2452,6 +2538,7 @@ def validate(args, report):
         if passes:
             print(f"NEGATIVE CONTROL FAILED: {passes} rule(s) passed on logs "
                   "captured before the emulation ran.")
+        if passes or vacuous:
             return 1
         print("Negative control held: the baseline alone does not pass any rule.")
         return 0

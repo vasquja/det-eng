@@ -27,7 +27,7 @@ python3 -B detections/tests/gatelib.py --gaps                                   
 
 `gatelib.py --run` runs the same tests as `unittest discover`, with one Python
 process for each test class, as many at a time as the machine has CPUs. Then it
-prints the known gaps. It takes about 100 seconds on a development machine with four
+prints the known gaps. It takes about two minutes on a development machine with four
 CPUs, and about three and a half minutes on a GitHub runner (four CPUs). The
 tests in sequence take about four minutes on the development machine. It fails:
 
@@ -84,7 +84,7 @@ after each test or test class.
 | `test_gatelib.py` | Tests of the harness, on constructed gates. |
 | `test_sufficiency.py` | `rule_cases.py` (and through it the event table of `sigma_eval.py`), the import guard of `sigma_eval.py`, `check_sufficiency.py` (R0 to R4 and the waiver digests), the sufficiency ratchet, the self-test of `sigma_explain.py`. |
 | `test_quality.py` | `score_benign.py` and the benign ratchet, `check_null_safety.py`, `check_provider_mappings.py`, `k8s_policy_coverage.py`, `k8s_platforms_md.py`, `coverage_report.py`. |
-| `test_validators.py` | The cloud validator, the Linux validator (dry run, with the check of its `CONTROLS` table; and its verdict code on canned results: the detections; the no-op baseline, which must own a record; each mutant and each re-run, which must be held by what it declares (an item of its rule, or the success gate); the limits of the exemption for a rule whose emulation is a SKIP; a live negative control for each rule), the three Kubernetes validators (dry run and negative control), `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py`, `check_schedule_freshness.py`. |
+| `test_validators.py` | The cloud validator (a rule must fire on a marked record of its attack fixture and on no benign record; a fixture that is missing and a benign baseline without a record fail the run, also with `--report`), the Linux validator (dry run, with the check of its `CONTROLS` table; and its verdict code on canned results: the detections; the no-op baseline, which must own a record; each mutant and each re-run, which must be held by what it declares (an item of its rule, or the success gate); the limits of the exemption for a rule whose emulation is a SKIP; a live negative control for each rule), the three Kubernetes validators (dry run; the negative-control step, which fails when a rule passes on a pre-emulation log, when a pre-emulation log is not given or is missing, and when the audit log holds no record; for the API server validator, also when the CRI log holds no sandbox), `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py`, `check_schedule_freshness.py`. |
 | `test_suite.py` | Rules of the suite as a whole: each self-test has a runner, the CI job runs every test on every pull request, the `emulation-scripts` job does the same for `atomics/tests/`, no workflow step pipes a command into `tee` without pipefail, no step that runs a gate or the unit tests has `continue-on-error`, each known gap names a roadmap item, each planted artifact is used, this file agrees with the tests. |
 | `test_apt_install.py` | Tests of `.github/scripts/apt_install.sh`, the step that installs `auditd`, with a stub for `sudo`, `apt-get`, `unshare`, `mount`, `getent` and `timeout`. When the runner cannot resolve the package mirror, or apt printed a message about name resolution, or the mirror does not resolve after a failed run, apt gets one run with public resolvers in a private mount namespace; the script fails only after apt failed in a run with the resolver of the runner (but in the forced way of the CI job); a necessary package that is not installed fails the step; a text that is not a package name (also a name that ends with `-`, which apt reads as a removal) or not an address is refused. The class `DirectInstalls` (with two CONTROLs) fails when a workflow (a `run:` text, a `with:` or `env:` value), a composite action or a shell script (`*.sh`, or a shell on its first line) installs packages in a usual form (`apt-get install`, `apt update`, `dpkg -i`, `snap install`, also with options, a path or quotes) without the script. The one line that is allowed is `apt-get update -qq` in `detections/benign/linux/workload.sh`. It is a rule on text: a command that is built at run time, or that a different program starts, is not seen. The stubs do not show that the namespace works on a runner: the CI job `apt-install-fallback` does. It forces that way, and its CONTROL step gives a resolver that does not answer (`APT_INSTALL_RESOLVERS`) and fails if the install then passes. |
 | `known_bad/<group>/` | The planted artifacts of that group. `known_bad/gatelib/` holds samples for `test_gatelib.py`. |
@@ -240,10 +240,10 @@ Rules for a known gap:
 
 - **The last assertion is the wanted behaviour**: one `assert_rejects()`. Every
   assertion before it is a plain one.
-- **Prove that the artifact is bad**, with plain assertions (the planted baseline
-  holds no record; the gate fails the hidden rule when it gets the rule as an
-  argument). The gate has no check for the artifact, so without this proof the
-  test passes for a sound artifact too.
+- **Prove that the artifact is bad**, with plain assertions (the one record of the
+  planted baseline holds no field; the gate fails the hidden rule when it gets the
+  rule as an argument). The gate has no check for the artifact, so without this
+  proof the test passes for a sound artifact too.
 - **Prove that the gate read the artifact**, with `self.assert_saw(result,
   pattern)` before the last assertion. An artifact that the gate never read is
   also accepted. The pattern must hold today and after the gate is fixed (a row
@@ -264,8 +264,9 @@ Rules for a known gap:
   wrong, for the planted artifact and for the repository. Where another job or
   the merge policy still stops the planted change, say so. A test can prove
   such a sentence with plain assertions inside `if result.returncode == 0:`, so
-  that the text cannot go out of date (the two known gaps of `CloudValidator`
-  do). `gate=` is plain text on one line, without a backtick and without `|`:
+  that the text cannot go out of date (the known gap
+  `cloud-benign-far-from-the-rule` of `CloudValidator` does). `gate=` is plain
+  text on one line, without a backtick and without `|`:
   the Markdown list of the gaps puts it in a code span of a table cell.
 - **A gap is closed by a change to the gate, never by deleting the case.** Fix
   the gate, and in the same pull request remove the marker: the test fails with

@@ -119,6 +119,7 @@ ROADMAP = {
     "R2b": "Linux controls are not vacuous",
     "R2c": "negative controls and baselines cannot be empty",
     "R2d": "hygiene and report truth",
+    "R2e": "cloud baselines are hard",
     "R3": "external records that the agent did not write",
     "R4": "the captures of CI, harvested into committed evidence",
     "R5": "provenance tiers",
@@ -363,16 +364,17 @@ def known_gap(gap_id, *, gate, reason, closes, today="accepts", _registry=None):
 
     Write the test body as the wanted behaviour, ending in one assert_rejects():
 
-        @gatelib.known_gap("k8s-negative-control-empty-log",
-                           gate="detections/validate_k8s_detections.py --expect-miss",
-                           reason="The negative control holds on a log with no record.",
-                           closes="R2c")
-        def test_gap_negative_control_on_an_empty_log(self):
-            good = self.good()
-            write_log(good, "pre-emulation-audit.log")      # the artifact: an empty log
-            result = good.run_step(self.negative_control_step())
-            self.assert_saw(result, r"^Loaded 0 audit event\\(s\\) from ")
-            self.assert_rejects(result, r"^NEGATIVE CONTROL FAILED: .*no audit event")
+        @gatelib.known_gap("cloud-benign-far-from-the-rule",
+                           gate="detections/validate_cloud_detections.py",
+                           reason="A benign baseline whose records are all far from the "
+                                  "rule passes as `benign baseline clean`.",
+                           closes="R2e")
+        def test_gap_benign_baseline_far_from_the_rule(self):
+            tree = self.tree()
+            tree.write(self.BENIGN, "[{}]\\n")              # the artifact: one empty record
+            result = tree.run(self.GATE)
+            self.assert_saw(result, r"^(PASS|FAIL)  \\[TRR9012 AWS\\] ")
+            self.assert_rejects(result, r"^FAIL  \\[TRR9012 AWS\\] .*benign.*near-miss")
 
     gap_id  unique in the suite (the case id).
     gate    the script (or workflow job) that should reject the artifact. Plain

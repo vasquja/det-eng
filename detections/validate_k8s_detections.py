@@ -46,7 +46,10 @@ Modes:
     python3 detections/validate_k8s_detections.py --audit-log PATH
         Full validation against the given audit log. Default strict: a rule
         with no matching emulation event fails the run (exit 1). The emulation
-        in kind is deterministic, so a miss is a real regression.
+        in kind is deterministic, so a miss is a real regression. Without
+        --audit-log a strict run reads /tmp/kube-apiserver-audit.log. When the
+        log does not exist, a strict run prints SKIP and exits 0 (for a local
+        run without a cluster).
 
     ... --ledger PATH
         The emulation ledger (atomics/T1609/src/emulate.sh appends one JSON
@@ -63,6 +66,13 @@ Modes:
         Negative control, for a log captured BEFORE the emulation ran: exit 1
         if any one procedure gate matches. Proves a pass depends on the
         emulation. It uses the field gates only (--ledger is ignored).
+        A negative control that read no record cannot fail, so it proves
+        nothing. Thus the run also exits 1, before it judges a rule, when
+        --audit-log is not given (this mode has no default log), when the log
+        does not exist, and when the log holds no audit event. The count is
+        the number that the `Loaded N audit event(s)` line prints: the JSON
+        objects of the lines that are not blank. A blank line and a line that
+        is not JSON are not records.
 
     ... --report
         Report rule misses in the summary instead of failing on them. A rule
@@ -232,6 +242,23 @@ def load_events(audit_log):
             except json.JSONDecodeError:
                 continue
     return events
+
+
+def nonblank_lines(path):
+    """The number of lines of a log that are not blank. The message about a log
+    without a record gives it: 0 records from 0 lines is a capture that recorded
+    nothing, and 0 records from N lines is a capture that did not parse."""
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        return sum(1 for line in fh if line.strip())
+
+
+# The audit log of a strict run that names none (the path where the workflow and
+# detections/README.md put the log of a live run). --expect-miss has no default:
+# this log is the one that holds the emulation.
+DEFAULT_AUDIT_LOG = "/tmp/kube-apiserver-audit.log"
+
+# --expect-miss: why a pre-emulation log that gave the rules no record fails the run.
+VACUOUS = "A negative control that read no record cannot fail, so it proves nothing."
 
 
 def dedup_by_audit_id(matches):
@@ -511,12 +538,15 @@ def check_gap_e(events, queries, ledger):
 
 def main():
     ap = argparse.ArgumentParser(description="Validate TRR9002 K8s detections.")
-    ap.add_argument("--audit-log", default="/tmp/kube-apiserver-audit.log",
-                    help="Path to the API server audit log (JSON lines).")
+    ap.add_argument("--audit-log",
+                    help="Path to the API server audit log (JSON lines). A strict run "
+                         f"without it reads {DEFAULT_AUDIT_LOG}; --expect-miss needs it.")
     ap.add_argument("--dry-run", action="store_true",
                     help="Compile rules only; no cluster or log needed.")
     ap.add_argument("--expect-miss", action="store_true",
-                    help="Negative control: fail if any rule passes.")
+                    help="Negative control: fail if any rule passes, or if the "
+                         "pre-emulation log is not given, is missing or holds no "
+                         "audit event.")
     ap.add_argument("--report", action="store_true",
                     help="Report rule misses instead of failing on them (a compile "
                          "error or a failed Procedure E gap assertion still fails).")
@@ -573,13 +603,38 @@ def validate(args, report):
         print(f"Dry run OK: {len(queries)} rule(s) compile with pySigma.")
         return 0
 
-    if not os.path.exists(args.audit_log):
-        print(f"\nAudit log not found: {args.audit_log}")
+    audit_log = args.audit_log or DEFAULT_AUDIT_LOG
+    if args.expect_miss:
+        # A negative control must read the log that was captured before the
+        # emulation. Without that log it read no record: an error, not a SKIP.
+        why = ("no pre-emulation audit log was given (--audit-log)" if not args.audit_log
+               else f"the pre-emulation audit log {audit_log} was not found"
+               if not os.path.exists(audit_log) else None)
+        if why:
+            print(f"\nERROR: {why}. {VACUOUS}")
+            report["controls"].append({"control": "the pre-emulation audit log holds a "
+                                                  "record", "status": "FAILED", "detail": why})
+            return 1
+    elif not os.path.exists(audit_log):
+        print(f"\nAudit log not found: {audit_log}")
         print("SKIP: no audit log to validate against (exit 0).")
         return 0 if not parse_errors else 1
 
-    events = load_events(args.audit_log)
-    print(f"\nLoaded {len(events)} audit event(s) from {args.audit_log}")
+    events = load_events(audit_log)
+    print(f"\nLoaded {len(events)} audit event(s) from {audit_log}")
+    if args.expect_miss:
+        # The count is what load_events() returned: the records that each rule is
+        # run on (this mode has no time filter). No rule can match a log without a
+        # record, so no rule is judged.
+        why = (None if events else
+               f"the pre-emulation audit log {audit_log} holds no audit event (0 records "
+               f"read from {nonblank_lines(audit_log)} non-blank line(s))")
+        report["controls"].append({"control": "the pre-emulation audit log holds a record",
+                                   "status": "FAILED" if why else "held",
+                                   "detail": why or f"{len(events)} audit event(s)"})
+        if why:
+            print(f"\nNEGATIVE CONTROL FAILED: {why}. {VACUOUS}")
+            return 1
 
     ledger = None
     if args.ledger and args.expect_miss:

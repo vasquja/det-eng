@@ -1041,7 +1041,8 @@ python3 detections/validate_k8s_detections.py --dry-run
 python3 detections/validate_k8s_detections.py \
   --audit-log /tmp/kube-apiserver-audit.log --ledger /tmp/emulation-ledger.jsonl
 
-# Negative control, on a log collected BEFORE the emulation ran:
+# Negative control, on a log collected BEFORE the emulation ran (the log must be
+# given, must exist and must hold an audit event):
 python3 detections/validate_k8s_detections.py \
   --audit-log /tmp/pre-emulation-audit.log --expect-miss
 ```
@@ -1087,7 +1088,9 @@ Elastic's Kubernetes audit integration does not meet this contract: it maps
 cluster for every change to the TRR9002 files, strict: a rule that does not
 fire fails the job, because the `kind` emulation is deterministic. It also
 captures the audit log before the emulation and runs the validator on it with
-`--expect-miss`, so a pass that does not depend on the emulation fails the job.
+`--expect-miss`, so a pass that does not depend on the emulation fails the job. A
+negative control that read no record fails the job too (see
+[below](#a-negative-control-must-read-a-record)).
 `validate_staticpod_detections.py` and
 `.github/workflows/validate-staticpod-detections.yml` do the same for TRR9003
 (T1543.005), where the gate matters most: the validator match-gates three rules,
@@ -1112,6 +1115,42 @@ source). B writes no manifest file, so the file-event rule does not gate it. The
 worker is `TRR9003_WORKER` (default `trr9003-worker`). Without the flag B stays a
 read-only demonstration with no telemetry: its ledger row says
 `"mode":"read-only"`, and a strict run misses B's gates and names the flag.
+
+### A negative control must read a record
+
+A negative control that read no record cannot fail, so it proves nothing. With
+`--expect-miss`, each of the three Kubernetes validators
+(`validate_k8s_detections.py`, `validate_staticpod_detections.py`,
+`validate_apiserver_detections.py`) exits 1 in these conditions:
+
+- **A log is not given.** In this mode `--audit-log` has no default (the default of a
+  strict run, `/tmp/kube-apiserver-audit.log`, is the log of a live run, which holds
+  the emulation), and the static pod and API server validators also need `--cri-log`
+  and `--file-log`.
+- **A log does not exist.**
+- **A log holds no record.** A record is what the loader returns, which is what the
+  rules are run on. The `Loaded N ...` line prints the number: the JSON objects of the
+  lines of an audit log or a file log, and one sandbox for each sandbox id of a CRI
+  log. A blank line and a line that is not JSON are not records. The message gives
+  the number of lines that are not blank, so a capture that recorded nothing (0
+  lines) is told from a capture that did not parse.
+
+What each validator prints:
+
+| Validator | A log without a record | A log that is not given or does not exist |
+|-----------|------------------------|-------------------------------------------|
+| `validate_k8s_detections.py` | `NEGATIVE CONTROL FAILED: the pre-emulation audit log <path> holds no audit event (0 records read from N non-blank line(s))`. No rule is judged. | `ERROR: no pre-emulation audit log was given (--audit-log)`, or `ERROR: the pre-emulation audit log <path> was not found`. |
+| `validate_staticpod_detections.py` | `CONTROL FAILED: no audit event in the pre-emulation audit log <path> ...`, then `FAILED: N control(s) failed.` The CRI control and the file control fail a CRI log without an API-scheduled sandbox and a file log without a `kubeadm` write, so they fail an empty CRI or file log. | A `CONTROL FAILED` line for each log that is not given, and for an audit log that does not exist. A CRI or file log that is given and does not exist is an `ERROR`. |
+| `validate_apiserver_detections.py` | One `NEGATIVE CONTROL FAILED: the pre-emulation <log> <path> holds no <record> ...` line for each of the audit log and the CRI log. The file log is not counted: a file log without a file event does not fail the run. | One `NEGATIVE CONTROL FAILED` line for each log that is not given, and for an audit log that does not exist. A CRI or file log that is given and does not exist is an `ERROR`. |
+
+The checks count records. They do not grade them: a log whose records are all far
+from the rules passes (a log of `{}` lines), and the static pod validator does not
+require a mirror-pod create of the control-plane baseline in the audit log.
+
+A strict run is not changed. Without `--audit-log` it reads
+`/tmp/kube-apiserver-audit.log`; a rule whose log is not given is skipped, and a run
+with no log at all prints `SKIP` and exits 0. That is for a local run without a
+cluster: CI gives each log.
 
 ### Node runtime sensor (TRR9003 Strategy 1)
 
@@ -1291,7 +1330,9 @@ namespace and a `dns-default` ConfigMap, and the vendored DNS Operator CRD and a
 is why these two gates read only the request body and need a patch or update, so the
 setup creates cannot pass them. The cleanup deletes only the labelled objects, the CRD
 included. The negative control proves a pass depends on the emulation, not the
-baseline.
+baseline. It fails when one of its three logs is not given, and when the audit log or
+the CRI log holds no record (see
+[A negative control must read a record](#a-negative-control-must-read-a-record)).
 
 **Per-procedure gates and the emulation ledger.** A `MANIFEST` entry's gate is either
 one callable (any marked record passes, as before) or a list of `(procedure, gate)`
@@ -1587,6 +1628,26 @@ placeholder IDs, and `trr90NN-` resource names. The validator runs each rule
 through the **same pySigma SQLite backend** the Kubernetes validators use (`sigma_eval.py`),
 and a technique passes only if the rule fires on its attack fixture (carrying the
 emulation's marker) **and** matches nothing in the benign baseline.
+
+Both fixtures that `MANIFEST` names for a rule must be files, and the benign baseline
+must hold a record, because a negative control that read no record cannot fail:
+
+- A rule whose attack or benign fixture is missing gets an `ERROR` row that names the
+  file. There is no state for a fixture that comes later: list a rule in `MANIFEST`
+  in the change that adds its two fixtures.
+- A rule whose benign baseline holds no record gets a `FAIL` row with `NEGATIVE
+  CONTROL VACUOUS`. The count is the number of records that the loader returns, which
+  is the set that the rule is run on: `[]`, a file of zero bytes or of blank lines,
+  and an envelope with an empty list (`{"Records": []}`) hold no record.
+- Each of the two fails the run (exit 1), and `--report` does not waive them.
+  `--report` makes only a miss non-fatal: a rule that did not fire on a marked
+  record of its attack fixture, or that fired on a benign record.
+- The validator counts the records of a baseline and does not grade them. A baseline
+  whose records are all far from the rule passes (`[{}]`); the grading line under
+  each row is informational (roadmap item R2e).
+- A `MANIFEST` entry whose rule file does not exist is still `PENDING`: the validator
+  prints it, does not count it and does not fail on it. `check_sufficiency.py` fails
+  that tree.
 
 The benign baseline is deliberately hard: it hits the same log source, method, and
 structural fields as the attack and differs only on the discriminating field (the
