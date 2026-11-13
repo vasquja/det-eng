@@ -245,6 +245,16 @@ jobs:
           # same way validate-detections.yml does on this runner image.
           bash .github/scripts/apt_install.sh auditd
           sudo systemctl start auditd || sudo service auditd start
+          # auditd 4 (the ubuntu-26.04 runner image) loads its rule files in a oneshot
+          # unit of its own, audit-rules.service. The start above starts that unit again
+          # and does not wait for it, and its rule file starts with -D: a rule that is
+          # added before the unit ends is deleted. A start of a oneshot unit returns
+          # when the unit has ended, so wait here. auditd 3 has no such unit. A unit
+          # that ends with an error has ended too, so that is a warning only.
+          if systemctl cat audit-rules.service >/dev/null 2>&1; then
+            sudo systemctl start audit-rules.service \
+              || echo "::warning title=auditd::audit-rules.service ended with an error (the rule files of the image did not load); the step goes on"
+          fi
           # The kubelet static-pod directory is bind-mounted from this host path
           # (kind-staticpod-cluster.yaml extraMount: the relative ./.kind/trr9003-manifests,
           # which kind resolves against the checkout, the working directory of the
@@ -393,6 +403,15 @@ jobs:
           if [ "${FILESENSOR_OUTCOME}" != "success" ]; then
             echo "::error title=file sensor::the node file-event sensor did not start; the file gate and the file control will fail"
           fi
+          # Second line of defence for the file sensor. Its step added the rule and saw
+          # it in the list. On auditd 4 a late run of audit-rules.service (its rule file
+          # starts with -D) deleted the rule 1 ms after that check, and auditd then
+          # recorded no file event. Name that cause here. The step goes on: the file
+          # gate and the file control fail closed without events.
+          rules="$(sudo auditctl -l 2>/dev/null || true)"
+          if ! grep -qF k8s_node_file <<<"${rules}"; then
+            echo "::error title=file sensor::the audit rule of the file sensor is not loaded ('auditctl -l' does not list the key k8s_node_file): the sensor did not start, or the rule was deleted after the sensor step. auditd records no file event from that time on; the file gate and the file control will fail"
+          fi
           sudo cat /var/log/audit/audit.log 2>/dev/null | sudo tee /tmp/pre-audit-raw.log >/dev/null || true
           python3 detections/k8s/auditd_file_events.py /tmp/pre-audit-raw.log \
             --key k8s_node_file > /tmp/pre-emulation-file.jsonl || true
@@ -444,6 +463,15 @@ jobs:
             docker exec "${NODE}" cat /var/log/cri-pods.jsonl >> /tmp/cri-pods.jsonl || true
           done
           echo "Collected $(wc -l < /tmp/cri-pods.jsonl) CRI sensor snapshots (both nodes)."
+          # Second line of defence for the file sensor. Its step added the rule and saw
+          # it in the list. On auditd 4 a late run of audit-rules.service (its rule file
+          # starts with -D) deleted the rule 1 ms after that check, and auditd then
+          # recorded no file event. Name that cause here. The step goes on: the file
+          # gate and the file control fail closed without events.
+          rules="$(sudo auditctl -l 2>/dev/null || true)"
+          if ! grep -qF k8s_node_file <<<"${rules}"; then
+            echo "::error title=file sensor::the audit rule of the file sensor is not loaded ('auditctl -l' does not list the key k8s_node_file): the sensor did not start, or the rule was deleted after the sensor step. auditd recorded no file event from that time on; the file gate and the file control fail if that was before the end of the emulation"
+          fi
           # Node file events: poll (max 30 s) for the marked writer's record, then
           # convert the auditd records to linux/file_event JSON lines. The validator
           # fails closed if the record never appears (gate MISS).

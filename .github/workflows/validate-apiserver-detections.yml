@@ -560,6 +560,16 @@ jobs:
           # validate-detections.yml does on this runner image.
           bash .github/scripts/apt_install.sh auditd
           sudo systemctl start auditd || sudo service auditd start
+          # auditd 4 (the ubuntu-26.04 runner image) loads its rule files in a oneshot
+          # unit of its own, audit-rules.service. The start above starts that unit again
+          # and does not wait for it, and its rule file starts with -D: a rule that is
+          # added before the unit ends is deleted. A start of a oneshot unit returns
+          # when the unit has ended, so wait here. auditd 3 has no such unit. A unit
+          # that ends with an error has ended too, so that is a warning only.
+          if systemctl cat audit-rules.service >/dev/null 2>&1; then
+            sudo systemctl start audit-rules.service \
+              || echo "::warning title=auditd::audit-rules.service ended with an error (the rule files of the image did not load); the step goes on"
+          fi
           # The token is on a tmpfs that the kubelet mounts inside the node's own mount
           # namespace (a projected volume is a memory-backed emptyDir). A directory-tree
           # watch added from the runner (-w DIR, or -F dir=DIR: the same recursive

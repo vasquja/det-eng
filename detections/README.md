@@ -82,6 +82,10 @@ Without root or auditd the script SKIPS (exit 0), unless `--require-audit` is
 given (CI passes it, so a broken audit setup fails instead of passing). It
 needs `gcc` always, and `auditctl` and `ausyscall` for a real run.
 
+The validator does not start auditd: it loads its rules into an auditd that runs.
+If you start auditd by hand immediately before the validator, read the note on
+auditd 4 in [Manual run](#manual-run) first.
+
 ### What a PASS means
 
 A case passes only if all three hold:
@@ -1027,6 +1031,14 @@ calling `ausearch`. On some hosts (GitHub-hosted runners among them)
 `ausearch` resolves its default log path to nothing and reports no matches
 even though the records are present in the file.
 
+Note on auditd 4 (Ubuntu 26.04): `sudo systemctl start auditd` also starts the
+oneshot unit `audit-rules.service` and does not wait for it, and the rule file that
+the unit loads starts with `-D`. So a rule that you add or load immediately after
+the start can be deleted some milliseconds later: `auditctl -l` showed it, and the
+log then holds no record. Run `sudo systemctl start audit-rules.service` before you
+add a rule (it returns when the unit has ended). The workflows that start auditd do
+this; auditd 3 has no such unit.
+
 ## Kubernetes detections (TRR9002)
 
 The Kubernetes rules (`sigma/T1609/`) key on the API server **audit log**, not
@@ -1175,7 +1187,10 @@ source (`--file-log`), and each gates its rule on one marked emulation record (C
   `Timestamp`). The `exe` and the PATH `name` are the paths that the node process
   saw, so they are the values the rules read. A relative name of a `*at` syscall
   with a real directory fd cannot be placed; the converter skips it and counts it
-  on stderr.
+  on stderr. Each lab adds its watch in the step that starts auditd, after the wait
+  for `audit-rules.service` (auditd 4; see the note in [Manual run](#manual-run)).
+  The static-pod lab also prints an `::error` line when the rule of the sensor is
+  not in the list of `auditctl -l` before or after the emulation.
 - **Static-pod directory (TRR9003).** `k8s/kind-staticpod-cluster.yaml` bind-mounts
   `.kind/trr9003-manifests` in the checkout (a relative path, which kind resolves
   against the working directory, as it does the audit policy) at the node's
