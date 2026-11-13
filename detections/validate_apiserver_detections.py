@@ -163,8 +163,10 @@ Modes:
                         audit log does not exist, and when one of the three logs holds
                         no record. The count is the number that the `Loaded N ...` line
                         prints: the JSON objects of the lines of the audit log or the
-                        file log that are not blank, and one sandbox for each sandbox id
-                        of the CRI log.
+                        file log that are not blank, and one sandbox for each sandbox
+                        object of the CRI log (by id: an object whose id the log held
+                        before is not counted again, and the objects without an id
+                        count as one).
     --report            Report misses instead of failing on them.
     --json PATH         Also write a machine-readable report (status, detail and the
                         explanation lines of every rule) to PATH.
@@ -1823,7 +1825,9 @@ def load_cri(path):
     """CRI pod sandboxes, flattened, one per sandbox id (first sighting).
 
     Each line is a `crictl pods -o json` snapshot ({"items": [...]}) or a single
-    sandbox object, as detections/k8s/cri-pod-sensor.sh writes it.
+    sandbox object, as detections/k8s/cri-pod-sensor.sh writes it. The id is the
+    `id` key of the object: the objects without that key have the same id (None),
+    so they count as one sandbox.
     """
     seen, sandboxes = set(), []
     with open(path, encoding="utf-8") as fh:
@@ -1847,7 +1851,9 @@ def load_cri(path):
 def nonblank_lines(path):
     """The number of lines of a log that are not blank. The message about a log
     without a record gives it: 0 records from 0 lines is a capture that recorded
-    nothing, and 0 records from N lines is a capture that did not parse."""
+    nothing, and 0 records from N lines is a capture that did not parse. For a CRI
+    log, 0 records from N lines is also a capture of N snapshots that parsed and
+    hold no sandbox (`{"items": []}`)."""
     with open(path, encoding="utf-8", errors="replace") as fh:
         return sum(1 for line in fh if line.strip())
 
@@ -1875,7 +1881,7 @@ def negative_control_inputs(args, logs):
     or file log that is given and does not exist ended the run before this point), and
     when it holds no record. The count is what the loader returned, which is what each
     rule of that source is run on: the JSON objects of the lines of the audit log or
-    the file log, and one sandbox for each sandbox id of the CRI log.
+    the file log, and one sandbox for each sandbox object of the CRI log (by id).
     """
     paths = {"audit": args.audit_log, "cri": args.cri_log, "file": args.file_log}
     failures = []

@@ -536,6 +536,8 @@ jobs:
         # A failure here must not skip the steps after it (the benign slice, the
         # pre-emulation capture), so it cannot stop the audit and CRI gates. The 9006 E
         # file gate fails closed without this sensor: no watch, no file event, MISS.
+        # The negative control also fails on a pre-emulation file log without a file
+        # event.
         id: filesensor
         continue-on-error: true
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
@@ -621,7 +623,7 @@ jobs:
           FILESENSOR_OUTCOME: ${{ steps.filesensor.outcome }}
         run: |
           if [ "${FILESENSOR_OUTCOME}" != "success" ]; then
-            echo "::error title=file sensor::the node file-event sensor did not start (outcome '${FILESENSOR_OUTCOME}'); the 9006 E file gate will fail"
+            echo "::error title=file sensor::the node file-event sensor did not start (outcome '${FILESENSOR_OUTCOME}'); with no file event, the 9006 E file gate will fail, and the negative control will fail on the pre-emulation file log"
           fi
           # Wait for the baseline privileged workloads (kube-proxy, kindnet) so the
           # pre-emulation log carries the matches the gate must exclude.
@@ -640,7 +642,9 @@ jobs:
           # a read of the public ca.crt beside the token, which the token rule must
           # not match. The negative-control step fails when this log holds no file
           # event. The validator's file control checks that the rule matches none of
-          # the kubelet's reads (a notice when none).
+          # the kubelet's reads (a notice when none). Each converter line says on
+          # stderr, in this log, what it read: the audit records, the events with its
+          # key, the file events that it wrote and the PATH items that it skipped.
           sudo cat /var/log/audit/audit.log 2>/dev/null | sudo tee /tmp/pre-audit-raw.log >/dev/null || true
           python3 detections/k8s/auditd_file_events.py /tmp/pre-audit-raw.log \
             --key k8s_node_file > /tmp/pre-emulation-file.jsonl || true

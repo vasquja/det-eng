@@ -97,8 +97,10 @@ Modes:
         event(s)` line prints: the JSON objects of the lines that are not
         blank. The CRI control and the file control fail a CRI log without an
         API-scheduled sandbox and a file log without a kubeadm write, so an
-        empty CRI or file log fails there. The run does not fail an audit log
-        whose records hold no mirror-pod create of the control-plane baseline.
+        empty CRI or file log fails there; the line of that failure names the
+        log and the number of records that it holds. The run does not fail an
+        audit log whose records hold no mirror-pod create of the control-plane
+        baseline.
 
     ... --report
         Report misses in the summary instead of failing on them.
@@ -453,10 +455,12 @@ def report_audit(events):
         print(f"  note: no '{GHOST_NAME}' mirror-create seen.")
 
 
-def report_cri(sandboxes, cri_hits):
+def report_cri(sandboxes, cri_hits, path):
     """The static sandboxes the sensor saw, and the API-pod false-positive control.
 
-    Returns a list of control failures (empty when the control holds).
+    Returns a list of control failures (empty when the control holds). The failure
+    for a log without an API-scheduled sandbox names the log (`path`) and the number
+    of sandboxes that it holds.
     """
     static = [s for s in sandboxes if s.get(CONFIG_SOURCE) in ("file", "http")]
     api = [s for s in sandboxes if s.get(CONFIG_SOURCE) == "api"]
@@ -477,7 +481,8 @@ def report_cri(sandboxes, cri_hits):
     if not api:
         failures.append("no API-scheduled sandbox (config.source=api) in the CRI "
                         "log, so the false-positive control proves nothing; does "
-                        "the sensor record carry the pod annotations?")
+                        "the sensor record carry the pod annotations? (the CRI log "
+                        f"{path} holds {len(sandboxes)} pod sandbox(es))")
     if api_hits:
         failures.append("the CRI rule matched API-scheduled sandbox(es): "
                         + ", ".join(sorted(s.get("metadata.name") or "?" for s in api_hits)))
@@ -496,14 +501,16 @@ def _kubeadm_writes(events):
             and str(e.get("TargetFilename") or "").startswith(MANIFESTS_DIR)]
 
 
-def report_file(events, file_hits):
+def report_file(events, file_hits, path):
     """The file-event rule's false-positive control on kubeadm's own writes.
 
     CI adds the static-pod directory watch before `kind create cluster`, so kubeadm
     init's manifest writes (etcd, kube-apiserver, ...) are in the file log. The rule
     must match none of them (filter_install), and there must be some, so the control
     tests the rule on real bootstrap writes and the sensor's exe spelling. Returns a
-    list of control failures (empty when the control holds).
+    list of control failures (empty when the control holds). The failure for a log
+    without such a write names the log (`path`) and the number of file events that
+    it holds.
     """
     boot = _kubeadm_writes(events)
     print(f"\nNode file-event sensor — file events seen: {len(events)} "
@@ -517,7 +524,8 @@ def report_file(events, file_hits):
     if not boot:
         failures.append(f"no {KUBEADM_IMAGE} write under {MANIFESTS_DIR} in the file log, so "
                         "the false-positive control proves nothing; was the watch added "
-                        "before the cluster was created?")
+                        f"before the cluster was created? (the file log {path} holds "
+                        f"{len(events)} file event(s))")
     if boot_hits:
         failures.append("the file-event rule matched kubeadm's control-plane manifest "
                         "write(s): " + ", ".join(sorted(str(e.get("TargetFilename"))
@@ -1009,7 +1017,7 @@ def validate(args, report):
                                    "status": "FAILED" if input_controls else "held",
                                    "detail": "; ".join(input_controls), "explanation": []})
     if "cri" in logs:
-        controls = report_cri(logs["cri"], hits_by_source.get("cri", []))
+        controls = report_cri(logs["cri"], hits_by_source.get("cri", []), args.cri_log)
         cri_rule = next((os.path.join(RULES_DIR, m[0]) for m in MANIFEST if m[1] == "cri"),
                         None)
         lines = explained(explain_cri_control, cri_rule, logs["cri"],
@@ -1022,7 +1030,8 @@ def validate(args, report):
     if "file" in logs:
         file_rule = next((os.path.join(RULES_DIR, m[0]) for m in MANIFEST if m[1] == "file"),
                          None)
-        file_controls = report_file(logs["file"], hits_by_source.get("file", []))
+        file_controls = report_file(logs["file"], hits_by_source.get("file", []),
+                                    args.file_log)
         lines = explained(explain_file_control, file_rule, logs["file"],
                           hits_by_source.get("file", [])) if file_controls else []
         for line in lines:
