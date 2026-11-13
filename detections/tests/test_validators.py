@@ -142,10 +142,12 @@ def with_options(test, step, options):
 
 def with_report(test, step):
     """A negative-control step whose command holds `--report` (see with_options()).
-    When the step of CI holds the option already, the result is that step. The tests
+    When a command of the step of CI holds the option already, the result is that step
+    (a comment that holds the word does not count: with_options() then fails). The tests
     that use this say that `--report` does not waive the negative control. They do
     not say whether the step of CI can hold the option."""
-    if re.search(r"(?<![\w-])--report(?![\w-])", step.run):
+    if any(re.search(r"(?<![\w-])--report(?![\w-])", line)
+           for line in gatelib._command_lines(step.run)):
         return step
     return with_options(test, step, "--report")
 
@@ -2422,6 +2424,10 @@ class StaticPodValidator(gatelib.GateCase):
             self.assert_rejects(result, reason, exit_code=1)
             self.assert_saw(result, r"^FAILED: 1 control\(s\) failed\.$")
             self.assertNotIn("Negative control held", result.stdout)
+            if option.startswith("--audit-log"):
+                # Not given, or given with an empty value: no path is read.
+                self.assert_saw(result, r"^No audit log given \(--audit-log\)\.$")
+                self.assertNotIn("Audit log not found", result.stdout)
 
     def test_rejects_negative_control_without_the_audit_log(self):
         """Also with an empty value of the option (`--audit-log ''`), which counts as
@@ -2565,10 +2571,12 @@ class ApiserverValidator(gatelib.GateCase):
         self.assertEqual(len(copies), 1, f"job {job}: {len(copies)} line(s) of the capture "
                                          "step read /var/log/audit/audit.log; wanted 1")
         self.assertRegex(
-            copies[0], rf"(?:\| sudo tee|(?<![>&\d])>) {re.escape(raw)}(?![\w.-])",
+            copies[0], rf"(?:\| sudo tee {re.escape(raw)} >/dev/null\b"
+                       rf"|(?<![>&\d])> ?{re.escape(raw)}(?![\w.-]))",
             f"job {job}: the capture step must copy the audit log of the runner to {raw}, "
             "the raw log that its converter lines read. The test knows two forms of the "
-            f"line: a pipe into `sudo tee {raw}`, and a plain redirect of stdout (`> {raw}`). "
+            f"line: a pipe into `sudo tee {raw} >/dev/null`, and a plain redirect of stdout "
+            f"(`> {raw}`). "
             "If the line has a new form that still writes a raw log that the runner user "
             "can read, change this pattern. If the raw log has a new name in each line of "
             "the step that names it, change ApiserverValidator.RAW.")
@@ -2924,6 +2932,10 @@ class ApiserverValidator(gatelib.GateCase):
                 exit_code=1)
             self.assertEqual(self.vacuous_lines(result), 1)
             self.assertNotIn("Negative control held", result.stdout)
+            if option.startswith("--audit-log"):
+                # Not given, or given with an empty value: no path is read.
+                self.assert_saw(result, r"^No audit log given \(--audit-log\)\.$")
+                self.assertNotIn("Audit log not found", result.stdout)
 
     def test_rejects_negative_control_without_the_audit_log(self):
         """Also with an empty value of the option (`--audit-log ''`), which counts as
