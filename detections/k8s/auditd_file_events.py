@@ -15,7 +15,9 @@ node file-event rules the kind CI node sensor gates (C2-7):
     write in the kubelet static-pod directory, caught by a write/attribute tree
     watch on the host directory that is bind-mounted there, in the checkout
     (`-F dir=${GITHUB_WORKSPACE}/.kind/trr9003-manifests -F perm=wa`).
-Both use the key k8s_node_file.
+Both use the key k8s_node_file. The capture step of validate-apiserver-detections.yml
+also converts the key k8s_node_canary (the canary read of ca.crt that the file
+sensor step makes) into the pre-emulation file log.
 
 A kind node is a Docker container on the runner's kernel, and the audit
 subsystem is not namespaced, so the runner's auditd sees the syscalls the node's
@@ -73,7 +75,9 @@ Each run that read its log also says on stderr what it read, in one summary line
     S  the PATH items that the limit above skipped
 
 Thus the log of a capture step shows why a run wrote no file event: the log held
-no record (R is 0), no event held the key (K is 0), or each PATH item was skipped.
+no record (R is 0), no event held the key (K is 0), each PATH item was skipped (S
+is not 0), or a keyed event holds no exe or no PATH item of the file itself (K is
+not 0, and W and S are 0).
 """
 
 import argparse
@@ -332,7 +336,8 @@ def main(argv=None):
         sys.stderr.write(f"auditd_file_events: skipped {skipped[0]} PATH item(s) whose "
                          "relative name is relative to a directory fd (not placeable)\n")
     # What the run read, always: a capture step that wrote no file event shows the
-    # cause in its log (no record, no event with the key, or each PATH item skipped).
+    # cause in its log (no record, no event with the key, each PATH item skipped, or
+    # a keyed event without an exe or without a PATH item of the file itself).
     keyed = (f"with the key {args.key}" if args.key is not None
              else "with a SYSCALL record (no --key)")
     sys.stderr.write(f"auditd_file_events: {args.audit_log}: read {counts['records']} audit "

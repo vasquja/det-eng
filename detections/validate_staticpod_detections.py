@@ -306,11 +306,14 @@ def load_events(audit_log):
 
 
 def load_cri(cri_log):
-    """CRI pod sandboxes, flattened, one per sandbox id (its first sighting).
+    """CRI pod sandboxes, flattened: one for each sandbox object, by id (its first
+    sighting).
 
     Each line is a `crictl pods -o json` snapshot ({"items": [...]}) or a single
     sandbox object. A sandbox shows up in every snapshot while it exists; a
-    runtime sensor reports it once, when it starts.
+    runtime sensor reports it once, when it starts. The id is the `id` key of the
+    object: the objects without that key have the same id (None), so they count as
+    one sandbox.
     """
     seen, sandboxes = set(), []
     with open(cri_log, encoding="utf-8") as fh:

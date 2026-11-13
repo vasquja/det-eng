@@ -623,7 +623,7 @@ jobs:
           FILESENSOR_OUTCOME: ${{ steps.filesensor.outcome }}
         run: |
           if [ "${FILESENSOR_OUTCOME}" != "success" ]; then
-            echo "::error title=file sensor::the node file-event sensor did not start (outcome '${FILESENSOR_OUTCOME}'); with no file event, the 9006 E file gate will fail, and the negative control will fail on the pre-emulation file log"
+            echo "::error title=file sensor::the node file-event sensor did not start (outcome '${FILESENSOR_OUTCOME}'); the 9006 E file gate will fail, and the negative control fails if the pre-emulation file log holds no file event"
           fi
           # Wait for the baseline privileged workloads (kube-proxy, kindnet) so the
           # pre-emulation log carries the matches the gate must exclude.

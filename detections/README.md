@@ -1165,10 +1165,14 @@ negative control: the near-miss of each rule is proven by its rule cases (item 3
 the definition of done). The static pod validator does not require a mirror-pod
 create of the control-plane baseline in the audit log.
 
-A strict run is not changed. Without `--audit-log` it reads
+The verdict and the exit code of a strict run are not changed, and a strict run needs
+no more logs than before. Without `--audit-log` it reads
 `/tmp/kube-apiserver-audit.log`; a rule whose log is not given is skipped, and a run
 with no log at all prints `SKIP` and exits 0. That is for a local run without a
-cluster: CI gives each log.
+cluster: CI gives each log. One text of a strict run is changed: the two
+`CONTROL FAILED` lines of the static pod validator (a CRI log without an
+API-scheduled sandbox, a file log without a `kubeadm` write) name the log and the
+number of its records in a strict run too.
 
 ### Node runtime sensor (TRR9003 Strategy 1)
 
@@ -1218,10 +1222,13 @@ source (`--file-log`), and each gates its rule on one marked emulation record (C
   `Timestamp`). The `exe` and the PATH `name` are the paths that the node process
   saw, so they are the values the rules read. A relative name of a `*at` syscall
   with a real directory fd cannot be placed; the converter skips it and counts it
-  on stderr. Each run also prints one summary line on stderr: the raw log, the
-  audit records and the events that it read, the events with the key, the file
-  events that it wrote and the PATH items that it skipped. Thus the log of a
-  capture step shows why a file log is empty. stdout holds only the JSON lines.
+  on stderr. Each run that read its log also prints one summary line on stderr: the
+  raw log, the audit records and the events that it read, the events with the key,
+  the file events that it wrote and the PATH items that it skipped. Thus the log of
+  a capture step shows why a file log is empty. stdout holds only the JSON lines. A
+  run that cannot open its log (a path that does not exist, a directory) ends with
+  a traceback and prints no summary line. Each workflow step that runs the converter
+  first makes the raw log with `tee`, so the file is there.
 - **Static-pod directory (TRR9003).** `k8s/kind-staticpod-cluster.yaml` bind-mounts
   `.kind/trr9003-manifests` in the checkout (a relative path, which kind resolves
   against the working directory, as it does the audit policy) at the node's

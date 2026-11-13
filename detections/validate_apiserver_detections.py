@@ -1822,7 +1822,8 @@ def load_events(path):
 
 
 def load_cri(path):
-    """CRI pod sandboxes, flattened, one per sandbox id (first sighting).
+    """CRI pod sandboxes, flattened: one for each sandbox object, by id (first
+    sighting).
 
     Each line is a `crictl pods -o json` snapshot ({"items": [...]}) or a single
     sandbox object, as detections/k8s/cri-pod-sensor.sh writes it. The id is the
