@@ -140,16 +140,22 @@ def strict_runs_without_a_log(test, skip):
 
     Two runs of test.GATE. The first names an audit log that does not exist. The
     second names no log, so it reads the default log of a strict run, which is a
-    path of the machine. A machine that ran the lab can hold that log; then the
-    second run must load it, and its verdict is not asserted. `skip` is the SKIP
-    line of the validator, as a regular expression."""
+    path of the machine. The test asks what the validator asks (os.path.exists): a
+    path that does not exist, or a symbolic link to nothing, is a log that the run
+    does not find. A machine that ran the lab can hold that log; then the second
+    run must load it, and its verdict is not asserted. When the path exists and is
+    not a file (a directory), nothing of the second run is asserted: no validator
+    has a message for such a log (roadmap item R2d). `skip` is the SKIP line of
+    the validator, as a regular expression."""
     good = test.good()
     missing = good.tmp_path("no-such-audit.log")
     test.assertFalse(os.path.lexists(missing))
     named, default = good.start(test.GATE, "--audit-log", missing), good.start(test.GATE)
     for result, log in ((named.result(), missing), (default.result(), DEFAULT_AUDIT_LOG)):
-        if log == DEFAULT_AUDIT_LOG and os.path.lexists(log):
-            test.assert_saw(result, rf"^Loaded \d+ audit event\(s\) from {re.escape(log)}$")
+        if log == DEFAULT_AUDIT_LOG and os.path.exists(log):
+            if os.path.isfile(log):
+                test.assert_saw(result,
+                                rf"^Loaded \d+ audit event\(s\) from {re.escape(log)}$")
             continue
         test.assert_accepts(result, skip)
         test.assert_saw(result, rf"^Audit log not found: {re.escape(log)}$")
@@ -422,19 +428,28 @@ class CloudValidator(gatelib.GateCase):
             r"detections/cloud/fixtures/trr9012/benign\.json, and no such file exists: ")
         self.assertEqual(len(re.findall(r"^ERROR \[", result.stdout, re.MULTILINE)), 1)
 
-    def test_rejects_directory_in_the_place_of_the_benign_fixture(self):
-        """A directory has the name of the benign fixture. A fixture is a file: the
-        rule is an ERROR, also with --report, and the run does not stop with a
-        traceback when it opens the directory."""
+    def rejects_directory_in_the_place_of(self, kind):
+        """A copy in which a directory has the name of one fixture of TRR9012 (`kind`:
+        attack or benign). A fixture is a file: the rule is an ERROR, also with
+        --report, and the run does not stop with a traceback when it opens the
+        directory."""
+        fixture, other = ((self.ATTACK, self.BENIGN) if kind == "attack"
+                          else (self.BENIGN, self.ATTACK))
         tree = self.tree()
-        tree.remove(self.BENIGN)
-        os.mkdir(tree.path(self.BENIGN))
-        # The artifact is bad in one way: the name of the baseline is a directory.
-        self.assertTrue(os.path.isdir(tree.path(self.BENIGN)))
-        self.assertTrue(tree.exists(self.RULE) and os.path.isfile(tree.path(self.ATTACK)))
-        result = self.rejected_as_unproven(tree, self.MISSING.format("benign", "benign"))
+        tree.remove(fixture)
+        os.mkdir(tree.path(fixture))
+        # The artifact is bad in one way: the name of the fixture is a directory.
+        self.assertTrue(os.path.isdir(tree.path(fixture)))
+        self.assertTrue(tree.exists(self.RULE) and os.path.isfile(tree.path(other)))
+        result = self.rejected_as_unproven(tree, self.MISSING.format(kind, kind))
         self.assertNotRegex(result.stdout, r"(?m)^PASS +\[TRR9012\b")
         self.assertEqual(len(re.findall(r"^ERROR \[", result.stdout, re.MULTILINE)), 1)
+
+    def test_rejects_directory_in_the_place_of_the_benign_fixture(self):
+        self.rejects_directory_in_the_place_of("benign")
+
+    def test_rejects_directory_in_the_place_of_the_attack_fixture(self):
+        self.rejects_directory_in_the_place_of("attack")
 
     @gatelib.known_gap(
         "cloud-benign-far-from-the-rule",
@@ -522,7 +537,14 @@ class CloudValidator(gatelib.GateCase):
         self.assertGreater(len(good), 0)
         self.assertTrue(all(isinstance(row, dict) for row in good))
         self.assertEqual(tree.read_json(self.BENIGN), good + [None])
+        # For the proof of the last sentence of the `reason`, below: a second copy,
+        # whose baseline is the JSON text `null` (no list, no object).
+        other = self.tree()
+        other.write(self.BENIGN, "null\n")
+        self.assertIsNone(other.read_json(self.BENIGN))
+        pending = other.start(self.GATE)
         result = tree.run(self.GATE)
+        null = pending.result()
         # The gate reached the rule (it compiled it), and it read the planted record:
         # today the last line of the traceback names the type of that record. A gate
         # that does not stop there prints a row for the rule, whatever its verdict.
@@ -539,8 +561,26 @@ class CloudValidator(gatelib.GateCase):
                                 r'^\s+\("(TRR\d+)", "T[\d.]+", "([^"]+\.yml)",')
             first = [name for _, name in entries].index(os.path.basename(self.RULE))
             self.assertLess(first, len(entries) - 1, "no MANIFEST entry is after the rule")
+            before = [trr for trr, _ in entries[:first]]
             self.assertEqual(re.findall(r"^(?:PASS|FAIL|ERROR)\s+\[(TRR\d+) ", result.stdout,
-                                        re.MULTILINE), [trr for trr, _ in entries[:first]])
+                                        re.MULTILINE), before)
+            # The exception comes from sigma_eval.flatten, and no line names the fixture.
+            self.assertRegex(result.output, r'(?m)^  File ".*sigma_eval\.py", line \d+, in '
+                                            r'flatten$', result.describe())
+            self.assertNotIn("trr9012/benign.json", result.output, result.describe())
+            # The last sentence of the `reason`: the baseline whose text is `null` ends
+            # the run in the same way (a traceback, and the same rows before it), with
+            # a TypeError that load_fixture raises.
+            self.assertTrue(null.crashed and null.returncode != 0,
+                            "a fixture whose JSON text is `null` does not end the run with a "
+                            "traceback any more: correct the `reason` of the marker\n"
+                            + null.describe())
+            self.assertRegex(null.output, r"(?m)^TypeError: 'NoneType' object is not iterable$",
+                             null.describe())
+            self.assertRegex(null.output, r'(?m)^  File ".*validate_cloud_detections\.py", '
+                                          r'line \d+, in load_fixture$', null.describe())
+            self.assertEqual(re.findall(r"^(?:PASS|FAIL|ERROR)\s+\[(TRR\d+) ", null.stdout,
+                                        re.MULTILINE), before)
         self.assert_rejects(
             result,
             r"^(FAIL|ERROR)\s+\[TRR9012[^\]]*\] aws_leaked_access_key_recon\.yml: "
@@ -1809,19 +1849,24 @@ class K8sValidator(gatelib.GateCase):
 
     def test_json_report_says_that_the_control_of_an_empty_log_failed(self):
         """The --json report holds the control of the pre-emulation log. For a log
-        with records it says `held` and gives the count; for the empty log it says
-        `FAILED` and names the log. (The step with --json is a variant: no workflow
-        runs it.)"""
+        with records it says `held` and gives the count; for the empty log and for a
+        log that does not exist it says `FAILED` and names the log. (The step with
+        --json is a variant: no workflow runs it.)"""
         good = self.good()
         step = with_options(self, self.negative_control_step(), "--json /tmp/k8sneg.json")
 
         def control(records):
+            """One run of the step, and the control of its report. records: the
+            number of the `Loaded` line, or None for a run that loads no log."""
             result = good.run_step(step)
             with open(good.tmp_path("k8sneg.json"), encoding="utf-8") as fh:
                 report = json.load(fh)
             self.assertEqual((report["mode"], report["exit"]),
                              ("expect-miss", result.returncode), result.describe())
-            self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+            if records is None:
+                self.assertNotRegex(result.stdout, r"(?m)^Loaded ")
+            else:
+                self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
             self.assertEqual([entry["control"] for entry in report["controls"]],
                              ["the pre-emulation audit log holds a record"])
             return result, report["controls"][0]
@@ -1836,6 +1881,13 @@ class K8sValidator(gatelib.GateCase):
         self.assertRegex(entry["detail"],
                          r"^the pre-emulation audit log \S+/pre-emulation-audit\.log holds no "
                          r"audit event \(0 records read from 0 non-blank line\(s\)\)$")
+        # The log does not exist. (Each test that reads this log of the shared copy
+        # writes it first.)
+        os.remove(good.tmp_path(self.LOG))
+        result, entry = control(None)
+        self.assertEqual((result.returncode, entry["status"]), (1, "FAILED"), result.describe())
+        self.assertRegex(entry["detail"], r"^the pre-emulation audit log \S+/"
+                                          r"pre-emulation-audit\.log was not found$")
 
     def test_control_strict_run_without_a_log_is_a_skip(self):
         """CONTROL of a strict run that finds no audit log: SKIP, exit 0."""
@@ -1920,8 +1972,9 @@ class K8sValidator(gatelib.GateCase):
                "ends the validator with an uncaught AttributeError of sigma_eval.flatten. "
                "The negative-control step fails, but with a traceback: no line names the "
                "log or the bad line, and no rule is judged. A strict run stops in the same "
-               "way, and so do the loaders of the audit log, the CRI log and the file log "
-               "in validate_staticpod_detections.py and validate_apiserver_detections.py.",
+               "way. So do validate_staticpod_detections.py and "
+               "validate_apiserver_detections.py, with an uncaught AttributeError, on such "
+               "a line in the audit log, in the CRI log and in the file log.",
         closes="R2d", today="crash")
     def test_gap_log_line_that_is_not_an_object(self):
         """WANTED: the validator names the log and the line that is not a JSON object,
@@ -1936,11 +1989,55 @@ class K8sValidator(gatelib.GateCase):
             lines = fh.read().splitlines()
         self.assertEqual(len(lines), records + 1)
         self.assertEqual(json.loads(lines[-1]), [])
+        # For the proof of the last sentences of the `reason`, below: a strict run on
+        # the same log, and six runs of the other two Kubernetes validators. Each of
+        # the six gets one log, a log whose one line is `[]`: with --expect-miss a
+        # validator has no default log, so the loader of that log is the one that
+        # reads the line.
+        strict = good.start(self.GATE, "--audit-log", good.tmp_path(self.LOG), "--report")
+        write_text_log(good, "list-line.log", "[]\n")
+        others = {
+            (script, option): good.start(script, option, good.tmp_path("list-line.log"),
+                                         "--expect-miss")
+            for script in ("detections/validate_staticpod_detections.py",
+                           "detections/validate_apiserver_detections.py")
+            for option in ("--audit-log", "--cri-log", "--file-log")}
         result = good.run_step(self.negative_control_step())
+        strict = strict.result()
+        others = {run: pending.result() for run, pending in others.items()}
         # The gate read the planted line: today the last line of the traceback names
         # its type; a designed message names the log and the number of the line.
         self.assert_saw(result, r"^AttributeError: 'list' object has no attribute 'items'$|"
                                 rf"pre-emulation-audit\.log.*\bline {records + 1}\b")
+        if result.crashed:
+            # Today. Prove each sentence of the `reason` of the marker, so that the
+            # text cannot go out of date. The exception comes from sigma_eval.flatten,
+            # no line names the log, and no rule is judged.
+            self.assertRegex(result.output, r'(?m)^  File ".*sigma_eval\.py", line \d+, in '
+                                            r'flatten$', result.describe())
+            self.assertNotIn("pre-emulation-audit.log", result.output, result.describe())
+            self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+            # A strict run on the same log.
+            self.assertTrue(strict.crashed and strict.returncode != 0,
+                            "a strict run on the log does not end with a traceback any "
+                            "more: correct the `reason` of the marker\n" + strict.describe())
+            self.assertRegex(strict.output, r"(?m)^AttributeError: 'list' object has no "
+                                            r"attribute 'items'$", strict.describe())
+            self.assertNotRegex(strict.stdout, r"(?m)^(PASS|MISS)  \[")
+            # The other two validators. The loader of an audit log and of a file log
+            # is load_events(), and the loader of a CRI log is load_cri().
+            for (script, option), run in others.items():
+                loader = "load_cri" if option == "--cri-log" else "load_events"
+                self.assertTrue(run.crashed and run.returncode != 0,
+                                f"{script} {option}: a `[]` line does not end the run with a "
+                                "traceback any more: correct the `reason` of the marker\n"
+                                + run.describe())
+                self.assertRegex(run.output, r"(?m)^AttributeError: 'list' object has no "
+                                             r"attribute '\w+'$", run.describe())
+                self.assertRegex(run.output, rf'(?m)^  File ".*/{re.escape(script)}", line \d+, '
+                                             rf'in {loader}$', run.describe())
+                self.assertNotRegex(run.stdout, r"(?m)^Loaded |CONTROL FAILED|list-line\.log",
+                                    run.describe())
         self.assert_rejects(
             result,
             r"(?i)^\s*(NEGATIVE CONTROL FAILED|FAILED|ERROR)\b.*pre-emulation-audit\.log.*"
@@ -2023,6 +2120,28 @@ class StaticPodValidator(gatelib.GateCase):
                                 r"API-scheduled sandbox\(es\)\.$")
         self.assert_saw(result, rf"^  control held: each rule has its log, and the audit log "
                                 rf"holds {audit} audit event\(s\)\.$")
+
+    def test_rejects_pre_emulation_log_that_holds_an_emulation_record(self):
+        """Definition of done 2 for Kubernetes. The audit log captured before the
+        emulation already holds the mirror-pod create of Procedure A, beside the
+        benign records: the audit rule passes without the emulation. The CRI log and
+        the file log are the logs of the control, so this is the one defect."""
+        good = self.good()
+        audit, _, _ = self.write_logs(good)
+        records = write_log(good, self.AUDIT,
+                            self.FOLDER + "k8s_static_pod_mirror_create.cases.jsonl",
+                            "user-creates-pod", "scheduler-binding", "mirror-create-procA")
+        self.assertEqual(records, audit + 1)
+        result = good.run_step(self.negative_control_step())
+        self.assert_rejects(
+            result,
+            r"^PASS  \[A/B\] k8s_static_pod_mirror_create\.yml: matched an emulation pod "
+            r"[\s\S]*^NEGATIVE CONTROL FAILED: 1 rule\(s\) passed on logs captured before the "
+            r"emulation ran \(a gate matched\)\.$",
+            exit_code=1)
+        # The three controls of the logs held: the rule that passed is the failure.
+        self.assertNotRegex(result.stdout, r"(?m)^  CONTROL FAILED: ")
+        self.assertEqual(len(re.findall(r"^PASS  \[", result.stdout, re.MULTILINE)), 1)
 
     def test_rejects_negative_control_on_an_empty_cri_log(self):
         """A CRI log without one API-scheduled sandbox gives the false-positive
@@ -2140,6 +2259,39 @@ class StaticPodValidator(gatelib.GateCase):
             exit_code=1)
         self.assert_saw(result, r"^FAILED: 1 control\(s\) failed\.$")
         self.assertNotIn("Negative control held", result.stdout)
+
+    def test_json_report_says_that_the_control_of_an_empty_audit_log_failed(self):
+        """The --json report holds the three controls of the pre-emulation logs. For
+        logs with records each one says `held`. For an audit log without a record the
+        control of the logs says `FAILED` and names the log, and the other two still
+        say `held`. (The step with --json is a variant: no workflow runs it.)"""
+        good = self.good()
+        step = with_options(self, self.negative_control_step(), "--json /tmp/staticpodneg.json")
+        inputs = "each rule has its pre-emulation log, and the audit log holds a record"
+
+        def controls():
+            result = good.run_step(step)
+            with open(good.tmp_path("staticpodneg.json"), encoding="utf-8") as fh:
+                report = json.load(fh)
+            self.assertEqual((report["mode"], report["exit"]),
+                             ("expect-miss", result.returncode), result.describe())
+            self.assertEqual(len(report["controls"]), 3, report["controls"])
+            self.assertEqual(report["controls"][0]["control"], inputs)
+            return (result, [entry["status"] for entry in report["controls"]],
+                    report["controls"][0]["detail"])
+
+        self.write_logs(good)
+        result, states, detail = controls()
+        self.assertEqual((result.returncode, states, detail), (0, ["held"] * 3, ""),
+                         result.describe())
+        self.assertEqual(self.write_logs(good, audit=False)[0], 0)
+        result, states, detail = controls()
+        self.assertEqual((result.returncode, states), (1, ["FAILED", "held", "held"]),
+                         result.describe())
+        self.assertRegex(detail, r"^no audit event in the pre-emulation audit log \S+/"
+                                 r"pre-emulation-audit\.log \(0 records read from 0 non-blank "
+                                 r"line\(s\)\), so the negative control proves nothing for the "
+                                 r"audit rule$")
 
     def rejects_without(self, option, reason):
         """The step without one of its three logs (a variant: CI gives each log). The
@@ -2273,34 +2425,80 @@ class ApiserverValidator(gatelib.GateCase):
     def file_capture_step(self, job="validate"):
         """The lines of the capture step of `job` that make the pre-emulation file log
         from /tmp/pre-audit-raw.log, as a step of their own. The other lines of that
-        step need a cluster and root."""
+        step need a cluster and root. One of them copies the audit log of the runner
+        to the raw log: it must write the path that the converter lines read, and it
+        must come before them."""
         step = gatelib.ci_step("validate-apiserver-detections.yml", job,
                                "> /tmp/pre-emulation-file.jsonl")
-        lines = [line for line in gatelib._command_lines(step.run)
+        commands = gatelib._command_lines(step.run)
+        lines = [line for line in commands
                  if "/tmp/pre-emulation-file.jsonl" in line and "wc -l" not in line]
+        copies = [line for line in commands if "/var/log/audit/audit.log" in line]
+        self.assertEqual(len(copies), 1, f"job {job}: {len(copies)} line(s) of the capture "
+                                         "step read /var/log/audit/audit.log; wanted 1")
+        self.assertRegex(copies[0], r"\| sudo tee /tmp/pre-audit-raw\.log >/dev/null\b",
+                         f"job {job}: the capture step must copy the audit log of the runner "
+                         "to /tmp/pre-audit-raw.log, the raw log that its converter lines "
+                         "read")
+        self.assertGreater(len(lines), 0, f"job {job}: no line makes the file log")
+        self.assertLess(commands.index(copies[0]), commands.index(lines[0]),
+                        f"job {job}: the raw log must be written before it is converted")
+        for line in lines:
+            self.assertIn("auditd_file_events.py /tmp/pre-audit-raw.log ", line,
+                          f"job {job}: a converter line reads another raw log")
         return step._replace(run="\n".join(lines) + "\n")
 
     def sensor_keys(self, job="validate"):
         """The audit keys of the two watches of the file sensor step of `job`, from
         its `auditctl` lines: (the key of the canary watch on ca.crt, the key of the
-        watch on the token file). That step has `continue-on-error`, so
-        gatelib.ci_step() refuses it: the step comes from gatelib.ci_steps()."""
-        watches = [[line for line in gatelib._command_lines(step.run)
-                    if line.startswith("sudo auditctl -a ")]
+        watch on the token file). The file of a watch is found through the shell
+        variables of the step, so a variable can get another name. That step has
+        `continue-on-error`, so gatelib.ci_step() refuses it: the step comes from
+        gatelib.ci_steps()."""
+        watches = [(step.run, [line for line in gatelib._command_lines(step.run)
+                               if line.startswith("sudo auditctl -a ")])
                    for step in gatelib.ci_steps()
                    if step.workflow == "validate-apiserver-detections.yml" and step.job == job]
-        watches = [lines for lines in watches if lines]
+        watches = [(run, lines) for run, lines in watches if lines]
         self.assertEqual(len(watches), 1, f"job {job}: {len(watches)} step(s) add an audit "
                                           "watch; wanted the file sensor step only")
+        run, lines = watches[0]
+        # The value that the step gives each shell variable (`NAME=...` at the start
+        # of a line). A watch path names variables, and the test follows them to the
+        # file: the name of a variable is not a part of the rule.
+        values = dict(re.findall(r"^[ \t]*(\w+)=(.+)$", run, re.MULTILINE))
+
+        def expanded(text):
+            for _ in range(8):      # the value of a variable can name a variable
+                after = re.sub(r"\$\{(\w+)\}",
+                               lambda name: values.get(name.group(1), name.group(0)), text)
+                if after == text:
+                    break
+                text = after
+            return text
+
         keys = []
-        for line, path in zip(watches[0], ('"/proc/${NODE_PID}/root${CA_REAL}"', '"${WATCH}"')):
+        for line, wanted in zip(lines, ("ca.crt", "token")):
             found = re.fullmatch(r"sudo auditctl -a always,exit -F path=(\S+) -F perm=r "
-                                 r"-F key=(\w+)", line)
-            self.assertIsNotNone(found, f"job {job}: not a read watch with one key: {line}")
-            self.assertEqual(found.group(1), path, f"job {job}: {line}")
+                                 r"-F key=([\w.-]+)", line)
+            self.assertIsNotNone(found, f"job {job}: the test reads a watch in the form "
+                                        "`sudo auditctl -a always,exit -F path=... -F perm=r "
+                                        f"-F key=...` (a read watch with one key): {line}")
+            # The first watch is the canary watch, on the ca.crt beside the token. The
+            # second is the watch on the token file. The path of the canary watch is
+            # made from the path of the token (`${TOKEN_FILE%/token}/ca.crt`), so
+            # `/ca.crt` is the first question.
+            path = expanded(found.group(1))
+            file = "ca.crt" if "/ca.crt" in path else "token" if "/token" in path else None
+            self.assertEqual(file, wanted,
+                             f"job {job}: the first watch of the file sensor step must be "
+                             "the canary watch (a path that leads to `/ca.crt`), and the "
+                             "second the watch on the token file (a path that leads to "
+                             f"`/token`).\n  the line: {line}\n  its path, with the values "
+                             f"of the variables of the step: {path}")
             keys.append(found.group(2))
-        self.assertEqual(len(watches[0]), 2, f"job {job}: the file sensor step adds "
-                                             f"{len(watches[0])} watch(es); wanted 2")
+        self.assertEqual(len(lines), 2, f"job {job}: the file sensor step adds "
+                                        f"{len(lines)} watch(es); wanted 2")
         return tuple(keys)
 
     def vacuous_lines(self, result):
@@ -2591,9 +2789,67 @@ class ApiserverValidator(gatelib.GateCase):
         self.assertEqual(self.vacuous_lines(result), 3)
         self.assertNotIn("SKIP: no log", result.stdout)
 
+    def test_json_report_gives_the_records_of_each_log_and_says_that_an_empty_log_failed(self):
+        """The --json report holds the control of the pre-emulation logs, with the
+        number of records of each log. For logs with records it says `held`; for a
+        file log without a file event it says `FAILED` and names the log. (The step
+        with --json is a variant: no workflow runs it.)"""
+        good = self.good()
+        step = with_options(self, self.negative_control_step(), "--json /tmp/apiserverneg.json")
+
+        def control():
+            result = good.run_step(step)
+            with open(good.tmp_path("apiserverneg.json"), encoding="utf-8") as fh:
+                report = json.load(fh)
+            self.assertEqual((report["mode"], report["exit"]),
+                             ("expect-miss", result.returncode), result.describe())
+            found = [entry for entry in report["controls"]
+                     if entry["control"] == "each pre-emulation log is given and holds a record"]
+            self.assertEqual(len(found), 1, report["controls"])
+            return result, found[0]
+
+        # Each log gets a number of records of its own, so that the report cannot give
+        # the number of one log for another: one more near-miss in the audit log, and
+        # one file event.
+        audit, cri, _ = self.write_logs(good, "serviceaccount-create-procA-setup")
+        files = write_log(good, self.FILE,
+                          "detections/sigma/T1552.007/linux_k8s_sa_token_read.cases.jsonl",
+                          "reads-ca-crt-not-token")
+        self.assertEqual(len({audit, cri, files, 0}), 4, (audit, cri, files))
+        result, entry = control()
+        self.assertEqual((result.returncode, entry["status"], entry["records"], entry["detail"]),
+                         (0, "held", {"audit": audit, "cri": cri, "file": files}, ""),
+                         result.describe())
+        self.assertEqual(write_log(good, self.FILE), 0)
+        result, entry = control()
+        self.assertEqual((result.returncode, entry["status"], entry["records"]),
+                         (1, "FAILED", {"audit": audit, "cri": cri, "file": 0}),
+                         result.describe())
+        self.assertRegex(entry["detail"],
+                         r"^the pre-emulation file log \S+/pre-emulation-file\.jsonl holds no "
+                         r"file event \(0 records read from 0 non-blank line\(s\)\)$")
+
     def test_control_strict_run_without_a_log_is_a_skip(self):
         """CONTROL of a strict run that finds no log at all: SKIP, exit 0."""
         strict_runs_without_a_log(self, r"^SKIP: no log to validate against \(exit 0\)\.$")
+
+    def test_control_strict_run_with_only_the_audit_log_gets_no_negative_control(self):
+        """CONTROL of a strict run with one log (a local run on an audit log), with
+        --report: the rules of the CRI log and of the file log are skipped, the misses
+        are reported, and the run exits 0. A log that is not given fails only the
+        negative control: a strict run prints no line of that check."""
+        good = self.good()
+        log = "strict-audit.log"
+        records = write_log(good, log, "detections/sigma/T1098.006/k8s_rbac_write.cases.jsonl",
+                            "crb-get-recon", "selfsubjectaccessreview-can-i")
+        result = good.run(self.GATE, "--audit-log", good.tmp_path(log), "--report")
+        self.assert_accepts(result, r"^Reported \d+ miss\(es\); not gated \(--report\)\.$")
+        self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+        self.assert_saw(result, r"^SKIP  \[9006 E\] linux_k8s_sa_token_read\.yml: no file log "
+                                r"given$")
+        self.assert_saw(result, r"^SKIP  \[.*\] k8s_cri_job_pod\.yml: no cri log given$")
+        self.assertNotIn("NEGATIVE CONTROL", result.stdout)
+        self.assertNotRegex(result.stdout, r"(?m)^Loaded \d+ (pod sandbox|file event)")
 
 
 class FileEventConverter(gatelib.GateCase):
@@ -2652,31 +2908,53 @@ class FileEventConverter(gatelib.GateCase):
         commands = gatelib.ci_commands(self.GATE)
         self.assertGreater(len(commands), 0, "no workflow runs the converter")
         for command in commands:
-            self.assertRegex(command, r"^python3 detections/k8s/auditd_file_events\.py "
-                                      r"/tmp/[\w-]+\.log --key \w+ >>? /tmp/[\w-]+\.jsonl "
-                                      r"\|\| true$")
+            self.assertRegex(
+                command,
+                r"^python3 detections/k8s/auditd_file_events\.py /tmp/[\w-]+\.log "
+                r"--key [\w.-]+ >>? /tmp/[\w-]+\.jsonl \|\| true$",
+                "the command must send only stdout to the file log. The test knows one "
+                "form of the command: a raw log in /tmp/, one --key, one redirect of "
+                "stdout to a .jsonl file in /tmp/, and `|| true`. If the command has a "
+                "new form that still keeps stderr out of the file log, change this "
+                "pattern.")
         # The commands were read (not vacuous): the two forms of the capture steps.
         for redirect in (" > /tmp/pre-emulation-file.jsonl ", " >> /tmp/pre-emulation-file.jsonl "):
             self.assertTrue(any(redirect in command for command in commands),
                             f"no workflow command holds `{redirect.strip()}`")
 
+    # Two events of a raw audit log that are not a file syscall, each with a serial of
+    # its own. The first is one record of a type that the converter does not read
+    # (most records of a runner's audit.log are of such a type). The second is a CWD
+    # record whose SYSCALL record is not in the log. Each is a record and an event
+    # of the summary line, and none is an event with a SYSCALL record.
+    OTHER_EVENTS = (
+        "type=USER_CMD msg=audit(1793902558.512:4713): pid=4201 uid=1001 auid=1001 ses=3 "
+        "subj=unconfined msg='cwd=\"/home/runner\" cmd=617564697463746C202D6C "
+        "exe=\"/usr/bin/sudo\" terminal=? res=success'\n"
+        'type=CWD msg=audit(1793902558.512:4714): cwd="/"\n')
+
     def test_control_summary_of_a_run_that_writes_one_file_event(self):
         """CONTROL: one event holds the key and an absolute PATH name, and one event
-        holds another key. stdout holds the one file event, and stderr holds only the
-        summary line. Without --key the run converts the two events."""
-        raw = self.event(4711, self.KEY, self.CA_CRT) + self.event(4712, "another_watch",
-                                                                   "/etc/hostname")
+        holds another key, a longer one that starts with the first key: a key is
+        compared as a whole. Two more events are not a file syscall (OTHER_EVENTS):
+        the summary line counts their records and their events, and it does not
+        count them as events with a SYSCALL record. stdout holds the one file event,
+        and stderr holds only the summary line. Without --key the run converts the
+        two events that hold a SYSCALL record."""
+        raw = (self.event(4711, self.KEY, self.CA_CRT)
+               + self.event(4712, self.KEY + "_2", "/etc/hostname") + self.OTHER_EVENTS)
+        self.assertEqual(len(raw.splitlines()), 10)
         result, events, stderr, read = self.converted(raw, "--key", self.KEY)
         self.assertEqual([(event["TargetFilename"], event["Image"], event["EventType"])
                           for event in events], [(self.CA_CRT, "/usr/bin/cat", "open")])
         self.assertEqual(stderr, [
-            read + f"8 audit record(s) of 2 event(s); 1 event(s) with the key {self.KEY}; "
+            read + f"10 audit record(s) of 4 event(s); 1 event(s) with the key {self.KEY}; "
                    "wrote 1 file event(s); skipped 0 PATH item(s)"], result.describe())
         result, events, stderr, read = self.converted(raw)
         self.assertEqual([event["TargetFilename"] for event in events],
                          [self.CA_CRT, "/etc/hostname"])
         self.assertEqual(stderr, [
-            read + "8 audit record(s) of 2 event(s); 2 event(s) with a SYSCALL record "
+            read + "10 audit record(s) of 4 event(s); 2 event(s) with a SYSCALL record "
                    "(no --key); wrote 2 file event(s); skipped 0 PATH item(s)"],
             result.describe())
 
