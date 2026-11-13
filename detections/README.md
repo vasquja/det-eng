@@ -82,6 +82,10 @@ Without root or auditd the script SKIPS (exit 0), unless `--require-audit` is
 given (CI passes it, so a broken audit setup fails instead of passing). It
 needs `gcc` always, and `auditctl` and `ausyscall` for a real run.
 
+The validator does not start auditd: it loads its rules into an auditd that runs.
+If you start auditd by hand immediately before the validator, read the note on
+auditd 4 in [Manual run](#manual-run) first.
+
 ### What a PASS means
 
 A case passes only if all three hold:
@@ -882,6 +886,21 @@ check the sha256 of both binaries, and fail when the cluster's server version di
 from the pin. The pin moves every quarter, and before the pinned minor reaches end of
 life; the `env` block of each workflow says how.
 
+Before the first lab pod is created, each job pulls its lab images (`LAB_IMAGES`)
+inside each node of the cluster: `docker exec <node> crictl pull <image>`, with three
+attempts for each image and node. `crictl` is in the kind node image, and it puts the
+image in the store that the kubelet reads. When the last attempt fails, the step fails
+and names the image and the node. Thus a slow registry fails the job at that step. The
+later steps still run, so the job keeps its logs. The jobs do not use
+`kind load docker-image`.
+That command fails on a multi-platform tag (`ctr: content digest sha256:...: not found`)
+when Docker on the runner uses the containerd image store, which is the default of a
+new installation of Docker Engine 29
+([kind issue 3795](https://github.com/kubernetes-sigs/kind/issues/3795)). The jobs
+run on `ubuntu-latest`. On 2026-11-13 that label gave the `ubuntu-26.04` runner image
+(Docker Engine 29.4.2), and a `validate-k8s` run failed at `kind load`; the
+`ubuntu-24.04` image before it had Docker Engine 28.0.4.
+
 `.github/workflows/k8s-version-matrix.yml` runs the three Kubernetes workflows every
 week on the minors beside the pin: v1.35.8 and v1.37.0, the newest kindest/node images
 of those minors that kind v0.33.0 publishes. (v1.34 is not in the matrix: it reaches end
@@ -1012,6 +1031,14 @@ Note: the validator reads `/var/log/audit/audit.log` directly instead of
 calling `ausearch`. On some hosts (GitHub-hosted runners among them)
 `ausearch` resolves its default log path to nothing and reports no matches
 even though the records are present in the file.
+
+Note on auditd 4 (Ubuntu 26.04): `sudo systemctl start auditd` also starts the
+oneshot unit `audit-rules.service` and does not wait for it, and the rule file that
+the unit loads starts with `-D`. So a rule that you add or load immediately after
+the start can be deleted some milliseconds later: `auditctl -l` showed it, and the
+log then holds no record. Run `sudo systemctl start audit-rules.service` before you
+add a rule (it returns when the unit has ended). The workflows that start auditd do
+this; auditd 3 has no such unit.
 
 ## Kubernetes detections (TRR9002)
 
@@ -1234,6 +1261,10 @@ source (`--file-log`), and each gates its rule on one marked emulation record (C
   run that cannot open its log (a path that does not exist, a directory) ends with
   a traceback and prints no summary line. Each workflow step that runs the converter
   first makes the raw log with `tee`, so the file is there.
+  Each lab adds its watch in the step that starts auditd, after the wait
+  for `audit-rules.service` (auditd 4; see the note in [Manual run](#manual-run)).
+  The static-pod lab also prints an `::error` line when the rule of the sensor is
+  not in the list of `auditctl -l` before or after the emulation.
 - **Static-pod directory (TRR9003).** `k8s/kind-staticpod-cluster.yaml` bind-mounts
   `.kind/trr9003-manifests` in the checkout (a relative path, which kind resolves
   against the working directory, as it does the audit policy) at the node's
@@ -1409,6 +1440,16 @@ failed, and when a matching event has no `requestReceivedTimestamp` to place it 
 A ledger line that does not parse, or is not a row with `trr` and `procedure`, fails
 the run, because a corrupt ledger proves nothing. The TRR9002 and TRR9003 validators
 do the same.
+
+The emulation scripts take `start` and `end` from bash (`EPOCHREALTIME`, bash 5.0 or
+later) and not from `date +%6N`. `date` of uutils coreutils 0.10.0 (Ubuntu 26.04)
+prints `%6N` without the leading zeros of the fraction, and a start that is up to
+0.9 s late puts the record of the procedure outside its window. With an older bash
+the script calls `date` with `%N` and keeps six digits. A `date` that has no `%N`
+(bash 3.2 with the `date` of macOS) gives a text that is not a time: the validator
+then says that the ledger row has no start or end that it can read, and the gates of
+that procedure miss. The gate tests hold the function (`LedgerClock` and `DateWidth`
+in [`tests/test_labs.py`](tests/test_labs.py)).
 
 **Must-not-match checks.** With a ledger, `MISS_MANIFEST` asserts that a rule stays
 quiet on the emulation's own server-side dry runs, which persist nothing. The `dryrun`

@@ -50,7 +50,7 @@ prints, because the format of that text differs between Python versions.
 only the standard library (`unittest`), PyYAML and pySigma. It needs no network
 and no root. It runs on Python 3.10 and later (3.10 is the minimum of pySigma).
 
-Four conditions skip a test:
+Five conditions skip a test:
 
 - `gcc` is not installed. The class `LinuxValidatorDryRun` is skipped: the Linux
   dry run compiles the atomics.
@@ -63,6 +63,10 @@ Four conditions skip a test:
 - The Python of the tests is older than 3.12. One test of `EmulationScriptsJob` is
   skipped: it runs the step of the `emulation-scripts` job on a directory with no
   test, and unittest ends with 5 there only from Python 3.12.
+- `bash` is older than 5.0. Two tests of `LedgerClock` are skipped: they run the
+  clock function of the emulation scripts with the clock of bash
+  (`EPOCHREALTIME`, from bash 5.0). A third test is skipped when `bash` is older
+  than 4.2: it needs `printf '%(...)T'`.
 
 In CI (the variable `CI` is set) each of these conditions fails the test in
 place of a skip, and `--no-skips` fails the run when a test was skipped. So no
@@ -87,6 +91,7 @@ after each test or test class.
 | `test_validators.py` | The cloud validator (a rule must fire on a marked record of its attack fixture and on no benign record; an attack or benign fixture that is missing or is a directory, and a benign baseline without a record, fail the run, also with `--report`), the Linux validator (dry run, with the check of its `CONTROLS` table; and its verdict code on canned results: the detections; the no-op baseline, which must own a record; each mutant and each re-run, which must be held by what it declares (an item of its rule, or the success gate); the limits of the exemption for a rule whose emulation is a SKIP; a live negative control for each rule), the three Kubernetes validators (dry run; the negative-control step, which fails when a rule passes on a pre-emulation log, when a pre-emulation log is not given or is missing, and when the audit log holds no record; an empty value of `--audit-log` counts as a log that is not given; with `--report` too, each validator fails a rule that passes on a pre-emulation log, and logs without a record; the `--json` report of each validator says that the control of a log without a record failed; for `validate_k8s_detections.py`, its `--json` report says the same for a log that is missing; for the static pod validator, also when the CRI log holds no API-scheduled sandbox or the file log holds no `kubeadm` write, with a line that names the log and the number of its records, and a strict run fails a CRI log without an API-scheduled sandbox with the same line; for the API server validator, also when the CRI log or the file log holds no record, and a CRI snapshot without a sandbox is no record; the lines of the capture step of that validator's workflow that make the pre-emulation file log, on a constructed raw audit log that holds the audit key of the canary watch of the file sensor step, and the line of that step that writes the raw log; and the strict run, which prints SKIP and exits 0 when it finds no log, also when the value of `--audit-log` is empty (a log that does not exist: the run does not read the default log), and gets no check of the negative control when it has a log), the converter of the node file sensor, `k8s/auditd_file_events.py` (one summary line on stderr for each run that read its log, only the JSON lines on stdout, and no workflow command that sends stderr to the file log), `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py`, `check_schedule_freshness.py`. |
 | `test_suite.py` | Rules of the suite as a whole: each self-test has a runner, the CI job runs every test on every pull request, the `emulation-scripts` job does the same for `atomics/tests/`, no workflow step pipes a command into `tee` without pipefail, no step that runs a gate or the unit tests has `continue-on-error`, each known gap names a roadmap item, each planted artifact is used, this file agrees with the tests. |
 | `test_apt_install.py` | Tests of `.github/scripts/apt_install.sh`, the step that installs `auditd`, with a stub for `sudo`, `apt-get`, `unshare`, `mount`, `getent` and `timeout`. When the runner cannot resolve the package mirror, or apt printed a message about name resolution, or the mirror does not resolve after a failed run, apt gets one run with public resolvers in a private mount namespace; the script fails only after apt failed in a run with the resolver of the runner (but in the forced way of the CI job); a necessary package that is not installed fails the step; a text that is not a package name (also a name that ends with `-`, which apt reads as a removal) or not an address is refused. The class `DirectInstalls` (with two CONTROLs) fails when a workflow (a `run:` text, a `with:` or `env:` value), a composite action or a shell script (`*.sh`, or a shell on its first line) installs packages in a usual form (`apt-get install`, `apt update`, `dpkg -i`, `snap install`, also with options, a path or quotes) without the script. The one line that is allowed is `apt-get update -qq` in `detections/benign/linux/workload.sh`. It is a rule on text: a command that is built at run time, or that a different program starts, is not seen. The stubs do not show that the namespace works on a runner: the CI job `apt-install-fallback` does. It forces that way, and its CONTROL step gives a resolver that does not answer (`APT_INSTALL_RESOLVERS`) and fails if the install then passes. |
+| `test_labs.py` | Rules for the lab jobs that run on a GitHub runner (auditd on the runner, a kind cluster). No offline gate runs these jobs, and a new runner image can break them with no change in the repository. `AuditdStart`: each workflow step that starts auditd waits for `audit-rules.service` before its first line that adds or loads an audit rule or runs a validator (auditd 4 loads its rule files in that oneshot unit, the start of auditd does not wait for it, and its rule file starts with `-D`). The wait is in a guard, because auditd 3 has no such unit, and a unit that ends with an error gives a `::warning` line and does not stop the step. The class also runs the start of each such step, and the whole sensor step of the static pod lab, with a stub for `sudo`, `systemctl`, `service` and `auditctl`. The stubs model the fault of 2026-11-12: a run of the unit that nobody waited for deletes the rule after the step saw it in the list. `FileSensorRule`: the two steps of the static pod lab that read the file events print an `::error` line when `auditctl -l` does not list the rule of the file sensor, and they go on. `DateWidth`: no shell script, workflow or composite action gives `%N` a width (`%6N`, `%3N`): `date` of uutils coreutils 0.10.0 prints such a field without the leading zeros of the fraction. `LedgerClock`: the function that gives the times of the emulation ledger (`now_utc()`, or `now()`) is one accepted text in each emulation script and in each workflow step that defines it, and a script that writes a ledger defines it one time. The class runs that text in bash with a stub `date` that prints a wrong time: the result is the time of the test in UTC, a fraction that starts with zero keeps its zeros, and `date` is not called; without the clock of bash the function calls `date` with `%N` only. The stubs do not show what systemd, auditd and the `date` of a runner image do: the lab jobs show that. |
 | `known_bad/<group>/` | The planted artifacts of that group. `known_bad/gatelib/` holds samples for `test_gatelib.py`. |
 
 The planted artifacts are outside `detections/sigma/`, the fixtures and the
@@ -316,6 +321,32 @@ the two timeouts.
 The `gate-tests` job itself has no `if:`, no `continue-on-error` and no `needs:`
 (GitHub skips a job when a job that it needs failed), and its workflow has no
 path filter. `test_suite.py` checks that too.
+
+`test_labs.py` keeps the rules for the lab jobs (auditd on the runner, a kind
+cluster). A planted script or workflow step shows that each rule finds its fault:
+
+- A step that starts auditd (`systemctl start auditd`) waits for
+  `audit-rules.service` after that start and before its first line that adds or
+  loads an audit rule or runs a validator. The wait is these lines, and a new step
+  that starts auditd needs them too:
+
+  ```bash
+  if systemctl cat audit-rules.service >/dev/null 2>&1; then
+    sudo systemctl start audit-rules.service \
+      || echo "::warning title=auditd::audit-rules.service ended with an error ..."
+  fi
+  ```
+
+  It is a rule on text: it does not see a start of auditd that a script or a
+  different program makes.
+- No line of a shell script, a workflow or a composite action holds `%N` with a
+  width of one digit (`%6N`, `%3N`, `%06N`). A comment does not count. It is a
+  rule on text: it does not see a format that is built at run time, and it does
+  not find a width of two digits (in a URL, `%20N` is a space before an `N`).
+- Each definition of `now_utc()` or `now()` in `atomics/*/src/*.sh` and in a
+  workflow step is the text `LedgerClock.ACCEPTED` (the name can be `now()`). A
+  script that writes a ledger (`DETENG_LEDGER`) defines the function one time. To
+  change the function, change that text and each copy in the same pull request.
 
 The job `emulation-scripts` of `lint-trr.yml` runs a second suite: the tests of the
 cloud emulation scripts in [`atomics/tests/`](../../atomics/tests/README.md). The

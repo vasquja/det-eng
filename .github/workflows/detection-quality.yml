@@ -698,6 +698,16 @@ jobs:
           # room so it does not rotate mid-capture, and the kernel a deeper backlog.
           sudo sed -i -E 's/^\s*max_log_file\s*=.*/max_log_file = 512/' /etc/audit/auditd.conf
           sudo systemctl start auditd || sudo service auditd start
+          # auditd 4 (the ubuntu-26.04 runner image) loads its rule files in a oneshot
+          # unit of its own, audit-rules.service. The start above starts that unit again
+          # and does not wait for it, and its rule file starts with -D: a rule that is
+          # added before the unit ends is deleted. A start of a oneshot unit returns
+          # when the unit has ended, so wait here. auditd 3 has no such unit. A unit
+          # that ends with an error has ended too, so that is a warning only.
+          if systemctl cat audit-rules.service >/dev/null 2>&1; then
+            sudo systemctl start audit-rules.service \
+              || echo "::warning title=auditd::audit-rules.service ended with an error (the rule files of the image did not load); the step goes on"
+          fi
           # auditd re-reads auditd.conf on SIGHUP (its unit may refuse a manual restart).
           sudo pkill -HUP -x auditd || true
           sudo auditctl -b 32768 || true

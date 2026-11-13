@@ -177,8 +177,9 @@ jobs:
       # the emulate and validate steps share it; the version pins stay in the
       # workflow-level env block above.
       DETENG_LEDGER: /tmp/emulation-ledger.jsonl
-      # The only image the static pods run, loaded into the node before use so a
-      # Docker Hub hiccup inside the node cannot flake a pod start.
+      # The only image the static pods run. The pre-pull step puts it in each node
+      # before the first pod that uses it, so a slow registry cannot fail a pod
+      # start.
       LAB_IMAGES: busybox:1.36
       # Run Procedure B live (reconfigure the WORKER kubelet's staticPodURL), not the
       # read-only demonstration. The atomic serves the manifest from the runner on the
@@ -244,6 +245,16 @@ jobs:
           # same way validate-detections.yml does on this runner image.
           bash .github/scripts/apt_install.sh auditd
           sudo systemctl start auditd || sudo service auditd start
+          # auditd 4 (the ubuntu-26.04 runner image) loads its rule files in a oneshot
+          # unit of its own, audit-rules.service. The start above starts that unit again
+          # and does not wait for it, and its rule file starts with -D: a rule that is
+          # added before the unit ends is deleted. A start of a oneshot unit returns
+          # when the unit has ended, so wait here. auditd 3 has no such unit. A unit
+          # that ends with an error has ended too, so that is a warning only.
+          if systemctl cat audit-rules.service >/dev/null 2>&1; then
+            sudo systemctl start audit-rules.service \
+              || echo "::warning title=auditd::audit-rules.service ended with an error (the rule files of the image did not load); the step goes on"
+          fi
           # The kubelet static-pod directory is bind-mounted from this host path
           # (kind-staticpod-cluster.yaml extraMount: the relative ./.kind/trr9003-manifests,
           # which kind resolves against the checkout, the working directory of the
@@ -300,17 +311,34 @@ jobs:
             cat /etc/kubernetes/manifests/kube-apiserver.yaml | grep -- --audit- \
             || { echo "::error::audit flags not set on the API server"; exit 1; }
 
-      - name: Load the lab image and wait for the default service account
+      - name: Pre-pull the lab image and wait for the default service account
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
         shell: bash
         run: |
-          # Docker Hub pulls inside the node are the main source of flaky pod
-          # starts: pull on the runner with a bounded retry, then load into the node.
-          for img in ${LAB_IMAGES}; do
-            for i in 1 2 3; do docker pull -q "$img" && break; sleep $((i * 10)); done
-            # Load into every node (control-plane and worker), so Procedure B's URL
-            # static pod on the worker starts without a Docker Hub pull.
-            kind load docker-image --name "${CLUSTER_NAME}" "$img"
+          # The image must be in the node before a pod that uses it is created, so
+          # that a slow registry cannot fail a pod start. Pull it inside each node
+          # with crictl (into the image store that the kubelet reads), with a
+          # bounded retry. Do not use `kind load docker-image` here: it fails on a
+          # multi-platform tag when Docker on the runner uses the containerd image
+          # store, which is the default of a new installation of Docker Engine 29
+          # (the ubuntu-26.04 runner image). See kubernetes-sigs/kind issue 3795.
+          # Every node gets the image (control plane and worker): Procedure B's URL
+          # static pod starts on the worker.
+          nodes="$(kind get nodes --name "${CLUSTER_NAME}")"
+          # kind prints no name and exits 0 when it finds no node of the cluster.
+          [ -n "${nodes}" ] || { echo "::error::kind lists no node of the cluster ${CLUSTER_NAME}"; exit 1; }
+          for node in ${nodes}; do
+            for img in ${LAB_IMAGES}; do
+              ok=
+              for i in 1 2 3; do
+                if docker exec "${node}" crictl pull "${img}"; then ok=1; break; fi
+                echo "pull of ${img} into the node ${node} failed (attempt ${i} of 3)"
+                # Back off only before another attempt.
+                if [ "${i}" -lt 3 ]; then sleep $((i * 10)); fi
+              done
+              [ -n "${ok}" ] || { echo "::error::could not pull ${img} into the node ${node} after 3 attempts"; exit 1; }
+              echo "pulled ${img} into the node ${node}"
+            done
           done
           # A pod create before the token controller makes sa/default fails with
           # 'serviceaccount "default" not found' (kubectl 1.31+ supports --for=create).
@@ -375,6 +403,15 @@ jobs:
           if [ "${FILESENSOR_OUTCOME}" != "success" ]; then
             echo "::error title=file sensor::the node file-event sensor did not start; the file gate and the file control will fail"
           fi
+          # Second line of defence for the file sensor. Its step added the rule and saw
+          # it in the list. On auditd 4 a late run of audit-rules.service (its rule file
+          # starts with -D) deleted the rule 1 ms after that check, and auditd then
+          # recorded no file event. Name that cause here. The step goes on: the file
+          # gate and the file control fail closed without events.
+          rules="$(sudo auditctl -l 2>/dev/null || true)"
+          if ! grep -qF k8s_node_file <<<"${rules}"; then
+            echo "::error title=file sensor::the audit rule of the file sensor is not loaded ('auditctl -l' does not list the key k8s_node_file): the sensor did not start, or the rule was deleted after the sensor step. auditd records no file event from that time on; the file gate and the file control will fail"
+          fi
           sudo cat /var/log/audit/audit.log 2>/dev/null | sudo tee /tmp/pre-audit-raw.log >/dev/null || true
           python3 detections/k8s/auditd_file_events.py /tmp/pre-audit-raw.log \
             --key k8s_node_file > /tmp/pre-emulation-file.jsonl || true
@@ -426,6 +463,15 @@ jobs:
             docker exec "${NODE}" cat /var/log/cri-pods.jsonl >> /tmp/cri-pods.jsonl || true
           done
           echo "Collected $(wc -l < /tmp/cri-pods.jsonl) CRI sensor snapshots (both nodes)."
+          # Second line of defence for the file sensor. Its step added the rule and saw
+          # it in the list. On auditd 4 a late run of audit-rules.service (its rule file
+          # starts with -D) deleted the rule 1 ms after that check, and auditd then
+          # recorded no file event. Name that cause here. The step goes on: the file
+          # gate and the file control fail closed without events.
+          rules="$(sudo auditctl -l 2>/dev/null || true)"
+          if ! grep -qF k8s_node_file <<<"${rules}"; then
+            echo "::error title=file sensor::the audit rule of the file sensor is not loaded ('auditctl -l' does not list the key k8s_node_file): the sensor did not start, or the rule was deleted after the sensor step. auditd recorded no file event from that time on; the file gate and the file control fail if that was before the end of the emulation"
+          fi
           # Node file events: poll (max 30 s) for the marked writer's record, then
           # convert the auditd records to linux/file_event JSON lines. The validator
           # fails closed if the record never appears (gate MISS).
