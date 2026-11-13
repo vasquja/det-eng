@@ -1,0 +1,121 @@
+# TEMPORARY diagnostic. This branch is not for merge and is deleted after the run.
+# Question: why does the auditd directory watch of the static pod lab record nothing
+# on the ubuntu-26.04 runner image, when it recorded kubeadm's writes on ubuntu-24.04?
+name: diag-audit-dir-watch
+on:
+  push:
+    branches: [claude/diag-audit-dir-watch]
+permissions:
+  contents: read
+jobs:
+  diag:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-26.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      KIND_VERSION: v0.33.0
+      KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
+      KIND_NODE_IMAGE: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Versions
+        shell: bash
+        run: |
+          uname -a
+          docker version --format 'docker client {{.Client.Version}} server {{.Server.Version}}'
+          docker info --format 'storage driver: {{.Driver}}  status: {{.DriverStatus}}'
+          cat /etc/docker/daemon.json 2>/dev/null || echo "(no /etc/docker/daemon.json)"
+          findmnt -T "${GITHUB_WORKSPACE}" || true
+          findmnt -T /tmp || true
+
+      - name: Start auditd
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/apt_install.sh auditd
+          sudo systemctl start auditd || sudo service auditd start
+          sudo auditctl -v || true
+          sudo auditctl -s
+          echo "--- rules at start:"; sudo auditctl -l
+
+      - name: "Experiment 1: four watch forms, a host writer and two container writers"
+        shell: bash
+        run: |
+          set -uo pipefail
+          B="${GITHUB_WORKSPACE}/.diag"
+          for n in dirperm legacyw dirsys pathf; do mkdir -p "$B/$n"; done
+          mkdir -p /tmp/diag-tmpdir
+          sudo auditctl -a always,exit -F dir="$B/dirperm" -F perm=wa -F key=diag_dirperm
+          sudo auditctl -w "$B/legacyw" -p wa -k diag_legacyw
+          sudo auditctl -a always,exit -F arch=b64 -S open,openat,openat2,creat,rename,renameat,renameat2,unlink,unlinkat \
+            -F dir="$B/dirsys" -F key=diag_dirsys
+          sudo auditctl -a always,exit -F path="$B/pathf/known.yaml" -F perm=wa -F key=diag_pathf
+          sudo auditctl -a always,exit -F dir=/tmp/diag-tmpdir -F perm=wa -F key=diag_tmpdir
+          echo "--- rules:"; sudo auditctl -l
+          docker pull -q busybox:1.36
+          for n in dirperm legacyw dirsys pathf; do
+            echo host > "$B/$n/host.yaml"
+            echo host > "$B/$n/known.yaml"
+            docker run --rm -v "$B/$n:/m" busybox:1.36 sh -c 'echo ctr > /m/ctr.yaml; echo ctr >> /m/known.yaml'
+            docker run --rm --privileged -v "$B/$n:/m" busybox:1.36 sh -c 'echo priv > /m/priv.yaml; echo priv >> /m/known.yaml'
+          done
+          echo host > /tmp/diag-tmpdir/host.yaml
+          docker run --rm -v /tmp/diag-tmpdir:/m busybox:1.36 sh -c 'echo ctr > /m/ctr.yaml'
+          sleep 3
+          echo "--- rules after the writes:"; sudo auditctl -l
+          sudo auditctl -s
+          sudo cat /var/log/audit/audit.log > /tmp/diag-raw-1.log
+          for k in diag_dirperm diag_legacyw diag_dirsys diag_pathf diag_tmpdir; do
+            echo "=== key ${k}: $(grep -c "key=\"${k}\"" /tmp/diag-raw-1.log || true) raw SYSCALL record(s)"
+            python3 detections/k8s/auditd_file_events.py /tmp/diag-raw-1.log --key "${k}" \
+              | python3 -c 'import sys,json
+          for l in sys.stdin:
+              e=json.loads(l); print("   ", e.get("EventType"), e.get("Image"), e.get("TargetFilename"))' || true
+          done
+
+      - name: "Experiment 2: a kind node writes kubeadm's manifests through a bind mount"
+        shell: bash
+        run: |
+          set -uo pipefail
+          curl -fsSLo ./kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          echo "${KIND_SHA256}  ./kind" | sha256sum -c -
+          chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind
+          M="${GITHUB_WORKSPACE}/.kind/diag-manifests"
+          mkdir -p "$M"
+          # First rule that matches gives its key: the path rule takes kube-apiserver.yaml,
+          # the directory rule takes every other file of the directory.
+          sudo auditctl -a always,exit -F path="$M/kube-apiserver.yaml" -F perm=wa -F key=diag_kind_path
+          sudo auditctl -a always,exit -F dir="$M" -F perm=wa -F key=diag_kind_dir
+          echo "--- rules before the cluster:"; sudo auditctl -l
+          cat > /tmp/diag-kind.yaml <<YAML
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes:
+            - role: control-plane
+              extraMounts:
+                - hostPath: ${M}
+                  containerPath: /etc/kubernetes/manifests
+          YAML
+          kind create cluster --name diag --image "${KIND_NODE_IMAGE}" --config /tmp/diag-kind.yaml --wait 120s
+          echo "--- files in the bind source:"; ls -la "$M"
+          docker exec diag-control-plane sh -c 'echo node > /etc/kubernetes/manifests/.diag-node-write'
+          echo host > "$M/.diag-host-write"
+          sleep 3
+          echo "--- rules after the cluster:"; sudo auditctl -l
+          sudo auditctl -s
+          docker inspect diag-control-plane --format '{{range .Mounts}}{{.Type}} {{.Source}} -> {{.Destination}} ({{.Propagation}}){{"\n"}}{{end}}'
+          sudo cat /var/log/audit/audit.log > /tmp/diag-raw-2.log
+          for k in diag_kind_path diag_kind_dir; do
+            echo "=== key ${k}: $(grep -c "key=\"${k}\"" /tmp/diag-raw-2.log || true) raw SYSCALL record(s)"
+            python3 detections/k8s/auditd_file_events.py /tmp/diag-raw-2.log --key "${k}" \
+              | python3 -c 'import sys,json
+          for l in sys.stdin:
+              e=json.loads(l); print("   ", e.get("EventType"), e.get("Image"), e.get("TargetFilename"))' || true
+          done
+          echo "--- raw records that name the manifests directory, without a key filter (first 12):"
+          grep -E 'kubernetes/manifests|diag-manifests' /tmp/diag-raw-2.log | cut -c1-300 | head -12 || true
+          kind delete cluster --name diag || true
