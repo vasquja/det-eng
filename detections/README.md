@@ -1125,18 +1125,21 @@ A negative control that read no record cannot fail, so it proves nothing. With
 
 - **A log is not given.** In this mode `--audit-log` has no default (the default of a
   strict run, `/tmp/kube-apiserver-audit.log`, is the log of a live run, which holds
-  the emulation), and the static pod and API server validators also need `--cri-log`
-  and `--file-log`.
+  the emulation), and an empty value of it (`--audit-log ''`) counts as a log that is
+  not given. The static pod and API server validators also need `--cri-log` and
+  `--file-log`.
 - **A log does not exist.**
 - **A log holds no record.** A record is what the loader returns, which is what the
   rules are run on. The `Loaded N ...` line prints the number: the JSON objects of the
   lines of an audit log or a file log, and one sandbox for each sandbox object of a
   CRI log (by `id`: an object whose `id` the log held before is not counted again,
   and the objects without an `id` count as one). A blank line and a line that is not
-  JSON are not records. The message gives the number of lines that are not blank, so
-  a capture that recorded nothing (0 lines) is told from a capture that did not
-  parse (N lines). For a CRI log, N lines with 0 records is also a capture of
-  snapshots that parsed and hold no sandbox (`{"items": []}`).
+  JSON are not records. For an audit log, and for each log of the API server
+  validator, the message gives the number of lines that are not blank. Thus a capture
+  that recorded nothing (0 lines) is told from a capture that did not parse (N
+  lines). For its CRI log and its file log, the static pod validator gives the number
+  of records, and not the number of lines. For a CRI log, N lines with 0 records is
+  also a capture of snapshots that parsed and hold no sandbox (`{"items": []}`).
 
 What each validator prints:
 
@@ -1152,10 +1155,10 @@ step of `validate-apiserver-detections.yml` also converts the canary read of the
 sensor step (audit key `k8s_node_canary`): a read of the public `ca.crt` beside the
 token. Such a record is a near-miss of the token rule: it is under
 `kubernetes.io~projected/`, and its name does not end in `/token`. The gate tests run
-the converter lines of the capture step on a constructed auditd record. That record
-holds the key that the file sensor step gives to its canary watch, so a capture step
-that converts another key fails the tests. Only the kind job shows the record that
-the runner's auditd writes.
+the converter lines of the capture step on a constructed audit event. Its SYSCALL
+record holds the key that the file sensor step gives to its canary watch, so a
+capture step that converts another key fails the tests. Only the kind job shows the
+records that the runner's auditd writes.
 
 The checks count records. They do not grade them. A log of `{}` lines passes today:
 each loader counts a JSON object that is not a record of its log. Roadmap item R2d
@@ -1168,11 +1171,13 @@ create of the control-plane baseline in the audit log.
 The verdict and the exit code of a strict run are not changed, and a strict run needs
 no more logs than before. Without `--audit-log` it reads
 `/tmp/kube-apiserver-audit.log`; a rule whose log is not given is skipped, and a run
-with no log at all prints `SKIP` and exits 0. That is for a local run without a
-cluster: CI gives each log. One text of a strict run is changed: the two
-`CONTROL FAILED` lines of the static pod validator (a CRI log without an
-API-scheduled sandbox, a file log without a `kubeadm` write) name the log and the
-number of its records in a strict run too.
+that finds no log at all prints `SKIP` and exits 0. That is for a local run without a
+cluster: CI gives each log. An empty value (`--audit-log ''`) is not a run without the
+option. As before, it is a log that does not exist: the run prints
+`Audit log not found:` with no path after it, and it does not read the default log.
+One text of a strict run is changed: the two `CONTROL FAILED` lines of the static pod
+validator (a CRI log without an API-scheduled sandbox, a file log without a `kubeadm`
+write) name the log and the number of its records in a strict run too.
 
 ### Node runtime sensor (TRR9003 Strategy 1)
 

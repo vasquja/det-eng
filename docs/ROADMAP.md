@@ -79,8 +79,8 @@ and `bpf_prog_load.yml` test that gate, and no item of a rule.
 
 Note for R2c. No offline check shows that the capture step of the API server lab
 writes the canary read into the pre-emulation file log: the gate tests run the
-converter lines of that step on a constructed auditd record, which holds the key of
-the canary watch of the file sensor step, and get one file event. If the job
+converter lines of that step on a constructed audit event, whose SYSCALL record holds
+the key of the canary watch of the file sensor step, and get one file event. If the job
 `validate-apiserver` prints `Captured 0 pre-emulation file event(s).` on a healthy
 cluster, its negative control fails. Then first find the cause and correct the
 capture. Read these lines:
@@ -90,13 +90,13 @@ capture. Read these lines:
   event(s) with the key <key>; wrote W file event(s); skipped S PATH item(s)`). R is
   0 when the step could not read the audit log of the runner. K is 0 for the canary
   key when the capture converts another key than the file sensor step set, or when
-  the record is not in the log that the step read. S is not 0 when the PATH name of
-  the canary read is relative to a directory fd; the converter then also prints
+  the canary read is not in the log that the step read. S is not 0 when the PATH name
+  of the canary read is relative to a directory fd; the converter then also prints
   `skipped N PATH item(s) whose relative name is relative to a directory fd`. When
   K is not 0, and W and S are 0, the event holds no `exe` or no PATH item of the
   file itself.
-- In the log of the file sensor step, the line `Canary held; ...`: the step saw the
-  canary record in the audit log of the runner.
+- In the log of the file sensor step, the line `Canary held; ...`: the step saw a
+  record of the canary read in the audit log of the runner.
 
 Take the file log out of the check only when a healthy capture cannot hold the canary
 read. Then print in the run that the negative control of the file rule was not
