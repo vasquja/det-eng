@@ -710,6 +710,7 @@ jobs:
           fi
           # auditd re-reads auditd.conf on SIGHUP (its unit may refuse a manual restart).
           sudo pkill -HUP -x auditd || true
+          # After the wait: the rule file that audit-rules.service loads sets -b 8192.
           sudo auditctl -b 32768 || true
           sudo auditctl -s
 
@@ -878,10 +879,9 @@ jobs:
 
       - name: Run the gate tests (each gate must reject its planted bad artifacts)
         # One process for each test class, as many at a time as the runner has CPUs.
-        # --no-skips: a skipped test is lost coverage, and it fails the job. Outside
-        # CI a test is skipped when gcc or git is missing, or when a GIT_* variable
-        # pins git to a repository (detections/tests/README.md, "Run"). With CI set,
-        # as it is here, each of these fails the test. gcc and git are on the runner.
+        # --no-skips: a skipped test is lost coverage, and it fails the job. The
+        # conditions that skip a test outside CI are in detections/tests/README.md,
+        # "Run". With CI set, as it is here, each of them fails the test.
         # The runner stops a class that does not end in 10 minutes
         # (gatelib.CLASS_TIMEOUT), before timeout-minutes stops the job: the log
         # then holds the output of every class. The script writes the job summary

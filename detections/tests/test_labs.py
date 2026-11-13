@@ -344,7 +344,7 @@ class AuditdStart(LabSteps):
         """The whole step of the static pod lab, with the model of the fault in the
         stubs: the rule of the sensor is loaded when the step has ended, in each
         state of the unit. CONTROL: the step as it was (no wait) passes its own
-        check, and the rule is gone when the step has ended, as in CI on 2026-11-12."""
+        check, and the rule is gone when the step has ended, as in CI on 2026-11-13."""
         step = self.the_step(*self.SENSOR)
         for unit in UNIT_STATES:
             with self.subTest(unit=unit):
@@ -384,7 +384,10 @@ class FileSensorRule(LabSteps):
     file events before the emulation, and the step that collects them after it, ask
     `auditctl -l` for the rule of the file sensor. When the key k8s_node_file is not
     in the list, each prints an ::error line that names the cause. Neither stops: the
-    file gate and the file control of the validator fail closed without events."""
+    validator fails closed without events. Its file gate needs the record of the
+    emulation. Its file control needs the manifest writes of kubeadm, which are in the
+    log from the time when the cluster was created: the control fails only when the
+    rule was gone before that. Each ::error line says which of the two fails when."""
 
     WORKFLOW, JOB = "validate-staticpod-detections.yml", "validate"
     STEPS = ("Capture the node file events before the emulation (negative control)",
@@ -392,6 +395,11 @@ class FileSensorRule(LabSteps):
     RULE = "-w /home/runner/work/det-eng/det-eng/.kind/trr9003-manifests -p wa -k k8s_node_file\n"
     ERROR = ("::error title=file sensor::the audit rule of the file sensor is not loaded "
              "('auditctl -l' does not list the key k8s_node_file)")
+    # What each step says of the two checks of the validator.
+    FAILS = {STEPS[0]: "the file gate will fail, and the file control too if the rule was gone before the "
+                       "cluster was created",
+             STEPS[1]: "the file gate fails if that was before the end of the emulation, and the file "
+                       "control if it was before the cluster was created"}
     # One record of the marked writer: the collect step stops its poll when it sees one.
     RECORD = ('type=SYSCALL msg=audit(1794601947.257:300): arch=c000003e syscall=257 success=yes exit=3 '
               'pid=4242 comm="trr9003-tee" exe="/usr/local/bin/trr9003-tee" key="k8s_node_file"\n')
@@ -420,7 +428,8 @@ class FileSensorRule(LabSteps):
                 errors = [line for line in done.stdout.splitlines() if line.startswith("::error")]
                 self.assertEqual(len(errors), 1, done.describe())
                 self.assertTrue(errors[0].startswith(self.ERROR), errors[0])
-                self.assertIn("the file gate and the file control", errors[0])
+                self.assertTrue(errors[0].endswith(self.FAILS[name]), errors[0])
+                self.assertNotIn("the file gate and the file control", errors[0])
                 # The step went on to its last line.
                 self.assertRegex(done.stdout.splitlines()[-1], last[name])
 
@@ -436,9 +445,9 @@ class DateWidth(unittest.TestCase):
     """GNU `date` prints %6N as the first six digits of the nanoseconds. `date` of
     uutils coreutils 0.10.0 (the ubuntu-26.04 runner image) drops the leading zeros
     of the fraction first: at 0.005613 s it printed `.561317` for %6N, and at about
-    0.0125 s it printed `125` for %3N. The times of the emulation ledger were then up
-    to 0.9 s late, and the record of a procedure was outside its window. %N with no
-    width is right in both programs.
+    0.0125 s it printed `125` for %3N. A time of the emulation ledger was then almost
+    1 s late (a fraction below 0.01 s lost two zeros or more), and the record of a
+    procedure was outside its window. %N with no width is right in both programs.
 
     The rule: no line of a shell script, a workflow or a composite action holds %N
     with a width (and its flags) of one digit: %6N, %3N, %06N, %-3N. A comment does
@@ -531,10 +540,13 @@ class LedgerClock(unittest.TestCase):
     (the name is now_utc(), or now() in two scripts) and in each workflow step that
     defines it.
 
-    The text takes the time from bash: EPOCHREALTIME (bash 5.0) is seconds, a
-    separator (`.` or `,`, by the locale) and six digits. It starts no `date`. A
-    bash that does not have the variable calls `date` with %N (nine digits) and keeps
-    six: no width, which `date` of uutils coreutils 0.10.0 prints wrongly (DateWidth)."""
+    The text takes the time from bash: EPOCHREALTIME (bash 5.0) is seconds, the
+    decimal point of the locale and six digits. The text reads `.` and `,`. It
+    starts no `date`. A bash that does not have the variable calls `date` with %N
+    (nine digits) and keeps six: no width, which `date` of uutils coreutils 0.10.0
+    prints wrongly (DateWidth). Not handled: a locale with a different decimal point
+    (glibc has one, ps_AF). There printf fails, and a script stops at its first call
+    of the function."""
 
     ACCEPTED = r"""now_utc() {
   local t="${EPOCHREALTIME:-}"

@@ -1036,9 +1036,11 @@ Note on auditd 4 (Ubuntu 26.04): `sudo systemctl start auditd` also starts the
 oneshot unit `audit-rules.service` and does not wait for it, and the rule file that
 the unit loads starts with `-D`. So a rule that you add or load immediately after
 the start can be deleted some milliseconds later: `auditctl -l` showed it, and the
-log then holds no record. Run `sudo systemctl start audit-rules.service` before you
-add a rule (it returns when the unit has ended). The workflows that start auditd do
-this; auditd 3 has no such unit.
+log then holds no record. The rule file also sets the backlog limit (`-b 8192`), the
+failure mode and the backlog wait time, so a setting that you change immediately
+after the start is set back too. Run `sudo systemctl start audit-rules.service`
+before you add a rule or change a setting (it returns when the unit has ended; it
+needs `sudo`). The workflows that start auditd do this; auditd 3 has no such unit.
 
 ## Kubernetes detections (TRR9002)
 
@@ -1366,13 +1368,16 @@ do the same.
 
 The emulation scripts take `start` and `end` from bash (`EPOCHREALTIME`, bash 5.0 or
 later) and not from `date +%6N`. `date` of uutils coreutils 0.10.0 (Ubuntu 26.04)
-prints `%6N` without the leading zeros of the fraction, and a start that is up to
-0.9 s late puts the record of the procedure outside its window. With an older bash
+prints `%6N` without the leading zeros of the fraction, and a start that is almost
+1 s late puts the record of the procedure outside its window. With an older bash
 the script calls `date` with `%N` and keeps six digits. A `date` that has no `%N`
 (bash 3.2 with the `date` of macOS) gives a text that is not a time: the validator
 then says that the ledger row has no start or end that it can read, and the gates of
-that procedure miss. The gate tests hold the function (`LedgerClock` and `DateWidth`
-in [`tests/test_labs.py`](tests/test_labs.py)).
+that procedure miss. bash writes `EPOCHREALTIME` with the decimal point of the
+locale. The function reads `.` and `,`. In a locale with a different decimal point
+(glibc has one, `ps_AF`) the function fails, and the script stops before its first
+procedure: run the script with `LC_ALL=C` there. The gate tests hold the function
+(`LedgerClock` and `DateWidth` in [`tests/test_labs.py`](tests/test_labs.py)).
 
 **Must-not-match checks.** With a ledger, `MISS_MANIFEST` asserts that a rule stays
 quiet on the emulation's own server-side dry runs, which persist nothing. The `dryrun`

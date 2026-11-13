@@ -634,8 +634,8 @@ jobs:
           # (UTC, microseconds); the kind node shares the runner's clock. The time
           # comes from bash, with the function of the emulation scripts, and not from
           # `date +%6N`: date of uutils coreutils 0.10.0 (the ubuntu-26.04 runner
-          # image) drops the leading zeros of %6N, so the split point could be up to
-          # 0.9 s late.
+          # image) drops the leading zeros of %6N, so the split point could be almost
+          # 1 s late.
           now_utc() {
             local t="${EPOCHREALTIME:-}"
             if [ -n "$t" ]; then TZ=UTC0 printf '%(%Y-%m-%dT%H:%M:%S)T.%sZ\n' "${t%[.,]*}" "${t#*[.,]}"
