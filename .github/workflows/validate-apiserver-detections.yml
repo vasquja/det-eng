@@ -631,8 +631,17 @@ jobs:
           # The split point of the live slice: a request received before it is cluster
           # bootstrap, one at or after it is the operator workload (score_benign.py
           # --extra-split-at). The format is the audit log's requestReceivedTimestamp
-          # (UTC, microseconds); the kind node shares the runner's clock.
-          echo "BENIGN_START=$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)" >> "$GITHUB_ENV"
+          # (UTC, microseconds); the kind node shares the runner's clock. The time
+          # comes from bash, with the function of the emulation scripts, and not from
+          # `date +%6N`: date of uutils coreutils 0.10.0 (the ubuntu-26.04 runner
+          # image) drops the leading zeros of %6N, so the split point could be up to
+          # 0.9 s late.
+          now_utc() {
+            local t="${EPOCHREALTIME:-}"
+            if [ -n "$t" ]; then TZ=UTC0 printf '%(%Y-%m-%dT%H:%M:%S)T.%sZ\n' "${t%[.,]*}" "${t#*[.,]}"
+            else t="$(date -u +%Y-%m-%dT%H:%M:%S.%N)"; printf '%sZ\n' "${t:0:26}"; fi
+          }
+          echo "BENIGN_START=$(now_utc)" >> "$GITHUB_ENV"
           bash detections/benign/k8s/workload.sh
 
       - &apiserver-capture
@@ -952,8 +961,9 @@ jobs:
         # a rule matches here is reported, never enforced; only a workload rule over its
         # corpus budget is annotated, and so is a window with no timed event. If
         # BENIGN_START is empty, or is not the UTC time that the workload step writes
-        # (a `date` with no %6N, for example), a warning says so and every hit on the
-        # unsplit capture is annotated: a bad value never stops the scoring.
+        # (a bash older than 5 with a `date` that has no %N, for example), a warning
+        # says so and every hit on the unsplit capture is annotated: a bad value never
+        # stops the scoring.
         if: always()
         continue-on-error: true
         shell: bash

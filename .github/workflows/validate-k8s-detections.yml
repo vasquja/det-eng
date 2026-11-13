@@ -313,8 +313,9 @@ jobs:
               cat /var/log/kubernetes/kube-apiserver-audit.log \
               > /tmp/kube-apiserver-audit.log || true
             # Both timestamps are fixed-width RFC3339 microsecond UTC (the ledger
-            # from date -u +%6NZ, the audit field from k8s metav1.MicroTime), so a
-            # lexicographic string compare is chronological.
+            # from now() of the emulation script, which takes the six digits of
+            # EPOCHREALTIME of bash; the audit field from k8s metav1.MicroTime), so
+            # a lexicographic string compare is chronological.
             last_end="$({ grep -o '"end": *"[^"]*"' "${DETENG_LEDGER}" 2>/dev/null || true; } | sed -E 's/.*"end": *"//; s/"$//' | sort | tail -1)"
             newest="$({ grep -o '"requestReceivedTimestamp": *"[^"]*"' /tmp/kube-apiserver-audit.log 2>/dev/null || true; } | sed -E 's/.*"requestReceivedTimestamp": *"//; s/"$//' | sort | tail -1)"
             if [ -z "${last_end}" ] || [[ "${newest}" > "${last_end}" ]]; then flushed=1; break; fi

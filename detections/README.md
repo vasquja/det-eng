@@ -890,8 +890,9 @@ Before the first lab pod is created, each job pulls its lab images (`LAB_IMAGES`
 inside each node of the cluster: `docker exec <node> crictl pull <image>`, with three
 attempts for each image and node. `crictl` is in the kind node image, and it puts the
 image in the store that the kubelet reads. When the last attempt fails, the step fails
-and names the image and the node. Thus a slow registry stops the job at that step, and
-not later as a pod that does not start. The jobs do not use `kind load docker-image`.
+and names the image and the node. Thus a slow registry fails the job at that step. The
+later steps still run, so the job keeps its logs. The jobs do not use
+`kind load docker-image`.
 That command fails on a multi-platform tag (`ctr: content digest sha256:...: not found`)
 when Docker on the runner uses the containerd image store, which is the default of a
 new installation of Docker Engine 29
@@ -1362,6 +1363,16 @@ failed, and when a matching event has no `requestReceivedTimestamp` to place it 
 A ledger line that does not parse, or is not a row with `trr` and `procedure`, fails
 the run, because a corrupt ledger proves nothing. The TRR9002 and TRR9003 validators
 do the same.
+
+The emulation scripts take `start` and `end` from bash (`EPOCHREALTIME`, bash 5.0 or
+later) and not from `date +%6N`. `date` of uutils coreutils 0.10.0 (Ubuntu 26.04)
+prints `%6N` without the leading zeros of the fraction, and a start that is up to
+0.9 s late puts the record of the procedure outside its window. With an older bash
+the script calls `date` with `%N` and keeps six digits. A `date` that has no `%N`
+(bash 3.2 with the `date` of macOS) gives a text that is not a time: the validator
+then says that the ledger row has no start or end that it can read, and the gates of
+that procedure miss. The gate tests hold the function (`LedgerClock` and `DateWidth`
+in [`tests/test_labs.py`](tests/test_labs.py)).
 
 **Must-not-match checks.** With a ledger, `MISS_MANIFEST` asserts that a rule stays
 quiet on the emulation's own server-side dry runs, which persist nothing. The `dryrun`

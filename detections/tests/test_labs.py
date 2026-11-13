@@ -11,22 +11,36 @@ Each class holds the rule that one of those faults gave.
                     does not wait for it, and the rule file of the unit starts with -D
     FileSensorRule  the two steps of the static pod lab that read the file events name
                     the cause when the audit rule of the file sensor is not loaded
+    DateWidth       no shell script and no workflow gives `date` a width with %N (%6N,
+                    %3N): `date` of uutils coreutils 0.10.0 prints such a field without
+                    the leading zeros of the fraction
+    LedgerClock     the function that gives the times of the emulation ledger (now_utc()
+                    or now()) is one accepted text in each emulation script and in each
+                    workflow step; that text takes the time from bash and calls no
+                    `date`, and it keeps the zeros of the fraction
 
-The steps run here with a stub in the place of sudo, systemctl, service, auditctl and
-docker. A stub does not show what systemd and auditd do on a runner: the lab jobs do.
+The steps run here with a stub in the place of sudo, systemctl, service, auditctl,
+docker and date. A stub does not show what systemd, auditd and the `date` of a runner
+image do: the lab jobs do.
 
 How the harness works: gatelib.py and README.md in this directory.
 
     python3 -B -m unittest discover -s detections/tests -p 'test_labs.py' -v
 """
 
+import datetime
+import glob
 import os
 import re
+import subprocess
 import sys
+import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gatelib  # noqa: E402  (the line above makes it importable with `-t .` too)
+import test_apt_install as apt  # noqa: E402  (its rule on text reads the same files)
 
 # Stubs for Tree.run_step(programs=...), as shell lines. Each reads and writes the
 # directory $STATE. No stub starts a real program as root: `sudo` starts only the
@@ -416,6 +430,367 @@ class FileSensorRule(LabSteps):
         self.assertIn("-F perm=wa -F key=k8s_node_file", sensor.run)
         for name in self.STEPS:
             self.assertIn('grep -qF k8s_node_file <<<"${rules}"', self.the_step(self.WORKFLOW, self.JOB, name).run)
+
+
+class DateWidth(unittest.TestCase):
+    """GNU `date` prints %6N as the first six digits of the nanoseconds. `date` of
+    uutils coreutils 0.10.0 (the ubuntu-26.04 runner image) drops the leading zeros
+    of the fraction first: at 0.005613 s it printed `.561317` for %6N, and at about
+    0.0125 s it printed `125` for %3N. The times of the emulation ledger were then up
+    to 0.9 s late, and the record of a procedure was outside its window. %N with no
+    width is right in both programs.
+
+    The rule: no line of a shell script, a workflow or a composite action holds %N
+    with a width (and its flags) of one digit: %6N, %3N, %06N, %-3N. A comment does
+    not count. Shell scripts are the files that DirectInstalls reads (test_apt_install.py).
+
+    It is a rule on text. It does not see a format that is built at run time, and it
+    does not ask if the line calls `date`. It does not find a width of two digits
+    (%10N): in a URL, the same text is a percent-encoded character before an N
+    (`%20New`)."""
+
+    WIDTH = re.compile(r"%[-_0^#+]*[1-9]N")
+
+    @classmethod
+    def hits(cls, root=gatelib.REPO):
+        """`file:line: text` of each line that gives %N a width, in the shell scripts,
+        the workflows and the composite actions under `root`."""
+        files = [os.path.join(root, rel) for rel in apt.DirectInstalls.shell_scripts(root)]
+        files += glob.glob(os.path.join(root, ".github", "workflows", "*.y*ml"))
+        files += glob.glob(os.path.join(root, ".github", "actions", "**", "*.y*ml"), recursive=True)
+        found = []
+        for path in sorted(set(files)):
+            rel = os.path.relpath(path, root).replace(os.sep, "/")
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                for number, raw in enumerate(fh, 1):
+                    line = raw.strip()
+                    if not line.startswith("#") and cls.WIDTH.search(apt.DirectInstalls.no_comment(line)):
+                        found.append(f"{rel}:{number}: {line}")
+        return found
+
+    def test_the_rule_finds_a_width_before_N(self):
+        """CONTROL of the rule, on constructed lines."""
+        found = ["now_utc() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }",
+                 'echo "BENIGN_START=$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)" >> "$GITHUB_ENV"',
+                 "t0=$(date +%s.%3N)", "date +%s%3N", "date '+%H:%M:%S.%06N'", "date +%-3N", "date +%_6N",
+                 "stamp='+%s.%9N'", 'echo "step #1: $(date +%3N)"', "run: date +%T.%3N",
+                 "STAMP: $(date +%s%3N)   # a value of env:"]
+        not_found = ["now_utc() { date -u +%Y-%m-%dT%H:%M:%S.%NZ; }", "date +%s.%N", "date +%s%N",
+                     't="$(date -u +%Y-%m-%dT%H:%M:%S.%N)"; printf \'%sZ\\n\' "${t:0:26}"',
+                     "date +%s  # not %3N", "printf '%6d %3s\\n' 5 N",
+                     "TZ=UTC0 printf '%(%Y-%m-%dT%H:%M:%S)T.%sZ\\n' 1794601386 003423",
+                     'curl "https://example.com/find?q=a%20New"', "date +%Y%m%d%H%M%S", "date +%-H:%M",
+                     'STAMP="$(date +%Y%m%d%H%M%S)"']
+        self.assertEqual([line for line in found + not_found
+                          if self.WIDTH.search(apt.DirectInstalls.no_comment(line))], found)
+
+    def test_a_planted_script_and_a_planted_step_are_rejected(self):
+        """In a copy of the repository: a script with %6N (the function of 2026-11-12), a
+        script with no .sh in its name, a workflow step with %3N, an `env:` value and
+        a composite action. The message names the file and the line. A comment with
+        %6N in the same files is not found."""
+        tree = gatelib.Tree((".github", "atomics", "detections/benign", "detections/k8s"))
+        self.addCleanup(tree.cleanup)
+        self.assertEqual(self.hits(tree.root), [])              # CONTROL: the copy has no hit
+        tree.write("atomics/T9999/src/emulate.sh",
+                   "#!/usr/bin/env bash\nset -euo pipefail\n# The old form: date +%6N.\n"
+                   "now_utc() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }\n")
+        tree.write("atomics/T9999/src/stamp", "#!/bin/sh\n\necho \"$(date +%s).$(date +%3N)\"\n")
+        tree.write(".github/workflows/planted-lab.yml",
+                   "on: push\njobs:\n  lab:\n    runs-on: ubuntu-latest\n    env:\n"
+                   "      STAMP_FORMAT: +%s.%6N\n    steps:\n"
+                   "      - name: Mark the start\n        run: |\n"
+                   "          # Milliseconds (not with %3N of uutils date).\n"
+                   "          echo \"T0=$(date +%s.%3N)\" >> \"$GITHUB_ENV\"\n")
+        tree.write(".github/actions/stamp/action.yml",
+                   "runs:\n  using: composite\n  steps:\n    - shell: bash\n      run: date -u +%T.%6N\n")
+        self.assertEqual(self.hits(tree.root), [
+            ".github/actions/stamp/action.yml:5: run: date -u +%T.%6N",
+            ".github/workflows/planted-lab.yml:6: STAMP_FORMAT: +%s.%6N",
+            '.github/workflows/planted-lab.yml:11: echo "T0=$(date +%s.%3N)" >> "$GITHUB_ENV"',
+            "atomics/T9999/src/emulate.sh:4: now_utc() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }",
+            'atomics/T9999/src/stamp:3: echo "$(date +%s).$(date +%3N)"'])
+
+    def test_no_shell_script_and_no_workflow_gives_date_a_width_with_N(self):
+        scripts = apt.DirectInstalls.shell_scripts()
+        # The files were read (not vacuous): the emulation scripts are shell scripts, and
+        # today some of their comments name %6N.
+        self.assertGreater(len(scripts), 10, "the shell scripts were not read")
+        self.assertIn("atomics/T1609/src/emulate.sh", scripts)
+        with open(os.path.join(gatelib.REPO, "atomics", "T1609", "src", "emulate.sh"), encoding="utf-8") as fh:
+            self.assertRegex(fh.read(), r"(?m)^# .*%6N")
+        self.assertEqual(self.hits(), [], "these lines give %N a width. `date` of uutils coreutils "
+                         "0.10.0 (Ubuntu 26.04) prints such a field without the leading zeros of "
+                         "the fraction. Use the function of LedgerClock.ACCEPTED, or %N and cut the text")
+
+
+class LedgerClock(unittest.TestCase):
+    """Each Kubernetes emulation script writes one ledger line for each procedure, with
+    its start and its end. The validators read the two times as the window of the
+    procedure. The function that gives the time is one text, the same in each script
+    (the name is now_utc(), or now() in two scripts) and in each workflow step that
+    defines it.
+
+    The text takes the time from bash: EPOCHREALTIME (bash 5.0) is seconds, a
+    separator (`.` or `,`, by the locale) and six digits. It starts no `date`. A
+    bash that does not have the variable calls `date` with %N (nine digits) and keeps
+    six: no width, which `date` of uutils coreutils 0.10.0 prints wrongly (DateWidth)."""
+
+    ACCEPTED = r"""now_utc() {
+  local t="${EPOCHREALTIME:-}"
+  if [ -n "$t" ]; then TZ=UTC0 printf '%(%Y-%m-%dT%H:%M:%S)T.%sZ\n' "${t%[.,]*}" "${t#*[.,]}"
+  else t="$(date -u +%Y-%m-%dT%H:%M:%S.%N)"; printf '%sZ\n' "${t:0:26}"; fi
+}
+"""
+    OLD = "now_utc() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }\n"       # until 2026-11-13
+    DEFINES = re.compile(r"^[ \t]*(?:function[ \t]+(?:now_utc|now)\b|(?:now_utc|now)[ \t]*\(\))")
+    NAME = re.compile(r"^(?:function[ \t]+)?(now_utc|now)\b")
+    SCRIPTS = "atomics/*/src/*.sh"
+    FORMAT = r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z"
+    BENIGN = ("validate-apiserver-detections.yml", "validate", "Benign operator workload (live false-positive slice)")
+    WRONG = "1999-12-31T23:59:59.987654321"      # what the stub `date` prints
+
+    @classmethod
+    def definitions(cls, text):
+        """(line number, name, text) of each definition of now_utc() or now() in a shell
+        text. The text is the definition from its first line to its closing brace,
+        without the indent of the first line, with the name now_utc."""
+        lines = text.splitlines()
+        found = []
+        for first, line in enumerate(lines):
+            if not cls.DEFINES.match(line):
+                continue
+            indent = len(line) - len(line.lstrip())
+            last = first
+            if not line.rstrip().endswith("}"):
+                last = next((i for i in range(first + 1, len(lines)) if lines[i].strip() == "}"), len(lines) - 1)
+            body = [part[indent:] if part[:indent].strip() == "" else part for part in lines[first:last + 1]]
+            name = cls.NAME.match(body[0]).group(1)
+            body[0] = re.sub(r"^" + name + r"\b", "now_utc", body[0], count=1)
+            found.append((first + 1, name, "\n".join(body) + "\n"))
+        return found
+
+    @classmethod
+    def faults(cls, root=gatelib.REPO):
+        """What is wrong with the clock functions under `root`, as a list of sentences."""
+        found = []
+        for path in sorted(glob.glob(os.path.join(root, *cls.SCRIPTS.split("/")))):
+            rel = os.path.relpath(path, root).replace(os.sep, "/")
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+            definitions = cls.definitions(text)
+            found += [f"{rel}:{number}: the function {name}() is not the accepted text (LedgerClock.ACCEPTED)"
+                      for number, name, body in definitions if body != cls.ACCEPTED]
+            if "DETENG_LEDGER" in text and len(definitions) != 1:
+                found.append(f"{rel}: the script writes a ledger (DETENG_LEDGER) and defines now_utc() or "
+                             f"now() {len(definitions)} time(s); wanted 1")
+        for step in gatelib.ci_steps(root=root):
+            found += [f"{step.workflow}, job {step.job}, step {step.name!r}: the function {name}() is not "
+                      "the accepted text (LedgerClock.ACCEPTED)"
+                      for _number, name, body in cls.definitions(step.run) if body != cls.ACCEPTED]
+        return found
+
+    def test_the_rule_finds_a_function_that_is_not_the_accepted_text(self):
+        """CONTROL of the rule, on constructed texts."""
+        accepted = self.ACCEPTED
+        other = {
+            "the function of 2026-11-12": self.OLD,
+            "the old function, with the name now": self.OLD.replace("now_utc", "now"),
+            "a width in the fallback": accepted.replace("%S.%N)", "%S.%6N)"),
+            "no UTC for printf": accepted.replace("TZ=UTC0 printf", "printf"),
+            "date in each case": "now_utc() {\n  date -u +%Y-%m-%dT%H:%M:%SZ\n}\n",
+            "two reads of the clock": accepted.replace('"${t%[.,]*}"', '"${EPOCHREALTIME%[.,]*}"'),
+            "the keyword form": accepted.replace("now_utc() {", "function now_utc {"),
+            "a line more": accepted.replace("}\n", "  sleep 0\n}\n"),
+        }
+        same = {
+            "the accepted text": accepted,
+            "the name now": accepted.replace("now_utc() {", "now() {"),
+            "in a workflow step, after other lines": "set -euo pipefail\n# The split point.\n" + accepted
+                                                     + 'echo "BENIGN_START=$(now_utc)" >> "$GITHUB_ENV"\n',
+            "with an indent": "".join("    " + line for line in accepted.splitlines(keepends=True)),
+        }
+        for name, text in other.items():
+            with self.subTest(text=name):
+                found = self.definitions("TRR=TRR9999\n" + text + "must() {\n  return 0\n}\n")
+                self.assertEqual(len(found), 1, found)
+                self.assertEqual(found[0][0], 2)                 # the line of the definition
+                self.assertNotEqual(found[0][2], accepted)
+        for name, text in same.items():
+            with self.subTest(text=name):
+                self.assertEqual([body for _number, _name, body in self.definitions(text)], [accepted])
+        # A call, a comment and a different function are not definitions.
+        self.assertEqual(self.definitions('start="$(now_utc)"\n# now_utc() { date; }\nknown() { :; }\nnow=1\n'), [])
+
+    def test_each_clock_function_is_the_accepted_text(self):
+        scripts = {}
+        for path in sorted(glob.glob(os.path.join(gatelib.REPO, *self.SCRIPTS.split("/")))):
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+            if self.definitions(text) or "DETENG_LEDGER" in text:
+                scripts[os.path.relpath(path, gatelib.REPO).replace(os.sep, "/")] = \
+                    [name for _number, name, _body in self.definitions(text)]
+        # The scripts were read (not vacuous): today 20 scripts write a ledger, and two
+        # of them name the function now().
+        self.assertGreaterEqual(len(scripts), 20, "the emulation scripts were not read")
+        self.assertEqual(scripts["atomics/T1609/src/emulate.sh"], ["now"])
+        self.assertEqual(scripts["atomics/T1611/src/emulate_k8s.sh"], ["now_utc"])
+        in_steps = [(s.workflow, s.job, s.name) for s in gatelib.ci_steps() if self.definitions(s.run)]
+        self.assertIn(self.BENIGN, in_steps)
+        self.assertEqual(self.faults(), [], "the clock function of the ledger is one text. Copy "
+                         "LedgerClock.ACCEPTED (the name can be now() or now_utc()); to change the "
+                         "function, change that text and each copy in the same pull request")
+
+    def test_a_planted_script_with_the_old_function_is_rejected(self):
+        """In a copy of the repository: a script with the function of 2026-11-12, a
+        script that writes a ledger with no such function, and a workflow step with
+        the old function."""
+        tree = gatelib.Tree((".github", "atomics"))
+        self.addCleanup(tree.cleanup)
+        self.assertEqual(self.faults(tree.root), [])            # CONTROL: the copy has no fault
+        head = "#!/usr/bin/env bash\nset -euo pipefail\nTRR=\"TRR9999\"\nFAILED=()\n"
+        ledger = ('run_proc() {\n  local start end\n  start="$(STAMP)"\n  "procedure_$1"\n  end="$(STAMP)"\n'
+                  '  printf \'{"trr":"%s","start":"%s","end":"%s"}\\n\' "$TRR" "$start" "$end" >> "$DETENG_LEDGER"\n}\n')
+        tree.write("atomics/T9999/src/emulate.sh", head + self.OLD + ledger.replace("STAMP", "now_utc"))
+        tree.write("atomics/T9999/src/emulate_other.sh", head + ledger.replace("STAMP", "date -u +%FT%T.%NZ"))
+        tree.write(".github/workflows/planted-lab.yml",
+                   "on: push\njobs:\n  lab:\n    runs-on: ubuntu-latest\n    steps:\n"
+                   "      - name: Mark the start\n        shell: bash\n        run: |\n"
+                   "          now() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }\n"
+                   "          echo \"T0=$(now)\" >> \"$GITHUB_ENV\"\n")
+        self.assertEqual(self.faults(tree.root), [
+            "atomics/T9999/src/emulate.sh:5: the function now_utc() is not the accepted text (LedgerClock.ACCEPTED)",
+            "atomics/T9999/src/emulate_other.sh: the script writes a ledger (DETENG_LEDGER) and defines "
+            "now_utc() or now() 0 time(s); wanted 1",
+            "planted-lab.yml, job lab, step 'Mark the start': the function now() is not the accepted text "
+            "(LedgerClock.ACCEPTED)"])
+
+    # -- the accepted text, run in bash ----------------------------------------------
+
+    def need_bash(self, major, minor, why):
+        """Skip the test when `bash` is older than major.minor (in CI: fail)."""
+        done = subprocess.run(["bash", "-c", 'echo "${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"'],
+                              capture_output=True, text=True, timeout=60, check=True)
+        version = tuple(int(part) for part in done.stdout.split())
+        if version < (major, minor):
+            why = f"bash is {version[0]}.{version[1]}, and {why} needs bash {major}.{minor} or later"
+            if os.environ.get("CI"):
+                self.fail("in CI: " + why)
+            self.skipTest(why)
+
+    def run_function(self, lines, date_says=WRONG, zone="America/New_York"):
+        """Run `lines` after the accepted function, as an emulation script does (bash,
+        set -euo pipefail), with a stub `date` first on PATH. The stub prints
+        `date_says` and writes its arguments to a file. Returns (the lines that the
+        run printed, the calls of the stub)."""
+        with tempfile.TemporaryDirectory(prefix="deteng-clock-") as work:
+            stubs = os.path.join(work, "bin")
+            os.mkdir(stubs)
+            with open(os.path.join(stubs, "date"), "w", encoding="utf-8") as fh:
+                fh.write('#!/bin/sh\necho "$*" >> "$CALLS"\necho "$DATE_SAYS"\n')
+            os.chmod(os.path.join(stubs, "date"), 0o755)
+            script = os.path.join(work, "clock.sh")
+            with open(script, "w", encoding="utf-8") as fh:
+                fh.write("set -euo pipefail\n" + self.ACCEPTED + lines)
+            calls = os.path.join(work, "calls")
+            done = subprocess.run(
+                ["bash", "--noprofile", "--norc", script], capture_output=True, text=True, timeout=60,
+                check=False, env={"PATH": stubs + os.pathsep + os.environ.get("PATH", ""), "TZ": zone,
+                                  "CALLS": calls, "DATE_SAYS": date_says, "LC_ALL": "C"})
+            self.assertEqual((done.returncode, done.stderr), (0, ""), done.stdout)
+            called = []
+            if os.path.exists(calls):
+                with open(calls, encoding="utf-8") as fh:
+                    called = fh.read().splitlines()
+            return done.stdout.splitlines(), called
+
+    def test_the_time_comes_from_bash_and_not_from_date(self):
+        """The function as a script calls it (`start="$(now_utc)"`), with the clock of
+        bash and a `date` that prints a wrong time: the result is the time of the
+        test, in UTC (the zone of the run is not UTC), and `date` was not called."""
+        self.need_bash(5, 0, "EPOCHREALTIME")
+        before = time.time()
+        printed, called = self.run_function('start="$(now_utc)"\nprintf \'%s\\n\' "$start"\nnow_utc\n')
+        after = time.time()
+        self.assertEqual(called, [], "the function called `date`")
+        self.assertEqual(len(printed), 2, printed)
+        for value in printed:
+            self.assertRegex(value, "^" + self.FORMAT + "$")
+            at = datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
+                tzinfo=datetime.timezone.utc).timestamp()
+            self.assertTrue(before - 2 <= at <= after + 2,
+                            f"{value} is not within two seconds of the time of the test")
+        self.assertLessEqual(printed[0], printed[1])
+
+    def test_a_fraction_that_starts_with_zero_keeps_its_zeros(self):
+        """The function with a fixed value of the clock. bash gives EPOCHREALTIME its
+        value at each read, so a test cannot set it; after `unset` it is a plain
+        variable, and the function reads the value that the test gives. The values:
+        the EPOCHREALTIME of the sample of the CI log in which `date +%6N` printed
+        .561317, the same with the comma of a locale, one microsecond, the last
+        microsecond of a second, and a fraction of zero."""
+        self.need_bash(4, 2, "printf '%(...)T'")
+        values = {"1794601386.003423": "2026-11-13T20:23:06.003423Z",
+                  "1794601386,003423": "2026-11-13T20:23:06.003423Z",
+                  "1794601386.000001": "2026-11-13T20:23:06.000001Z",
+                  "1794601386.999999": "2026-11-13T20:23:06.999999Z",
+                  "1794528000.000000": "2026-11-13T00:00:00.000000Z"}
+        lines = "unset EPOCHREALTIME\n" + "".join(f"EPOCHREALTIME={value}\nnow_utc\n" for value in values)
+        for zone in ("America/New_York", "Asia/Kolkata", "UTC"):
+            with self.subTest(zone=zone):
+                printed, called = self.run_function(lines + 'printf \'%s\\n\' "$TZ"\n', zone=zone)
+                self.assertEqual(printed, list(values.values()) + [zone])       # and TZ is as it was
+                self.assertEqual(called, [])
+
+    def test_without_the_clock_of_bash_the_function_calls_date_with_N_only(self):
+        """A bash older than 5.0 has no EPOCHREALTIME: here the variable is unset, and
+        the function is the same text. It calls `date` one time, with %N and no
+        width, and keeps six of the nine digits."""
+        printed, called = self.run_function("unset EPOCHREALTIME\nnow_utc\n",
+                                            date_says="2026-11-13T20:23:06.003423789")
+        self.assertEqual(printed, ["2026-11-13T20:23:06.003423Z"])
+        self.assertEqual(called, ["-u +%Y-%m-%dT%H:%M:%S.%N"])
+        self.assertIsNone(DateWidth.WIDTH.search(called[0]))
+        # A `date` that has no %N (BSD date prints the letter): no valid time, and no
+        # time that looks valid.
+        printed, _called = self.run_function("unset EPOCHREALTIME\nnow_utc\n", date_says="2026-11-13T20:23:06.N")
+        self.assertEqual(printed, ["2026-11-13T20:23:06.NZ"])
+        self.assertNotRegex(printed[0], "^" + self.FORMAT + "$")
+
+    def test_the_benign_step_writes_its_split_point_without_date(self):
+        """The step of the API server lab that writes BENIGN_START, to that line: the
+        value is the time of the test in the format that the step that scores the
+        slice accepts, and `date` was not called."""
+        self.need_bash(5, 0, "EPOCHREALTIME")
+        step = AuditdStart.the_step(*self.BENIGN)
+        lines = step.run.splitlines()
+        write = [i for i, line in enumerate(lines) if "BENIGN_START=" in line and not line.strip().startswith("#")]
+        self.assertEqual(len(write), 1, "one line of the step writes BENIGN_START")
+        self.assertEqual(lines[write[0]].strip(), 'echo "BENIGN_START=$(now_utc)" >> "$GITHUB_ENV"')
+        tree = gatelib.Tree(())
+        self.addCleanup(tree.cleanup)
+        calls = tree.out("date-calls")
+        before = time.time()
+        done = tree.run_step(step._replace(run="\n".join(lines[:write[0] + 1]) + "\n"), timeout=60,
+                             env={"TZ": "America/New_York", "CALLS": calls, "DATE_SAYS": self.WRONG},
+                             programs={"date": 'echo "$*" >> "$CALLS"\necho "$DATE_SAYS"'})
+        after = time.time()
+        self.assertEqual(done.returncode, 0, done.describe())
+        self.assertFalse(os.path.exists(calls), "the step called `date`")
+        with open(tree.out("github/github_env"), encoding="utf-8") as fh:
+            written = fh.read().splitlines()
+        self.assertEqual(len(written), 1, written)
+        self.assertRegex(written[0], "^BENIGN_START=" + self.FORMAT + "$")
+        value = written[0].split("=", 1)[1]
+        at = datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
+            tzinfo=datetime.timezone.utc).timestamp()
+        self.assertTrue(before - 2 <= at <= after + 2, f"{value} is not within two seconds of the time of the test")
+        # The step that scores the slice reads the value with this pattern.
+        score = AuditdStart.the_step("validate-apiserver-detections.yml", "validate",
+                                     "Score the pre-emulation log as a live benign slice (shadow)")
+        pattern = re.search(r"^\s*utc='(\^[^']+\$)'$", score.run, re.MULTILINE)
+        self.assertTrue(pattern, "the pattern of the scoring step was not found")
+        self.assertRegex(value, pattern.group(1))
 
 
 if __name__ == "__main__":
