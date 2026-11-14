@@ -31,9 +31,11 @@ description: |
   always calls an in-cluster Service via clientConfig.service, never a raw URL, so a
   URL-mode webhook is the strongest tell that the webhook ships admitted objects -- every
   created Secret, every pod spec -- to an attacker endpoint (Procedure A mutating
-  backdoor callback, Procedure B Secret exfiltration). The match uses |contains
-  against the JSON-serialized webhooks array in both the spaced (request-body) and
-  compact (Go) forms (the same dual-form convention as the TRR9008 neuter grader). The
+  backdoor callback, Procedure B Secret exfiltration). The match is one |re value
+  against the JSON-serialized webhooks array: optional white space on each side of the
+  colon (the spaced request-body form and the compact Go form), and the URL scheme
+  with character classes, so each letter case of the scheme matches (the form of
+  sel_body_url of k8s_admission_webhook_repointed_to_url.yml). The
   audit log holds the webhooks list as JSON; the validators flatten a list to its JSON
   text (sigma_eval.flatten), so a SIEM must index every list field as that text. It
   does NOT key on cluster-wide rules or a secrets scope: those do not separate a malicious webhook
@@ -81,10 +83,14 @@ detection:
       - 'validatingwebhookconfigurations'
     verb: 'patch'
     responseStatus.code: 201
+  # The webhooks list as JSON text: a url key with an http(s) value. One value, in the
+  # form of sel_body_url of k8s_admission_webhook_repointed_to_url.yml: optional white
+  # space on each side of the colon, and the scheme with character classes (a
+  # |contains value holds an upper-case scheme only on a store that ignores letter
+  # case; the API server accepts HTTPS://). The key url is matched in lower case
+  # only: the API server decodes a JSON key with its letter case (closed entry K71).
   sel_offcluster_url:
-    requestObject.webhooks|contains:
-      - '"url": "http'
-      - '"url":"http'
+    requestObject.webhooks|re: '\"url\"\s*:\s*\"[hH][tT][tT][pP]'
   condition: (select_webhook_create or select_webhook_ssa_create) and sel_offcluster_url
 falsepositives:
   - A legitimate webhook that genuinely uses URL mode (rare; most call an in-cluster
