@@ -3,6 +3,19 @@
   "expected": [
     {
       "variant": "sorted",
+      "rule": "T1098.001/gcp_workload_identity_federation_sa_binding.yml",
+      "source": "case",
+      "name": "pool-wide-workload-identity-user-delta-with-condition",
+      "fault": "loss",
+      "lost": [[0]],
+      "gained": [],
+      "items": ["selection_wif_binding_added.protoPayload.serviceData.policyDelta.bindingDeltas"],
+      "reason": "KEY_ORDER",
+      "defect": "C19",
+      "why": "The delta of this record carries an IAM condition object. The pattern reads the parts of one delta object with a skip that cannot pass a closing brace ([^}]*). With sorted keys the condition comes between action and the member and role, so the rule misses the grant. C19 tracks the correction: a skip that can pass one nested object. Not verified against a real record."
+    },
+    {
+      "variant": "sorted",
       "rule": "T1098.006/k8s_rbac_privileged_grant.yml",
       "source": "case",
       "name": "aggregation-controller-writes-impersonate-users-into-admin",
@@ -25,6 +38,19 @@
       "items": ["sel_priv_groups.impersonatedUser.groups"],
       "reason": "LIST_TEXT",
       "why": "sel_priv_groups reads the group name with its JSON quotes (\"system:masters\"), so that a longer group name does not match. One element of a multi-valued field has no quotes. A store with such a field must test the element for equality. The rule as written is for a store that keeps the list as JSON text."
+    },
+    {
+      "variant": "sorted",
+      "rule": "T1199/gcp_workforce_principalset_privileged_binding.yml",
+      "source": "case",
+      "name": "group-scoped-project-iam-admin-delta-with-condition",
+      "fault": "loss",
+      "lost": [[0]],
+      "gained": [],
+      "items": ["selection_workforce_privileged_binding.protoPayload.serviceData.policyDelta.bindingDeltas"],
+      "reason": "KEY_ORDER",
+      "defect": "C19",
+      "why": "The delta of this record carries an IAM condition object. The pattern reads the parts of one delta object with a skip that cannot pass a closing brace ([^}]*). With sorted keys the condition comes between action and the member and role, so the rule misses the grant. C19 tracks the correction: a skip that can pass one nested object. Not verified against a real record."
     },
     {
       "variant": "multi",
