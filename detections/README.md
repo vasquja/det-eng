@@ -82,12 +82,19 @@ Without root or auditd the script SKIPS (exit 0), unless `--require-audit` is
 given (CI passes it, so a broken audit setup fails instead of passing). It
 needs `gcc` always, and `auditctl` and `ausyscall` for a real run.
 
+The validator does not start auditd: it loads its rules into an auditd that runs.
+If you start auditd by hand immediately before the validator, read the note on
+auditd 4 in [Manual run](#manual-run) first.
+
 ### What a PASS means
 
 A case passes only if all three hold:
 
-1. **The rule matches, as Sigma defines it.** The backend evaluates the full
-   condition, including the `not <allowlist>` filters and correlation windows.
+1. **The rule matches, in the query of a real Sigma backend.** The backend
+   evaluates the full condition, including the `not <allowlist>` filters and
+   correlation windows. It is one backend on one form of the records:
+   [`SEMANTICS.md`](SEMANTICS.md) says what it decides, and where the Sigma
+   specification or another store decides in another way.
 2. **The match came from the atomic.** Every event behind the hit belongs to
    the atomic's process tree, so nothing else running in the window (the
    validator itself included) can satisfy the rule.
@@ -170,8 +177,9 @@ argument value can keep them quiet. Their control is the rule's own syscall with
 arguments that the kernel rejects, declared `success`. That control tests the
 success gate of the validator, not an item of the rule: the rule's logic matches
 the rejected call. No rule of this validator reads `success`, so each rule as
-written matches a rejected call too. Roadmap item R7 (`detections/SEMANTICS.md`)
-must say what a SIEM does with a rejected call.
+written matches a rejected call too.
+[`SEMANTICS.md`](SEMANTICS.md#8-a-system-call-that-the-kernel-rejected) says what a
+SIEM does with a rejected call.
 
 When the kernel-feature probe turned every emulation of a rule into a SKIP, the
 rule is not proven on that host. Its re-run does not run: a re-run needs an
@@ -434,6 +442,7 @@ python3 detections/rule_cases.py --atoms detections/sigma/T1040/afinet_raw_socke
 python3 detections/rule_cases.py                     # every rule's cases
 python3 detections/check_sufficiency.py              # the gate (CI: detection-quality / check-sufficiency)
 python3 detections/check_null_safety.py              # same hits in two- and three-valued logic (CI: null-safety)
+python3 detections/check_variants.py                 # same hits under each representation variant (CI: representation-variants)
 ```
 
 ## Portable regular expressions
@@ -478,6 +487,13 @@ differently:
 | a bare `{` `}` `]` outside a quantifier or class | `\{` `\}` `\]` |
 | `[` and `&&` `--` `~~` `\|\|` inside a class | an escaped `\[`; KQL reads the pairs as set operators |
 | a value over 1000 characters | Elasticsearch's `index.max_regex_length` default; split it |
+
+**Two differences stay in the subset.** Python and RE2 accept these two forms and give
+different answers. `$` as the last character matches before a last line break in
+Python and not in RE2. `\s` matches a no-break space in Python and not in RE2. The
+`re2` variant of [`check_variants.py`](check_variants.py) runs each `|re` item with RE2
+on every case and fixture; [`SEMANTICS.md`](SEMANTICS.md#7-regular-expressions) names
+the two probes.
 
 **Differences no lint removes.** A backend must still translate the edges. A check with
 pySigma 1.5.1 (`pySigma-backend-elasticsearch` 2.1.1) and Lucene 10.1 found these:
@@ -710,6 +726,82 @@ lists them and says what a backend pipeline must map. The machine-readable resul
 [`pipelines/mapping_results.json`](pipelines/mapping_results.json). No query has run on
 a live AKS or GKE log yet (backlog issue #55).
 
+## Representation variants (one oracle, other stores)
+
+Every validator and gate runs a rule in one way: the query of pySigma's SQLite
+backend, on the table that `sigma_eval.flatten()` builds. That is one backend on one
+representation of the records. A real store decides four things in its own way: the
+JSON text of a list, a list as one value or as many, the letter case of a `LIKE`
+match, and the regex dialect. A rule that holds only for the way of the oracle passes
+every other gate. [`SEMANTICS.md`](SEMANTICS.md) says what the oracle decides and
+what other stores do.
+
+[`check_variants.py`](check_variants.py) (CI: `detection-quality` /
+`representation-variants`, a hard gate for every rule) runs each rule again on every
+sidecar case and cloud fixture, once for each variant, and compares the hits with the
+default run:
+
+| Variant | What changes |
+|---------|--------------|
+| `compact` | A list is JSON text without blanks (`[{"a":1,"b":2}]`). The default text has a blank after each `,` and `:`. |
+| `sorted` | As `compact`, and the keys of each object are sorted. |
+| `multi` | A list is not text: the field has one value for each element (an object as its JSON text), and an item holds when it holds on one value. |
+| `cs_like` | `LIKE` does not ignore letter case, so `\|contains`, `\|startswith`, `\|endswith` and a wildcard value are case-sensitive. |
+| `re2` | A `\|re` item is a search with RE2, not with Python's `re`. It needs the module `re2` (google-re2). Without it the variant does not run and the report says so; CI passes `--require-re2`. |
+
+A difference is a **loss** (a record that fires by default does not fire) or a
+**gain** (a record that is quiet by default fires). On a positive case or an attack
+fixture a loss is a miss of the technique on that representation. On a near-miss, a
+filtered case, a confounder, a benign case or a benign fixture a gain is a false
+positive there. Each difference names the items whose truth changed and the value
+that they read. A near-miss or a filtered case that stays quiet, but whose `breaks`
+item is no longer one flip from a hit, is a `note` row (weakened); it does not fail.
+
+The gate does not model a store that explodes a list into leaf fields or indexed
+keys: such a store cannot run a rule that reads a list as text.
+`check_provider_mappings.py` prints that mode (`exploded`) as a warning for the
+Kubernetes audit rules. The gate reads the cases and the fixtures, not the benign
+corpus.
+
+[`variants/expected.json`](variants/expected.json) lists each difference that is
+accepted: the variant, the rule, the case or fixture, the fault, the hits that are
+lost and gained, the items, a reason that the gate proves (`KEY_ORDER`, `LIKE_CASE`,
+`LIST_TEXT`), a `why` sentence and, where one exists, the open entry of
+[`RULE_DEFECTS.md`](RULE_DEFECTS.md) that tracks it. An entry is a human approval,
+as a waiver or a budget is: propose it in the pull request (`--propose` prints the
+list that a run shows), and the maintainer approves it when the pull request merges.
+The gate fails on a difference that is not listed, on an entry whose difference
+changed, and on an entry that shows no difference (stale). On a pull request the
+`sufficiency-ratchet` job compares the list with the list of the base branch
+(`--baseline-expected`): an entry that the base does not hold as it is on the head
+fails that job. The file is not content for the merge policy.
+
+```
+python3 detections/check_variants.py              # every rule; about 10 s
+python3 detections/check_variants.py --require-re2   # as CI runs it (needs google-re2)
+python3 detections/check_variants.py -v detections/sigma/T1537/aws_snapshot_or_ami_made_public.yml
+python3 detections/check_variants.py --self-test  # the golden probes and constructed rules
+python3 detections/check_variants.py --probes     # the golden probes as a table
+python3 detections/check_variants.py --check-doc  # the probe table of SEMANTICS.md is current (CI)
+python3 detections/check_variants.py --write-doc  # write that table
+python3 detections/check_variants.py --propose    # the expected list that this run shows
+```
+
+A golden probe is one detection on one record, with its answer by default and under
+each variant. The self-test proves each answer, and each variant must change the
+answer of a probe that names it (if not, the gate stops with exit code 2).
+[`SEMANTICS.md`](SEMANTICS.md#10-the-golden-probes) holds the table of the probes, and
+its text names the probe that proves a statement about the oracle. After a change to
+the probes, run `--write-doc`. The job fails (`--check-doc`) when the table of the
+document is not the table of the run, when the text names a probe that the gate does
+not hold, and when a probe has no name in the text.
+
+When the gate fails on your rule, correct the rule first: write the item so that it
+holds with and without a blank after a colon (closed entry C17 of `RULE_DEFECTS.md`
+shows the form), and for each key order. Propose an entry only for a difference that
+the rule cannot remove, such as an item that reads the whole text of a list on
+purpose.
+
 ## The benign corpus (false-positive scores)
 
 The hard gate answers "does the rule key on the technique?". The **benign corpus**
@@ -793,7 +885,8 @@ probe-confirmed SKIP does not. On a public repository the run is free.
 
 `.github/workflows/detection-quality.yml` runs the offline layers on every pull
 request, on push to `main`, and weekly: `rule-cases`, `null-safety`
-(`check_null_safety.py`), `check-sufficiency`,
+(`check_null_safety.py`), `representation-variants` (`check_variants.py`),
+`check-sufficiency`,
 `sufficiency-ratchet` (pull requests only), `benign-corpus`
 (`score_benign.py --check --enforce`) and the shadow `benign-linux-live` capture.
 It also runs `schedule-freshness` (not on push), which reads the Actions API; see
@@ -881,6 +974,21 @@ loops on a kind cluster. They pin kind, the kindest/node image (by digest) and k
 check the sha256 of both binaries, and fail when the cluster's server version differs
 from the pin. The pin moves every quarter, and before the pinned minor reaches end of
 life; the `env` block of each workflow says how.
+
+Before the first lab pod is created, each job pulls its lab images (`LAB_IMAGES`)
+inside each node of the cluster: `docker exec <node> crictl pull <image>`, with three
+attempts for each image and node. `crictl` is in the kind node image, and it puts the
+image in the store that the kubelet reads. When the last attempt fails, the step fails
+and names the image and the node. Thus a slow registry fails the job at that step. The
+later steps still run, so the job keeps its logs. The jobs do not use
+`kind load docker-image`.
+That command fails on a multi-platform tag (`ctr: content digest sha256:...: not found`)
+when Docker on the runner uses the containerd image store, which is the default of a
+new installation of Docker Engine 29
+([kind issue 3795](https://github.com/kubernetes-sigs/kind/issues/3795)). The jobs
+run on `ubuntu-latest`. On 2026-11-13 that label gave the `ubuntu-26.04` runner image
+(Docker Engine 29.4.2), and a `validate-k8s` run failed at `kind load`; the
+`ubuntu-24.04` image before it had Docker Engine 28.0.4.
 
 `.github/workflows/k8s-version-matrix.yml` runs the three Kubernetes workflows every
 week on the minors beside the pin: v1.35.8 and v1.37.0, the newest kindest/node images
@@ -1012,6 +1120,16 @@ Note: the validator reads `/var/log/audit/audit.log` directly instead of
 calling `ausearch`. On some hosts (GitHub-hosted runners among them)
 `ausearch` resolves its default log path to nothing and reports no matches
 even though the records are present in the file.
+
+Note on auditd 4 (Ubuntu 26.04): `sudo systemctl start auditd` also starts the
+oneshot unit `audit-rules.service` and does not wait for it, and the rule file that
+the unit loads starts with `-D`. So a rule that you add or load immediately after
+the start can be deleted some milliseconds later: `auditctl -l` showed it, and the
+log then holds no record. The rule file also sets the backlog limit (`-b 8192`), the
+failure mode and the backlog wait time, so a setting that you change immediately
+after the start is set back too. Run `sudo systemctl start audit-rules.service`
+before you add a rule or change a setting (it returns when the unit has ended; it
+needs `sudo`). The workflows that start auditd do this; auditd 3 has no such unit.
 
 ## Kubernetes detections (TRR9002)
 
@@ -1161,7 +1279,10 @@ source (`--file-log`), and each gates its rule on one marked emulation record (C
   `Timestamp`). The `exe` and the PATH `name` are the paths that the node process
   saw, so they are the values the rules read. A relative name of a `*at` syscall
   with a real directory fd cannot be placed; the converter skips it and counts it
-  on stderr.
+  on stderr. Each lab adds its watch in the step that starts auditd, after the wait
+  for `audit-rules.service` (auditd 4; see the note in [Manual run](#manual-run)).
+  The static-pod lab also prints an `::error` line when the rule of the sensor is
+  not in the list of `auditctl -l` before or after the emulation.
 - **Static-pod directory (TRR9003).** `k8s/kind-staticpod-cluster.yaml` bind-mounts
   `.kind/trr9003-manifests` in the checkout (a relative path, which kind resolves
   against the working directory, as it does the audit policy) at the node's
@@ -1333,6 +1454,21 @@ failed, and when a matching event has no `requestReceivedTimestamp` to place it 
 A ledger line that does not parse, or is not a row with `trr` and `procedure`, fails
 the run, because a corrupt ledger proves nothing. The TRR9002 and TRR9003 validators
 do the same.
+
+The emulation scripts take `start` and `end` from bash (`EPOCHREALTIME`, bash 5.0 or
+later) and not from `date +%6N`. `date` of uutils coreutils 0.10.0 (Ubuntu 26.04)
+prints `%6N` without the leading zeros of the fraction, and a start that is almost
+1 s late puts the record of the procedure outside its window. With an older bash
+the script calls `date` with `%N` and keeps six digits. A `date` that has no `%N`
+(bash 3.2 with the `date` of macOS) prints the letter `N`, and the function then
+prints a text such as `2026-11-13T20:23:06.NZ`. The validators read that text as the
+whole second (Python 3.11 and later). The window of the procedure then starts and
+ends up to 1 s early, and a record from the last second of the procedure can be
+outside it. Use bash 5 there. bash writes `EPOCHREALTIME` with the decimal point of
+the locale. The function reads `.` and `,`. In a locale with a different decimal point
+(glibc has one, `ps_AF`) the function fails, and the script stops before its first
+procedure: run the script with `LC_ALL=C` there. The gate tests hold the function
+(`LedgerClock` and `DateWidth` in [`tests/test_labs.py`](tests/test_labs.py)).
 
 **Must-not-match checks.** With a ledger, `MISS_MANIFEST` asserts that a rule stays
 quiet on the emulation's own server-side dry runs, which persist nothing. The `dryrun`

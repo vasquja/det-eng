@@ -104,6 +104,7 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 | [C6](#c6-gcp_workforce_principalset_privileged_binding-where-the-privileged-role-tier-ends) | `T1199/gcp_workforce_principalset_privileged_binding` | service-level admin roles granted to a group fire only pool-wide | false negative, false positive (trade-off) | low |
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
+| [C19](#c19-gcp-delta-list-rules-a-binding-delta-with-an-iam-condition-is-missed-when-the-keys-are-sorted) | `T1098.001/gcp_workload_identity_federation_sa_binding`, `T1199/gcp_workforce_principalset_privileged_binding`, `T1098.003/gcp_public_iam_member_grant` (the delta path) | a binding delta that carries an IAM condition is missed on a store that sorts the keys of an object: the condition object comes between the parts that the pattern reads, and the pattern does not pass its closing brace; not verified against a real record | false negative | low |
 | [K56](#k56-aws_eks_access_entry_cluster_admin_policy-a-namespace-scoped-secrets-grant-is-missed) | `T1098.006/aws_eks_access_entry_cluster_admin_policy` | a reads-Secrets policy scoped to a sensitive namespace (`kube-system`) reads those Secrets but trips only the medium chokepoint, not the graded rule; one CloudTrail record cannot weigh one namespace against another | false negative | medium |
 | [K57](#k57-aws_eks_access_entry_cluster_admin_policy-no-safe-sigma-predicate-for-a-cross-account-grant) | `T1098.006/aws_eks_access_entry_cluster_admin_policy` | no safe Sigma predicate raises fidelity on a cross-account grant: `principalArn\|fieldref\|contains: recipientAccountId` goes quiet when the attacker names its role with the victim account ID | false negative (documented) | low |
 | [K61](#k61-azure_privileged_role_assignment-a-custom-role-with-owner-equivalent-permissions-evades-the-built-in-guid-allowlist) | `T1098.003/azure_privileged_role_assignment` (TRR9036 A, B) | a custom role definition with Owner-equivalent permissions carries a tenant-specific GUID that is not on the built-in-role allowlist, so the body grade does not fire; the fix is a per-tenant privileged-role-GUID list | evasion | medium |
@@ -1575,15 +1576,18 @@ the current ones.
   `python3 detections/check_provider_mappings.py -v --provider aks detections/sigma/T1098.006/k8s_rbac_privileged_grant.yml`
   reports `sorted: native fires, aks quiet; blocks sel_agg_beyond_builtin` (and the same
   for GKE); the AKS and GKE `EXPECTED_LOSS` entries for that case (reason `KEY_ORDER`)
-  point here. Which key order a KQL query or a GKE log store really gives: **unverified**
+  point here. `python3 detections/check_variants.py` shows the same loss on the native
+  record (variant `sorted`), and its entry in
+  [`variants/expected.json`](variants/expected.json) (reason `KEY_ORDER`) points here too.
+  Which key order a KQL query or a GKE log store really gives: **unverified**
   (backlog issue #55).
 - **Fix**: make the impersonate clause independent of the key order: add an alternative
   for each other order of `verbs`, `apiGroups` and `resources` (the `[^\]]*` skips stay
   inside one list, so each order is one more alternative of the same form). A rule change,
   so a later pull request.
 - **Then**: a new positive case with the rule objects' keys sorted fires; the two
-  `KEY_ORDER` entries in `check_provider_mappings.py` become stale and are removed; the
-  entry closes.
+  `KEY_ORDER` entries in `check_provider_mappings.py` and the `KEY_ORDER` entry in
+  `variants/expected.json` become stale and are removed; the entry closes.
 
 ### K45. k8s_coredns_configmap_modified: the DNS Operator filter trusts the operator's name
 
@@ -2376,6 +2380,53 @@ the current ones.
   `efs-public-allow-scoping-key-as-condition-value`.
 - **Fix**: decode the policy JSON in the log pipeline and test each statement.
 
+### C19. GCP delta-list rules: a binding delta with an IAM condition is missed when the keys are sorted
+
+- **Rules**: [`sigma/T1098.001/gcp_workload_identity_federation_sa_binding.yml`](sigma/T1098.001/gcp_workload_identity_federation_sa_binding.yml) (level high),
+  [`sigma/T1199/gcp_workforce_principalset_privileged_binding.yml`](sigma/T1199/gcp_workforce_principalset_privileged_binding.yml) (level medium),
+  [`sigma/T1098.003/gcp_public_iam_member_grant.yml`](sigma/T1098.003/gcp_public_iam_member_grant.yml) (level high; its delta path only).
+- **Procedures**: `TRR9018.GCP.A`, `TRR9018.GCP.C`, `TRR9020.GCP.A`, `TRR9020.GCP.C` and
+  `TRR9014.GCP.A`. The other procedure that `gcp_public_iam_member_grant` proves reads
+  the request path (`protoPayload.request.policy.bindings`), which has no such pattern.
+- **Kind**: false negative. **Severity**: low (a portability caveat: only a store that
+  does not keep the key order of an object is affected, and only for a conditional role
+  binding; the oracle and every store that keeps the key order of the record fire).
+- **Problem**: each rule reads `protoPayload.serviceData.policyDelta.bindingDeltas` with
+  `|re` values of one form: `\{[^}]*<part>[^}]*<part>...`, one value for each order of
+  the parts, so that every part is in one delta object. The skip `[^}]*` cannot pass a
+  `}`. A conditional role binding gives the delta object a fourth field, `condition`,
+  which is an object (`{"expression": ..., "title": ...}`). With the fields in the
+  order of `google.iam.v1.BindingDelta` (`action`, `role`, `member`, `condition`) the
+  condition is last, and the rules fire. A store that sorts the keys of an object gives
+  `action`, `condition`, `member`, `role`: the closing brace of the condition comes
+  before the member and the role, no value matches, and the rule is quiet. The same
+  holds for each key order that puts the condition between two of the parts (reasoned
+  from the pattern; the probe is the sorted order). Correction C17 (`\s*` after a
+  colon) does not change this.
+- **Evidence**: *case* — the positives
+  `pool-wide-workload-identity-user-delta-with-condition` (workload rule) and
+  `group-scoped-project-iam-admin-delta-with-condition` (workforce rule) fire by default
+  and as compact text. `python3 detections/check_variants.py` shows a loss of each
+  under the variant `sorted`, and the two entries of
+  [`variants/expected.json`](variants/expected.json) (reason `KEY_ORDER`) point here.
+  *probe* (`sigma_eval.py`) — record 0 of `cloud/fixtures/trr9014/attack.json` with
+  `"condition": {"expression": ..., "title": ...}` added to its delta:
+  `gcp_public_iam_member_grant` gives 1 hit by default and as compact text, and 0 hits
+  with sorted keys (`sigma_eval.flatten(record, separators=(",", ":"), sort_keys=True)`).
+  That rule has no sidecar, so no case holds this record. **Unverified**: whether a real
+  audit record carries `condition` in a binding delta, in which key order a log store
+  gives the delta, and which resources accept a conditional binding for these members.
+  No record in this repository shows a delta with a condition.
+- **Fix**: let the skip between the parts pass one nested object:
+  `([^{}]|\{[^{}]*\})*` in place of `[^}]*`. That changes every gap of each value, so
+  first count the determinized states of the new values for Lucene (closed entry S1).
+  The session that found the defect could not make that count. A rule change, so a later
+  pull request.
+- **Then**: the two positives fire under `sorted`; the two `KEY_ORDER` entries in
+  `variants/expected.json` become stale and are removed; a positive with a conditional
+  delta in a first sidecar of `gcp_public_iam_member_grant` fires in each key order; the
+  entry closes.
+
 ### K56. aws_eks_access_entry_cluster_admin_policy: a namespace-scoped secrets grant is missed
 
 - **Rule**: [`sigma/T1098.006/aws_eks_access_entry_cluster_admin_policy.yml`](sigma/T1098.006/aws_eks_access_entry_cluster_admin_policy.yml) (level high).
@@ -2664,6 +2715,8 @@ points here.
 | C13 | `entra_app_federated_credential_backdoor` reads only `newValue`, in any key order | near-misses `fic-with-unapproved-issuer-removed`, `fic-repointed-away-new-value-first` and the other reordered cases |
 | C14 | `aws_resource_policy_made_public` reads a `Statement` that is one object | positives `s3-single-statement-object-public-read`, `sqs-single-statement-object-public-send`, `efs-single-statement-object-public-mount` |
 | C16 | `aws_github_oidc_role_trust_abuse` grades each `sub` value | near-miss `two-subs-pinned-ref-wildcards-grade-high`; positive `two-subs-pinned-ref-wildcards-go-to-high-rule` of the low rule |
+| C17 | `T1098.001/gcp_workload_identity_federation_sa_binding` and `T1199/gcp_workforce_principalset_privileged_binding` read the delta list (`protoPayload.serviceData.policyDelta.bindingDeltas`) with or without a blank after a colon. Each `\|re` value held `"action": "ADD"` (the workforce rule also `"role": "`) with the one blank that `sigma_eval.flatten()` writes. So on a store that keeps the list as JSON text without blanks neither rule fired (probe at `a1668de`: 1 hit by default and 0 hits as compact text on `trr9018/attack.json`, on `trr9020/attack.json` and on each of the 12 positives of the workforce sidecar). The values now read `\s*` after the colon, as `T1098.003/gcp_public_iam_member_grant` does. Which text a real log store gives the list: **unverified** (no record in this repository shows it). The Lucene state count of S1 was not repeated for the 18 changed values | positives `pool-wide-workload-identity-user-delta-list-without-blanks` (the first sidecar of the workload rule: four positives, three near-misses) and `whole-pool-owner-delta-list-without-blanks` (workforce): each is "expected a match, got near-miss" on the rule at `a1668de` and fires now. `check_variants.py` runs every case and fixture of both rules as `compact` text with no difference |
+| C18 | `T1098.003/gcp_public_iam_member_grant` writes the two endings of `protoPayload.methodName` in the letter case of the records. The `\|endswith` values were lower case (`setiampolicy`, `setiampermissions`), so the rule matched only where `\|endswith` ignores letter case, as Sigma specifies. On a store whose match is case-sensitive it missed both attack records of `trr9014/attack.json` (probe at `eb5fb3e`: `check_variants.py`, variant `cs_like`, a loss of records 0 and 1). The values are now `SetIamPolicy` and `setIamPermissions`. The default match ignores letter case, so no verdict of the oracle changed. Sources, read on 2026-11-14: `rpc SetIamPolicy` of `service Services` in `package google.cloud.run.v2` (`https://raw.githubusercontent.com/googleapis/googleapis/97f6460c3558c1435d7fd001a9251f8df058ae2f/google/cloud/run/v2/service.proto`), and the comment on `method_name` in `google/cloud/audit/audit_log.proto` of the same commit ("For API calls, this should be the name of the API method", for example `google.cloud.bigquery.v2.TableService.InsertTable`); `"methodName": "storage.setIamPermissions"` in a Cloud Storage audit record that Google Cloud publishes (`https://raw.githubusercontent.com/GoogleCloudPlatform/professional-services/587120aa12c7017e1bf481f97e356b3628747691/examples/audit-log-examples/cloud-storage/gcs-admin-set-iam-permissions.log`). The Cloud Audit Logs page of Cloud Storage was **not read** (the session could not reach its host), so the Cloud Storage spelling rests on that published record and not on the documentation. Not covered: on a case-sensitive store the rule matches only these two spellings, and not a method of the family in another letter case (the description names `setIamPolicy`); the exact letter case of those methods is **unverified** | `check_variants.py`: `trr9014/attack.json` shows no difference under `cs_like`, and its entry is gone from `variants/expected.json` (a stale entry fails the gate). The rule has no sidecar, so no case holds the two spellings; the attack fixture does |
 | S1 | every `\|re` value fits Lucene's default `max_determinized_states` (10000) | a Lucene 10.1 `RegExp` build over all 236 values wrapped in `.*`: largest 7,986 states (the CoreDNS JSON-patch root grammar). Recount on 2026-10-20 (Kubernetes coverage wave 2): 321 values, all fit; with case folding (`ASCII_CASE_INSENSITIVE`) the largest is 8,094 states (the JSON-patch capability grammar of `T1611/k8s_podspec_controller_host_access`), and without it 7,986 (the CoreDNS root grammar) |
 
 ## Closing an entry

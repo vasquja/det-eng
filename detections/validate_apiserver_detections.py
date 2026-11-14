@@ -1666,9 +1666,10 @@ PROCEDURES = _build_procedures()
 
 def _ts(value):
     """Parse an audit requestReceivedTimestamp or a ledger start/end to an aware
-    datetime, or None. Both are RFC3339 UTC to the microsecond (metav1.MicroTime,
-    `date -u +%Y-%m-%dT%H:%M:%S.%6NZ`); be liberal about the fraction and the zone, and
-    read a value with no zone as UTC (both sides are UTC)."""
+    datetime, or None. Both are RFC3339 UTC to the microsecond (metav1.MicroTime;
+    now_utc() of the emulation scripts, YYYY-MM-DDTHH:MM:SS.ffffffZ from EPOCHREALTIME
+    of bash); be liberal about the fraction and the zone, and read a value with no
+    zone as UTC (both sides are UTC)."""
     from datetime import datetime, timezone
     if not value:
         return None

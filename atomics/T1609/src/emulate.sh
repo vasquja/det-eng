@@ -43,7 +43,13 @@ log() { printf '[trr9002] %s\n' "$*" >&2; }
 # never retried (readiness comes from the workflow instead).
 TRR="TRR9002"
 FAILED=()
-now() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }
+# UTC time to the microsecond, from bash (EPOCHREALTIME, bash 5) and not from `date +%6N`:
+# date of uutils coreutils 0.10.0 drops the leading zeros of %6N. An older bash uses date %N.
+now() {
+  local t="${EPOCHREALTIME:-}"
+  if [ -n "$t" ]; then TZ=UTC0 printf '%(%Y-%m-%dT%H:%M:%S)T.%sZ\n' "${t%[.,]*}" "${t#*[.,]}"
+  else t="$(date -u +%Y-%m-%dT%H:%M:%S.%N)"; printf '%sZ\n' "${t:0:26}"; fi
+}
 must() {
   local out rc=0
   out="$("$@" 2>&1 >/dev/null)" || rc=$?

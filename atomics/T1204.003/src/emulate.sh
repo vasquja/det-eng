@@ -50,7 +50,13 @@ log() { printf '[trr9034] %s\n' "$*" >&2; }
 # run. No credential is ever placed on a command line or in a log line.
 TRR="TRR9034"
 FAILED=()
-now_utc() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }
+# UTC time to the microsecond, from bash (EPOCHREALTIME, bash 5) and not from `date +%6N`:
+# date of uutils coreutils 0.10.0 drops the leading zeros of %6N. An older bash uses date %N.
+now_utc() {
+  local t="${EPOCHREALTIME:-}"
+  if [ -n "$t" ]; then TZ=UTC0 printf '%(%Y-%m-%dT%H:%M:%S)T.%sZ\n' "${t%[.,]*}" "${t#*[.,]}"
+  else t="$(date -u +%Y-%m-%dT%H:%M:%S.%N)"; printf '%sZ\n' "${t:0:26}"; fi
+}
 must() {
   local out rc=0
   out="$("$@" 2>&1 >/dev/null)" || rc=$?

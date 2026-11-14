@@ -279,8 +279,8 @@ MANIFEST = [
 FOLDERS = sorted({folder for _, folder, *_ in MANIFEST})
 
 
-def load_fixture(path):
-    """Load a fixture file to a list of flattened event dicts.
+def load_records(path):
+    """Load a fixture file to the list of its records, as the file holds them.
 
     Accepts a JSON array, a single JSON object, a common log envelope
     ({"Records"/"value"/"items"/"entries": [...]}), or JSON-lines.
@@ -305,7 +305,12 @@ def load_fixture(path):
             line = line.strip()
             if line:
                 records.append(json.loads(line))
-    return [sigma_eval.flatten(r) for r in records]
+    return records
+
+
+def load_fixture(path):
+    """Load a fixture file to a list of flattened event dicts (load_records())."""
+    return [sigma_eval.flatten(r) for r in load_records(path)]
 
 
 # ---- failure explanations (sigma_explain) --------------------------------

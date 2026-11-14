@@ -50,7 +50,7 @@ prints, because the format of that text differs between Python versions.
 only the standard library (`unittest`), PyYAML and pySigma. It needs no network
 and no root. It runs on Python 3.10 and later (3.10 is the minimum of pySigma).
 
-Four conditions skip a test:
+Five conditions skip a test:
 
 - `gcc` is not installed. The class `LinuxValidatorDryRun` is skipped: the Linux
   dry run compiles the atomics.
@@ -63,10 +63,19 @@ Four conditions skip a test:
 - The Python of the tests is older than 3.12. One test of `EmulationScriptsJob` is
   skipped: it runs the step of the `emulation-scripts` job on a directory with no
   test, and unittest ends with 5 there only from Python 3.12.
+- `bash` is older than 5.0. Two tests of `LedgerClock` are skipped: they run the
+  clock function of the emulation scripts with the clock of bash
+  (`EPOCHREALTIME`, from bash 5.0). A third test is skipped when `bash` is older
+  than 4.2: it needs `printf '%(...)T'`.
 
 In CI (the variable `CI` is set) each of these conditions fails the test in
 place of a skip, and `--no-skips` fails the run when a test was skipped. So no
 test is skipped in CI.
+
+With Python 3.10, one test of `LedgerClock` does not make one of its assertions:
+how the validators read a ledger time whose fraction has no digit
+(`detections/README.md` says that for Python 3.11 and later). The test is not
+skipped.
 
 The `re2` module (the package google-re2) skips no test. With it, the tests of
 `check_sigma_regex.py` and `check_provider_mappings.py` pass `--require-re2`, as
@@ -87,6 +96,7 @@ after each test or test class.
 | `test_validators.py` | The cloud validator, the Linux validator (dry run, with the check of its `CONTROLS` table; and its verdict code on canned results: the detections; the no-op baseline, which must own a record; each mutant and each re-run, which must be held by what it declares (an item of its rule, or the success gate); the limits of the exemption for a rule whose emulation is a SKIP; a live negative control for each rule), the three Kubernetes validators (dry run and negative control), `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py`, `check_schedule_freshness.py`. |
 | `test_suite.py` | Rules of the suite as a whole: each self-test has a runner, the CI job runs every test on every pull request, the `emulation-scripts` job does the same for `atomics/tests/`, no workflow step pipes a command into `tee` without pipefail, no step that runs a gate or the unit tests has `continue-on-error`, each known gap names a roadmap item, each planted artifact is used, this file agrees with the tests. |
 | `test_apt_install.py` | Tests of `.github/scripts/apt_install.sh`, the step that installs `auditd`, with a stub for `sudo`, `apt-get`, `unshare`, `mount`, `getent` and `timeout`. When the runner cannot resolve the package mirror, or apt printed a message about name resolution, or the mirror does not resolve after a failed run, apt gets one run with public resolvers in a private mount namespace; the script fails only after apt failed in a run with the resolver of the runner (but in the forced way of the CI job); a necessary package that is not installed fails the step; a text that is not a package name (also a name that ends with `-`, which apt reads as a removal) or not an address is refused. The class `DirectInstalls` (with two CONTROLs) fails when a workflow (a `run:` text, a `with:` or `env:` value), a composite action or a shell script (`*.sh`, or a shell on its first line) installs packages in a usual form (`apt-get install`, `apt update`, `dpkg -i`, `snap install`, also with options, a path or quotes) without the script. The one line that is allowed is `apt-get update -qq` in `detections/benign/linux/workload.sh`. It is a rule on text: a command that is built at run time, or that a different program starts, is not seen. The stubs do not show that the namespace works on a runner: the CI job `apt-install-fallback` does. It forces that way, and its CONTROL step gives a resolver that does not answer (`APT_INSTALL_RESOLVERS`) and fails if the install then passes. |
+| `test_labs.py` | Rules for the lab jobs that run on a GitHub runner (auditd on the runner, a kind cluster). No offline gate runs these jobs, and a new runner image can break them with no change in the repository. `AuditdStart`: each workflow step that starts auditd (with `systemctl` or `service`) waits for `audit-rules.service` after the start. Before the wait, and before the start, no line of the step changes the rules or a setting of the audit system (an `auditctl` command that is not a status or a list), and between the start and the wait no line runs a validator. auditd 4 loads its rule files in that oneshot unit, the start of auditd does not wait for it, and its rule file starts with `-D` and sets the backlog limit. The wait is in a guard, because auditd 3 has no such unit. It runs with `sudo`, because systemd refuses the start of a unit for a user that is not root and cannot give an authorization. A unit that ends with an error gives a `::warning` line and does not stop the step. The class also runs each such step from its first line to the end of its wait, the whole sensor step of the static pod lab and the whole start step of the `benign-linux-live` job, with a stub for `sudo`, `systemctl`, `service` and `auditctl`. The stubs model the fault that CI showed on 2026-11-13: a run of the unit that nobody waited for deletes the rule after the step saw it in the list, and sets the backlog limit back to the value of its rule file. They also model root: a start of the unit without `sudo` fails at once and waits for nothing. `FileSensorRule`: the two steps of the static pod lab that read the file events print an `::error` line when `auditctl -l` does not list the rule of the file sensor, and they go on. The line says which check of the validator fails when: the file gate, or the file control too. `DateWidth`: no shell script, file under `atomics/`, workflow or composite action gives `%N` a width (`%6N`, `%3N`): `date` of uutils coreutils 0.10.0 prints such a field without the leading zeros of the fraction. `LedgerClock`: the function that gives the times of the emulation ledger (`now_utc()`, or `now()`) is one accepted text in each shell script under `atomics/` and in each workflow step that defines it, and a script that appends to the ledger defines it one time. The class runs that text in bash with a stub `date` that prints a wrong time, in a zone that is not UTC: the result is the time of the test in UTC, a fraction that starts with zero keeps its zeros, and `date` is not called; without the clock of bash the function calls `date` with `%N` only. The stubs do not show what systemd, auditd and the `date` of a runner image do: the lab jobs show that. |
 | `known_bad/<group>/` | The planted artifacts of that group. `known_bad/gatelib/` holds samples for `test_gatelib.py`. |
 
 The planted artifacts are outside `detections/sigma/`, the fixtures and the
@@ -94,6 +104,22 @@ benign corpus, so the gates do not read them in the repository. Do not give a
 planted file the extension `.md` or `.py`: `check_md_links.py` reads every `.md`
 file of the repository, and Python can import a `.py` file. Name it `.md.txt` or
 `.txt` and plant it under its real name.
+
+`test_quality.py` also holds the tests of `check_variants.py` (class `Variants`):
+the gate itself, its expected list (`detections/variants/expected.json`), the probe
+table of [`detections/SEMANTICS.md`](../SEMANTICS.md) (`--check-doc`), the form
+of its CI job, and the third comparison of the `sufficiency-ratchet` job. With the
+`re2` module these tests pass `--require-re2`, as the job does. Without it they run
+the four variants that need no module, and one test proves that `--require-re2`
+stops the gate.
+
+One test of that class was a known gap until roadmap item R7:
+`ns-one-json-serialisation`. Its marker named `check_null_safety.py`, because no
+gate varied the JSON text of a list for a rule that is not a Kubernetes audit rule.
+The gap closed in another gate, `check_variants.py`. The test keeps its planted
+artifact and its wanted row, and it is now a rejection test of that gate
+(`Variants.test_rejects_one_json_serialisation_cloud`). It also asserts that
+`check_null_safety.py` still accepts the artifact: that gate has no check for it.
 
 ## How a test works
 
@@ -316,6 +342,106 @@ The `gate-tests` job itself has no `if:`, no `continue-on-error` and no `needs:`
 (GitHub skips a job when a job that it needs failed), and its workflow has no
 path filter. `test_suite.py` checks that too.
 
+`test_labs.py` keeps the rules for the lab jobs (auditd on the runner, a kind
+cluster). A planted script or workflow step shows that each rule finds its fault:
+
+- A step that starts auditd waits for `audit-rules.service` after that start. A
+  start is `systemctl` with `start`, `restart`, `try-restart`, `reload-or-restart`
+  or `enable --now` and `auditd` as one of its units, or `service auditd start`
+  (or `restart`). The program can have a path and options, and a redirect can be
+  joined to a word (`systemctl start auditd>/dev/null`). The wait is these
+  lines, and a new step that starts auditd needs them too:
+
+  ```bash
+  if systemctl cat audit-rules.service >/dev/null 2>&1; then
+    sudo systemctl start audit-rules.service \
+      || echo "::warning title=auditd::audit-rules.service ended with an error ..."
+  fi
+  ```
+
+  The wait line is `sudo systemctl start audit-rules.service || echo "::warning ..."`
+  and no more. Without `sudo`, systemd refuses the start (the user of a step
+  cannot give an authorization), the line prints the warning, and the step does
+  not wait. That is known of systemd; it was not tried on a runner. With a `&`
+  after the line, the step does not wait.
+
+  The wait is at the top level of the step. It is not in an outer `if`, a loop, a
+  function, a subshell, a here-document or a quoted text, also when the start is
+  in the same block. A step does not reach a wait in a block whose condition is
+  false or in a function that nothing calls, and it does not wait for a subshell
+  in the background. The rule asks `bash -n`: the lines of the step to the `fi`
+  of the wait are complete shell. The tests that run a step ask that too, before
+  they run a part of the step.
+
+  Before the wait, and before the start, no line of the step changes the rules or
+  a setting of the audit system: each `auditctl` command but a status (`-s`) and a
+  list (`-l`) is such a change (`-a`, `-w`, `-R`, `-D`, `-b`, `-f`, `-e`, `-r`,
+  `--backlog_wait_time`). The rule file of the unit starts with `-D`, and it sets
+  `-b`, `-f` and `--backlog_wait_time`. Between the start and the wait no line
+  runs a validator (`python ... detections/validate_*.py`, or
+  `detections/benign/linux/capture.py`).
+
+  A message can name a command
+  (`echo "::error::the step Start auditd (sudo systemctl start auditd) failed"`).
+  So the rule does not look for a start or an `auditctl` command in the words of
+  a message. A message is a command whose first word is `echo` or `printf`, and
+  whose output no different command takes: it is not before a pipe
+  (`echo "..." | bash`) and not in a command substitution or a process
+  substitution. The rule reads a command substitution in a message
+  (`echo "$(sudo auditctl -l)"`). The check for a validator reads the whole line,
+  so a message that names a validator between the start and the wait counts.
+
+  A new step that starts auditd also goes into the list `AuditdStart.STEPS`: the
+  test says so. The tests run each step of that list from its first line to the
+  end of its wait, with stubs (`STUBS` in `test_labs.py`) for `sudo`, `systemctl`,
+  `service`, `auditctl`, `docker`, `kubectl`, `kind` and `sleep`. A different
+  program of those lines runs as the real program, in the copy. So read the
+  lines before you add the step, and give a program a stub where it needs one.
+  After `sudo`, the stub starts only the other stubs and `tee`, and `tee` only
+  for a file of the sandbox (a step names `/tmp/`, which is in the sandbox
+  there). For `cat`, the stub prints the audit log of its state and does not
+  read the file that the step names. The stub does not run a different command:
+  it writes the command to its record.
+
+  It is a rule on text, one step at a time and one line at a time. It does not
+  see:
+
+  - a start that a script, a shell function or a different program makes (an
+    init script such as `/etc/init.d/auditd`, `invoke-rc.d`, a file that a
+    message wrote);
+  - a command that is built at run time (`"$SYSTEMCTL" start auditd`,
+    `systemctl start "$UNIT"`, a message in a group or a subshell whose output a
+    pipe gives to a shell), or a unit that pulls auditd in (a target);
+  - a start in a different step of the job than the rule;
+  - before the wait, a change of the rules that has no option as a word of its
+    `auditctl` command (`auditctl "${RULE[@]}"`, `xargs auditctl`), or that a
+    different program makes (`augenrules --load`);
+  - a wait at the top level that the step does not reach (a `&&` or a `||` at
+    the end of the line before the guard). The tests that run the steps of
+    `AuditdStart.STEPS` see that.
+- No line of a shell script, a file under `atomics/`, a workflow or a composite
+  action holds `%N` with a width of one digit (`%6N`, `%3N`, `%06N`). A `#`
+  comment does not count. A shell script is a file with the name `*.sh` or
+  `*.bash`, or with a shell on its first line. Under `atomics/` the rule reads
+  each file that is text and not Markdown: also a file that a script sources, and
+  a program in a different language. It is a rule on text. It does not ask what
+  the language of a file is: a mention in prose (a YAML description, a text
+  note), or in a comment that does not start with `#` (`/* */`, `//`), counts
+  too. Write the format in two parts there (`%6` and `N`), or move the note to a
+  Markdown file. The rule does not see a format that is built at run time, and
+  it does not find a width of two digits (in a URL, `%20N` is a space before an
+  `N`). Outside `atomics/` it does not read a file that a script sources when the
+  file has no shell on its first line and no such name.
+- Each definition of `now_utc()` or `now()` in a `*.sh` file under `atomics/`
+  and in a workflow step is the text `LedgerClock.ACCEPTED` (the name can be
+  `now()`). A script that appends to the ledger (`>> "$DETENG_LEDGER"`) defines the
+  function one time. To change the function, change that text and each copy in
+  the same pull request. When a function is not the accepted text, the message
+  shows the difference, line by line. It is a rule on text: it does not see a
+  definition that `eval` or a sourced file makes, and it does not see a script
+  that keeps the function and takes the times of its ledger from a different
+  command.
+
 The job `emulation-scripts` of `lint-trr.yml` runs a second suite: the tests of the
 cloud emulation scripts in [`atomics/tests/`](../../atomics/tests/README.md). The
 gate tests do not run that suite. They hold the rules of its job (class
@@ -419,6 +545,8 @@ it does not see one test in the place of a different one.
   - `detections/cloud/fixtures/trr9012/attack.json`
   - `detections/cloud/fixtures/trr9012/benign.json`
   - `detections/RULE_DEFECTS.md`
+  - `detections/variants/expected.json`
+  - `detections/SEMANTICS.md`
   - `detections/k8s/PLATFORMS.md`
   - `research/trr9001/lin/README.md`
   - `research/trr9012/aws/README.md`
@@ -434,10 +562,29 @@ it does not see one test in the place of a different one.
   - `detections/sigma/T1053.007/k8s_cri_job_pod.cases.jsonl`
   - `detections/sigma/T1552.007/linux_k8s_sa_token_read.cases.jsonl`
 
-  `NullSafety` (`test_quality.py`) takes one case by name from this sidecar, for
+  `Variants` (`test_quality.py`) takes one case by name from this sidecar, for
   its probe of the two JSON texts of a list:
 
   - `detections/sigma/T1537/aws_snapshot_or_ami_made_public.cases.jsonl`
+
+  `Variants` also needs two entries of `detections/variants/expected.json`, and
+  what each one names. The first is the one entry of
+  `detections/sigma/T1134/k8s_impersonation_privileged.yml`: a loss of record 0 of
+  the case `impersonate-system-masters-group-procB` under the variant `multi`. The
+  second is the one entry of `detections/sigma/T1098.006/k8s_rbac_privileged_grant.yml`,
+  which names the open entry K43 of `detections/RULE_DEFECTS.md`. One test also
+  needs K13 as a row of the closed entries of that file. When a rule correction
+  removes one of these differences, give the tests another entry of the list:
+
+  - `detections/sigma/T1134/k8s_impersonation_privileged.cases.jsonl`
+  - `detections/sigma/T1098.006/k8s_rbac_privileged_grant.cases.jsonl`
+
+  Two tests of `Variants` read the probe table of `detections/SEMANTICS.md`
+  between its two marker lines (`<!-- probes:begin -->`, `<!-- probes:end -->`).
+  One of them needs the row of the probe `eq-case`, with the answer `quiet` in each
+  of its six answer cells. The table is generated
+  (`check_variants.py --write-doc`), so a change to that probe in the gate changes
+  the row.
 
   `CheckSufficiency` (`test_sufficiency.py`) takes the positive cases of this
   sidecar, for its proof that a rule that needs one account id is bad:
@@ -481,6 +628,25 @@ it does not see one test in the place of a different one.
   `gatelib.py --gaps` lists a gap that it closes: the item is not done, so set
   its status back, or close the gap (see [Known gaps](#known-gaps)).
 
+  `test_labs.py` reads the lab steps of these workflows, and it finds a step by
+  its name (`AuditdStart.STEPS`, `FileSensorRule.STEPS`, `LedgerClock.BENIGN` and
+  `LedgerClock.SCORE`):
+
+  - `.github/workflows/validate-detections.yml`
+  - `.github/workflows/detection-quality.yml`
+  - `.github/workflows/validate-staticpod-detections.yml`
+  - `.github/workflows/validate-apiserver-detections.yml`
+
+  A step with a new name makes a test fail with a `LookupError` that says so. The
+  repair is the new name in the test. The lab is not wrong. The tests also run
+  the text of these steps with stubs: the first lines of each step that starts
+  auditd, the whole sensor step of the static pod lab, the whole start step of the
+  `benign-linux-live` job, the two steps of the static pod lab that read the file
+  events, and the step that writes `BENIGN_START`. A new command in one of these
+  steps can need a stub in `test_labs.py`. `LedgerClock` reads each `*.sh` file
+  under `atomics/`: a script that appends to the ledger must define the clock
+  function one time, as the accepted text.
+
   `test_suite.py` fails when a file of these lists is not in the repository.
 
 ## Not covered yet
@@ -498,6 +664,19 @@ These rejections have no planted artifact and no test:
   report of the gate, or that holds no rule.
 - The digest check of the `COMPILE_ONLY` table of `check_sufficiency.py`. The
   table is empty today, so there is no entry to make stale.
+- `check_variants.py` has four of them: a gain (a negative case or a benign
+  fixture that fires under a variant), a rule that the `multi` variant cannot
+  check (a correlation rule on records with a list, or an item with `|neq` on a
+  list), an
+  entry whose proof fails (`KEY_ORDER` on a set that differs as compact text
+  too), and an entry of a rule file that is gone. Its self-test holds a
+  constructed rule for each.
+- `check_variants.py --check-doc` has three of them: a probe that the text of
+  `detections/SEMANTICS.md` does not name, a document without one of its two
+  marker lines, and a document that is not there. The self-test holds a
+  constructed document for each. The mode `--write-doc` has no gate test: no
+  workflow runs it, and `AGENTS.md` does not give the command yet. The self-test
+  proves it on a constructed document.
 
 The suite does not run these checks:
 
@@ -505,6 +684,12 @@ The suite does not run these checks:
   google-re2 is not in `detections/requirements.txt`, so the `gate-tests` job
   runs the default path. For `check_sigma_regex.py`, one test proves that
   `--require-re2` fails when the module is missing.
+- The `re2` variant of `check_variants.py` (the search of each `|re` item with
+  RE2, and the `re2` answer of each golden probe), for the same cause. Only the
+  `representation-variants` job runs it. Without the module, `--check-doc`
+  compares the `re2` column of the document with the answers that the gate
+  declares. One test proves that `--require-re2` stops the gate when the module
+  is missing.
 - `sigma check`. sigma-cli is not in `detections/requirements.txt`.
 - The live modes of the validators (auditd on a host, a kind cluster). They
   stay in the `validate-*` workflows.

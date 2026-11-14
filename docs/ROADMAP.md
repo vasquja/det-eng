@@ -4,7 +4,7 @@ The ordered work for this repository. An AI agent owns and maintains the codebas
 (see [`AGENTS.md`](../AGENTS.md)). This file is how one session tells the next
 what the direction is.
 
-Last update: 2026-11-12.
+Last update: 2026-11-14.
 
 ## The goal
 
@@ -53,7 +53,7 @@ The order matters. Tests for the gates come before each change to the gates.
 | R2b | **Linux controls are not vacuous** (design 4.2). The Linux validator grades each control. The no-op stays on every rule as a baseline: it makes one audited syscall, its record fires no rule, and it must own that record. It declares no item, so the validator never counts it as the live negative control of a rule. Each mutant and each re-run under an allowlisted name declares what holds it: one required item of the rule (an argument item, the group-by of a correlation, an allowlist filter), or the success gate of the validator for a call that the kernel rejects. A control that is not held by what it declares fails the run. There is one exception: the mutant of a rule whose every emulation is a SKIP on the host is `N/A` when the kernel rejected one or more of the calls of the mutant that the rule reads. Each of the seven rules that had only the no-op gets a mutant: five make the syscall that the rule reads with one wrong argument, and two make a call that the kernel rejects (`userfaultfd_syscall.yml` and `io_uring_setup.yml` read no argument, so that control tests the success gate and no item of the rule). | in progress | R2 | In the job `validate` on `main`, each rule of the `MANIFEST` of `detections/validate_detections.py` has a control row, other than its no-op row, that prints `held`: the validator holds that control by the one item that it declares, or by its success gate for a rejected call. The run fails on a no-op that left no record, on a mutant or a re-run that is not held as declared or that cannot be graded, on a rule for which no control is built, and on a bad row of the `CONTROLS` table (before a stimulus runs); the gate tests hold each of these rejections. The item is `done` when that job is green on `main`. |
 | R2c | **Negative controls and baselines cannot be empty** (design 4.2). A negative control that read no record cannot fail. Each Kubernetes validator fails `--expect-miss` when a pre-emulation log holds no record. The cloud validator fails a benign baseline that holds no record, and a rule of its `MANIFEST` whose fixture is missing. | not started | R2 | Its known-gap tests are rejection tests. Each validator exits with an error that names the empty log, the empty baseline or the missing fixture. |
 | R2d | **Hygiene and report truth** (design 4.2). No rule file is hidden from the gates: a rule in a dotfile under `detections/sigma/` fails. The coverage report counts an entry of `detections/RULE_DEFECTS.md` that has a section and no Summary row. `rule_cases.py` names the rule and the case when two keys of an event differ only in letter case, and does not stop with a traceback. | not started | R2 | Its known-gap tests are rejection tests. Each gate exits with an error that names the hidden file, the defect entry or the case. |
-| R7 | **Representation variants in the oracle** (design 4.7). Run each case as compact JSON, sorted JSON, a multi-valued list model, case-sensitive `LIKE` and RE2. Correct the two GCP rules that lose their hit under compact JSON. Write `detections/SEMANTICS.md`. | not started | R2 | A check fails on a new divergence between variants. The known losses are listed as expected, each with a reason. Two rules lose their hit under compact JSON today: `T1199/gcp_workforce_principalset_privileged_binding.yml` and `T1098.001/gcp_workload_identity_federation_sa_binding.yml`. This item records both in `detections/RULE_DEFECTS.md` and corrects them. |
+| R7 | **Representation variants in the oracle** (design 4.7). Run each case as compact JSON, sorted JSON, a multi-valued list model, case-sensitive `LIKE` and RE2. Correct the two GCP rules that lose their hit under compact JSON. Write `detections/SEMANTICS.md`. | in progress | R2 | A check fails on a new divergence between variants. The known losses are listed as expected, each with a reason. Two rules lose their hit under compact JSON today: `T1199/gcp_workforce_principalset_privileged_binding.yml` and `T1098.001/gcp_workload_identity_federation_sa_binding.yml`. This item records both in `detections/RULE_DEFECTS.md` and corrects them. |
 | R3 | **External records** (design 4.3). Records that the agent did not write, from `splunk/attack_data` (Apache-2.0), pinned by hash. A same-technique record must fire the rule unless a protected file says why not. | not started | R2 | The check runs in CI in shadow mode and reports each rule's result on each same-technique dataset. The first real-record miss has a defect entry. |
 | R4 | **Harvest the captures of CI** (design 4.4). The lab validators write the records that the kernel or the API server produced. A scheduled job commits them as evidence. | not started | R2, T8 | A Linux or Kubernetes rule has a committed captured positive that the agent did not write by hand. |
 | R5 | **Provenance tiers** (design 4.5). Each case and fixture says where it came from. The coverage report shows `proven-live`, `proven-recorded`, `proven-synthetic` and `claimed`. Stop calling a hand-written fixture "recorded". | not started | R3 | The coverage report does not call a cloud procedure Proven when its only evidence is a fixture that the agent wrote. |
@@ -69,12 +69,55 @@ correct the gate and, in the same pull request, change each of its known-gap tes
 into a rejection test (see [`detections/tests/README.md`](../detections/tests/README.md),
 "Known gaps"). The gate tests also read this table: see "How to use this file".
 
+Notes from R7, for the items after it (2026-11-14).
+
+- The gate is `detections/check_variants.py` (job `representation-variants`). The
+  list model that it gates is one value for each element of a list, with an object
+  as its JSON text. A store that explodes a list into leaf fields or indexed keys is
+  not gated: such a store cannot run a rule that reads a list as text, and
+  `check_provider_mappings.py` keeps that mode as a warning.
+- The gate reads the sidecar cases and the cloud fixtures. It does not read the
+  benign corpus. Two probes with the code of the gate on the corpus of this date
+  show what that leaves open. Under `multi`,
+  `T1528/k8s_pod_token_used_off_source.yml` goes from 0 to 830 hits: its filter
+  reads the last element of a list, and a multi-valued field has none. Under
+  `cs_like`, `T1078.004/aws_cognito_unauthenticated_identity_use.yml` goes from 27
+  to 12 hits. An item that scores the corpus under a variant needs a decision on
+  the budgets first (R8).
+- [`detections/SEMANTICS.md`](../detections/SEMANTICS.md) says what the oracle
+  decides and what other stores do. A statement about the oracle names a golden
+  probe of the gate: the self-test proves each probe, and the job fails when the
+  probe table of the document is not current (`--check-doc`). The document marks
+  what nothing proves on each run. A statement `by hand` was run one time (the
+  three-valued run, the group-by fields of a correlation, the record of a rejected
+  call on three rules). A statement `not verified` has no primary source that was
+  read (each cell about Splunk, the letter case of ES|QL `==`, the text that a real
+  store gives for a list). R3 and R9 are the items that can put a real record in
+  the place of a `not verified`.
+- The known gap `ns-one-json-serialisation` named `check_null_safety.py`. It closed
+  in another gate, `check_variants.py`. `check_null_safety.py` still has no
+  exemption list.
+- A latent miss is open as C19 in `detections/RULE_DEFECTS.md`. The three GCP rules
+  that read the binding deltas miss a delta with an IAM condition when a store
+  sorts the keys of an object. Two cases hold it, each with an expected entry. No
+  real record was read for it. R3 and R9 can show whether a real record carries a
+  condition, and in which key order.
+- For R8. `detections/variants/expected.json` is a list of human approvals. Two
+  things stand behind it today: the file is not content for automerge, and the
+  `sufficiency-ratchet` job compares the list with the list of the base branch (an
+  entry that the base does not hold as it is on the head fails). But the code that
+  reads the list and proves the reason of each entry is the code of the head, as for
+  the waivers of `check_sufficiency.py` (known gap `cs-self-added-waiver`). R8 must
+  take the list over: the conditions of an entry are then checked by code from
+  `main` (R1).
+
 Note for R7, from R2b. No rule that `detections/validate_detections.py` proves
 reads `success`: the logic of each rule matches a syscall that the kernel
 rejected. Only the validator holds a rejected syscall, with its own gate
 (`success=yes`). The controls of `userfaultfd_syscall.yml`, `io_uring_setup.yml`
 and `bpf_prog_load.yml` test that gate, and no item of a rule.
-`detections/SEMANTICS.md` (R7) must say what a SIEM does with a rejected call.
+`detections/SEMANTICS.md` (R7, its section 8) now says what a SIEM does with a
+rejected call: it alerts on the attempt. R7 changed no Linux rule.
 
 ## 2. Throughput: many builders, no hand integration
 
@@ -93,7 +136,7 @@ and `bpf_prog_load.yml` test that gate, and no item of a rule.
 
 | ID | Item | Status | Needs | Acceptance check |
 |----|------|--------|-------|------------------|
-| L6 | **Supply chain** (design 8): pin each action in each workflow to a commit, add `dependabot.yml`, pin `sigma-cli` to the pySigma version of the validators. | not started | R2 (the check that no action is used by tag is a gate test, and the `gate-tests` job is one of the jobs to pin) | No workflow uses an action by tag. The lint job and the validators resolve the same pySigma. |
+| L6 | **Supply chain** (design 8): pin each action in each workflow to a commit, add `dependabot.yml`, pin `sigma-cli` to the pySigma version of the validators. Name the runner image in each job (for example `ubuntu-26.04`, not `ubuntu-latest`): the move of `ubuntu-latest` to Ubuntu 26.04 on 2026-11-12 broke four jobs in three ways. | not started | R2 (the check that no action is used by tag is a gate test, and the `gate-tests` job is one of the jobs to pin) | No workflow uses an action by tag. The lint job and the validators resolve the same pySigma. |
 | L7 | **Correct the live scripts** that the sandbox guide lists as defective (`docs/setup/cloud-sandbox.md`, "Problems in the live scripts"). | done | | Each listed script runs to its end in dry-run mode and its live commands agree with the provider reference. The table in the guide is shorter. |
 | L2 | **A machine condition to close a defect** (design 6): a `known-miss` case that must not fire today and becomes a positive when the rule is corrected. | not started | R2 | Each open false-negative defect has a case that fails when the defect is fixed without closing it. |
 | L1 | **A path to retire or rewrite a rule** (design 6). | not started | T2 | A rule can be retired with a defect citation and no override label. |
