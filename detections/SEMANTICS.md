@@ -26,7 +26,7 @@ How to read the evidence:
   name of such a probe.
 - A statement with the words "by hand" has no named probe. It was run one time, on
   2026-11-14, with Python 3.13.18 and SQLite 3.53.1, on the code of this repository.
-  Its form is `item` on `record`: answer. No gate keeps it true.
+  No gate keeps it true.
 - Each statement about a product has a number in brackets, which points to
   [section 12](#12-sources). Words in quotation marks are the words of that source.
   "Not verified" means that no primary source was read for the statement. "Our
@@ -241,8 +241,8 @@ with a different type: not verified.
 
 - SQLite has no `REGEXP` of its own (by hand: `no such function: REGEXP`). The oracle
   supplies it: `re.search(pattern, str(value))` of Python. The sub-modifiers `|i`, `|m`
-  and `|s` become the prefix `(?i)`, `(?m)`, `(?s)` of the pattern (probes `re-i`,
-  `re-m`, `re-s`, `re-dot-newline`).
+  and `|s` become the prefix `(?i)`, `(?m)`, `(?s)` of the pattern (by hand). The
+  probes `re-i`, `re-m`, `re-s` and `re-dot-newline` show what each prefix does.
 - It is a search: `re.search` gives no match "if no position in the string matches
   the pattern" [6]. Probe `re-search`. A search of the two files of the specification
   found no sentence that says if `|re` is a search or a match of the full value. In
