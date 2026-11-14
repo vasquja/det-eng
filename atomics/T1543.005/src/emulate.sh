@@ -63,7 +63,13 @@ FAILED=()
 # A procedure that ran in a reduced mode sets PROC_MODE (Procedure B: "read-only"); the
 # ledger row then carries "mode", so the validator can say why that procedure's gates miss.
 PROC_MODE=""
-now() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }
+# UTC time to the microsecond, from bash (EPOCHREALTIME, bash 5) and not from `date +%6N`:
+# date of uutils coreutils 0.10.0 drops the leading zeros of %6N. An older bash uses date %N.
+now() {
+  local t="${EPOCHREALTIME:-}"
+  if [ -n "$t" ]; then TZ=UTC0 printf '%(%Y-%m-%dT%H:%M:%S)T.%sZ\n' "${t%[.,]*}" "${t#*[.,]}"
+  else t="$(date -u +%Y-%m-%dT%H:%M:%S.%N)"; printf '%sZ\n' "${t:0:26}"; fi
+}
 run_proc() {
   local p="$1" start end rc=0 mode=""
   PROC_MODE=""

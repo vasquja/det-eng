@@ -82,6 +82,10 @@ Without root or auditd the script SKIPS (exit 0), unless `--require-audit` is
 given (CI passes it, so a broken audit setup fails instead of passing). It
 needs `gcc` always, and `auditctl` and `ausyscall` for a real run.
 
+The validator does not start auditd: it loads its rules into an auditd that runs.
+If you start auditd by hand immediately before the validator, read the note on
+auditd 4 in [Manual run](#manual-run) first.
+
 ### What a PASS means
 
 A case passes only if all three hold:
@@ -882,6 +886,21 @@ check the sha256 of both binaries, and fail when the cluster's server version di
 from the pin. The pin moves every quarter, and before the pinned minor reaches end of
 life; the `env` block of each workflow says how.
 
+Before the first lab pod is created, each job pulls its lab images (`LAB_IMAGES`)
+inside each node of the cluster: `docker exec <node> crictl pull <image>`, with three
+attempts for each image and node. `crictl` is in the kind node image, and it puts the
+image in the store that the kubelet reads. When the last attempt fails, the step fails
+and names the image and the node. Thus a slow registry fails the job at that step. The
+later steps still run, so the job keeps its logs. The jobs do not use
+`kind load docker-image`.
+That command fails on a multi-platform tag (`ctr: content digest sha256:...: not found`)
+when Docker on the runner uses the containerd image store, which is the default of a
+new installation of Docker Engine 29
+([kind issue 3795](https://github.com/kubernetes-sigs/kind/issues/3795)). The jobs
+run on `ubuntu-latest`. On 2026-11-13 that label gave the `ubuntu-26.04` runner image
+(Docker Engine 29.4.2), and a `validate-k8s` run failed at `kind load`; the
+`ubuntu-24.04` image before it had Docker Engine 28.0.4.
+
 `.github/workflows/k8s-version-matrix.yml` runs the three Kubernetes workflows every
 week on the minors beside the pin: v1.35.8 and v1.37.0, the newest kindest/node images
 of those minors that kind v0.33.0 publishes. (v1.34 is not in the matrix: it reaches end
@@ -1013,6 +1032,16 @@ calling `ausearch`. On some hosts (GitHub-hosted runners among them)
 `ausearch` resolves its default log path to nothing and reports no matches
 even though the records are present in the file.
 
+Note on auditd 4 (Ubuntu 26.04): `sudo systemctl start auditd` also starts the
+oneshot unit `audit-rules.service` and does not wait for it, and the rule file that
+the unit loads starts with `-D`. So a rule that you add or load immediately after
+the start can be deleted some milliseconds later: `auditctl -l` showed it, and the
+log then holds no record. The rule file also sets the backlog limit (`-b 8192`), the
+failure mode and the backlog wait time, so a setting that you change immediately
+after the start is set back too. Run `sudo systemctl start audit-rules.service`
+before you add a rule or change a setting (it returns when the unit has ended; it
+needs `sudo`). The workflows that start auditd do this; auditd 3 has no such unit.
+
 ## Kubernetes detections (TRR9002)
 
 The Kubernetes rules (`sigma/T1609/`) key on the API server **audit log**, not
@@ -1041,7 +1070,8 @@ python3 detections/validate_k8s_detections.py --dry-run
 python3 detections/validate_k8s_detections.py \
   --audit-log /tmp/kube-apiserver-audit.log --ledger /tmp/emulation-ledger.jsonl
 
-# Negative control, on a log collected BEFORE the emulation ran:
+# Negative control, on a log collected BEFORE the emulation ran (the log must be
+# given, must exist and must hold an audit event):
 python3 detections/validate_k8s_detections.py \
   --audit-log /tmp/pre-emulation-audit.log --expect-miss
 ```
@@ -1087,7 +1117,9 @@ Elastic's Kubernetes audit integration does not meet this contract: it maps
 cluster for every change to the TRR9002 files, strict: a rule that does not
 fire fails the job, because the `kind` emulation is deterministic. It also
 captures the audit log before the emulation and runs the validator on it with
-`--expect-miss`, so a pass that does not depend on the emulation fails the job.
+`--expect-miss`, so a pass that does not depend on the emulation fails the job. A
+negative control that read no record fails the job too (see
+[below](#a-negative-control-must-read-a-record)).
 `validate_staticpod_detections.py` and
 `.github/workflows/validate-staticpod-detections.yml` do the same for TRR9003
 (T1543.005), where the gate matters most: the validator match-gates three rules,
@@ -1112,6 +1144,69 @@ source). B writes no manifest file, so the file-event rule does not gate it. The
 worker is `TRR9003_WORKER` (default `trr9003-worker`). Without the flag B stays a
 read-only demonstration with no telemetry: its ledger row says
 `"mode":"read-only"`, and a strict run misses B's gates and names the flag.
+
+### A negative control must read a record
+
+A negative control that read no record cannot fail, so it proves nothing. With
+`--expect-miss`, each of the three Kubernetes validators
+(`validate_k8s_detections.py`, `validate_staticpod_detections.py`,
+`validate_apiserver_detections.py`) exits 1 in these conditions:
+
+- **A log is not given.** In this mode `--audit-log` has no default (the default of a
+  strict run, `/tmp/kube-apiserver-audit.log`, is the log of a live run, which holds
+  the emulation), and an empty value of it (`--audit-log ''`) counts as a log that is
+  not given. The static pod and API server validators also need `--cri-log` and
+  `--file-log`.
+- **A log does not exist.**
+- **A log holds no record.** A record is what the loader returns, which is what the
+  rules are run on. The `Loaded N ...` line prints the number: the JSON objects of the
+  lines of an audit log or a file log, and one sandbox for each sandbox object of a
+  CRI log (by `id`: an object whose `id` the log held before is not counted again,
+  and the objects without an `id` count as one). A blank line and a line that is not
+  JSON are not records. For an audit log, and for each log of the API server
+  validator, the message gives the number of lines that are not blank. Thus a capture
+  that recorded nothing (0 lines) is told from a capture that did not parse (N
+  lines). For its CRI log and its file log, the static pod validator gives the number
+  of records, and not the number of lines. For a CRI log, N lines with 0 records is
+  also a capture of snapshots that parsed and hold no sandbox (`{"items": []}`).
+
+What each validator prints:
+
+| Validator | A log without a record | A log that is not given or does not exist |
+|-----------|------------------------|-------------------------------------------|
+| `validate_k8s_detections.py` | `NEGATIVE CONTROL FAILED: the pre-emulation audit log <path> holds no audit event (0 records read from N non-blank line(s))`. No rule is judged. | `ERROR: no pre-emulation audit log was given (--audit-log)`, or `ERROR: the pre-emulation audit log <path> was not found`. |
+| `validate_staticpod_detections.py` | `CONTROL FAILED: no audit event in the pre-emulation audit log <path> ...`, then `FAILED: N control(s) failed.` The CRI control and the file control fail a CRI log without an API-scheduled sandbox and a file log without a `kubeadm` write, so they fail an empty CRI or file log. The `CONTROL FAILED` line of each names the log and the number of records that it holds: `(the CRI log <path> holds N pod sandbox(es))`, `(the file log <path> holds N file event(s))`. | A `CONTROL FAILED` line for each log that is not given, and for an audit log that does not exist. A CRI or file log that is given and does not exist is an `ERROR`. |
+| `validate_apiserver_detections.py` | One `NEGATIVE CONTROL FAILED: the pre-emulation <log> <path> holds no <record> ...` line for each of the audit log, the CRI log and the file log. | One `NEGATIVE CONTROL FAILED` line for each log that is not given, and for an audit log that does not exist. A CRI or file log that is given and does not exist is an `ERROR`. |
+
+The file log of the API server lab is the audit trail of one watched token file, and
+a healthy capture can hold no read of that file before the emulation. So the capture
+step of `validate-apiserver-detections.yml` also converts the canary read of the file
+sensor step (audit key `k8s_node_canary`): a read of the public `ca.crt` beside the
+token. Such a record is a near-miss of the token rule: it is under
+`kubernetes.io~projected/`, and its name does not end in `/token`. The gate tests run
+the converter lines of the capture step on a constructed audit event. Its SYSCALL
+record holds the key that the file sensor step gives to its canary watch, so a
+capture step that converts another key fails the tests. Only the kind job shows the
+records that the runner's auditd writes.
+
+The checks count records. They do not grade them. A log of `{}` lines passes today:
+each loader counts a JSON object that is not a record of its log. Roadmap item R2d
+closes that (the known gap `k8s-log-object-not-an-audit-event` of the gate tests). How
+near the records of a live capture are to a rule is not a claim of the Kubernetes
+negative control: the near-miss of each rule is proven by its rule cases (item 3 of
+the definition of done). The static pod validator does not require a mirror-pod
+create of the control-plane baseline in the audit log.
+
+The verdict and the exit code of a strict run are not changed, and a strict run needs
+no more logs than before. Without `--audit-log` it reads
+`/tmp/kube-apiserver-audit.log`; a rule whose log is not given is skipped, and a run
+that finds no log at all prints `SKIP` and exits 0. That is for a local run without a
+cluster: CI gives each log. An empty value (`--audit-log ''`) is not a run without the
+option. As before, it is a log that does not exist: the run prints
+`Audit log not found:` with no path after it, and it does not read the default log.
+One text of a strict run is changed: the two `CONTROL FAILED` lines of the static pod
+validator (a CRI log without an API-scheduled sandbox, a file log without a `kubeadm`
+write) name the log and the number of its records in a strict run too.
 
 ### Node runtime sensor (TRR9003 Strategy 1)
 
@@ -1161,7 +1256,17 @@ source (`--file-log`), and each gates its rule on one marked emulation record (C
   `Timestamp`). The `exe` and the PATH `name` are the paths that the node process
   saw, so they are the values the rules read. A relative name of a `*at` syscall
   with a real directory fd cannot be placed; the converter skips it and counts it
-  on stderr.
+  on stderr. Each run that read its log also prints one summary line on stderr: the
+  raw log, the audit records and the events that it read, the events with the key,
+  the file events that it wrote and the PATH items that it skipped. Thus the log of
+  a capture step shows why a file log is empty. stdout holds only the JSON lines. A
+  run that cannot open its log (a path that does not exist, a directory) ends with
+  a traceback and prints no summary line. Each workflow step that runs the converter
+  first makes the raw log with `tee`, so the file is there.
+  Each lab adds its watch in the step that starts auditd, after the wait
+  for `audit-rules.service` (auditd 4; see the note in [Manual run](#manual-run)).
+  The static-pod lab also prints an `::error` line when the rule of the sensor is
+  not in the list of `auditctl -l` before or after the emulation.
 - **Static-pod directory (TRR9003).** `k8s/kind-staticpod-cluster.yaml` bind-mounts
   `.kind/trr9003-manifests` in the checkout (a relative path, which kind resolves
   against the working directory, as it does the audit policy) at the node's
@@ -1184,11 +1289,14 @@ source (`--file-log`), and each gates its rule on one marked emulation record (C
   watch through `/proc/<node pid>/root`, checks with a canary read of the `ca.crt`
   beside it that auditd records reads there, and passes the file to Procedure E
   (`TRR9006_TOKEN_FILE`). E reads it through a marked copy of cat
-  (`/usr/local/bin/trr9006-reader`). The negative control for this gate can fail
-  only on a stray marked-reader event. The validator prints how many file events
-  the log holds (E's marked read, and any read of the watched file by the kubelet or
-  by kube-proxy, when one occurs) and how many the rule matches (the kubelet is
-  filtered). A false-positive control runs in the validate and the negative-control
+  (`/usr/local/bin/trr9006-reader`). For the pre-emulation file log, the capture
+  step also converts the records of the canary key `k8s_node_canary`, and the
+  negative control fails when that log holds no file event (see
+  [A negative control must read a record](#a-negative-control-must-read-a-record)).
+  The validator prints how many file events the log holds (E's marked read, the
+  canary read in the pre-emulation log, and any read of the watched file by the
+  kubelet or by kube-proxy, when one occurs) and how many the rule matches (the
+  kubelet is filtered). A false-positive control runs in the validate and the negative-control
   runs: the rule must match none of the kubelet's own token reads (an `Image` whose
   file name is `kubelet`, in any directory). Live CI has recorded no kubelet read of
   the watched token in any run so far (3 of 3 runs to 2026-10-23, each watched for
@@ -1291,7 +1399,8 @@ namespace and a `dns-default` ConfigMap, and the vendored DNS Operator CRD and a
 is why these two gates read only the request body and need a patch or update, so the
 setup creates cannot pass them. The cleanup deletes only the labelled objects, the CRD
 included. The negative control proves a pass depends on the emulation, not the
-baseline.
+baseline. It fails when one of its three logs is not given or holds no record (see
+[A negative control must read a record](#a-negative-control-must-read-a-record)).
 
 **Per-procedure gates and the emulation ledger.** A `MANIFEST` entry's gate is either
 one callable (any marked record passes, as before) or a list of `(procedure, gate)`
@@ -1333,6 +1442,21 @@ failed, and when a matching event has no `requestReceivedTimestamp` to place it 
 A ledger line that does not parse, or is not a row with `trr` and `procedure`, fails
 the run, because a corrupt ledger proves nothing. The TRR9002 and TRR9003 validators
 do the same.
+
+The emulation scripts take `start` and `end` from bash (`EPOCHREALTIME`, bash 5.0 or
+later) and not from `date +%6N`. `date` of uutils coreutils 0.10.0 (Ubuntu 26.04)
+prints `%6N` without the leading zeros of the fraction, and a start that is almost
+1 s late puts the record of the procedure outside its window. With an older bash
+the script calls `date` with `%N` and keeps six digits. A `date` that has no `%N`
+(bash 3.2 with the `date` of macOS) prints the letter `N`, and the function then
+prints a text such as `2026-11-13T20:23:06.NZ`. The validators read that text as the
+whole second (Python 3.11 and later). The window of the procedure then starts and
+ends up to 1 s early, and a record from the last second of the procedure can be
+outside it. Use bash 5 there. bash writes `EPOCHREALTIME` with the decimal point of
+the locale. The function reads `.` and `,`. In a locale with a different decimal point
+(glibc has one, `ps_AF`) the function fails, and the script stops before its first
+procedure: run the script with `LC_ALL=C` there. The gate tests hold the function
+(`LedgerClock` and `DateWidth` in [`tests/test_labs.py`](tests/test_labs.py)).
 
 **Must-not-match checks.** With a ledger, `MISS_MANIFEST` asserts that a rule stays
 quiet on the emulation's own server-side dry runs, which persist nothing. The `dryrun`
@@ -1587,6 +1711,26 @@ placeholder IDs, and `trr90NN-` resource names. The validator runs each rule
 through the **same pySigma SQLite backend** the Kubernetes validators use (`sigma_eval.py`),
 and a technique passes only if the rule fires on its attack fixture (carrying the
 emulation's marker) **and** matches nothing in the benign baseline.
+
+Both fixtures that `MANIFEST` names for a rule must be files, and the benign baseline
+must hold a record, because a negative control that read no record cannot fail:
+
+- A rule whose attack or benign fixture is missing gets an `ERROR` row that names the
+  file. There is no state for a fixture that comes later: list a rule in `MANIFEST`
+  in the change that adds its two fixtures.
+- A rule whose benign baseline holds no record gets a `FAIL` row with `NEGATIVE
+  CONTROL VACUOUS`. The count is the number of records that the loader returns, which
+  is the set that the rule is run on: `[]`, a file of zero bytes or of blank lines,
+  and an envelope with an empty list (`{"Records": []}`) hold no record.
+- Each of the two fails the run (exit 1), and `--report` does not waive them.
+  `--report` makes only a miss non-fatal: a rule that did not fire on a marked
+  record of its attack fixture, or that fired on a benign record.
+- The validator counts the records of a baseline and does not grade them. A baseline
+  whose records are all far from the rule passes (`[{}]`); the grading line under
+  each row is informational (roadmap item R2e).
+- A `MANIFEST` entry whose rule file does not exist is still `PENDING`: the validator
+  prints it, does not count it and does not fail on it. `check_sufficiency.py` fails
+  that tree.
 
 The benign baseline is deliberately hard: it hits the same log source, method, and
 structural fields as the attack and differs only on the discriminating field (the

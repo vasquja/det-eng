@@ -15,7 +15,9 @@ node file-event rules the kind CI node sensor gates (C2-7):
     write in the kubelet static-pod directory, caught by a write/attribute tree
     watch on the host directory that is bind-mounted there, in the checkout
     (`-F dir=${GITHUB_WORKSPACE}/.kind/trr9003-manifests -F perm=wa`).
-Both use the key k8s_node_file.
+Both use the key k8s_node_file. The capture step of validate-apiserver-detections.yml
+also converts the key k8s_node_canary (the canary read of ca.crt that the file
+sensor step makes) into the pre-emulation file log.
 
 A kind node is a Docker container on the runner's kernel, and the audit
 subsystem is not namespaced, so the runner's auditd sees the syscalls the node's
@@ -58,6 +60,24 @@ Limit: a relative PATH name of a *at syscall with a real directory fd (openat(fd
 "token"), as fts/find traversal or os.open(name, dir_fd=...) make) is relative to
 that directory, which the audit record does not name. The converter does not guess
 it from the CWD: it skips that item and counts it on stderr.
+
+Each run that read its log also says on stderr what it read, in one summary line
+(stdout holds only the JSON lines):
+
+    auditd_file_events: AUDIT_LOG: read R audit record(s) of E event(s); K event(s)
+    with the key KEY; wrote W file event(s); skipped S PATH item(s)
+
+    R  the lines of the log that hold an audit message id (a record of any type)
+    E  the events that these records make (one for each message id)
+    K  the events whose SYSCALL record names the key (without --key: the events
+       that hold a SYSCALL record)
+    W  the JSON lines on stdout
+    S  the PATH items that the limit above skipped
+
+Thus the log of a capture step shows why a run wrote no file event: the log held
+no record (R is 0), no event held the key (K is 0), each PATH item was skipped (S
+is not 0), or a keyed event holds no exe or no PATH item of the file itself (K is
+not 0, and W and S are 0).
 """
 
 import argparse
@@ -139,22 +159,29 @@ def _key_match(syscall_fields, key):
     return key in raw.split("\x01")
 
 
-def group_events(lines):
+def group_events(lines, counts=None):
     """{event id: {"epoch": str, "syscall": {...}|None, "paths": [{...}, ...], "cwd": str|None}}
     from raw audit lines, in first-seen order. A line that has no audit msg token,
-    or whose record type is one we do not read, is skipped."""
+    or whose record type is one we do not read, is skipped.
+
+    counts, a dictionary, gets what the lines held: `records`, the lines with an
+    audit msg token (a record of any type), and `events`, the number of different
+    message ids of these records."""
     events = {}
+    records, ids = 0, set()
     for line in lines:
         m = _MSG.search(line)
         if not m:
             continue
+        eid = (m.group("epoch"), m.group("serial"))
+        records += 1
+        ids.add(eid)
         tm = re.search(r"\btype=(\w+)", line)
         if not tm:
             continue
         rtype = tm.group(1)
         if rtype not in ("SYSCALL", "PATH", "CWD"):
             continue
-        eid = (m.group("epoch"), m.group("serial"))
         ev = events.setdefault(eid, {"epoch": m.group("epoch"), "syscall": None,
                                      "paths": [], "cwd": None})
         rest = line[m.end():]
@@ -165,6 +192,8 @@ def group_events(lines):
             ev["paths"].append(fields)
         elif rtype == "CWD":
             ev["cwd"] = fields.get("cwd")
+    if counts is not None:
+        counts.update(records=records, events=len(ids))
     return events
 
 
@@ -272,11 +301,20 @@ def event_records(ev, key, skipped=None):
     return out
 
 
-def convert(lines, key=None, skipped=None):
-    """Every file_event record from the raw audit `lines`, in event order."""
+def convert(lines, key=None, skipped=None, counts=None):
+    """Every file_event record from the raw audit `lines`, in event order.
+
+    counts, a dictionary, gets what the run read: `records` and `events` (see
+    group_events()), and `keyed`, the events whose SYSCALL record names `key`
+    (without a key: the events that hold a SYSCALL record)."""
     out = []
-    for ev in group_events(lines).values():
+    keyed = 0
+    for ev in group_events(lines, counts).values():
+        if ev["syscall"] and _key_match(ev["syscall"], key):
+            keyed += 1
         out.extend(event_records(ev, key, skipped))
+    if counts is not None:
+        counts["keyed"] = keyed
     return out
 
 
@@ -289,13 +327,23 @@ def main(argv=None):
                          "(e.g. k8s_node_file); default: every file syscall")
     args = ap.parse_args(argv)
     skipped = [0]
+    counts = {}
     with open(args.audit_log, encoding="utf-8", errors="replace") as fh:
-        records = convert(fh, args.key, skipped)
+        records = convert(fh, args.key, skipped, counts)
     for rec in records:
         sys.stdout.write(json.dumps(rec, ensure_ascii=False) + "\n")
     if skipped[0]:
         sys.stderr.write(f"auditd_file_events: skipped {skipped[0]} PATH item(s) whose "
                          "relative name is relative to a directory fd (not placeable)\n")
+    # What the run read, always: a capture step that wrote no file event shows the
+    # cause in its log (no record, no event with the key, each PATH item skipped, or
+    # a keyed event without an exe or without a PATH item of the file itself).
+    keyed = (f"with the key {args.key}" if args.key is not None
+             else "with a SYSCALL record (no --key)")
+    sys.stderr.write(f"auditd_file_events: {args.audit_log}: read {counts['records']} audit "
+                     f"record(s) of {counts['events']} event(s); {counts['keyed']} event(s) "
+                     f"{keyed}; wrote {len(records)} file event(s); skipped {skipped[0]} "
+                     "PATH item(s)\n")
     return 0
 
 
