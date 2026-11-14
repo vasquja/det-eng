@@ -173,7 +173,8 @@ The variant `multi` is this model: a list field has one value for each element. 
 scalar element is the value itself. An element that is an object or a list is its
 default JSON text. An item holds when it holds on one value. An empty list has no
 value. Under `multi`, `list-equality` fires, and `list-quotes` and `list-empty-exists`
-are quiet.
+are quiet. The item `f: null` does not hold on an empty list by default, and it holds
+under `multi` (probe `null-empty-list`).
 
 A store that explodes a list into leaf fields (Elasticsearch, for a list of objects)
 or into indexed keys (`field.0`, `field.1`) has no field that holds the text of the
@@ -332,10 +333,18 @@ for each rule.
 - A **gain**: a record that is quiet by default fires. On a near-miss, the item in
   `breaks` does not hold the case. On a filtered case, the filter does not apply. On a
   confounder, a benign case or a benign fixture, it is a false positive.
+- An event set that loses one hit and gains another has the fault `loss+gain`. The two
+  meanings hold together.
 - **Weakened**: a near-miss or a filtered case stays quiet, but its `breaks` item is
-  no longer the single flip that fires the rule. This is a note, not a failure.
-- Each variant must change the answer of a golden probe that names it. If not, the
-  gate stops with exit code 2.
+  no longer the single flip that fires the rule. This is a note, not a failure. The
+  gate makes the note for a plain rule under `compact`, `sorted`, `cs_like` and `re2`.
+  It does not make the note under `multi`, or for a correlation rule: a negative case
+  that is weakened there is not reported.
+- **In force**: before a rule runs, each golden probe that names a variant must give
+  the answer that the table declares for that variant, and one of these answers must
+  differ from the default answer. If not, the gate stops with exit code 2 and names
+  the variant. Thus a `sorted` that lost its key sort (it is then `compact`) stops the
+  gate: the probe `list-key-order` names it.
 - The variant `multi` cannot check a correlation rule on records with a list, or an
   item with `|neq` on a list. The gate fails such a rule.
 
@@ -343,17 +352,22 @@ for each rule.
 entry is one event set under one variant: the rule, the case or fixture, the fault,
 the hits that are lost and gained (each hit is the list of its record numbers), the
 changed items, a reason, a `why` and, where one exists, the open entry of
-[`RULE_DEFECTS.md`](RULE_DEFECTS.md). The gate proves each reason on each run:
+[`RULE_DEFECTS.md`](RULE_DEFECTS.md). A reason names the cause of its variant:
 
-| Reason | Variant | The gate proves |
-|--------|---------|-----------------|
-| `KEY_ORDER` | `sorted` | the event set does not differ under `compact`, and each changed item reads a list |
-| `LIKE_CASE` | `cs_like` | each changed item is a `LIKE` test |
-| `LIST_TEXT` | `multi` | each changed item reads a field that is a list in the record |
+| Reason | Variant | The cause | What the gate proves about it |
+|--------|---------|-----------|-------------------------------|
+| `KEY_ORDER` | `sorted` | the item needs the key order of the record | the event set does not differ under `compact`. This check can fail |
+| `LIKE_CASE` | `cs_like` | the item is a `LIKE` test | nothing more: each difference of `cs_like` is on a `LIKE` test |
+| `LIST_TEXT` | `multi` | the item reads a field that is a list, and a multi-valued field gives the item one element at a time | nothing more: each difference of `multi` is on a field that is a list |
+
+The `why` of an entry says why the rule needs the key order, the letter case or the
+text of the list. A person judges that sentence. The gate does not judge its words:
+it fails only a `why` that is empty or is still the `TODO` text of `--propose`.
 
 The gate fails on a difference that is not in the list. It also fails on an entry
 whose fault, hits or items changed, on an entry with no difference (stale), on a
-reason that it cannot prove, on an entry with no `why`, and on a `defect` that is not
+reason that is not a reason of the variant, on a `KEY_ORDER` entry whose event set
+differs under `compact` too, on an entry with no `why`, and on a `defect` that is not
 an open entry which names the rule. An entry is a human decision, as a budget or a
 waiver is: propose it in the pull request (`--propose` prints the list of the run).
 On a pull request, `--baseline-expected` fails an entry that the list of the base
@@ -425,6 +439,7 @@ and when a row has no name in the text. CI runs the self-test and `--check-doc`.
 | `null-absent` | `field: null` holds on a record without the field | `verb: 'delete', dryRun: null` | `{"verb": "delete"}` | fires | fires | fires | fires | fires | fires |
 | `null-json-null` | `field: null` holds on a JSON null | `verb: 'delete', dryRun: null` | `{"verb": "delete", "dryRun": null}` | fires | fires | fires | fires | fires | fires |
 | `null-empty` | `field: null` does not hold on an empty string | `f: null` | `{"f": ""}` | quiet | quiet | quiet | quiet | quiet | quiet |
+| `null-empty-list` | `field: null` does not hold on an empty list (the text `[]`); as multi the field has no value, and the item holds | `f: null` | `{"f": []}` | quiet | quiet | quiet | fires | quiet | quiet |
 | `empty-absent` | an empty string does not match a record without the field | `verb: 'get', f: ''` | `{"verb": "get"}` | quiet | quiet | quiet | quiet | quiet | quiet |
 | `exists-json-null` | `\|exists: true` does not hold on a JSON null | `f\|exists: true` | `{"f": null}` | quiet | quiet | quiet | quiet | quiet | quiet |
 | `exists-false-absent` | `\|exists: false` holds on a record without the field | `verb: 'get', f\|exists: false` | `{"verb": "get"}` | fires | fires | fires | fires | fires | fires |

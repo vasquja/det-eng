@@ -96,7 +96,9 @@ file of the repository, and Python can import a `.py` file. Name it `.md.txt` or
 `.txt` and plant it under its real name.
 
 `test_quality.py` also holds the tests of `check_variants.py` (class `Variants`):
-the gate itself, its expected list (`detections/variants/expected.json`), the probe
+the gate itself (its control counts the event sets of each rule, and one test
+proves that the gate stops when a variant is not in force), its expected list
+(`detections/variants/expected.json`), the probe
 table of [`detections/SEMANTICS.md`](../SEMANTICS.md) (`--check-doc`), the form
 of its CI job, and the third comparison of the `sufficiency-ratchet` job. With the
 `re2` module these tests pass `--require-re2`, as the job does. Without it they run
@@ -463,7 +465,9 @@ it does not see one test in the place of a different one.
   the case `impersonate-system-masters-group-procB` under the variant `multi`. The
   second is the one entry of `detections/sigma/T1098.006/k8s_rbac_privileged_grant.yml`,
   which names the open entry K43 of `detections/RULE_DEFECTS.md`. One test also
-  needs K13 as a row of the closed entries of that file. When a rule correction
+  needs K13 as a row of the closed entries of that file. One more needs C6 as an
+  open entry of that file (a row of its Summary table, and a section) that does not
+  name `k8s_rbac_privileged_grant`. When a rule correction
   removes one of these differences, give the tests another entry of the list:
 
   - `detections/sigma/T1134/k8s_impersonation_privileged.cases.jsonl`
@@ -475,6 +479,14 @@ it does not see one test in the place of a different one.
   of its six answer cells. The table is generated
   (`check_variants.py --write-doc`), so a change to that probe in the gate changes
   the row.
+
+  One test of `Variants` changes one line of the oracle in its copy: the
+  `json.dumps` call that `flatten()` makes for a list. The planted line has no key
+  sort, so the variant `sorted` is not in force. This file is code, not content. A
+  change to that line makes the test fail with the `replace()` message above, and
+  the repair is the new text in the test:
+
+  - `detections/sigma_eval.py`
 
   `CheckSufficiency` (`test_sufficiency.py`) takes the positive cases of this
   sidecar, for its proof that a rule that needs one account id is bad:
@@ -535,19 +547,32 @@ These rejections have no planted artifact and no test:
   report of the gate, or that holds no rule.
 - The digest check of the `COMPILE_ONLY` table of `check_sufficiency.py`. The
   table is empty today, so there is no entry to make stale.
-- `check_variants.py` has four of them: a gain (a negative case or a benign
-  fixture that fires under a variant), a rule that the `multi` variant cannot
-  check (a correlation rule on records with a list, or an item with `|neq` on a
-  list), an
-  entry whose proof fails (`KEY_ORDER` on a set that differs as compact text
-  too), and an entry of a rule file that is gone. Its self-test holds a
-  constructed rule for each.
+- `check_variants.py` has eight of them: a gain (a negative case or a benign
+  fixture that fires under a variant), a change of hits in an event set that still
+  fires (a fixture of two records that loses one hit; a positive that loses one hit
+  and gains another), a rule that the `multi` variant cannot check (a correlation
+  rule on records with a list, or an item with `|neq` on a list), a rule with no
+  case and no fixture, a rule file that cannot be checked, an entry with the
+  reason `KEY_ORDER` on a set that differs as compact text too, an entry whose
+  `why` is still the `TODO` text of `--propose`, and a `compact`, `cs_like` or
+  `re2` variant that is not in force. Its self-test holds a constructed rule, or a
+  constructed variant, for each (for `re2`, where the module is installed). The gate
+  test of the in-force check plants a `sorted` that lost its key sort. No test and
+  no self-test check switches `multi` off.
+- Two checks of `check_variants.py` have no test, because no artifact can fail
+  them: an entry with the reason `LIKE_CASE` whose changed item is not a `LIKE`
+  test, and an entry with the reason `LIST_TEXT` or `KEY_ORDER` whose changed item
+  does not read a list. The variant of each reason changes no other item
+  ([`detections/SEMANTICS.md`](../SEMANTICS.md), section 9).
+- The control of `Variants` counts the event sets of each rule. It does not prove
+  that the gate read each record of a set (a fixture that is read as its first
+  record only). Only the two entries of the expected list for a fixture name a
+  record of a fixture.
 - `check_variants.py --check-doc` has three of them: a probe that the text of
   `detections/SEMANTICS.md` does not name, a document without one of its two
   marker lines, and a document that is not there. The self-test holds a
   constructed document for each. The mode `--write-doc` has no gate test: no
-  workflow runs it, and `AGENTS.md` does not give the command yet. The self-test
-  proves it on a constructed document.
+  workflow runs it. The self-test proves it on a constructed document.
 
 The suite does not run these checks:
 

@@ -962,8 +962,9 @@ jobs:
 
       - name: Install requirements
         # detections/requirements.txt only: the suite needs no other package. With
-        # google-re2 the tests of the two regex lints pass --require-re2, as their
-        # jobs do; without it they run the default path. No test is skipped for it.
+        # google-re2 the tests of check_sigma_regex.py, check_provider_mappings.py
+        # and check_variants.py pass --require-re2, as their jobs do; without it
+        # they run the default path. No test is skipped for it.
         run: pip install --quiet -r detections/requirements.txt
 
       - name: Run the gate tests (each gate must reject its planted bad artifacts)

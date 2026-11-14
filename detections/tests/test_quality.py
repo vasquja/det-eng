@@ -463,6 +463,18 @@ class Variants(gatelib.GateCase):
     LISTED = "T1134/k8s_impersonation_privileged.yml"
     LISTED_CASE = "impersonate-system-masters-group-procB"
     TRACKED = "T1098.006/k8s_rbac_privileged_grant.yml"
+    # A rule file that is not in the repository, for an entry of a rule that is gone.
+    GONE = "T9999/gone.yml"
+    # The closing line of a run whose only problems are problems of the expected list.
+    LIST_FAILED = ("\nFAILED: 1 problem(s) of the expected list name no rule of this run (the "
+                   "list itself, or an entry of a rule file that is not there).\n")
+    # The rows of the cloud MANIFEST of the copy for each rule file (`T<id>/<file>.yml`):
+    # the gate reads the attack fixture and the benign fixture of each row.
+    MANIFEST_ROWS = (
+        "import collections, json, sys\n"
+        "sys.path.insert(0, 'detections')\n"
+        "import validate_cloud_detections as cloud\n"
+        "print(json.dumps(collections.Counter(f'{row[1]}/{row[2]}' for row in cloud.MANIFEST)))\n")
 
     @classmethod
     def setUpClass(cls):
@@ -472,6 +484,15 @@ class Variants(gatelib.GateCase):
         cls.ci_arguments = ("--require-re2",) if cls.RE2 else ()
         # One full run takes about 10 s: start it now.
         cls.full_run = cls.in_background(cls.good().run, cls.GATE, *cls.ci_arguments)
+        # A second full run, on a copy whose list holds an entry of a rule file that
+        # is not there (test_rejects_expected_entry_of_a_rule_file_that_is_gone).
+        cls.gone = cls.class_tree()
+        cls.gone.edit_json(cls.EXPECTED, cls.add_entry_of_a_rule_that_is_gone)
+        cls.gone_run = cls.in_background(cls.gone.run, cls.GATE, *cls.ci_arguments)
+
+    @classmethod
+    def add_entry_of_a_rule_that_is_gone(cls, doc):
+        doc["expected"].append(dict(doc["expected"][0], rule=cls.GONE))
 
     def entry(self, tree, rule):
         """The one entry of the expected list of the copy for `rule`."""
@@ -527,7 +548,10 @@ class Variants(gatelib.GateCase):
 
     def test_control_good_tree_is_accepted(self):
         """CONTROL: the unmodified copy passes; the gate checked every rule of the
-        copy, and each entry of the expected list is a difference that it shows."""
+        copy, on each event set of the rule and on no other one (each case of its
+        sidecar, and the attack fixture and the benign fixture of each of its rows
+        in the cloud MANIFEST), and each entry of the expected list is a difference
+        that it shows."""
         good = self.good()
         rules = rule_keys(good)
         known = len(good.read_json(self.EXPECTED)["expected"])
@@ -535,12 +559,26 @@ class Variants(gatelib.GateCase):
                                      "stale-entry test below would be vacuous")
         result = self.full_run.result()
         self.assert_accepts(result, self.OK.format(rules=len(rules), known=known))
-        checked = found(result, r"^ok    (T\S+\.yml): [1-9]\d* event set\(s\), same hits as ")
-        self.assertEqual(sorted(checked), rules)
         self.assertEqual(len(found(result, r"^known T\S+\.yml :: .*, expected \(")), known)
-        cases = sum(len(good.read_jsonl(rel)) for rel in good.glob("detections/sigma/*/*.cases.jsonl"))
+        # The event sets that the copy holds for each rule, counted without the gate.
+        probe = good.run_python(self.MANIFEST_ROWS)
+        self.assertEqual(probe.returncode, 0, probe.describe())
+        rows = json.loads(probe.stdout)
+        self.assertGreater(sum(rows.values()), 0, "the cloud MANIFEST of the copy is empty")
+        self.assertLessEqual(set(rows), set(rules), "a MANIFEST row names no rule of the copy")
+        wanted = {}
+        for rule in rules:
+            sidecar = "detections/sigma/" + rule[:-len(".yml")] + ".cases.jsonl"
+            cases = len(good.read_jsonl(sidecar)) if good.exists(sidecar) else 0
+            wanted[rule] = cases + 2 * rows.get(rule, 0)
+        self.assertGreater(sum(1 for rule in rules if rule in rows and wanted[rule] > 2 * rows[rule]),
+                           0, "no rule of the copy has a sidecar and a MANIFEST row")
+        checked = found(result, r"^ok    (T\S+\.yml): (\d+) event set\(s\), same hits as ")
+        self.assertEqual(sorted(rule for rule, _ in checked), rules)
+        self.assertEqual({rule: int(count) for rule, count in checked}, wanted,
+                         "the gate did not read each case and each fixture of a rule")
         sets = int(re.search(r"(?m)^OK: \d+ rule\(s\), (\d+) event set", result.stdout).group(1))
-        self.assertGreaterEqual(sets, cases, "fewer event sets than sidecar cases in the copy")
+        self.assertEqual(sets, sum(wanted.values()))
         if not self.RE2:
             # Without google-re2 the report must say that the variant did not run.
             self.assertIn("\nNOT RUN: variant re2: ", result.stdout)
@@ -798,6 +836,110 @@ class Variants(gatelib.GateCase):
                                     r"detections/RULE_DEFECTS\.md \(its Summary table\)$",
                             exit_code=1)
 
+    def test_rejects_expected_entry_whose_defect_names_another_rule(self):
+        """vr-entry-defect-of-another-rule. The `defect` of an entry must be an open
+        entry of RULE_DEFECTS.md that names the rule of the entry. `C6` is open, and
+        it is the entry of another rule: an entry that points to it says that the
+        difference is tracked, and nothing tracks it."""
+        tree = self.tree()
+        rule = self.TRACKED
+        stem = os.path.basename(rule)[:-len(".yml")]
+        defects = tree.read("detections/RULE_DEFECTS.md")
+        self.assertIn("\n| [C6](#c6-", defects, "C6 is not a row of the Summary table")
+        start = defects.index("\n### C6. ")
+        section = defects[start:defects.index("\n### ", start + 1)]
+        self.assertNotIn(stem, section, "the entry C6 names the rule: the test needs another entry")
+        self.change_entry(tree, rule, defect="C6")
+        result = tree.run(self.GATE, "detections/sigma/" + rule)
+        self.assert_rejects(result, rf"^FAIL  {re.escape(rule)}: expected \[sorted\] case \S+: "
+                                    rf"the entry C6 of RULE_DEFECTS\.md does not name {stem}$",
+                            exit_code=1)
+        # The difference that the entry excused before is now new.
+        self.assertRegex(result.stdout, rf"(?m)^FAIL  {re.escape(rule)} :: case positive \S+: "
+                                        r"\[sorted\] loss: .* \(listed, but the entry does not "
+                                        r"hold\)$")
+
+    def test_rejects_expected_entry_of_a_rule_file_that_is_gone(self):
+        """vr-entry-of-a-rule-that-is-gone. On a run of every rule, an entry whose rule
+        file is not in the repository is stale: the rule was deleted or renamed, and
+        the entry would excuse a difference of a later rule file with that name. The
+        closing line counts it as a problem of the list, not as one of the rules
+        that the run checked."""
+        tree = self.gone
+        rules = rule_keys(tree)
+        self.assertNotIn(self.GONE, rules)
+        self.assertFalse(tree.exists("detections/sigma/" + self.GONE))
+        result = self.gone_run.result()
+        self.assert_rejects(result, rf"^FAIL  {re.escape(self.GONE)}: expected \[\w+\] \w+ \S+: "
+                                    r"stale: no rule file detections/sigma/"
+                                    rf"{re.escape(self.GONE)}; delete the entry$", exit_code=1)
+        # One planted defect: one problem. Each rule of the copy passed, and the
+        # entry that was copied still holds for its own rule.
+        self.assertEqual(len(found(result, r"^FAIL .*$")), 1, result.describe())
+        self.assertEqual(sorted(found(result, r"^ok    (T\S+\.yml): ")), rules)
+        self.assertIn(self.LIST_FAILED, result.stdout)
+        self.assertNotRegex(result.stdout, r"(?m)^FAILED: .* rule\(s\) have a new difference")
+        # CONTROL: on a run of some rule files the entry is left alone (the run did
+        # not look for the rule file).
+        some = tree.run(self.GATE, "detections/sigma/" + self.LISTED)
+        self.assert_accepts(some, self.OK.format(rules=1, known=1))
+
+    def test_rejects_second_expected_entry_for_one_event_set(self):
+        """vr-entry-second-for-one-event-set. The list holds one entry for one event
+        set under one variant. A second entry for the same one (a copy with another
+        `why`) is an error of the list: which of the two a person approved is not
+        known. The first entry still holds; the closing line counts the error as a
+        problem of the list, not as a rule."""
+        tree = self.tree()
+        rule = self.LISTED
+        entries = len(tree.read_json(self.EXPECTED)["expected"])
+
+        def duplicate(doc):
+            doc["expected"].append(dict(next(e for e in doc["expected"] if e["rule"] == rule),
+                                        why="PLANTED: other words for the same difference."))
+        tree.edit_json(self.EXPECTED, duplicate)
+        result = tree.run(self.GATE, "detections/sigma/" + rule)
+        self.assert_rejects(result, rf"^FAIL  -: detections/variants/expected\.json entry {entries}: "
+                                    rf"a second entry for \('multi', '{re.escape(rule)}', 'case', "
+                                    rf"'{self.LISTED_CASE}'\)$", exit_code=1)
+        self.assertEqual(len(found(result, r"^FAIL .*$")), 1, result.describe())
+        self.assertRegex(result.stdout, rf"(?m)^ok    {re.escape(rule)}: \d+ event set\(s\), same "
+                                        r"hits as .*; 1 expected difference\(s\)$")
+        self.assertIn(self.LIST_FAILED, result.stdout)
+
+    def test_rejects_run_with_a_variant_that_is_not_in_force(self):
+        """vr-variant-not-in-force. sigma_eval.flatten() of the copy lost the key sort
+        (`sort_keys`), so the variant `sorted` writes the text of `compact`: the gate
+        would run, and a rule that needs the key order of the record would pass. The
+        gate must stop before it checks a rule, with exit code 2, and name `sorted`
+        and no other variant (`compact` is in force)."""
+        tree = self.tree()
+        tree.replace("detections/sigma_eval.py",
+                     " = json.dumps(val, separators=separators, sort_keys=sort_keys)\n",
+                     " = json.dumps(val, separators=separators)   # PLANTED: no key sort\n")
+        # The artifact is bad: the planted hook gives one text with and without the
+        # key sort, and the real one gives two. (Plain assertions.)
+        texts = ("import sys\n"
+                 "sys.path.insert(0, 'detections')\n"
+                 "import sigma_eval\n"
+                 "record = {'rules': [{'verbs': ['*'], 'apiGroups': ['']}]}\n"
+                 "for sort_keys in (False, True):\n"
+                 "    flat = sigma_eval.flatten(record, separators=(',', ':'), sort_keys=sort_keys)\n"
+                 "    print(flat['rules'])\n")
+        self.assertEqual(self.good().run_python(texts).stdout.split(),
+                         ['[{"verbs":["*"],"apiGroups":[""]}]', '[{"apiGroups":[""],"verbs":["*"]}]'])
+        self.assertEqual(tree.run_python(texts).stdout.split(),
+                         ['[{"verbs":["*"],"apiGroups":[""]}]'] * 2)
+        result = tree.run(self.GATE, *self.ci_arguments)
+        self.assert_rejects(result, r"^ERROR: variant\(s\) not in force: sorted\. A variant that "
+                                    r"changes nothing, or less than the table PROBES declares, "
+                                    r"passes rules that it must fail\. No rule was checked\.$",
+                            exit_code=2)
+        self.assertIn("\n  sorted: as this variant, the probe(s) list-key-order do not give the "
+                      "answer that the table PROBES declares\n", result.stdout)
+        # No rule was checked, and no line says OK.
+        self.assertNotRegex(result.stdout, r"(?m)^(ok   |known|FAIL |OK:|FAILED:)")
+
     # -- the ratchet: the third comparison of the sufficiency-ratchet job ----------
 
     RATCHET_OK = (r"^OK: each of the {known} expected difference\(s\) is on the base branch as it "
@@ -852,6 +994,58 @@ class Variants(gatelib.GateCase):
                                     rf"{self.LISTED_CASE}: the base branch does not list this "
                                     r"entry as it is here", exit_code=1)
         self.assertEqual(len(found(result, r"^FAIL .*$")), 1, result.describe())
+
+    CANNOT_COMPARE = ("\nFAILED: the lists cannot be compared: 1 problem(s) of the expected "
+                      "list of this tree or of the base branch (the FAIL rows above).\n")
+
+    def test_rejects_ratchet_against_a_base_list_that_cannot_be_read(self):
+        """vr-ratchet-base-list-unreadable. The list of the base is not JSON (a cut
+        file). No entry can be compared with it, so the comparison fails, and its
+        closing line says that: it does not say that N entries are not on the base."""
+        tree = self.tree()
+        base = tree.out("base/detections/variants/expected.json")
+        with open(base, "w", encoding="utf-8") as fh:
+            fh.write("{\n")
+        result = tree.run(self.GATE, "--baseline-expected", base)
+        self.assert_rejects(result, r"^FAIL  -: the expected list of the base cannot be read: "
+                                    r"\S+expected\.json: cannot read: ", exit_code=1)
+        self.assertEqual(len(found(result, r"^FAIL .*$")), 1, result.describe())
+        self.assertIn(self.CANNOT_COMPARE, result.stdout)
+        self.assertNotIn("are not on the base branch as they are here", result.stdout)
+        self.assertNotRegex(result.stdout, r"(?m)^OK: ")
+
+    def test_rejects_ratchet_of_a_list_with_a_second_entry(self):
+        """vr-ratchet-list-with-a-second-entry. The list of the head holds a second
+        entry for one event set and variant. The gate reads the first one only, so a
+        comparison of what it read would pass: the error of the list must fail the
+        comparison, with a closing line that names the list."""
+        tree = self.tree()
+        base = tree.out("base/detections/variants/expected.json")
+        shutil.copyfile(tree.path(self.EXPECTED), base)
+        entries = len(tree.read_json(self.EXPECTED)["expected"])
+        tree.edit_json(self.EXPECTED, lambda doc: doc["expected"].append(dict(doc["expected"][0])))
+        result = tree.run(self.GATE, "--baseline-expected", base)
+        self.assert_rejects(result, rf"^FAIL  -: detections/variants/expected\.json entry {entries}: "
+                                    r"a second entry for \(", exit_code=1)
+        self.assertEqual(len(found(result, r"^FAIL .*$")), 1, result.describe())
+        self.assertIn(self.CANNOT_COMPARE, result.stdout)
+        self.assertNotIn("are not on the base branch as they are here", result.stdout)
+
+    def test_rejects_ratchet_of_a_list_with_a_second_entry_when_the_base_has_no_list(self):
+        """vr-ratchet-bad-list-and-no-base-list. The base tree has no expected list, so
+        there is nothing to compare with. That is a notice only for a list of the
+        head that can be read: a list with an error (here a second entry for one
+        event set) fails, also on the pull request that adds the list."""
+        tree = self.tree()
+        os.makedirs(tree.out("base/detections/sigma"))
+        entries = len(tree.read_json(self.EXPECTED)["expected"])
+        tree.edit_json(self.EXPECTED, lambda doc: doc["expected"].append(dict(doc["expected"][0])))
+        result = tree.run(self.GATE, "--baseline-expected",
+                          tree.out("base/detections/variants/expected.json"))
+        self.assert_rejects(result, rf"^FAIL  -: detections/variants/expected\.json entry {entries}: "
+                                    r"a second entry for \(", exit_code=1)
+        self.assertNotIn("::notice", result.stdout)
+        self.assertIn(self.CANNOT_COMPARE, result.stdout)
 
     def test_ratchet_passes_with_a_notice_when_the_base_has_no_list(self):
         """The pull request that adds the gate: the base tree is there and has no

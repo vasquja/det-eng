@@ -42,7 +42,7 @@ and benign fixtures of its rows in validate_cloud_detections.MANIFEST (the event
 sets of check_null_safety.py), each from its raw records, not from flattened ones.
 
 A DIFFERENCE is an event set whose hits (the records that fire; for a correlation,
-the alerts) are not the hits of the default run. It has one of two faults:
+the alerts) are not the hits of the default run. Its fault is one of three values:
 
   loss  a record that fires by default does not fire. On a positive case or an
         attack fixture the rule misses the technique on that representation.
@@ -51,6 +51,8 @@ the alerts) are not the hits of the default run. It has one of two faults:
         apply; on a confounder, a benign case or a benign fixture it is a false
         positive. A positive case or an attack fixture can gain a hit too (a
         record of the set that is quiet by default).
+  loss+gain  an event set that loses one hit and gains another. The two meanings
+        above hold together.
 
 A change of the verdict of the set (fires / quiet) and a change of hits inside a
 set that still fires both count. Each difference names the items whose truth
@@ -59,21 +61,29 @@ changed on the records in question, and the value they read.
 A negative case that stays quiet can still stop being a proof: a near-miss or a
 filtered case declares the item that it breaks (`breaks`), and under a variant
 another item can keep it quiet. Such a case is reported as WEAKENED (a note, and
-in --json); it does not fail the run.
+in --json); it does not fail the run. The note is made for a plain rule under
+`compact`, `sorted`, `cs_like` and `re2`. It is not made under `multi`, and not
+for a correlation rule: a negative case that is weakened there is not reported.
 
 EXPECTED DIFFERENCES. detections/variants/expected.json lists each known
 difference: the variant, the rule, the event set, the fault, the hits that are
 lost and gained (each hit is the list of its record numbers in the event set), the
 items whose truth changes, a reason, one sentence that says why the difference is
 accepted (`why`) and, where one exists, the entry of detections/RULE_DEFECTS.md
-that tracks it. An entry is a human approval, like a waiver of check_sufficiency.py:
+that tracks it. The reason names the cause of the variant (REASONS), and a reason
+of another variant is refused. The gate proves one thing about a reason: KEY_ORDER
+on an event set that differs as `compact` text too is refused. The `why` is what a
+person judges; the gate does not judge its words. An entry is a human approval,
+like a waiver of check_sufficiency.py:
 propose it in the pull request (--propose prints the list that this run shows).
 The run fails on
   - a difference that is not listed (new);
   - a listed difference whose fault, hits or items changed;
   - a listed entry that shows no difference (stale): delete it;
-  - a reason that is not one of REASONS for that variant, or whose proof fails;
-  - an entry without a `why`, or a second entry for one event set and variant;
+  - a reason that is not one of REASONS for that variant, or a KEY_ORDER entry
+    whose event set differs as `compact` text too;
+  - an entry without a `why` (empty, or still the TODO text of --propose), or a
+    second entry for one event set and variant;
   - a `defect` that is not an open entry of RULE_DEFECTS.md that names the rule;
   - an entry of a variant that did not run, with --require-re2.
 --baseline-expected FILE only compares the list with the list of the base branch
@@ -90,6 +100,13 @@ for `compact` and `sorted` when no record changes (no list), for `sorted` when i
 records are those of `compact`, for `multi` when no record holds a list, for
 `cs_like` when no query of the rule holds LIKE, and for `re2` when none holds
 REGEXP. The self-test proves on the golden probes that this changes no answer.
+
+IN FORCE. Before a rule runs, each variant must be in force: each golden probe
+that names the variant gives the answer that PROBES declares for it, and one of
+these answers is not the default answer. A variant that changes nothing passes
+every rule, and a variant that changes less than declared (`sorted` without its
+key sort is `compact`) passes rules that it must fail. Then the gate stops with
+exit code 2 and names that variant.
 
 THE DOCUMENT. detections/SEMANTICS.md says what the oracle decides, and proves each
 statement with a golden probe (the table PROBES below: one detection, one record,
@@ -493,18 +510,19 @@ class Difference:
         else:
             verdict = (f"fires in both, but the hits differ as {self.variant} "
                        f"({self.default_hits} -> {self.variant_hits})")
-        if self.fault == "loss":
-            meaning = ("the rule misses the technique on that representation"
-                       if self.kind in ("positive", "attack") else "a hit is lost")
-        elif self.kind == "near-miss":
-            meaning = "the item that the case breaks does not hold it there"
-        elif self.kind == "filtered":
-            meaning = "the filter does not apply there"
-        elif self.kind in ("positive", "attack"):
-            meaning = "a record that is quiet by default fires there"
-        else:
-            meaning = "a false positive there"
-        return f"[{self.variant}] {self.fault}: {verdict}; {meaning}"
+        # A set that loses one hit and gains another (loss+gain) gets both meanings.
+        positive = self.kind in ("positive", "attack")
+        meaning = []
+        if self.lost:
+            meaning.append("the rule misses the technique on that representation"
+                           if positive else "a hit is lost")
+        if self.gained:
+            meaning.append("a record that is quiet by default fires there" if positive
+                           else "the item that the case breaks does not hold it there"
+                           if self.kind == "near-miss"
+                           else "the filter does not apply there" if self.kind == "filtered"
+                           else "a false positive there")
+        return f"[{self.variant}] {self.fault}: {verdict}; {', and '.join(meaning)}"
 
     def lines(self):
         out = []
@@ -537,10 +555,12 @@ class Difference:
 
 class Problem:
     """A row that fails the run and is not a difference (a rule that cannot be
-    checked, a bad entry of the expected list)."""
+    checked, a bad entry of the expected list). of_list: a problem of the expected
+    list itself (it cannot be read, an entry has a bad form, a second entry); it
+    names no rule, and its `rule` is "-"."""
 
-    def __init__(self, rule, detail):
-        self.rule, self.detail = rule, detail
+    def __init__(self, rule, detail, of_list=False):
+        self.rule, self.detail, self.of_list = rule, detail, of_list
 
 
 # ---- one rule ----------------------------------------------------------------
@@ -609,18 +629,28 @@ def check_rule(rule_path, fixtures, ctx, rule=None, sets=None):
 
 # ---- the expected list -------------------------------------------------------
 
-# Each reason is one cause, for one variant, with a proof that this run makes. A new
-# reason is a change to this script, which a human reviews.
+# Each reason names the cause of one variant: what that variant changes for an
+# item. A new reason is a change to this script, which a human reviews.
+# What _proof() proves for an entry:
+#   KEY_ORDER  the event set does not differ as `compact` text (the same text
+#              without blanks, in the key order of the record). This check can fail.
+#              Its second half (each changed item reads a list) holds for every
+#              difference of `sorted`.
+#   LIKE_CASE, LIST_TEXT  each changed item is a LIKE test, or reads a field that is
+#              a list. That holds for every difference of `cs_like` and of `multi`:
+#              the variant changes nothing else. So these two checks cannot fail on
+#              a real run. They do not say why the rule needs the letter case or the
+#              text of the list: the `why` of the entry says that, and a person
+#              judges it.
 REASONS = {
-    "KEY_ORDER": ("sorted", "the item matches the JSON text of a list with a pattern that "
-                            "needs the key order of the record; the difference shows with "
-                            "sorted keys and not in the compact text"),
+    "KEY_ORDER": ("sorted", "the item reads a field that is a list, as JSON text; the "
+                            "difference shows with sorted keys and not in the compact "
+                            "text, so the item needs the key order of the record"),
     "LIKE_CASE": ("cs_like", "the item is a LIKE test (|contains, |startswith, |endswith or a "
-                             "wildcard value) that relies on Sigma's default of a match "
-                             "without regard to letter case"),
-    "LIST_TEXT": ("multi", "the item matches the JSON text of the whole list (its brackets, "
-                           "the quotes of an element, or more than one element), or reads an "
-                           "empty list, which has no value in a multi-valued field"),
+                             "wildcard value); a LIKE that does not fold letter case gives "
+                             "another answer"),
+    "LIST_TEXT": ("multi", "the item reads a field that is a list; a multi-valued field "
+                           "gives the item one element at a time"),
 }
 ENTRY_KEYS = {"variant", "rule", "source", "name", "fault", "lost", "gained", "items",
               "reason", "why"}
@@ -748,8 +778,10 @@ def judge_expected(differences, entries, ctx, checked_rules, require_re2=False, 
             bad = (f"the hits changed: listed lost {_canon(entry['lost'])}, gained "
                    f"{_canon(entry['gained'])}; this run shows lost {diff.lost}, gained "
                    f"{diff.gained}")
-        elif not str(entry["why"]).strip() or str(entry["why"]).startswith("TODO"):
+        elif not str(entry["why"]).strip():
             bad = "`why` is empty"
+        elif str(entry["why"]).lstrip().startswith("TODO"):
+            bad = "`why` is still the TODO text that --propose writes"
         else:
             bad = _proof(entry, diff, compact)
         if not bad and entry.get("defect") is not None:
@@ -797,7 +829,8 @@ def ratchet(entries, base_path):
         return None
     base, errors = load_expected(base_path)
     if errors:
-        return [Problem("-", f"the expected list of the base cannot be read: {e}") for e in errors]
+        return [Problem("-", f"the expected list of the base cannot be read: {e}", of_list=True)
+                for e in errors]
     held = {json.dumps(e, sort_keys=True) for e in base}
     return [Problem(e["rule"], f"expected [{e['variant']}] {e['source']} {e['name']}: the base "
                                "branch does not list this entry as it is here; a new or changed "
@@ -827,7 +860,7 @@ def print_report(results, list_problems, ctx, verbose=False):
     for rel, count, differences, problems, weakened in results:
         new = [d for d in differences if d.status != "expected"]
         known = [d for d in differences if d.status == "expected"]
-        listed = [p for p in list_problems if p.rule == rel]
+        listed = [p for p in list_problems if p.rule == rel and not p.of_list]
         if not new and not problems and not listed:
             extra = f"; {len(known)} expected difference(s)" if known else ""
             print(f"ok    {rel}: {count} event set(s), same hits as {ran}{extra}")
@@ -850,19 +883,29 @@ def print_report(results, list_problems, ctx, verbose=False):
         for w in weakened:
             print(f"note  {rel} :: {w['source']} {w['kind']} {w['name']}: [{w['variant']}] "
                   f"weakened: {w['detail']}")
-    for p in list_problems:
-        if p.rule not in [r[0] for r in results]:
-            print(f"FAIL  {p.rule}: {p.detail}")
-            failed.append(p.rule)
+    # A problem of the list that names no rule of this run: the list itself (its
+    # form, a second entry), or an entry of a rule file that is not there. It is not
+    # one of the rules that were checked, so it has a count of its own.
+    checked = {r[0] for r in results}
+    other = [p for p in list_problems if p.of_list or p.rule not in checked]
+    for p in other:
+        print(f"FAIL  {p.rule}: {p.detail}")
     print()
     for variant, why in ctx.skipped.items():
         print(f"NOT RUN: variant {variant}: {why}. Nothing is proven for it "
               "(--require-re2 makes this an error).")
     sets = sum(r[1] for r in results)
     known = sum(1 for r in results for d in r[2] if d.status == "expected")
-    if failed:
-        print(f"FAILED: {len(set(failed))} of {len(results)} rule(s) have a new difference under "
-              f"a variant, or an expected entry that does not hold: {', '.join(sorted(set(failed)))}.")
+    if failed or other:
+        parts = []
+        if failed:
+            parts.append(f"{len(set(failed))} of {len(results)} rule(s) have a new difference "
+                         "under a variant, or an expected entry that does not hold: "
+                         f"{', '.join(sorted(set(failed)))}")
+        if other:
+            parts.append(f"{len(other)} problem(s) of the expected list name no rule of this "
+                         "run (the list itself, or an entry of a rule file that is not there)")
+        print("FAILED: " + "; ".join(parts) + ".")
         return 1
     print(f"OK: {len(results)} rule(s), {sets} event set(s), variants {ran}: no new difference; "
           f"{known} expected.")
@@ -1048,6 +1091,9 @@ PROBES = [
      {"verb": "delete", "dryRun": None}, {"default": True}),
     ("null-empty", "`field: null` does not hold on an empty string",
      {"s": {"f": None}, "condition": "s"}, {"f": ""}, {"default": False}),
+    ("null-empty-list", "`field: null` does not hold on an empty list (the text `[]`); as "
+                        "multi the field has no value, and the item holds",
+     {"s": {"f": None}, "condition": "s"}, {"f": []}, {"default": False, "multi": True}),
     ("empty-absent", "an empty string does not match a record without the field",
      {"s": {"verb": "get", "f": ""}, "condition": "s"}, {"verb": "get"}, {"default": False}),
     ("exists-json-null", "`|exists: true` does not hold on a JSON null",
@@ -1084,13 +1130,26 @@ def probe_results(ctx):
 
 
 def in_force(ctx):
-    """Each variant that runs must change the answer of a probe that names it: a
-    variant that changes nothing would pass every rule. Returns the variants that do
-    not."""
-    changed = set()
-    for _, _, got, want in probe_results(ctx):
-        changed |= {v for v in ctx.variants if got[v] != got["default"] and got == want}
-    return [v for v in ctx.variants if v not in changed]
+    """{variant: why} for each variant that runs and is NOT in force (see IN FORCE in
+    the module text).
+
+    A variant is in force when each probe that names it (a row of PROBES whose
+    answers hold the variant) gives the answer that the row declares for it, and one
+    of these answers is not the default answer of its probe. Only the cells of the
+    variant count: a fault of one variant does not name another one. A probe that
+    does not name the variant is not read here; the self-test proves each cell."""
+    named = {ident: expect for ident, _, _, _, expect in PROBES}
+    results = probe_results(ctx)
+    dead = {}
+    for variant in ctx.variants:
+        rows = [(ident, got, want) for ident, _, got, want in results if variant in named[ident]]
+        wrong = [ident for ident, got, want in rows if got[variant] != want[variant]]
+        if wrong:
+            dead[variant] = ("as this variant, the probe(s) " + ", ".join(wrong) + " do not give "
+                             "the answer that the table PROBES declares")
+        elif not any(got[variant] != got["default"] for _, got, _ in rows):
+            dead[variant] = "no probe that names it gives another answer than the default run"
+    return dead
 
 
 def _rule_value(value):
@@ -1302,6 +1361,55 @@ def self_test():
         check(f"probe {ident}", got == want, f"got {got}, want {want}")
     check("each variant that runs is in force", not in_force(ctx), in_force(ctx))
 
+    # A variant that is switched off is named, and no other variant with it.
+    class SortedWithoutKeySort(Context):
+        @staticmethod
+        def records(variant, raw_events):
+            return Context.records("compact" if variant == "sorted" else variant, raw_events)
+
+    class SortedAsDefaultText(Context):
+        @staticmethod
+        def records(variant, raw_events):
+            if variant == "sorted":
+                return [sigma_eval.flatten(e) for e in raw_events]
+            return Context.records(variant, raw_events)
+
+    class CompactAsDefaultText(Context):
+        @staticmethod
+        def records(variant, raw_events):
+            if variant == "compact":
+                return [sigma_eval.flatten(e) for e in raw_events]
+            return Context.records(variant, raw_events)
+
+    class LikeThatFoldsCase(Context):
+        def table(self, variant, flat):
+            if variant == "cs_like":
+                return sigma_eval.EventTable(flat)
+            return super().table(variant, flat)
+
+    class Re2ThatIsPythonRe(Context):
+        def __init__(self):
+            super().__init__()
+            self.search = lambda pattern, text: re.search(pattern, text) is not None
+
+    dead = in_force(SortedWithoutKeySort())
+    check("a `sorted` variant without its key sort (it is `compact`) is not in force, and "
+          "no other variant is named", list(dead) == ["sorted"]
+          and "list-key-order" in dead["sorted"] and "list-blank" not in dead["sorted"], dead)
+    dead = in_force(SortedAsDefaultText())
+    check("a `sorted` variant that writes the default text is not in force, and `compact` "
+          "is not named with it", list(dead) == ["sorted"], dead)
+    dead = in_force(CompactAsDefaultText())
+    check("a `compact` variant that writes the default text is not in force, and `sorted` "
+          "is not named with it", list(dead) == ["compact"], dead)
+    dead = in_force(LikeThatFoldsCase())
+    check("a `cs_like` variant whose LIKE folds letter case is not in force, and no other "
+          "variant is named", list(dead) == ["cs_like"], dead)
+    if "re2" in ctx.variants:
+        dead = in_force(Re2ThatIsPythonRe())
+        check("an `re2` variant that is Python's re is not in force, and no other variant "
+              "is named", list(dead) == ["re2"], dead)
+
     def judged(detection, sets, entries=(), defects=None):
         rule = _probe_rule(detection, "self-test")
         full = [(s, n, k, e, {"kind": k, "breaks": b} if b else None) for s, n, k, e, b in sets]
@@ -1340,6 +1448,8 @@ def self_test():
             ("a reason of another variant", {"reason": "LIKE_CASE"}, "is not a reason of the variant"),
             ("an unknown reason", {"reason": "BECAUSE"}, "is not a reason of the variant"),
             ("no why", {"why": " "}, "`why` is empty"),
+            ("a why that is still the text of --propose",
+             {"why": "TODO: one line, what the rule relies on"}, "`why` is still the TODO text"),
             ("other hits", {"gained": [[0], [1]]}, "the hits changed"),
             ("a defect that is not open", {"defect": "K999"}, "is not an open entry")):
         _, diffs, problems, _ = judged(
@@ -1365,6 +1475,14 @@ def self_test():
         defects={"K1": "### K1. self_test: text"})
     check("an entry with an open defect that names the rule is expected",
           [d.status for d in diffs] == ["expected"] and not problems)
+    _, diffs, problems, _ = judged(
+        filt, [("case", "f", "filtered", [{"verb": "create", "groups": ["system:masters"]}],
+                ["f.groups"])], [dict(entry, defect="K1")],
+        defects={"K1": "### K1. another_rule: text"})
+    check("an entry whose defect is an open entry of another rule does not excuse the "
+          "difference", [d.status for d in diffs] == ["new"]
+          and any("the entry K1 of RULE_DEFECTS.md does not name self_test" in p.detail
+                  for p in problems), [p.detail for p in problems])
 
     order = {"s": {"rules|re": '\\"verbs\\":\\s*\\[[^\\]]*\\],\\s*\\"apiGroups\\"'},
              "condition": "s"}
@@ -1397,12 +1515,59 @@ def self_test():
           [d.status for d in diffs] == ["expected"] and not problems,
           [p.detail for p in problems])
 
+    # A change of hits inside a set that still fires: record 0 holds the list, record 1
+    # holds the same text as a string, which no variant changes.
+    part = [("fixture", "part.json", "attack",
+             [record, {"verb": "create", "items": '"group": "all"'}], None)]
+    _, diffs, _, _ = judged(blank, part)
+    check("a fixture of two records that loses one hit and still fires is a difference",
+          [(d.variant, d.fault, d.lost, d.default_hits, d.variant_hits) for d in diffs]
+          == [("compact", "loss", [[0]], 2, 1), ("sorted", "loss", [[0]], 2, 1)]
+          and all(d.text().endswith("fires in both, but the hits differ as " + d.variant
+                                    + " (2 -> 1); the rule misses the technique on that "
+                                    "representation") for d in diffs),
+          [(d.variant, d.text()) for d in diffs])
+    _, diffs, _, _ = judged(
+        filt, [("fixture", "benign.json", "benign",
+                [{"verb": "create", "groups": ["system:masters"]}], None)])
+    check("a benign fixture that fires under a variant is a gain, a false positive there",
+          [(d.variant, d.fault, d.kind, d.gained) for d in diffs]
+          == [("multi", "gain", "benign", [[0]])]
+          and diffs[0].text() == "[multi] gain: quiet by default, fires as multi; a false "
+                                 "positive there", [d.text() for d in diffs])
+    both = {"s": {"a|contains": "X"}, "f": {"b|contains": "Y"}, "condition": "s and not f"}
+    _, diffs, _, _ = judged(both, [("case", "b", "positive",
+                                    [{"a": "x", "b": "z"}, {"a": "X", "b": "y"}], None)])
+    check("a positive set that loses one hit and gains another says both meanings",
+          [(d.variant, d.fault, d.lost, d.gained) for d in diffs]
+          == [("cs_like", "loss+gain", [[0]], [[1]])]
+          and diffs[0].text() == "[cs_like] loss+gain: fires in both, but the hits differ as "
+                                 "cs_like (1 -> 1); the rule misses the technique on that "
+                                 "representation, and a record that is quiet by default "
+                                 "fires there", [d.text() for d in diffs])
+    _, diffs, problems, _ = judged(blank, [])
+    check("a rule with no case and no fixture is a problem",
+          not diffs and ["no sidecar case and no cloud fixture" in p.detail for p in problems]
+          == [True], [p.detail for p in problems])
+    absent = os.path.join("T0000", "no_such_rule.yml")
+    gone = run([os.path.join(SIGMA, absent)], ctx, fixtures={})
+    check("a rule file that cannot be checked is a problem of that rule, not a rule that "
+          "the run drops", [(r[0], r[1], [p.detail[:14] for p in r[3]]) for r in gone]
+          == [(absent, 0, ["cannot check: "])], [(r[0], [p.detail for p in r[3]]) for r in gone])
+
     weak = {"s": {"verb": "create", "user": "alice", "items|contains": '"group": "all"'},
             "condition": "s"}
     _, diffs, _, weakened = judged(
         weak, [("case", "n", "near-miss", [dict(record, user="bob")], ["s.user"])])
     check("a near-miss that a second item keeps quiet as compact is weakened, not a difference",
           not diffs and sorted(w["variant"] for w in weakened) == ["compact", "sorted"], weakened)
+    weak_multi = {"s": {"verb": "create", "user": "alice", "groups|contains": '"admin"'},
+                  "condition": "s"}
+    _, diffs, _, weakened = judged(
+        weak_multi, [("case", "n", "near-miss",
+                      [{"verb": "create", "user": "bob", "groups": ["admin"]}], ["s.user"])])
+    check("a near-miss that a second item keeps quiet as multi gives no note (the note is "
+          "not made under multi)", not diffs and not weakened, weakened)
 
     corr = sigma_explain.from_docs([
         {"title": "a", "name": "b_a", "logsource": {"product": "probe"},
@@ -1556,6 +1721,34 @@ def self_test():
             check("--write-doc does not write a document without a marker",
                   wrote == 1 and fh.read() == current.replace(DOC_BEGIN, ""), said.getvalue())
 
+    # The closing line of a report: the rules that failed and the problems of the list
+    # that name no rule of the run have a count each.
+    def closing(report_results, list_problems):
+        with contextlib.redirect_stdout(io.StringIO()) as said:
+            code = print_report(report_results, list_problems, ctx)
+        return code, said.getvalue().strip().splitlines()[-1]
+
+    clean = [(os.path.join("T0000", "a.yml"), 1, [], [], [])]
+    not_a_rule = ("problem(s) of the expected list name no rule of this run (the list itself, "
+                  "or an entry of a rule file that is not there).")
+    second = Problem("-", "detections/variants/expected.json entry 1: a second entry",
+                     of_list=True)
+    no_file = Problem(os.path.join("T0000", "gone.yml"), "expected [multi] case f: stale: no "
+                                                         "rule file")
+    held = Problem(clean[0][0], "expected [multi] case f: `why` is empty")
+    check("a problem of the list is not counted as a rule that failed",
+          closing(clean, [second, no_file]) == (1, "FAILED: 2 " + not_a_rule),
+          closing(clean, [second, no_file]))
+    check("a rule that failed and a problem of the list have a count each",
+          closing(clean, [held, second])
+          == (1, "FAILED: 1 of 1 rule(s) have a new difference under a variant, or an expected "
+                 f"entry that does not hold: {clean[0][0]}; 1 " + not_a_rule),
+          closing(clean, [held, second]))
+    check("a run without a problem ends with OK",
+          closing(clean, []) == (0, f"OK: 1 rule(s), 1 event set(s), variants "
+                                    f"{', '.join(ctx.variants)}: no new difference; 0 expected."),
+          closing(clean, []))
+
     if ctx.skipped:
         for variant, why in ctx.skipped.items():
             print(f"self-test: variant {variant} NOT RUN ({why}); its probes are not proven")
@@ -1626,13 +1819,22 @@ def main():
                   f"{os.path.relpath(args.expected, REPO)}; no expected list to ratchet against "
                   f"({len(entries)} entr(ies) here)")
             return 0
-        problems = [Problem("-", e) for e in errors] + (compared or [])
+        problems = [Problem("-", e, of_list=True) for e in errors] + (compared or [])
         print(f"Expected-difference ratchet against {args.baseline_expected} (the list of the "
               "base branch):")
         for p in problems:
             print(f"FAIL  {p.rule}: {p.detail}")
-        if problems:
-            print(f"\nFAILED: {len(problems)} entr(ies) of "
+        unread = [p for p in problems if p.of_list]
+        grown = [p for p in problems if not p.of_list]
+        if unread:
+            # No count of entries here: a list that cannot be read was not compared.
+            print(f"\nFAILED: the lists cannot be compared: {len(unread)} problem(s) of the "
+                  "expected list of this tree or of the base branch (the FAIL rows above)."
+                  + (f" {len(grown)} entr(ies) that could be read are not on the base branch "
+                     "as they are here." if grown else ""))
+            return 1
+        if grown:
+            print(f"\nFAILED: {len(grown)} entr(ies) of "
                   f"{os.path.relpath(args.expected, REPO)} are not on the base branch as they "
                   "are here. A new or changed expected difference is a human decision: the "
                   "maintainer merges the pull request by hand, or the entry goes.")
@@ -1642,13 +1844,16 @@ def main():
         return 0
     dead = in_force(ctx)
     if dead:
-        print(f"ERROR: variant(s) not in force: {', '.join(dead)}: no probe changes its answer "
-              "as the table PROBES says. A variant that changes nothing passes every rule.")
+        print(f"ERROR: variant(s) not in force: {', '.join(dead)}. A variant that changes "
+              "nothing, or less than the table PROBES declares, passes rules that it must "
+              "fail. No rule was checked.")
+        for variant, why in dead.items():
+            print(f"  {variant}: {why}")
         return 2
     paths = args.rules or sorted(glob.glob(os.path.join(SIGMA, "*", "*.yml")))
     results = run(paths, ctx)
     entries, errors = load_expected(args.expected)
-    list_problems = [Problem("-", e) for e in errors]
+    list_problems = [Problem("-", e, of_list=True) for e in errors]
     differences = [d for r in results for d in r[2]]
     list_problems += judge_expected(differences, entries, ctx, {r[0] for r in results},
                                     require_re2=args.require_re2, every_rule=not args.rules)

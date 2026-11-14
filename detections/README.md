@@ -746,12 +746,16 @@ default run:
 | `re2` | A `\|re` item is a search with RE2, not with Python's `re`. It needs the module `re2` (google-re2). Without it the variant does not run and the report says so; CI passes `--require-re2`. |
 
 A difference is a **loss** (a record that fires by default does not fire) or a
-**gain** (a record that is quiet by default fires). On a positive case or an attack
+**gain** (a record that is quiet by default fires). An event set that loses one hit
+and gains another has the fault `loss+gain`. On a positive case or an attack
 fixture a loss is a miss of the technique on that representation. On a near-miss, a
 filtered case, a confounder, a benign case or a benign fixture a gain is a false
 positive there. Each difference names the items whose truth changed and the value
 that they read. A near-miss or a filtered case that stays quiet, but whose `breaks`
 item is no longer one flip from a hit, is a `note` row (weakened); it does not fail.
+The gate makes that note for a plain rule under `compact`, `sorted`, `cs_like` and
+`re2`. It does not make it under `multi`, or for a correlation rule: a negative case
+that is weakened there is not reported.
 
 The gate does not model a store that explodes a list into leaf fields or indexed
 keys: such a store cannot run a rule that reads a list as text.
@@ -761,9 +765,15 @@ corpus.
 
 [`variants/expected.json`](variants/expected.json) lists each difference that is
 accepted: the variant, the rule, the case or fixture, the fault, the hits that are
-lost and gained, the items, a reason that the gate proves (`KEY_ORDER`, `LIKE_CASE`,
-`LIST_TEXT`), a `why` sentence and, where one exists, the open entry of
-[`RULE_DEFECTS.md`](RULE_DEFECTS.md) that tracks it. An entry is a human approval,
+lost and gained, the items, a reason (`KEY_ORDER`, `LIKE_CASE`, `LIST_TEXT`), a `why`
+sentence and, where one exists, the open entry of
+[`RULE_DEFECTS.md`](RULE_DEFECTS.md) that tracks it. The reason names the cause of
+the variant: the item needs the key order of the record, the item is a `LIKE` test,
+or the item reads a field that is a list. The gate refuses a reason of another
+variant, and it proves one thing about a reason: it refuses `KEY_ORDER` when the
+event set differs as `compact` text too. The `why` sentence says why the rule needs
+that, and a person judges it: the gate fails only a `why` that is empty or is still
+the `TODO` text of `--propose`. An entry is a human approval,
 as a waiver or a budget is: propose it in the pull request (`--propose` prints the
 list that a run shows), and the maintainer approves it when the pull request merges.
 The gate fails on a difference that is not listed, on an entry whose difference
@@ -784,8 +794,10 @@ python3 detections/check_variants.py --propose    # the expected list that this 
 ```
 
 A golden probe is one detection on one record, with its answer by default and under
-each variant. The self-test proves each answer, and each variant must change the
-answer of a probe that names it (if not, the gate stops with exit code 2).
+each variant. The self-test proves each answer. Before a rule runs, each variant must
+be in force: each probe that names the variant gives the answer that the gate
+declares for it, and one of these answers is not the default answer. If not, the gate
+stops with exit code 2 and names the variant.
 [`SEMANTICS.md`](SEMANTICS.md#10-the-golden-probes) holds the table of the probes, and
 its text names the probe that proves a statement about the oracle. After a change to
 the probes, run `--write-doc`. The job fails (`--check-doc`) when the table of the
