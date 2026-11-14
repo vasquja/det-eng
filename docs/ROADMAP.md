@@ -4,7 +4,7 @@ The ordered work for this repository. An AI agent owns and maintains the codebas
 (see [`AGENTS.md`](../AGENTS.md)). This file is how one session tells the next
 what the direction is.
 
-Last update: 2026-11-12.
+Last update: 2026-11-13.
 
 ## The goal
 
@@ -93,7 +93,7 @@ and `bpf_prog_load.yml` test that gate, and no item of a rule.
 
 | ID | Item | Status | Needs | Acceptance check |
 |----|------|--------|-------|------------------|
-| L6 | **Supply chain** (design 8): pin each action in each workflow to a commit, add `dependabot.yml`, pin `sigma-cli` to the pySigma version of the validators. | not started | R2 (the check that no action is used by tag is a gate test, and the `gate-tests` job is one of the jobs to pin) | No workflow uses an action by tag. The lint job and the validators resolve the same pySigma. |
+| L6 | **Supply chain** (design 8): pin each action in each workflow to a commit, add `dependabot.yml`, pin `sigma-cli` to the pySigma version of the validators. Name the runner image in each job (for example `ubuntu-26.04`, not `ubuntu-latest`): the move of `ubuntu-latest` to Ubuntu 26.04 on 2026-11-12 broke four jobs in three ways. | not started | R2 (the check that no action is used by tag is a gate test, and the `gate-tests` job is one of the jobs to pin) | No workflow uses an action by tag. The lint job and the validators resolve the same pySigma. |
 | L7 | **Correct the live scripts** that the sandbox guide lists as defective (`docs/setup/cloud-sandbox.md`, "Problems in the live scripts"). | done | | Each listed script runs to its end in dry-run mode and its live commands agree with the provider reference. The table in the guide is shorter. |
 | L2 | **A machine condition to close a defect** (design 6): a `known-miss` case that must not fire today and becomes a positive when the rule is corrected. | not started | R2 | Each open false-negative defect has a case that fails when the defect is fixed without closing it. |
 | L1 | **A path to retire or rewrite a rule** (design 6). | not started | T2 | A rule can be retired with a defect citation and no override label. |

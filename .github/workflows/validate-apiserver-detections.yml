@@ -394,9 +394,11 @@ jobs:
       # Each emulation appends one line per procedure (window + exit status) here; the
       # validator binds each procedure gate to its window with --ledger (C1-3).
       DETENG_LEDGER: /tmp/emulation-ledger.jsonl
-      # The only images the atomics and the benign workload run; pre-pulled with a
-      # bounded retry and loaded into the node so a Docker Hub hiccup does not flake pod
-      # starts (C1-5).
+      # The images of the pods that must start (the atomics and the benign workload);
+      # pre-pulled inside the node with a bounded retry, before the first pod that uses
+      # them, so a slow registry does not fail a pod start (C1-5). TRR9031 and TRR9034
+      # also name registry.k8s.io/pause:3.10, which is not in this list: no step waits
+      # for a TRR9031 pod to start, and a TRR9034 pod is never scheduled.
       LAB_IMAGES: busybox:1.36 registry.k8s.io/pause:3.9 curlimages/curl:8.11.1
     steps:
       - &apiserver-checkout
@@ -491,18 +493,28 @@ jobs:
           set -euo pipefail
           # Start the emulation ledger empty, so each procedure's window is this run's.
           : > "${DETENG_LEDGER}"
-          # Docker Hub pulls from inside the node are the main source of flaky pod starts;
-          # pull on the runner with a bounded retry, then load each image into the node.
-          for img in ${LAB_IMAGES}; do
-            ok=
-            for i in 1 2 3; do
-              if docker pull -q "$img"; then ok=1; break; fi
-              echo "pull of $img failed (attempt $i)"
-              # Back off only before another attempt.
-              if [ "$i" -lt 3 ]; then sleep $((i * 10)); fi
+          # Each image must be in the node before a pod that uses it is created, so that
+          # a slow registry cannot fail a pod start. Pull it inside each node with
+          # crictl (into the image store that the kubelet reads), with a bounded retry.
+          # Do not use `kind load docker-image` here: it fails on a multi-platform tag
+          # when Docker on the runner uses the containerd image store, which is the
+          # default of a new installation of Docker Engine 29 (the ubuntu-26.04 runner
+          # image). See kubernetes-sigs/kind issue 3795.
+          nodes="$(kind get nodes --name "${CLUSTER_NAME}")"
+          # kind prints no name and exits 0 when it finds no node of the cluster.
+          [ -n "${nodes}" ] || { echo "::error::kind lists no node of the cluster ${CLUSTER_NAME}"; exit 1; }
+          for node in ${nodes}; do
+            for img in ${LAB_IMAGES}; do
+              ok=
+              for i in 1 2 3; do
+                if docker exec "${node}" crictl pull "${img}"; then ok=1; break; fi
+                echo "pull of ${img} into the node ${node} failed (attempt ${i} of 3)"
+                # Back off only before another attempt.
+                if [ "${i}" -lt 3 ]; then sleep $((i * 10)); fi
+              done
+              [ -n "${ok}" ] || { echo "::error::could not pull ${img} into the node ${node} after 3 attempts"; exit 1; }
+              echo "pulled ${img} into the node ${node}"
             done
-            [ -n "$ok" ] || { echo "::error::could not pull $img after 3 attempts"; exit 1; }
-            kind load docker-image --name "${CLUSTER_NAME}" "$img"
           done
           # A pod create before the token controller has made the default SA fails with
           # 'serviceaccount "default" not found'; wait for it (kubectl 1.31+).
@@ -548,6 +560,16 @@ jobs:
           # validate-detections.yml does on this runner image.
           bash .github/scripts/apt_install.sh auditd
           sudo systemctl start auditd || sudo service auditd start
+          # auditd 4 (the ubuntu-26.04 runner image) loads its rule files in a oneshot
+          # unit of its own, audit-rules.service. The start above starts that unit again
+          # and does not wait for it, and its rule file starts with -D: a rule that is
+          # added before the unit ends is deleted. A start of a oneshot unit returns
+          # when the unit has ended, so wait here. auditd 3 has no such unit. A unit
+          # that ends with an error has ended too, so that is a warning only.
+          if systemctl cat audit-rules.service >/dev/null 2>&1; then
+            sudo systemctl start audit-rules.service \
+              || echo "::warning title=auditd::audit-rules.service ended with an error (the rule files of the image did not load); the step goes on"
+          fi
           # The token is on a tmpfs that the kubelet mounts inside the node's own mount
           # namespace (a projected volume is a memory-backed emptyDir). A directory-tree
           # watch added from the runner (-w DIR, or -F dir=DIR: the same recursive
@@ -609,8 +631,17 @@ jobs:
           # The split point of the live slice: a request received before it is cluster
           # bootstrap, one at or after it is the operator workload (score_benign.py
           # --extra-split-at). The format is the audit log's requestReceivedTimestamp
-          # (UTC, microseconds); the kind node shares the runner's clock.
-          echo "BENIGN_START=$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)" >> "$GITHUB_ENV"
+          # (UTC, microseconds); the kind node shares the runner's clock. The time
+          # comes from bash, with the function of the emulation scripts, and not from
+          # `date +%6N`: date of uutils coreutils 0.10.0 (the ubuntu-26.04 runner
+          # image) drops the leading zeros of %6N, so the split point could be almost
+          # 1 s late.
+          now_utc() {
+            local t="${EPOCHREALTIME:-}"
+            if [ -n "$t" ]; then TZ=UTC0 printf '%(%Y-%m-%dT%H:%M:%S)T.%sZ\n' "${t%[.,]*}" "${t#*[.,]}"
+            else t="$(date -u +%Y-%m-%dT%H:%M:%S.%N)"; printf '%sZ\n' "${t:0:26}"; fi
+          }
+          echo "BENIGN_START=$(now_utc)" >> "$GITHUB_ENV"
           bash detections/benign/k8s/workload.sh
 
       - &apiserver-capture
@@ -930,8 +961,9 @@ jobs:
         # a rule matches here is reported, never enforced; only a workload rule over its
         # corpus budget is annotated, and so is a window with no timed event. If
         # BENIGN_START is empty, or is not the UTC time that the workload step writes
-        # (a `date` with no %6N, for example), a warning says so and every hit on the
-        # unsplit capture is annotated: a bad value never stops the scoring.
+        # (a bash older than 5 with a `date` that has no %N, for example), a warning
+        # says so and every hit on the unsplit capture is annotated: a bad value never
+        # stops the scoring.
         if: always()
         continue-on-error: true
         shell: bash
