@@ -1023,22 +1023,40 @@ def in_force(ctx):
     return [v for v in ctx.variants if v not in changed]
 
 
-def print_probes(ctx):
-    names = ["default"] + list(ctx.variants)
-    print("| probe | statement | " + " | ".join(names) + " |")
-    print("|---|---|" + "---|" * len(names))
+def probes_table(ctx):
+    """(lines, count of cells that are not as PROBES says): the golden probes as a
+    Markdown table, with one column for the default run and for each variant of
+    VARIANTS. A cell is the answer of this run. For a variant that does not run here
+    (re2 without the module) it is the answer that PROBES declares, and print_probes()
+    says below the table that the variant did not run. So the table is the same text
+    with and without the module while every answer is as declared. A `|` in a
+    statement is escaped: it would end the cell."""
+    names = ["default"] + list(VARIANTS)
+    lines = ["| probe | statement | " + " | ".join(names) + " |",
+             "|---|---|" + "---|" * len(names)]
+    declared = {ident: expect for ident, _, _, _, expect in PROBES}
     bad = 0
-    for ident, statement, got, want in probe_results(ctx):
+    for ident, statement, got, _ in probe_results(ctx):
         cells = []
         for name in names:
-            cell = "fires" if got[name] else "quiet"
-            if got[name] != want[name]:
-                cell += " (WANT " + ("fires" if want[name] else "quiet") + ")"
+            wanted = declared[ident].get(name, declared[ident]["default"])
+            fires = got.get(name, wanted)
+            cell = "fires" if fires else "quiet"
+            if fires != wanted:
+                cell += " (WANT " + ("fires" if wanted else "quiet") + ")"
                 bad += 1
             cells.append(cell)
-        print(f"| `{ident}` | {statement} | " + " | ".join(cells) + " |")
+        lines.append(f"| `{ident}` | " + statement.replace("|", "\\|") + " | "
+                     + " | ".join(cells) + " |")
+    return lines, bad
+
+
+def print_probes(ctx):
+    lines, bad = probes_table(ctx)
+    print("\n".join(lines))
     for variant, why in ctx.skipped.items():
-        print(f"\nNOT RUN: variant {variant}: {why}.")
+        print(f"\nNOT RUN: variant {variant}: {why}. Its column is what the table PROBES "
+              "declares; --self-test proves it where the variant runs.")
     return 1 if bad else 0
 
 
@@ -1236,6 +1254,15 @@ def self_test():
     check("the shortcuts change no answer of a golden probe",
           [got for _, _, got, _ in probe_results(ctx)]
           == [got for _, _, got, _ in probe_results(full)])
+
+    lines, bad = probes_table(ctx)
+    cells = [len(re.split(r"(?<!\\)\|", line)) for line in lines]
+    check("the probe table has one row for each probe, and each row has the same cells",
+          len(lines) == len(PROBES) + 2 and set(cells) == {len(VARIANTS) + 5} and not bad,
+          (len(lines), sorted(set(cells)), bad))
+    without = Context(variants=[v for v in VARIANTS if v != "re2"])
+    check("the probe table is the same text when a variant does not run",
+          probes_table(without)[0] == lines)
 
     if ctx.skipped:
         for variant, why in ctx.skipped.items():

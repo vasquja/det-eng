@@ -550,6 +550,26 @@ class Variants(gatelib.GateCase):
         self.assert_accepts(self.good().run(self.GATE, *self.ci_arguments, "--self-test"),
                             r"^self-test: all [1-9]\d* checks hold$")
 
+    def test_probes_table_is_one_text_with_and_without_re2(self):
+        """--probes prints the golden probes as a Markdown table (the probe table of
+        detections/SEMANTICS.md is this text). It has a column for each variant, re2
+        too, also where the module is missing: the same text on a development machine
+        and in CI. Each row has the same count of cells: a `|` in a statement
+        (`|contains`) is escaped, or it would end the cell."""
+        result = self.good().run(self.GATE, *self.ci_arguments, "--probes")
+        self.assert_accepts(result, r"^\| probe \| statement \| default \| compact \| sorted \| "
+                                    r"multi \| cs_like \| re2 \|$")
+        rows = found(result, r"^\| .*\|$")
+        self.assertGreater(len(rows), 20, "the table holds fewer rows than the probes")
+        self.assertEqual({len(re.split(r"(?<!\\)\|", row)) for row in rows}, {10},
+                         "a row does not have 8 cells:\n" + result.stdout)
+        self.assertIn("| `contains-case` | \\|contains ignores ASCII case (LIKE) | fires | fires "
+                      "| fires | fires | quiet | fires |\n", result.stdout)
+        self.assertRegex(result.stdout, r"(?m)^\| `re-space-class` \| .* \| quiet \|$")
+        self.assertNotIn("WANT", result.stdout)
+        if not self.RE2:
+            self.assertIn("\nNOT RUN: variant re2: ", result.stdout)
+
     def test_rejects_run_without_re2_when_ci_requires_it(self):
         """vr-re2-missing. CI passes --require-re2: without the module the gate must
         stop, not run four of five variants and say OK."""
