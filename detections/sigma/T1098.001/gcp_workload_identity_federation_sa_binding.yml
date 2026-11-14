@@ -14,9 +14,10 @@ description: |
   roles/iam.workloadIdentityUser or roles/iam.serviceAccountTokenCreator to a member
   that is a workload-identity-pool principal -- member containing /workloadIdentityPools/
   (both the set form principalSet:// and the single-subject form principal://). The three
-  conditions are required on the SAME delta object (a regex with lookaheads bounded to
-  one {...} element), so a REMOVE, or an unrelated ADD elsewhere in the policy, does not
-  fire.
+  conditions are required on the SAME delta object (a portable regex, no lookaround, kept
+  inside one {...} by [^}]*, with one value per order of the three parts), so a REMOVE, or
+  an unrelated ADD elsewhere in the policy, does not fire. The text of the delta list may
+  have a blank after the colon of "action" or not (C17).
 
   The discriminator vs benign GKE Workload Identity is the member: GKE binds the same
   role/action with member serviceAccount:<project-id>.svc.id.goog[ns/ksa] (project ID,
@@ -48,14 +49,16 @@ detection:
     # One binding delta object ('{' up to its first '}') that holds all three of: action
     # ADD, a /workloadIdentityPools/ member, and the workloadIdentityUser or
     # serviceAccountTokenCreator role. Portable regex (no lookahead): one value per order
-    # of the three parts, so the parts may come in any order inside the object.
+    # of the three parts, so the parts may come in any order inside the object. `\s*`
+    # after the colon: a store writes the JSON text of the list with a blank there
+    # (`"action": "ADD"`) or without one (`"action":"ADD"`); C17.
     protoPayload.serviceData.policyDelta.bindingDeltas|re:
-      - '\{[^}]*\"action\": \"ADD\"[^}]*/workloadIdentityPools/[^}]*roles/iam\.(workloadIdentityUser|serviceAccountTokenCreator)'
-      - '\{[^}]*\"action\": \"ADD\"[^}]*roles/iam\.(workloadIdentityUser|serviceAccountTokenCreator)[^}]*/workloadIdentityPools/'
-      - '\{[^}]*/workloadIdentityPools/[^}]*\"action\": \"ADD\"[^}]*roles/iam\.(workloadIdentityUser|serviceAccountTokenCreator)'
-      - '\{[^}]*/workloadIdentityPools/[^}]*roles/iam\.(workloadIdentityUser|serviceAccountTokenCreator)[^}]*\"action\": \"ADD\"'
-      - '\{[^}]*roles/iam\.(workloadIdentityUser|serviceAccountTokenCreator)[^}]*\"action\": \"ADD\"[^}]*/workloadIdentityPools/'
-      - '\{[^}]*roles/iam\.(workloadIdentityUser|serviceAccountTokenCreator)[^}]*/workloadIdentityPools/[^}]*\"action\": \"ADD\"'
+      - '\{[^}]*\"action\":\s*\"ADD\"[^}]*/workloadIdentityPools/[^}]*roles/iam\.(workloadIdentityUser|serviceAccountTokenCreator)'
+      - '\{[^}]*\"action\":\s*\"ADD\"[^}]*roles/iam\.(workloadIdentityUser|serviceAccountTokenCreator)[^}]*/workloadIdentityPools/'
+      - '\{[^}]*/workloadIdentityPools/[^}]*\"action\":\s*\"ADD\"[^}]*roles/iam\.(workloadIdentityUser|serviceAccountTokenCreator)'
+      - '\{[^}]*/workloadIdentityPools/[^}]*roles/iam\.(workloadIdentityUser|serviceAccountTokenCreator)[^}]*\"action\":\s*\"ADD\"'
+      - '\{[^}]*roles/iam\.(workloadIdentityUser|serviceAccountTokenCreator)[^}]*\"action\":\s*\"ADD\"[^}]*/workloadIdentityPools/'
+      - '\{[^}]*roles/iam\.(workloadIdentityUser|serviceAccountTokenCreator)[^}]*/workloadIdentityPools/[^}]*\"action\":\s*\"ADD\"'
   condition: selection_setiam and selection_wif_binding_added
 falsepositives:
   - Legitimate CI/CD onboarding (GitHub Actions, GitLab, AWS/Azure OIDC) and IaC create

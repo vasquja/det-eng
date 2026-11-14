@@ -81,14 +81,16 @@ detection:
     # roles/compute.securityAdmin, roles/secretmanager.admin, ...) is NOT in this tier; it
     # fires only through the whole-pool selection below (C6). In any order: portable regex
     # (no lookaround), one value per order of the three parts. This keeps TRR9020
-    # Procedure C at every member scope it uses.
+    # Procedure C at every member scope it uses. `\s*` after the colon of "action" and
+    # of "role": a store writes the JSON text of the list with a blank there or without
+    # one (C17).
     protoPayload.serviceData.policyDelta.bindingDeltas|re:
-      - '\{[^}]*\"action\": \"ADD\"[^}]*\"role\": \"(roles/(owner|editor)|roles/iam\.[^\"}]*([Aa]dmin|[Cc]reator|[Uu]ser)|roles/resourcemanager\.((project|folder|organization)IamAdmin|(folder|organization)Admin)|roles/orgpolicy\.policyAdmin|(projects|organizations)/[^/\"}]*/roles/[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin))\"[^}]*/workforcePools/'
-      - '\{[^}]*\"action\": \"ADD\"[^}]*/workforcePools/[^}]*\"role\": \"(roles/(owner|editor)|roles/iam\.[^\"}]*([Aa]dmin|[Cc]reator|[Uu]ser)|roles/resourcemanager\.((project|folder|organization)IamAdmin|(folder|organization)Admin)|roles/orgpolicy\.policyAdmin|(projects|organizations)/[^/\"}]*/roles/[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin))\"'
-      - '\{[^}]*\"role\": \"(roles/(owner|editor)|roles/iam\.[^\"}]*([Aa]dmin|[Cc]reator|[Uu]ser)|roles/resourcemanager\.((project|folder|organization)IamAdmin|(folder|organization)Admin)|roles/orgpolicy\.policyAdmin|(projects|organizations)/[^/\"}]*/roles/[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin))\"[^}]*\"action\": \"ADD\"[^}]*/workforcePools/'
-      - '\{[^}]*\"role\": \"(roles/(owner|editor)|roles/iam\.[^\"}]*([Aa]dmin|[Cc]reator|[Uu]ser)|roles/resourcemanager\.((project|folder|organization)IamAdmin|(folder|organization)Admin)|roles/orgpolicy\.policyAdmin|(projects|organizations)/[^/\"}]*/roles/[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin))\"[^}]*/workforcePools/[^}]*\"action\": \"ADD\"'
-      - '\{[^}]*/workforcePools/[^}]*\"action\": \"ADD\"[^}]*\"role\": \"(roles/(owner|editor)|roles/iam\.[^\"}]*([Aa]dmin|[Cc]reator|[Uu]ser)|roles/resourcemanager\.((project|folder|organization)IamAdmin|(folder|organization)Admin)|roles/orgpolicy\.policyAdmin|(projects|organizations)/[^/\"}]*/roles/[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin))\"'
-      - '\{[^}]*/workforcePools/[^}]*\"role\": \"(roles/(owner|editor)|roles/iam\.[^\"}]*([Aa]dmin|[Cc]reator|[Uu]ser)|roles/resourcemanager\.((project|folder|organization)IamAdmin|(folder|organization)Admin)|roles/orgpolicy\.policyAdmin|(projects|organizations)/[^/\"}]*/roles/[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin))\"[^}]*\"action\": \"ADD\"'
+      - '\{[^}]*\"action\":\s*\"ADD\"[^}]*\"role\":\s*\"(roles/(owner|editor)|roles/iam\.[^\"}]*([Aa]dmin|[Cc]reator|[Uu]ser)|roles/resourcemanager\.((project|folder|organization)IamAdmin|(folder|organization)Admin)|roles/orgpolicy\.policyAdmin|(projects|organizations)/[^/\"}]*/roles/[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin))\"[^}]*/workforcePools/'
+      - '\{[^}]*\"action\":\s*\"ADD\"[^}]*/workforcePools/[^}]*\"role\":\s*\"(roles/(owner|editor)|roles/iam\.[^\"}]*([Aa]dmin|[Cc]reator|[Uu]ser)|roles/resourcemanager\.((project|folder|organization)IamAdmin|(folder|organization)Admin)|roles/orgpolicy\.policyAdmin|(projects|organizations)/[^/\"}]*/roles/[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin))\"'
+      - '\{[^}]*\"role\":\s*\"(roles/(owner|editor)|roles/iam\.[^\"}]*([Aa]dmin|[Cc]reator|[Uu]ser)|roles/resourcemanager\.((project|folder|organization)IamAdmin|(folder|organization)Admin)|roles/orgpolicy\.policyAdmin|(projects|organizations)/[^/\"}]*/roles/[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin))\"[^}]*\"action\":\s*\"ADD\"[^}]*/workforcePools/'
+      - '\{[^}]*\"role\":\s*\"(roles/(owner|editor)|roles/iam\.[^\"}]*([Aa]dmin|[Cc]reator|[Uu]ser)|roles/resourcemanager\.((project|folder|organization)IamAdmin|(folder|organization)Admin)|roles/orgpolicy\.policyAdmin|(projects|organizations)/[^/\"}]*/roles/[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin))\"[^}]*/workforcePools/[^}]*\"action\":\s*\"ADD\"'
+      - '\{[^}]*/workforcePools/[^}]*\"action\":\s*\"ADD\"[^}]*\"role\":\s*\"(roles/(owner|editor)|roles/iam\.[^\"}]*([Aa]dmin|[Cc]reator|[Uu]ser)|roles/resourcemanager\.((project|folder|organization)IamAdmin|(folder|organization)Admin)|roles/orgpolicy\.policyAdmin|(projects|organizations)/[^/\"}]*/roles/[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin))\"'
+      - '\{[^}]*/workforcePools/[^}]*\"role\":\s*\"(roles/(owner|editor)|roles/iam\.[^\"}]*([Aa]dmin|[Cc]reator|[Uu]ser)|roles/resourcemanager\.((project|folder|organization)IamAdmin|(folder|organization)Admin)|roles/orgpolicy\.policyAdmin|(projects|organizations)/[^/\"}]*/roles/[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin))\"[^}]*\"action\":\s*\"ADD\"'
   selection_workforce_pool_wide_admin_binding:
     # A grant of any role whose name carries owner, editor or admin (a service-level
     # role such as roles/container.admin, roles/secretmanager.admin,
@@ -97,12 +99,12 @@ detection:
     # accept gets it. The same role granted to a group, an attribute set or one subject is
     # routine workforce RBAC (C6) and is not matched here.
     protoPayload.serviceData.policyDelta.bindingDeltas|re:
-      - '\{[^}]*\"action\": \"ADD\"[^}]*\"principalSet://iam\.googleapis\.com/locations/global/workforcePools/[^/\"}]*/\*\"[^}]*\"role\": \"[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^\"}]*\"'
-      - '\{[^}]*\"action\": \"ADD\"[^}]*\"role\": \"[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^\"}]*\"[^}]*\"principalSet://iam\.googleapis\.com/locations/global/workforcePools/[^/\"}]*/\*\"'
-      - '\{[^}]*\"principalSet://iam\.googleapis\.com/locations/global/workforcePools/[^/\"}]*/\*\"[^}]*\"action\": \"ADD\"[^}]*\"role\": \"[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^\"}]*\"'
-      - '\{[^}]*\"principalSet://iam\.googleapis\.com/locations/global/workforcePools/[^/\"}]*/\*\"[^}]*\"role\": \"[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^\"}]*\"[^}]*\"action\": \"ADD\"'
-      - '\{[^}]*\"role\": \"[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^\"}]*\"[^}]*\"action\": \"ADD\"[^}]*\"principalSet://iam\.googleapis\.com/locations/global/workforcePools/[^/\"}]*/\*\"'
-      - '\{[^}]*\"role\": \"[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^\"}]*\"[^}]*\"principalSet://iam\.googleapis\.com/locations/global/workforcePools/[^/\"}]*/\*\"[^}]*\"action\": \"ADD\"'
+      - '\{[^}]*\"action\":\s*\"ADD\"[^}]*\"principalSet://iam\.googleapis\.com/locations/global/workforcePools/[^/\"}]*/\*\"[^}]*\"role\":\s*\"[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^\"}]*\"'
+      - '\{[^}]*\"action\":\s*\"ADD\"[^}]*\"role\":\s*\"[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^\"}]*\"[^}]*\"principalSet://iam\.googleapis\.com/locations/global/workforcePools/[^/\"}]*/\*\"'
+      - '\{[^}]*\"principalSet://iam\.googleapis\.com/locations/global/workforcePools/[^/\"}]*/\*\"[^}]*\"action\":\s*\"ADD\"[^}]*\"role\":\s*\"[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^\"}]*\"'
+      - '\{[^}]*\"principalSet://iam\.googleapis\.com/locations/global/workforcePools/[^/\"}]*/\*\"[^}]*\"role\":\s*\"[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^\"}]*\"[^}]*\"action\":\s*\"ADD\"'
+      - '\{[^}]*\"role\":\s*\"[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^\"}]*\"[^}]*\"action\":\s*\"ADD\"[^}]*\"principalSet://iam\.googleapis\.com/locations/global/workforcePools/[^/\"}]*/\*\"'
+      - '\{[^}]*\"role\":\s*\"[^\"}]*([Oo]wner|[Ee]ditor|[Aa]dmin)[^\"}]*\"[^}]*\"principalSet://iam\.googleapis\.com/locations/global/workforcePools/[^/\"}]*/\*\"[^}]*\"action\":\s*\"ADD\"'
   condition: selection_setiam and (selection_workforce_privileged_binding or selection_workforce_pool_wide_admin_binding)
 falsepositives:
   - A legitimate break-glass admin group federated through a workforce pool and bound to
