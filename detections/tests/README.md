@@ -460,17 +460,20 @@ it does not see one test in the place of a different one.
   - `detections/sigma/T1537/aws_snapshot_or_ami_made_public.cases.jsonl`
 
   `Variants` also needs two entries of `detections/variants/expected.json`, and
-  what each one names. The first is the one entry of
-  `detections/sigma/T1134/k8s_impersonation_privileged.yml`: a loss of record 0 of
-  the case `impersonate-system-masters-group-procB` under the variant `multi`. The
-  second is the one entry of `detections/sigma/T1098.006/k8s_rbac_privileged_grant.yml`,
-  which names the open entry K43 of `detections/RULE_DEFECTS.md`. One test also
-  needs K13 as a row of the closed entries of that file. One more needs C6 as an
-  open entry of that file (a row of its Summary table, and a section) that does not
-  name `k8s_rbac_privileged_grant`. When a rule correction
-  removes one of these differences, give the tests another entry of the list:
+  what each one names. The first is the entry of the case
+  `scale-smp-root-alias-retain-keys-with-count` of
+  `detections/sigma/T1685/k8s_enforcer_workload_removed.yml`: a loss of record 0
+  under the variant `multi`. The tests find that entry by the rule and the case.
+  Two tests count the entries of the rule (two today). The second is the one
+  entry of `detections/sigma/T1098.006/k8s_rbac_privileged_grant.yml`, which names
+  the open entry K43 of `detections/RULE_DEFECTS.md`. One test also needs K13 as a
+  row of the closed entries of that file. One more needs C6 as an open entry of
+  that file (a row of its Summary table, and a section) that does not name
+  `k8s_rbac_privileged_grant`. When a rule correction removes one of these
+  differences, give the tests another entry of the list, as the correction of
+  `T1134/k8s_impersonation_privileged.yml` did (closed entry K72):
 
-  - `detections/sigma/T1134/k8s_impersonation_privileged.cases.jsonl`
+  - `detections/sigma/T1685/k8s_enforcer_workload_removed.cases.jsonl`
   - `detections/sigma/T1098.006/k8s_rbac_privileged_grant.cases.jsonl`
 
   Two tests of `Variants` read the probe table of `detections/SEMANTICS.md`

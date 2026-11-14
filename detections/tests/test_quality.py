@@ -458,10 +458,11 @@ class Variants(gatelib.GateCase):
     RE2 = importlib.util.find_spec("re2") is not None
     OK = (r"^OK: {rules} rule\(s\), \d+ event set\(s\), variants compact, sorted, multi, cs_like"
           r"(, re2)?: no new difference; {known} expected\.$")
-    # A rule with one entry in the expected list (variant multi, a sidecar case), and
-    # a rule whose entry names an open entry of RULE_DEFECTS.md (K43).
-    LISTED = "T1134/k8s_impersonation_privileged.yml"
-    LISTED_CASE = "impersonate-system-masters-group-procB"
+    # A sidecar case with an entry in the expected list (variant multi, a loss of
+    # record 0), of a rule that has one more entry; and a rule whose one entry names
+    # an open entry of RULE_DEFECTS.md (K43).
+    LISTED = "T1685/k8s_enforcer_workload_removed.yml"
+    LISTED_CASE = "scale-smp-root-alias-retain-keys-with-count"
     TRACKED = "T1098.006/k8s_rbac_privileged_grant.yml"
     # A rule file that is not in the repository, for an entry of a rule that is gone.
     GONE = "T9999/gone.yml"
@@ -494,19 +495,28 @@ class Variants(gatelib.GateCase):
     def add_entry_of_a_rule_that_is_gone(cls, doc):
         doc["expected"].append(dict(doc["expected"][0], rule=cls.GONE))
 
-    def entry(self, tree, rule):
-        """The one entry of the expected list of the copy for `rule`."""
-        entries = [e for e in tree.read_json(self.EXPECTED)["expected"] if e["rule"] == rule]
-        self.assertEqual(len(entries), 1, f"the test needs one expected entry for {rule}")
+    def entry(self, tree, rule, case=None):
+        """The one entry of the expected list of the copy for `rule` and, when it is
+        given, for the event set `case` (a rule can have more than one entry)."""
+        entries = [e for e in tree.read_json(self.EXPECTED)["expected"]
+                   if e["rule"] == rule and case in (None, e["name"])]
+        self.assertEqual(len(entries), 1, f"the test needs one expected entry for {rule}"
+                                          + (f", {case}" if case else ""))
         return entries[0]
 
-    def change_entry(self, tree, rule, **values):
-        """Change the one entry of the expected list of the copy for `rule`."""
-        self.entry(tree, rule)
+    def change_entry(self, tree, rule, case=None, **values):
+        """Change the one entry of the expected list of the copy for `rule` (and
+        `case`)."""
+        self.entry(tree, rule, case)
 
         def change(doc):
-            next(e for e in doc["expected"] if e["rule"] == rule).update(values)
+            next(e for e in doc["expected"]
+                 if e["rule"] == rule and case in (None, e["name"])).update(values)
         tree.edit_json(self.EXPECTED, change)
+
+    def entries_of(self, tree, rule):
+        """The count of the entries of the expected list of the copy for `rule`."""
+        return sum(1 for e in tree.read_json(self.EXPECTED)["expected"] if e["rule"] == rule)
 
     def test_ci_runs_the_self_test_and_every_rule_with_re2(self):
         self.assertEqual(gatelib.ci_commands(self.GATE), [
@@ -769,7 +779,7 @@ class Variants(gatelib.GateCase):
         may hold such entries can excuse a later difference in advance."""
         tree = self.tree()
         rule = self.LISTED
-        self.change_entry(tree, rule, name="a-case-that-is-not-in-the-sidecar")
+        self.change_entry(tree, rule, self.LISTED_CASE, name="a-case-that-is-not-in-the-sidecar")
         result = tree.run(self.GATE, "detections/sigma/" + rule)
         self.assert_rejects(
             result, rf"^FAIL  {re.escape(rule)}: expected \[multi\] case "
@@ -785,7 +795,7 @@ class Variants(gatelib.GateCase):
         variant is refused, and the difference stays new."""
         tree = self.tree()
         rule = self.LISTED
-        self.change_entry(tree, rule, reason="KEY_ORDER")
+        self.change_entry(tree, rule, self.LISTED_CASE, reason="KEY_ORDER")
         result = tree.run(self.GATE, "detections/sigma/" + rule)
         self.assert_rejects(result, rf"^FAIL  {re.escape(rule)}: expected \[multi\] case "
                                     rf"{self.LISTED_CASE}: reason 'KEY_ORDER' "
@@ -802,8 +812,8 @@ class Variants(gatelib.GateCase):
         fixture must not excuse the loss of a second one."""
         tree = self.tree()
         rule = self.LISTED
-        self.assertEqual(self.entry(tree, rule)["lost"], [[0]])
-        self.change_entry(tree, rule, lost=[[1]])
+        self.assertEqual(self.entry(tree, rule, self.LISTED_CASE)["lost"], [[0]])
+        self.change_entry(tree, rule, self.LISTED_CASE, lost=[[1]])
         result = tree.run(self.GATE, "detections/sigma/" + rule)
         self.assert_rejects(result, rf"^FAIL  {re.escape(rule)}: expected \[multi\] case "
                                     rf"{self.LISTED_CASE}: the hits changed: listed lost "
@@ -815,7 +825,7 @@ class Variants(gatelib.GateCase):
         empty `why` excuses nothing."""
         tree = self.tree()
         rule = self.LISTED
-        self.change_entry(tree, rule, why=" ")
+        self.change_entry(tree, rule, self.LISTED_CASE, why=" ")
         result = tree.run(self.GATE, "detections/sigma/" + rule)
         self.assert_rejects(result, rf"^FAIL  {re.escape(rule)}: expected \[multi\] case "
                                     rf"{self.LISTED_CASE}: `why` is empty$", exit_code=1)
@@ -882,7 +892,7 @@ class Variants(gatelib.GateCase):
         # CONTROL: on a run of some rule files the entry is left alone (the run did
         # not look for the rule file).
         some = tree.run(self.GATE, "detections/sigma/" + self.LISTED)
-        self.assert_accepts(some, self.OK.format(rules=1, known=1))
+        self.assert_accepts(some, self.OK.format(rules=1, known=self.entries_of(tree, self.LISTED)))
 
     def test_rejects_second_expected_entry_for_one_event_set(self):
         """vr-entry-second-for-one-event-set. The list holds one entry for one event
@@ -893,9 +903,12 @@ class Variants(gatelib.GateCase):
         tree = self.tree()
         rule = self.LISTED
         entries = len(tree.read_json(self.EXPECTED)["expected"])
+        known = self.entries_of(tree, rule)
+        self.entry(tree, rule, self.LISTED_CASE)
 
         def duplicate(doc):
-            doc["expected"].append(dict(next(e for e in doc["expected"] if e["rule"] == rule),
+            doc["expected"].append(dict(next(e for e in doc["expected"] if e["rule"] == rule
+                                             and e["name"] == self.LISTED_CASE),
                                         why="PLANTED: other words for the same difference."))
         tree.edit_json(self.EXPECTED, duplicate)
         result = tree.run(self.GATE, "detections/sigma/" + rule)
@@ -904,7 +917,7 @@ class Variants(gatelib.GateCase):
                                     rf"'{self.LISTED_CASE}'\)$", exit_code=1)
         self.assertEqual(len(found(result, r"^FAIL .*$")), 1, result.describe())
         self.assertRegex(result.stdout, rf"(?m)^ok    {re.escape(rule)}: \d+ event set\(s\), same "
-                                        r"hits as .*; 1 expected difference\(s\)$")
+                                        rf"hits as .*; {known} expected difference\(s\)$")
         self.assertIn(self.LIST_FAILED, result.stdout)
 
     def test_rejects_run_with_a_variant_that_is_not_in_force(self):
@@ -988,7 +1001,8 @@ class Variants(gatelib.GateCase):
         tree = self.tree()
         base = tree.out("base/detections/variants/expected.json")
         shutil.copyfile(tree.path(self.EXPECTED), base)
-        self.change_entry(tree, self.LISTED, why="Other words for the same difference.")
+        self.change_entry(tree, self.LISTED, self.LISTED_CASE,
+                          why="Other words for the same difference.")
         result = tree.run(self.GATE, "--baseline-expected", base)
         self.assert_rejects(result, rf"^FAIL  {re.escape(self.LISTED)}: expected \[multi\] case "
                                     rf"{self.LISTED_CASE}: the base branch does not list this "

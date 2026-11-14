@@ -342,9 +342,12 @@ rules** have such items.
 The harness mode `exploded` (indexed keys, no pipeline) shows the loss case by case and
 never fails: all 16 rules show differences there, and the other 15 keep every verdict
 and block. A multi-valued backend should keep more of the string lists
-(`requestObject.dryRun|contains: All` can match one element), but not a pattern with JSON
-quotes (`impersonatedUser.groups|contains: '"system:masters"'`) nor a list of objects;
-this is reasoned from the item patterns, not run on such a backend.
+(`requestObject.dryRun|contains: All` can match one element), but not a pattern with
+the JSON quotes of an element alone, nor a list of objects; this is reasoned from the
+item patterns, not run on such a backend. `T1134/k8s_impersonation_privileged.yml`
+reads its group names with two `|re` values: one with the quotes (the list as text),
+and one anchored with `^` and `$` (one element) (closed entry K72 of
+[`RULE_DEFECTS.md`](../RULE_DEFECTS.md#closed-entries)).
 
 The gate [`check_variants.py`](../check_variants.py) now runs one model of a
 multi-valued field on every rule, the cloud rules too (its variant `multi`: one value

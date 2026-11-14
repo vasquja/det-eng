@@ -28,18 +28,6 @@
       "why": "The impersonate clause of sel_agg_beyond_builtin needs the keys of each RBAC rule in the order that the API server writes (verbs, apiGroups, resources). With sorted keys the rule misses the grant. K43 tracks the correction: one alternative for each key order."
     },
     {
-      "variant": "multi",
-      "rule": "T1134/k8s_impersonation_privileged.yml",
-      "source": "case",
-      "name": "impersonate-system-masters-group-procB",
-      "fault": "loss",
-      "lost": [[0]],
-      "gained": [],
-      "items": ["sel_priv_groups.impersonatedUser.groups"],
-      "reason": "LIST_TEXT",
-      "why": "sel_priv_groups reads the group name with its JSON quotes (\"system:masters\"), so that a longer group name does not match. One element of a multi-valued field has no quotes. A store with such a field must test the element for equality. The rule as written is for a store that keeps the list as JSON text."
-    },
-    {
       "variant": "sorted",
       "rule": "T1199/gcp_workforce_principalset_privileged_binding.yml",
       "source": "case",
