@@ -62,7 +62,7 @@ The default text of a list has these properties:
 - A blank follows each `,` and each `:`. In `json.dumps`, "*separators* defaults to
   `(', ', ': ')` if *indent* is `None`" [5]. Probes `list-blank`, `list-no-blank`.
 - The keys of an object keep the order of the record. Probe `list-key-order`.
-- A non-ASCII character is an escape (`é` for `é`): "the output is guaranteed
+- A non-ASCII character is an escape (`\u00e9` for `é`): "the output is guaranteed
   to have all incoming non-ASCII and non-printable characters escaped" [5]. Probe
   `list-non-ascii`.
 - A scalar element is as JSON writes it: `true`, `null`, a string in quotes. Probe
