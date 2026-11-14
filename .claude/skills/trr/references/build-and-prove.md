@@ -323,10 +323,17 @@ print(bool(sigma_eval.evaluate(q, [ev])))
   (bools/ints preserved). An empty `{}` yields no key at all — so a rule keying on a field
   inside it simply does not match (this is how IRSA's non-empty `federatedProvider`
   excludes Pod Identity's empty `webIdFederationData`).
+  That text is one of the texts that a store can give. Do not match a blank after `,`
+  or `:`, and do not rely on the key order of an object: write `\"action\":\s*\"ADD\"`,
+  and one value for each order of the parts. `check_variants.py` runs each case with
+  the text without blanks, with sorted keys, and with one value for each element.
+  `detections/SEMANTICS.md` says what the oracle decides and what other stores do.
 - **`|cidr`** compiles to a textual `LIKE '<prefix>%'`. IPv4 CIDRs on octet boundaries are
   exact; IPv6 only matches the canonical compressed lowercase form on a nibble boundary —
   document that in any IPv6 allowlist.
-- **`|re`** works (a `REGEXP` function is registered, full Python `re`, look-around OK).
+- **`|re`** works (a `REGEXP` function is registered, with Python `re`). The oracle
+  accepts look-around; `check_sigma_regex.py` does not: keep each value in the portable
+  subset (`detections/SEMANTICS.md`, section 7).
 - **`not` is two-valued here and three-valued on SQL backends.** The SQLite backend
   writes each negation as `NOT COALESCE(<test>, 0)`, so `not filter` keeps a record
   that lacks the filter's field (Sigma's meaning). ES|QL and other SQL backends read a
@@ -527,6 +534,14 @@ approval that lands after they have passed leaves the merge to a human (see
   - `rule-cases` runs every sidecar.
   - `null-safety` runs every rule in two- and three-valued logic
     (`check_null_safety.py`).
+  - `representation-variants` runs every rule on every case and cloud fixture under
+    each variant (`check_variants.py --require-re2`): a list as JSON text without
+    blanks, with sorted keys, as one value for each element; case-sensitive `LIKE`;
+    RE2. A difference fails unless it is an entry of
+    `detections/variants/expected.json`. An entry is a human approval: propose it in
+    the PR (`--propose` prints it). Correct the rule first. The job also fails when
+    the probe table of `detections/SEMANTICS.md` is not current (`--check-doc`; run
+    `--write-doc` after a change to the golden probes).
   - `check-sufficiency` is the gate above.
   - `platform-coverage` (not required) replays every Kubernetes audit rule's cases as
     each lab and provider audit policy records them (`k8s_policy_coverage.py
@@ -544,7 +559,8 @@ approval that lands after they have passed leaves the merge to a human (see
     `NOT_PORTABLE` entry, which is a human approval.
   - `sufficiency-ratchet` (pull requests only) compares every rule with the base
     branch: its sufficiency report (cases, negatives, positives, logsource) and its
-    benign-corpus hits.
+    benign-corpus hits. It also compares `detections/variants/expected.json` with the
+    base branch (`check_variants.py --baseline-expected`): a new or changed entry fails.
   - `benign-corpus` checks the FP snapshot and budgets, and smoke-tests the live
     capture split (`score_benign.py --extra-split-at`) on a constructed capture.
   - `benign-linux-live` is a shadow capture of a real runner workload.
@@ -556,6 +572,7 @@ Run locally before pushing:
 ```bash
 python3 detections/rule_cases.py detections/sigma/<T...>/<rule>.yml   # sidecar cases hold
 python3 detections/check_null_safety.py detections/sigma/<T...>/<rule>.yml  # null-safe `not`
+python3 detections/check_variants.py detections/sigma/<T...>/<rule>.yml     # same hits under each representation variant
 python3 detections/check_sufficiency.py --rule detections/sigma/<T...>/<rule>.yml
 python3 detections/k8s_policy_coverage.py --check          # Kubernetes: --update, then commit the JSON
 python3 detections/check_provider_mappings.py --check      # Kubernetes: --propose, review, --write

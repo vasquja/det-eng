@@ -42,7 +42,12 @@ A detection change is done only when CI shows all of these:
 4. **Stays within its benign budget.** `score_benign.py --check --enforce` passes:
    the rule's hits on the benign corpus (`detections/benign/`) are within its
    budget (0 for a new rule), and `scores.json` is current.
-5. **Lints clean.** `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py` (every
+5. **Holds in each representation.** `check_variants.py` passes: the rule gives the
+   same hits on its cases and fixtures when a list is JSON text without blanks, with
+   sorted keys, or one value for each element, when `LIKE` is case-sensitive, and when
+   `|re` runs with RE2. A difference that the rule cannot remove is an entry of
+   `detections/variants/expected.json`, with a reason that the gate proves.
+6. **Lints clean.** `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py` (every
    `|re` value stays in the portable regex subset) and `sigma check` pass.
 
 Never skip, disable, or loosen a control, a test, a case, or a benign baseline to
@@ -57,7 +62,10 @@ For any TRR or new detection, load the `trr` skill first:
 [`.claude/skills/trr/SKILL.md`](.claude/skills/trr/SKILL.md). Order:
 
 1. **Select and novelty-vet** (GO/NO-GO gate) before building anything.
-2. **Research.** Pin exact telemetry field names and types from primary sources.
+2. **Research.** Pin exact telemetry field names and types from primary sources. Read
+   [`detections/SEMANTICS.md`](detections/SEMANTICS.md) before you write an item that
+   depends on letter case, on the text of a list, on a missing field, on a type or on
+   a regular expression.
 3. **Build** the artifacts below.
 4. **Prove** with the validators.
 5. **Review adversarially.** Reproduce every finding with `detections/sigma_eval.py`.
@@ -119,6 +127,12 @@ python3 detections/score_benign.py --check --enforce
 # Null safety: every rule gives the same hits in two- and three-valued logic
 python3 detections/check_null_safety.py
 
+# Representation variants: every rule gives the same hits when a list is stored, or a
+# value is matched, in another way (CI adds --require-re2; --propose prints the list)
+python3 detections/check_variants.py
+python3 detections/check_variants.py --check-doc   # the probe table of detections/SEMANTICS.md is current
+python3 detections/check_variants.py --write-doc   # after a change to the golden probes of the gate
+
 python3 -B detections/tests/gatelib.py --run   # gate tests: each gate rejects its planted bad artifacts
 
 # Kubernetes platforms (offline): audit-policy simulator and provider field mappings.
@@ -155,5 +169,6 @@ Each validator's details are in [`detections/README.md`](detections/README.md).
   cases, fixtures, docs) also needs an approval on its head commit from an
   independent human. With one maintainer, who authors your pull requests, that
   approval cannot exist, so such a pull request waits for the maintainer to merge it
-  by hand. Do not add that label yourself. Budgets, corpus slices and
-  check waivers are human decisions too: propose them in the pull request.
+  by hand. Do not add that label yourself. Budgets, corpus slices, check waivers
+  and expected differences (`detections/variants/expected.json`) are human decisions
+  too: propose them in the pull request.
