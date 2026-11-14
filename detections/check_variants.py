@@ -91,6 +91,15 @@ records are those of `compact`, for `multi` when no record holds a list, for
 `cs_like` when no query of the rule holds LIKE, and for `re2` when none holds
 REGEXP. The self-test proves on the golden probes that this changes no answer.
 
+THE DOCUMENT. detections/SEMANTICS.md says what the oracle decides, and proves each
+statement with a golden probe (the table PROBES below: one detection, one record,
+and the answer by default and under each variant). The self-test proves each
+answer. The document holds the table of --probes between two marker lines, and
+its text names a probe by its id. --check-doc fails when the table of the
+document is not the table of this run (stale), when the text names a probe that
+PROBES does not hold, and when a probe has no name in the text. --write-doc
+writes the table. No rule runs in these two modes.
+
 Usage:
     python3 detections/check_variants.py                    # every rule (the gate)
     python3 detections/check_variants.py detections/sigma/T1537/aws_snapshot_or_ami_made_public.yml
@@ -98,12 +107,15 @@ Usage:
     python3 detections/check_variants.py --json out.json --markdown "$GITHUB_STEP_SUMMARY"
     python3 detections/check_variants.py --propose          # the expected list of this run
     python3 detections/check_variants.py --baseline-expected BASE/detections/variants/expected.json
-    python3 detections/check_variants.py --probes           # the golden probes (SEMANTICS.md)
+    python3 detections/check_variants.py --probes           # the golden probes as a table
+    python3 detections/check_variants.py --check-doc        # the probe table of SEMANTICS.md is current
+    python3 detections/check_variants.py --write-doc        # write that table
     python3 detections/check_variants.py --self-test        # probes and constructed rules
 
 Exit 0 when no rule has a new difference and the expected list holds, 1 when a
-rule fails or the list does not hold, 2 when a variant is not in force (also
---require-re2 without the module) or --baseline-expected names no base tree.
+rule fails, the list does not hold or the document does not agree with the probes,
+2 when a variant is not in force (also --require-re2 without the module) or
+--baseline-expected names no base tree.
 """
 
 import os
@@ -128,6 +140,7 @@ import rule_cases  # noqa: E402
 REPO = os.path.dirname(_HERE)
 SIGMA = os.path.join(REPO, "detections", "sigma")
 EXPECTED = os.path.join(REPO, "detections", "variants", "expected.json")
+SEMANTICS = os.path.join(REPO, "detections", "SEMANTICS.md")
 DEFECTS = os.path.join(REPO, "detections", "RULE_DEFECTS.md")
 
 VARIANTS = ("compact", "sorted", "multi", "cs_like", "re2")
@@ -909,10 +922,15 @@ def write_markdown(path, results, list_problems, ctx):
 
 # (id, statement, detection, record, {variant: fires}); "default" is the oracle as
 # every validator runs it, and a variant that the row does not name gives the
-# default answer. The self-test proves each cell; SEMANTICS.md quotes the table.
+# default answer. The self-test proves each cell. SEMANTICS.md holds the table
+# (--write-doc) and names each probe in its text (--check-doc). An id is lower-case
+# words joined by hyphens.
 PROBES = [
     ("eq-case", "equality is case-sensitive (SQL `=`; Sigma's default is not)",
      {"s": {"verb": "Create"}, "condition": "s"}, {"verb": "create"}, {"default": False}),
+    ("eq-list-case", "a list of values is an OR of equalities; each one is case-sensitive",
+     {"s": {"verb": ["Create", "Update"]}, "condition": "s"}, {"verb": "update"},
+     {"default": False}),
     ("contains-case", "|contains ignores ASCII case (LIKE)",
      {"s": {"verb|contains": "Create"}, "condition": "s"}, {"verb": "create"},
      {"default": True, "cs_like": False}),
@@ -929,6 +947,11 @@ PROBES = [
     ("contains-non-ascii", "LIKE folds ASCII letters only",
      {"s": {"name|contains": "ÉTÉ"}, "condition": "s"}, {"name": "été"},
      {"default": False}),
+    ("cased-case", "|cased is case-sensitive (GLOB)",
+     {"s": {"verb|cased": "Create"}, "condition": "s"}, {"verb": "create"}, {"default": False}),
+    ("cidr-like", "|cidr matches an address of the network (a LIKE test on its text)",
+     {"s": {"ip|cidr": "192.0.2.0/24"}, "condition": "s"}, {"ip": "192.0.2.77"},
+     {"default": True}),
     ("list-equality", "equality on a list never matches (the field is the JSON text)",
      {"s": {"user.groups": "system:masters"}, "condition": "s"},
      {"user": {"groups": ["system:masters", "dev"]}}, {"default": False, "multi": True}),
@@ -951,11 +974,22 @@ PROBES = [
      {"s": {"rules|re": '\\"verbs\\":\\s*\\[[^\\]]*\\],\\s*\\"apiGroups\\"'}, "condition": "s"},
      {"rules": [{"verbs": ["*"], "apiGroups": [""]}]},
      {"default": True, "compact": True, "sorted": False}),
+    ("list-scalars-text", "a scalar element is as JSON writes it (`true`, `null`, a string "
+                          "in quotes)",
+     {"s": {"v": '[1, true, null, "x"]'}, "condition": "s"}, {"v": [1, True, None, "x"]},
+     {"default": True, "compact": False, "sorted": False, "multi": False}),
+    ("list-leaf-no-field", "a name below a list is not a field",
+     {"s": {"rules.verbs|exists": True}, "condition": "s"}, {"rules": [{"verbs": ["*"]}]},
+     {"default": False}),
     ("list-empty-exists", "an empty list is the text `[]`, so the field exists",
      {"s": {"items|exists": True}, "condition": "s"}, {"items": []},
      {"default": True, "multi": False}),
     ("object-empty-exists", "an empty object leaves no field",
      {"s": {"spec|exists": True}, "condition": "s"}, {"spec": {}}, {"default": False}),
+    ("object-no-field", "an object with a leaf has no field of its own",
+     {"s": {"spec|exists": True}, "condition": "s"}, {"spec": {"a": 1}}, {"default": False}),
+    ("object-leaf", "a leaf of an object is a field with a dotted name",
+     {"s": {"spec.a": 1}, "condition": "s"}, {"spec": {"a": 1}}, {"default": True}),
     ("list-non-ascii", "the JSON text escapes a non-ASCII character",
      {"s": {"names|contains": "é"}, "condition": "s"}, {"names": ["café"]},
      {"default": False, "multi": True}),
@@ -963,9 +997,20 @@ PROBES = [
      {"s": {"verb|re": "Create"}, "condition": "s"}, {"verb": "create"}, {"default": False}),
     ("re-i", "|re|i ignores case",
      {"s": {"verb|re|i": "Create"}, "condition": "s"}, {"verb": "create"}, {"default": True}),
+    ("re-i-non-ascii", "|re|i folds a non-ASCII letter too",
+     {"s": {"name|re|i": "ÉTÉ"}, "condition": "s"}, {"name": "été"}, {"default": True}),
     ("re-search", "|re is a search, not a match of the whole value",
      {"s": {"apiVersion|re": "v1"}, "condition": "s"}, {"apiVersion": "apps/v1beta1"},
      {"default": True}),
+    ("re-anchored", "with `^` and `$`, |re must match the whole value",
+     {"s": {"apiVersion|re": "^v1$"}, "condition": "s"}, {"apiVersion": "apps/v1beta1"},
+     {"default": False}),
+    ("re-dot-newline", "`.` does not match a line break",
+     {"s": {"line|re": "a.b"}, "condition": "s"}, {"line": "a\nb"}, {"default": False}),
+    ("re-s", "with |s, `.` matches a line break",
+     {"s": {"line|re|s": "a.b"}, "condition": "s"}, {"line": "a\nb"}, {"default": True}),
+    ("re-m", "with |m, `^` matches at the start of each line",
+     {"s": {"line|re|m": "^b"}, "condition": "s"}, {"line": "a\nb"}, {"default": True}),
     ("re-space-class", "`\\s` matches a no-break space in Python re, not in RE2",
      {"s": {"line|re": "rewrite\\sname"}, "condition": "s"}, {"line": "rewrite name"},
      {"default": True, "re2": False}),
@@ -977,14 +1022,39 @@ PROBES = [
      {"s": {"Verb": "create"}, "condition": "s"}, {"verb": "create"}, {"default": True}),
     ("number-text", "the text of a number does not equal the number",
      {"s": {"code": "200"}, "condition": "s"}, {"code": 200}, {"default": False}),
+    ("text-number", "a number does not equal the text of the number",
+     {"s": {"code": 200}, "condition": "s"}, {"code": "200"}, {"default": False}),
     ("number-number", "a number equals the number",
      {"s": {"code": 200}, "condition": "s"}, {"code": 200}, {"default": True}),
+    ("int-float", "an integer equals the float of the same value",
+     {"s": {"code": 200}, "condition": "s"}, {"code": 200.0}, {"default": True}),
+    ("like-on-number", "LIKE reads a number as its text",
+     {"s": {"code|startswith": "2"}, "condition": "s"}, {"code": 200}, {"default": True}),
+    ("re-on-number", "|re reads a number as its text",
+     {"s": {"code|re": "^2[0-9][0-9]$"}, "condition": "s"}, {"code": 200}, {"default": True}),
+    ("gt-text", "|gt puts a text value above each number (the order of SQLite)",
+     {"s": {"n|gt": 5}, "condition": "s"}, {"n": "1"}, {"default": True}),
+    ("bool-true", "`field: true` holds on a JSON true",
+     {"s": {"flag": True}, "condition": "s"}, {"flag": True}, {"default": True}),
+    ("bool-on-text", "`field: true` holds on the text `true` too",
+     {"s": {"flag": True}, "condition": "s"}, {"flag": "true"}, {"default": True}),
+    ("text-on-bool", "the text `true` does not equal a JSON true (the table holds 1)",
+     {"s": {"flag": "true"}, "condition": "s"}, {"flag": True}, {"default": False}),
     ("null-absent", "`field: null` holds on a record without the field",
      {"s": {"verb": "delete", "dryRun": None}, "condition": "s"}, {"verb": "delete"},
      {"default": True}),
     ("null-json-null", "`field: null` holds on a JSON null",
      {"s": {"verb": "delete", "dryRun": None}, "condition": "s"},
      {"verb": "delete", "dryRun": None}, {"default": True}),
+    ("null-empty", "`field: null` does not hold on an empty string",
+     {"s": {"f": None}, "condition": "s"}, {"f": ""}, {"default": False}),
+    ("empty-absent", "an empty string does not match a record without the field",
+     {"s": {"verb": "get", "f": ""}, "condition": "s"}, {"verb": "get"}, {"default": False}),
+    ("exists-json-null", "`|exists: true` does not hold on a JSON null",
+     {"s": {"f|exists": True}, "condition": "s"}, {"f": None}, {"default": False}),
+    ("exists-false-absent", "`|exists: false` holds on a record without the field",
+     {"s": {"verb": "get", "f|exists": False}, "condition": "s"}, {"verb": "get"},
+     {"default": True}),
     ("not-absent", "`not filter` keeps a record without the filter's field (two-valued; "
                    "check_null_safety.py runs the three-valued logic)",
      {"s": {"verb": "delete"}, "f": {"dryRun": "All"}, "condition": "s and not f"},
@@ -1023,18 +1093,55 @@ def in_force(ctx):
     return [v for v in ctx.variants if v not in changed]
 
 
+def _rule_value(value):
+    """A value of an item as a rule file writes it: text in single quotes (in double
+    quotes with escapes when it holds a character that does not print)."""
+    if isinstance(value, list):
+        return "[" + ", ".join(_rule_value(v) for v in value) + "]"
+    if isinstance(value, str) and value.isprintable():
+        return "'" + value.replace("'", "''") + "'"
+    return json.dumps(value)        # a number, true, false, null; text with escapes
+
+
+def probe_item(detection):
+    """The detection of a probe as text: `field|modifier: value`. With more than one
+    selection: the condition, with each selection in brackets in place of its name."""
+    def one(selection):
+        return ", ".join(f"{field}: {_rule_value(value)}" for field, value in selection.items())
+    names = [name for name in detection if name != "condition"]
+    if names == [detection["condition"]]:
+        return one(detection[names[0]])
+    return re.sub(r"\b(" + "|".join(re.escape(name) for name in names) + r")\b",
+                  lambda found: "(" + one(detection[found.group(1)]) + ")", detection["condition"])
+
+
+def probe_record(record):
+    """The record of a probe as JSON text; a character that does not print (a
+    no-break space) is an escape."""
+    text = json.dumps(record, ensure_ascii=False)
+    return "".join(ch if ch.isprintable() else f"\\u{ord(ch):04x}" for ch in text)
+
+
+def _code_cell(text):
+    """Text as a code span of a table cell: a `|` is escaped, or it would end the cell."""
+    return "`" + text.replace("|", "\\|") + "`"
+
+
 def probes_table(ctx):
     """(lines, count of cells that are not as PROBES says): the golden probes as a
-    Markdown table, with one column for the default run and for each variant of
-    VARIANTS. A cell is the answer of this run. For a variant that does not run here
+    Markdown table: the probe, its statement, its detection, its record, and one column
+    for the default run and for each variant of VARIANTS. A cell of those columns
+    is the answer of this run. For a variant that does not run here
     (re2 without the module) it is the answer that PROBES declares, and print_probes()
     says below the table that the variant did not run. So the table is the same text
     with and without the module while every answer is as declared. A `|` in a
-    statement is escaped: it would end the cell."""
+    statement, a detection or a record is escaped: it would end the cell."""
     names = ["default"] + list(VARIANTS)
-    lines = ["| probe | statement | " + " | ".join(names) + " |",
-             "|---|---|" + "---|" * len(names)]
+    lines = ["| probe | statement | detection | record | " + " | ".join(names) + " |",
+             "|---|---|---|---|" + "---|" * len(names)]
     declared = {ident: expect for ident, _, _, _, expect in PROBES}
+    shown = {ident: (_code_cell(probe_item(detection)), _code_cell(probe_record(record)))
+             for ident, _, detection, record, _ in PROBES}
     bad = 0
     for ident, statement, got, _ in probe_results(ctx):
         cells = []
@@ -1047,7 +1154,7 @@ def probes_table(ctx):
                 bad += 1
             cells.append(cell)
         lines.append(f"| `{ident}` | " + statement.replace("|", "\\|") + " | "
-                     + " | ".join(cells) + " |")
+                     + " | ".join(shown[ident] + tuple(cells)) + " |")
     return lines, bad
 
 
@@ -1058,6 +1165,125 @@ def print_probes(ctx):
         print(f"\nNOT RUN: variant {variant}: {why}. Its column is what the table PROBES "
               "declares; --self-test proves it where the variant runs.")
     return 1 if bad else 0
+
+
+# ---- the probe table of detections/SEMANTICS.md ------------------------------
+
+# SEMANTICS.md holds the table of probes_table() between two marker lines, and its
+# text names a probe by its id in a code span. In that document a code span of
+# lower-case words joined by hyphens (`eq-case`) is always the name of a golden
+# probe: write any other such text without a code span.
+DOC_BEGIN, DOC_END = "<!-- probes:begin -->", "<!-- probes:end -->"
+DOC_NOTE = ("<!-- Generated by detections/check_variants.py --write-doc from its table "
+            "PROBES. Do not edit by hand. -->")
+_PROBE_NAME = re.compile(r"`([a-z0-9]+(?:-[a-z0-9]+)+)`")
+
+
+def doc_block(ctx):
+    """(the text between the two markers of SEMANTICS.md, the count of cells that are
+    not as PROBES declares)."""
+    lines, bad = probes_table(ctx)
+    return "\n" + "\n".join([DOC_NOTE, ""] + lines + [""]) + "\n", bad
+
+
+def split_doc(text):
+    """(text up to and with the begin marker, the block, text from the end marker), or
+    None when the text does not hold each marker one time, in that order."""
+    if text.count(DOC_BEGIN) != 1 or text.count(DOC_END) != 1 \
+            or text.index(DOC_BEGIN) > text.index(DOC_END):
+        return None
+    head, rest = text.split(DOC_BEGIN, 1)
+    block, tail = rest.split(DOC_END, 1)
+    return head + DOC_BEGIN, block, DOC_END + tail
+
+
+def check_doc(path, ctx):
+    """(problems, count of probe names in the text) of the document at `path`.
+
+    A problem is a line of text: the file or a marker is missing; the block between
+    the markers is not the table of this run (STALE); the text outside the block
+    names a probe that PROBES does not hold; a probe of PROBES has no name in the
+    text outside the block (then no statement of the document rests on that row)."""
+    rel = os.path.relpath(path, REPO)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError as e:
+        return [f"MISSING: {rel}: cannot read: {e.strerror or e}"], 0
+    parts = split_doc(text)
+    if parts is None:
+        return [f"ERROR: {rel}: want one line `{DOC_BEGIN}` and, after it, one line "
+                f"`{DOC_END}`: the probe table goes between them"], 0
+    head, block, tail = parts
+    problems = []
+    wanted, bad = doc_block(ctx)
+    if bad:
+        problems.append(f"ERROR: {bad} answer(s) of the golden probes are not as the table "
+                        "PROBES declares (the cells with WANT below); run --self-test")
+    if block != wanted:
+        import difflib
+        changed = [line for line in difflib.unified_diff(
+            block.splitlines(), wanted.splitlines(), "in the document", "of this run",
+            lineterm="", n=0) if not line.startswith(("---", "+++", "@@"))]
+        problems.append(f"STALE: the probe table of {rel} differs from the golden probes of "
+                        "detections/check_variants.py (the table PROBES); run python3 "
+                        "detections/check_variants.py --write-doc\n"
+                        + "\n".join("    " + line for line in changed[:12])
+                        + (f"\n    ... ({len(changed) - 12} more line(s))" if len(changed) > 12 else ""))
+    known = [ident for ident, *_ in PROBES]
+    outside = re.sub(r"(?ms)^```.*?^```$", "", head + tail)
+    named = _PROBE_NAME.findall(outside)
+    for name in sorted(set(named) - set(known)):
+        line = 1 + text[:text.index(f"`{name}`")].count("\n")
+        problems.append(f"UNKNOWN: {rel} line {line} names the probe `{name}`, and the table "
+                        "PROBES holds no such probe. In this document a code span of "
+                        "lower-case words joined by hyphens is the name of a golden probe")
+    for name in known:
+        if name not in named:
+            problems.append(f"UNUSED: the probe `{name}` is a row of the table, and no "
+                            f"statement of {rel} names it: say what the row proves, or "
+                            "delete the probe")
+    return problems, len(named)
+
+
+def print_doc_check(path, ctx):
+    problems, named = check_doc(path, ctx)
+    rel = os.path.relpath(path, REPO)
+    for problem in problems:
+        print(problem)
+    for variant, why in ctx.skipped.items():
+        print(f"NOT RUN: variant {variant}: {why}. Its column was compared with what the "
+              "table PROBES declares.")
+    if problems:
+        print(f"\nFAILED: {rel} does not agree with the golden probes: {len(problems)} "
+              "problem(s).")
+        return 1
+    print(f"OK: {rel}: the table of the {len(PROBES)} golden probes is current, and each of "
+          f"the {named} probe name(s) in the text is a row of it.")
+    return 0
+
+
+def write_doc(path, ctx):
+    """Put the table of this run between the markers of the document, then check it."""
+    rel = os.path.relpath(path, REPO)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError as e:
+        print(f"MISSING: {rel}: cannot read: {e.strerror or e}")
+        return 1
+    parts = split_doc(text)
+    wanted, bad = doc_block(ctx)
+    if parts is None or bad:
+        # No marker: nothing says where the table goes. A wrong answer: the table
+        # would hold a WANT cell.
+        return print_doc_check(path, ctx)
+    new = parts[0] + wanted + parts[2]
+    if new != text:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(new)
+    print(f"{'wrote' if new != text else 'unchanged:'} the probe table of {rel}")
+    return print_doc_check(path, ctx)
 
 
 # ---- self-test ---------------------------------------------------------------
@@ -1258,11 +1484,77 @@ def self_test():
     lines, bad = probes_table(ctx)
     cells = [len(re.split(r"(?<!\\)\|", line)) for line in lines]
     check("the probe table has one row for each probe, and each row has the same cells",
-          len(lines) == len(PROBES) + 2 and set(cells) == {len(VARIANTS) + 5} and not bad,
+          len(lines) == len(PROBES) + 2 and set(cells) == {len(VARIANTS) + 7} and not bad,
           (len(lines), sorted(set(cells)), bad))
     without = Context(variants=[v for v in VARIANTS if v != "re2"])
     check("the probe table is the same text when a variant does not run",
           probes_table(without)[0] == lines)
+    check("no probe has the id of another probe",
+          len({ident for ident, *_ in PROBES}) == len(PROBES))
+    check("no cell of a detection or a record holds a backtick (it would end the code span)",
+          not any("`" in probe_item(d) + probe_record(r) for _, _, d, r, _ in PROBES))
+    check("a detection is shown as a rule writes it, a record as JSON",
+          (probe_item({"s": {"a|re": "x\\s'y", "b": [1, None, True]}, "condition": "s"}),
+           probe_item({"s": {"a": "x"}, "f": {"b": ""}, "condition": "s and not f"}),
+           probe_record({"a": "é\xa0\n", "b": [None, 1.5]}))
+          == ("a|re: 'x\\s''y', b: [1, null, true]", "(a: 'x') and not (b: '')",
+              '{"a": "é\\u00a0\\n", "b": [null, 1.5]}'))
+
+    # The probe table of SEMANTICS.md, on constructed documents.
+    names = "".join(f"- `{ident}`\n" for ident, *_ in PROBES)
+    current = f"# Text\n\n{names}\n{DOC_BEGIN}{doc_block(ctx)[0]}{DOC_END}\n\nMore text.\n"
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "SEMANTICS.md")
+
+        def doc_problems(text):
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            return check_doc(path, ctx)[0]
+
+        check("a document with the table of this run and each probe name has no problem",
+              doc_problems(current) == [], doc_problems(current))
+        stale = current.replace("| quiet | quiet | quiet | quiet | quiet | quiet |",
+                                "| fires | quiet | quiet | quiet | quiet | quiet |", 1)
+        found = doc_problems(stale)
+        check("a table with one changed answer is stale, and the report shows the row",
+              len(found) == 1 and found[0].startswith("STALE: ") and "\n    -| `eq-case` | " in found[0]
+              and "\n    +| `eq-case` | " in found[0], found)
+        check("a table that lost a row is stale",
+              [f[:7] for f in doc_problems(current.replace(lines[-1] + "\n", "", 1))] == ["STALE: "])
+        check("a document without the end marker is an error",
+              [f[:7] for f in doc_problems(current.replace(DOC_END, ""))] == ["ERROR: "])
+        check("a document with the markers in the wrong order is an error",
+              [f[:7] for f in doc_problems(f"{DOC_END}\n{names}{DOC_BEGIN}\n")] == ["ERROR: "])
+        found = doc_problems(current + "A probe that is gone: `eq-letter-case`.\n")
+        check("a probe name in the text that is not a probe is a problem",
+              len(found) == 1 and found[0].startswith("UNKNOWN: ")
+              and "names the probe `eq-letter-case`" in found[0], found)
+        found = doc_problems(current.replace("- `eq-case`\n", "", 1))
+        check("a probe that the text does not name is a problem",
+              len(found) == 1 and found[0].startswith("UNUSED: the probe `eq-case` "), found)
+        check("a name in a fenced block, an option and a file name are not probe names",
+              doc_problems(current + "`--self-test` `check-me.py` `a_b-c`\n\n```\n`not-a-probe`\n```\n")
+              == [])
+        os.remove(path)
+        check("a document that is not there is a problem",
+              [f[:9] for f in check_doc(path, ctx)[0]] == ["MISSING: "])
+        import contextlib
+        import io
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(stale)
+        with contextlib.redirect_stdout(io.StringIO()) as said:
+            wrote = write_doc(path, ctx)
+        with open(path, encoding="utf-8") as fh:
+            check("--write-doc makes a stale document current, and changes no other text",
+                  wrote == 0 and fh.read() == current and "wrote the probe table" in said.getvalue(),
+                  said.getvalue())
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(current.replace(DOC_BEGIN, ""))
+        with contextlib.redirect_stdout(io.StringIO()) as said:
+            wrote = write_doc(path, ctx)
+        with open(path, encoding="utf-8") as fh:
+            check("--write-doc does not write a document without a marker",
+                  wrote == 1 and fh.read() == current.replace(DOC_BEGIN, ""), said.getvalue())
 
     if ctx.skipped:
         for variant, why in ctx.skipped.items():
@@ -1296,6 +1588,12 @@ def main():
     ap.add_argument("--markdown", metavar="PATH",
                     help="append a Markdown summary (e.g. $GITHUB_STEP_SUMMARY)")
     ap.add_argument("--probes", action="store_true", help="print the golden probes, and exit")
+    ap.add_argument("--check-doc", action="store_true",
+                    help="only compare the probe table of detections/SEMANTICS.md with the "
+                         "golden probes of this run, and the probe names of its text with "
+                         "the table: fail when they differ")
+    ap.add_argument("--write-doc", action="store_true",
+                    help="write the probe table of detections/SEMANTICS.md, then check it")
     ap.add_argument("--self-test", action="store_true",
                     help="prove the probes and the gate on constructed rules, and exit")
     args = ap.parse_args()
@@ -1308,6 +1606,10 @@ def main():
         return self_test()
     if args.probes:
         return print_probes(ctx)
+    if args.write_doc:
+        return write_doc(SEMANTICS, ctx)
+    if args.check_doc:
+        return print_doc_check(SEMANTICS, ctx)
     if args.baseline_expected:
         entries, errors = load_expected(args.expected)
         compared = ratchet(entries, args.baseline_expected)

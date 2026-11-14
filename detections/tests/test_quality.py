@@ -552,18 +552,21 @@ class Variants(gatelib.GateCase):
 
     def test_probes_table_is_one_text_with_and_without_re2(self):
         """--probes prints the golden probes as a Markdown table (the probe table of
-        detections/SEMANTICS.md is this text). It has a column for each variant, re2
-        too, also where the module is missing: the same text on a development machine
-        and in CI. Each row has the same count of cells: a `|` in a statement
-        (`|contains`) is escaped, or it would end the cell."""
+        detections/SEMANTICS.md is this text). A row holds the probe, its statement,
+        its detection, its record and one answer for the default run and for each
+        variant, re2 too, also where the module is missing: the same text on a
+        development machine and in CI. Each row has the same count of cells: a `|`
+        in a statement or a detection (`|contains`) is escaped, or it would end the
+        cell."""
         result = self.good().run(self.GATE, *self.ci_arguments, "--probes")
-        self.assert_accepts(result, r"^\| probe \| statement \| default \| compact \| sorted \| "
-                                    r"multi \| cs_like \| re2 \|$")
+        self.assert_accepts(result, r"^\| probe \| statement \| detection \| record \| default "
+                                    r"\| compact \| sorted \| multi \| cs_like \| re2 \|$")
         rows = found(result, r"^\| .*\|$")
         self.assertGreater(len(rows), 20, "the table holds fewer rows than the probes")
-        self.assertEqual({len(re.split(r"(?<!\\)\|", row)) for row in rows}, {10},
-                         "a row does not have 8 cells:\n" + result.stdout)
-        self.assertIn("| `contains-case` | \\|contains ignores ASCII case (LIKE) | fires | fires "
+        self.assertEqual({len(re.split(r"(?<!\\)\|", row)) for row in rows}, {12},
+                         "a row does not have 10 cells:\n" + result.stdout)
+        self.assertIn("| `contains-case` | \\|contains ignores ASCII case (LIKE) | "
+                      "`verb\\|contains: 'Create'` | `{\"verb\": \"create\"}` | fires | fires "
                       "| fires | fires | quiet | fires |\n", result.stdout)
         self.assertRegex(result.stdout, r"(?m)^\| `re-space-class` \| .* \| quiet \|$")
         self.assertNotIn("WANT", result.stdout)
