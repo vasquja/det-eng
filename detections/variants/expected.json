@@ -2,18 +2,6 @@
   "schema": 1,
   "expected": [
     {
-      "variant": "cs_like",
-      "rule": "T1098.003/gcp_public_iam_member_grant.yml",
-      "source": "fixture",
-      "name": "trr9014/attack.json",
-      "fault": "loss",
-      "lost": [[0], [1]],
-      "gained": [],
-      "items": ["selection_set_iam.protoPayload.methodName"],
-      "reason": "LIKE_CASE",
-      "why": "The rule writes the endings of methodName in lower case (setiampolicy, setiampermissions), and the records hold storage.setIamPermissions and google.cloud.run.v2.Services.SetIamPolicy. The item matches only where |endswith ignores letter case, as Sigma specifies. A store whose match is case-sensitive misses both records."
-    },
-    {
       "variant": "sorted",
       "rule": "T1098.006/k8s_rbac_privileged_grant.yml",
       "source": "case",
