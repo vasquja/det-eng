@@ -106,10 +106,13 @@ Notes from R7, for the items after it (2026-11-14).
   things stand behind it today: the file is not content for automerge, and the
   `sufficiency-ratchet` job compares the list with the list of the base branch (an
   entry that the base does not hold as it is on the head fails). But the code that
-  reads the list and proves the reason of each entry is the code of the head, as for
-  the waivers of `check_sufficiency.py` (known gap `cs-self-added-waiver`). R8 must
-  take the list over: the conditions of an entry are then checked by code from
-  `main` (R1).
+  reads the list and checks each entry is the code of the head, as for the waivers
+  of `check_sufficiency.py` (known gap `cs-self-added-waiver`). R8 must take the list
+  over: the conditions of an entry are then checked by code from `main` (R1). An
+  entry binds names (the variant, the rule, the case or fixture, the fault, the hits
+  and the items), not the values of the item or the records of the case: a change of
+  a rule value or of a case, which is content, can keep an approval whose `why` is no
+  longer true.
 
 Note for R7, from R2b. No rule that `detections/validate_detections.py` proves
 reads `success`: the logic of each rule matches a syscall that the kernel
