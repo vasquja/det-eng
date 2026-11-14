@@ -133,11 +133,14 @@ The variant `cs_like` is the model of a `LIKE` that does not fold letter case. O
 inference: GoogleSQL `LIKE` and ES|QL `LIKE` on a `text` field are such tests. No
 variant folds the letter case of equality (section 11).
 
-A rule that reads a value whose letter case the sender chooses relies on that fold.
-The expected list of the gate holds one such difference (reason `LIKE_CASE`, section
-9): a webhook URL with an upper-case scheme. On a store whose match is case-sensitive,
-the query must make the field lower-case first: no list of values holds each mix of
-letter cases.
+A rule that reads a value whose letter case the sender chooses must not rely on that
+fold. On a store that compares with letter case, a `|contains` value holds only the
+letter case that the rule writes. A `|re` value with character classes
+(`[hH][tT][tT][pP]`) holds each mix of letter cases and needs no fold.
+`T1546/k8s_admission_webhook_repointed_to_url.yml` reads the scheme of a webhook URL in
+that form (closed entry K71 of [`RULE_DEFECTS.md`](RULE_DEFECTS.md)). Its `|contains`
+values were a difference under `cs_like` before that correction. The expected list of
+the gate holds no difference with the reason `LIKE_CASE` today (section 9).
 
 ## 4. Lists
 

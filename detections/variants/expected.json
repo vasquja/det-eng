@@ -161,18 +161,6 @@
       "why": "selection_public reads the value with its JSON quotes (\"All\"), so that a longer value does not match. One element of accountIdsToAdd has no quotes. A store with a multi-valued field must test the element for equality. The rule as written is for a store that keeps the list as JSON text."
     },
     {
-      "variant": "cs_like",
-      "rule": "T1546/k8s_admission_webhook_repointed_to_url.yml",
-      "source": "case",
-      "name": "smp-patch-uppercase-scheme",
-      "fault": "loss",
-      "lost": [[0]],
-      "gained": [],
-      "items": ["sel_body_url.requestObject.webhooks"],
-      "reason": "LIKE_CASE",
-      "why": "The record holds an upper-case URL scheme (HTTPS://). The API server accepts it, and the attacker chooses the letter case. The item '\"url\": \"http' matches it only where |contains ignores letter case, as Sigma specifies. A store whose match is case-sensitive needs a lower-case function on the field: no list of values can hold each mix of letter cases."
-    },
-    {
       "variant": "multi",
       "rule": "T1685/k8s_enforcer_workload_removed.yml",
       "source": "case",

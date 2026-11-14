@@ -912,7 +912,7 @@
     "openshift-wrb-4.17": {"near_misses": {"no_record": 0, "quiet": 8, "total": 8}, "negatives_firing": [], "not_modeled": 1, "not_modeled_reads": 0, "positives": {"firing": 20, "lost": [], "total": 20}},
     "recommended": {"near_misses": {"no_record": 0, "quiet": 8, "total": 8}, "negatives_firing": [], "not_modeled": 0, "not_modeled_reads": 0, "positives": {"firing": 20, "lost": [], "total": 20}}
    },
-   "rule_digest": "062dda6ece085b34dcfeed850f260e08fada254d0ce02421a4730bf4a2e0ea00",
+   "rule_digest": "08b2be9f2c356092e4411392c8870b818ac39e7630ac449d3ce591bd9ed9fc28",
    "title": "Kubernetes Admission Webhook Repointed to a URL"
   },
   "T1546/k8s_malicious_admission_webhook_created.yml": {
