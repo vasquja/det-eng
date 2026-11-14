@@ -36,6 +36,7 @@ How the harness works: gatelib.py and README.md in this directory.
 import datetime
 import difflib
 import glob
+import json
 import os
 import re
 import subprocess
@@ -752,9 +753,10 @@ class FileSensorRule(LabSteps):
     `auditctl -l` for the rule of the file sensor. When the key k8s_node_file is not
     in the list, each prints an ::error line that names the cause. Neither stops: the
     validator fails closed without events. Its file gate needs the record of the
-    emulation. Its file control needs the manifest writes of kubeadm, which are in the
-    log from the time when the cluster was created: the control fails only when the
-    rule was gone before that. Each ::error line says which of the two fails when."""
+    emulation: the write of the manifest of Procedure A, which is the first procedure.
+    Its file control needs the manifest writes of kubeadm, which are in the log from
+    the time when the cluster was created: the control fails only when the rule was
+    gone before that. Each ::error line says which of the two fails when."""
 
     WORKFLOW, JOB = "validate-staticpod-detections.yml", "validate"
     STEPS = ("Capture the node file events before the emulation (negative control)",
@@ -765,7 +767,7 @@ class FileSensorRule(LabSteps):
     # What each step says of the two checks of the validator.
     FAILS = {STEPS[0]: "the file gate will fail, and the file control too if the rule was gone before the "
                        "cluster was created",
-             STEPS[1]: "the file gate fails if that was before the end of the emulation, and the file "
+             STEPS[1]: "the file gate fails if that was before Procedure A wrote its manifest, and the file "
                        "control if it was before the cluster was created"}
     # One record of the marked writer: the collect step stops its poll when it sees one.
     RECORD = ('type=SYSCALL msg=audit(1794601947.257:300): arch=c000003e syscall=257 success=yes exit=3 '
@@ -974,6 +976,16 @@ class LedgerClock(unittest.TestCase):
     ZONES = {"XYZ5": "-0500", "XYZ-5:30": "+0530", "UTC0": "+0000"}
     ZONE = "XYZ5"
     SAY_ZONE = "printf 'zone %(%z)T\\n' -1\n"       # a shell line: the zone of the run is in force
+    # A child Python at the root of a copy: _ts() of each validator that reads a ledger,
+    # for each argument. Prints {validator: [the time as ISO 8601 text, or None]}.
+    VALIDATORS = ("validate_k8s_detections", "validate_staticpod_detections", "validate_apiserver_detections")
+    READ = ("import importlib, json, sys\n"
+            "sys.path.insert(0, 'detections')\n"
+            "read = {}\n"
+            "for name in sys.argv[1].split(','):\n"
+            "    times = [importlib.import_module(name)._ts(text) for text in sys.argv[2:]]\n"
+            "    read[name] = [t.isoformat(timespec='microseconds') if t else None for t in times]\n"
+            "print(json.dumps(read))\n")
 
     @classmethod
     def definitions(cls, text):
@@ -1231,11 +1243,27 @@ class LedgerClock(unittest.TestCase):
         self.assertEqual(printed, ["2026-11-13T20:23:06.003423Z"])
         self.assertEqual(called, ["-u +%Y-%m-%dT%H:%M:%S.%N"])
         self.assertIsNone(DateWidth.WIDTH.search(called[0]))
-        # A `date` that has no %N (BSD date prints the letter): no valid time, and no
-        # time that looks valid.
+        # A `date` that has no %N (BSD date prints the letter N): the text of the
+        # function is not in the format of the ledger.
         printed, _called = self.run_function("unset EPOCHREALTIME\nnow_utc\n", date_says="2026-11-13T20:23:06.N")
         self.assertEqual(printed, ["2026-11-13T20:23:06.NZ"])
         self.assertNotRegex(printed[0], "^" + self.FORMAT + "$")
+        # detections/README.md (`The emulation scripts take ...`) says what the
+        # validators do with that text: they read it as the whole second, so the window
+        # of the procedure starts and ends up to 1 s early. That is true from Python
+        # 3.11 (an older Python is not asked here). CONTROL: they read a text in the
+        # format of the ledger with its fraction.
+        if sys.version_info >= (3, 11):
+            tree = gatelib.Tree(("detections/*.py",))
+            self.addCleanup(tree.cleanup)
+            done = tree.run_python(self.READ, ",".join(self.VALIDATORS), "2026-11-13T20:23:06.003423Z", printed[0])
+            self.assertEqual(done.returncode, 0, done.describe())
+            self.assertEqual(json.loads(done.stdout.splitlines()[-1]), dict.fromkeys(
+                self.VALIDATORS, ["2026-11-13T20:23:06.003423+00:00", "2026-11-13T20:23:06.000000+00:00"]),
+                "detections/README.md (`The emulation scripts take ...`) says that the validators read `"
+                + printed[0] + "` as the whole second, with Python 3.11 and later. With this Python ("
+                + sys.version.split()[0] + ") a validator reads it differently: correct that sentence, and "
+                "this assertion")
 
     def test_the_benign_step_writes_its_split_point_without_date(self):
         """The step of the API server lab that writes BENIGN_START, to that line: the

@@ -72,6 +72,11 @@ In CI (the variable `CI` is set) each of these conditions fails the test in
 place of a skip, and `--no-skips` fails the run when a test was skipped. So no
 test is skipped in CI.
 
+With Python 3.10, one test of `LedgerClock` does not make one of its assertions:
+how the validators read a ledger time whose fraction has no digit
+(`detections/README.md` says that for Python 3.11 and later). The test is not
+skipped.
+
 The `re2` module (the package google-re2) skips no test. With it, the tests of
 `check_sigma_regex.py` and `check_provider_mappings.py` pass `--require-re2`, as
 their CI jobs do. Without it, they run the default path. The gate-tests job

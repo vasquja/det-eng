@@ -474,7 +474,7 @@ jobs:
           # the time when the cluster was created.
           rules="$(sudo auditctl -l 2>/dev/null || true)"
           if ! grep -qF k8s_node_file <<<"${rules}"; then
-            echo "::error title=file sensor::the audit rule of the file sensor is not loaded ('auditctl -l' does not list the key k8s_node_file): the sensor did not start, or the rule was deleted after the sensor step. auditd recorded no file event from that time on; the file gate fails if that was before the end of the emulation, and the file control if it was before the cluster was created"
+            echo "::error title=file sensor::the audit rule of the file sensor is not loaded ('auditctl -l' does not list the key k8s_node_file): the sensor did not start, or the rule was deleted after the sensor step. auditd recorded no file event from that time on; the file gate fails if that was before Procedure A wrote its manifest, and the file control if it was before the cluster was created"
           fi
           # Node file events: poll (max 30 s) for the marked writer's record, then
           # convert the auditd records to linux/file_event JSON lines. The validator

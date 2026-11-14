@@ -1371,10 +1371,12 @@ later) and not from `date +%6N`. `date` of uutils coreutils 0.10.0 (Ubuntu 26.04
 prints `%6N` without the leading zeros of the fraction, and a start that is almost
 1 s late puts the record of the procedure outside its window. With an older bash
 the script calls `date` with `%N` and keeps six digits. A `date` that has no `%N`
-(bash 3.2 with the `date` of macOS) gives a text that is not a time: the validator
-then says that the ledger row has no start or end that it can read, and the gates of
-that procedure miss. bash writes `EPOCHREALTIME` with the decimal point of the
-locale. The function reads `.` and `,`. In a locale with a different decimal point
+(bash 3.2 with the `date` of macOS) prints the letter `N`, and the function then
+prints a text such as `2026-11-13T20:23:06.NZ`. The validators read that text as the
+whole second (Python 3.11 and later). The window of the procedure then starts and
+ends up to 1 s early, and a record from the last second of the procedure can be
+outside it. Use bash 5 there. bash writes `EPOCHREALTIME` with the decimal point of
+the locale. The function reads `.` and `,`. In a locale with a different decimal point
 (glibc has one, `ps_AF`) the function fails, and the script stops before its first
 procedure: run the script with `LC_ALL=C` there. The gate tests hold the function
 (`LedgerClock` and `DateWidth` in [`tests/test_labs.py`](tests/test_labs.py)).
