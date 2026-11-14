@@ -764,14 +764,14 @@ class Variants(gatelib.GateCase):
         # gate says that it no longer proves its filter there (a note, not a failure).
         self.assertRegex(result.stdout, r"(?m)^note  \S+ :: case filtered \S+: \[compact\] weakened: ")
         # One planted defect: the same case is lost with sorted keys too (that text has
-        # no blanks), and no other row fails. The entry of the real rule in the
-        # expected list (the multi variant) still holds.
+        # no blanks), and no other row fails. The real rule has no entry in the
+        # expected list (closed entry C20), so no row of the run is `known`.
         self.assertEqual(found(result, r"^FAIL  (.*?): \[(\w+)\] "),
                          [(f"{rule} :: case positive {case}", "compact"),
                           (f"{rule} :: case positive {case}", "sorted")])
         self.assertEqual(len(found(result, r"^FAIL .*$")), 2, result.describe())
-        self.assertEqual(len(found(result, rf"^known {re.escape(rule)} :: .*\[multi\] loss, "
-                                           r"expected \(LIST_TEXT\)$")), 1)
+        self.assertEqual(self.entries_of(tree, rule), 0)
+        self.assertNotRegex(result.stdout, r"(?m)^known ")
 
     def test_rejects_expected_entry_that_shows_no_difference(self):
         """vr-stale-entry. An entry of the expected list for a difference that the run

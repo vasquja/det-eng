@@ -114,42 +114,6 @@
     },
     {
       "variant": "multi",
-      "rule": "T1537/aws_snapshot_or_ami_made_public.yml",
-      "source": "case",
-      "name": "rds-snapshot-made-public",
-      "fault": "loss",
-      "lost": [[0]],
-      "gained": [],
-      "items": ["selection_rds.requestParameters.valuesToAdd"],
-      "reason": "LIST_TEXT",
-      "why": "selection_rds reads the value with its JSON quotes (\"all\"), so that a longer value does not match. One element of valuesToAdd has no quotes. A store with a multi-valued field must test the element for equality. The rule as written is for a store that keeps the list as JSON text."
-    },
-    {
-      "variant": "multi",
-      "rule": "T1537/aws_ssm_document_shared_publicly.yml",
-      "source": "case",
-      "name": "share-document-publicly",
-      "fault": "loss",
-      "lost": [[0]],
-      "gained": [],
-      "items": ["selection_public.requestParameters.accountIdsToAdd"],
-      "reason": "LIST_TEXT",
-      "why": "selection_public reads the value with its JSON quotes (\"All\"), so that a longer value does not match. One element of accountIdsToAdd has no quotes. A store with a multi-valued field must test the element for equality. The rule as written is for a store that keeps the list as JSON text."
-    },
-    {
-      "variant": "multi",
-      "rule": "T1537/aws_ssm_document_shared_publicly.yml",
-      "source": "fixture",
-      "name": "trr9021/attack.json",
-      "fault": "loss",
-      "lost": [[4]],
-      "gained": [],
-      "items": ["selection_public.requestParameters.accountIdsToAdd"],
-      "reason": "LIST_TEXT",
-      "why": "selection_public reads the value with its JSON quotes (\"All\"), so that a longer value does not match. One element of accountIdsToAdd has no quotes. A store with a multi-valued field must test the element for equality. The rule as written is for a store that keeps the list as JSON text."
-    },
-    {
-      "variant": "multi",
       "rule": "T1685/k8s_enforcer_workload_removed.yml",
       "source": "case",
       "name": "scale-jsonpatch-replace-to-three",

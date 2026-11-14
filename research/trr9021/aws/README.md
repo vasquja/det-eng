@@ -131,9 +131,9 @@ The field that separates attack from benign is the **grantee token with no effec
   User Guide ("Blocking public access" > "The meaning of 'public'") counts a policy as non-public
   only if it grants access only to fixed values of those keys. The EFS policy sits in
   `requestParameters.policy`; the Glue policy sits in `requestParameters.policyInJson`.
-- **SSM (E):** `requestParameters.accountIdsToAdd` containing `"All"` (case-insensitive; the CLI
-  constrains the value to `(?i)all` or a 12-digit account ID). A share to a named 12-digit account is
-  not public.
+- **SSM (E):** `requestParameters.accountIdsToAdd` holding the element `All` in any letter case (the
+  API model of SSM gives each element the pattern `(?i)all|[0-9]{12}`: the word all in any letter
+  case, or a 12-digit account ID). A share to a named 12-digit account is not public.
 
 All five committed rules **require success** (`not errorCode`). This matters most for S3: since April
 2023 new buckets default to Object-Ownership "bucket owner enforced", which disables ACLs, so a
@@ -482,6 +482,8 @@ Red Team nor Atomic Red Team ships.
   <https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_ModifyDocumentPermission.html>
 - AWS, SSM `modify-document-permission` CLI (value pattern `(?i)all|[0-9]{12}`):
   <https://docs.aws.amazon.com/cli/latest/reference/ssm/modify-document-permission.html>
+- AWS, the API model of SSM (shape `AccountId`, pattern `^(?i)all|[0-9]{12}$`; read on 2026-11-14):
+  <https://github.com/aws/api-models-aws/blob/46135f8468cd5cb60d983b97290c9f6661e359c6/models/ssm/service/2014-11-06/ssm-2014-11-06.json>
 - AWS, Redshift `AuthorizeSnapshotAccess` API (`AccountWithRestoreAccess`; no public `"all"` value):
   <https://docs.aws.amazon.com/redshift/latest/APIReference/API_AuthorizeSnapshotAccess.html>
 - AWS, IAM global condition keys (`aws:PrincipalOrgID`, `aws:SourceArn`, `aws:SourceAccount`):
