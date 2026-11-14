@@ -2400,9 +2400,13 @@ the current ones.
   condition is last, and the rules fire. A store that sorts the keys of an object gives
   `action`, `condition`, `member`, `role`: the closing brace of the condition comes
   before the member and the role, no value matches, and the rule is quiet. The same
-  holds for each key order that puts the condition between two of the parts (reasoned
-  from the pattern; the probe is the sorted order). Correction C17 (`\s*` after a
-  colon) does not change this.
+  holds for each key order in which the condition is not after the last of the parts
+  (probes: the sorted order, the condition first, the condition between role and
+  member). The rules fire only when the condition is the last field. A `}` inside the
+  member text (a subject or an attribute value, which the grantor chooses) stops the
+  skip in the same way when the member is not the last part that the value reads. The
+  skip that **Fix** proposes does not correct that second form. Correction C17 (`\s*`
+  on each side of a colon) does not change this.
 - **Evidence**: *case* — the positives
   `pool-wide-workload-identity-user-delta-with-condition` (workload rule) and
   `group-scoped-project-iam-admin-delta-with-condition` (workforce rule) fire by default
@@ -2413,13 +2417,27 @@ the current ones.
   `"condition": {"expression": ..., "title": ...}` added to its delta:
   `gcp_public_iam_member_grant` gives 1 hit by default and as compact text, and 0 hits
   with sorted keys (`sigma_eval.flatten(record, separators=(",", ":"), sort_keys=True)`).
-  That rule has no sidecar, so no case holds this record. **Unverified**: whether a real
+  That rule has no sidecar, so no case holds this record. *probe* — the key orders:
+  the delta of `pool-wide-workload-identity-user`, of `group-scoped-project-iam-admin`
+  and of record 0 of `trr9014/attack.json` with the condition as the first field, between
+  `action` and `role`, and between `role` and `member`: 0 hits on each of the three
+  rules, by default and as compact text; with the condition as the last field: 1 hit.
+  *probe* — a `}` in the member text: the member
+  `principal://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/ext-ci-pool/subject/repo:example-org/deploy}x`
+  (and `.../workforcePools/corp-workforce/subject/a}b` with `roles/owner` for the
+  workforce rule), with no condition. In the order `action`, `role`, `member`: 1 hit.
+  In the orders `member`, `role`, `action` and `action`, `member`, `role`, and with
+  sorted keys: 0 hits. **Unverified**: whether a real
   audit record carries `condition` in a binding delta, in which key order a log store
-  gives the delta, and which resources accept a conditional binding for these members.
+  gives the delta, which resources accept a conditional binding for these members, and
+  whether IAM accepts a `}` in a subject or an attribute value.
   No record in this repository shows a delta with a condition.
 - **Fix**: let the skip between the parts pass one nested object:
-  `([^{}]|\{[^{}]*\})*` in place of `[^}]*`. That changes every gap of each value, so
-  first count the determinized states of the new values for Lucene (closed entry S1).
+  `([^{}]|\{[^{}]*\})*` in place of `[^}]*`. That skip passes a nested object. It does
+  not pass a lone `}` inside a string (probe: on the member-first text with the member
+  above, a value with that skip does not match). The new skip changes every gap of each
+  value, so first count the determinized states of the new values for Lucene (closed
+  entry S1).
   The session that found the defect could not make that count. A rule change, so a later
   pull request.
 - **Then**: the two positives fire under `sorted`; the two `KEY_ORDER` entries in
