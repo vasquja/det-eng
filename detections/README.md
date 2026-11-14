@@ -792,11 +792,12 @@ the probes, run `--write-doc`. The job fails (`--check-doc`) when the table of t
 document is not the table of the run, when the text names a probe that the gate does
 not hold, and when a probe has no name in the text.
 
-When the gate fails on your rule, correct the rule first: write the item so that it
-holds with and without a blank after a colon (closed entry C17 of `RULE_DEFECTS.md`
-shows the form), and for each key order. Propose an entry only for a difference that
-the rule cannot remove, such as an item that reads the whole text of a list on
-purpose.
+When the gate fails on your rule, correct the rule first. Write the item so that it
+holds with white space on each side of a colon and without it (closed entry C17 of
+`RULE_DEFECTS.md` shows the form), for each letter case of a value that the sender
+chooses (closed entry K71 shows the form: character classes in a `|re` value), and for
+each key order. Propose an entry only for a difference that the rule cannot remove,
+such as an item that reads the whole text of a list on purpose.
 
 ## The benign corpus (false-positive scores)
 

@@ -185,8 +185,9 @@ matches there, and the conversion does not fail. The gate does not model that st
 
 What a rule can do:
 
-- Do not match a blank after `,` or `:`. Write the white space as optional
-  (`"action":\s*"ADD"`), or give the two forms of the text.
+- Do not match a fixed white space at a `,` or a `:`. Write the white space as optional
+  on each side of the separator (`"action"\s*:\s*"ADD"`). A rule that gives two forms of
+  the text (with a blank after the colon, and without) holds for these two forms only.
 - Do not rely on the key order of an object, or record the difference
   ([`variants/expected.json`](variants/expected.json), reason `KEY_ORDER`).
 - A value that names one element without JSON punctuation holds as text and as one
@@ -199,9 +200,10 @@ Example. `T1098.001/gcp_workload_identity_federation_sa_binding.yml` and
 structure: `UNNEST(...bindingDeltas)` in BigQuery, `UNNEST(JSON_QUERY_ARRAY(...))` in
 Log Analytics [19]. Our inference: a store that gives the field as text must write
 the text, and it decides blanks and key order. Which text a real store gives for
-this field: not verified. The two rules accept the text with and without a blank
-after a colon (closed entry C17 of [`RULE_DEFECTS.md`](RULE_DEFECTS.md)). They still
-need the key order of the record when a delta has a condition (open entry C19).
+this field: not verified. The two rules accept white space on each side of a colon,
+or none (closed entry C17 of [`RULE_DEFECTS.md`](RULE_DEFECTS.md)). They do not read a
+text that escapes `/` as `\/` (section 11). They still need the key order of the
+record when a delta has a condition (open entry C19).
 
 ## 5. Null and a missing field
 
@@ -444,6 +446,9 @@ and when a row has no name in the text. CI runs the self-test and `--check-doc`.
   [Portable regular expressions](README.md#portable-regular-expressions).
 - **A text that is not JSON**, such as the text of the Elastic AWS integration (section 4).
 - **A key order other than** the order of the record and the sorted order.
+- **A JSON text with other white space or escapes**: a blank before a colon, a line
+  break, `\/` for `/` (the escaped solidus). The variants `compact` and `sorted` are two
+  texts of many.
 - **Typed columns** (section 6).
 - **Three-valued logic.** [`check_null_safety.py`](check_null_safety.py) is the gate
   for it (section 5).
