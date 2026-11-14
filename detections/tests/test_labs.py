@@ -53,9 +53,10 @@ import test_apt_install as apt  # noqa: E402  (its rule on text reads the same f
 # directory $STATE. `sudo` starts the other stubs, by their names (a path such as
 # /usr/bin/systemctl gives the stub too), and one real program: `tee`, when each file
 # that it names is in the sandbox of the test ($SANDBOX; a step names /tmp/, and
-# run_step() puts that there). `sudo` writes each other command to `calls` without a
-# run, and also a `tee` to a different place: the tests can run as root, and a step
-# text must not write a file of the machine.
+# run_step() puts that there). For `cat`, `sudo` prints the audit log of the state
+# ($STATE/audit.log) and does not read the file that the step names. `sudo` writes each
+# other command to `calls` without a run, and also a `tee` to a different place: the
+# tests can run as root, and a step text must not write a file of the machine.
 #
 #   UNIT     the state of audit-rules.service: `ok` (auditd 4), `error` (auditd 4, the
 #            unit ends with an error) or `absent` (auditd 3: no such unit)
@@ -363,11 +364,19 @@ class AuditdStart(LabSteps):
         def command(closer=""):
             return {"text": "", "quote": "", "closer": closer, "depth": 0}
 
-        found, stack, i = [], [command()], 0
+        found, stack, i, dollar = [], [command()], 0, False
         while i < len(line):
             top, char = stack[-1], line[i]
             substitution = line.startswith("$(", i)
-            if top["quote"] == "'":                         # in single quotes: plain text
+            after_dollar, dollar = dollar, False
+            if top["quote"] == "$'":                        # in $'...': a backslash takes the next character
+                if char == "\\":
+                    top["text"] += line[i:i + 2]
+                    i += 1
+                else:
+                    top["quote"] = "" if char == "'" else "$'"
+                    top["text"] += char
+            elif top["quote"] == "'":                       # in single quotes: plain text
                 top["quote"] = "" if char == "'" else "'"
                 top["text"] += char
             elif char == "\\":                              # the next character is plain text
@@ -376,7 +385,7 @@ class AuditdStart(LabSteps):
             elif top["quote"] and not substitution and char not in '"`':
                 top["text"] += char                         # in double quotes: plain text
             elif char in "\"'":
-                top["quote"] = "" if top["quote"] else char
+                top["quote"] = "" if top["quote"] else ("$'" if char == "'" and after_dollar else char)
                 top["text"] += char
             elif substitution or (char == "`" and top["closer"] != "`"):
                 stack.append(command(")" if substitution else "`"))
@@ -384,6 +393,8 @@ class AuditdStart(LabSteps):
             elif char == "`" or (char == ")" and top["closer"] == ")" and not top["depth"]):
                 found.append((stack.pop()["text"], False))  # the end of a substitution
                 stack[-1]["text"] += " "
+            elif char == "&" and (line[i - 1:i] in ("<", ">") or line[i + 1:i + 2] == ">"):
+                top["text"] += char                         # a part of a redirect: 2>&1, >&2, <&0, &>file
             elif char in ";|&()":
                 process = char == "(" and line[i - 1:i] in ("<", ">")
                 pipe = (char == "|" and "|" not in (line[i - 1:i], line[i + 1:i + 2])) \
@@ -396,8 +407,11 @@ class AuditdStart(LabSteps):
                     top["depth"] += (char == "(") - (char == ")" and top["depth"] > 0)
             else:
                 top["text"] += char
+                dollar = char == "$"
             i += 1
         found += [(top["text"], number == 0) for number, top in enumerate(stack)]
+        if len(stack) > 1 or stack[0]["quote"]:             # the line ends in a quote or a substitution:
+            found = [(text, False) for text, _alone in found]   # a part of a longer text, so no message
         return [(text, alone) for text, alone in found if text.strip()]
 
     @staticmethod
@@ -631,6 +645,17 @@ class AuditdStart(LabSteps):
                 '{ echo "::group::auditd"; sudo systemctl start auditd; }\n' + add, no_wait),
             "a message that a pipe gives to a shell": ('echo "sudo systemctl start auditd" | sudo bash\n' + add,
                                                        no_wait),
+            "a message with 2>&1 that a pipe gives to a shell": (
+                'echo "systemctl start auditd" 2>&1 | sudo bash\n' + add, no_wait),
+            "a rule in a message with 2>&1 that a pipe gives to a shell": (
+                start + 'echo "auditctl -D" 2>&1 | sudo sh\n' + wait, before_the_wait),
+            # A message whose quotes the scanner must read as bash does.
+            "a start after a message with $'...'": (
+                "echo $'auditd isn\\'t up yet'; sudo systemctl start auditd\n" + add, no_wait),
+            "a rule after a message with $'...' before the wait": (
+                start + "echo $'auditd isn\\'t ready'; sudo auditctl -D\n" + wait, before_the_wait),
+            "a start after a message of two lines": (
+                'echo "auditd:\necho is the next word"; sudo systemctl start auditd\n' + add, no_wait),
             "a message that eval runs": ('eval "$(echo "sudo systemctl start auditd")"\n' + add, no_wait),
             "a message that a shell reads as a file": ('sudo bash <(echo "systemctl start auditd")\n' + add, no_wait),
             "a start in the text of a shell": ('sudo bash -c "systemctl start auditd; auditctl -l"\n' + add, no_wait),

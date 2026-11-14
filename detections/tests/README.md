@@ -383,8 +383,9 @@ cluster). A planted script or workflow step shows that each rule finds its fault
   lines before you add the step, and give a program a stub where it needs one.
   After `sudo`, the stub starts only the other stubs and `tee`, and `tee` only
   for a file of the sandbox (a step names `/tmp/`, which is in the sandbox
-  there). The stub does not run a different command: it writes the command to
-  its record.
+  there). For `cat`, the stub prints the audit log of its state and does not
+  read the file that the step names. The stub does not run a different command:
+  it writes the command to its record.
 
   It is a rule on text, one step at a time and one line at a time. It does not
   see:
