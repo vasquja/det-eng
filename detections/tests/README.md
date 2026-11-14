@@ -95,6 +95,21 @@ planted file the extension `.md` or `.py`: `check_md_links.py` reads every `.md`
 file of the repository, and Python can import a `.py` file. Name it `.md.txt` or
 `.txt` and plant it under its real name.
 
+`test_quality.py` also holds the tests of `check_variants.py` (class `Variants`):
+the gate itself, its expected list (`detections/variants/expected.json`), the form
+of its CI job, and the third comparison of the `sufficiency-ratchet` job. With the
+`re2` module these tests pass `--require-re2`, as the job does. Without it they run
+the four variants that need no module, and one test proves that `--require-re2`
+stops the gate.
+
+One test of that class was a known gap until roadmap item R7:
+`ns-one-json-serialisation`. Its marker named `check_null_safety.py`, because no
+gate varied the JSON text of a list for a rule that is not a Kubernetes audit rule.
+The gap closed in another gate, `check_variants.py`. The test keeps its planted
+artifact and its wanted row, and it is now a rejection test of that gate
+(`Variants.test_rejects_one_json_serialisation_cloud`). It also asserts that
+`check_null_safety.py` still accepts the artifact: that gate has no check for it.
+
 ## How a test works
 
 1. `self.good()` is an unmodified copy of the repository that the test class
@@ -419,6 +434,7 @@ it does not see one test in the place of a different one.
   - `detections/cloud/fixtures/trr9012/attack.json`
   - `detections/cloud/fixtures/trr9012/benign.json`
   - `detections/RULE_DEFECTS.md`
+  - `detections/variants/expected.json`
   - `detections/k8s/PLATFORMS.md`
   - `research/trr9001/lin/README.md`
   - `research/trr9012/aws/README.md`
@@ -434,10 +450,22 @@ it does not see one test in the place of a different one.
   - `detections/sigma/T1053.007/k8s_cri_job_pod.cases.jsonl`
   - `detections/sigma/T1552.007/linux_k8s_sa_token_read.cases.jsonl`
 
-  `NullSafety` (`test_quality.py`) takes one case by name from this sidecar, for
+  `Variants` (`test_quality.py`) takes one case by name from this sidecar, for
   its probe of the two JSON texts of a list:
 
   - `detections/sigma/T1537/aws_snapshot_or_ami_made_public.cases.jsonl`
+
+  `Variants` also needs two entries of `detections/variants/expected.json`, and
+  what each one names. The first is the one entry of
+  `detections/sigma/T1134/k8s_impersonation_privileged.yml`: a loss of record 0 of
+  the case `impersonate-system-masters-group-procB` under the variant `multi`. The
+  second is the one entry of `detections/sigma/T1098.006/k8s_rbac_privileged_grant.yml`,
+  which names the open entry K43 of `detections/RULE_DEFECTS.md`. One test also
+  needs K13 as a row of the closed entries of that file. When a rule correction
+  removes one of these differences, give the tests another entry of the list:
+
+  - `detections/sigma/T1134/k8s_impersonation_privileged.cases.jsonl`
+  - `detections/sigma/T1098.006/k8s_rbac_privileged_grant.cases.jsonl`
 
   `CheckSufficiency` (`test_sufficiency.py`) takes the positive cases of this
   sidecar, for its proof that a rule that needs one account id is bad:
@@ -498,6 +526,13 @@ These rejections have no planted artifact and no test:
   report of the gate, or that holds no rule.
 - The digest check of the `COMPILE_ONLY` table of `check_sufficiency.py`. The
   table is empty today, so there is no entry to make stale.
+- `check_variants.py` has four of them: a gain (a negative case or a benign
+  fixture that fires under a variant), a rule that the `multi` variant cannot
+  check (a correlation rule on records with a list, or an item with `|neq` on a
+  list), an
+  entry whose proof fails (`KEY_ORDER` on a set that differs as compact text
+  too), and an entry of a rule file that is gone. Its self-test holds a
+  constructed rule for each.
 
 The suite does not run these checks:
 
@@ -505,6 +540,10 @@ The suite does not run these checks:
   google-re2 is not in `detections/requirements.txt`, so the `gate-tests` job
   runs the default path. For `check_sigma_regex.py`, one test proves that
   `--require-re2` fails when the module is missing.
+- The `re2` variant of `check_variants.py` (the search of each `|re` item with
+  RE2, and its two golden probes), for the same cause. Only the
+  `representation-variants` job runs it. One test proves that `--require-re2`
+  stops the gate when the module is missing.
 - `sigma check`. sigma-cli is not in `detections/requirements.txt`.
 - The live modes of the validators (auditd on a host, a kind cluster). They
   stay in the `validate-*` workflows.

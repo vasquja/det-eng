@@ -346,6 +346,14 @@ and block. A multi-valued backend should keep more of the string lists
 quotes (`impersonatedUser.groups|contains: '"system:masters"'`) nor a list of objects;
 this is reasoned from the item patterns, not run on such a backend.
 
+The gate [`check_variants.py`](../check_variants.py) now runs one model of a
+multi-valued field on every rule, the cloud rules too (its variant `multi`: one value
+for each element of a list, an object as its JSON text). Each difference that it
+shows is an entry of [`variants/expected.json`](../variants/expected.json). That
+model is not the `exploded` mode: a store that explodes a list into leaf fields or
+indexed keys cannot run a rule that reads a list as text, and the harness here keeps
+that mode as a warning. `detections/SEMANTICS.md` states the contract.
+
 **What a backend pipeline must do:** map each such item to the field that holds the raw
 event JSON where the ingest keeps it (Splunk `_raw`, Elastic `event.original`, the
 CloudWatch Logs Insights `@message`), and accept the scope loss: the text can then

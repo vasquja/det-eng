@@ -1575,15 +1575,18 @@ the current ones.
   `python3 detections/check_provider_mappings.py -v --provider aks detections/sigma/T1098.006/k8s_rbac_privileged_grant.yml`
   reports `sorted: native fires, aks quiet; blocks sel_agg_beyond_builtin` (and the same
   for GKE); the AKS and GKE `EXPECTED_LOSS` entries for that case (reason `KEY_ORDER`)
-  point here. Which key order a KQL query or a GKE log store really gives: **unverified**
+  point here. `python3 detections/check_variants.py` shows the same loss on the native
+  record (variant `sorted`), and its entry in
+  [`variants/expected.json`](variants/expected.json) (reason `KEY_ORDER`) points here too.
+  Which key order a KQL query or a GKE log store really gives: **unverified**
   (backlog issue #55).
 - **Fix**: make the impersonate clause independent of the key order: add an alternative
   for each other order of `verbs`, `apiGroups` and `resources` (the `[^\]]*` skips stay
   inside one list, so each order is one more alternative of the same form). A rule change,
   so a later pull request.
 - **Then**: a new positive case with the rule objects' keys sorted fires; the two
-  `KEY_ORDER` entries in `check_provider_mappings.py` become stale and are removed; the
-  entry closes.
+  `KEY_ORDER` entries in `check_provider_mappings.py` and the `KEY_ORDER` entry in
+  `variants/expected.json` become stale and are removed; the entry closes.
 
 ### K45. k8s_coredns_configmap_modified: the DNS Operator filter trusts the operator's name
 
@@ -2664,7 +2667,7 @@ points here.
 | C13 | `entra_app_federated_credential_backdoor` reads only `newValue`, in any key order | near-misses `fic-with-unapproved-issuer-removed`, `fic-repointed-away-new-value-first` and the other reordered cases |
 | C14 | `aws_resource_policy_made_public` reads a `Statement` that is one object | positives `s3-single-statement-object-public-read`, `sqs-single-statement-object-public-send`, `efs-single-statement-object-public-mount` |
 | C16 | `aws_github_oidc_role_trust_abuse` grades each `sub` value | near-miss `two-subs-pinned-ref-wildcards-grade-high`; positive `two-subs-pinned-ref-wildcards-go-to-high-rule` of the low rule |
-| C17 | `T1098.001/gcp_workload_identity_federation_sa_binding` and `T1199/gcp_workforce_principalset_privileged_binding` read the delta list (`protoPayload.serviceData.policyDelta.bindingDeltas`) with or without a blank after a colon. Each `\|re` value held `"action": "ADD"` (the workforce rule also `"role": "`) with the one blank that `sigma_eval.flatten()` writes. So on a store that keeps the list as JSON text without blanks neither rule fired (probe at `a1668de`: 1 hit by default and 0 hits as compact text on `trr9018/attack.json`, on `trr9020/attack.json` and on each of the 12 positives of the workforce sidecar). The values now read `\s*` after the colon, as `T1098.003/gcp_public_iam_member_grant` does. Which text a real log store gives the list: **unverified** (no record in this repository shows it). The Lucene state count of S1 was not repeated for the 18 changed values | positives `pool-wide-workload-identity-user-delta-list-without-blanks` (the first sidecar of the workload rule: four positives, three near-misses) and `whole-pool-owner-delta-list-without-blanks` (workforce): each is "expected a match, got near-miss" on the rule at `a1668de` and fires now |
+| C17 | `T1098.001/gcp_workload_identity_federation_sa_binding` and `T1199/gcp_workforce_principalset_privileged_binding` read the delta list (`protoPayload.serviceData.policyDelta.bindingDeltas`) with or without a blank after a colon. Each `\|re` value held `"action": "ADD"` (the workforce rule also `"role": "`) with the one blank that `sigma_eval.flatten()` writes. So on a store that keeps the list as JSON text without blanks neither rule fired (probe at `a1668de`: 1 hit by default and 0 hits as compact text on `trr9018/attack.json`, on `trr9020/attack.json` and on each of the 12 positives of the workforce sidecar). The values now read `\s*` after the colon, as `T1098.003/gcp_public_iam_member_grant` does. Which text a real log store gives the list: **unverified** (no record in this repository shows it). The Lucene state count of S1 was not repeated for the 18 changed values | positives `pool-wide-workload-identity-user-delta-list-without-blanks` (the first sidecar of the workload rule: four positives, three near-misses) and `whole-pool-owner-delta-list-without-blanks` (workforce): each is "expected a match, got near-miss" on the rule at `a1668de` and fires now. `check_variants.py` runs every case and fixture of both rules as `compact` text with no difference |
 | S1 | every `\|re` value fits Lucene's default `max_determinized_states` (10000) | a Lucene 10.1 `RegExp` build over all 236 values wrapped in `.*`: largest 7,986 states (the CoreDNS JSON-patch root grammar). Recount on 2026-10-20 (Kubernetes coverage wave 2): 321 values, all fit; with case folding (`ASCII_CASE_INSENSITIVE`) the largest is 8,094 states (the JSON-patch capability grammar of `T1611/k8s_podspec_controller_host_access`), and without it 7,986 (the CoreDNS root grammar) |
 
 ## Closing an entry
