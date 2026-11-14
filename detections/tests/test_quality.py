@@ -490,6 +490,7 @@ class Variants(gatelib.GateCase):
     def test_ci_runs_the_self_test_and_every_rule_with_re2(self):
         self.assertEqual(gatelib.ci_commands(self.GATE), [
             "python3 detections/check_variants.py --require-re2 --self-test",
+            "python3 detections/check_variants.py --require-re2 --check-doc",
             'python3 detections/check_variants.py --require-re2 --markdown "$GITHUB_STEP_SUMMARY" '
             "| tee /tmp/variants.out",
             "python3 detections/check_variants.py "
@@ -501,7 +502,7 @@ class Variants(gatelib.GateCase):
         and its steps have no `continue-on-error`, the job has no `if:` and no
         `needs:`, and no step that runs the gate has an `if:`. Its Python has RE2:
         the job installs google-re2 (one fixed version), on a Python for which that
-        version has a wheel. Without the module the two gate steps stop
+        version has a wheel. Without the module the three gate steps stop
         (--require-re2: test_ci_runs_the_self_test_and_every_rule_with_re2)."""
         import yaml     # PyYAML: in detections/requirements.txt
 
@@ -512,7 +513,7 @@ class Variants(gatelib.GateCase):
         self.assertNotIn("needs", job)
         self.assertNotIn("continue-on-error", job)
         gate_steps = [s for s in job["steps"] if "detections/check_variants.py" in s.get("run", "")]
-        self.assertEqual(len(gate_steps), 2)
+        self.assertEqual(len(gate_steps), 3)
         for step in job["steps"]:
             self.assertNotIn("continue-on-error", step)
             if step in gate_steps or "pip install" in step.get("run", ""):
@@ -572,6 +573,66 @@ class Variants(gatelib.GateCase):
         self.assertNotIn("WANT", result.stdout)
         if not self.RE2:
             self.assertIn("\nNOT RUN: variant re2: ", result.stdout)
+
+    # -- the probe table of detections/SEMANTICS.md (--check-doc) ------------------
+
+    DOC = "detections/SEMANTICS.md"
+    DOC_OK = (r"^OK: detections/SEMANTICS\.md: the table of the {probes} golden probes is "
+              r"current, and each of the [1-9]\d* probe name\(s\) in the text is a row of it\.$")
+    DOC_FAILED = ("\nFAILED: detections/SEMANTICS.md does not agree with the golden probes: "
+                  "1 problem(s).\n")
+
+    def probe_rows(self, tree):
+        """The rows of the probe table of the document of the copy."""
+        text = tree.read(self.DOC)
+        block = text[text.index("<!-- probes:begin -->"):text.index("<!-- probes:end -->")]
+        return re.findall(r"(?m)^\| `[a-z0-9-]+` \|.*\|$", block)
+
+    def test_control_probe_table_of_the_document_is_current(self):
+        """CONTROL of the job's second step (--check-doc): the unmodified copy passes,
+        for each row of the probe table of detections/SEMANTICS.md."""
+        good = self.good()
+        rows = self.probe_rows(good)
+        self.assertGreater(len(rows), 20, "the document holds no probe table: vacuous")
+        self.assert_accepts(good.run(self.GATE, *self.ci_arguments, "--check-doc"),
+                            self.DOC_OK.format(probes=len(rows)))
+
+    def test_rejects_stale_probe_table_in_the_document(self):
+        """vr-stale-probe-table. Inside the generated probe table of
+        detections/SEMANTICS.md, the default answer of the row `eq-case` is changed by
+        hand from `quiet` to `fires`: the document then says that equality ignores
+        letter case, and the gate proves the opposite on each run."""
+        tree = self.tree()
+        row = next(r for r in self.probe_rows(tree) if r.startswith("| `eq-case` |"))
+        answers = "| quiet | quiet | quiet | quiet | quiet | quiet |"
+        self.assertTrue(row.endswith(answers), row)
+        planted = row[:-len(answers)] + "| fires | quiet | quiet | quiet | quiet | quiet |"
+        tree.replace(self.DOC, row + "\n", planted + "\n")
+        result = tree.run(self.GATE, *self.ci_arguments, "--check-doc")
+        self.assert_rejects(
+            result, r"^STALE: the probe table of detections/SEMANTICS\.md differs from the "
+                    r"golden probes of detections/check_variants\.py \(the table PROBES\); run "
+                    r"python3 detections/check_variants\.py --write-doc$", exit_code=1)
+        # The report shows the row of the document and the row of the run.
+        self.assertIn("\n    -" + planted + "\n    +" + row + "\n", result.stdout)
+        # One planted defect: one problem, and no other row differs.
+        self.assertEqual(len(found(result, r"^    [-+]\| ")), 2, result.describe())
+        self.assertIn(self.DOC_FAILED, result.stdout)
+
+    def test_rejects_probe_name_in_the_document_that_is_not_a_probe(self):
+        """vr-unknown-probe-name. The text of detections/SEMANTICS.md proves a statement
+        with the name of a golden probe. A sentence is added that names
+        `eq-letter-case`, which is not a probe: nothing proves that sentence (a probe
+        was renamed or deleted, and the text did not follow)."""
+        tree = self.tree()
+        tree.append(self.DOC, "\nPLANTED: equality folds letter case (probe `eq-letter-case`).\n")
+        result = tree.run(self.GATE, *self.ci_arguments, "--check-doc")
+        self.assert_rejects(
+            result, r"^UNKNOWN: detections/SEMANTICS\.md line \d+ names the probe "
+                    r"`eq-letter-case`, and the table PROBES holds no such probe\.", exit_code=1)
+        self.assertEqual(len(found(result, r"^(STALE|UNKNOWN|UNUSED|ERROR|MISSING): .*$")), 1,
+                         result.describe())
+        self.assertIn(self.DOC_FAILED, result.stdout)
 
     def test_rejects_run_without_re2_when_ci_requires_it(self):
         """vr-re2-missing. CI passes --require-re2: without the module the gate must

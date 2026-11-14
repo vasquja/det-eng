@@ -96,7 +96,8 @@ file of the repository, and Python can import a `.py` file. Name it `.md.txt` or
 `.txt` and plant it under its real name.
 
 `test_quality.py` also holds the tests of `check_variants.py` (class `Variants`):
-the gate itself, its expected list (`detections/variants/expected.json`), the form
+the gate itself, its expected list (`detections/variants/expected.json`), the probe
+table of [`detections/SEMANTICS.md`](../SEMANTICS.md) (`--check-doc`), the form
 of its CI job, and the third comparison of the `sufficiency-ratchet` job. With the
 `re2` module these tests pass `--require-re2`, as the job does. Without it they run
 the four variants that need no module, and one test proves that `--require-re2`
@@ -435,6 +436,7 @@ it does not see one test in the place of a different one.
   - `detections/cloud/fixtures/trr9012/benign.json`
   - `detections/RULE_DEFECTS.md`
   - `detections/variants/expected.json`
+  - `detections/SEMANTICS.md`
   - `detections/k8s/PLATFORMS.md`
   - `research/trr9001/lin/README.md`
   - `research/trr9012/aws/README.md`
@@ -466,6 +468,13 @@ it does not see one test in the place of a different one.
 
   - `detections/sigma/T1134/k8s_impersonation_privileged.cases.jsonl`
   - `detections/sigma/T1098.006/k8s_rbac_privileged_grant.cases.jsonl`
+
+  Two tests of `Variants` read the probe table of `detections/SEMANTICS.md`
+  between its two marker lines (`<!-- probes:begin -->`, `<!-- probes:end -->`).
+  One of them needs the row of the probe `eq-case`, with the answer `quiet` in each
+  of its six answer cells. The table is generated
+  (`check_variants.py --write-doc`), so a change to that probe in the gate changes
+  the row.
 
   `CheckSufficiency` (`test_sufficiency.py`) takes the positive cases of this
   sidecar, for its proof that a rule that needs one account id is bad:
@@ -533,6 +542,12 @@ These rejections have no planted artifact and no test:
   entry whose proof fails (`KEY_ORDER` on a set that differs as compact text
   too), and an entry of a rule file that is gone. Its self-test holds a
   constructed rule for each.
+- `check_variants.py --check-doc` has three of them: a probe that the text of
+  `detections/SEMANTICS.md` does not name, a document without one of its two
+  marker lines, and a document that is not there. The self-test holds a
+  constructed document for each. The mode `--write-doc` has no gate test: no
+  workflow runs it, and `AGENTS.md` does not give the command yet. The self-test
+  proves it on a constructed document.
 
 The suite does not run these checks:
 
@@ -541,9 +556,11 @@ The suite does not run these checks:
   runs the default path. For `check_sigma_regex.py`, one test proves that
   `--require-re2` fails when the module is missing.
 - The `re2` variant of `check_variants.py` (the search of each `|re` item with
-  RE2, and its two golden probes), for the same cause. Only the
-  `representation-variants` job runs it. One test proves that `--require-re2`
-  stops the gate when the module is missing.
+  RE2, and the `re2` answer of each golden probe), for the same cause. Only the
+  `representation-variants` job runs it. Without the module, `--check-doc`
+  compares the `re2` column of the document with the answers that the gate
+  declares. One test proves that `--require-re2` stops the gate when the module
+  is missing.
 - `sigma check`. sigma-cli is not in `detections/requirements.txt`.
 - The live modes of the validators (auditd on a host, a kind cluster). They
   stay in the `validate-*` workflows.
