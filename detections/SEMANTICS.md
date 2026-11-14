@@ -187,8 +187,9 @@ matches there, and the conversion does not fail. The gate does not model that st
 What a rule can do:
 
 - Do not match a fixed white space at a `,` or a `:`. Write the white space as optional
-  on each side of the separator (`"action"\s*:\s*"ADD"`). A rule that gives two forms of
-  the text (with a blank after the colon, and without) holds for these two forms only.
+  on each side of the separator (`\"action\"\s*:\s*\"ADD\"`, with each quote escaped as
+  `check_sigma_regex.py` requires). A rule that gives two forms of the text (with a
+  blank after the colon, and without) holds for these two forms only.
 - Do not rely on the key order of an object, or record the difference
   ([`variants/expected.json`](variants/expected.json), reason `KEY_ORDER`).
 - A value that names one element without JSON punctuation holds as text and as one
