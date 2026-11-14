@@ -86,8 +86,11 @@ needs `gcc` always, and `auditctl` and `ausyscall` for a real run.
 
 A case passes only if all three hold:
 
-1. **The rule matches, as Sigma defines it.** The backend evaluates the full
-   condition, including the `not <allowlist>` filters and correlation windows.
+1. **The rule matches, in the query of a real Sigma backend.** The backend
+   evaluates the full condition, including the `not <allowlist>` filters and
+   correlation windows. It is one backend on one form of the records:
+   [`SEMANTICS.md`](SEMANTICS.md) says what it decides, and where the Sigma
+   specification or another store decides in another way.
 2. **The match came from the atomic.** Every event behind the hit belongs to
    the atomic's process tree, so nothing else running in the window (the
    validator itself included) can satisfy the rule.
@@ -170,8 +173,9 @@ argument value can keep them quiet. Their control is the rule's own syscall with
 arguments that the kernel rejects, declared `success`. That control tests the
 success gate of the validator, not an item of the rule: the rule's logic matches
 the rejected call. No rule of this validator reads `success`, so each rule as
-written matches a rejected call too. Roadmap item R7 (`detections/SEMANTICS.md`)
-must say what a SIEM does with a rejected call.
+written matches a rejected call too.
+[`SEMANTICS.md`](SEMANTICS.md#8-a-system-call-that-the-kernel-rejected) says what a
+SIEM does with a rejected call.
 
 When the kernel-feature probe turned every emulation of a rule into a SKIP, the
 rule is not proven on that host. Its re-run does not run: a re-run needs an
@@ -480,6 +484,13 @@ differently:
 | `[` and `&&` `--` `~~` `\|\|` inside a class | an escaped `\[`; KQL reads the pairs as set operators |
 | a value over 1000 characters | Elasticsearch's `index.max_regex_length` default; split it |
 
+**Two differences stay in the subset.** Python and RE2 accept these two forms and give
+different answers. `$` as the last character matches before a last line break in
+Python and not in RE2. `\s` matches a no-break space in Python and not in RE2. The
+`re2` variant of [`check_variants.py`](check_variants.py) runs each `|re` item with RE2
+on every case and fixture; [`SEMANTICS.md`](SEMANTICS.md#7-regular-expressions) names
+the two probes.
+
 **Differences no lint removes.** A backend must still translate the edges. A check with
 pySigma 1.5.1 (`pySigma-backend-elasticsearch` 2.1.1) and Lucene 10.1 found these:
 
@@ -718,7 +729,7 @@ backend, on the table that `sigma_eval.flatten()` builds. That is one backend on
 representation of the records. A real store decides four things in its own way: the
 JSON text of a list, a list as one value or as many, the letter case of a `LIKE`
 match, and the regex dialect. A rule that holds only for the way of the oracle passes
-every other gate. `SEMANTICS.md` (in this directory) says what the oracle decides and
+every other gate. [`SEMANTICS.md`](SEMANTICS.md) says what the oracle decides and
 what other stores do.
 
 [`check_variants.py`](check_variants.py) (CI: `detection-quality` /
@@ -767,8 +778,19 @@ python3 detections/check_variants.py --require-re2   # as CI runs it (needs goog
 python3 detections/check_variants.py -v detections/sigma/T1537/aws_snapshot_or_ami_made_public.yml
 python3 detections/check_variants.py --self-test  # the golden probes and constructed rules
 python3 detections/check_variants.py --probes     # the golden probes as a table
+python3 detections/check_variants.py --check-doc  # the probe table of SEMANTICS.md is current (CI)
+python3 detections/check_variants.py --write-doc  # write that table
 python3 detections/check_variants.py --propose    # the expected list that this run shows
 ```
+
+A golden probe is one detection on one record, with its answer by default and under
+each variant. The self-test proves each answer, and each variant must change the
+answer of a probe that names it (if not, the gate stops with exit code 2).
+[`SEMANTICS.md`](SEMANTICS.md#10-the-golden-probes) holds the table of the probes, and
+its text names the probe that proves a statement about the oracle. After a change to
+the probes, run `--write-doc`. The job fails (`--check-doc`) when the table of the
+document is not the table of the run, when the text names a probe that the gate does
+not hold, and when a probe has no name in the text.
 
 When the gate fails on your rule, correct the rule first: write the item so that it
 holds with and without a blank after a colon (closed entry C17 of `RULE_DEFECTS.md`

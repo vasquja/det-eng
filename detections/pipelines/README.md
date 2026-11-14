@@ -352,7 +352,7 @@ for each element of a list, an object as its JSON text). Each difference that it
 shows is an entry of [`variants/expected.json`](../variants/expected.json). That
 model is not the `exploded` mode: a store that explodes a list into leaf fields or
 indexed keys cannot run a rule that reads a list as text, and the harness here keeps
-that mode as a warning. `detections/SEMANTICS.md` states the contract.
+that mode as a warning. [`SEMANTICS.md`](../SEMANTICS.md#4-lists) states the contract.
 
 **What a backend pipeline must do:** map each such item to the field that holds the raw
 event JSON where the ingest keeps it (Splunk `_raw`, Elastic `event.original`, the

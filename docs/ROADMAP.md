@@ -84,6 +84,16 @@ Notes from R7, for the items after it (2026-11-14).
   `cs_like`, `T1078.004/aws_cognito_unauthenticated_identity_use.yml` goes from 27
   to 12 hits. An item that scores the corpus under a variant needs a decision on
   the budgets first (R8).
+- [`detections/SEMANTICS.md`](../detections/SEMANTICS.md) says what the oracle
+  decides and what other stores do. A statement about the oracle names a golden
+  probe of the gate: the self-test proves each probe, and the job fails when the
+  probe table of the document is not current (`--check-doc`). The document marks
+  what nothing proves on each run. A statement `by hand` was run one time (the
+  three-valued run, the group-by fields of a correlation, the record of a rejected
+  call on three rules). A statement `not verified` has no primary source that was
+  read (each cell about Splunk, the letter case of ES|QL `==`, the text that a real
+  store gives for a list). R3 and R9 are the items that can put a real record in
+  the place of a `not verified`.
 - The known gap `ns-one-json-serialisation` named `check_null_safety.py`. It closed
   in another gate, `check_variants.py`. `check_null_safety.py` still has no
   exemption list.
@@ -106,7 +116,8 @@ reads `success`: the logic of each rule matches a syscall that the kernel
 rejected. Only the validator holds a rejected syscall, with its own gate
 (`success=yes`). The controls of `userfaultfd_syscall.yml`, `io_uring_setup.yml`
 and `bpf_prog_load.yml` test that gate, and no item of a rule.
-`detections/SEMANTICS.md` (R7) must say what a SIEM does with a rejected call.
+`detections/SEMANTICS.md` (R7, its section 8) now says what a SIEM does with a
+rejected call: it alerts on the attempt. R7 changed no Linux rule.
 
 ## 2. Throughput: many builders, no hand integration
 
