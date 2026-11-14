@@ -332,7 +332,8 @@ cluster). A planted script or workflow step shows that each rule finds its fault
 - A step that starts auditd waits for `audit-rules.service` after that start. A
   start is `systemctl` with `start`, `restart`, `try-restart`, `reload-or-restart`
   or `enable --now` and `auditd` as one of its units, or `service auditd start`
-  (or `restart`). The program can have a path and options. The wait is these
+  (or `restart`). The program can have a path and options, and a redirect can be
+  joined to a word (`systemctl start auditd>/dev/null`). The wait is these
   lines, and a new step that starts auditd needs them too:
 
   ```bash
@@ -348,6 +349,14 @@ cluster). A planted script or workflow step shows that each rule finds its fault
   not wait. That is known of systemd; it was not tried on a runner. With a `&`
   after the line, the step does not wait.
 
+  The wait is at the top level of the step. It is not in an outer `if`, a loop, a
+  function, a subshell, a here-document or a quoted text, also when the start is
+  in the same block. A step does not reach a wait in a block whose condition is
+  false or in a function that nothing calls, and it does not wait for a subshell
+  in the background. The rule asks `bash -n`: the lines of the step to the `fi`
+  of the wait are complete shell. The tests that run a step ask that too, before
+  they run a part of the step.
+
   Before the wait, and before the start, no line of the step changes the rules or
   a setting of the audit system: each `auditctl` command but a status (`-s`) and a
   list (`-l`) is such a change (`-a`, `-w`, `-R`, `-D`, `-b`, `-f`, `-e`, `-r`,
@@ -356,30 +365,56 @@ cluster). A planted script or workflow step shows that each rule finds its fault
   runs a validator (`python ... detections/validate_*.py`, or
   `detections/benign/linux/capture.py`).
 
+  A message can name a command
+  (`echo "::error::the step Start auditd (sudo systemctl start auditd) failed"`).
+  So the rule does not look for a start or an `auditctl` command in the words of
+  a message. A message is a command whose first word is `echo` or `printf`, and
+  whose output no different command takes: it is not before a pipe
+  (`echo "..." | bash`) and not in a command substitution or a process
+  substitution. The rule reads a command substitution in a message
+  (`echo "$(sudo auditctl -l)"`). The check for a validator reads the whole line,
+  so a message that names a validator between the start and the wait counts.
+
   A new step that starts auditd also goes into the list `AuditdStart.STEPS`: the
   test says so. The tests run each step of that list from its first line to the
   end of its wait, with stubs (`STUBS` in `test_labs.py`) for `sudo`, `systemctl`,
   `service`, `auditctl`, `docker`, `kubectl`, `kind` and `sleep`. A different
   program of those lines runs as the real program, in the copy. So read the
   lines before you add the step, and give a program a stub where it needs one.
+  After `sudo`, the stub starts only the other stubs and `tee`, and `tee` only
+  for a file of the sandbox (a step names `/tmp/`, which is in the sandbox
+  there). The stub does not run a different command: it writes the command to
+  its record.
 
-  It is a rule on text, one step at a time. It does not see:
+  It is a rule on text, one step at a time and one line at a time. It does not
+  see:
 
-  - a start that a script, a shell function or a different program makes;
+  - a start that a script, a shell function or a different program makes (an
+    init script such as `/etc/init.d/auditd`, `invoke-rc.d`, a file that a
+    message wrote);
   - a command that is built at run time (`"$SYSTEMCTL" start auditd`,
-    `systemctl start "$UNIT"`), or a unit that pulls auditd in (a target);
+    `systemctl start "$UNIT"`, a message in a group or a subshell whose output a
+    pipe gives to a shell), or a unit that pulls auditd in (a target);
   - a start in a different step of the job than the rule;
-  - a wait that the step does not reach (in an outer `if`, in a function that
-    nothing calls). The tests that run the steps of `AuditdStart.STEPS` see that.
+  - before the wait, a change of the rules that has no option as a word of its
+    `auditctl` command (`auditctl "${RULE[@]}"`, `xargs auditctl`), or that a
+    different program makes (`augenrules --load`);
+  - a wait at the top level that the step does not reach (a `&&` or a `||` at
+    the end of the line before the guard). The tests that run the steps of
+    `AuditdStart.STEPS` see that.
 - No line of a shell script, a file under `atomics/`, a workflow or a composite
-  action holds `%N` with a width of one digit (`%6N`, `%3N`, `%06N`). A comment
-  does not count. A shell script is a file with the name `*.sh` or `*.bash`, or
-  with a shell on its first line. Under `atomics/` the rule reads each file that
-  is text and not Markdown: also a file that a script sources, and a program in a
-  different language. It is a rule on text: it does not see a format that is
-  built at run time, and it does not find a width of two digits (in a URL, `%20N`
-  is a space before an `N`). Outside `atomics/` it does not read a file that a
-  script sources when the file has no shell on its first line and no such name.
+  action holds `%N` with a width of one digit (`%6N`, `%3N`, `%06N`). A `#`
+  comment does not count. A shell script is a file with the name `*.sh` or
+  `*.bash`, or with a shell on its first line. Under `atomics/` the rule reads
+  each file that is text and not Markdown: also a file that a script sources, and
+  a program in a different language. It is a rule on text. It does not ask what
+  the language of a file is: a mention in prose (a YAML description, a text
+  note), or in a comment that does not start with `#` (`/* */`, `//`), counts
+  too. Write the format in two parts there (`%6` and `N`), or move the note to a
+  Markdown file. The rule does not see a format that is built at run time, and
+  it does not find a width of two digits (in a URL, `%20N` is a space before an
+  `N`). Outside `atomics/` it does not read a file that a script sources when the
+  file has no shell on its first line and no such name.
 - Each definition of `now_utc()` or `now()` in a `*.sh` file under `atomics/`
   and in a workflow step is the text `LedgerClock.ACCEPTED` (the name can be
   `now()`). A script that appends to the ledger (`>> "$DETENG_LEDGER"`) defines the

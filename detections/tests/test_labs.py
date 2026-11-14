@@ -50,9 +50,12 @@ import gatelib  # noqa: E402  (the line above makes it importable with `-t .` to
 import test_apt_install as apt  # noqa: E402  (its rule on text reads the same files)
 
 # Stubs for Tree.run_step(programs=...), as shell lines. Each reads and writes the
-# directory $STATE. No stub starts a real program as root: `sudo` starts only the
-# other stubs, by their names (a path such as /usr/bin/systemctl gives the stub too),
-# and writes each other command to `calls` without a run.
+# directory $STATE. `sudo` starts the other stubs, by their names (a path such as
+# /usr/bin/systemctl gives the stub too), and one real program: `tee`, when each file
+# that it names is in the sandbox of the test ($SANDBOX; a step names /tmp/, and
+# run_step() puts that there). `sudo` writes each other command to `calls` without a
+# run, and also a `tee` to a different place: the tests can run as root, and a step
+# text must not write a file of the machine.
 #
 #   UNIT     the state of audit-rules.service: `ok` (auditd 4), `error` (auditd 4, the
 #            unit ends with an error) or `absent` (auditd 3: no such unit)
@@ -91,7 +94,22 @@ case "${1##*/}" in
     AS_ROOT=1; export AS_ROOT
     exec "$program" "$@" ;;
   cat) cat "$STATE/audit.log"; exit 0 ;;
-  tee) exec "$@" ;;
+  tee)
+    shift
+    outside=""
+    [ -n "${SANDBOX:-}" ] || outside=1
+    for word in "$@"; do
+      case "$word" in
+        -*) ;;
+        */../*|*/..) outside=1 ;;
+        "$SANDBOX"/*) ;;
+        *) outside=1 ;;
+      esac
+    done
+    if [ -z "$outside" ]; then exec tee "$@"; fi
+    cat > /dev/null
+    echo "sudo did not run: tee $*" >> "$STATE/calls"
+    exit 0 ;;
 esac
 echo "sudo did not run: $*" >> "$STATE/calls"
 """,
@@ -220,8 +238,8 @@ class LabSteps(unittest.TestCase):
             self.fail(f"{step.workflow}, job {step.job}, step {step.name!r}: the test does not run this step, "
                       "because a line names a program with a path and no stub can stand in for it: "
                       + real[0])
-        values = {"STATE": tree.state, "UNIT": tree.unit, "GITHUB_WORKSPACE": tree.root,
-                  "CLUSTER_NAME": "trr9003"}
+        values = {"STATE": tree.state, "UNIT": tree.unit, "SANDBOX": tree.sandbox,
+                  "GITHUB_WORKSPACE": tree.root, "CLUSTER_NAME": "trr9003"}
         values.update(env or {})
         return tree.run_step(step if run is None else step._replace(run=run), env=values,
                              programs=STUBS, timeout=60)
@@ -254,6 +272,14 @@ class AuditdStart(LabSteps):
         authorization, which a step cannot give (the start then fails at once: that
         is known of systemd, and it was not tried on a runner); a unit that ends
         with an error gives a ::warning line and does not stop the step;
+      - the wait is at the top level of the step: not in an outer `if`, a loop, a
+        function, a subshell, a here-document or a quoted text, also when the start
+        is in the same block. A step does not reach a wait in a block whose condition
+        is false or in a function that nothing calls, and it does not wait for a
+        subshell in the background. The rule asks `bash -n`: the command lines of
+        the step to the `fi` of the wait are complete shell. (It does not ask when
+        bash does not read the whole step: the tests that run the step then fail
+        with the message of bash);
       - before the wait, and before the start, no line changes the rules or a setting
         of the audit system (an `auditctl` command that is not a status or a list),
         and between the start and the wait no line runs a validator.
@@ -261,19 +287,41 @@ class AuditdStart(LabSteps):
     A start of auditd is `systemctl` with start, restart, try-restart,
     reload-or-restart (and the other verbs of STARTS) or `enable --now`, and auditd
     as one of its units; or `service auditd start` (restart, ...). The program can
-    have a path, and options.
+    have a path, and options. A redirect that is joined to a word is not a part of
+    the word (`systemctl start auditd>/dev/null`).
 
-    It is a rule on text, one step at a time. It does not see a start that a script,
-    a shell function or a different program makes, a command that is built at run
-    time (`"$SYSTEMCTL" start auditd`, `systemctl start "$UNIT"`), a unit that pulls
-    auditd in (a target), or a start in a different step of the job than the rule.
-    It does not see a wait that the step does not reach (in an outer `if`, in a
-    function that nothing calls): the tests that run each step of STEPS see that."""
+    A message can name a command (`echo "::error::the step Start auditd (sudo
+    systemctl start auditd) failed"`), so the rule does not look for a start or an
+    `auditctl` command in the words of a message. A message is a command whose first
+    word is `echo` or `printf`, and whose output no different command takes: it is
+    not before a pipe (`echo "..." | bash`) and not in a command substitution or a
+    process substitution. A command substitution in a message is a command, and the
+    rule reads it (`echo "$(sudo auditctl -l)"`). The check for a validator reads
+    the whole line, so a message that names a validator between the start and the
+    wait counts.
+
+    It is a rule on text, one step at a time and one line at a time. It does not see:
+      - a start that a script, a shell function or a different program makes (an
+        init script such as /etc/init.d/auditd, `invoke-rc.d`; a file that a message
+        wrote);
+      - a command that is built at run time (`"$SYSTEMCTL" start auditd`, `systemctl
+        start "$UNIT"`, a message in a group or a subshell whose output a pipe
+        gives to a shell), or a unit that pulls auditd in (a target);
+      - a start in a different step of the job than the rule;
+      - before the wait, a change of the rules that has no option as a word of its
+        `auditctl` command (`auditctl "${RULE[@]}"`, `xargs auditctl`), or that a
+        different program makes (`augenrules --load`);
+      - a wait at the top level that the step does not reach (a `&&` or a `||` at
+        the end of the line before the guard): the tests that run each step of
+        STEPS see that."""
 
     GUARD = "if systemctl cat audit-rules.service >/dev/null 2>&1; then"
     # The wait, as one command line (white space collapsed, the backslash line joined).
     WAIT = re.compile(r'sudo systemctl start audit-rules\.service \|\| echo "::warning [^"]*"')
     SPLIT = re.compile(r"\|\||&&|[;|&()`]|\$\(")        # where a command of a line ends
+    MESSAGE = frozenset({"echo", "printf"})             # a command that prints its words
+    # The words of the shell that can come before the first word of a command.
+    BEFORE = frozenset({"{", "}", "if", "then", "elif", "else", "while", "until", "do", "!", "time"})
     STARTS = frozenset({"start", "restart", "try-restart", "reload-or-restart", "try-reload-or-restart",
                         "condrestart", "force-reload"})
     AUDITD = frozenset({"auditd", "auditd.service"})
@@ -298,19 +346,104 @@ class AuditdStart(LabSteps):
     ]
     WARNING = "::warning title=auditd::audit-rules.service ended with an error"
     NO_WAIT = "starts auditd and does not wait for audit-rules.service"
+    NESTED = ("the wait for audit-rules.service is not at the top level of the step: it is inside a "
+              "compound command or a longer text (an outer `if`, a loop, a function, a subshell, a "
+              "here-document, a quoted text). Put the wait at the top level of the step")
+
+    @classmethod
+    def top_commands(cls, line):
+        """(text, alone) of each command of a command line, split outside quotes only
+        (at the places of SPLIT). A command substitution (`$(...)`, backticks) is a
+        command of its own, also inside double quotes, and the command around it
+        goes on after it. `alone` is False for a command that gives its output to a
+        different command: a command in a command substitution or in a process
+        substitution (`<(...)`, `>(...)`), and a command before a pipe or before
+        `>(...)`. The line is read alone: a quote that starts on a different line is
+        not seen."""
+        def command(closer=""):
+            return {"text": "", "quote": "", "closer": closer, "depth": 0}
+
+        found, stack, i = [], [command()], 0
+        while i < len(line):
+            top, char = stack[-1], line[i]
+            substitution = line.startswith("$(", i)
+            if top["quote"] == "'":                         # in single quotes: plain text
+                top["quote"] = "" if char == "'" else "'"
+                top["text"] += char
+            elif char == "\\":                              # the next character is plain text
+                top["text"] += line[i:i + 2]
+                i += 1
+            elif top["quote"] and not substitution and char not in '"`':
+                top["text"] += char                         # in double quotes: plain text
+            elif char in "\"'":
+                top["quote"] = "" if top["quote"] else char
+                top["text"] += char
+            elif substitution or (char == "`" and top["closer"] != "`"):
+                stack.append(command(")" if substitution else "`"))
+                i += 1 if substitution else 0
+            elif char == "`" or (char == ")" and top["closer"] == ")" and not top["depth"]):
+                found.append((stack.pop()["text"], False))  # the end of a substitution
+                stack[-1]["text"] += " "
+            elif char in ";|&()":
+                process = char == "(" and line[i - 1:i] in ("<", ">")
+                pipe = (char == "|" and "|" not in (line[i - 1:i], line[i + 1:i + 2])) \
+                    or (process and line[i - 1] == ">")
+                found.append((top["text"], len(stack) == 1 and not pipe))
+                top["text"] = ""
+                if process:
+                    stack.append(command(")"))
+                else:
+                    top["depth"] += (char == "(") - (char == ")" and top["depth"] > 0)
+            else:
+                top["text"] += char
+            i += 1
+        found += [(top["text"], number == 0) for number, top in enumerate(stack)]
+        return [(text, alone) for text, alone in found if text.strip()]
+
+    @staticmethod
+    def word_of(text):
+        """A word of a command without its quotes, and without a redirect that is
+        joined to it (`auditd>/dev/null` is `auditd`; `2>/dev/null` is no word)."""
+        whole = text.strip("\"'")
+        word = re.split(r"[<>]", whole, maxsplit=1)[0]
+        return "" if word != whole and word.isdigit() else word
 
     @classmethod
     def commands(cls, line, program):
         """The words after `program` in each command of a command line that names it:
         one list for each command. A word names the program when its last path part
-        is the name (`sudo systemctl`, `/usr/bin/systemctl`, `"systemctl"`)."""
+        is the name (`sudo systemctl`, `/usr/bin/systemctl`, `"systemctl"`). A
+        message is not read: a command whose first word is `echo` or `printf`, and
+        whose output no different command takes. Each other command is split at
+        each place of SPLIT, also inside quotes (`bash -c "systemctl start auditd;
+        auditctl -l"`)."""
         found = []
-        for part in cls.SPLIT.split(apt.DirectInstalls.no_comment(line)):
-            words = [word.strip("\"'") for word in part.split()]
-            at = next((i for i, word in enumerate(words) if word.rsplit("/", 1)[-1] == program), None)
-            if at is not None:
-                found.append(words[at + 1:])
+        for command, alone in cls.top_commands(apt.DirectInstalls.no_comment(line)):
+            if alone and next((word for word in command.split() if word not in cls.BEFORE), "") in cls.MESSAGE:
+                continue
+            for part in cls.SPLIT.split(command):
+                words = [word for word in map(cls.word_of, part.split()) if word]
+                at = next((i for i, word in enumerate(words) if word.rsplit("/", 1)[-1] == program), None)
+                if at is not None:
+                    found.append(words[at + 1:])
         return found
+
+    @staticmethod
+    def not_shell(text):
+        """What `bash -n` says of a shell text: "" when bash reads the text to its end
+        as complete shell. bash runs no command of the text. For a text that ends in
+        a here-document, bash gives a warning and the exit code 0: that is a message."""
+        done = subprocess.run(["bash", "--noprofile", "--norc", "-n"], input=text.encode("utf-8"),
+                              capture_output=True, timeout=60, check=False)
+        said = done.stderr.decode("utf-8", errors="replace").strip()
+        return said or ("" if done.returncode == 0 else f"bash -n ended with {done.returncode}")
+
+    @classmethod
+    def nested(cls, lines, last):
+        """True when line `last` of the lines of a step (the `fi` of a wait) is not at
+        the top level of the step: bash reads all the lines as complete shell, and
+        the lines to `last` are not complete shell."""
+        return bool(cls.not_shell("\n".join(lines[:last + 1]) + "\n")) and not cls.not_shell("\n".join(lines) + "\n")
 
     @classmethod
     def starts_auditd(cls, line):
@@ -376,6 +509,8 @@ class AuditdStart(LabSteps):
             if wait == 0 or after[wait - 1] != cls.GUARD or after[wait + 1:wait + 2] != ["fi"]:
                 found.append("the wait for audit-rules.service is not between the guard `" + cls.GUARD
                              + "` and its `fi`")
+            elif cls.nested(lines, start + wait + 2):
+                found.append(cls.NESTED)
             if cls.WAIT.fullmatch(after[wait]):
                 continue
             if "sudo" not in after[wait].split("systemctl", 1)[0].split():
@@ -471,6 +606,40 @@ class AuditdStart(LabSteps):
                                       "does not run as root"),
             "the wait in the background": (start + wait.replace('error"\n', 'error" &\n') + add,
                                            "and no more"),
+            # The wait is not at the top level of the step.
+            "the wait in an outer if that the step reaches": (
+                start + "if [ -d /run/systemd/system ] || true; then\n" + wait + "fi\n" + add, self.NESTED),
+            "the wait in an outer if that is false": (
+                start + 'if [ -n "${WAIT_FOR_RULES:-}" ]; then\n' + wait + "fi\n" + add, self.NESTED),
+            "the wait in a subshell in the background": (start + "(\n" + wait + ") &\n" + add, self.NESTED),
+            "the wait in a function that nothing calls": (start + "wait_rules() {\n" + wait + "}\n" + add,
+                                                          self.NESTED),
+            "the wait in a loop": (start + "for unit in audit-rules; do\n" + wait + "done\n" + add, self.NESTED),
+            "the wait in a here-document": (start + ": <<'SKIP'\n" + wait + "SKIP\n" + add, self.NESTED),
+            "the wait in a quoted text": (start + "bash -c '\n" + wait + "'\n" + add, self.NESTED),
+            "the start and the wait in one block": (
+                'if [ "${RUNNER_OS}" = Linux ]; then\n' + start + wait + add + "fi\n", self.NESTED),
+            # A command in a message, and a message before a command.
+            "a start in a command substitution of a message": (
+                'echo "started: $(sudo systemctl start auditd)"\n' + add, no_wait),
+            "a start in backticks in a message": ('echo "started: `sudo systemctl start auditd`"\n' + add, no_wait),
+            "a rule in a command substitution of a message": (
+                start + 'echo "rules: $(sudo auditctl -D) deleted"\n' + wait, before_the_wait + "echo"),
+            "a start after a message": ('echo "start auditd; then the rules" && sudo systemctl start auditd\n' + add,
+                                        no_wait),
+            "a start after a message in a block": (
+                '{ echo "::group::auditd"; sudo systemctl start auditd; }\n' + add, no_wait),
+            "a message that a pipe gives to a shell": ('echo "sudo systemctl start auditd" | sudo bash\n' + add,
+                                                       no_wait),
+            "a message that eval runs": ('eval "$(echo "sudo systemctl start auditd")"\n' + add, no_wait),
+            "a message that a shell reads as a file": ('sudo bash <(echo "systemctl start auditd")\n' + add, no_wait),
+            "a start in the text of a shell": ('sudo bash -c "systemctl start auditd; auditctl -l"\n' + add, no_wait),
+            "a rule in the text of a shell": (start + "sudo sh -c 'auditctl -l; auditctl -D'\n" + wait,
+                                              before_the_wait),
+            # A redirect that is joined to a word.
+            "a redirect joined to the unit": ("sudo systemctl start auditd>/dev/null\n" + add, no_wait),
+            "redirects before the verb": ("sudo systemctl 2>/dev/null >/dev/null start auditd\n" + add, no_wait),
+            "a redirect joined to an option": (start + "sudo auditctl -D>/dev/null\n" + wait, before_the_wait),
         }
         sound = {
             "the wait, then the rule": start + wait + add,
@@ -488,6 +657,18 @@ class AuditdStart(LabSteps):
                                     "sudo service auditd status\n" + add,
             "a stop": "sudo systemctl stop auditd\n" + add,
             "only the unit": wait + add,
+            # A message that names a command is not the command.
+            "the start in a message": 'echo "::error::auditd is down (sudo systemctl start auditd failed in the '
+                                      'step before)"\n' + add,
+            "the start in a message after a command": (
+                'sudo auditctl -l | tee /tmp/rules.out || { echo "::error::no list; the step Start auditd (sudo '
+                'systemctl start auditd) failed first"; exit 1; }\n' + add),
+            "the start in a message of printf": "printf '%s\\n' 'next: sudo service auditd restart'\n" + add,
+            "the start in a message in a condition": (
+                'if ! sudo auditctl -s; then echo "run: sudo systemctl restart auditd"; fi\n' + add),
+            "a rule in a message before the wait": (
+                start + 'echo "next: sudo auditctl -a always,exit -F dir=/x -F perm=wa"\n' + wait + add),
+            "a list with a redirect before the wait": start + "sudo auditctl -l>/tmp/rules.out 2>&1\n" + wait + add,
         }
 
         def step(run):
@@ -504,7 +685,9 @@ class AuditdStart(LabSteps):
         no_faults(self, self.all_faults(), "these steps start auditd, and audit-rules.service (auditd 4) can "
                   "put back a rule or a setting that the step changes after that start. Add the wait that "
                   "the other steps have, after the start and before the first such line "
-                  "(detections/tests/README.md, `CI`, shows the lines)")
+                  "(detections/tests/README.md, `CI`, shows the lines). The rule reads the words of a "
+                  "message (`echo`, `printf`) as a command only when a pipe takes the output of the "
+                  "message, or when the message is in a command substitution")
         # The steps were read (not vacuous), and the tests that run a step run each one.
         found = [(step.workflow, step.job, step.name) for step in self.starting_steps()]
         no_faults(self, [f"{name}: the step starts auditd and is not in STEPS. It has the wait (the rule found "
@@ -518,9 +701,10 @@ class AuditdStart(LabSteps):
 
     def test_a_planted_step_without_the_wait_is_rejected(self):
         """Planted steps in a copy of the workflows: the step of the static pod lab as
-        it was on 2026-11-12, a step that waits after it added its rule, and a step
-        that starts auditd with `service` and waits without sudo. CONTROL: a new step
-        with the wait has no fault."""
+        it was on 2026-11-12, a step that waits after it added its rule, a step that
+        starts auditd with `service` and waits without sudo, and a step with the wait
+        in an outer `if`. CONTROL: a new step with the wait has no fault, and a step
+        with a message that names the start is not a step that starts auditd."""
         tree = gatelib.Tree((".github",))
         self.addCleanup(tree.cleanup)
         self.assertEqual(self.all_faults(tree.root), [])        # CONTROL: the copy has no fault
@@ -532,10 +716,14 @@ class AuditdStart(LabSteps):
         tree.write(".github/workflows/sound-lab.yml", (
             head + "      - name: Start a new sensor\n        shell: bash\n        run: |\n"
             "          sudo systemctl start auditd || sudo service auditd start\n" + wait
-            + "          sudo auditctl -a always,exit -F dir=/srv/x -F perm=wa -F key=new_lab\n"))
+            + "          sudo auditctl -a always,exit -F dir=/srv/x -F perm=wa -F key=new_lab\n"
+            "      - name: Read the rules\n        shell: bash\n        run: |\n"
+            "          sudo auditctl -l | tee /tmp/rules.out || { echo \"::error::no list of the rules; if auditd "
+            "is down, the step Start a new sensor (sudo systemctl start auditd) failed first\"; exit 1; }\n"))
         self.assertEqual(self.all_faults(tree.root), [])        # CONTROL: a new step with the wait
-        self.assertIn(("sound-lab.yml", "lab", "Start a new sensor"),
-                      [(step.workflow, step.job, step.name) for step in self.starting_steps(tree.root)])
+        starting = [(step.workflow, step.job, step.name) for step in self.starting_steps(tree.root)]
+        self.assertIn(("sound-lab.yml", "lab", "Start a new sensor"), starting)
+        self.assertNotIn(("sound-lab.yml", "lab", "Read the rules"), starting)     # CONTROL: a message
         tree.write(".github/workflows/planted-lab.yml", (
             head + "      - name: Start the sensor\n        shell: bash\n        run: |\n"
             "          set -euo pipefail\n"
@@ -553,7 +741,13 @@ class AuditdStart(LabSteps):
             "      - name: Start the sensor with service, wait without sudo\n        run: |\n"
             "          sudo /usr/sbin/service auditd start\n"
             + wait.replace("sudo systemctl start audit-rules", "systemctl start audit-rules")
-            + "          sudo /usr/sbin/auditctl -a always,exit -F dir=/srv/x -F perm=wa -F key=new_lab\n"))
+            + "          sudo /usr/sbin/auditctl -a always,exit -F dir=/srv/x -F perm=wa -F key=new_lab\n"
+            "      - name: Start the sensor, wait in an outer block\n        run: |\n"
+            "          sudo systemctl start auditd\n"
+            "          if [ -d /run/systemd/system ] || true; then\n"
+            + wait
+            + "          fi\n"
+            "          sudo auditctl -a always,exit -F dir=/srv/x -F perm=wa -F key=new_lab\n"))
         self.assertEqual(self.all_faults(tree.root), [
             "planted-lab.yml, job lab, step 'Start the sensor': " + self.NO_WAIT,
             "planted-lab.yml, job lab, step 'Start the sensor, wait too late': changes the audit rules or a "
@@ -561,17 +755,33 @@ class AuditdStart(LabSteps):
             "auditctl -w /etc/kubernetes/manifests -p wa -k k8s_node_file",
             "planted-lab.yml, job lab, step 'Start the sensor with service, wait without sudo': the wait for "
             "audit-rules.service does not run as root (`sudo systemctl start audit-rules.service`): systemd "
-            "refuses such a start, and the step goes on with no wait"])
+            "refuses such a start, and the step goes on with no wait",
+            "planted-lab.yml, job lab, step 'Start the sensor, wait in an outer block': " + self.NESTED])
+
+    def a_part(self, step, text, cause):
+        """`text`, a part of the text of `step` that a test runs. The test fails when
+        the part is not complete shell: bash would only say `unexpected end of file`
+        of a text that the test made. The message is `cause` when bash reads the
+        whole step, and what `bash -n` says of the step when it does not."""
+        if self.not_shell(text):
+            said = self.not_shell(step.run)
+            self.fail(f"{step.workflow}, job {step.job}, step {step.name!r}: "
+                      + (cause if not said else "bash does not read the text of the step as complete shell. "
+                                                "`bash -n` says: " + said))
+        return text
 
     def wait_of(self, step):
         """(first, last) line numbers of the wait in the text of a step: from the guard
-        to its `fi`. The test fails when the step has no such lines."""
+        to its `fi`. The test fails when the step has no such lines, and when the
+        wait is not at the top level of the step."""
         lines = [line.strip() for line in step.run.splitlines()]
         if self.GUARD not in lines or "fi" not in lines[lines.index(self.GUARD):]:
             self.fail(f"{step.workflow}, job {step.job}, step {step.name!r}: no wait for "
                       "audit-rules.service in the guard `" + self.GUARD + "`")
         first = lines.index(self.GUARD)
-        return first, lines.index("fi", first)
+        last = lines.index("fi", first)
+        self.a_part(step, "\n".join(step.run.splitlines()[:last + 1]) + "\n", self.NESTED)
+        return first, last
 
     def start_of(self, step):
         """The text of a step from its first line to the end of its wait."""
@@ -581,7 +791,21 @@ class AuditdStart(LabSteps):
         """The text of a step without the lines of its wait: the step as it was."""
         first, last = self.wait_of(step)
         lines = step.run.splitlines()
-        return "\n".join(lines[:first] + lines[last + 1:]) + "\n"
+        return self.a_part(step, "\n".join(lines[:first] + lines[last + 1:]) + "\n",
+                           "the step without the lines of its wait is not complete shell: the wait is a part of "
+                           "a longer command (a `&&`, a `||` or a `|` at the end of the line before the guard). "
+                           "Put the wait on lines of its own")
+
+    WAIT_AS_ROOT = re.compile(r"^([ \t]*)sudo (systemctl start audit-rules\.service)", re.MULTILINE)
+
+    def without_sudo(self, step, text):
+        """`text` (the text of `step`, or a part of it) with its wait line without
+        `sudo`. The test fails when the text does not have one such line."""
+        changed, count = self.WAIT_AS_ROOT.subn(r"\1\2", text)
+        self.assertEqual(count, 1, f"{step.workflow}, job {step.job}, step {step.name!r}: the test takes "
+                         "`sudo` from the one line that starts with `sudo systemctl start audit-rules.service`; "
+                         f"the text has {count} such line(s)")
+        return changed
 
     def test_the_wait_ends_in_each_state_of_the_unit(self):
         """Each step of the workflows that starts auditd, from its first line to the end
@@ -608,8 +832,63 @@ class AuditdStart(LabSteps):
                     else:
                         self.assertIn(wait, calls)
                     self.assertEqual([line for line in done.stdout.splitlines() if line.startswith("::")],
-                                     [line for line in done.stdout.splitlines() if line.startswith(self.WARNING)])
+                                     [line for line in done.stdout.splitlines() if line.startswith(self.WARNING)],
+                                     "to the end of its wait, the step prints no `::` line but the warning of the "
+                                     "wait, and that line starts with `" + self.WARNING + "` (AuditdStart.WARNING: "
+                                     "the tests find the warning of a run by this text):\n" + done.describe())
                     self.assertEqual(done.stdout.count(self.WARNING), 1 if unit == "error" else 0, done.describe())
+
+    def test_a_wait_that_is_not_at_the_top_level_is_named_before_a_run(self):
+        """CONTROL of the parts of a step that the tests run. For a constructed step
+        with the wait in an outer `if`, in a subshell, in a function, in a
+        here-document or in a quoted text, the cut at the `fi` of the wait is not
+        complete shell, and bash would only say `unexpected end of file`. The
+        functions that cut a step fail first, with the sentence of the rule. A step
+        whose wait is the last part of a longer command, and a step that is not
+        shell, fail with a sentence too. CONTROL: a step with the wait at the top
+        level gives its parts."""
+        start = "sudo systemctl start auditd || sudo service auditd start\n"
+        wait = (self.GUARD + "\n"
+                "  sudo systemctl start audit-rules.service \\\n"
+                '    || echo "' + self.WARNING + '"\n'
+                "fi\n")
+        add = "sudo auditctl -a always,exit -F dir=/x -F perm=wa -F key=k8s_node_file\n"
+
+        def step(run):
+            return gatelib.Step("w.yml", "job", "step", "bash", run)
+
+        def refused(call, run):
+            with self.assertRaises(AssertionError) as caught:
+                call(step(run))
+            return str(caught.exception)
+
+        sound = step(start + wait + add)
+        self.assertEqual(self.wait_of(sound), (1, 4))
+        self.assertEqual(self.start_of(sound), start + wait)
+        self.assertEqual(self.without_the_wait(sound), start + add)
+        nested = {
+            "an outer if that the step reaches": "if [ -d /run/systemd/system ] || true; then\n" + wait + "fi\n",
+            "an outer if that is false": 'if [ -n "${WAIT_FOR_RULES:-}" ]; then\n' + wait + "fi\n",
+            "a subshell in the background": "(\n" + wait + ") &\n",
+            "a function that nothing calls": "wait_rules() {\n" + wait + "}\n",
+            "a here-document": ": <<'SKIP'\n" + wait + "SKIP\n",
+            "a quoted text": "bash -c '\n" + wait + "'\n",
+        }
+        for name, block in nested.items():
+            with self.subTest(wait_in=name):
+                for call in (self.wait_of, self.start_of, self.without_the_wait):
+                    self.assertEqual(refused(call, start + block + add),
+                                     "w.yml, job job, step 'step': " + self.NESTED)
+                self.assertEqual(self.faults(step(start + block + add)), [self.NESTED])
+        # The wait is the last part of a longer command: the cut to its `fi` is shell.
+        longer = step(start + add + '[ -n "${WAIT_FOR_RULES:-}" ] &&\n' + wait)
+        self.assertEqual(self.start_of(longer), longer.run)
+        self.assertIn("the wait is a part of a longer command", refused(self.without_the_wait, longer.run))
+        # A step that bash does not read: the message is what bash says of the step.
+        for call in (self.wait_of, self.start_of, self.without_the_wait):
+            said = refused(call, start + "if true; then\n" + wait + add)
+            self.assertIn("bash does not read the text of the step as complete shell. `bash -n` says: ", said)
+            self.assertNotIn(self.NESTED, said)
 
     def test_a_wait_that_is_not_root_does_not_wait(self):
         """CONTROL of the stubs. A constructed step that starts auditd and waits
@@ -631,14 +910,13 @@ class AuditdStart(LabSteps):
         for name in self.STEPS:
             step = self.the_step(*name)
             with self.subTest(step=name):
-                text = self.start_of(step)
-                self.assertEqual(text.count("  sudo systemctl start audit-rules.service"), 1)
-                text = text.replace("  sudo systemctl start audit-rules.service",
-                                    "  systemctl start audit-rules.service")
+                text = self.without_sudo(step, self.start_of(step))
                 self.assertIn("does not run as root", " / ".join(self.faults(step._replace(run=text))))
                 done = self.run_text(self.lab("ok"), step, text + 'echo "the step goes on"\n')
                 self.assertEqual(done.returncode, 0, done.describe())
-                self.assertEqual(done.stdout.count(self.WARNING), 1, done.describe())
+                self.assertEqual(done.stdout.count(self.WARNING), 1, "with a wait that is not root, the step "
+                                 "prints the warning of the wait one time: a line that starts with `"
+                                 + self.WARNING + "` (AuditdStart.WARNING):\n" + done.describe())
                 self.assertIn(refused, done.stderr)
 
     def test_a_line_that_names_a_real_program_does_not_run(self):
@@ -659,6 +937,32 @@ class AuditdStart(LabSteps):
         self.assertEqual(done.returncode, 0, done.describe())
         self.assertEqual(self.state(tree, "calls"), ["systemctl start auditd", "auditctl -s"])
         self.assertIn("backlog_limit 64", done.stdout.splitlines())         # the stub answered
+
+    def test_sudo_tee_writes_no_file_outside_the_sandbox(self):
+        """CONTROL of the stubs: `tee` is the one real program that the stub `sudo`
+        starts. It writes a file of the sandbox (a step names /tmp/). For a file in
+        a different place, also through `..`, and for a relative path, the stub
+        starts nothing: it reads its input to the end (the command before the pipe
+        does not fail) and writes the command to `calls`."""
+        tree = self.lab()
+        with tempfile.TemporaryDirectory(prefix="deteng-outside-") as outside:
+            target = os.path.join(outside, "x.rules")
+            through = os.path.join(tree.sandbox, os.path.relpath(os.path.realpath(outside), tree.sandbox), "y.rules")
+            self.assertTrue(through.startswith(tree.sandbox + "/../"), through)
+            done = self.run_text(tree, gatelib.Step("w.yml", "job", "step", "bash", ""), (
+                "echo inside | sudo tee /tmp/inside.log >/dev/null\n"
+                'echo outside | sudo tee "$OUTSIDE" >/dev/null\n'
+                'seq 1 20000 | sudo tee -a "$THROUGH" >/dev/null\n'
+                "echo relative | sudo tee z.rules >/dev/null\n"
+                'echo "the step goes on"\n'), env={"OUTSIDE": target, "THROUGH": through})
+            self.assertEqual((done.returncode, done.stdout), (0, "the step goes on\n"), done.describe())
+            self.assertEqual(os.listdir(outside), [], "the stub `sudo` wrote a file outside the sandbox")
+        with open(tree.tmp_path("inside.log"), encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), "inside\n")
+        self.assertFalse(tree.exists("z.rules"))
+        self.assertEqual(self.state(tree, "calls"), ["sudo did not run: tee " + target,
+                                                     "sudo did not run: tee -a " + through,
+                                                     "sudo did not run: tee z.rules"])
 
     def test_the_sensor_step_of_the_static_pod_lab_keeps_its_rule(self):
         """The whole step of the static pod lab, with the model of the fault in the
@@ -682,7 +986,11 @@ class AuditdStart(LabSteps):
                 # The rule is added after the unit has ended (or where there is no unit).
                 add = next(i for i, call in enumerate(calls) if call.startswith("auditctl -a"))
                 if unit != "absent":
-                    self.assertLess(calls.index("systemctl start audit-rules.service"), add)
+                    wait = "systemctl start audit-rules.service"
+                    self.assertIn(wait, calls, "the step did not call `" + wait + "`, with these words and no "
+                                  "more:\n" + done.describe())
+                    self.assertLess(calls.index(wait), add, "the step added the rule of the sensor before "
+                                    "audit-rules.service ended:\n" + done.describe())
                 self.assertEqual(done.stdout.count(self.WARNING), 1 if unit == "error" else 0, done.describe())
                 self.assertNotIn("::error", done.output)
         old = self.without_the_wait(step)
@@ -696,10 +1004,8 @@ class AuditdStart(LabSteps):
         self.assertEqual(self.run_text(tree, step, old).returncode, 0)
         self.assertEqual(len(self.state(tree, "rules")), 1)
         # A wait that is not root: the step passes its own check, and the rule is gone.
-        self.assertEqual(step.run.count("  sudo systemctl start audit-rules.service"), 1)
         tree = self.lab("ok")
-        done = self.run_text(tree, step, step.run.replace("  sudo systemctl start audit-rules.service",
-                                                          "  systemctl start audit-rules.service"))
+        done = self.run_text(tree, step, self.without_sudo(step, step.run))
         self.assertEqual(done.returncode, 0, done.describe())
         self.assertEqual(self.state(tree, "rules"), [], "the model of the fault did not delete the rule")
 
@@ -728,8 +1034,10 @@ class AuditdStart(LabSteps):
                 self.assertIsNone(self.state(tree, "unit"), "a run of audit-rules.service is in progress")
                 self.assertIn("backlog_limit " + limit, done.stdout.splitlines())
         self.assertLess(last, sets[0], "the CONTROL moves the wait after the line that sets the limit")
-        late = "\n".join(lines[:first] + lines[last + 1:sets[0] + 1] + lines[first:last + 1]
-                         + lines[sets[0] + 1:]) + "\n"
+        late = self.a_part(step, "\n".join(lines[:first] + lines[last + 1:sets[0] + 1] + lines[first:last + 1]
+                                            + lines[sets[0] + 1:]) + "\n",
+                           "the test moves the wait after the line `sudo auditctl -b N`, and that text is not "
+                           "complete shell. Write that line as one line, with no `\\` at its end")
         found = self.faults(step._replace(run=late))
         self.assertEqual(len(found), 1, found)
         self.assertIn("before the wait for audit-rules.service: sudo auditctl -b " + limit, found[0])
@@ -774,33 +1082,45 @@ class FileSensorRule(LabSteps):
               'pid=4242 comm="trr9003-tee" exe="/usr/local/bin/trr9003-tee" key="k8s_node_file"\n')
 
     def run_the_step(self, name, rules):
+        """Run the step `name` with the stubs. Returns (the Result, the first words
+        of a failure message: the step, and what its check is)."""
         tree = self.lab(rules=rules, audit_log=self.RECORD)
         done = self.run_text(tree, self.the_step(self.WORKFLOW, self.JOB, name),
                              env={"FILESENSOR_OUTCOME": "success"})
-        self.assertIn("auditctl -l", self.state(tree, "calls"), done.describe())
-        return done
+        where = (f"{self.WORKFLOW}, job {self.JOB}, step {name!r}. The step asks `sudo auditctl -l` for the "
+                 "rule of the file sensor. When the key k8s_node_file is not in the list, it prints one line "
+                 "that starts with FileSensorRule.ERROR and ends with FileSensorRule.FAILS of the step, and "
+                 "it goes on to its last line. ")
+        self.assertIn("auditctl -l", self.state(tree, "calls"), where + "The step did not call `auditctl -l`:\n"
+                      + done.describe())
+        return done, where
 
     def test_control_a_rule_that_is_loaded_gives_no_error(self):
         for name in self.STEPS:
             with self.subTest(step=name):
-                done = self.run_the_step(name, self.RULE)
-                self.assertEqual(done.returncode, 0, done.describe())
-                self.assertNotIn("::error", done.output, done.describe())
+                done, where = self.run_the_step(name, self.RULE)
+                self.assertEqual(done.returncode, 0, where + "The step did not end with 0:\n" + done.describe())
+                self.assertNotIn("::error", done.output, where + "The rule is loaded, and the step prints an "
+                                 "::error line:\n" + done.describe())
 
     def test_a_rule_that_is_not_loaded_is_named_and_the_step_goes_on(self):
         last = {self.STEPS[0]: r"^Captured \d+ pre-emulation file event\(s\)\.$",
                 self.STEPS[1]: r"^Collected \d+ file event\(s\)\.$"}
         for name in self.STEPS:
             with self.subTest(step=name):
-                done = self.run_the_step(name, "")
-                self.assertEqual(done.returncode, 0, done.describe())
+                done, where = self.run_the_step(name, "")
+                self.assertEqual(done.returncode, 0, where + "The step did not end with 0:\n" + done.describe())
                 errors = [line for line in done.stdout.splitlines() if line.startswith("::error")]
-                self.assertEqual(len(errors), 1, done.describe())
-                self.assertTrue(errors[0].startswith(self.ERROR), errors[0])
-                self.assertTrue(errors[0].endswith(self.FAILS[name]), errors[0])
+                self.assertEqual(len(errors), 1, where + f"The rule is not loaded, and the step prints "
+                                 f"{len(errors)} ::error line(s):\n" + done.describe())
+                self.assertTrue(errors[0].startswith(self.ERROR), where + "The line does not start with "
+                                "FileSensorRule.ERROR: " + errors[0])
+                self.assertTrue(errors[0].endswith(self.FAILS[name]), where + "The line does not end with `"
+                                + self.FAILS[name] + "`: " + errors[0])
                 self.assertNotIn("the file gate and the file control", errors[0])
                 # The step went on to its last line.
-                self.assertRegex(done.stdout.splitlines()[-1], last[name])
+                self.assertRegex(done.stdout.splitlines()[-1], last[name], where + "The step did not go on to "
+                                 "its last line:\n" + done.describe())
 
     def test_the_sensor_step_adds_the_rule_that_the_two_steps_look_for(self):
         """The key of the two checks is the key of the rule that the sensor step adds."""
@@ -820,17 +1140,21 @@ class DateWidth(unittest.TestCase):
 
     The rule: no line of a shell script, a file under atomics/, a workflow or a
     composite action holds %N with a width (and its flags) of one digit: %6N, %3N,
-    %06N, %-3N. A comment (a line or the end of a line after `#`) does not count.
+    %06N, %-3N. A `#` comment (a line or the end of a line after `#`) does not count.
     Shell scripts are the files that DirectInstalls reads (test_apt_install.py: the
     name *.sh, or a shell on the first line) and the files with the name *.bash. Under
     atomics/ the rule reads each file that is text and not Markdown: also a file that
     a script sources, and a program in a different language that starts `date`.
 
     It is a rule on text. It does not see a format that is built at run time, and it
-    does not ask if the line calls `date`. It does not find a width of two digits
-    (%10N): in a URL, the same text is a percent-encoded character before an N
-    (`%20New`). Outside atomics/ it does not read a file that a script sources when
-    the file has no shell on its first line and no name *.sh or *.bash."""
+    does not ask if the line calls `date` or what the language of the file is. So a
+    mention in prose (a YAML description, a text note, a Python docstring), or in a
+    comment that does not start with `#` (`/* */`, `//`), counts too: write the
+    format in two parts there (`%6` and `N`), or move the note to a Markdown file.
+    The rule does not find a width of two digits (%10N): in a URL, the same text is
+    a percent-encoded character before an N (`%20New`). Outside atomics/ it does not
+    read a file that a script sources when the file has no shell on its first line
+    and no name *.sh or *.bash."""
 
     WIDTH = re.compile(r"%[-_0^#+]*[1-9]N")
     SKIPPED = (".git", ".kind", "known_bad")        # as DirectInstalls.shell_scripts
@@ -887,8 +1211,10 @@ class DateWidth(unittest.TestCase):
         script with no .sh in its name, a file that a script sources (no shell on its
         first line), a *.bash file outside atomics/, a Python program under atomics/
         that starts `date`, a workflow step with %3N, an `env:` value and a composite
-        action. The message names the file and the line. A comment with %6N in the
-        same files, a Markdown file and a file that is not text are not found."""
+        action. The message names the file and the line. A `#` comment with %6N in
+        the same files, a Markdown file and a file that is not text are not found. A
+        comment of C and a description in a YAML file under atomics/ are found: the
+        rule does not ask what the language of a file is."""
         tree = gatelib.Tree((".github", "atomics", "detections/benign", "detections/k8s"))
         self.addCleanup(tree.cleanup)
         self.assertEqual(self.hits(tree.root), [])              # CONTROL: the copy has no hit
@@ -900,6 +1226,9 @@ class DateWidth(unittest.TestCase):
         tree.write("atomics/T9999/src/clock.py",
                    "import subprocess\n# Not %3N.\nprint(subprocess.run(['date', '+%s.%3N']))\n")
         tree.write("atomics/T9999/README.md", "Do not use `date +%6N` in a script.\n")
+        tree.write("atomics/T9999/src/note.c", "/* The time comes from bash, not from date +%6N. */\n"
+                                               "int main(void) { return 0; }  /* `%6` and `N`: two parts */\n")
+        tree.write("atomics/T9999/crd.yaml", "# Not %3N.\ndescription: \"The stamp is not strftime %6N.\"\n")
         tree.write("atomics/T9999/src/blob.bin", "date +%6N\0\n")
         tree.write("detections/k8s/helper.bash", "stamp() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }\n")
         tree.write(".github/workflows/planted-lab.yml",
@@ -914,9 +1243,11 @@ class DateWidth(unittest.TestCase):
             ".github/actions/stamp/action.yml:5: run: date -u +%T.%6N",
             ".github/workflows/planted-lab.yml:6: STAMP_FORMAT: +%s.%6N",
             '.github/workflows/planted-lab.yml:11: echo "T0=$(date +%s.%3N)" >> "$GITHUB_ENV"',
+            'atomics/T9999/crd.yaml:2: description: "The stamp is not strftime %6N."',
             "atomics/T9999/src/clock.py:3: print(subprocess.run(['date', '+%s.%3N']))",
             "atomics/T9999/src/emulate.sh:4: now_utc() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }",
             "atomics/T9999/src/lib.inc:2: stamp() { date -u +%T.%6N; }",
+            "atomics/T9999/src/note.c:1: /* The time comes from bash, not from date +%6N. */",
             'atomics/T9999/src/stamp:3: echo "$(date +%s).$(date +%3N)"',
             "detections/k8s/helper.bash:1: stamp() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }"])
 
@@ -930,7 +1261,10 @@ class DateWidth(unittest.TestCase):
                            "the workflows were not read")
         no_faults(self, self.hits(), "these lines give %N a width. `date` of uutils coreutils 0.10.0 "
                   "(Ubuntu 26.04) prints such a field without the leading zeros of the fraction. Use "
-                  "the function of LedgerClock.ACCEPTED, or %N and cut the text")
+                  "the function of LedgerClock.ACCEPTED, or %N and cut the text. The rule does not ask "
+                  "what the language of a file is: a mention in prose, or in a comment that does not "
+                  "start with `#`, counts too. Write the format in two parts there (`%6` and `N`), or "
+                  "move the note to a Markdown file")
 
 
 class LedgerClock(unittest.TestCase):
@@ -1102,12 +1436,17 @@ class LedgerClock(unittest.TestCase):
 
     def test_each_clock_function_is_the_accepted_text(self):
         scripts = self.scripts()
-        # The scripts were read (not vacuous): today 20 scripts append to a ledger, and
-        # each of them defines the function.
+        # The scripts were read (not vacuous). Today 20 scripts append to a ledger, and
+        # each of them defines the function. The floor has room, as in DateWidth: it is
+        # not the count, and a script less does not fail.
         writers = [rel for rel, text in scripts.items() if self.writes_a_ledger(text)]
-        self.assertGreaterEqual(len(writers), 20, "the emulation scripts were not read")
-        self.assertGreaterEqual(len([rel for rel, text in scripts.items() if self.definitions(text)]), 20,
-                                "the definitions of the emulation scripts were not found")
+        defined = [rel for rel, text in scripts.items() if self.definitions(text)]
+        floor = ("; the test wants more than 10, to show that the rule read the emulation scripts (it is a "
+                 "floor with room, not the count of the scripts)")
+        self.assertGreater(len(writers), 10, f"{len(writers)} of the {len(scripts)} script(s) that match "
+                           f"{self.SCRIPTS} append to a ledger (DETENG_LEDGER)" + floor)
+        self.assertGreater(len(defined), 10, f"{len(defined)} of the {len(scripts)} script(s) that match "
+                           f"{self.SCRIPTS} define now_utc() or now()" + floor)
         in_steps = [(s.workflow, s.job, s.name) for s in gatelib.ci_steps() if self.definitions(s.run)]
         self.assertIn(self.BENIGN, in_steps, "the step that writes BENIGN_START does not define the function "
                       "(or has a new name: then put the new name in LedgerClock.BENIGN)")
@@ -1268,7 +1607,9 @@ class LedgerClock(unittest.TestCase):
     def test_the_benign_step_writes_its_split_point_without_date(self):
         """The step of the API server lab that writes BENIGN_START, to that line: the
         value is the time of the test in the format that the step that scores the
-        slice accepts, and `date` was not called."""
+        slice accepts, and `date` was not called. The run has the locale C, as the
+        runs of run_function(): the decimal point of the locale of the machine of
+        the test is not the subject (the comma has its own test)."""
         self.need_bash(5, 0, "EPOCHREALTIME")
         step = AuditdStart.the_step(*self.BENIGN)
         lines = step.run.splitlines()
@@ -1279,8 +1620,12 @@ class LedgerClock(unittest.TestCase):
         self.addCleanup(tree.cleanup)
         calls = tree.out("date-calls")
         before = time.time()
-        done = tree.run_step(step._replace(run="\n".join(lines[:write[0] + 1]) + "\n" + self.SAY_ZONE), timeout=60,
-                             env={"TZ": self.ZONE, "CALLS": calls, "DATE_SAYS": self.WRONG},
+        part = "\n".join(lines[:write[0] + 1]) + "\n"
+        self.assertEqual(AuditdStart.not_shell(part), "", "the test runs the step to the line that writes "
+                         "BENIGN_START, and `bash -n` does not read that part as complete shell. Put the line "
+                         "at the top level of the step (not in an `if`, a loop or a function)")
+        done = tree.run_step(step._replace(run=part + self.SAY_ZONE), timeout=60,
+                             env={"TZ": self.ZONE, "CALLS": calls, "DATE_SAYS": self.WRONG, "LC_ALL": "C"},
                              programs={"date": 'echo "$*" >> "$CALLS"\necho "$DATE_SAYS"'})
         after = time.time()
         self.assertEqual(done.returncode, 0, done.describe())
