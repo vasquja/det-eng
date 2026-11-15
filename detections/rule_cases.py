@@ -42,7 +42,12 @@ Case fields:
            (`rule_cases.py --atoms RULE` lists a rule's atoms.)
   why      one line: what the case proves.
   events   the event set, as the log source writes it (nested JSON is flattened
-           the way the validators flatten it; flat auditd events stay flat).
+           the way the validators flatten it; flat auditd events stay flat). Each
+           event is a JSON object. The events of a case share one SQLite table, so
+           no two of their keys may differ only in letter case (`comm`, `Comm`), no
+           key may be `_rowid` in any letter case, and no two values of one event
+           may get one flat key (`{"a": {"b": 1}, "a.b": 2}`). Such a case is an
+           ERROR line that names the rule, the line and the case.
   source   optional provenance note ("synthetic: ..." or "recorded: ...").
 
 Usage:
@@ -72,7 +77,12 @@ def cases_path(rule_path):
 
 
 def load_cases(path):
-    """Parse a sidecar file. Returns (cases, errors)."""
+    """Parse a sidecar file. Returns (cases, errors).
+
+    A line that is not a well-formed case is an error that names the line (and the
+    case, when the line has a name that is a string), and it is not judged: it is not
+    JSON, or not a JSON object, it lacks a field, its name, kind, events or breaks has
+    the wrong type, or its events cannot be put in one event table (event_problem())."""
     cases, errors, names = [], [], set()
     with open(path, encoding="utf-8") as fh:
         for n, line in enumerate(fh, 1):
@@ -84,26 +94,106 @@ def load_cases(path):
             except json.JSONDecodeError as e:
                 errors.append(f"line {n}: not JSON ({e})")
                 continue
+            if not isinstance(case, dict):
+                errors.append(f"line {n}: not a JSON object ({_json_type(case)}): each line "
+                              "of a sidecar is one case, an object")
+                continue
+            if "name" in case and not isinstance(case["name"], str):
+                errors.append(f"line {n}: the name is {_json_type(case['name'])}, not a string")
+                continue
+            # From here, an error of a line that has a name names the case.
+            of = f"case {case['name']!r}: " if "name" in case else ""
             missing = [k for k in REQUIRED if k not in case]
             if missing:
-                errors.append(f"line {n}: missing {', '.join(missing)}")
+                errors.append(f"line {n}: {of}missing {', '.join(missing)}")
                 continue
-            if case["kind"] not in KINDS:
-                errors.append(f"line {n}: unknown kind {case['kind']!r}")
+            if not isinstance(case["kind"], str) or case["kind"] not in KINDS:
+                errors.append(f"line {n}: {of}unknown kind {case['kind']!r}")
                 continue
             if case["name"] in names:
                 errors.append(f"line {n}: duplicate name {case['name']!r}")
                 continue
             if not isinstance(case["events"], list) or not case["events"]:
-                errors.append(f"line {n}: events must be a non-empty list")
+                errors.append(f"line {n}: {of}events must be a non-empty list")
                 continue
             if case["kind"] in ("near-miss", "filtered") and not case.get("breaks"):
-                errors.append(f"line {n}: a {case['kind']} case must declare `breaks`")
+                errors.append(f"line {n}: {of}a {case['kind']} case must declare `breaks`")
+                continue
+            breaks = case.get("breaks")
+            if breaks is not None and not (isinstance(breaks, str) or isinstance(breaks, list)
+                                           and all(isinstance(a, str) for a in breaks)):
+                errors.append(f"line {n}: {of}`breaks` must be an atom name or a list of atom "
+                              "names (strings)")
+                continue
+            problem = event_problem(case["events"])
+            if problem:
+                errors.append(f"line {n}: {of}{problem}")
                 continue
             names.add(case["name"])
             case["_line"] = n
             cases.append(case)
     return cases, errors
+
+
+def _json_type(value):
+    """The JSON name of the type of a parsed value (`null`, `a number`, ...)."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return {dict: "an object", list: "an array", str: "a string"}.get(type(value), "a number")
+
+
+def _flat_keys(event):
+    """[(flat key, path)] for each value of an event: the key that sigma_eval.flatten()
+    gives the value, and its path of keys in the event."""
+    out = []
+
+    def walk(obj, path):
+        for key, val in obj.items():
+            if isinstance(val, dict):       # flatten() goes into a nested object
+                walk(val, path + [key])
+                continue
+            one = 0
+            for k in reversed(path + [key]):
+                one = {k: one}
+            out.append((next(iter(sigma_eval.flatten(one))), path + [key]))
+
+    walk(event, [])
+    return out
+
+
+def event_problem(events):
+    """Why the events of one case cannot be judged, or None.
+
+    run_case() flattens each event (sigma_eval.flatten) and puts all the events of
+    the case in one SQLite table (sigma_eval.EventTable). So each event must be a
+    JSON object; two values of an event must not get one flat key (flatten keeps the
+    last); no key may be the row id column of the table (`_rowid`, in any letter
+    case); and no two keys of the case may differ only in letter case, because the
+    column names of SQLite have no letter case."""
+    seen = {}
+    for i, event in enumerate(events, 1):
+        where = f"event {i} of {len(events)}"
+        if not isinstance(event, dict):
+            return (f"{where} is not a JSON object ({_json_type(event)}): an event is one "
+                    "record of the log")
+        paths = {}
+        for flat, path in _flat_keys(event):
+            if flat in paths:
+                return (f"{where}: the keys {paths[flat]} and {path} both flatten to "
+                        f"{flat!r}, and the flat event keeps only the last value")
+            paths[flat] = path
+            if flat.lower() == sigma_eval._ROWID:
+                return (f"{where}: the key {flat!r} is the row id column of the event table "
+                        "of sigma_eval.py (in any letter case), so an event cannot hold it")
+            seen.setdefault(flat.lower(), set()).add(flat)
+    clashes = sorted(" / ".join(sorted(keys)) for keys in seen.values() if len(keys) > 1)
+    if clashes:
+        return ("event keys that differ only by case: " + "; ".join(clashes) + " (the events "
+                "of a case share one SQLite table, whose column names have no letter case, so "
+                "the case cannot be judged)")
+    return None
 
 
 class CaseResult:

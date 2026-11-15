@@ -61,6 +61,11 @@ no timestamps, no case counts; schema in detections/pipelines/README.md). --chec
 when that file is not what this run generates. --approvals-table prints every approval
 as a Markdown table for a pull request.
 
+A sidecar that rule_cases.load_cases() refuses (a line that is not a case, a case whose
+events one event table cannot hold) gives an ERROR line that names the rule and the
+line, and the case when the line has a name. The run checks the other rules and fails;
+it does not write mapping_results.json, and --check does not compare it.
+
 Usage:
     python3 detections/check_provider_mappings.py               # the check
     python3 detections/check_provider_mappings.py --check       # the check + stale results file
@@ -1532,6 +1537,19 @@ def run(rules, providers, expected_loss=None, not_portable=None, check_anchors=T
                         f"convert_k8s.py defines {convert_k8s.NOT_BAG}")
     rels = set()
     reads_lost = {}
+    # A rule whose sidecar rule_cases.load_cases() refuses (a line that is not a case,
+    # a case that one event table cannot hold) has no cases to compare. Name the rule
+    # and the line (and the case, when the line has a name), and check the other rules.
+    SIDECAR_ERRORS.clear()
+    for path in rules:
+        _, errors = rule_cases.load_cases(rule_cases.cases_path(path))
+        if errors:
+            rel = os.path.relpath(path, SIGMA_DIR)
+            SIDECAR_ERRORS[rel] = errors
+            rels.add(rel)
+            for err in errors:
+                print(f"ERROR {rel}: sidecar error: {err}")
+                problems.append(f"{rel}: sidecar error: {err}")
     for name in providers:
         p = PROVIDERS[name]
         results["providers"][name] = {
@@ -1540,6 +1558,8 @@ def run(rules, providers, expected_loss=None, not_portable=None, check_anchors=T
                          "gke": "detections/pipelines/k8s_gke.py:gke_cloud_audit"}.get(name)}
         counts = {"same": 0, "expected_loss": 0, "not_portable": 0, "diverges": 0}
         for path in rules:
+            if os.path.relpath(path, SIGMA_DIR) in SIDECAR_ERRORS:
+                continue
             report = check_rule(path, name)
             rel = report["rule"]
             REPORTS[(name, rel)] = report
@@ -1599,6 +1619,7 @@ def _reason_name(expected_loss, provider_name, rel, case):
 
 VERBOSE = False
 REPORTS = {}  # (provider, rule) -> the last run's report (for --propose)
+SIDECAR_ERRORS = {}  # rule -> the sidecar errors of the last run (the rule was not checked)
 
 
 def yield_line(provider_name, rel, report, status, approved, unexpected, problems):
@@ -1749,7 +1770,13 @@ def main(argv=None):
     if args.approvals_table:
         print(approvals_table(REPORTS))
     text = results_text(results)
-    if args.write:
+    if SIDECAR_ERRORS:
+        # A rule that the run did not check is not in the results: they are not
+        # written, and not compared with the file.
+        if args.write:
+            print(f"did not write {os.path.relpath(RESULTS, REPO)}: "
+                  f"{len(SIDECAR_ERRORS)} rule(s) with a sidecar error were not checked")
+    elif args.write:
         with open(RESULTS, "w", encoding="utf-8") as fh:
             fh.write(text)
         print(f"wrote {os.path.relpath(RESULTS, REPO)}")

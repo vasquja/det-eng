@@ -258,6 +258,56 @@ class ScoreBenign(gatelib.GateCase):
                                 r"|T1014/bpf_prog_load\.yml: .*\b300\b")
         self.assert_rejects(result, r"T1014/bpf_prog_load\.yml.*\b(max_hits|budget)\b")
 
+    PLANTED_SLICE = "detections/benign/slices/aws/planted-key-case-clash.json"
+
+    @gatelib.known_gap(
+        "sb-slice-keys-differ-by-case",
+        gate="detections/score_benign.py --check --enforce",
+        reason="A benign slice whose event has two keys that differ only in letter case "
+               "(`eventName` and `EventName`) ends score_benign.py --check --enforce with an "
+               "uncaught ValueError of sigma_eval.EventTable: no line names the slice (the "
+               "last line of the traceback names the two keys), and no rule is scored. The "
+               "benign-corpus job fails, but with a traceback. The loader of the corpus "
+               "(benign_corpus.py) does not check the keys of an event; rule_cases.py names "
+               "the same clash in a sidecar case with the rule, the line and the case.",
+        closes="R2d", today="crash")
+    def test_gap_slice_event_keys_that_differ_only_in_letter_case(self):
+        """WANTED: the gate names the slice and the two keys, and does not stop with a
+        traceback."""
+        tree = self.tree()
+        tree.plant("quality/slice_keys_differ_by_case/planted-key-case-clash.json",
+                   self.PLANTED_SLICE)
+        # The artifact is bad in one way: its one event has `eventName` and `EventName`.
+        spec = tree.read_json(self.PLANTED_SLICE)
+        (template,) = spec["templates"]
+        self.assertEqual((spec["count"], sorted(template["event"])),
+                         (1, ["EventName", "eventName", "eventSource"]))
+        # Without the key `EventName` the corpus loads and the gate scores the slice.
+        sound = self.tree()
+        sound.plant("quality/slice_keys_differ_by_case/planted-key-case-clash.json",
+                    self.PLANTED_SLICE)
+        sound.edit_json(self.PLANTED_SLICE,
+                        lambda doc: [doc["templates"][0]["event"].pop("EventName"), doc][1])
+        scored = sound.run(self.GATE, "--examples", "0")
+        self.assert_accepts(scored, r"^  planted-key-case-clash +v1 +synthetic +aws/cloudtrail "
+                                    r"+1 event\(s\)$")
+        result = self.run_ci(tree)
+        # The gate read the planted event: its output names the two keys (today in
+        # the last line of the traceback).
+        self.assert_saw(result, r"differ only by case.*\bEventName / eventName\b")
+        if result.crashed:
+            # Today. Prove the sentences of the `reason`: the error of EventTable,
+            # raised where the gate scores the slices, is the last line, and it names
+            # the two keys; no line names the slice.
+            self.assertRegex(result.stderr, r'(?m)^  File ".*score_benign\.py", line \d+, in '
+                                            r'score\b', result.describe())
+            self.assertRegex(result.stderr.rstrip("\n").splitlines()[-1],
+                             r'^ValueError: event keys that differ only by case cannot share '
+                             r'one table: EventName / eventName \(', result.describe())
+            self.assertNotIn("planted-key-case-clash", result.output, result.describe())
+        self.assert_rejects(result, r"planted-key-case-clash.*\bEventName\b.*\beventName\b"
+                                    r"|\beventName\b.*\bEventName\b.*planted-key-case-clash")
+
 
 class BenignRatchet(gatelib.GateCase):
     """The benign half of the sufficiency-ratchet job (pull requests only):
@@ -1153,6 +1203,10 @@ class ProviderMappings(gatelib.GateCase):
     # The gate loads .github/scripts/check_sigma_regex.py by path.
     PARTS = ("detections", ".github/scripts/check_sigma_regex.py")
     REAL = "T1611/k8s_podspec_host_access.yml"      # the rule the planted one is derived from
+    # A rule with approvals for GKE (an EXPECTED_LOSS entry and a NOT_PORTABLE entry)
+    # whose sidecar no other list of detections/tests/README.md (Limits) names.
+    CLASH_RULE = "T1485/k8s_volume_reclaim_set_to_delete.yml"
+    CLASH_CASES = "detections/sigma/T1485/k8s_volume_reclaim_set_to_delete.cases.jsonl"
     PLANTED = "T9999/planted_json_separator_k8s.yml"
     OK = (r"^OK: every mapped rule keeps its verdicts and block truth on every case, or the "
           r"difference is approved\.$")
@@ -1174,6 +1228,15 @@ class ProviderMappings(gatelib.GateCase):
         cls.bad = cls.class_tree()
         cls.bad.plant("quality/one_json_serialisation_k8s", "detections/sigma/T9999")
         cls.rejection = cls.in_background(cls.bad.run, cls.GATE, *cls.ci_arguments)
+        # pm-sidecar-case-clash: one more case in the sidecar of a rule that has
+        # approvals, whose event has the keys `verb` and `Verb`. rule_cases.load_cases()
+        # refuses that case; the gate must name it, check every other rule, and leave
+        # the results file as it is (--write) and not compare it (--check).
+        cls.clash, cls.clash_write = cls.class_tree(), cls.class_tree()
+        for tree in (cls.clash, cls.clash_write):
+            tree.plant("quality/provider_case_clash.jsonl", cls.CLASH_CASES, append=True)
+        cls.clash_run = cls.in_background(cls.clash.run, cls.GATE, *cls.ci_arguments)
+        cls.clash_write_run = cls.in_background(cls.clash_write.run, cls.GATE, "--write")
 
     def test_ci_passes_check_and_require_re2(self):
         self.assert_ci_runs(self.GATE, "--check", "--require-re2")
@@ -1230,6 +1293,38 @@ class ProviderMappings(gatelib.GateCase):
         self.assertEqual(len(others), 1, result.describe())
         self.assertRegex(others[0], r"^  detections/pipelines/mapping_results\.json is stale: ")
         self.assertNotIn("configmap-emptydir-volumes", result.stdout)
+
+    def clash_error(self):
+        """The ERROR line for the planted case: the rule, the line and the case."""
+        line = len(self.good().read_jsonl(self.CLASH_CASES)) + 1
+        return (rf"^ERROR {re.escape(self.CLASH_RULE)}: sidecar error: line {line}: case "
+                r"'planted-two-verb-keys': event keys that differ only by case: Verb / verb "
+                r"\(the events of a case share one SQLite table")
+
+    def test_rejects_sidecar_case_that_one_table_cannot_hold(self):
+        """pm-sidecar-case-clash (planted in setUpClass), with the command line of the
+        job: an ERROR line names the rule, the line and the case, with no traceback.
+        It is the one problem: the gate checks every other rule for both gating
+        providers, and the approvals of the rule are not stale."""
+        result = self.clash_run.result()
+        self.assert_rejects(result, self.clash_error(), exit_code=1)
+        self.assertIn("\nFAILED: 1 problem(s).\n", result.stdout)
+        rules = [rule for rule in k8s_audit_rules(self.good(), sidecar=True)
+                 if rule != self.CLASH_RULE]
+        for provider in ("aks", "gke"):
+            judged = found(result, rf"^\[{provider}\] (?:SAME|EXPECTED LOSS|NOT PORTABLE) +"
+                                   r"(T\S+\.yml) \([1-9]\d* cases")
+            self.assertEqual(sorted(judged), rules, provider)
+
+    def test_write_keeps_the_results_file_when_a_sidecar_case_is_refused(self):
+        """pm-sidecar-case-clash with --write: the results would not hold the rule, so
+        the gate does not write them, and fails."""
+        result = self.clash_write_run.result()
+        self.assert_rejects(result, self.clash_error(), exit_code=1)
+        self.assertIn("\ndid not write detections/pipelines/mapping_results.json: 1 rule(s) with "
+                      "a sidecar error were not checked\n", result.stdout)
+        results = "detections/pipelines/mapping_results.json"
+        self.assertEqual(self.clash_write.read(results), self.good().read(results))
 
     def test_rejects_match_on_one_json_serialisation_by_rule_path(self):
         """The same pair with the rule-path form, which skips the results file: the
@@ -1563,31 +1658,114 @@ class CoverageReport(gatelib.GateCase):
         self.assertRegex(now, r"(?m)^\| \[TRR9001\]\(trr9001/lin/README\.md\) \|.*\| A:\*\*C\*\* ")
         self.assertRegex(now, r"(?m)^\| `TRR9001\.LIN\.A` \| [^|]+ \| Claimed \| backlog \| ")
 
-    @gatelib.known_gap(
-        "cr-defect-heading-without-summary-row",
-        gate="research/tools/coverage_report.py --check",
-        reason="An entry of detections/RULE_DEFECTS.md that has a section and no Summary row "
-               "is not an open defect for the report: open_defects() reads only the Summary "
-               "table, so COVERAGE.md keeps `Proven` for the procedures that the named rule "
-               "proves, and the gate says the report is current.",
-        closes="R2d")
-    def test_gap_defect_section_without_summary_row(self):
-        """cr-defect-heading-without-summary-row (planted in setUpClass). WANTED: the
-        entry marks the procedures of its rule (COVERAGE.md is stale), or the gate
-        refuses an entry that has no Summary row."""
+    # The words of the gate for an entry of the defect tracker that it cannot read.
+    ENTRY = r"^coverage_report: RULE_DEFECTS\.md L99: "
+
+    def assert_one_entry_problem(self, result, problem):
+        """The gate stops with one error line, for entry L99, before it writes or
+        compares anything."""
+        self.assert_rejects(result, self.ENTRY + problem, exit_code=1)
+        self.assertEqual(len(result.stderr.splitlines()), 1, result.describe())
+        self.assertEqual(result.stdout, "", result.describe())
+
+    def test_rejects_defect_section_without_summary_row(self):
+        """cr-defect-heading-without-summary-row (planted in setUpClass): an entry of
+        the defect tracker that has a section and no Summary row. The report reads the
+        Summary table, so it would not count the entry: the gate refuses it."""
         # The entry is effective when the gate reads it: with its Summary row the
-        # report is stale, and the unmodified copy is current. (Plain assertions:
-        # they must not count as the gap, and a copy that is stale for another
-        # reason must not count as the gap closed.)
+        # report is stale, and the unmodified copy is current.
         self.control_is_current()
         with_row = self.with_row_run.result()
         self.assertEqual(with_row.returncode, 1, with_row.describe())
         self.assertRegex(with_row.stdout, "(?m)" + self.STALE, with_row.describe())
         self.assertIn("\n### L99. PLANTED known-bad artifact", self.no_row.read(self.DEFECTS))
         self.assertNotIn("| [L99](", self.no_row.read(self.DEFECTS))
-        self.assert_rejects(self.no_row_run.result(),
-                            self.STALE + r"|^coverage_report: .*RULE_DEFECTS\.md.*\bL99\b")
+        self.assert_one_entry_problem(
+            self.no_row_run.result(),
+            r"the entry has a section \(### L99\.\) and no row in the Summary table, so the "
+            r"report would not count it; add its row to the Summary table$")
 
+    def test_generator_refuses_defect_section_without_summary_row(self):
+        """The same entry stops the generator (no --check), and it writes nothing."""
+        tree = self.tree()
+        tree.plant("quality/defect_without_summary_row/section.md.txt", self.DEFECTS, append=True)
+        before = tree.fingerprint()
+        self.assert_one_entry_problem(tree.run(self.GATE),
+                                      r"the entry has a section \(### L99\.\) and no row ")
+        self.assertEqual(tree.fingerprint(), before, "the generator wrote a file")
+
+    def test_rejects_defect_section_whose_id_starts_the_id_of_a_row(self):
+        """The ID of a section must be the ID of a row, not the start of one: the
+        section `### L1.` has no row while the row L14 is in the table."""
+        tree = self.tree()
+        self.assertIn("| [L14](", tree.read(self.DEFECTS))
+        tree.plant("quality/defect_without_summary_row/section.md.txt", self.DEFECTS, append=True)
+        tree.replace(self.DEFECTS, "\n### L99. PLANTED", "\n### L1. PLANTED")
+        result = tree.run(self.GATE, "--check")
+        self.assert_rejects(result, r"^coverage_report: RULE_DEFECTS\.md L1: the entry has a "
+                                    r"section \(### L1\.\) and no row in the Summary table",
+                            exit_code=1)
+        self.assertEqual(len(result.stderr.splitlines()), 1, result.describe())
+
+    def test_rejects_summary_row_without_a_section(self):
+        """A Summary row whose entry has no section: the report would read the entry
+        from its row alone. The planted row is the row of L99, without the section."""
+        tree = self.tree()
+        separator = "|----|------|---------|------|----------|\n"
+        tree.replace(self.DEFECTS, separator, separator + self.SUMMARY_ROW)
+        self.assert_one_entry_problem(
+            tree.run(self.GATE, "--check"),
+            r"the Summary table has a row for it and the file has no section \(### L99\.\); "
+            r"add its section, or delete the row of an entry that is closed$")
+
+    def test_rejects_two_rows_or_two_sections_for_one_entry(self):
+        """Entry L99 with its section and its row, and then a second row or a second
+        section: the report would read one entry in two ways."""
+        separator = "|----|------|---------|------|----------|\n"
+        for twice, problem in (
+                ("row", r"the Summary table has 2 rows for it; give each entry one row$"),
+                ("section", r"the file has 2 sections for it \(### L99\.\); give each entry "
+                            r"one section$")):
+            with self.subTest(twice):
+                tree = self.tree()
+                tree.plant("quality/defect_without_summary_row/section.md.txt", self.DEFECTS,
+                           append=True)
+                tree.replace(self.DEFECTS, separator, separator + self.SUMMARY_ROW
+                             * (2 if twice == "row" else 1))
+                if twice == "section":
+                    tree.plant("quality/defect_without_summary_row/section.md.txt", self.DEFECTS,
+                               append=True)
+                self.assert_one_entry_problem(tree.run(self.GATE, "--check"), problem)
+
+    def test_names_each_entry_that_it_cannot_read(self):
+        """Two entries that the gate cannot read, L98 and L99 (each a section without a
+        Summary row): one error line for each entry, in the order of the IDs."""
+        tree = self.tree()
+        tree.plant("quality/defect_without_summary_row/section.md.txt", self.DEFECTS, append=True)
+        tree.replace(self.DEFECTS, "\n### L99. PLANTED", "\n### L98. PLANTED")
+        tree.plant("quality/defect_without_summary_row/section.md.txt", self.DEFECTS, append=True)
+        result = tree.run(self.GATE, "--check")
+        self.assert_rejects(result, r"^coverage_report: RULE_DEFECTS\.md L99: the entry has a "
+                                    r"section \(### L99\.\) and no row ", exit_code=1)
+        self.assertEqual(result.stderr.splitlines(), [
+            f"coverage_report: RULE_DEFECTS.md {did}: the entry has a section (### {did}.) and "
+            "no row in the Summary table, so the report would not count it; add its row to "
+            "the Summary table" for did in ("L98", "L99")], result.describe())
+        self.assertEqual(result.stdout, "", result.describe())
+
+    def test_rejects_heading_that_starts_with_an_id_and_is_not_an_entry(self):
+        """A heading of a section that starts with an ID and is not the heading of an
+        entry (`### L99. <title>`): the planted section with `### L99:` and no Summary
+        row. The report would read it as no entry, and count nothing for it."""
+        tree = self.tree()
+        tree.plant("quality/defect_without_summary_row/section.md.txt", self.DEFECTS, append=True)
+        tree.replace(self.DEFECTS, "\n### L99. PLANTED", "\n### L99: PLANTED")
+        self.assertNotRegex(tree.read(self.DEFECTS), r"(?m)^### L99\. |^\| \[L99\]")
+        self.assert_one_entry_problem(
+            tree.run(self.GATE, "--check"),
+            r"the heading `### L99: PLANTED known-bad artifact: [^`]+` starts with an ID and is "
+            r"not the heading of an entry \(### L99\. <title>\), so the report does not read "
+            r"it; write it as `### L99\. <title>`$")
 
 if __name__ == "__main__":
     unittest.main()
