@@ -30,6 +30,7 @@ import http.client
 import json
 import os
 import re
+import stat
 import tempfile
 import urllib.error
 import urllib.parse
@@ -392,17 +393,32 @@ class Cache:
 
     def read(self, sha, size, what):
         """The bytes, or None when the cache does not hold the file. HashMismatch when
-        it holds other bytes (the file is deleted first). size None: the pin names
-        no size (a yml, the LICENSE), and only the sha256 is compared."""
+        it holds other bytes (the file is deleted first). A Fault when the entry is not
+        a regular file or cannot be read: the run does not replace it, and it does not
+        wait on it. size None: the pin names no size (a yml, the LICENSE), and only the
+        sha256 is compared."""
         path = self.path(sha)
         if not os.path.lexists(path):
             return None
+        fd = None
         try:
-            with open(path, "rb") as fh:
+            # O_NONBLOCK: a FIFO (or a link to one) opens at once, and the test below
+            # refuses it; open() without the flag waits for a writer. A regular file
+            # ignores the flag.
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise Fault(f"{what}: the cache entry {path} is not a regular file (a "
+                            "directory, a FIFO or a device, or a link to one); delete it or "
+                            "give another --cache")
+            with os.fdopen(fd, "rb") as fh:
+                fd = None
                 data = fh.read((MAX_BYTES if size is None else size) + 1)
         except OSError as e:
             raise Fault(f"{what}: the cache entry {path} cannot be read ({type(e).__name__}: "
                         f"{e.strerror}); delete it or give another --cache") from None
+        finally:
+            if fd is not None:
+                os.close(fd)
         got = hashlib.sha256(data).hexdigest()
         if got != sha or (size is not None and len(data) != size):
             try:
@@ -904,8 +920,9 @@ def read_dataset(entry, data, syscalls):
     """(records, other): the Records of a dataset in its format, and the number of
     records of the log that are not events of the rules' schema (an auditd record of
     another type than SYSCALL). A Fault names a line or a record that is not a record
-    of the format, a key or a value that one SQLite table cannot hold, and keys of one
-    log source that differ only in letter case."""
+    of the format, a key or a value that one SQLite table cannot hold, keys of one log
+    source that differ only in letter case, and a log source whose records hold more
+    than MAX_KEYS distinct keys."""
     entry_id, fmt = entry["id"], entry["format"]
     text = _text(entry_id, data)
     if fmt == "auditd-raw":
@@ -931,7 +948,33 @@ def read_dataset(entry, data, syscalls):
             records.append(Record(where, logsource, event))
     unstorable(entry_id, records)
     case_clashes(entry_id, records)
+    too_wide(entry_id, records)
     return records, other
+
+
+# The distinct keys that the records of one log source may hold: one SQLite table holds
+# at most 2000 columns (SQLITE_MAX_COLUMN), sigma_eval.EventTable takes one for the row
+# id, and a rule adds a column for each field that it names and the records do not
+# hold (ALTER TABLE); the rules that run on one table share it. 1900 leaves 99 columns
+# for those fields.
+MAX_KEYS = 1900
+
+
+def too_wide(entry_id, records):
+    """A Fault when the records of one log source hold more distinct keys than one
+    table of sigma_eval.EventTable can take with the fields of the rules: the dataset
+    is too wide, not the rule."""
+    keys = collections.defaultdict(set)
+    for r in records:
+        if r.logsource is not None:
+            keys[r.logsource].update(r.event)
+    for logsource, names in sorted(keys.items()):
+        if len(names) > MAX_KEYS:
+            raise Fault(f"{entry_id}: the {'/'.join(logsource)} records hold {len(names)} "
+                        f"distinct keys; one SQLite table of the gate holds at most {MAX_KEYS} "
+                        "(2000 columns, less the row id and room for the fields of the "
+                        "rules): exclude the dataset in SOURCES.json, or split it in a "
+                        "change to the gate")
 
 
 def case_clashes(entry_id, records):

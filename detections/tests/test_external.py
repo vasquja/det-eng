@@ -1611,6 +1611,20 @@ class ExternalLoaders(gatelib.GateCase):
          r": line 2 holds -Infinity, which is not a JSON value \(RFC 8259\)$"),
         ("nan_in_array", "cloudtrail-json", b"[" + line_of(ct()) + b"," + line_of(ct())[:-2]
          + b', "planted": NaN}]', r": the JSON document holds NaN, which is not a JSON value"),
+        # More distinct keys in the records of one log source than one table of the gate
+        # holds with the fields of the rules (MAX_KEYS, 1900): the dataset is too wide.
+        ("wide", "cloudtrail-json", line_of(ct(**{f"k{i}": i for i in range(1947)})),
+         r": the aws/cloudtrail records hold 1950 distinct keys; one SQLite table of the gate "
+         r"holds at most 1900 \(2000 columns, less the row id and room for the fields of the "
+         r"rules\): exclude the dataset in SOURCES\.json, or split it in a change to the gate$"),
+        ("wide_lines", "cloudtrail-json", line_of(ct(**{f"a{i}": i for i in range(1000)}))
+         + line_of(ct(**{f"b{i}": i for i in range(1000)})),
+         r": the aws/cloudtrail records hold 2003 distinct keys; "),
+        ("wide_at_the_bound", "cloudtrail-json", line_of(ct(**{f"k{i}": i for i in range(1897)})),
+         [("line 1", "aws/cloudtrail")]),
+        ("wide_not_routed", "azure-monitor-json", line_of(dict(
+            azure("MicrosoftGraphActivityLogs"), **{f"k{i}": i for i in range(1950)})),
+         [("line 1", None)]),
     ]
     READ_PROBE = (
         "import base64, traceback\n"
@@ -1880,6 +1894,41 @@ class ExternalLoaders(gatelib.GateCase):
             "gate)"])
         self.assertEqual(out["pairs"], [])
 
+    # Records at the bound of keys (MAX_KEYS), none of them a field of a rule: every
+    # rule of the log source runs on one table of them, as the report shares a table
+    # between the rules of a dataset, and each rule adds its fields as columns.
+    WIDE_PROBE = (
+        "import sigma_eval\n"
+        "record = {'k%d' % i: i for i in range(xr.MAX_KEYS)}\n"
+        "rules = [cer.Rule(p) for p in cer.rule_paths()]\n"
+        "out = {'MAX_KEYS': xr.MAX_KEYS}\n"
+        "for name, source in (('cloudtrail', ('aws', 'cloudtrail')),\n"
+        "                     ('audit', ('kubernetes', 'audit'))):\n"
+        "    table = sigma_eval.EventTable([record])\n"
+        "    ran, errors = 0, []\n"
+        "    for rule in rules:\n"
+        "        if rule.logsource != source:\n"
+        "            continue\n"
+        "        try:\n"
+        "            table.hit_indices(rule.sql())\n"
+        "            ran += 1\n"
+        "        except Exception as e:\n"
+        "            errors.append(f'{rule.key}: {type(e).__name__}: {e}')\n"
+        "    columns = len(table.db.execute('PRAGMA table_info(logs)').fetchall())\n"
+        "    out[name] = {'ran': ran, 'errors': errors, 'columns': columns}\n"
+        "print(json.dumps(out))\n")
+
+    def test_the_bound_of_keys_leaves_room_for_the_fields_of_the_rules(self):
+        """A dataset at the bound of the loader runs every rule of its log source on one
+        table: the bound (MAX_KEYS) is not the error of a rule (review of PR-1, X5)."""
+        out = probe(self.good(), self.WIDE_PROBE)
+        self.assertEqual(out["MAX_KEYS"], 1900)
+        for name in ("cloudtrail", "audit"):
+            with self.subTest(name):
+                self.assertGreater(out[name]["ran"], 10, out[name])
+                self.assertEqual(out[name]["errors"], [])
+                self.assertLess(out[name]["columns"], 2000)
+
     FETCH_PROBE = (
         "import hashlib, http.server, os, threading\n"
         "GOOD, OTHER = b'constructed by detections/tests\\n', b'other bytes\\n'\n"
@@ -1949,6 +1998,23 @@ class ExternalLoaders(gatelib.GateCase):
         "run('redirect_host', fresh('host'), base + '/to/http://localhost:PORT/good')\n"
         "os.makedirs(fresh('entry_dir').path(SHA))\n"
         "run('entry_dir', fresh('entry_dir'), base + '/good')\n"
+        "def bounded(name, cache, url):\n"
+        "    # A cache entry that blocks a read must not stop the probe (nor the test).\n"
+        "    t = threading.Thread(target=run, args=(name, cache, url), daemon=True)\n"
+        "    t.start()\n"
+        "    t.join(10)\n"
+        "    if t.is_alive():\n"
+        "        out[name] = {'hang': 'obtain() did not return in 10 s'}\n"
+        "if hasattr(os, 'mkfifo'):\n"
+        "    c = fresh('entry_fifo')\n"
+        "    os.makedirs(os.path.dirname(c.path(SHA)))\n"
+        "    os.mkfifo(c.path(SHA))\n"
+        "    bounded('entry_fifo', c, base + '/good')\n"
+        "    c = fresh('entry_fifo_link')\n"
+        "    os.makedirs(os.path.dirname(c.path(SHA)))\n"
+        "    os.mkfifo(os.path.join(c.root, 'fifo'))\n"
+        "    os.symlink(os.path.join(c.root, 'fifo'), c.path(SHA))\n"
+        "    bounded('entry_fifo_link', c, base + '/good')\n"
         "os.makedirs(root, exist_ok=True)\n"
         "open(os.path.join(root, 'a_file'), 'w').close()\n"
         "run('root_file', fresh('a_file'), base + '/good')\n"
@@ -2008,10 +2074,15 @@ class ExternalLoaders(gatelib.GateCase):
                 self.assertRegex(out[name].get("Unavailable", ""), rf"redirects to another origin "
                                  rf"\('{re.escape(origin)}'\); no redirect off the origin is followed$")
                 self.assertIsNone(out[name]["held"])
-        # A cache that cannot hold the file is a fault that names it.
-        self.assertRegex(out["entry_dir"].get("Fault", ""), r"^entry_dir: the cache entry \S+ "
-                         r"cannot be read \(IsADirectoryError: Is a directory\); delete it or give "
-                         r"another --cache$")
+        # A cache that cannot hold the file is a fault that names it. An entry that is
+        # not a regular file is not read (a FIFO would wait for a writer) and not replaced.
+        names = ["entry_dir"] + (["entry_fifo", "entry_fifo_link"] if hasattr(os, "mkfifo") else [])
+        for name in names:
+            with self.subTest(name):
+                self.assertNotIn("hang", out[name], out[name])
+                self.assertRegex(out[name].get("Fault", ""), rf"^{name}: the cache entry \S+ is "
+                                 r"not a regular file \(a directory, a FIFO or a device, or a link "
+                                 r"to one\); delete it or give another --cache$")
         self.assertRegex(out["root_file"].get("Fault", ""), r"^root_file: the cache \S+a_file "
                          r"cannot keep the file \(\w+Error: .*\); give another --cache$")
         self.assertEqual(out["over_cap"].get("Fault"), f"over_cap: size {50 * 1024 * 1024 + 1} is "
