@@ -170,7 +170,7 @@ part of C.
 
 **Strategy 1 — chokepoint (covers A, B).**
 Match Admin Activity events whose `protoPayload.methodName` ends (case-insensitively)
-`setiampolicy` or `setiampermissions`, and where `allUsers` or `allAuthenticatedUsers`
+`SetIamPolicy` or `setIamPermissions`, and where `allUsers` or `allAuthenticatedUsers`
 appears either in `protoPayload.serviceData.policyDelta.bindingDeltas` (delta path) or
 `protoPayload.request.policy.bindings` (request path). Prefer the delta (`action` `ADD`)
 when present; allowlist intentionally-public resources by `resourceName` + role.

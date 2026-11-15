@@ -90,8 +90,11 @@ auditd 4 in [Manual run](#manual-run) first.
 
 A case passes only if all three hold:
 
-1. **The rule matches, as Sigma defines it.** The backend evaluates the full
-   condition, including the `not <allowlist>` filters and correlation windows.
+1. **The rule matches, in the query of a real Sigma backend.** The backend
+   evaluates the full condition, including the `not <allowlist>` filters and
+   correlation windows. It is one backend on one form of the records:
+   [`SEMANTICS.md`](SEMANTICS.md) says what it decides, and where the Sigma
+   specification or another store decides in another way.
 2. **The match came from the atomic.** Every event behind the hit belongs to
    the atomic's process tree, so nothing else running in the window (the
    validator itself included) can satisfy the rule.
@@ -174,8 +177,9 @@ argument value can keep them quiet. Their control is the rule's own syscall with
 arguments that the kernel rejects, declared `success`. That control tests the
 success gate of the validator, not an item of the rule: the rule's logic matches
 the rejected call. No rule of this validator reads `success`, so each rule as
-written matches a rejected call too. Roadmap item R7 (`detections/SEMANTICS.md`)
-must say what a SIEM does with a rejected call.
+written matches a rejected call too.
+[`SEMANTICS.md`](SEMANTICS.md#8-a-system-call-that-the-kernel-rejected) says what a
+SIEM does with a rejected call.
 
 When the kernel-feature probe turned every emulation of a rule into a SKIP, the
 rule is not proven on that host. Its re-run does not run: a re-run needs an
@@ -438,6 +442,7 @@ python3 detections/rule_cases.py --atoms detections/sigma/T1040/afinet_raw_socke
 python3 detections/rule_cases.py                     # every rule's cases
 python3 detections/check_sufficiency.py              # the gate (CI: detection-quality / check-sufficiency)
 python3 detections/check_null_safety.py              # same hits in two- and three-valued logic (CI: null-safety)
+python3 detections/check_variants.py                 # same hits under each representation variant (CI: representation-variants)
 ```
 
 ## Portable regular expressions
@@ -482,6 +487,13 @@ differently:
 | a bare `{` `}` `]` outside a quantifier or class | `\{` `\}` `\]` |
 | `[` and `&&` `--` `~~` `\|\|` inside a class | an escaped `\[`; KQL reads the pairs as set operators |
 | a value over 1000 characters | Elasticsearch's `index.max_regex_length` default; split it |
+
+**Two differences stay in the subset.** Python and RE2 accept these two forms and give
+different answers. `$` as the last character matches before a last line break in
+Python and not in RE2. `\s` matches a no-break space in Python and not in RE2. The
+`re2` variant of [`check_variants.py`](check_variants.py) runs each `|re` item with RE2
+on every case and fixture; [`SEMANTICS.md`](SEMANTICS.md#7-regular-expressions) names
+the two probes.
 
 **Differences no lint removes.** A backend must still translate the edges. A check with
 pySigma 1.5.1 (`pySigma-backend-elasticsearch` 2.1.1) and Lucene 10.1 found these:
@@ -714,6 +726,100 @@ lists them and says what a backend pipeline must map. The machine-readable resul
 [`pipelines/mapping_results.json`](pipelines/mapping_results.json). No query has run on
 a live AKS or GKE log yet (backlog issue #55).
 
+## Representation variants (one oracle, other stores)
+
+Every validator and gate runs a rule in one way: the query of pySigma's SQLite
+backend, on the table that `sigma_eval.flatten()` builds. That is one backend on one
+representation of the records. A real store decides four things in its own way: the
+JSON text of a list, a list as one value or as many, the letter case of a `LIKE`
+match, and the regex dialect. A rule that holds only for the way of the oracle passes
+every other gate. [`SEMANTICS.md`](SEMANTICS.md) says what the oracle decides and
+what other stores do.
+
+[`check_variants.py`](check_variants.py) (CI: `detection-quality` /
+`representation-variants`, a hard gate for every rule) runs each rule again on every
+sidecar case and cloud fixture, once for each variant, and compares the hits with the
+default run:
+
+| Variant | What changes |
+|---------|--------------|
+| `compact` | A list is JSON text without blanks (`[{"a":1,"b":2}]`). The default text has a blank after each `,` and `:`. |
+| `sorted` | As `compact`, and the keys of each object are sorted. |
+| `multi` | A list is not text: the field has one value for each element (an object as its JSON text), and an item holds when it holds on one value. |
+| `cs_like` | `LIKE` does not ignore letter case, so `\|contains`, `\|startswith`, `\|endswith` and a wildcard value are case-sensitive. |
+| `re2` | A `\|re` item is a search with RE2, not with Python's `re`. It needs the module `re2` (google-re2). Without it the variant does not run and the report says so; CI passes `--require-re2`. |
+
+A difference is a **loss** (a record that fires by default does not fire) or a
+**gain** (a record that is quiet by default fires). An event set that loses one hit
+and gains another has the fault `loss+gain`. On a positive case or an attack
+fixture a loss is a miss of the technique on that representation. On a near-miss, a
+filtered case, a confounder, a benign case or a benign fixture a gain is a false
+positive there. Each difference names the items whose truth changed and the value
+that they read. A near-miss or a filtered case that stays quiet, but whose `breaks`
+item is no longer one flip from a hit, is a `note` row (weakened); it does not fail.
+The gate makes that note for a plain rule under `compact`, `sorted`, `cs_like` and
+`re2`. It does not make it under `multi`, or for a correlation rule: a negative case
+that is weakened there is not reported.
+
+The gate does not model a store that explodes a list into leaf fields or indexed
+keys: such a store cannot run a rule that reads a list as text.
+`check_provider_mappings.py` prints that mode (`exploded`) as a warning for the
+Kubernetes audit rules. The gate reads the cases and the fixtures, not the benign
+corpus.
+
+[`variants/expected.json`](variants/expected.json) lists each difference that is
+accepted: the variant, the rule, the case or fixture, the fault, the hits that are
+lost and gained, the items, a reason (`KEY_ORDER`, `LIKE_CASE`, `LIST_TEXT`), a `why`
+sentence and, where one exists, the open entry of
+[`RULE_DEFECTS.md`](RULE_DEFECTS.md) that tracks it. The reason names the cause of
+the variant: the item needs the key order of the record, the item is a `LIKE` test,
+or the item reads a field that is a list. The gate refuses a reason of another
+variant, and it proves one thing about a reason: it refuses `KEY_ORDER` when the
+event set differs as `compact` text too. The `why` sentence says why the rule needs
+that, and a person judges it: the gate fails only a `why` that is empty, or that
+starts with `TODO` after any white space (the text that `--propose` writes starts
+so). An entry is a human approval,
+as a waiver or a budget is: propose it in the pull request (`--propose` prints the
+list that a run shows), and the maintainer approves it when the pull request merges.
+The gate fails on a difference that is not listed, on an entry whose difference
+changed, and on an entry that shows no difference (stale). On a pull request the
+`sufficiency-ratchet` job compares the list with the list of the base branch
+(`--baseline-expected`): an entry that the base does not hold as it is on the head
+fails that job. The file is not content for the merge policy.
+
+```
+python3 detections/check_variants.py              # every rule; about 10 s
+python3 detections/check_variants.py --require-re2   # as CI runs it (needs google-re2)
+python3 detections/check_variants.py -v detections/sigma/T1537/aws_resource_policy_made_public.yml
+python3 detections/check_variants.py --self-test  # the golden probes and constructed rules
+python3 detections/check_variants.py --probes     # the golden probes as a table
+python3 detections/check_variants.py --check-doc  # the probe table of SEMANTICS.md is current (CI)
+python3 detections/check_variants.py --write-doc  # write that table
+python3 detections/check_variants.py --propose    # the expected list that this run shows
+```
+
+A golden probe is one detection on one record, with its answer by default and under
+each variant. The self-test proves each answer. Before a rule runs, each variant must
+be in force: each probe that names the variant gives the answer that the gate
+declares for it, and one of these answers is not the default answer. If not, the gate
+stops with exit code 2 and names the variant.
+[`SEMANTICS.md`](SEMANTICS.md#10-the-golden-probes) holds the table of the probes, and
+its text names the probe that proves a statement about the oracle. After a change to
+the probes, run `--write-doc`. The job fails (`--check-doc`) when the table of the
+document is not the table of the run, when the text names a probe that the gate does
+not hold, and when a probe has no name in the text.
+
+When the gate fails on your rule, correct the rule first. Write the item so that it
+holds with white space on each side of a colon and without it (closed entry C17 of
+`RULE_DEFECTS.md` shows the form), for each letter case of a value that the sender
+chooses (closed entry K71 shows the form: character classes in a `|re` value), for
+each key order, and for a list as text and as one value for each element (closed
+entries K72 and C20 show the form for one element: two `|re` values, one with the
+JSON quotes of the element and one anchored with `^` and `$`;
+[`SEMANTICS.md`](SEMANTICS.md#4-lists) section 4). Propose an entry only for a
+difference that the rule cannot remove, such as an item that reads the whole text of
+a list on purpose.
+
 ## The benign corpus (false-positive scores)
 
 The hard gate answers "does the rule key on the technique?". The **benign corpus**
@@ -797,7 +903,8 @@ probe-confirmed SKIP does not. On a public repository the run is free.
 
 `.github/workflows/detection-quality.yml` runs the offline layers on every pull
 request, on push to `main`, and weekly: `rule-cases`, `null-safety`
-(`check_null_safety.py`), `check-sufficiency`,
+(`check_null_safety.py`), `representation-variants` (`check_variants.py`),
+`check-sufficiency`,
 `sufficiency-ratchet` (pull requests only), `benign-corpus`
 (`score_benign.py --check --enforce`) and the shadow `benign-linux-live` capture.
 It also runs `schedule-freshness` (not on push), which reads the Actions API; see

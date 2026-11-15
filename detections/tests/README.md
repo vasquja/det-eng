@@ -105,6 +105,24 @@ planted file the extension `.md` or `.py`: `check_md_links.py` reads every `.md`
 file of the repository, and Python can import a `.py` file. Name it `.md.txt` or
 `.txt` and plant it under its real name.
 
+`test_quality.py` also holds the tests of `check_variants.py` (class `Variants`):
+the gate itself (its control counts the event sets of each rule, and one test
+proves that the gate stops when a variant is not in force), its expected list
+(`detections/variants/expected.json`), the probe
+table of [`detections/SEMANTICS.md`](../SEMANTICS.md) (`--check-doc`), the form
+of its CI job, and the third comparison of the `sufficiency-ratchet` job. With the
+`re2` module these tests pass `--require-re2`, as the job does. Without it they run
+the four variants that need no module, and one test proves that `--require-re2`
+stops the gate.
+
+One test of that class was a known gap until roadmap item R7:
+`ns-one-json-serialisation`. Its marker named `check_null_safety.py`, because no
+gate varied the JSON text of a list for a rule that is not a Kubernetes audit rule.
+The gap closed in another gate, `check_variants.py`. The test keeps its planted
+artifact and its wanted row, and it is now a rejection test of that gate
+(`Variants.test_rejects_one_json_serialisation_cloud`). It also asserts that
+`check_null_safety.py` still accepts the artifact: that gate has no check for it.
+
 ## How a test works
 
 1. `self.good()` is an unmodified copy of the repository that the test class
@@ -572,6 +590,8 @@ it does not see one test in the place of a different one.
   - `detections/cloud/fixtures/trr9012/attack.json`
   - `detections/cloud/fixtures/trr9012/benign.json`
   - `detections/RULE_DEFECTS.md`
+  - `detections/variants/expected.json`
+  - `detections/SEMANTICS.md`
   - `detections/k8s/PLATFORMS.md`
   - `research/trr9001/lin/README.md`
   - `research/trr9012/aws/README.md`
@@ -588,10 +608,45 @@ it does not see one test in the place of a different one.
   - `detections/sigma/T1053.007/k8s_cri_job_pod.cases.jsonl`
   - `detections/sigma/T1552.007/linux_k8s_sa_token_read.cases.jsonl`
 
-  `NullSafety` (`test_quality.py`) takes one case by name from this sidecar, for
+  `Variants` (`test_quality.py`) takes one case by name from this sidecar, for
   its probe of the two JSON texts of a list:
 
   - `detections/sigma/T1537/aws_snapshot_or_ami_made_public.cases.jsonl`
+
+  One test also needs `detections/sigma/T1537/aws_snapshot_or_ami_made_public.yml`
+  to have no entry in `detections/variants/expected.json`.
+
+  `Variants` also needs two entries of `detections/variants/expected.json`, and
+  what each one names. The first is the entry of the case
+  `scale-smp-root-alias-retain-keys-with-count` of
+  `detections/sigma/T1685/k8s_enforcer_workload_removed.yml`: a loss of record 0
+  under the variant `multi`. The tests find that entry by the rule and the case.
+  Two tests count the entries of the rule (two today). The second is the one
+  entry of `detections/sigma/T1098.006/k8s_rbac_privileged_grant.yml`, which names
+  the open entry K43 of `detections/RULE_DEFECTS.md`. One test also needs K13 as a
+  row of the closed entries of that file. One more needs C6 as an open entry of
+  that file (a row of its Summary table, and a section) that does not name
+  `k8s_rbac_privileged_grant`. When a rule correction removes one of these
+  differences, give the tests another entry of the list, as the correction of
+  `T1134/k8s_impersonation_privileged.yml` did (closed entry K72):
+
+  - `detections/sigma/T1685/k8s_enforcer_workload_removed.cases.jsonl`
+  - `detections/sigma/T1098.006/k8s_rbac_privileged_grant.cases.jsonl`
+
+  Two tests of `Variants` read the probe table of `detections/SEMANTICS.md`
+  between its two marker lines (`<!-- probes:begin -->`, `<!-- probes:end -->`).
+  One of them needs the row of the probe `eq-case`, with the answer `quiet` in each
+  of its six answer cells. The table is generated
+  (`check_variants.py --write-doc`), so a change to that probe in the gate changes
+  the row.
+
+  One test of `Variants` changes one line of the oracle in its copy: the
+  `json.dumps` call that `flatten()` makes for a list. The planted line has no key
+  sort, so the variant `sorted` is not in force. This file is code, not content. A
+  change to that line makes the test fail with the `replace()` message above, and
+  the repair is the new text in the test:
+
+  - `detections/sigma_eval.py`
 
   `CheckSufficiency` (`test_sufficiency.py`) takes the positive cases of this
   sidecar, for its proof that a rule that needs one account id is bad:
@@ -681,6 +736,40 @@ These rejections have no planted artifact and no test:
   report of the gate, or that holds no rule.
 - The digest check of the `COMPILE_ONLY` table of `check_sufficiency.py`. The
   table is empty today, so there is no entry to make stale.
+- `check_variants.py` has eight of them: a gain (a negative case or a benign
+  fixture that fires under a variant), a change of hits in an event set that still
+  fires (a fixture of two records that loses one hit; a positive that loses one hit
+  and gains another), a rule that the `multi` variant cannot check (a correlation
+  rule on records with a list, or an item with `|neq` on a list), a rule with no
+  case and no fixture, a rule file that cannot be checked, an entry with the
+  reason `KEY_ORDER` on a set that differs as compact text too, an entry whose
+  `why` starts with `TODO` (the text of `--propose`; also after a blank, and after
+  a tab with no colon after `TODO`), and a
+  `compact`, `cs_like` or `re2` variant that is not in force (for `compact`, also
+  a default run that reads the compact text). Its self-test holds a constructed
+  rule, or a constructed variant or default run, for each (for `re2`, where the
+  module is installed). The gate test of the in-force check plants a `sorted` that
+  lost its key sort. No test and no self-test check switches `multi` off.
+- Two checks of `check_variants.py` have no test, because no artifact can fail
+  them: an entry with the reason `LIKE_CASE` whose changed item is not a `LIKE`
+  test, and an entry with the reason `LIST_TEXT` or `KEY_ORDER` whose changed item
+  does not read a list. The variant of each reason changes no other item
+  ([`detections/SEMANTICS.md`](../SEMANTICS.md), section 9).
+- The control of `Variants` counts the event sets of each rule, not their
+  records, and no entry of the expected list names a record after record 0. The
+  self-test of `check_variants.py` takes each fixture of the cloud `MANIFEST` as
+  `check_rule()` gets it (`cloud_fixtures()`, then `event_sets()`), and compares
+  its count of records with the JSON list of the file: a gate that reads a fixture
+  as its first record only, in the loader or in `event_sets()`, fails it. The
+  self-test also proves on constructed sets of two records that `check_rule()`
+  reads the second record of a set that it is given. Not proven: that the gate
+  reads each record of a sidecar case. A gate that reads each case as its first
+  record only passes each test and each self-test check.
+- `check_variants.py --check-doc` has three of them: a probe that the text of
+  `detections/SEMANTICS.md` does not name, a document without one of its two
+  marker lines, and a document that is not there. The self-test holds a
+  constructed document for each. The mode `--write-doc` has no gate test: no
+  workflow runs it. The self-test proves it on a constructed document.
 
 The suite does not run these checks:
 
@@ -688,6 +777,12 @@ The suite does not run these checks:
   google-re2 is not in `detections/requirements.txt`, so the `gate-tests` job
   runs the default path. For `check_sigma_regex.py`, one test proves that
   `--require-re2` fails when the module is missing.
+- The `re2` variant of `check_variants.py` (the search of each `|re` item with
+  RE2, and the `re2` answer of each golden probe), for the same cause. Only the
+  `representation-variants` job runs it. Without the module, `--check-doc`
+  compares the `re2` column of the document with the answers that the gate
+  declares. One test proves that `--require-re2` stops the gate when the module
+  is missing.
 - `sigma check`. sigma-cli is not in `detections/requirements.txt`.
 - The live modes of the validators (auditd on a host, a kind cluster). They
   stay in the `validate-*` workflows.
