@@ -1019,7 +1019,8 @@ PROBES = [
      {"s": {"user.groups|re": "^system:masters$"}, "condition": "s"},
      {"user": {"groups": ["system:masters", "dev"]}}, {"default": False, "multi": True}),
     ("list-longer-element", "neither the value with the JSON quotes of an element nor the "
-                            "anchored value matches a longer element that has no quote",
+                            "anchored value matches a longer element that has no quote and "
+                            "no line break",
      {"s": {"user.groups|re": ['\\"system:masters\\"', "^system:masters$"]}, "condition": "s"},
      {"user": {"groups": ["system:masters-readonly", "dev"]}}, {"default": False}),
     ("list-quotes-in-element", "as multi, a value with the JSON quotes of an element matches a "
@@ -1492,6 +1493,8 @@ def self_test():
              "`why` starts with TODO"),
             ("a why with a tab before TODO and no colon", {"why": "\tTODO x"},
              "`why` starts with TODO"),
+            ("a why with a line break before TODO", {"why": "\nTODO x"},
+             "`why` starts with TODO"),
             ("other hits", {"gained": [[0], [1]]}, "the hits changed"),
             ("a defect that is not open", {"defect": "K999"}, "is not an open entry")):
         _, diffs, problems, _ = judged(
@@ -1569,18 +1572,25 @@ def self_test():
                                     + " (2 -> 1); the rule misses the technique on that "
                                     "representation") for d in diffs),
           [(d.variant, d.text()) for d in diffs])
-    # The checks above give check_rule() their sets. This one reads a real fixture of
-    # more than one record with the fixture loader of the gate, and compares the count
-    # of records with the JSON list of the file: a gate that reads a fixture as its
-    # first record only fails here.
-    real = "trr9021/attack.json"
-    with open(os.path.join(REPO, "detections", "cloud", "fixtures", real), encoding="utf-8") as fh:
-        in_file = len(json.load(fh))
-    loaded = [len(raw) for of_rule in cloud_fixtures().values()
-              for _, name, _, raw, _ in of_rule if name == real]
-    check(f"the fixture loader of the gate gives each record of {real} ({in_file} in the "
-          "file) to each rule that reads it",
-          in_file > 1 and loaded and set(loaded) == {in_file}, (in_file, loaded))
+    # The checks above give check_rule() their sets. This one takes each fixture of the
+    # cloud MANIFEST as check_rule() gets it (cloud_fixtures(), then event_sets()), and
+    # compares its count of records with the JSON list of the file: a gate that reads a
+    # fixture as its first record only, in the loader or in event_sets(), fails here.
+    fx, many, wrong = cloud_fixtures(), 0, []
+    for rule_path in sorted(fx):
+        for source, name, kind, raw, _ in event_sets(rule_path, fx)[0]:
+            if source != "fixture":
+                continue
+            with open(os.path.join(REPO, "detections", "cloud", "fixtures", name),
+                      encoding="utf-8") as fh:
+                doc = json.load(fh)
+            if not isinstance(doc, list):
+                continue
+            many += len(doc) > 1
+            if len(raw) != len(doc):
+                wrong.append((os.path.relpath(rule_path, SIGMA), name, kind, len(doc), len(raw)))
+    check(f"each record of each fixture of the cloud MANIFEST reaches check_rule() ({many} "
+          "fixture(s) hold more than one record)", many > 0 and not wrong, wrong)
     _, diffs, _, _ = judged(
         filt, [("fixture", "benign.json", "benign",
                 [{"verb": "create", "groups": ["system:masters"]}], None)])

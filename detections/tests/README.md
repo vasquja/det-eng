@@ -729,14 +729,14 @@ These rejections have no planted artifact and no test:
   ([`detections/SEMANTICS.md`](../SEMANTICS.md), section 9).
 - The control of `Variants` counts the event sets of each rule, not their
   records, and no entry of the expected list names a record after record 0. The
-  self-test of `check_variants.py` reads `trr9021/attack.json`, a fixture of more
-  than one record, with the fixture loader of the gate, and compares the count of
-  records with the JSON list of the file: a gate that reads a fixture as its first
-  record only fails it. The self-test also proves on constructed sets of two
-  records that `check_rule()` reads the second record of a set that it is given.
-  Not proven: that the loader gives each record of another fixture, and that the
-  gate reads each record of a sidecar case. A gate that reads each case as its
-  first record only passes each test and each self-test check.
+  self-test of `check_variants.py` takes each fixture of the cloud `MANIFEST` as
+  `check_rule()` gets it (`cloud_fixtures()`, then `event_sets()`), and compares
+  its count of records with the JSON list of the file: a gate that reads a fixture
+  as its first record only, in the loader or in `event_sets()`, fails it. The
+  self-test also proves on constructed sets of two records that `check_rule()`
+  reads the second record of a set that it is given. Not proven: that the gate
+  reads each record of a sidecar case. A gate that reads each case as its first
+  record only passes each test and each self-test check.
 - `check_variants.py --check-doc` has three of them: a probe that the text of
   `detections/SEMANTICS.md` does not name, a document without one of its two
   marker lines, and a document that is not there. The self-test holds a
