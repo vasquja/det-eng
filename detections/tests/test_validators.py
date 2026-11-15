@@ -2309,14 +2309,24 @@ class K8sValidator(gatelib.GateCase):
                                     r"\(EF BB BF\)$", exit_code=1)
 
     def test_rejects_json_that_the_validator_cannot_read(self):
-        """Two lines of JSON that is too deep: 100000 `[` (lists in lists), which
-        json.loads() cannot read, and an audit event whose requestObject holds objects
-        3000 deep, which json.loads() or sigma_eval.flatten() cannot read (it depends
-        on the version of Python). A third line is an audit event with a number of
-        5000 digits: json.loads() refuses it with a ValueError when the limit of the
-        digits of an int (sys.get_int_max_str_digits(), from Python 3.10.7) is less
-        than 5000. Each is a named problem, not a traceback. (Without the limit the
-        third line is a record.)"""
+        """Two lines of JSON that is too deep, and one with a number that is too long.
+        Each is a named problem, not a traceback.
+
+        - Lists 100000 deep. Python 3.13 and older stop at the limit of the recursion
+          (a RecursionError of json.loads()). From Python 3.14 the limit is the C stack
+          of the thread: with a large stack json.loads() reads the line, and it is a
+          list, which is not an object. Either way the line is named. The lists are
+          closed: a line that is not JSON (a line that was cut at the end of a capture)
+          is no record and no problem, so an open `[` * 100000 is skipped where the
+          stack is large, and that proves nothing. Where the stack is large, this line
+          does not show that the reader catches a RecursionError of json.loads().
+        - An audit event whose requestObject holds objects 3000 deep: json.loads()
+          reads it, and sigma_eval.flatten() stops at the limit of the recursion of
+          Python (a RecursionError on each version).
+        - An audit event with a number of 5000 digits: json.loads() refuses it with a
+          ValueError when the limit of the digits of an int
+          (sys.get_int_max_str_digits(), from Python 3.10.7) is less than 5000.
+          Without the limit the line is a record."""
         good = self.good()
         deep = ('{"kind": "Event", "apiVersion": "audit.k8s.io/v1", "verb": "get", '
                 '"requestObject": ' + '{"a": ' * 3000 + "1" + "}" * 3000 + "}")
@@ -2324,14 +2334,17 @@ class K8sValidator(gatelib.GateCase):
                 '"stageTimestamp": ' + "1" * 5000 + "}")
         limit = getattr(sys, "get_int_max_str_digits", lambda: 0)()
         refused = 0 < limit < 5000
-        records = self.log_with(good, "[" * 100000, deep, long)
+        records = self.log_with(good, "[" * 100000 + "]" * 100000, deep, long)
         result = good.run_step(self.negative_control_step())
         self.assert_saw(result, rf"^Loaded {records + (0 if refused else 1)} audit event\(s\) "
                                 r"from ")
-        self.assertEqual(re.findall(r"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
-                                    r"(\d+): JSON that the validator cannot read "
-                                    r"\(RecursionError: ", result.stdout, re.M),
-                         [str(records + 1), str(records + 2)])
+        log = r"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+        self.assertRegex(result.stdout, re.compile(
+            log + rf"{records + 1}: (JSON that the validator cannot read \(RecursionError: "
+                  r"|JSON that is not an object \(a list\)$)", re.M))
+        self.assertIn(re.findall(log + r"(\d+): JSON that the validator cannot read "
+                                       r"\(RecursionError: ", result.stdout, re.M),
+                      ([str(records + 1), str(records + 2)], [str(records + 2)]))
         self.assertEqual(re.findall(r"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
                                     r"(\d+): JSON that the validator cannot read "
                                     r"\(ValueError: ", result.stdout, re.M),
