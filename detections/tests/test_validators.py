@@ -518,9 +518,102 @@ class CloudValidator(gatelib.GateCase):
                                 r"`selection_write\.operationName`, which does not count: it "
                                 r"reads operationName, a surface field ")
 
+    # The Reader record of the TRR9036 baseline (#2): the attack's Start record with the
+    # Reader role in the place of Owner, and the only near-miss of that baseline.
+    READER = "acdd72a7-3385-48ef-bd42-f606fba81ae7"
+
+    def test_rejects_baseline_whose_only_near_miss_sigma_explain_misjudges(self):
+        """sigma_explain grades a record on which it disagrees with the compiled rule as
+        distant, so that record cannot count. When it was the only near-miss, the row
+        is NOT HARD and says that the cause is the grader, not the baseline. The copy
+        plants a defect in the grader only: in sigma_explain.PlainRule.verdict, the
+        verdict that the items compose is the opposite of the compiled rule's for the
+        Reader record of TRR9036. The baseline and the rule are those of the good tree."""
+        tree = self.tree()
+        benign = tree.read_json(self.AZURE_BENIGN)
+        reader = benign[2]
+        tree.replace("detections/sigma_explain.py",
+                     "        composed = self.evaluate(truth)\n        flips = ",
+                     "        composed = self.evaluate(truth)\n"
+                     f"        if event.get('correlationId') == {reader['correlationId']!r}:\n"
+                     "            composed = not fired  # the planted grader defect\n"
+                     "        flips = ")
+        # The planted defect reads one record: the Reader record, whose correlationId no
+        # other record of the baseline has.
+        self.assertIn(f"/roleDefinitions/{self.READER}", reader["properties"]["requestbody"])
+        self.assertEqual([r.get("correlationId") for r in benign].count(reader["correlationId"]),
+                         1)
+        result = self.rejected_as_unproven(
+            tree, self.not_hard(self.AZURE_ROW, self.AZURE_BENIGN)
+            + r"3 distant; sigma_explain disagrees with the compiled rule on benign "
+              r"record\(s\) #2, so they cannot count \(report it\)\)")
+        self.assert_saw(result, r"^        benign baseline graded: 3 distant; atoms exercised "
+                                r"\d+/\d+; !! sigma_explain disagrees with the compiled rule on "
+                                r"benign record\(s\) \[2\] \(report it\)$")
+
+    def test_rejects_benign_hit_on_the_only_hard_record_also_with_report(self):
+        """--report makes a benign hit non-fatal. A hit on the only hard record of a
+        baseline also leaves the baseline without a hard record, so the row is also NOT
+        HARD, and --report does not waive that. The planted rule of TRR9036 also lists
+        the Reader role, so it fires on the Reader record, the only near-miss of its
+        baseline."""
+        tree = self.tree()
+        rule = "detections/sigma/T1098.003/azure_privileged_role_assignment.yml"
+        tree.replace(rule, "'roledefinitions/(8e3af657-",
+                     f"'roledefinitions/({self.READER}|8e3af657-")
+        reader = tree.read_json(self.AZURE_BENIGN)[2]
+        # The artifact is bad: the rule now keys on a role that is not privileged, and
+        # the Reader record holds that role.
+        self.assertIn(f"/roleDefinitions/{self.READER}", reader["properties"]["requestbody"])
+        self.rejected_as_unproven(
+            tree, self.not_hard(self.AZURE_ROW + r"NEGATIVE CONTROL FAILED: rule fired on 1 "
+                                                 r"benign record\(s\); ", self.AZURE_BENIGN)
+            + r"1 match, 2 distant\)")
+
     SNAPSHOT_ROW = r"\[TRR9019 AWS\] aws_snapshot_or_ami_made_public\.yml: "
     SNAPSHOT_ENTRY = ('    ("TRR9019", "T1537", "aws_snapshot_or_ami_made_public.yml",\n'
                       '     "trr9019/attack.json", "trr9019/benign.json", "AWS",\n')
+    SNAPSHOT_BENIGN = "detections/cloud/fixtures/trr9019/benign_snapshot.json"
+    # The flip of the planted snapshot share to one account, which does not count.
+    SNAPSHOT_FLIP = (r"^        benign record #0 is near-miss on "
+                     r"`selection_ec2_snapshot\.requestParameters\.createVolumePermission"
+                     r"\.add\.items`, which does not count: the item fails on it and on every "
+                     r"marked attack hit")
+
+    @staticmethod
+    def snapshot_share(image, snapshot, grantee):
+        """The AMI share `image` of the TRR9019 attack, made a share of the snapshot
+        `snapshot` with `grantee` (one item of createVolumePermission)."""
+        record = json.loads(json.dumps(image))
+        record["eventName"] = "ModifySnapshotAttribute"
+        record["requestParameters"] = {
+            "snapshotId": snapshot, "attributeType": "CREATE_VOLUME_PERMISSION",
+            "createVolumePermission": {"add": {"items": [grantee]}}}
+        return record
+
+    def snapshot_tree(self, unmarked_public_share=False):
+        """A copy in which the snapshot rule of TRR9019 reads a baseline of its own: one
+        ModifySnapshotAttribute record that shares a snapshot with one account, a
+        near-miss of the snapshot branch. The two other rules of TRR9019 keep their
+        fixtures. With `unmarked_public_share`, the rule also reads an attack fixture
+        of its own: the TRR9019 attack and a public share of a snapshot whose id does
+        not carry the marker. Returns (the copy, the attack fixture of the rule, the
+        AMI share of the attack)."""
+        tree = self.tree()
+        attack = tree.read_json("detections/cloud/fixtures/trr9019/attack.json")
+        image = next(r for r in attack if r["eventName"] == "ModifyImageAttribute")
+        tree.write(self.SNAPSHOT_BENIGN, json.dumps(
+            [self.snapshot_share(image, "snap-trr9019example", {"userId": "123456789013"})],
+            indent=2) + "\n")
+        entry = self.SNAPSHOT_ENTRY.replace("trr9019/benign.json", "trr9019/benign_snapshot.json")
+        if unmarked_public_share:
+            attack = attack + [self.snapshot_share(image, "snap-0a1b2c3d4e5f60789",
+                                                   {"group": "all"})]
+            tree.write("detections/cloud/fixtures/trr9019/attack_snapshot.json",
+                       json.dumps(attack, indent=2) + "\n")
+            entry = entry.replace("trr9019/attack.json", "trr9019/attack_snapshot.json")
+        tree.replace(self.GATE, self.SNAPSHOT_ENTRY, entry)
+        return tree, attack, image
 
     def test_rejects_near_miss_of_a_branch_that_the_attack_does_not_use(self):
         """A flip counts only when some marked attack hit differs from the record on the
@@ -531,32 +624,54 @@ class CloudValidator(gatelib.GateCase):
         with one account: a near-miss of the snapshot branch, which no attack record
         uses, so it tests nothing that the attack depends on. The baseline is a file of
         its own, so the two other rules of TRR9019 keep their baseline."""
-        tree = self.tree()
-        attack = tree.read_json("detections/cloud/fixtures/trr9019/attack.json")
-        image = next(r for r in attack if r["eventName"] == "ModifyImageAttribute")
-        record = json.loads(json.dumps(image))
-        record["eventName"] = "ModifySnapshotAttribute"
-        record["requestParameters"] = {
-            "snapshotId": "snap-trr9019example", "attributeType": "CREATE_VOLUME_PERMISSION",
-            "createVolumePermission": {"add": {"items": [{"userId": "123456789013"}]}}}
-        tree.write("detections/cloud/fixtures/trr9019/benign_snapshot.json",
-                   json.dumps([record], indent=2) + "\n")
-        tree.replace(self.GATE, self.SNAPSHOT_ENTRY,
-                     self.SNAPSHOT_ENTRY.replace("trr9019/benign.json",
-                                                 "trr9019/benign_snapshot.json"))
+        tree, attack, image = self.snapshot_tree()
         # The artifact is bad: no attack record is a snapshot share, so the snapshot
         # branch is one that the attack does not use.
         self.assertNotIn("ModifySnapshotAttribute", [r["eventName"] for r in attack])
         self.assertEqual(image["requestParameters"]["launchPermission"]["add"]["items"],
                          [{"group": "all"}])
         result = self.rejected_as_unproven(
-            tree, self.not_hard(self.SNAPSHOT_ROW,
-                                "detections/cloud/fixtures/trr9019/benign_snapshot.json")
-            + r"1 near-miss\)")
-        self.assert_saw(result, r"^        benign record #0 is near-miss on "
-                                r"`selection_ec2_snapshot\.requestParameters\.createVolumePermission"
-                                r"\.add\.items`, which does not count: the item fails on it and "
-                                r"on every marked attack hit")
+            tree, self.not_hard(self.SNAPSHOT_ROW, self.SNAPSHOT_BENIGN) + r"1 near-miss\)")
+        self.assert_saw(result, self.SNAPSHOT_FLIP)
+
+    def test_rejects_near_miss_of_a_branch_that_only_an_unmarked_attack_hit_uses(self):
+        """Condition (a) compares the record with the MARKED attack hits only. An attack
+        record that fires the rule and does not carry the marker is not shown to be the
+        emulation's, so it cannot make a near-miss count. The copy gives the snapshot
+        rule an attack fixture of its own: the TRR9019 attack and one public share of a
+        snapshot whose id does not carry `trr9019`. The baseline is the snapshot share
+        to one account of the test above: the unmarked hit differs from it on the item
+        of the snapshot branch, and no marked hit does."""
+        tree, attack, _ = self.snapshot_tree(unmarked_public_share=True)
+        unmarked = len(attack) - 1
+        # The artifact is bad: the one snapshot share of the attack fixture carries no
+        # marker, so each marked hit of the rule is of another branch.
+        self.assertEqual([i for i, r in enumerate(attack)
+                          if r["eventName"] == "ModifySnapshotAttribute"], [unmarked])
+        self.assertNotIn("trr9019", json.dumps(attack[unmarked]["requestParameters"]))
+        result = self.rejected_as_unproven(
+            tree, self.not_hard(self.SNAPSHOT_ROW, self.SNAPSHOT_BENIGN) + r"1 near-miss\)")
+        self.assert_saw(result, self.SNAPSHOT_FLIP)
+        # The rule fired on the unmarked record: the run judged the case of this test.
+        _, _, row = self.json_row(tree, "T1537/aws_snapshot_or_ami_made_public.yml")
+        self.assertIn(unmarked, row["attack_hits"])
+
+    # The flip of a TRR9012 record that only a placeholder entry of the allowlist holds.
+    PLACEHOLDER_FLIP = (r"^        benign record #0 is filtered on "
+                        r"`filter_known_egress\.sourceIPAddress`, which does not count: the "
+                        r"filter holds on it only through documentation addresses "
+                        r"\(203\.0\.113\.0/24, 2001:db8::/32\)")
+
+    def placeholder_tree(self, address=None):
+        """A copy whose TRR9012 baseline is its record #1 alone (a GetCallerIdentity
+        call that the allowlist filter holds), from `address` when one is given.
+        Returns (the copy, the record)."""
+        tree = self.tree()
+        record = tree.read_json(self.BENIGN)[1]
+        if address is not None:
+            record["sourceIPAddress"] = address
+        tree.write(self.BENIGN, json.dumps([record], indent=2) + "\n")
+        return tree, record
 
     def test_rejects_record_that_only_a_placeholder_allowlist_entry_filters(self):
         """An allowlist entry in a documentation range (RFC 5737, RFC 3849) is a
@@ -564,29 +679,32 @@ class CloudValidator(gatelib.GateCase):
         filters proves nothing about a real environment. The planted baseline of
         TRR9012 is its record #1 alone: a GetCallerIdentity call from 203.0.113.10,
         which the allowlist filter holds only through its 203.0.113.0/24 entry."""
-        tree = self.tree()
-        record = tree.read_json(self.BENIGN)[1]
-        tree.write(self.BENIGN, json.dumps([record], indent=2) + "\n")
+        tree, record = self.placeholder_tree()
         # The artifact is bad: the source is in the documentation range that the rule
         # lists as a placeholder, and in no other range of the filter.
         self.assertIn(ipaddress.ip_address(record["sourceIPAddress"]),
                       ipaddress.ip_network("203.0.113.0/24"))
         self.assertIn("      - '203.0.113.0/24'\n", tree.read(self.RULE))
         result = self.rejected_as_unproven(tree, self.NOT_HARD + r"1 filtered\)")
-        self.assert_saw(result, r"^        benign record #0 is filtered on "
-                                r"`filter_known_egress\.sourceIPAddress`, which does not count: "
-                                r"the filter holds on it only through documentation addresses "
-                                r"\(203\.0\.113\.0/24, 2001:db8::/32\)")
+        self.assert_saw(result, self.PLACEHOLDER_FLIP)
+
+    def test_rejects_record_that_only_an_ipv6_placeholder_allowlist_entry_filters(self):
+        """The same for the RFC 3849 range: the record comes from 2001:db8::5, which the
+        filter holds only through its 2001:db8::/32 entry (the other entries of the
+        item are IPv4 networks)."""
+        tree, record = self.placeholder_tree("2001:db8::5")
+        self.assertIn(ipaddress.ip_address(record["sourceIPAddress"]),
+                      ipaddress.ip_network("2001:db8::/32"))
+        self.assertIn("      - '2001:db8::/32'\n", tree.read(self.RULE))
+        result = self.rejected_as_unproven(tree, self.NOT_HARD + r"1 filtered\)")
+        self.assert_saw(result, self.PLACEHOLDER_FLIP)
 
     def test_control_record_that_a_real_allowlist_entry_filters_is_hard(self):
         """CONTROL of the placeholder rule: the same record from 10.20.30.40, which the
         10.0.0.0/8 entry of the same filter item holds. The item also lists the two
         documentation ranges, and the record still counts: the item holds on it through
         an entry that is not a placeholder."""
-        tree = self.tree()
-        record = tree.read_json(self.BENIGN)[1]
-        record["sourceIPAddress"] = "10.20.30.40"
-        tree.write(self.BENIGN, json.dumps([record], indent=2) + "\n")
+        tree, _ = self.placeholder_tree("10.20.30.40")
         self.assertIn("      - '10.0.0.0/8'\n", tree.read(self.RULE))
         result = tree.run(self.GATE)
         self.assert_accepts(result, r"^All \d+ external-cloud detection\(s\) fired on their "
@@ -613,13 +731,15 @@ class CloudValidator(gatelib.GateCase):
         self.assertNotIn("NEGATIVE CONTROL FAILED", result.stdout)
         self.assertNotRegex(result.stdout, r"(?m)^FAIL  " + self.ROW + r"rule did NOT fire")
 
-    def json_row(self, tree):
-        """The --json report of a --report run of the copy, and the result of RULE."""
+    def json_row(self, tree, rule=None):
+        """The --json report of a --report run of the copy, and the result of `rule`
+        (<folder>/<file>; default RULE)."""
         report = tree.out("cloud.json")
         result = tree.run(self.GATE, "--report", "--json", report)
         with open(report, encoding="utf-8") as fh:
             data = json.load(fh)
-        row = next(r for r in data["results"] if r["rule"] == "/".join(self.RULE.split("/")[-2:]))
+        rule = rule or "/".join(self.RULE.split("/")[-2:])
+        row = next(r for r in data["results"] if r["rule"] == rule)
         return result, data, row
 
     def test_json_report_says_that_a_baseline_is_not_hard_or_cannot_be_graded(self):
