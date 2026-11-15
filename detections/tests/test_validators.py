@@ -240,12 +240,15 @@ LINES_NOT_RECORDS = (r"^FAILED: {} line\(s\) of the logs are not records of thei
 
 
 def rejects_a_line_that_is_not_a_record_in_each_log(test):
-    """Six runs of the negative-control step of the static pod or the API server
-    validator: the healthy logs of test.write_logs(), and one more line after the
-    records of one log (audit, CRI or file): `[]`, or `{}`. Each run has a private
-    copy (the step reads fixed names in /tmp/), and the six start together. In each
-    run the validator names that log and that line in its one ERROR line, counts
-    the records of each log (the bad line is not one), and judges no rule."""
+    """Seven runs of the static pod or the API server validator, each in a private copy
+    (the step reads fixed names in /tmp/), started together. Six runs of the
+    negative-control step: the healthy logs of test.write_logs(), and one more line
+    after the records of one log (audit, CRI or file): `[]`, or `{}`. The seventh is a
+    strict run with --report (the run on the logs of the emulation) on the same logs
+    and a `[]` line after the records of the file log: --report makes a rule miss
+    non-fatal, not a log that the validator cannot read. In each run the validator
+    names that log and that line in its one ERROR line, counts the records of each
+    log (the bad line is not one), and judges no rule."""
     logs = (("audit", test.AUDIT, "audit log", "audit event(s)"),
             ("cri", test.CRI, "CRI log", "pod sandbox(es)"),
             ("file", test.FILE, "file log", "file event(s)"))
@@ -256,16 +259,25 @@ def rejects_a_line_that_is_not_a_record_in_each_log(test):
             counts = dict(zip(("audit", "cri", "file"), test.write_logs(tree)))
             with open(tree.tmp_path(name), "a", encoding="utf-8") as fh:
                 fh.write(line + "\n")
-            runs.append((source, name, log, line, counts,
+            runs.append(("--expect-miss", source, name, log, line, counts,
                          tree.start_step(test.negative_control_step())))
-    for source, name, log, line, counts, pending in runs:
-        with test.subTest(log=log, line=line):
+    tree = test.tree()
+    counts = dict(zip(("audit", "cri", "file"), test.write_logs(tree)))
+    with open(tree.tmp_path(test.FILE), "a", encoding="utf-8") as fh:
+        fh.write("[]\n")
+    runs.append(("strict, --report", "file", test.FILE, "file log", "[]", counts,
+                 tree.start(test.GATE, "--audit-log", tree.tmp_path(test.AUDIT),
+                            "--cri-log", tree.tmp_path(test.CRI),
+                            "--file-log", tree.tmp_path(test.FILE), "--report")))
+    for run, source, name, log, line, counts, pending in runs:
+        with test.subTest(run=run, log=log, line=line):
             result = pending.result()
             for other, _, _, what in logs:
                 test.assert_saw(result, rf"^Loaded {counts[other]} {re.escape(what)} from ")
             test.assertEqual(len(re.findall(r"^ERROR: ", result.stdout, re.MULTILINE)), 1,
                              result.describe())
-            test.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[|CONTROL FAILED")
+            test.assertNotRegex(result.stdout,
+                                r"(?m)^(PASS|MISS)  \[|CONTROL FAILED|not gated \(--report\)")
             test.assert_saw(result, LINES_NOT_RECORDS.format(1))
             test.assert_rejects(result, rf"^ERROR: the {log} \S+/{re.escape(name)}, line "
                                         rf"{counts[source] + 1}: {NOT_A_RECORD[line][source]}$",
@@ -2849,7 +2861,8 @@ class StaticPodValidator(gatelib.GateCase):
 
     def test_rejects_a_line_that_is_not_a_record_in_each_log(self):
         """A line of `[]` or of `{}` after the records of the audit log, the CRI log or
-        the file log (six runs of the step, each with one bad line)."""
+        the file log (six runs of the step, each with one bad line), and a `[]` line of
+        the file log in a strict run with --report."""
         rejects_a_line_that_is_not_a_record_in_each_log(self)
 
     def test_rejects_a_snapshot_that_holds_no_sandbox(self):
@@ -3536,7 +3549,8 @@ class ApiserverValidator(gatelib.GateCase):
 
     def test_rejects_a_line_that_is_not_a_record_in_each_log(self):
         """A line of `[]` or of `{}` after the records of the audit log, the CRI log or
-        the file log (six runs of the step, each with one bad line)."""
+        the file log (six runs of the step, each with one bad line), and a `[]` line of
+        the file log in a strict run with --report."""
         rejects_a_line_that_is_not_a_record_in_each_log(self)
 
     def test_rejects_a_snapshot_item_that_is_not_a_sandbox(self):
