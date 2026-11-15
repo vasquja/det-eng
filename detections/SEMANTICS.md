@@ -198,13 +198,22 @@ What a rule can do:
   JSON quotes of the element, for the list as text (`\"system:masters\"`), and one
   anchored with `^` and `$`, for a multi-valued field (`^system:masters$`). A value
   with the quotes matches the text only (probe `list-quotes`), and the anchored value
-  matches one value only (probe `list-element-anchored`). Neither matches a longer
-  element. Where the sender chooses the letter case, write character classes (section
-  3). Or write one value without JSON punctuation, when no other valid element can
-  hold it as a part: it holds as text and as one value (probe `list-contains`).
-  `T1134/k8s_impersonation_privileged.yml`, `T1537/aws_snapshot_or_ami_made_public.yml`
-  and `T1537/aws_ssm_document_shared_publicly.yml` read an element with two values
-  (closed entries K72 and C20 of [`RULE_DEFECTS.md`](RULE_DEFECTS.md)).
+  matches one value only (probe `list-element-anchored`). Neither value matches a
+  longer element that has no quote and no line break in it (probe
+  `list-longer-element`; with Python's `re`, `$` also matches before a line break at
+  the end of a value: probe `re-dollar-newline`, section 7). Two shapes of a longer
+  element with a quote in it match the value with the quotes. On a multi-valued
+  field: an element that holds the name in quotes (`x"system:masters"y`, probe
+  `list-quotes-in-element`). In the list text: an element in which the name follows a
+  quote and ends the element (`x"system:masters`, probe `list-escaped-quote`),
+  because the JSON text writes that quote as `\"`, and the quote that ends the element
+  follows the name. Where the sender chooses the letter case, write character classes
+  (section 3). Or write one value without JSON punctuation, when no other valid
+  element can hold it as a part: it holds as text and as one value (probe
+  `list-contains`). `T1134/k8s_impersonation_privileged.yml`,
+  `T1537/aws_snapshot_or_ami_made_public.yml` and
+  `T1537/aws_ssm_document_shared_publicly.yml` read an element with two values (closed
+  entries K72 and C20 of [`RULE_DEFECTS.md`](RULE_DEFECTS.md)).
 
 Example. `T1098.001/gcp_workload_identity_federation_sa_binding.yml` and
 `T1199/gcp_workforce_principalset_privileged_binding.yml` match the text of
@@ -419,6 +428,9 @@ and when a row has no name in the text. CI runs the self-test and `--check-doc`.
 | `list-contains` | \|contains matches inside the JSON text of a list | `user.groups\|contains: 'system:MASTERS'` | `{"user": {"groups": ["system:masters", "dev"]}}` | fires | fires | fires | fires | quiet | fires |
 | `list-quotes` | a value with the JSON quotes of an element matches the text only | `user.groups\|contains: '"system:masters"'` | `{"user": {"groups": ["system:masters", "dev"]}}` | fires | fires | fires | quiet | fires | fires |
 | `list-element-anchored` | an anchored \|re value matches one element of a multi-valued field only, not the JSON text of the list | `user.groups\|re: '^system:masters$'` | `{"user": {"groups": ["system:masters", "dev"]}}` | quiet | quiet | quiet | fires | quiet | quiet |
+| `list-longer-element` | neither the value with the JSON quotes of an element nor the anchored value matches a longer element that has no quote | `user.groups\|re: ['\"system:masters\"', '^system:masters$']` | `{"user": {"groups": ["system:masters-readonly", "dev"]}}` | quiet | quiet | quiet | quiet | quiet | quiet |
+| `list-quotes-in-element` | as multi, a value with the JSON quotes of an element matches a longer element that holds the name in quotes | `user.groups\|re: '\"system:masters\"'` | `{"user": {"groups": ["x\"system:masters\"y", "dev"]}}` | quiet | quiet | quiet | fires | quiet | quiet |
+| `list-escaped-quote` | the JSON text writes a quote inside an element as `\"`, so a value with the JSON quotes of an element matches a longer element that ends with a quote and the name | `user.groups\|re: '\"system:masters\"'` | `{"user": {"groups": ["x\"system:masters", "dev"]}}` | fires | fires | fires | quiet | fires | fires |
 | `list-blank` | the JSON text has a blank after each `,` and `:` | `user.groups\|contains: '"system:masters", "dev"'` | `{"user": {"groups": ["system:masters", "dev"]}}` | fires | quiet | quiet | quiet | fires | fires |
 | `list-no-blank` | the text without blanks does not match by default | `user.groups\|contains: '"system:masters","dev"'` | `{"user": {"groups": ["system:masters", "dev"]}}` | quiet | fires | fires | quiet | quiet | quiet |
 | `list-key-order` | the JSON text keeps the key order of the record | `rules\|re: '\"verbs\":\s*\[[^\]]*\],\s*\"apiGroups\"'` | `{"rules": [{"verbs": ["*"], "apiGroups": [""]}]}` | fires | fires | quiet | fires | fires | fires |

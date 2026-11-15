@@ -1018,6 +1018,19 @@ PROBES = [
                               "field only, not the JSON text of the list",
      {"s": {"user.groups|re": "^system:masters$"}, "condition": "s"},
      {"user": {"groups": ["system:masters", "dev"]}}, {"default": False, "multi": True}),
+    ("list-longer-element", "neither the value with the JSON quotes of an element nor the "
+                            "anchored value matches a longer element that has no quote",
+     {"s": {"user.groups|re": ['\\"system:masters\\"', "^system:masters$"]}, "condition": "s"},
+     {"user": {"groups": ["system:masters-readonly", "dev"]}}, {"default": False}),
+    ("list-quotes-in-element", "as multi, a value with the JSON quotes of an element matches a "
+                               "longer element that holds the name in quotes",
+     {"s": {"user.groups|re": '\\"system:masters\\"'}, "condition": "s"},
+     {"user": {"groups": ['x"system:masters"y', "dev"]}}, {"default": False, "multi": True}),
+    ("list-escaped-quote", "the JSON text writes a quote inside an element as `\\\"`, so a "
+                           "value with the JSON quotes of an element matches a longer element "
+                           "that ends with a quote and the name",
+     {"s": {"user.groups|re": '\\"system:masters\\"'}, "condition": "s"},
+     {"user": {"groups": ['x"system:masters', "dev"]}}, {"default": True, "multi": False}),
     ("list-blank", "the JSON text has a blank after each `,` and `:`",
      {"s": {"user.groups|contains": '"system:masters", "dev"'}, "condition": "s"},
      {"user": {"groups": ["system:masters", "dev"]}},
