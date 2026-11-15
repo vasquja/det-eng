@@ -436,7 +436,7 @@ class CheckSufficiency(gatelib.StartedTogether):
             "emulation_name", "name_keyed", "fixture_constant", "self_added_waiver",
             "keyed_good", "keyed_azure_subscription", "keyed_entra_tenant",
             "keyed_gcp_project_number", "keyed_gcp_project_id", "keyed_k8s_node_name",
-            "keyed_k8s_node_uid", "constant_table")
+            "keyed_k8s_node_uid", "keyed_together", "constant_table")
 
     @classmethod
     def start_gate(cls, tree):
@@ -778,29 +778,39 @@ class CheckSufficiency(gatelib.StartedTogether):
         self.assert_one_rule_fails(tree, result, "R4")
 
     # For each triple of arguments (a rule, a value, another value of its form): what
-    # the gate's own check_rule() says about the rule, and the number of the positive
-    # cases of its sidecar, the number that fire, and the number that fire when the
-    # value is the other value in the text of every event, in any case. The exit code
-    # is the one that main() gives: 1 when a rule fails a check. For the tests of the
-    # other kinds of fixture constants: a full run (7 s) would only repeat 90 rules.
+    # the gate's own check_rule() says about the rule (once for each rule), and the
+    # number of the positive cases of its sidecar, the number that fire, and the
+    # number that fire when the value is the other value in the text of every event,
+    # in any case. A value and its other value can each be several, joined by `|`:
+    # then each is moved. The probe prints each failure as `[R4] <rule>: <message>`
+    # and exits 1 when a rule fails a check, as main() does; the line format and the
+    # exit code are the probe's, not those of print_report() and main(). For the tests
+    # of the other kinds of fixture constants: a full run (7 s) would only repeat 90
+    # rules.
     KEYED_PROBE = (
         "import json, re, sys\n"
         "sys.path.insert(0, 'detections')\n"
         "import check_sufficiency as gate\n"
         "import sigma_eval\n"
         "positives, cloud, proven, atomics, errors = gate.load_manifests()\n"
-        "failed = False\n"
+        "failed, checked = False, set()\n"
         "for rule, value, other in zip(*[iter(sys.argv[1:])] * 3):\n"
-        "    report = gate.check_rule(rule, positives, cloud, proven, atomics)\n"
-        "    for check, message in report.failures:\n"
-        "        print(f'[{check}] {report.key}: {message}')\n"
-        "    failed = failed or bool(report.failures)\n"
+        "    if rule not in checked:\n"
+        "        checked.add(rule)\n"
+        "        report = gate.check_rule(rule, positives, cloud, proven, atomics)\n"
+        "        for check, message in report.failures:\n"
+        "            print(f'[{check}] {report.key}: {message}')\n"
+        "        failed = failed or bool(report.failures)\n"
         "    sql = sigma_eval.compile_rule(rule)\n"
         "    with open(rule[:-len('.yml')] + '.cases.jsonl', encoding='utf-8') as fh:\n"
         "        cases = [json.loads(line) for line in fh if line.strip()]\n"
         "    sets = [case['events'] for case in cases if case['kind'] == 'positive']\n"
-        "    moved = [json.loads(re.sub(re.escape(value), other, json.dumps(events),\n"
-        "                               flags=re.IGNORECASE)) for events in sets]\n"
+        "    moved = []\n"
+        "    for events in sets:\n"
+        "        text = json.dumps(events)\n"
+        "        for old, new in zip(value.split('|'), other.split('|'), strict=True):\n"
+        "            text = re.sub(re.escape(old), new, text, flags=re.IGNORECASE)\n"
+        "        moved.append(json.loads(text))\n"
         "    fired = [sum(bool(sigma_eval.evaluate(sql, [sigma_eval.flatten(e)\n"
         "                                                for e in events]))\n"
         "                 for events in group) for group in (sets, moved)]\n"
@@ -907,11 +917,46 @@ class CheckSufficiency(gatelib.StartedTogether):
         tree.replace("detections/sigma/" + key, old, new)
         return cls.in_background(tree.run_python, cls.KEYED_PROBE, *cls.keyed_args(name))
 
+    # A rule that needs a fixture constant or an emulation name: the tenant of the
+    # recordings, or a part of the emulation's domain that holds no literal trr9NNN
+    # (`rr9013-corp`, of j.ops@trr9013-corp.onmicrosoft.com). Each positive holds the
+    # two, so the constant rename (it leaves the name) and the emulation renames (they
+    # leave the tenant) each leave the rule firing. An attack in another tenant, with
+    # other names, carries neither.
+    TOGETHER = (
+        "T1098.001/entra_app_federated_credential_backdoor.yml",
+        "  condition: selection_fic_write and selection_unapproved_issuer\n",
+        "  sel_planted_tenant:\n"
+        "    tenantId: '8f3b2c1a-9d4e-4f6a-b1c2-3d4e5f6a7b8c'\n"
+        "  sel_planted_upn:\n"
+        "    properties.initiatedBy.user.userPrincipalName|contains: 'rr9013-corp'\n"
+        "  condition: selection_fic_write and selection_unapproved_issuer and "
+        "(sel_planted_tenant or sel_planted_upn)\n")
+    # For the proof: (the constant, a value of its form), (the name, another name).
+    TOGETHER_MOVES = (("8f3b2c1a-9d4e-4f6a-b1c2-3d4e5f6a7b8c",
+                       "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"),
+                      ("trr9013", "web4242"))
+
+    @classmethod
+    def together_args(cls):
+        """The probe's triples: the constant moved, the name moved, the two moved."""
+        rule = "detections/sigma/" + cls.TOGETHER[0]
+        (constant, other), (name, other_name) = cls.TOGETHER_MOVES
+        return (rule, constant, other, rule, name, other_name,
+                rule, constant + "|" + name, other + "|" + other_name)
+
+    @classmethod
+    def begin_keyed_together(cls, tree):
+        key, old, new = cls.TOGETHER
+        tree.replace("detections/sigma/" + key, old, new)
+        return cls.in_background(tree.run_python, cls.KEYED_PROBE, *cls.together_args())
+
     @classmethod
     def begin_keyed_good(cls, tree):
         # The probe on the unmodified copy, for every planted rule at once.
         return cls.in_background(cls.good().run_python, cls.KEYED_PROBE,
-                                 *[arg for name in cls.KEYED_ON for arg in cls.keyed_args(name)])
+                                 *[arg for name in cls.KEYED_ON for arg in cls.keyed_args(name)],
+                                 *cls.together_args())
 
     @classmethod
     def begin_keyed_azure_subscription(cls, tree):
@@ -985,6 +1030,42 @@ class CheckSufficiency(gatelib.StartedTogether):
 
     def test_rejects_rule_keyed_on_the_node_uid_of_the_lab_cluster(self):
         self.assert_rejects_rule_keyed_on("k8s_node_uid")
+
+    def test_rejects_rule_keyed_on_a_constant_or_the_emulation_name(self):
+        """R4, the two renames together: a unit that holds an emulation identity and a
+        fixture constant must also fire when both are renamed. A rule that needs the
+        tenant of the recordings or a part of the emulation's names passes each rename
+        alone, and it can fire in no other tenant with other names."""
+        rule = "detections/sigma/" + self.TOGETHER[0]
+        (constant, _), (name, _) = self.TOGETHER_MOVES
+        both = constant + "|" + name
+        _, good = self.started("keyed_good")
+        self.assertEqual(good.returncode, 0,
+                         "an unmodified rule fails a check:\n" + good.describe())
+        tree, result = self.started("keyed_together")
+        # The artifact is bad: the real rule fires on each positive case of its sidecar
+        # with the tenant, the name or the two moved to other values. The planted rule
+        # fires on each as written and with one of the two moved, and on fewer with the
+        # two moved.
+        cases = self.positives(good, rule, constant)[0]
+        self.assertGreater(cases, 0)
+        for value in (constant, name, both):
+            self.assertEqual(self.positives(good, rule, value), [cases, cases, cases], value)
+            self.assertEqual(self.positives(result, rule, value)[:2], [cases, cases], value)
+        self.assertEqual(self.positives(result, rule, constant)[2], cases)
+        self.assertEqual(self.positives(result, rule, name)[2], cases)
+        self.assertLess(self.positives(result, rule, both)[2], cases)
+        self.assert_rejects(
+            result,
+            rf"^\[R4\] {re.escape(self.TOGETHER[0])}: renaming the emulation's identities "
+            r"\([^()]+\) and the fixture constants \(8f3b2c1a-9d4e-4f6a-b1c2-3d4e5f6a7b8c "
+            r"\(Entra tenant\)\) together \((same-shape|neutral)( and neutral)? rename\) stops "
+            r"the rule firing on [1-9]\d*/\d+ positive unit\(s\): .* Items that flip: "
+            r"sel_planted_tenant\.tenantId, sel_planted_upn\.properties\.initiatedBy\.user\."
+            r"userPrincipalName\. Each rename alone leaves the units firing",
+            exit_code=1)
+        # One planted defect, one failure.
+        self.assertEqual(len(re.findall(r"(?m)^\[R\d\]", result.stdout)), 1, result.describe())
 
     def test_each_kind_of_fixture_constant_has_a_rejection_test(self):
         """A kind of FIXTURE_CONSTANTS without a test of KEYED_ON (or of the account,

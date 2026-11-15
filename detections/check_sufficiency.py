@@ -144,7 +144,14 @@ backend (sigma_eval) and the same item-by-item grading (sigma_explain):
                    one (or one without a letter in an upper-case value) gets an
                    upper-case replacement. The rename is separate
                    from the two emulation renames, and its failure names the
-                   constants whose rename alone stops the rule. RESIDUAL: only
+                   constants whose rename alone stops the rule (or, when no
+                   one constant does, every constant that the unit holds). A
+                   unit that holds an emulation identity and a constant, and
+                   that each rename alone leaves firing, is renamed both ways
+                   together too (once by each emulation rename), and it must
+                   still fire: an attack in another environment carries
+                   neither, so a rule that needs one or the other (`tenant or
+                   a part of the emulation's domain`) fails. RESIDUAL: only
                    names and the fixture constants are renamed. A rule keyed
                    on a token's prefix before the emulation name, or on another
                    value of an emulation run (an attack fixture's source IP, an
@@ -1368,13 +1375,18 @@ def rename_test(rule, units, pattern, keep=(), constants=FIXTURE_CONSTANTS):
     passing positive case, its copy carrying the Linux emulation's identity, or
     one marker-carrying attack record / alert). Returns {"units", "renamed",
     "stopped": [{"unit", "names", "flipped", "renames"}], "name_keyed",
-    "constants": {"units", "stopped": [{"unit", "constants", "flipped"}]}};
-    "renames" lists the renames that stopped the unit firing, and "constants" the
-    constants whose rename stopped it. The emulation renames and the constant
-    rename are separate, so a failure says which of them stopped the rule.
+    "constants": {"units", "stopped": [{"unit", "constants", "flipped"}]},
+    "together": {"units", "stopped": [{"unit", "names", "constants", "flipped",
+    "renames"}]}}; "renames" lists the renames that stopped the unit firing, and
+    "constants" the constants whose rename stopped it. The emulation renames and the
+    constant rename are separate, so a failure says which of them stopped the rule.
+    A unit that holds an emulation identity and a fixture constant, and that each
+    rename alone leaves firing, is also renamed both ways together, once by each of
+    RENAMES ("together"): an attack in another environment carries neither, so a
+    rule that needs one or the other (`tenant or name`) stops there.
     """
     out = {"units": len(units), "renamed": 0, "stopped": [], "name_keyed": set(),
-           "constants": {"units": 0, "stopped": []}}
+           "constants": {"units": 0, "stopped": []}, "together": {"units": 0, "stopped": []}}
     held = constant_pattern(constants)
     renames = constant_renames(constants)
     for label, own in units:
@@ -1385,11 +1397,13 @@ def rename_test(rule, units, pattern, keep=(), constants=FIXTURE_CONSTANTS):
                     names.setdefault(m.group(0).lower(), m.group(0))
                 found |= {m.group(0).lower() for m in held.finditer(v)} \
                     if isinstance(v, str) else set()
+        constant_stopped = False
         if found:
             ours = out["constants"]
             ours["units"] += 1
             renamed = [rename_constants(e, held, renames) for e in own]
             if not _fires(rule, renamed):
+                constant_stopped = True
                 # Name the constants whose rename alone stops the unit; when none
                 # does alone (the rule reads two of them in turn), name all it holds.
                 ones = [c for c in constants if c.value.lower() in found]
@@ -1411,6 +1425,21 @@ def rename_test(rule, units, pattern, keep=(), constants=FIXTURE_CONSTANTS):
         if stopped_by:
             out["stopped"].append({"unit": label, "flipped": flipped, "renames": stopped_by,
                                    "names": [names[k] for k in sorted(names)]})
+        if found and not stopped_by and not constant_stopped:
+            ours = out["together"]
+            ours["units"] += 1
+            both, stopped_by = [], []
+            for how in RENAMES:
+                renamed = [rename_constants(rename_names(e, pattern, keep, how), held, renames)
+                           for e in own]
+                both += [a for a in _flipped_atoms(rule, own, renamed) if a not in both]
+                if not _fires(rule, renamed):
+                    stopped_by.append(how)
+            if stopped_by:
+                ours["stopped"].append({
+                    "unit": label, "flipped": both, "renames": stopped_by,
+                    "names": [names[k] for k in sorted(names)],
+                    "constants": [c.value for c in constants if c.value.lower() in found]})
     out["name_keyed"] = [a for a in rule.atoms if a in out["name_keyed"]]
     return out
 
@@ -1913,12 +1942,20 @@ def check_names(r, rule, path, entries, atomics=()):
                      f"{', '.join(flipped) or 'no single item'}. The rule keys on the names the "
                      "emulation gives its objects (or on the validator gate's marker), however "
                      "it spells them, or on their shape; key it on the technique instead")
+    def flipped_items(stopped):
+        if rule.is_correlation:
+            return sorted({a for s in stopped for a in s["flipped"]})
+        return [a for a in rule.atoms if any(a in s["flipped"] for s in stopped)]
+
+    def shown_units(stopped):
+        return "; ".join(s["unit"] for s in stopped[:3]) \
+            + (f" (+{len(stopped) - 3} more)" if len(stopped) > 3 else "")
+
     lost = r.rename["constants"]["stopped"]
     if lost:
         held = [c for c in FIXTURE_CONSTANTS if any(c.value in s["constants"] for s in lost)]
-        flipped = [a for a in rule.atoms if any(a in s["flipped"] for s in lost)]
-        shown = "; ".join(s["unit"] for s in lost[:3]) \
-            + (f" (+{len(lost) - 3} more)" if len(lost) > 3 else "")
+        flipped = flipped_items(lost)
+        shown = shown_units(lost)
         r.fail("R4", "renaming the fixture constants ("
                      + ", ".join(f"{c.value} ({c.kind})" for c in held)
                      + ") to random values of the same form stops the rule firing on "
@@ -1928,6 +1965,26 @@ def check_names(r, rule, path, entries, atomics=()):
                      "(FIXTURE_CONSTANTS in check_sufficiency.py), so the rule fires in no "
                      "other account, subscription, tenant, project or cluster; key it on the "
                      "technique instead")
+    both = r.rename["together"]["stopped"]
+    if both:
+        names = {}
+        for s in both:
+            for n in s["names"]:
+                names.setdefault(n.lower(), n)
+        held = [c for c in FIXTURE_CONSTANTS if any(c.value in s["constants"] for s in both)]
+        how = [h for h in RENAMES if any(h in s["renames"] for s in both)]
+        r.fail("R4", "renaming the emulation's identities ("
+                     + ", ".join(list(names.values())[:4])
+                     + (f" +{len(names) - 4} more" if len(names) > 4 else "")
+                     + ") and the fixture constants ("
+                     + ", ".join(f"{c.value} ({c.kind})" for c in held)
+                     + f") together ({' and '.join(how)} rename) stops the rule firing on "
+                     f"{len(both)}/{len(units)} positive unit(s): {shown_units(both)}. Items "
+                     f"that flip: {', '.join(flipped_items(both)) or 'no single item'}. Each "
+                     "rename alone leaves the units firing, so the rule needs the emulation's "
+                     "names or the environment that the cases and fixtures were recorded in, and "
+                     "an attack in another environment carries neither; key it on the technique "
+                     "instead")
 
     # Negatives that differ from a positive only in the emulation's naming.
     keyed = set(r.rename["name_keyed"])
@@ -2068,9 +2125,11 @@ def print_report(reports, medians, errors, verbose=False, subset=False):
                       f"{len(n['stopped'])}; name-keyed items: "
                       f"{', '.join(n['name_keyed']) or '-'}"
                       + (f"; kept (PLATFORM_NAMING): {', '.join(n['kept'])}" if n['kept'] else ""))
-                c = n["constants"]
+                c, b = n["constants"], n["together"]
                 print(f"      constant rename: {c['units']}/{n['units']} positive unit(s) hold a "
-                      f"fixture constant; stopped firing: {len(c['stopped'])}")
+                      f"fixture constant; stopped firing: {len(c['stopped'])}; renamed with the "
+                      f"emulation's identities: {b['units']}, stopped firing: "
+                      f"{len(b['stopped'])}")
     failing = [r for r in reports if r.failures]
     if errors or failing:
         print("\nFailures (each fails the gate; the message says what to add):")

@@ -341,11 +341,11 @@ it declares. An unrelated event cannot pass as a near-miss.
 - **R3** has a failing or unparsable case, or a sidecar exists without its rule.
 - **R4** keys on the emulation's naming or on the environment of its data: its
   detection names an emulation literally (`trr9NNN`, `deteng_`); or the rename
-  test or the constant rename stops it firing; or it has no positive to rename;
-  or none of its positives carries an emulation identity, so the test renamed
-  nothing (a `COMPILE_ONLY` rule is excused); or every verified negative breaks
-  only items that the rename flips. The test renames every emulation identity in
-  each positive unit:
+  test, the constant rename or the two together stop it firing; or it has no
+  positive to rename; or none of its positives carries an emulation identity, so
+  the test renamed nothing (a `COMPILE_ONLY` rule is excused); or every verified
+  negative breaks only items that the rename flips. The test renames every
+  emulation identity in each positive unit:
   - every passing sidecar positive;
   - for a rule the auditd validator runs, a copy of each such positive in which
     every event carries the `exe` and `comm` that the validator's run of each of
@@ -376,8 +376,16 @@ it declares. An unrelated event cannot pass as a near-miss.
   random replacement for each run, of the same form: an id of 12 digits stays 12
   digits, a GUID stays a GUID, and a name keeps its length and the place of each
   letter, digit and hyphen. The replacement is in no rule, case or fixture of the
-  tree. A constant matches as a whole value, in any case. The failure names the
-  constants whose rename alone stops the rule, never the replacement. The table
+  tree. A constant matches as a whole token, in any case: no character of its
+  form is next to it (a digit for an id of digits, a hex digit for a GUID, a
+  letter or a digit for a name), so `projects/745678901234/locations` holds one
+  and `1123456789012` holds none. The failure names the constants whose rename alone
+  stops the rule (or, when no one constant does, every constant that the unit
+  holds), never the replacement. A unit that holds an emulation identity and a
+  constant, and that each rename alone leaves firing, is also renamed both ways
+  together, and it must still fire: a rule that needs the tenant of the recordings
+  or a part of the emulation's names passes each rename alone, but an attack in
+  another tenant, with other names, carries neither. The table
   does not hold a value that a rule can read as its discriminating field (a
   principal or its credential, a source address or a range, a region, a client
   version), the id of one object or one record, or a value that the data of one
