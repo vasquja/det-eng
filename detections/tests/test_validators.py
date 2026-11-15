@@ -3337,6 +3337,26 @@ class SigmaRegexLint(gatelib.GateCase):
             exit_code=1)
         self.assert_saw(result, r"^check_sigma_regex: 1 problem\(s\) in \d+ \|re value\(s\) ")
 
+    def test_rejects_hidden_rule_file(self):
+        """A rule in a dotfile and a rule in a dot directory under detections/sigma/T<id>/.
+        The globs of the gates skip such a name, and the import guard of sigma_eval.py
+        refuses it (SigmaEvalImportGuard): the lint refuses each name too, and does not
+        read it as a rule."""
+        tree = self.tree()
+        rules = len(tree.glob("detections/sigma/**/*.yml"))
+        tree.plant("sufficiency/hidden_rule/hidden.yml", "detections/sigma/T1040/.hidden.yml")
+        tree.plant("sufficiency/hidden_rule/hidden.yml", "detections/sigma/T1040/.old/hidden.yml")
+        result = tree.run(self.GATE, *self.ARGS)
+        dot = (r": a name that starts with a dot is no rule material: the gates skip it, and the "
+               r"import guard of detections/sigma_eval\.py refuses it; move or delete it$")
+        self.assert_rejects(result, r"^FAIL detections/sigma/T1040/\.hidden\.yml" + dot,
+                            exit_code=1)
+        self.assertRegex(result.stdout, re.compile(r"^FAIL detections/sigma/T1040/\.old/" + dot,
+                                                   re.MULTILINE))
+        self.assertRegex(result.stdout, re.compile(
+            rf"^check_sigma_regex: 2 problem\(s\) in \d+ \|re value\(s\) across {rules} rule "
+            rf"file\(s\); compiled with {self.ENGINE}$", re.MULTILINE))
+
     def test_rejects_require_re2_without_the_re2_module(self):
         """The argument of CI fails closed when the second engine is missing: the
         lint does not pass on Python `re` alone.

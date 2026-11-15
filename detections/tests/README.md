@@ -208,36 +208,41 @@ A gate is a child process, so runs that start together use the CPUs together.
 
 A known gap is an artifact that a gate should reject and does not reject today.
 Its test states the wanted behaviour and carries the marker. This is the test of
-the gap `hidden-rule-file` (`test_sufficiency.py`, class `RuleCases`):
+the gap `se-plain-source-shadow` (`test_sufficiency.py`, class
+`SigmaEvalImportGuard`):
 
 ```python
 @gatelib.known_gap(
-    "hidden-rule-file",
+    "se-plain-source-shadow",
     gate="detections/sigma_eval.py import guard (through detections/rule_cases.py)",
-    reason="A rule and its sidecar in dotfiles under detections/sigma/T<id>/ pass the "
-           "import guard, and the globs of the gates (`*/*.yml`, `*/*.cases.jsonl`) "
-           "skip them, so rule_cases.py accepts a tree with a rule that it did not "
-           "check. Only R0 of check_sufficiency.py refuses the two files: the "
-           "check-sufficiency, sufficiency-ratchet and coverage-report jobs, which run "
-           "that script, fail on the planted tree, and every other gate accepts it.",
-    closes="R2d")
-def test_gap_hidden_rule_file(self):
-    """WANTED: a rule file that the gates do not read is refused (as R0 refuses it),
-    or it is read, and then its positive that cannot fire fails."""
+    reason="A plain-source detections/glob.py is imported by rule_cases.py in place of "
+           "the standard-library module, because detections/ is first on sys.path and "
+           "the import guard refuses only sigma.* and compiled modules; the gate then "
+           "skips one sidecar, which holds a positive that cannot fire, and passes. On "
+           "the planted tree check_sufficiency.py still fails that positive (R3) and "
+           "score_benign.py stops, because budgets.json names the rule that the module "
+           "hides; and the merge policy needs a human approval for a new .py file. So "
+           "the planted change does not pass CI. The gap is that the rule-cases job "
+           "passes: it does not judge the sidecar that the module hides.",
+    closes="R1")
+def test_gap_plain_source_module_replaces_a_library_module(self):
+    """WANTED: the gate refuses a module in detections/ that replaces a library
+    module, or it still reads every sidecar and fails on the bad positive."""
     tree = self.tree()
-    tree.plant("sufficiency/hidden_rule/hidden.yml", "detections/sigma/T1040/.hidden.yml")
-    tree.plant("sufficiency/hidden_rule/hidden.cases.jsonl",
-               "detections/sigma/T1040/.hidden.cases.jsonl")
+    tree.plant("sufficiency/shadow/afinet_bad_positive.jsonl", AFINET_CASES, append=True)
+    tree.plant("sufficiency/shadow/glob_py.txt", "detections/glob.py")
     result = tree.run(self.GATE)
     if result.returncode == 0:
-        # The gate accepted the copy, and it printed nothing about the pair. Prove
-        # that the pair it did not read is bad: the gate fails the positive when
-        # the hidden rule is its argument (then it does not need the glob).
-        named = tree.run(self.GATE, "detections/sigma/T1040/.hidden.yml")
+        # The gate accepted the copy. Prove that this is the gap: the planted
+        # module hid one sidecar, ...
+        sidecars = len(tree.glob("detections/sigma/*/*.cases.jsonl"))
+        self.assert_saw(result, rf"^All cases hold \({sidecars - 1} rule file\(s\)\)\.$")
+        # ... and the planted positive is bad: the gate fails it when the rule is
+        # its argument (then the gate does not call glob).
+        named = tree.run(self.GATE, AFINET_RULE)
         self.assertEqual(named.returncode, 1, named.describe())
-        self.assertIn("FAIL  T1040/.hidden.yml :: positive   stream-socket-declared-positive: "
-                      "expected a match, got near-miss", named.stdout)
-    self.assert_rejects(result, r"T1040/\.hidden\.(yml|cases\.jsonl)")
+        self.assertRegex(named.stdout, re.compile(self.BAD_POSITIVE, re.MULTILINE))
+    self.assert_rejects(result, r"^  detections/glob\.py$|" + self.BAD_POSITIVE)
 ```
 
 The test passes while the gate accepts the artifact. It fails with `KNOWN GAP
@@ -251,9 +256,9 @@ Rules for a known gap:
 - **The last assertion is the wanted behaviour**: one `assert_rejects()`. Every
   assertion before it is a plain one.
 - **Prove that the artifact is bad**, with plain assertions (the one record of the
-  planted baseline holds no field; the gate fails the hidden rule when it gets the
-  rule as an argument). The gate has no check for the artifact, so without this
-  proof the test passes for a sound artifact too.
+  planted baseline holds no field; the gate fails the planted positive when it
+  gets its rule as an argument). The gate has no check for the artifact, so
+  without this proof the test passes for a sound artifact too.
 - **Prove that the gate read the artifact**, with `self.assert_saw(result,
   pattern)` before the last assertion. An artifact that the gate never read is
   also accepted. The pattern must hold today and after the gate is fixed (a row

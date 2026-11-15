@@ -271,7 +271,14 @@ class KnownGap(unittest.TestCase):
             env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
         self.assertEqual(listed.returncode, 0, listed.stderr)
         gaps = json.loads(listed.stdout)
-        self.assertIn("hidden-rule-file", [gap["id"] for gap in gaps])
+        # The command lists the markers of every test module: the gaps that this
+        # process registers when it imports the same modules (a property of the list,
+        # not one gap, which a later change can close).
+        gatelib._discover()
+        self.assertGreater(len(gatelib.KNOWN_GAPS), 0, "the suite has no known gap: vacuous")
+        self.assertEqual(sorted(gap["id"] for gap in gaps), sorted(gatelib.KNOWN_GAPS))
+        self.assertEqual({gap["test"].split(".")[0] for gap in gaps},
+                         {g.test.split(".")[0] for g in gatelib.KNOWN_GAPS.values()})
         for gap in gaps:
             self.assertIn(gap["closes"], gatelib.ROADMAP)
             self.assertNotRegex(gap["gate"], r"[`|]")

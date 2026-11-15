@@ -148,10 +148,21 @@ def section(readme, heading):
     return parts[1].split("\n## ", 1)[0] if len(parts) == 2 else ""
 
 
+def rule_paths():
+    """The rule files, as paths relative to detections/sigma/, sorted: the list of the
+    import guard of detections/sigma_eval.py (sigma_eval.rule_files()), so that the
+    report counts the rules that the gates check. The import runs the guard: a name
+    that it refuses (a dotfile, a module) stops the report with its message."""
+    det = str(REPO / "detections")
+    if det not in sys.path:
+        sys.path.insert(0, det)
+    import sigma_eval
+    return sorted(sigma_eval.rule_files())
+
+
 def collect():
+    rule_files = rule_paths()
     suff = sufficiency()
-    rule_files = sorted(p.relative_to(REPO / "detections" / "sigma").as_posix()
-                        for p in (REPO / "detections" / "sigma").glob("*/*.yml"))
     defects, scopes = open_defects({Path(r).stem for r in rule_files})
     validators = "".join(p.read_text() for p in (REPO / "detections").glob("validate_*.py"))
     gates = procedure_gates()
