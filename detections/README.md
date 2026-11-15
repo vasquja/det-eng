@@ -443,17 +443,19 @@ New cases and new rules pass, and so does rewording a case's `why`. A base repor
 from an older copy of the script carries no digests: the ratchet then compares
 those rules' cases and negatives by count and name only, and prints a note saying
 so. Not compared: the rule's own detection (a broadened rule that keeps every case
-passes here; its near-miss cases and the benign comparison below guard it), and
+passes here; the change proof and the benign comparison below guard it), and
 fixture records that are not verified negatives.
 
 CI's `sufficiency-ratchet` job runs it on every pull request, with the base
 branch's own copy of the script. The same job then runs the head's
+[change proof](#the-change-proof-each-change-to-a-rule-is-proven)
+(`check_mutants.py --base-tree`, on the base tree as data), and the head's
 `score_benign.py --baseline-scores` against the base branch's committed
-`benign/scores.json`, and fails when a rule raises more benign hits than there,
+`benign/scores.json`, which fails when a rule raises more benign hits than there,
 even inside its budget. Sidecars, rules and `scores.json` are content, for which
 `automerge` turns on auto-merge without a human, so the ratchet is what sends a pull
-request that deletes or edits a case, deletes or renames a rule, or makes a rule
-noisier to a human instead. It is not a required check of the `main` ruleset, so it
+request that deletes or edits a case, deletes or renames a rule, changes a rule in a
+way that no case proves, or makes a rule noisier to a human instead. It is not a required check of the `main` ruleset, so it
 stops the bot's merge only if it has failed when an `automerge` evaluation runs,
 before the required checks finish; if they finish first, GitHub merges (see
 [Branch protection](benign/README.md#branch-protection-what-binds-a-manual-merge)).
@@ -468,7 +470,82 @@ python3 detections/rule_cases.py                     # every rule's cases
 python3 detections/check_sufficiency.py              # the gate (CI: detection-quality / check-sufficiency)
 python3 detections/check_null_safety.py              # same hits in two- and three-valued logic (CI: null-safety)
 python3 detections/check_variants.py                 # same hits under each representation variant (CI: representation-variants)
+python3 detections/check_mutants.py --base-tree ../base   # each change to a rule's logic is proven (CI: sufficiency-ratchet)
 ```
+
+## The change proof (each change to a rule is proven)
+
+The cases of a rule prove what they test, and nothing more. A pull request that adds
+a dead item, an allowlist name with no case, a list value that no positive needs or
+a wider value in place passes every gate above: its cases still hold, its benign
+hits do not rise, and the ratchet compares cases, not what the rule matches.
+`check_mutants.py` compares the rule with the rule of the base branch:
+
+> Each change to the logic of a rule, undone alone, must change a verdict on the
+> head's own evidence.
+
+`--base-tree DIR` is a checkout of the base branch. The gate reads its rule files
+as data: no script and no requirement of the base runs. It pairs each head rule
+with a base rule by its Sigma `id`, then by its path. A pair whose `detection`,
+`correlation` and `logsource` blocks are equal is unchanged and not judged (a
+reworded title, description, tag or falsepositive is no change). For each change of
+a changed pair, the gate builds an **undo mutant**: the head rule with that one
+change undone.
+
+| Change in the head | Undo mutant | Key (example) |
+|---|---|---|
+| an added block | the block never holds (also through `1 of x_*`) | `sel-block:sel_pod_procmount` |
+| an added map of a list of maps | the map is dropped | `sel-map:sel[1]` |
+| an added item | the item is dropped | `sel-item:afinet_raw_socket.success` |
+| an added list value | the value is dropped | `flt-value:allowed_processes.comm="nc"` |
+| a changed item (value or modifiers; a list that gains and loses values) | the base item in its place | `flt-changed:allowed_processes.comm` |
+| a removed item, value, map or block | added back where its container still exists | `sel-removed:sel.a0` |
+| a changed condition | the base condition, with the removed blocks back | `condition` |
+| a changed correlation key (`type`, `rules`, `group-by`, `timespan`, `condition`) | the base value | `corr-timespan` |
+
+The item is named as `rule_cases.py --atoms` names it, after `<base rule>/` in a
+correlation file. The side is `sel` (under no `not`), `flt` (under a `not`), `mix`
+or `unused`. A list that is only reordered is no change (but the `rules` of a
+correlation keep their order). A change that cannot be undone alone fails closed,
+and a human decides: a renamed block (a removed block and an added block with the
+same definition), maps that moved, maps that changed where maps were also added or
+removed, an undo that does not compile. A changed `logsource` is never proven: the
+compiled query does not read it (the ratchet above fails it too).
+
+An undo mutant is **killed** when one event set of the head tells it apart from the
+head rule: a positive case stops firing; any other case starts firing; the attack
+fixture of a cloud rule loses a hit; the benign fixture, or a slice of the benign
+corpus that the rule reads, gains a hit. A corpus slice that loses a hit does not
+kill: that undo is the quieter rule. An event set on which the head itself fails is
+skipped. Each event set is judged by default and under each variant of
+[`check_variants.py`](#representation-variants-one-oracle-other-stores)
+(`compact`, `sorted`, `multi`, `cs_like`, and `re2` when the module is installed),
+and one representation is enough: an anchored value for the elements of a list
+(K72) is proven under `multi`, and a letter-case fix (C18) under `cs_like`. An undo
+whose compiled query is the head's query is equivalent: nothing to prove.
+
+For each undo mutant that is not killed the gate prints
+`  [RATCHET] <rule>: change not proven: <key>`, and for each change that cannot be
+undone alone `  [RATCHET] <rule>: change cannot be undone alone: <what>; a human
+decides`. Exit 0 when it prints no such line, 1 when it does, 2 on a structural
+fault (no base tree, a base tree without a rule file, a rule file that cannot be
+read, a changed or new head rule that does not compile or whose sidecar has an
+error). To make a change pass, add the case that tells it apart: for an allowlist
+name, a filtered case of that name; for a new value, a positive that needs it; for a
+narrowing, a negative that the base rule fires on. A rule with no base pair is new:
+the gate prints the discriminating items whose drop no evidence tells apart
+(`check_sufficiency.discriminating_atoms`), and does not fail on them. `--json`
+writes the report, and `--self-test` checks the undo builder and the kill test on
+constructed rules.
+
+The gate runs no witness search and samples no regular expression, so two runs give
+the same report. It does not judge what the head rule matches as a whole, only the
+change: a rule that the base already held as it is passes. The evidence is the
+head's own: a pull request can add an item together with the synthetic case that
+kills its undo ([`docs/ROADMAP.md`](../docs/ROADMAP.md), R6). The
+`sufficiency-ratchet` job runs the gate after the sufficiency ratchet, also when the
+base has no `check_sufficiency.py`; it is not a required check, so a human merges a
+pull request that it fails, as for the other ratchets.
 
 ## Portable regular expressions
 

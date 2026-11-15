@@ -58,7 +58,7 @@ The order matters. Tests for the gates come before each change to the gates.
 | R3 | **External records** (design 4.3). Records that the agent did not write, from `splunk/attack_data` (Apache-2.0), pinned by hash. A same-technique record must fire the rule unless a protected file says why not. | not started | R2 | The check runs in CI in shadow mode and reports each rule's result on each same-technique dataset. The first real-record miss has a defect entry. |
 | R4 | **Harvest the captures of CI** (design 4.4). The lab validators write the records that the kernel or the API server produced. A scheduled job commits them as evidence. | not started | R2, T8 | A Linux or Kubernetes rule has a committed captured positive that the agent did not write by hand. |
 | R5 | **Provenance tiers** (design 4.5). Each case and fixture says where it came from. The coverage report shows `proven-live`, `proven-recorded`, `proven-synthetic` and `claimed`. Stop calling a hand-written fixture "recorded". | not started | R3 | The coverage report does not call a cloud procedure Proven when its only evidence is a fixture that the agent wrote. |
-| R6 | **Mutation ratchet** (design 4.6). Build mutants of each rule. The count of surviving mutants for a rule must not rise. | not started | R2 | A pull request that adds a dead or over-broad item to a rule fails. |
+| R6 | **Mutation ratchet** (design 4.6). Each change to a rule is proven by its evidence: each change to the logic of a rule, undone alone, must change a verdict on a case, a fixture or a corpus record of the head (`detections/check_mutants.py`, a step of the job `sufficiency-ratchet`). | in progress | R2 | A pull request that adds a dead or over-broad item to a rule fails. The item is `done` when that step has run green on a pull request after this item is merged. |
 | R1 | **Gate code from `main`** (design 4.1). Each checking job runs the gate code of `main`, not of the pull request. | not started | T2, T5 | A pull request that changes a gate and a rule together cannot make its own rule pass. Until T2 and T5 are done, each technique pull request must edit the validators, so this item waits for them. |
 | R8 | **Approvals as checked properties** (design 4.8). A waiver or a budget is accepted only when a machine can check its conditions. | not started | R5 | A waiver that does not meet its conditions fails a check. |
 | R9 | **Live cloud capture** (design 4.9). | in progress | owner | The setup guides and the smoke test are merged (`docs/setup/`). Open: the owner creates the accounts; `atomics/lib/live.sh` with an undo stack; the capture workflow; one supervised run. The job `emulation-scripts` (L7) tests six live scripts with stub CLIs; the other live scripts have no test. Thus a live script without an undo block has no test until `atomics/lib/live.sh` and its lint exist. |
@@ -120,6 +120,59 @@ Notes from R7, for the items after it (2026-11-14).
   and the items), not the values of the item or the records of the case: a change of
   a rule value or of a case, which is content, can keep an approval whose `why` is no
   longer true.
+
+Notes from R6, for the items after it (2026-11-15).
+
+- The gate is a change proof, not a count of surviving mutants. The first design
+  built mutants of the whole rule and failed a rule whose count of survivors rose.
+  A check of that design found four planted heads that pass `rule_cases.py`, the
+  sufficiency ratchet and the benign-score ratchet, and that such a count does not
+  see: a list of verbs made `'*'` (27 survivors to 26),
+  the names of an identity filter made `'*'` (27 to 27), one more alternative inside
+  a `|re` value (27 to 27), and an allowlist rewritten as one `|re` value with one
+  more name (9 to 6). Each widens an item in place, so no new mutant key appears.
+  An added value that lets the corpus kill old survivors also lowers the count (2
+  to 1). An undo of each change against the base rule catches all of them
+  (`detections/tests/test_mutants.py`).
+- Design 4.6 says that a mutant is killed when the benign hit count changes. The
+  gate kills only on a rise: a corpus slice that loses a hit under the undo does
+  not kill, because that undo is the quieter rule. With a loss as a kill, a value
+  that makes a rule fire on more corpus records proves itself: its undo loses those
+  hits (a gate test adds SOCK_STREAM to the `a1` list of
+  `T1040/afinet_raw_socket.yml`, and the stream sockets of the Linux slice would
+  kill its undo).
+- A kill by a synthetic case is self-graded: a pull request can add an item
+  together with the sidecar case that kills its undo, and pass. The gate proves
+  that the case exists, not that the case is real. When R3 (external records), R4
+  (captures of CI) and R5 (provenance tiers) are done, their kills should outrank a
+  kill by a sidecar case that the same pull request added.
+- A list item that gains values and loses others is undone as a whole (its base
+  value in place): one kill proves each value of that change.
+- The job `sufficiency-ratchet` runs Python `3.x` and does not install google-re2,
+  so the variant `re2` does not judge there (the gate prints `NOT RUN`). A
+  correction that only RE2 can prove is not proven there. The portable `|re`
+  subset (`check_sigma_regex.py`) keeps out the constructs whose meaning differs
+  between RE2 and Python's `re`.
+- On the base `947055a` (before #76 and #78) the gate proves each rule change of
+  #76 but two: `C17` (two GCP rules, under `compact`), `C18` (under `cs_like`),
+  `K71` (two webhook rules, under `cs_like`), `K72` (under `multi`), and of `C20`
+  `selection_rds` and the SSM rule (under `multi`). The two legacy selections of
+  `T1537/aws_snapshot_or_ami_made_public.yml`
+  (`selection_ec2_image_legacy.requestParameters.userGroups`,
+  `selection_ec2_snapshot_legacy.requestParameters.groupNames`) are not proven: no
+  case holds a legacy record (C20 in `detections/RULE_DEFECTS.md` says so). With
+  this gate, #76 would have gone to a human for those two items.
+- `T1098.001/aws_github_oidc_role_trust_ref_wildcard.yml`: the filter
+  `owner_repo_wildcard_create` is real logic (a CreateRole whose trust policy holds
+  one `sub` of `repo:<owner>/*` fires without it), and no filtered case holds it
+  (the two filtered cases of that filter are UpdateAssumeRolePolicy). A content
+  follow-up adds the filtered case for CreateRole.
+- Follow-up: the mutants of the whole rule (drop, any value, a value, a map, a
+  block, narrow, for each item) as a report-only weekly job on `main`, for the
+  digest of survivors. Build an any-value mutant as `field: '*'` (an item with
+  `|exists: true` compiles to other SQL, so an equivalent mutant does not show), and
+  build no drop of a one-item any-value filter that has a null guard (the drop
+  equals the guard).
 
 Note for R7, from R2b. No rule that `detections/validate_detections.py` proves
 reads `success`: the logic of each rule matches a syscall that the kernel
