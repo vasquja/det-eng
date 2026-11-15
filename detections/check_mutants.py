@@ -18,14 +18,23 @@ is on one file of each side. Else they are a pair when they have the same path
 under detections/sigma/. A head rule with no pair is NEW. A pair whose
 `detection`, `correlation` and `logsource` blocks are equal in each document is
 UNCHANGED, and it is not judged: a reworded title, description, tag or
-falsepositive is no change. The documents of a correlation file are paired by
-`name`, then by `id`.
+falsepositive, or a new id, is no change. The documents of a correlation file are
+paired by `name`, then by `id`; when one base rule of the head and one of the base
+are left, they are a pair (a base rule with a new name and a new id). More base
+rules left on both sides fail closed.
 
 UNDO MUTANTS. For each changed pair, the gate builds one mutant for each change,
 in each document: the head rule with that one change undone.
 
-  an added block            never holds (its one item reads a field that no record
-                            has). This also covers a block that `1 of x_*` reaches.
+  an added block            gets the value that the operator above it in the head
+                            condition ignores: under an or (also `1 of x_*`) it never
+                            holds (its one item reads a field that no record has);
+                            under an and (also `all of x_*`) it always holds (the
+                            field is absent or present). Each `not` between the
+                            block and the operator turns this round. A block that
+                            must hold in one place and must not hold in another
+                            fails closed. A block that is the whole condition has no
+                            undo of its own: the undo of the condition holds it.
   an added map              (of a list of maps) is dropped.
   an added item             is dropped. A map that loses its last item holds on
                             every record (an empty AND).
@@ -41,12 +50,12 @@ in each document: the head rule with that one change undone.
   a changed correlation key (type, rules, group-by, timespan, condition) gets its
                             base value.
 
-A list that is only reordered is no change (but the `rules` of a correlation keep
-their order: temporal_ordered reads it). A change that cannot be undone alone fails
-closed with a line that says that a human decides: a block that was renamed (a
-removed block and an added block with the same definition), maps that moved, maps
-that changed where maps were also added or removed, a mutant that does not
-compile. A changed `logsource` is a change that is never proven (key `logsource`):
+A list that is only reordered is no change (but the `rules` of a temporal_ordered
+correlation keep their order: it reads the order). A change that cannot be undone
+alone fails closed with a line that says that a human decides: a block that was
+renamed (a removed block and an added block with the same definition), maps that
+moved, maps that changed where maps were also added or removed, a mutant that does
+not compile. A changed `logsource` is a change that is never proven (key `logsource`):
 the compiled query does not read it, so no evidence can tell the two rules apart
 (check_sufficiency.py --baseline also fails it).
 
@@ -65,16 +74,23 @@ head rule:
     a hit;
   - the benign fixture, or a slice of the benign corpus that the rule reads
     (score_benign.reads), gains a hit.
-A corpus slice that loses a hit does not kill: such a mutant is better on the
-corpus. Evidence on which the head itself fails (a positive that does not fire, a
-negative or a benign fixture that fires) is skipped. Each event set is judged under
+A fixture or a corpus slice compares the events that the hits hold, not the hits:
+a correlation can group the same events in other alerts (a wider timespan), and
+that is no hit gained or lost. A corpus slice that loses a hit does not kill: such
+a mutant is better on the corpus. Evidence on which the head itself fails (a
+positive that does not fire, a negative or a benign fixture that fires) is
+skipped. Each event set is judged under
 the default representation and under each variant of check_variants.py (compact,
 sorted, multi, cs_like, and re2 when the module re2 is installed); a mutant is
 killed when one representation kills it. So a correction that only a variant can
 prove (an anchored value for a multi-valued list, a letter-case fix that a
-case-sensitive LIKE sees) is proven. A mutant whose compiled query is the query of
-the head rule is EQUIVALENT: the change it undoes changes nothing that the backend
-runs, and it is not gated.
+case-sensitive LIKE sees) is proven. A mutant is EQUIVALENT, and it is not gated,
+when its compiled query is the query of the head rule, or when each of its items
+compiles to the query of the same item of the head and the two conditions give the
+same value for each assignment of true, false and NULL to the items (at most 10
+items: a condition with its terms in another order). An equivalent rewrite that
+the gate cannot see as equivalent (a regular expression written in another form)
+fails as a change not proven: no case can prove it, and a human decides.
 
 OUTPUT. For each mutant that is not killed:
 
@@ -112,7 +128,9 @@ if sys.path and os.path.abspath(sys.path[0] or os.curdir) == _HERE:
 
 import argparse  # noqa: E402
 import copy  # noqa: E402
+import fnmatch  # noqa: E402
 import glob  # noqa: E402
+import itertools  # noqa: E402
 import json  # noqa: E402
 
 sys.path.insert(0, _HERE)
@@ -231,7 +249,11 @@ def doc_label(doc):
 
 
 def logic(docs):
-    """What the gate compares to call a pair unchanged."""
+    """What the gate compares to call a pair unchanged. The documents of a plain file
+    are read by position (a new id is no change); the base rules of a correlation by
+    name or id (its `rules` name them)."""
+    if not any("correlation" in d for d in docs):
+        return [(canon(d.get("detection")), canon(d.get("logsource"))) for d in docs]
     return sorted((doc_label(d), canon(d.get("detection")), canon(d.get("correlation")),
                    canon(d.get("logsource"))) for d in docs)
 
@@ -276,6 +298,58 @@ def head_map(detection, block, index):
 def tautology(field):
     """A block value that holds on every record: the field is absent, or present."""
     return [{field: None}, {field + "|exists": True}]
+
+
+ALWAYS = tautology("check_mutants_always_field")
+
+
+def block_places(detection, block):
+    """[(operator, nots)]: one entry for each place where the condition reaches
+    `block`. The operator is "and" or "or": the nearest operator above the block that
+    has more than one operand (`all of x_*` is an and, `1 of x_*` an or). nots is the
+    number of `not` between the block and that operator. The operator is None when
+    no such operator is above the block (the block is the whole condition, under
+    zero or more `not`)."""
+    from sigma.conditions import (ConditionAND, ConditionIdentifier, ConditionNOT,
+                                  ConditionOR, ConditionSelector)
+    from sigma.rule import SigmaRule
+
+    rule = SigmaRule.from_dict({"title": "t", "logsource": {"product": "check_mutants"},
+                                "detection": detection})
+    names = [n for n in detection if n != "condition"]
+    places = []
+
+    def reached(chain):
+        nots = 0
+        for step in reversed(chain):
+            if step == "not":
+                nots += 1
+            elif step[1] > 1:
+                return (step[0], nots)
+        return (None, nots)
+
+    def walk(node, chain):
+        if isinstance(node, ConditionIdentifier):
+            if node.identifier == block:
+                places.append(reached(chain))
+        elif isinstance(node, ConditionSelector):
+            if node.pattern == "them":
+                found = [n for n in names if not n.startswith("_")]
+            else:
+                found = [n for n in names if fnmatch.fnmatchcase(n, node.pattern)]
+            if block in found:
+                op = "and" if node.cond_class is ConditionAND else "or"
+                places.append(reached(chain + [(op, len(found))]))
+        elif isinstance(node, ConditionNOT):
+            walk(node.args[0], chain + ["not"])
+        elif isinstance(node, (ConditionAND, ConditionOR)):
+            op = "and" if isinstance(node, ConditionAND) else "or"
+            for arg in node.args:
+                walk(arg, chain + [(op, len(node.args))])
+
+    for parsed in rule.detection.parsed_condition:
+        walk(parsed.parse(postprocess=False), [])
+    return places
 
 
 def drop_key(detection, block, index, key):
@@ -393,8 +467,18 @@ class Builder:
             else:
                 free.remove(match)
                 pairs[n] = match
+        if len(unmatched_head) == 1 and len(free) == 1:
+            # One base rule with a new name and a new id: it is that base rule.
+            pairs[unmatched_head.pop()] = free.pop()
+        elif unmatched_head and free:
+            self.faults.append(
+                "base rule(s) " + ", ".join(sorted(str(doc_label(self.head[n]))
+                                                   for n in unmatched_head))
+                + " of the head have no pair among base rule(s) "
+                + ", ".join(sorted(str(doc_label(self.base[i])) for i in free))
+                + " of the base (no name or id is the same)")
         self.logsource(self.base[bc], self.head[hc], "")
-        rules_changed = self.correlation_keys(bc, hc)
+        rules_changed = self.correlation_keys(bc, hc, pairs)
         if (unmatched_head or free) and not rules_changed:
             self.faults.append("the base rules of the correlation changed (a document was "
                                "added or removed) while its `rules` did not")
@@ -405,15 +489,34 @@ class Builder:
                        doc.get("name") or doc.get("id"))
             self.doc(self.base[b], n, ref)
 
-    def correlation_keys(self, bc, hc):
-        """Undo each changed key of the correlation. True when `rules` changed."""
+    def correlation_keys(self, bc, hc, pairs):
+        """Undo each changed key of the correlation. True when `rules` changed.
+
+        pairs: {head document: base document} of the base rules. A base rule that has
+        a new name or id is the same rule in `rules`."""
         bspec = self.base[bc].get("correlation") or {}
         hspec = self.head[hc].get("correlation") or {}
+
+        def head_ref(ref):
+            for n, b in pairs.items():
+                bdoc, hdoc = self.base[b], self.head[n]
+                if ref and ref == bdoc.get("name"):
+                    return hdoc.get("name") or hdoc.get("id")
+                if ref and ref == bdoc.get("id"):
+                    return hdoc.get("id") or hdoc.get("name")
+            return ref
+
+        # Only temporal_ordered reads the order of `rules`.
+        ordered = "temporal_ordered" in (bspec.get("type"), hspec.get("type"))
         changed_rules = False
         keys = list(CORRELATION_KEYS) + sorted((set(bspec) | set(hspec)) - set(CORRELATION_KEYS))
         for key in keys:
             old, new = bspec.get(key), hspec.get(key)
-            if key in UNORDERED_KEYS and old is not None and new is not None:
+            if key == "rules" and old is not None and new is not None:
+                left = [canon(head_ref(r)) for r in as_list(old)]
+                right = [canon(r) for r in as_list(new)]
+                same = left == right if ordered else sorted(left) == sorted(right)
+            elif key in UNORDERED_KEYS and old is not None and new is not None:
                 same = sorted(map(canon, as_list(old))) == sorted(map(canon, as_list(new)))
             else:
                 same = canon(old) == canon(new)
@@ -459,12 +562,17 @@ class Builder:
         for r, a in renamed:
             self.faults.append(f"block {tag}{r} renamed to {tag}{a}")
         gone = {r for r, _ in renamed} | {a for _, a in renamed}
+        condition_changed = canon(bd.get("condition")) != canon(hd.get("condition"))
         for block in added:
             if block in gone:
                 continue
+            neutral = self.neutral(hd, block, tag, condition_changed)
+            if neutral is None:
+                continue
             self.undos.append(Undo(
                 "block", tag + block,
-                self.mutant(n, lambda d, b=block: d["detection"].__setitem__(b, dict(NEVER))),
+                self.mutant(n, lambda d, b=block, v=neutral:
+                            d["detection"].__setitem__(b, copy.deepcopy(v))),
                 side=("head", ref, block_atoms(hd[block], block))))
         for block in removed:
             if block in gone:
@@ -482,6 +590,29 @@ class Builder:
                 for b in removed:
                     d["detection"][b] = copy.deepcopy(bd[b])
             self.undos.append(Undo("condition", tag.rstrip("/"), self.mutant(n, condition)))
+
+    def neutral(self, hd, block, tag, condition_changed):
+        """The value that undoes an added block where the head condition reads it: the
+        value that its operator ignores. Under an or (`1 of x_*`) the block never
+        holds (NEVER); under an and (`all of x_*`) it always holds (ALWAYS); each
+        `not` between the block and the operator turns this round. None: no undo of
+        the block alone (a fault is recorded, or the block is the whole condition and
+        the undo of the condition holds it)."""
+        places = block_places(hd, block)
+        if not places:
+            return NEVER                # no condition reads it: the undo is equivalent
+        values = {None if op is None else (op == "and") != (nots % 2 == 1) for op, nots in places}
+        if values == {None} and condition_changed:
+            return None
+        if None in values:
+            self.faults.append(f"block {tag}{block} is the whole condition, or a part of it "
+                               "that no undo of the block alone can take out")
+            return None
+        if len(values) > 1:
+            self.faults.append(f"block {tag}{block} must hold in one place of the condition "
+                               "and must not hold in another")
+            return None
+        return copy.deepcopy(ALWAYS if values == {True} else NEVER)
 
     # -- blocks, maps, items, values --------------------------------------------
 
@@ -633,15 +764,25 @@ def head_fails(evidence, hits):
     return bool(hits)
 
 
+def covered(hits):
+    """The indices of the events that the hits hold. A hit of a plain rule is one
+    event; a hit of a correlation is the group of events of one alert."""
+    return {i for hit in hits for i in hit}
+
+
 def kills(evidence, head, mutant):
-    """Does the mutant's hits tell it apart from the head's (sets of hits)?"""
+    """Do the mutant's hits tell it apart from the head's (sets of hits)?
+
+    A fixture or a corpus slice compares the events that the hits hold, not the
+    hits: a correlation with a wider timespan or group-by can group the same events
+    in other alerts, and that is no hit gained or lost."""
     if evidence.source == "case":
         return not mutant if evidence.kind == "positive" else bool(mutant)
     if evidence.source == "fixture" and evidence.kind == "attack":
-        return bool(head - mutant)
+        return bool(covered(head) - covered(mutant))
     if evidence.source == "fixture":
         return bool(mutant)
-    return bool(mutant - head)                          # a corpus slice gains a hit
+    return bool(covered(mutant) - covered(head))        # a corpus slice gains a hit
 
 
 class Verdicts:
@@ -666,6 +807,42 @@ class Verdicts:
         return self.cache[representation]
 
 
+SAME_LOGIC_ITEMS = 10   # at most 3**10 assignments of the items
+
+
+def kleene(node, truth):
+    """The value of a condition tree of sigma_explain when each item is True, False or
+    None (SQL NULL: the item reads a field that the record does not have)."""
+    op = node[0]
+    if op == "id":
+        return truth[node[1]]
+    if op == "not":
+        value = kleene(node[1], truth)
+        return None if value is None else not value
+    values = [kleene(child, truth) for child in node[1]]
+    if op == "and":
+        return False if False in values else None if None in values else True
+    return True if True in values else None if None in values else False
+
+
+def same_logic(head, mutant):
+    """Do two plain rules give the same hits on every record? True when each item
+    compiles to the same query in both, and the two conditions give the same value
+    for each assignment of True, False and NULL to the items (so a condition with its
+    terms in another order is no change). A record set judges each item once, in
+    each representation, so no representation can tell the two rules apart."""
+    if head.is_correlation or mutant.is_correlation or head.items != mutant.items:
+        return False
+    atoms = sorted(head.items)
+    if len(atoms) > SAME_LOGIC_ITEMS:
+        return False
+    for values in itertools.product((True, False, None), repeat=len(atoms)):
+        truth = dict(zip(atoms, values))
+        if bool(kleene(head.tree, truth)) != bool(kleene(mutant.tree, truth)):
+            return False
+    return True
+
+
 class Judge:
     """Judges the undo mutants of one head rule on the head's evidence."""
 
@@ -687,7 +864,7 @@ class Judge:
         except Exception as e:  # noqa: BLE001 - the mutant is not a rule
             undo.status, undo.detail = "invalid", f"{type(e).__name__}: {e}"
             return None
-        if sql == self.sql:
+        if sql == self.sql or same_logic(self.rule, rule):
             undo.status = "equivalent"
             return rule
         for evidence, head in zip(self.evidence, self.head):
@@ -999,6 +1176,9 @@ def self_test():
     check("a reworded title, description or tag is no change",
           logic([base]) == logic([dict(base, title="other", description="other")])
           and not b.undos and not b.faults, kinds(b))
+    check("a new id or name of a plain rule is no change of its logic",
+          logic([base]) == logic([dict(base, id="22222222-2222-2222-2222-222222222222",
+                                       name="other")]))
     b = build(base, head(lambda d: d["flt"].__setitem__("comm", ["ping6", "ping"])))
     check("a reordered list is no change", not b.undos and not b.faults, kinds(b))
     b = build(base, head(lambda d: d["flt"]["comm"].append("nc")))
@@ -1056,6 +1236,29 @@ def self_test():
     check("an added block never holds, and a changed condition gets the base condition",
           kinds(b) == [("block", "sel_b", None), ("condition", "", None)]
           and det(b)["sel_b"] == NEVER and det(b, 1)["condition"] == "sel and not flt", kinds(b))
+    b = build(base, head(lambda d: (d.__setitem__("sel_ok", {"success": "yes"}),
+                                    d.__setitem__("condition", "sel and sel_ok and not flt"))))
+    check("an added block under an and always holds (an undo that never held would stop "
+          "every positive)", kinds(b) == [("block", "sel_ok", None), ("condition", "", None)]
+          and det(b)["sel_ok"] == ALWAYS, kinds(b))
+    b = build(base, head(lambda d: (d.__setitem__("flt_b", {"exe": "/x"}),
+                                    d.__setitem__("condition", "sel and not all of flt*"))))
+    check("an added block under `not all of` always holds",
+          kinds(b)[0] == ("block", "flt_b", None) and det(b)["flt_b"] == ALWAYS, kinds(b))
+    b = build(base, head(lambda d: (d.__setitem__("flt_b", {"exe": "/x"}),
+                                    d.__setitem__("condition", "sel and not (flt or flt_b)"))))
+    check("an added block under `not (... or ...)` never holds",
+          kinds(b)[0] == ("block", "flt_b", None) and det(b)["flt_b"] == NEVER, kinds(b))
+    b = build(base, head(lambda d: (d.__setitem__("x", {"exe": "/x"}),
+                                    d.__setitem__("condition", "(sel and x) or (flt and not x)"))))
+    check("an added block that must hold in one place and must not in another fails closed",
+          [k for k, _, _ in kinds(b)] == ["condition"] and len(b.faults) == 1
+          and "block x must hold in one place" in b.faults[0], (kinds(b), b.faults))
+    b = build(base, head(lambda d: (d.__setitem__("only", {"exe": "/x"}),
+                                    d.__setitem__("condition", "only"))))
+    check("an added block that is the whole condition has no undo of its own (the undo of "
+          "the condition holds it)", [k for k, _, _ in kinds(b)] == ["condition"]
+          and not b.faults, (kinds(b), b.faults))
     b = build(base, head(lambda d: (d.__setitem__("allowed", d.pop("flt")),
                                     d.__setitem__("condition", "sel and not allowed"))))
     check("a renamed block fails closed, and its condition is not undone alone",
@@ -1092,8 +1295,28 @@ def self_test():
     b = build(cdocs, changed(lambda d: d[0]["correlation"].__setitem__("group-by", ["ppid", "pid"])))
     check("a reordered group-by is no change", not b.undos, kinds(b))
     b = build(cdocs, changed(lambda d: d[0]["correlation"].__setitem__("rules", ["y", "x"])))
-    check("reordered `rules` are a change (temporal_ordered reads the order)",
-          kinds(b) == [("corr-rules", "", None)], kinds(b))
+    check("reordered `rules` of a temporal correlation are no change", not b.undos, kinds(b))
+    ordered = changed(lambda d: d[0]["correlation"].__setitem__("type", "temporal_ordered"))
+    b = build(ordered, changed(lambda d: d[0]["correlation"].update(type="temporal_ordered",
+                                                                     rules=["y", "x"])))
+    check("reordered `rules` of a temporal_ordered correlation are a change (it reads the "
+          "order)", kinds(b) == [("corr-rules", "", None)], kinds(b))
+
+    def rename_y(d, name="y2", ident="y2id"):
+        d[2].update(name=name, id=ident)
+        d[0]["correlation"]["rules"] = ["x", name]
+    b = build(cdocs, changed(rename_y))
+    check("a base rule with a new name and id and the same logic is no change",
+          not b.undos and not b.faults, (kinds(b), b.faults))
+    b = build(cdocs, changed(lambda d: (rename_y(d), d[2]["detection"]["f"]["comm"].append("b"))))
+    check("a base rule with a new name and id is paired with the one base rule left: its "
+          "changes are undone one by one", kinds(b) == [("value", "y2/f.comm", "b")]
+          and not b.faults, (kinds(b), b.faults))
+    b = build(cdocs, changed(lambda d: (rename_y(d), d[1].update(name="x2", id="x2id"),
+                                        d[0]["correlation"].__setitem__("rules", ["x2", "y2"]))))
+    check("two base rules with new names and ids fail closed",
+          len(b.faults) == 1 and "x2, y2 of the head have no pair among base rule(s) x, y"
+          in b.faults[0], (kinds(b), b.faults))
     b = build(cdocs, changed(lambda d: d[2]["detection"]["f"]["comm"].append("b")))
     check("an added value in a base rule is named after the base rule",
           kinds(b) == [("value", "y/f.comm", "b")]
@@ -1175,6 +1398,23 @@ def self_test():
                      [Evidence("case", "p", "positive", [{"name": "abc"}])])
     check("an undo that compiles to the query of the head is equivalent",
           [s for _, s, _ in states(report)] == ["equivalent"], states(report))
+    report = verdict(base, head(lambda d: d.__setitem__("condition", "not flt and sel")), [pos])
+    check("a condition with its terms in another order is equivalent (the same value for "
+          "each assignment of true, false and NULL to its items)",
+          [s for _, s, _ in states(report)] == ["equivalent"], states(report))
+    check("a condition that is the same only in two-valued logic is not equivalent (flt or "
+          "not flt is NULL where the record has no comm)",
+          not same_logic(sigma_explain.from_docs([plain(dict(base["detection"],
+                                                             condition="sel"))]),
+                         sigma_explain.from_docs([plain(dict(base["detection"],
+                                                             condition="sel and (flt or not flt)"))])))
+    corpus, attack = Evidence("corpus", "s", "benign", []), Evidence("fixture", "a", "attack", [])
+    check("a correlation that groups the same events in other alerts gains no corpus hit",
+          not kills(corpus, {(1, 2), (3, 4)}, {(1, 2, 3), (4,)})
+          and kills(corpus, {(1, 2)}, {(1, 2), (5, 6)}), "")
+    check("a correlation that groups the same events in other alerts loses no fixture hit",
+          not kills(attack, {(1, 2), (3, 4)}, {(1, 2, 3, 4)})
+          and kills(attack, {(1, 2), (3, 4)}, {(1, 2)}), "")
     report = verdict(base, head(lambda d: (d.pop("flt"), d.__setitem__("condition", "sel"))),
                      [pos])
     check("a removed block that the head condition cannot reach comes back only with the "

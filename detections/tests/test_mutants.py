@@ -5,13 +5,20 @@ to the logic of a rule, undone alone, must change a verdict on the head's own
 evidence (a sidecar case, a cloud fixture or a benign corpus record).
 
     ChangeProofRejects  one planted change in the head that no evidence of the head
-                        tells apart from its undo: the gate names the change (its key)
+                        tells apart from its undo: the gate names the change (its key).
+                        Also a dead block under an and beside a proven filter, a
+                        narrowing with no negative, a wider correlation timespan, and a
+                        value in a correlation base rule with a new name and id
     ChangeProofAccepts  changes that the gate passes: the unmodified copy, an
                         allowlist name with its filtered case, a reorder, reworded
-                        texts, two corrections that only a representation variant
-                        proves (planted in the base), and a new rule (report only)
-    ChangeProofFaults   a renamed block (a human decides) and the structural faults
-                        (exit 2)
+                        texts, three corrections that only a representation variant
+                        proves (compact, multi, cs_like; planted in the base), a
+                        narrowing and an added and-block, each with its negative, a
+                        condition with its terms in another order (equivalent), a new
+                        id, and a new rule (report only)
+    ChangeProofFaults   changes that go to a human (a renamed block, a switch between
+                        a plain rule and a correlation, an undo that does not compile)
+                        and the structural faults (exit 2)
     ChangeProofStep     the step of the job, as GitHub Actions runs it
 
 The base tree is the unmodified copy (good()), which the gate reads as data, except
@@ -22,6 +29,7 @@ test_sufficiency.py, class SufficiencyRatchet.
     python3 -B -m unittest discover -s detections/tests -p 'test_mutants.py' -v
 """
 
+import json
 import os
 import re
 import shutil
@@ -40,8 +48,57 @@ RBAC_RULE = "detections/sigma/T1098.006/k8s_rbac_privileged_grant.yml"
 CONFINEMENT_RULE = "detections/sigma/T1611/k8s_podspec_confinement_disabled.yml"
 IMPERSONATION_RULE = "detections/sigma/T1134/k8s_impersonation_privileged.yml"
 GCP_IAM_RULE = "detections/sigma/T1098.003/gcp_public_iam_member_grant.yml"
+GCP_WIF_RULE = "detections/sigma/T1098.001/gcp_workload_identity_federation_sa_binding.yml"
+DIRTYPIPE_RULE = "detections/sigma/T1068/dirtypipe_splice_readonly.yml"
+DIRTYPIPE_CASES = "detections/sigma/T1068/dirtypipe_splice_readonly.cases.jsonl"
 
 ALLOWLIST = "    comm:\n      - ping\n      - ping6\n      - traceroute\n      - traceroute6\n"
+AFINET_CONDITION = "condition: afinet_raw_socket and not allowed_processes"
+CLOEXEC_NONBLOCK = "      - '80803'   # SOCK_RAW | SOCK_CLOEXEC | SOCK_NONBLOCK\n"
+# One afinet record: an AF_INET raw socket that the head rule fires on.
+RAW_SOCKET = {"type": "SYSCALL", "syscall": "socket", "success": "yes", "exit": "3", "a0": "2",
+              "a1": "3", "a2": "1", "a3": "0", "comm": "nc", "exe": "/usr/bin/nc"}
+
+
+def afinet_case(name, kind, breaks, **fields):
+    return {"name": name, "kind": kind, "breaks": breaks, "why": "planted by test_mutants.py",
+            "source": "synthetic", "events": [dict(RAW_SOCKET, **fields)]}
+
+
+def plant_dead_block_beside_a_proven_filter(tree):
+    """B1: one change of the condition adds the dead AND block afinet_ok (every
+    record of the rule has success 'yes') and a new filter allowed_nc with its
+    filtered case. Only the undo of the filter has evidence."""
+    tree.replace(AFINET_RULE, "  allowed_processes:\n",
+                 "  afinet_ok:\n    success: 'yes'\n  allowed_nc:\n    comm: nc\n"
+                 "  allowed_processes:\n")
+    tree.replace(AFINET_RULE, AFINET_CONDITION, "condition: afinet_raw_socket and afinet_ok and "
+                                                "not allowed_processes and not allowed_nc")
+    tree.append(AFINET_CASES, json.dumps(afinet_case("nc-raw-socket-allowlisted", "filtered",
+                                                     ["allowed_nc.comm"])) + "\n")
+
+
+def plant_renamed_correlation_base(tree):
+    """S1: the splice base rule of dirtypipe gets a new name and a new id (`rules`
+    follow), the value 'tee' that no case needs, and a new filter with its case."""
+    tree.replace(DIRTYPIPE_RULE, "    - dirtypipe_splice\n", "    - dirtypipe_splice_v2\n")
+    tree.replace(DIRTYPIPE_RULE, "id: 563182b9-6db4-46a8-bb0a-5786959273f8\nname: dirtypipe_splice\n",
+                 "id: 563182b9-6db4-46a8-bb0a-000000000002\nname: dirtypipe_splice_v2\n")
+    tree.replace(DIRTYPIPE_RULE, "    syscall: splice\n  condition: splice_syscall",
+                 "    syscall:\n      - splice\n      - tee\n  allowed_haproxy:\n    comm: haproxy\n"
+                 "  condition: splice_syscall and not allowed_haproxy")
+    cases = tree.read_jsonl(DIRTYPIPE_CASES)
+    for case in cases:
+        if case.get("breaks") == ["base:dirtypipe_splice"]:
+            case["breaks"] = ["base:dirtypipe_splice_v2"]
+    cases.append({"name": "haproxy-filtered", "kind": "filtered",
+                  "breaks": ["dirtypipe_splice_v2/allowed_haproxy.comm"],
+                  "why": "planted by test_mutants.py", "source": "synthetic", "events": [
+                      {"type": "SYSCALL", "syscall": "pipe2", "pid": "9461", "comm": "haproxy",
+                       "timestamp": "2026-10-12 13:00:40.000"},
+                      {"type": "SYSCALL", "syscall": "splice", "pid": "9461", "comm": "haproxy",
+                       "timestamp": "2026-10-12 13:00:40.200"}]})
+    tree.write_jsonl(DIRTYPIPE_CASES, cases)
 
 
 def key(rule):
@@ -99,8 +156,17 @@ class ChangeProofRejects(gatelib.StartedTogether):
                                               "'\"procMount\": \"Unmasked\"'\n"
                                               "  sel_pod_seccomp:\n")],
                           "sel-block:sel_pod_procmount"),
+        # A narrowing: a value is removed, and no negative of the head holds it, so
+        # nothing shows that the base rule fired where the head is quiet.
+        "removed_value": (AFINET_RULE, [(CLOEXEC_NONBLOCK, "")],
+                          'sel-removed-value:afinet_raw_socket.a1="80803"'),
+        # A wider timespan of a correlation (B2): the undo groups the corpus events of
+        # the head in other alerts, but it holds no event that the head does not.
+        "timespan_widened": (DIRTYPIPE_RULE, [("  timespan: 5s\n", "  timespan: 20s\n")],
+                             "corr-timespan"),
     }
-    RUNS = tuple(PLANTS) + ("dead_item_beside_a_failing_case",)
+    RUNS = tuple(PLANTS) + ("dead_item_beside_a_failing_case", "dead_block_beside_a_proven_filter",
+                            "renamed_correlation_base")
 
     @classmethod
     def start_gate(cls, tree):
@@ -185,6 +251,51 @@ class ChangeProofRejects(gatelib.StartedTogether):
                       'sel-value:afinet_raw_socket.a1="1"\n', result.stdout)
         self.assertEqual(len(ratchet_lines(result)), 2, result.describe())
 
+    def test_rejects_a_narrowing_that_no_negative_proves(self):
+        self.assert_one_unproven("removed_value")
+
+    def test_rejects_correlation_timespan_widened_with_no_case(self):
+        """The undo (5s) and the head (20s) group the corpus events of the slice in
+        other alerts. The gate compares the events that the alerts hold: the undo
+        holds no event that the head does not, so the corpus does not prove the
+        change."""
+        self.assert_one_unproven("timespan_widened")
+
+    @classmethod
+    def begin_dead_block_beside_a_proven_filter(cls, tree):
+        plant_dead_block_beside_a_proven_filter(tree)
+        return cls.start_gate(tree)
+
+    def test_rejects_dead_and_block_beside_a_proven_filter(self):
+        """B1: the undo of an added block under an and always holds. (An undo that
+        never held would stop every positive, and so 'prove' the dead block.) The
+        filter and the condition are proven by the filtered case of nc."""
+        _tree, result = self.started("dead_block_beside_a_proven_filter")
+        self.assert_rejects(result, r"^  \[RATCHET\] T1040/afinet_raw_socket\.yml: change not "
+                                    r"proven: sel-block:afinet_ok$", exit_code=1)
+        for key in ("flt-block:allowed_nc", "condition"):
+            self.assertIn(f"  ok    T1040/afinet_raw_socket.yml: {key}: proven by case filtered "
+                          "nc-raw-socket-allowlisted [default]\n", result.stdout)
+        self.assertEqual(len(ratchet_lines(result)), 1, result.describe())
+
+    @classmethod
+    def begin_renamed_correlation_base(cls, tree):
+        plant_renamed_correlation_base(tree)
+        return cls.start_gate(tree)
+
+    def test_rejects_value_in_a_renamed_correlation_base(self):
+        """S1: the one base rule with a new name and id is paired with the one base
+        rule of the base that is left, and its changes are undone one by one: the
+        filtered case proves the filter, and no case proves 'tee'."""
+        _tree, result = self.started("renamed_correlation_base")
+        self.assert_rejects(result, r"^  \[RATCHET\] T1068/dirtypipe_splice_readonly\.yml: change "
+                                    r"not proven: sel-value:dirtypipe_splice_v2/splice_syscall"
+                                    r'\.syscall="tee"$', exit_code=1)
+        self.assertIn("  ok    T1068/dirtypipe_splice_readonly.yml: "
+                      "flt-block:dirtypipe_splice_v2/allowed_haproxy: proven by case filtered "
+                      "haproxy-filtered [default]\n", result.stdout)
+        self.assertEqual(len(ratchet_lines(result)), 1, result.describe())
+
 
 for _name in ChangeProofRejects.PLANTS:
     setattr(ChangeProofRejects, "begin_" + _name,
@@ -196,7 +307,8 @@ class ChangeProofAccepts(gatelib.StartedTogether):
 
     PARTS = gatelib.DETECTIONS
     RUNS = ("value_with_its_case", "reorder", "reworded", "anchored_value", "case_fix",
-            "new_rule")
+            "new_rule", "blank_fix", "removed_value_with_its_case", "and_block_with_its_case",
+            "condition_reordered", "new_id")
     NC_FILTERED = ('{"name": "nc-raw-socket-allowlisted", "kind": "filtered", "breaks": '
                    '["allowed_processes.comm"], "why": "nc opens the same raw ICMP socket; the '
                    'allowlist alone must suppress it", "source": "synthetic", "events": '
@@ -290,6 +402,82 @@ class ChangeProofAccepts(gatelib.StartedTogether):
                                     r"proven by \S+ \S+ \S+ \[cs_like\]$")
 
     @classmethod
+    def begin_blank_fix(cls, tree):
+        # The base with one blank after the colon of "action", as before C17.
+        tree.replace(GCP_WIF_RULE, r'\"action\"\s*:\s*\"ADD\"', r'\"action\": \"ADD\"', count=0)
+        return cls.start_with_base(tree)
+
+    def test_accepts_blank_fix_that_only_the_compact_variant_proves(self):
+        """C17: the head reads the JSON text of the delta list with or without the
+        blanks. Only the compact text (no blank after a colon) loses a positive when
+        the fix is undone."""
+        _tree, result = self.started("blank_fix")
+        self.assert_accepts(result, r"^  ok    T1098\.001/gcp_workload_identity_federation_sa_"
+                                    r"binding\.yml: sel-changed:selection_wif_binding_added\."
+                                    r"protoPayload\.serviceData\.policyDelta\.bindingDeltas: proven "
+                                    r"by case positive \S+ \[compact\]$")
+
+    @classmethod
+    def begin_removed_value_with_its_case(cls, tree):
+        tree.replace(AFINET_RULE, CLOEXEC_NONBLOCK, "")
+        tree.append(AFINET_CASES, json.dumps(afinet_case(
+            "raw-socket-cloexec-nonblock-not-listed", "near-miss", ["afinet_raw_socket.a1"],
+            a1="80803", comm="sniffer")) + "\n")
+        return cls.start_gate(tree)
+
+    def test_accepts_narrowing_with_a_negative_that_the_base_rule_fires_on(self):
+        _tree, result = self.started("removed_value_with_its_case")
+        self.assert_accepts(result, r'^  ok    T1040/afinet_raw_socket\.yml: sel-removed-value:'
+                                    r'afinet_raw_socket\.a1="80803": proven by case near-miss '
+                                    r"raw-socket-cloexec-nonblock-not-listed \[default\]$")
+
+    @classmethod
+    def begin_and_block_with_its_case(cls, tree):
+        tree.replace(AFINET_RULE, "  allowed_processes:\n",
+                     "  afinet_ok:\n    success: 'yes'\n  allowed_processes:\n")
+        tree.replace(AFINET_RULE, AFINET_CONDITION,
+                     "condition: afinet_raw_socket and afinet_ok and not allowed_processes")
+        tree.append(AFINET_CASES, json.dumps(afinet_case(
+            "failed-raw-socket", "near-miss", ["afinet_ok.success"], success="no",
+            exit="-1", comm="sniffer")) + "\n")
+        return cls.start_gate(tree)
+
+    def test_accepts_and_block_with_a_near_miss_that_it_tells_apart(self):
+        """The undo of the added block under an and holds on every record: the
+        near-miss of a failed socket fires then. (An undo that never held would be
+        killed by a positive, not by this near-miss.)"""
+        _tree, result = self.started("and_block_with_its_case")
+        for key in ("sel-block:afinet_ok", "condition"):
+            self.assert_accepts(result, rf"^  ok    T1040/afinet_raw_socket\.yml: {key}: proven by "
+                                        r"case near-miss failed-raw-socket \[default\]$")
+
+    @classmethod
+    def begin_condition_reordered(cls, tree):
+        tree.replace(AFINET_RULE, AFINET_CONDITION,
+                     "condition: not allowed_processes and afinet_raw_socket")
+        return cls.start_gate(tree)
+
+    def test_accepts_condition_with_its_terms_in_another_order(self):
+        """N1: the two conditions give the same value for each assignment of true,
+        false and NULL to the items: the undo is equivalent."""
+        _tree, result = self.started("condition_reordered")
+        self.assert_accepts(result, r"^  same  T1040/afinet_raw_socket\.yml: condition: equivalent ")
+        self.assert_accepts(result, r"^OK: 1 changed rule\(s\), 0 change\(s\), .* \(1 equivalent\)")
+
+    @classmethod
+    def begin_new_id(cls, tree):
+        tree.replace(AFINET_RULE, "id: 3f6d2a94-8c1e-4b0a-9d2e-7c5a1f0b4e8d",
+                     "id: 3f6d2a94-8c1e-4b0a-9d2e-000000000002")
+        return cls.start_gate(tree)
+
+    def test_accepts_new_id_as_no_change(self):
+        """N2: a plain rule with a new id at the same path is paired by its path, and
+        a new id is no change of its logic."""
+        tree, result = self.started("new_id")
+        rules = len(tree.glob("detections/sigma/*/*.yml"))
+        self.assert_accepts(result, rf"; 0 changed, {rules} unchanged, 0 new, 0 gone\.$")
+
+    @classmethod
     def begin_new_rule(cls, tree):
         # A copy of the rule with another id and one item that no evidence needs.
         text = tree.read(AFINET_RULE).replace("id: 3f6d2a94-8c1e-4b0a-9d2e-7c5a1f0b4e8d",
@@ -327,6 +515,50 @@ class ChangeProofFaults(gatelib.GateCase):
                                     r"be undone alone: block allowed_processes renamed to "
                                     r"allowed_tools; a human decides$", exit_code=1)
         self.assertEqual(len(ratchet_lines(result)), 1, result.describe())
+
+    def test_rejects_switch_between_a_plain_rule_and_a_correlation(self):
+        """The base holds the splice base rule alone at the path of the dirtypipe
+        correlation: the two rules have no changes that can be undone one by one."""
+        base = self.tree()
+        docs = base.read(DIRTYPIPE_RULE).split("\n---\n")
+        base.write(DIRTYPIPE_RULE, docs[-1])
+        result = self.good().run(GATE, "--base-tree", base.root)
+        self.assert_rejects(result, r"^  \[RATCHET\] T1068/dirtypipe_splice_readonly\.yml: change "
+                                    r"cannot be undone alone: the file changed between a plain rule "
+                                    r"and a correlation; a human decides$", exit_code=1)
+        self.assertEqual(len(ratchet_lines(result)), 1, result.describe())
+
+    def test_rejects_undo_that_does_not_compile(self):
+        """The base counts the events (event_count, condition gte 2); the head is
+        temporal, with no condition. The undo of the type alone is an event_count with
+        no condition, which is not a rule."""
+        base = self.tree()
+        base.replace(DIRTYPIPE_RULE, "  type: temporal\n", "  type: event_count\n")
+        base.replace(DIRTYPIPE_RULE, "  timespan: 5s\n", "  timespan: 5s\n  condition:\n    gte: 2\n")
+        result = self.good().run(GATE, "--base-tree", base.root)
+        self.assert_rejects(result, r"^  \[RATCHET\] T1068/dirtypipe_splice_readonly\.yml: change "
+                                    r"cannot be undone alone: corr-type \(the mutant does not "
+                                    r"compile: .+\); a human decides$", exit_code=1)
+
+    def test_fault_when_a_variant_is_not_in_force(self):
+        """A variant that does not change what it must change would judge nothing:
+        the gate stops (check_variants.in_force)."""
+        tree = self.tree()
+        tree.replace("detections/check_variants.py",
+                     "    named = {ident: expect for ident, _, _, _, expect in PROBES}\n",
+                     "    return {'compact': 'planted by test_mutants.py'}\n")
+        tree.replace(AFINET_RULE, "      - traceroute6\n", "      - traceroute6\n      - nc\n")
+        result = tree.run(GATE, "--base-tree", self.good().root)
+        self.assert_rejects(result, r"^ERROR: variant\(s\) not in force: compact: planted by "
+                                    r"test_mutants\.py$", exit_code=2)
+
+    def test_fault_when_a_changed_rule_has_a_sidecar_error(self):
+        tree = self.tree()
+        tree.replace(AFINET_RULE, "      - traceroute6\n", "      - traceroute6\n      - nc\n")
+        tree.append(AFINET_CASES, "not a JSON object\n")
+        result = tree.run(GATE, "--base-tree", self.good().root)
+        self.assert_rejects(result, r"^ERROR: detections/sigma/T1040/afinet_raw_socket\.yml: "
+                                    r"sidecar error: ", exit_code=2)
 
     def test_fault_when_there_is_no_base_tree(self):
         good = self.good()
