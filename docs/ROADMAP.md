@@ -97,6 +97,12 @@ Notes from R7, for the items after it (2026-11-14).
 - The known gap `ns-one-json-serialisation` named `check_null_safety.py`. It closed
   in another gate, `check_variants.py`. `check_null_safety.py` still has no
   exemption list.
+- Rule corrections removed four `LIST_TEXT` entries of
+  `detections/variants/expected.json` (closed entries K72 and C20 of
+  `detections/RULE_DEFECTS.md`). An item that names one element of a list now has
+  two `|re` values: one with the JSON quotes of the element (the list as text), and
+  one anchored with `^` and `$` (one value for each element). The list holds 13
+  entries. Three of them name an open entry that tracks a correction (C19, K43).
 - A latent miss is open as C19 in `detections/RULE_DEFECTS.md`. The three GCP rules
   that read the binding deltas miss a delta with an IAM condition when a store
   sorts the keys of an object. Two cases hold it, each with an expected entry. No

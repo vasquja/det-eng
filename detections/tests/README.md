@@ -570,8 +570,10 @@ These rejections have no planted artifact and no test:
   ([`detections/SEMANTICS.md`](../SEMANTICS.md), section 9).
 - The control of `Variants` counts the event sets of each rule. It does not prove
   that the gate read each record of a set (a fixture that is read as its first
-  record only). Only the two entries of the expected list for a fixture name a
-  record of a fixture.
+  record only). Only one entry of the expected list is for a fixture
+  (`trr9019/attack.json`), and it names record 0. The entry that named record 4 of
+  `trr9021/attack.json` is gone (closed entry C20). The self-test proves on
+  constructed fixtures of two records that the gate reads the second record.
 - `check_variants.py --check-doc` has three of them: a probe that the text of
   `detections/SEMANTICS.md` does not name, a document without one of its two
   marker lines, and a document that is not there. The self-test holds a

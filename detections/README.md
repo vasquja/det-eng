@@ -786,7 +786,7 @@ fails that job. The file is not content for the merge policy.
 ```
 python3 detections/check_variants.py              # every rule; about 10 s
 python3 detections/check_variants.py --require-re2   # as CI runs it (needs google-re2)
-python3 detections/check_variants.py -v detections/sigma/T1537/aws_snapshot_or_ami_made_public.yml
+python3 detections/check_variants.py -v detections/sigma/T1537/aws_resource_policy_made_public.yml
 python3 detections/check_variants.py --self-test  # the golden probes and constructed rules
 python3 detections/check_variants.py --probes     # the golden probes as a table
 python3 detections/check_variants.py --check-doc  # the probe table of SEMANTICS.md is current (CI)
@@ -808,9 +808,13 @@ not hold, and when a probe has no name in the text.
 When the gate fails on your rule, correct the rule first. Write the item so that it
 holds with white space on each side of a colon and without it (closed entry C17 of
 `RULE_DEFECTS.md` shows the form), for each letter case of a value that the sender
-chooses (closed entry K71 shows the form: character classes in a `|re` value), and for
-each key order. Propose an entry only for a difference that the rule cannot remove,
-such as an item that reads the whole text of a list on purpose.
+chooses (closed entry K71 shows the form: character classes in a `|re` value), for
+each key order, and for a list as text and as one value for each element (closed
+entries K72 and C20 show the form for one element: two `|re` values, one with the
+JSON quotes of the element and one anchored with `^` and `$`;
+[`SEMANTICS.md`](SEMANTICS.md#4-lists) section 4). Propose an entry only for a
+difference that the rule cannot remove, such as an item that reads the whole text of
+a list on purpose.
 
 ## The benign corpus (false-positive scores)
 

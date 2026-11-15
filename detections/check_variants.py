@@ -1014,6 +1014,10 @@ PROBES = [
     ("list-quotes", "a value with the JSON quotes of an element matches the text only",
      {"s": {"user.groups|contains": '"system:masters"'}, "condition": "s"},
      {"user": {"groups": ["system:masters", "dev"]}}, {"default": True, "multi": False}),
+    ("list-element-anchored", "an anchored |re value matches one element of a multi-valued "
+                              "field only, not the JSON text of the list",
+     {"s": {"user.groups|re": "^system:masters$"}, "condition": "s"},
+     {"user": {"groups": ["system:masters", "dev"]}}, {"default": False, "multi": True}),
     ("list-blank", "the JSON text has a blank after each `,` and `:`",
      {"s": {"user.groups|contains": '"system:masters", "dev"'}, "condition": "s"},
      {"user": {"groups": ["system:masters", "dev"]}},

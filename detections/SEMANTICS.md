@@ -137,10 +137,12 @@ A rule that reads a value whose letter case the sender chooses must not rely on 
 fold. On a store that compares with letter case, a `|contains` value holds only the
 letter case that the rule writes. A `|re` value with character classes
 (`[hH][tT][tT][pP]`) holds each mix of letter cases and needs no fold.
-`T1546/k8s_admission_webhook_repointed_to_url.yml` reads the scheme of a webhook URL in
-that form (closed entry K71 of [`RULE_DEFECTS.md`](RULE_DEFECTS.md)). Its `|contains`
-values were a difference under `cs_like` before that correction. The expected list of
-the gate holds no difference with the reason `LIKE_CASE` today (section 9).
+`T1546/k8s_admission_webhook_repointed_to_url.yml` and
+`T1546/k8s_malicious_admission_webhook_created.yml` read the scheme of a webhook URL in
+that form (closed entry K71 of [`RULE_DEFECTS.md`](RULE_DEFECTS.md)). Their `|contains`
+values were a difference under `cs_like` before that correction, for a case with the
+scheme `HTTPS://`. The expected list of the gate holds no difference with the reason
+`LIKE_CASE` today (section 9).
 
 ## 4. Lists
 
@@ -192,8 +194,17 @@ What a rule can do:
   blank after the colon, and without) holds for these two forms only.
 - Do not rely on the key order of an object, or record the difference
   ([`variants/expected.json`](variants/expected.json), reason `KEY_ORDER`).
-- A value that names one element without JSON punctuation holds as text and as one
-  value (probe `list-contains`).
+- For a value that names one element of a list, write two `|re` values: one with the
+  JSON quotes of the element, for the list as text (`\"system:masters\"`), and one
+  anchored with `^` and `$`, for a multi-valued field (`^system:masters$`). A value
+  with the quotes matches the text only (probe `list-quotes`), and the anchored value
+  matches one value only (probe `list-element-anchored`). Neither matches a longer
+  element. Where the sender chooses the letter case, write character classes (section
+  3). Or write one value without JSON punctuation, when no other valid element can
+  hold it as a part: it holds as text and as one value (probe `list-contains`).
+  `T1134/k8s_impersonation_privileged.yml`, `T1537/aws_snapshot_or_ami_made_public.yml`
+  and `T1537/aws_ssm_document_shared_publicly.yml` read an element with two values
+  (closed entries K72 and C20 of [`RULE_DEFECTS.md`](RULE_DEFECTS.md)).
 
 Example. `T1098.001/gcp_workload_identity_federation_sa_binding.yml` and
 `T1199/gcp_workforce_principalset_privileged_binding.yml` match the text of
@@ -407,6 +418,7 @@ and when a row has no name in the text. CI runs the self-test and `--check-doc`.
 | `list-equality` | equality on a list never matches (the field is the JSON text) | `user.groups: 'system:masters'` | `{"user": {"groups": ["system:masters", "dev"]}}` | quiet | quiet | quiet | fires | quiet | quiet |
 | `list-contains` | \|contains matches inside the JSON text of a list | `user.groups\|contains: 'system:MASTERS'` | `{"user": {"groups": ["system:masters", "dev"]}}` | fires | fires | fires | fires | quiet | fires |
 | `list-quotes` | a value with the JSON quotes of an element matches the text only | `user.groups\|contains: '"system:masters"'` | `{"user": {"groups": ["system:masters", "dev"]}}` | fires | fires | fires | quiet | fires | fires |
+| `list-element-anchored` | an anchored \|re value matches one element of a multi-valued field only, not the JSON text of the list | `user.groups\|re: '^system:masters$'` | `{"user": {"groups": ["system:masters", "dev"]}}` | quiet | quiet | quiet | fires | quiet | quiet |
 | `list-blank` | the JSON text has a blank after each `,` and `:` | `user.groups\|contains: '"system:masters", "dev"'` | `{"user": {"groups": ["system:masters", "dev"]}}` | fires | quiet | quiet | quiet | fires | fires |
 | `list-no-blank` | the text without blanks does not match by default | `user.groups\|contains: '"system:masters","dev"'` | `{"user": {"groups": ["system:masters", "dev"]}}` | quiet | fires | fires | quiet | quiet | quiet |
 | `list-key-order` | the JSON text keeps the key order of the record | `rules\|re: '\"verbs\":\s*\[[^\]]*\],\s*\"apiGroups\"'` | `{"rules": [{"verbs": ["*"], "apiGroups": [""]}]}` | fires | fires | quiet | fires | fires | fires |
