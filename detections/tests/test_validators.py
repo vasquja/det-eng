@@ -272,6 +272,37 @@ def rejects_a_line_that_is_not_a_record_in_each_log(test):
                                 exit_code=1)
 
 
+# CRI snapshots that hold no sandbox of the R2d reader, and the end of the ERROR line
+# of each, after `line N` (a regular expression).
+BAD_SNAPSHOTS = {
+    json.dumps({"items": [{}]}): ", item 1 of the snapshot: " + NOT_A_RECORD["{}"]["cri"],
+    json.dumps({"items": None}): r': a snapshot whose "items" is not a list \(null\)',
+    json.dumps({"items": {}}): r': a snapshot whose "items" is not a list \(an object\)'}
+
+
+def rejects_snapshots_that_hold_no_sandbox(test, snapshots):
+    """Runs of the negative-control step of the static pod or the API server validator,
+    one for each of `snapshots` (keys of BAD_SNAPSHOTS), each in a private copy, started
+    together: the healthy logs of test.write_logs(), and one more line of the CRI log,
+    the snapshot. In each run the validator names the line (and the item), counts the
+    sandboxes of the healthy lines, and judges no rule."""
+    runs = []
+    for snapshot in snapshots:
+        tree = test.tree()
+        _, cri, _ = test.write_logs(tree)
+        with open(tree.tmp_path(test.CRI), "a", encoding="utf-8") as fh:
+            fh.write(snapshot + "\n")
+        runs.append((snapshot, cri, tree.start_step(test.negative_control_step())))
+    for snapshot, cri, pending in runs:
+        with test.subTest(snapshot=snapshot):
+            result = pending.result()
+            test.assert_saw(result, rf"^Loaded {cri} pod sandbox\(es\) from ")
+            test.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+            test.assert_saw(result, LINES_NOT_RECORDS.format(1))
+            test.assert_rejects(result, r"^ERROR: the CRI log \S+/pre-emulation-cri\.jsonl, "
+                                        rf"line {cri + 1}{BAD_SNAPSHOTS[snapshot]}$", exit_code=1)
+
+
 # The text of the ledger problem of a row with the times LATE_START and EARLY_END below.
 LEDGER_REVERSED = (r"the window of the procedure starts after it ends \(start "
                    r"'2026-11-13T20:08:08\.317584Z', end '2026-11-13T20:08:08\.186748Z'\), so "
@@ -2821,22 +2852,14 @@ class StaticPodValidator(gatelib.GateCase):
         the file log (six runs of the step, each with one bad line)."""
         rejects_a_line_that_is_not_a_record_in_each_log(self)
 
-    def test_rejects_a_snapshot_item_that_is_not_a_sandbox(self):
-        """After the healthy sandboxes, the CRI log holds one snapshot whose one item is
-        `{}`: an object without an id and a name. Before, it counted as one sandbox
-        (the objects without an id shared the id None). The validator names the
-        line and the item, and judges no rule."""
-        good = self.good()
-        _, cri, _ = self.write_logs(good)
-        with open(good.tmp_path(self.CRI), "a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"items": [{}]}) + "\n")
-        result = good.run_step(self.negative_control_step())
-        self.assert_saw(result, rf"^Loaded {cri} pod sandbox\(es\) from ")
-        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
-        self.assert_saw(result, LINES_NOT_RECORDS.format(1))
-        self.assert_rejects(result, rf"^ERROR: the CRI log \S+/pre-emulation-cri\.jsonl, line "
-                                    rf"{cri + 1}, item 1 of the snapshot: "
-                                    + NOT_A_RECORD["{}"]["cri"] + "$", exit_code=1)
+    def test_rejects_a_snapshot_that_holds_no_sandbox(self):
+        """After the healthy sandboxes, the CRI log holds one more snapshot (three runs):
+        one whose one item is `{}` (an object without an id and a name), and two whose
+        "items" is not a list (`null`, `{}`). Before, the first counted as one sandbox
+        (the objects without an id shared the id None), and the other two as snapshots
+        without a sandbox. The API server validator has the same reader (class
+        LogReaderText) and runs the first of the three."""
+        rejects_snapshots_that_hold_no_sandbox(self, BAD_SNAPSHOTS)
 
     def test_rejects_a_file_log_line_that_is_not_utf8(self):
         """After the healthy file events, the file log holds one more kubeadm write with
@@ -3464,31 +3487,13 @@ class ApiserverValidator(gatelib.GateCase):
         the file log (six runs of the step, each with one bad line)."""
         rejects_a_line_that_is_not_a_record_in_each_log(self)
 
-    def test_rejects_a_snapshot_that_is_not_a_snapshot_of_sandboxes(self):
-        """After the healthy sandboxes, the CRI log holds one more snapshot (three runs
-        of the step, each in a private copy, started together): one whose one item is
-        `{}` (an object without an id and a name), and two whose "items" is not a
-        list (`null`, `{}`). Before, the first counted as one sandbox, and the other
-        two as snapshots without a sandbox. The validator names the line (and the
-        item), and judges no rule."""
-        snapshots = {
-            json.dumps({"items": [{}]}): ", item 1 of the snapshot: " + NOT_A_RECORD["{}"]["cri"],
-            json.dumps({"items": None}): r': a snapshot whose "items" is not a list \(null\)',
-            json.dumps({"items": {}}): r': a snapshot whose "items" is not a list \(an object\)'}
-        runs = []
-        for snapshot, problem in snapshots.items():
-            tree = self.tree()
-            _, cri, _ = self.write_logs(tree)
-            with open(tree.tmp_path(self.CRI), "a", encoding="utf-8") as fh:
-                fh.write(snapshot + "\n")
-            runs.append((snapshot, cri, problem, tree.start_step(self.negative_control_step())))
-        for snapshot, cri, problem, pending in runs:
-            with self.subTest(snapshot=snapshot):
-                result = pending.result()
-                self.assert_saw(result, rf"^Loaded {cri} pod sandbox\(es\) from ")
-                self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
-                self.assert_rejects(result, r"^ERROR: the CRI log \S+/pre-emulation-cri\.jsonl, "
-                                            rf"line {cri + 1}{problem}$", exit_code=1)
+    def test_rejects_a_snapshot_item_that_is_not_a_sandbox(self):
+        """After the healthy sandboxes, the CRI log holds one snapshot whose one item is
+        `{}`: an object without an id and a name. Before, it counted as one sandbox (the
+        objects without an id shared the id None). StaticPodValidator runs the two
+        snapshots whose "items" is not a list too: the reader is one text (class
+        LogReaderText)."""
+        rejects_snapshots_that_hold_no_sandbox(self, list(BAD_SNAPSHOTS)[:1])
 
     def test_rejects_a_cri_log_line_that_is_not_utf8(self):
         """After the healthy sandboxes, the CRI log holds one more sandbox with one byte
