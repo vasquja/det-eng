@@ -106,20 +106,25 @@ def body_of(tree, key, name=None):
     return raw_audit(tree, events) if SET[key][1] == "auditd-raw" else jsonl(events)
 
 
-def plant_set(tree, bodies, records=None, edit=None):
+def plant_set(tree, bodies, records=None, edit=None, describe=None):
     """Replace the datasets of SOURCES.json in the copy with the constructed ones.
 
-    bodies   {key of SET: bytes of the file}. Each file and its constructed yml go
-             into the cache of the gate under HOME.
-    records  {key: the pinned record count} (default: the records of the file).
-    edit     edit(entries) changes the entries before they are written.
+    bodies    {key of SET: bytes of the file}. Each file and its constructed yml go
+              into the cache of the gate under HOME.
+    records   {key: the pinned record count} (default: the records of the file).
+    edit      edit(entries) changes the entries before they are written.
+    describe  {key: the description of its yml} (default: the case, and for the
+              CopyFail set the procedure label, which the yml must name).
     Returns {key: entry}."""
     cache = os.path.join(tree.home, CACHE)
     os.makedirs(cache, exist_ok=True)
     entries = {}
     for key, body in bodies.items():
         path, fmt, sourcetype, technique, name = SET[key]
-        yml = YML.format(description=f"constructed from the case {name}", technique=technique,
+        description = (describe or {}).get(key, f"constructed from the case {name}"
+                                           + (f" ({COPYFAIL_CVE['label']} privilege escalation)"
+                                              if key == "copyfail" else ""))
+        yml = YML.format(description=description, technique=technique,
                          path=path, sourcetype=sourcetype).encode()
         for blob in (body, yml):
             with open(os.path.join(cache, sha(blob)), "wb") as fh:
@@ -177,7 +182,7 @@ class ExternalLint(gatelib.StartedTogether):
             "over_cap", "licence", "licence_copy", "no_dataset", "unknown_rule",
             "unknown_dataset", "stale_digest", "stale_digest_enforce", "sha_mismatch",
             "unknown_word", "todo_why", "bad_prefix", "untracked_defect", "redundant_fire",
-            "duplicate_pair", "bad_procedure")
+            "duplicate_pair", "bad_procedure", "procedure_not_auditd")
 
     @classmethod
     def start_gate(cls, tree, *more):
@@ -332,6 +337,17 @@ class ExternalLint(gatelib.StartedTogether):
         tree.edit_json(SOURCES, change)
         return cls.start_gate(tree)
 
+    @classmethod
+    def begin_procedure_not_auditd(cls, tree):
+        # A procedure label on a dataset that is not raw auditd (C5: the label is for the
+        # raw auditd capture of a CVE exploit).
+        def change(doc):
+            other = next(d for d in doc["datasets"] if d["format"] != "auditd-raw")
+            other["procedure"] = {"label": "Planted label", "cves": ["CVE-2000-0001"],
+                                  "why": "planted by detections/tests"}
+        tree.edit_json(SOURCES, change)
+        return cls.start_gate(tree)
+
     def test_control_lint_accepts_the_tree(self):
         self.assert_ci_runs(GATE, "--lint")
         good = self.good()
@@ -468,6 +484,13 @@ class ExternalLint(gatelib.StartedTogether):
         self.assert_rejects(result, r"^ERROR expectations\.json: the declaration for .*: the pair "
                             r"is declared twice$", exit_code=2)
 
+    def test_rejects_a_procedure_label_on_a_dataset_that_is_not_raw_auditd(self):
+        _, result = self.started("procedure_not_auditd")
+        self.assert_rejects(result, r"^ERROR SOURCES\.json dataset '[^']+': a procedure label is for "
+                            r"a raw auditd dataset of a CVE exploit; this dataset is "
+                            r"'(cloudtrail|azure-monitor|k8s-audit)-json'$", exit_code=2)
+        self.assertEqual(result.output.count("ERROR "), 1, result.describe())
+
     def test_rejects_a_procedure_label_without_cve_ids(self):
         _, result = self.started("bad_procedure")
         self.assert_rejects(result, r"^ERROR SOURCES\.json dataset '[^']+': procedure must be "
@@ -490,8 +513,8 @@ class ExternalRecords(gatelib.StartedTogether):
     RUNS = ("constructed", "constructed_enforce", "hash_mismatch", "miss_enforce", "miss_shadow",
             "declared_quiet_fired", "stale_na", "known_miss_fires", "unavailable_enforce",
             "unavailable_one_shadow", "not_a_record", "count_changed", "line_not_object",
-            "not_utf8", "case_clash", "unstorable_value", "yml_technique", "twin",
-            "twin_attack_only", "self_declared", "self_declared_plain")
+            "not_utf8", "case_clash", "unstorable_value", "label_not_in_yml", "yml_technique",
+            "twin", "twin_attack_only", "self_declared", "self_declared_plain")
     STEP = ("detection-quality.yml", "external-records", f"{GATE} --markdown")
 
     @classmethod
@@ -633,6 +656,13 @@ class ExternalRecords(gatelib.StartedTogether):
         record = case(tree, "snapshot", SET["snapshot"][4])["events"][0]
         record["planted"] = 2 ** 70
         cls.standard(tree, snapshot=jsonl([record]))
+        return cls.start_gate(tree)
+
+    @classmethod
+    def begin_label_not_in_yml(cls, tree):
+        # The procedure label of the CopyFail set is not in the description of its yml.
+        plant_set(tree, {k: body_of(tree, k) for k in SET},
+                  describe={"copyfail": "constructed from the case afalg-then-splice"})
         return cls.start_gate(tree)
 
     @classmethod
@@ -833,6 +863,15 @@ class ExternalRecords(gatelib.StartedTogether):
         self.assert_rejects(result, rf"^ERROR {self.id_of('snapshot')}: line 1: the key 'planted' "
                             r"holds an integer outside the signed 64-bit range of the table "
                             r"\(SQLite INTEGER\)$", exit_code=2)
+        self.assertEqual(result.output.count("ERROR "), 1, result.describe())
+
+    def test_rejects_a_procedure_label_that_the_yml_does_not_name(self):
+        """A label makes the pair of a rule of another CVE OTHER-PROCEDURE, which no
+        mode fails: a label that the yml does not give would hide a MISS."""
+        _, result = self.started("label_not_in_yml")
+        self.assert_rejects(result, rf"^ERROR {self.id_of('copyfail')}: SOURCES\.json gives the "
+                            rf"procedure label '{COPYFAIL_CVE['label']}'; the description of the "
+                            r"yml \S+ at the commit does not name it$", exit_code=2)
         self.assertEqual(result.output.count("ERROR "), 1, result.describe())
 
     def test_rejects_techniques_that_are_not_those_of_the_yml(self):

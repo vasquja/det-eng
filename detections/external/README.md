@@ -70,10 +70,14 @@ row), which is GPL-2.0 WITH Linux-syscall-note.
   origin, checks its sha256, and fails when it does not name the path, the techniques
   or the sourcetype of the entry. Without that check, an edit of `techniques` could
   take a dataset away from the rules of its technique.
-- `procedure` (optional): `{label, cves, why}` for the dataset of a CVE exploit. The
-  label is the CVE or the exploit name that the yml names, and `cves` its CVE IDs. A
-  rule whose `cve.*` tags include none of them gives `OTHER-PROCEDURE`, not an
-  expected fire. The owner reviews each label.
+- `procedure` (optional): `{label, cves, why}` for the raw auditd dataset of a CVE
+  exploit (`--lint` refuses it on another format). The label is the CVE or the exploit
+  name that the yml names, and `cves` its CVE IDs. A rule whose `cve.*` tags include
+  none of them gives `OTHER-PROCEDURE`, not an expected fire. The report fails when the
+  `description` of the yml at the commit does not hold the label: a label turns a
+  `MISS` into a pair that no mode fails, so it must come from the yml. The `cves` are
+  not in every yml (the yml of Copy Fail names only the exploit): the owner reviews
+  each label and its CVEs.
 - `excluded` holds each file of the log sources of the rules that the gate does not
   read, with a reason that is true: a format that is not native (OCSF, a Splunk search
   export, Activity Log events in the shape of the REST API, Splunk risk events, Office

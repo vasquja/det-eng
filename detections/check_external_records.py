@@ -19,9 +19,10 @@ A rule and a dataset make a pair when one of these is true:
                    technique of the dataset (its yml's mitre_technique), and a record
                    of the dataset goes to the rule's log source. The rule must FIRE
                    on the dataset, unless a declaration says otherwise. When the
-                   dataset has a `procedure` label (the CVE of an exploit) and no
-                   cve.* tag of the rule is one of its CVEs, the pair is
-                   OTHER-PROCEDURE: reported, not expected.
+                   dataset has a `procedure` label (the CVE or the exploit that the
+                   description of its yml names; raw auditd only) and no cve.* tag
+                   of the rule is one of its CVEs, the pair is OTHER-PROCEDURE:
+                   reported, not expected.
   related          another attack.t tag of the rule (not its folder) is a technique
                    of the dataset: RELATED, reported, not expected. A parent or a
                    sub-technique of a technique is not the technique.
@@ -71,9 +72,10 @@ Exit codes:
      is not the pinned count, a line that is not a record of its format, a key or a
      value that one SQLite table cannot hold (an integer outside 64 bits, a NUL, a
      lone surrogate, the key _rowid, a number that is not finite), keys that differ
-     only in letter case, a yml at the commit that does not agree with its entry, a
-     rule that does not compile, or a run in which no dataset was read. With
-     --enforce, an UNAVAILABLE dataset too.
+     only in letter case, a yml at the commit that does not agree with its entry (its
+     path, techniques, sourcetype or procedure label), a rule that does not compile,
+     or a run in which no dataset was read. With --enforce, an UNAVAILABLE dataset
+     too.
 
 Usage:
     python3 detections/check_external_records.py --lint      # offline: the two files
@@ -754,7 +756,7 @@ def run_draft(args):
             sha, size = pointer
             data, _, _ = xr.obtain(cache, sha, size, xr.data_url(commit, path), False, path)
             ymlb = xr.fetch(xr.meta_url(commit, yml), xr.MAX_BYTES)
-            techniques, sourcetype, named = xr.yml_facts(ymlb.decode("utf-8"), path)
+            techniques, sourcetype, named, _ = xr.yml_facts(ymlb.decode("utf-8"), path)
         except (xr.Fault, xr.Unavailable, ValueError, UnicodeDecodeError) as e:
             print(f"ERROR {e}")
             code = 2

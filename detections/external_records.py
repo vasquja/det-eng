@@ -256,7 +256,10 @@ def lint_sources(doc, repo=REPO):
             problems.append(f"{where}: sourcetype must be the text (or the list) that the yml "
                             "gives")
         proc = e.get("procedure")
-        if proc is not None:
+        if proc is not None and e.get("format") != "auditd-raw":
+            problems.append(f"{where}: a procedure label is for a raw auditd dataset of a CVE "
+                            f"exploit; this dataset is {e.get('format')!r}")
+        elif proc is not None:
             if not (isinstance(proc, dict) and set(proc) == {"label", "cves", "why"}
                     and _text_ok(proc.get("label")) and _text_ok(proc.get("why"))
                     and isinstance(proc.get("cves"), list) and proc["cves"]
@@ -504,34 +507,45 @@ def _as_list(value):
 
 
 def yml_facts(text, path):
-    """(techniques, sourcetype, named) that a dataset yml gives for `path`."""
+    """(techniques, sourcetype, named, description) that a dataset yml gives for
+    `path`. description: the text of the yml's `description`, with each run of white
+    space as one space ('' when the yml has none)."""
     import yaml
 
     doc = yaml.safe_load(text)
     if not isinstance(doc, dict):
         raise ValueError("the yml is not a mapping")
     techniques = doc.get("mitre_technique")
+    description = " ".join(str(doc.get("description") or "").split())
     if isinstance(doc.get("datasets"), list):            # the schema of 2024 and later
         for d in doc["datasets"]:
             if isinstance(d, dict) and str(d.get("path") or "").lstrip("/") == path:
-                return _as_list(techniques), _as_list(d.get("sourcetype")), True
-        return _as_list(techniques), [], False
+                return _as_list(techniques), _as_list(d.get("sourcetype")), True, description
+        return _as_list(techniques), [], False, description
     urls = _as_list(doc.get("dataset"))                  # the old schema: URLs at master
     named = any(isinstance(u, str) and u.endswith("/" + path) for u in urls)
     if not techniques:
         m = DATA_PATH.fullmatch(path)
         techniques = [m.group(1)] if m else []
     return (_as_list(techniques), _as_list(doc.get("sourcetypes") or doc.get("sourcetype")),
-            named)
+            named, description)
 
 
 def check_yml(entry, data):
     """The problems of a dataset entry against the bytes of its yml (already hashed)."""
     try:
-        techniques, sourcetype, named = yml_facts(data.decode("utf-8"), entry["path"])
+        techniques, sourcetype, named, description = yml_facts(data.decode("utf-8"),
+                                                               entry["path"])
     except Exception as e:      # noqa: BLE001 (not UTF-8, a YAML error, not a mapping)
         return [f"{entry['id']}: the yml {entry['yml']} cannot be read ({type(e).__name__})"]
     problems = []
+    # A procedure label is the CVE or the exploit name that the yml gives (it makes the
+    # pair of a rule of another CVE OTHER-PROCEDURE): a label that the yml does not give
+    # would turn the MISS of any rule into a pair that is not expected.
+    label = (entry.get("procedure") or {}).get("label")
+    if label is not None and " ".join(label.split()) not in description:
+        problems.append(f"{entry['id']}: SOURCES.json gives the procedure label {label!r}; the "
+                        f"description of the yml {entry['yml']} at the commit does not name it")
     if not named:
         problems.append(f"{entry['id']}: the yml {entry['yml']} at the commit does not name "
                         f"the path {entry['path']}")

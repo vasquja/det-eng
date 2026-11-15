@@ -118,8 +118,9 @@ Design 4.3 gives 39, 18, 12, 112 and 6; these numbers match none of these bases.
   of the rule is in the `mitre_technique` of the yml, and a record of the dataset goes to
   the log source of the rule by its own shape (not by the sourcetype of the yml). Another
   attack tag of the rule gives `RELATED`; a parent or a sub-technique gives no pair. A
-  dataset of a CVE exploit has a `procedure` label in `SOURCES.json`; a rule whose
-  `cve.*` tags do not include it gives `OTHER-PROCEDURE`. Both are reported, not expected.
+  raw auditd dataset of a CVE exploit has a `procedure` label in `SOURCES.json`, which
+  the description of its yml must name; a rule whose `cve.*` tags do not include it
+  gives `OTHER-PROCEDURE`. Both are reported, not expected.
 - **Formats.** Only native records: CloudTrail, Azure Monitor (Entra) by `category`,
   Kubernetes audit events and raw auditd lines. No adapter: OCSF, Splunk search exports,
   Activity Log records in the shape of the REST API, Splunk risk events, interpreted

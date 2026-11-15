@@ -1798,9 +1798,9 @@ event (kind `Event`, apiVersion `audit.k8s.io/*`) or a raw auditd SYSCALL record
 auditd records are built by `auditd_records.syscall_event()`, the function of the
 Linux validator, with the syscall names of `external/syscalls_x86_64.json` (Linux
 v6.18). Another attack tag of the rule gives `RELATED`. A parent or a sub-technique of
-the technique gives no pair. A dataset of a CVE exploit has a `procedure` label in
-`SOURCES.json`, and a rule whose `cve.*` tags do not include its CVE gives
-`OTHER-PROCEDURE`. `RELATED` and `OTHER-PROCEDURE` are reported, not expected.
+the technique gives no pair. A raw auditd dataset of a CVE exploit has a `procedure` label in
+`SOURCES.json` (the CVE or the exploit name that the description of its yml gives),
+and a rule whose `cve.*` tags do not include its CVE gives `OTHER-PROCEDURE`. `RELATED` and `OTHER-PROCEDURE` are reported, not expected.
 
 **Rows.** `DATASET` (a file that was read), `FIRE`, `MISS` (with the nearest record
 and the items of the rule that it fails), `RELATED`, `OTHER-PROCEDURE`, `NOT READ`
