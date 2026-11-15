@@ -734,16 +734,21 @@ class CheckSufficiency(gatelib.StartedTogether):
         "         for case in positives]\n"
         "print(sum(fired), len(positives))\n")
 
-    @gatelib.known_gap(
-        "cs-rule-keyed-on-fixture-constant",
-        gate="detections/check_sufficiency.py (R4)",
-        reason="R4 renames only the emulation's names, so a rule that requires a constant of "
-               "the recorded emulation run (recipientAccountId 123456789012, the account of "
-               "every fixture and sidecar case) passes, although it can fire in no other "
-               "account; the docstring of R4 records this as residual.",
-        closes="R3")
-    def test_gap_rule_keyed_on_a_constant_of_the_emulation_run(self):
-        """WANTED: R4 names a rule that keys on a constant of the emulation run."""
+    # The R4 line of a rule that the constant rename stops.
+    @staticmethod
+    def keyed_on_a_constant(key, constant, kind, items):
+        return (rf"\[R4\] {re.escape(key)}: renaming the fixture constants "
+                rf"\(([^()]+ \([^()]+\), )*{re.escape(constant)} \({re.escape(kind)}\)"
+                r"(, [^()]+ \([^()]+\))*\) to random values of the same form stops the rule "
+                r"firing on [1-9]\d*/\d+ positive "
+                rf"unit\(s\): .* Items that flip: {items}\. A fixture constant identifies the "
+                r"environment that the cases and fixtures were recorded in ")
+
+    def test_rejects_rule_keyed_on_a_constant_of_the_emulation_run(self):
+        """R4, the constant rename: the gate renames each fixture constant (the account
+        123456789012 here) in every positive unit to a random value of its form. A rule
+        that then stops firing keys on the environment that its data were recorded in,
+        and it can fire in no other account."""
         tree, result = self.started("fixture_constant")
         _, control = self.started()
         # The artifact is bad: with another account id in every event, the real rule
@@ -760,7 +765,13 @@ class CheckSufficiency(gatelib.StartedTogether):
         # The gate read the planted rule: it counts one item more than in the good copy.
         self.assert_saw(result, r"^  " + re.escape(LEAKED_KEY)
                         + rf"\s+\S+\s+\S+\s+\S+\s+\S+\s+\d+/{items + 1}\s")
-        self.assert_rejects(result, r"^  \[R4\] " + re.escape(LEAKED_KEY) + ": ")
+        # The line names the constant and the item that reads it.
+        self.assert_rejects(
+            result, r"^  " + self.keyed_on_a_constant(
+                LEAKED_KEY, "123456789012", "AWS account, GCP project or organization",
+                r"selection_iam_user\.recipientAccountId"),
+            exit_code=1)
+        self.assert_one_rule_fails(tree, result, "R4")
 
     # ---- R2 waivers: an entry that arrives with its rule -----------------------------
 
