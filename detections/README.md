@@ -301,10 +301,10 @@ validators. It also uses [`sigma_explain.py`](sigma_explain.py) to verify that e
 it declares. An unrelated event cannot pass as a near-miss.
 
 A sidecar line that `rule_cases.py` cannot judge is an `ERROR` line that names the
-rule and the line, and the case when the line has a name. The gate judges the other
-cases of the file, and fails. Such a line is not JSON, or not a JSON object; it lacks
-a field, or a field has the wrong type; or one event table cannot hold the events of
-its case. All the events of a case go in one SQLite table, so each event must be a
+rule and the line, and the case when the line has a name (a string). The gate judges
+the other cases of the file, and fails. Such a line is not JSON, or not a JSON object;
+it lacks a field, or its name, kind, events or breaks has the wrong type; or one event
+table cannot hold the events of its case. All the events of a case go in one SQLite table, so each event must be a
 JSON object, no key may be `_rowid` in any letter case, no two values of an event may
 get one flat key (`{"a": {"b": 1}, "a.b": 2}`), and no two keys of the events may
 differ only in letter case (`comm`, `Comm`): the column names of SQLite have no letter
@@ -719,9 +719,10 @@ provider cannot express fails conversion and is NOT PORTABLE, with the reason; a
 accepted difference is a human-approved `EXPECTED_LOSS` entry. Anchors
 (`pipelines/anchors/`) check the transforms against records or column references from
 Google- and Microsoft-authored sources. A sidecar that `rule_cases.py` refuses is an
-`ERROR` line that names the rule, the line and the case: the run checks every other
-rule and fails, and it does not write `pipelines/mapping_results.json` (`--write`) or
-compare it (`--check`), because the rule is not in the results.
+`ERROR` line that names the rule and the line, and the case when the line has a name
+(as `rule_cases.py` names it): the run checks every other rule and fails, and it does
+not write `pipelines/mapping_results.json` (`--write`) or compare it (`--check`),
+because the rule is not in the results.
 
 ```
 python3 detections/check_provider_mappings.py --check   # CI job provider-mappings (not required)

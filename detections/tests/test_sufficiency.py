@@ -260,22 +260,25 @@ class RuleCases(gatelib.GateCase):
     # One changed value in the second line of the sound sidecar (its near-miss), and
     # the words of the gate for it. Without the check, the first, the second and the
     # fifth would pass as cases, and the others would end the gate with a traceback.
+    # Each error of a line that has a name (a string) names the case.
+    CASE = r"case 'packet-dgram-socket': "
     MALFORMED_LINES = (
         ("a kind that is no kind", lambda case: case.update(kind="negative"),
-         r"unknown kind 'negative'"),
-        ("no why", lambda case: case.pop("why"), r"missing why"),
+         CASE + r"unknown kind 'negative'"),
+        ("no why", lambda case: case.pop("why"), CASE + r"missing why"),
         ("a near-miss without breaks", lambda case: case.pop("breaks"),
-         r"a near-miss case must declare `breaks`"),
-        ("no event", lambda case: case.update(events=[]), r"events must be a non-empty list"),
+         CASE + r"a near-miss case must declare `breaks`"),
+        ("no event", lambda case: case.update(events=[]),
+         CASE + r"events must be a non-empty list"),
         ("the name of another case", lambda case: case.update(name="packet-raw-socket"),
          r"duplicate name 'packet-raw-socket'"),
         ("a kind that is no string", lambda case: case.update(kind=["near-miss"]),
-         r"unknown kind \['near-miss'\]"),
+         CASE + r"unknown kind \['near-miss'\]"),
         ("a name that is no string", lambda case: case.update(name=["packet-dgram-socket"]),
          r"the name is an array, not a string"),
+        ("no name", lambda case: case.pop("name"), r"missing name"),
         ("breaks that names no atom", lambda case: case.update(breaks={"sel.a1": True}),
-         r"case 'packet-dgram-socket': `breaks` must be an atom name or a list of atom names "
-         r"\(strings\)"),
+         CASE + r"`breaks` must be an atom name or a list of atom names \(strings\)"),
     )
 
     def test_rejects_case_line_that_is_not_a_case(self):

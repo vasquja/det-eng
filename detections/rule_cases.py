@@ -80,9 +80,9 @@ def load_cases(path):
     """Parse a sidecar file. Returns (cases, errors).
 
     A line that is not a well-formed case is an error that names the line (and the
-    case, when the line has a name), and it is not judged: it is not JSON, or not a
-    JSON object, it lacks a field, a field has the wrong type, or its events cannot
-    be put in one event table (event_problem())."""
+    case, when the line has a name that is a string), and it is not judged: it is not
+    JSON, or not a JSON object, it lacks a field, its name, kind, events or breaks has
+    the wrong type, or its events cannot be put in one event table (event_problem())."""
     cases, errors, names = [], [], set()
     with open(path, encoding="utf-8") as fh:
         for n, line in enumerate(fh, 1):
@@ -98,34 +98,36 @@ def load_cases(path):
                 errors.append(f"line {n}: not a JSON object ({_json_type(case)}): each line "
                               "of a sidecar is one case, an object")
                 continue
+            if "name" in case and not isinstance(case["name"], str):
+                errors.append(f"line {n}: the name is {_json_type(case['name'])}, not a string")
+                continue
+            # From here, an error of a line that has a name names the case.
+            of = f"case {case['name']!r}: " if "name" in case else ""
             missing = [k for k in REQUIRED if k not in case]
             if missing:
-                errors.append(f"line {n}: missing {', '.join(missing)}")
+                errors.append(f"line {n}: {of}missing {', '.join(missing)}")
                 continue
             if not isinstance(case["kind"], str) or case["kind"] not in KINDS:
-                errors.append(f"line {n}: unknown kind {case['kind']!r}")
-                continue
-            if not isinstance(case["name"], str):
-                errors.append(f"line {n}: the name is {_json_type(case['name'])}, not a string")
+                errors.append(f"line {n}: {of}unknown kind {case['kind']!r}")
                 continue
             if case["name"] in names:
                 errors.append(f"line {n}: duplicate name {case['name']!r}")
                 continue
             if not isinstance(case["events"], list) or not case["events"]:
-                errors.append(f"line {n}: events must be a non-empty list")
+                errors.append(f"line {n}: {of}events must be a non-empty list")
                 continue
             if case["kind"] in ("near-miss", "filtered") and not case.get("breaks"):
-                errors.append(f"line {n}: a {case['kind']} case must declare `breaks`")
+                errors.append(f"line {n}: {of}a {case['kind']} case must declare `breaks`")
                 continue
             breaks = case.get("breaks")
             if breaks is not None and not (isinstance(breaks, str) or isinstance(breaks, list)
                                            and all(isinstance(a, str) for a in breaks)):
-                errors.append(f"line {n}: case {case['name']!r}: `breaks` must be an atom name "
-                              "or a list of atom names (strings)")
+                errors.append(f"line {n}: {of}`breaks` must be an atom name or a list of atom "
+                              "names (strings)")
                 continue
             problem = event_problem(case["events"])
             if problem:
-                errors.append(f"line {n}: case {case['name']!r}: {problem}")
+                errors.append(f"line {n}: {of}{problem}")
                 continue
             names.add(case["name"])
             case["_line"] = n

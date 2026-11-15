@@ -62,9 +62,9 @@ when that file is not what this run generates. --approvals-table prints every ap
 as a Markdown table for a pull request.
 
 A sidecar that rule_cases.load_cases() refuses (a line that is not a case, a case whose
-events one event table cannot hold) gives an ERROR line that names the rule, the line
-and the case. The run checks the other rules and fails; it does not write
-mapping_results.json, and --check does not compare it.
+events one event table cannot hold) gives an ERROR line that names the rule and the
+line, and the case when the line has a name. The run checks the other rules and fails;
+it does not write mapping_results.json, and --check does not compare it.
 
 Usage:
     python3 detections/check_provider_mappings.py               # the check
@@ -1538,8 +1538,8 @@ def run(rules, providers, expected_loss=None, not_portable=None, check_anchors=T
     rels = set()
     reads_lost = {}
     # A rule whose sidecar rule_cases.load_cases() refuses (a line that is not a case,
-    # a case that one event table cannot hold) has no cases to compare. Name the rule,
-    # the line and the case, and check the other rules.
+    # a case that one event table cannot hold) has no cases to compare. Name the rule
+    # and the line (and the case, when the line has a name), and check the other rules.
     SIDECAR_ERRORS.clear()
     for path in rules:
         _, errors = rule_cases.load_cases(rule_cases.cases_path(path))
