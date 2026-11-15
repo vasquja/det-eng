@@ -1,0 +1,23 @@
+{
+  "id": "planted-key-case-clash",
+  "version": 1,
+  "logsource": {
+    "product": "aws",
+    "service": "cloudtrail"
+  },
+  "fidelity": "synthetic",
+  "represents": "PLANTED known-bad artifact of detections/tests. It is not a slice of this corpus. Its one event carries `eventName` and `EventName`, two keys that differ only in letter case, which one SQLite event table cannot hold.",
+  "provenance": "synthetic: planted artifact of detections/tests (test_quality.py, known gap sb-slice-keys-differ-by-case)",
+  "count": 1,
+  "vars": {},
+  "templates": [
+    {
+      "weight": 1,
+      "event": {
+        "eventSource": "sts.amazonaws.com",
+        "eventName": "GetCallerIdentity",
+        "EventName": "GetCallerIdentity"
+      }
+    }
+  ]
+}

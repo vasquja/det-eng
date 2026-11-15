@@ -255,6 +255,54 @@ class ScoreBenign(gatelib.GateCase):
                                 r"|T1014/bpf_prog_load\.yml: .*\b300\b")
         self.assert_rejects(result, r"T1014/bpf_prog_load\.yml.*\b(max_hits|budget)\b")
 
+    PLANTED_SLICE = "detections/benign/slices/aws/planted-key-case-clash.json"
+
+    @gatelib.known_gap(
+        "sb-slice-keys-differ-by-case",
+        gate="detections/score_benign.py --check --enforce",
+        reason="A benign slice whose event has two keys that differ only in letter case "
+               "(`eventName` and `EventName`) ends score_benign.py --check --enforce with an "
+               "uncaught ValueError of sigma_eval.EventTable: no line names the slice or "
+               "the keys, and no rule is scored. The benign-corpus job fails, but with a "
+               "traceback. The loader of the corpus (benign_corpus.py) does not check the "
+               "keys of an event; rule_cases.py names the same clash in a sidecar case "
+               "with the rule, the line and the case.",
+        closes="R2d", today="crash")
+    def test_gap_slice_event_keys_that_differ_only_in_letter_case(self):
+        """WANTED: the gate names the slice and the two keys, and does not stop with a
+        traceback."""
+        tree = self.tree()
+        tree.plant("quality/slice_keys_differ_by_case/planted-key-case-clash.json",
+                   self.PLANTED_SLICE)
+        # The artifact is bad in one way: its one event has `eventName` and `EventName`.
+        spec = tree.read_json(self.PLANTED_SLICE)
+        (template,) = spec["templates"]
+        self.assertEqual((spec["count"], sorted(template["event"])),
+                         (1, ["EventName", "eventName", "eventSource"]))
+        # Without the key `EventName` the corpus loads and the gate scores the slice.
+        sound = self.tree()
+        sound.plant("quality/slice_keys_differ_by_case/planted-key-case-clash.json",
+                    self.PLANTED_SLICE)
+        sound.edit_json(self.PLANTED_SLICE,
+                        lambda doc: [doc["templates"][0]["event"].pop("EventName"), doc][1])
+        scored = sound.run(self.GATE, "--examples", "0")
+        self.assert_accepts(scored, r"^  planted-key-case-clash +v1 +synthetic +aws/cloudtrail "
+                                    r"+1 event\(s\)$")
+        result = self.run_ci(tree)
+        # The gate read the planted event: its output names the two keys (today in
+        # the last line of the traceback).
+        self.assert_saw(result, r"differ only by case.*\bEventName / eventName\b")
+        if result.crashed:
+            # Today. Prove the sentences of the `reason`: the error of EventTable,
+            # raised where the gate scores the slices, and no line names the slice.
+            self.assertRegex(result.stderr, r'(?m)^  File ".*score_benign\.py", line \d+, in '
+                                            r'score\b', result.describe())
+            self.assertRegex(result.stderr, r'(?m)^ValueError: event keys that differ only by '
+                                            r'case cannot share one table: ', result.describe())
+            self.assertNotIn("planted-key-case-clash", result.output, result.describe())
+        self.assert_rejects(result, r"planted-key-case-clash.*\bEventName\b.*\beventName\b"
+                                    r"|\beventName\b.*\bEventName\b.*planted-key-case-clash")
+
 
 class BenignRatchet(gatelib.GateCase):
     """The benign half of the sufficiency-ratchet job (pull requests only):
