@@ -128,17 +128,17 @@ backend (sigma_eval) and the same item-by-item grading (sigma_explain):
                    FIXTURE_CONSTANTS, each entry with its reason) identifies
                    the environment that the cases and fixtures were recorded
                    in, and the data of more than one rule share it: the AWS
-                   account 123456789012, the Azure subscription and the Entra
-                   tenants, the GCP project number and project id, and the
+                   account 123456789012 and organization o-exampleorgid, the
+                   Azure subscription and the Entra tenants, the GCP project number and project id, and the
                    name and uid of the node of the API server lab's kind
                    cluster. A rule that requires one fires in no other
                    account, subscription, tenant, project or cluster. Each
                    constant gets one replacement for the run (SystemRandom),
                    which the failure message never prints: each character of a
                    class of its form (CONSTANT_FORMS: digits; the hex digits
-                   of a GUID; the letters and digits of a name) becomes a
-                   different character of that class, other characters (`-`)
-                   stay, and the replacement is in no rule, case or fixture of
+                   of a GUID; the letters and digits of a name or, after its
+                   `o-`, of an AWS organization id) becomes a different
+                   character of that class, other characters (`-`) stay, and the replacement is in no rule, case or fixture of
                    the tree. A constant matches as a whole value (no character
                    of its classes next to it) in any case, and an upper-case
                    one (or one without a letter in an upper-case value) gets an
@@ -649,6 +649,12 @@ FIXTURE_CONSTANTS = (
         "cases and fixtures of TRR9018 and TRR9020 give the same digits to a project and an "
         "organization"),
     FixtureConstant(
+        "o-exampleorgid", "aws-organization", "AWS organization id",
+        "the AWS Organizations organization of the account of the CloudTrail cases: the "
+        "aws:PrincipalOrgID value of each org-scoped statement of the resource policies in "
+        "the cases of TRR9019 and TRR9021. The rules read whether a statement has the key, "
+        "not its value"),
+    FixtureConstant(
         "11111111-2222-3333-4444-555555555555", "guid", "Azure subscription",
         "the subscription of the Activity Log cases and fixtures of TRR9036 and of the "
         "fixtures of the managed-identity rule of TRR9013: each resourceId, scope and "
@@ -689,14 +695,19 @@ FIXTURE_CONSTANTS = (
 
 # What a renamed constant keeps: each character of one of its form's classes becomes a
 # different character of that class, and every other character (`-`) stays. So an
-# account stays 12 digits, a GUID stays a GUID and a name keeps its length and the
-# place of each letter, digit and hyphen. A character of those classes next to a
+# account stays 12 digits, a GUID stays a GUID, a name keeps its length and the
+# place of each letter, digit and hyphen, and an AWS organization id keeps its `o-`
+# (CONSTANT_PREFIXES) and its length. A character of those classes next to a
 # constant makes it part of a longer value, so a match has none on either side.
 CONSTANT_FORMS = {
     "digits": (string.digits,),
     "guid": (string.digits + "abcdef",),
     "name": (string.ascii_lowercase, string.digits),
+    "aws-organization": (string.ascii_lowercase, string.digits),
 }
+# The start of a form that the rename keeps: an AWS Organizations id is `o-` and 10
+# to 32 lowercase letters or digits (Organizations API Reference, Organization.Id).
+CONSTANT_PREFIXES = {"aws-organization": "o-"}
 
 CHECKS = ("R0", "R1", "R2", "R3", "R4")
 
@@ -1307,18 +1318,22 @@ _CONSTANT_RENAMES = {}
 def constant_renames(constants=FIXTURE_CONSTANTS):
     """{constant in lowercase: its replacement} for the run, drawn once (SystemRandom),
     so a rule cannot list the replacement. Each character of a class of the
-    constant's form (CONSTANT_FORMS) becomes a different random character of that
-    class; the replacement occurs in no rule, case or fixture of the tree and is not
+    constant's form (CONSTANT_FORMS), after the start that the form keeps
+    (CONSTANT_PREFIXES), becomes a different random character of that class; the
+    replacement occurs in no rule, case or fixture of the tree and is not
     the replacement of another constant. The failure message never prints it."""
     key = tuple(constants)
     if key not in _CONSTANT_RENAMES:
         seen, out = _tree_text(), {}
         for c in constants:
-            classes = CONSTANT_FORMS[c.form]
+            classes, kept = CONSTANT_FORMS[c.form], CONSTANT_PREFIXES.get(c.form, "")
+            if not c.value.lower().startswith(kept):
+                raise RuntimeError(f"the fixture constant {c.value!r} does not start with "
+                                   f"{kept!r}, the start of its form {c.form!r}")
             for _ in range(1000):
-                token = "".join(
+                token = kept + "".join(
                     _RANDOM.choice(pool.replace(ch, "")) if pool else ch
-                    for ch in c.value.lower()
+                    for ch in c.value.lower()[len(kept):]
                     for pool in [next((p for p in classes if ch in p), "")])
                 if token not in seen and token not in out.values():
                     break

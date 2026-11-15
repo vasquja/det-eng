@@ -434,7 +434,7 @@ class CheckSufficiency(gatelib.StartedTogether):
     PARTS = gatelib.DETECTIONS      # the gate and the validators it imports read only detections/
     RUNS = ("unregistered_rule", "no_verified_negative", "stale_waiver", "failing_case",
             "emulation_name", "name_keyed", "fixture_constant", "self_added_waiver",
-            "keyed_good", "keyed_azure_subscription", "keyed_entra_tenant",
+            "keyed_good", "keyed_aws_organization", "keyed_azure_subscription", "keyed_entra_tenant",
             "keyed_gcp_project_number", "keyed_gcp_project_id", "keyed_k8s_node_name",
             "keyed_k8s_node_uid", "keyed_together", "constant_table")
 
@@ -822,6 +822,25 @@ class CheckSufficiency(gatelib.StartedTogether):
     # (rule, text of the rule, the text with the item, the constant, its kind in the
     # table, a value of its form for the proof, the items of the message that flip).
     KEYED_ON = {
+        "aws_organization": (
+            # A statement scoped to an organization must name the organization of the
+            # recordings: that of the cases, or one that the emulation names (`o-trr`,
+            # no literal trr9NNN), as a filtered case does; without the second, that
+            # case does not hold and R3 fails the rule too. One positive holds a
+            # statement scoped to the first; the others have no aws:PrincipalOrgID
+            # condition with an organization id, so they still fire.
+            "T1537/aws_efs_file_system_policy_made_public.yml",
+            "  condition: >\n    selection_efs_policy and ",
+            "  sel_planted_org:\n"
+            "    requestParameters.policy|contains:\n"
+            "      - 'o-exampleorgid'\n"
+            "      - 'o-trr'\n"
+            "  sel_planted_org_key:\n"
+            "    requestParameters.policy|re: 'aws:PrincipalOrgID\"\\s*:\\s*\"o-'\n"
+            "  condition: >\n    (sel_planted_org or not sel_planted_org_key) and "
+            "selection_efs_policy and ",
+            "o-exampleorgid", "AWS organization id", "o-zzzzzzzzzzzz",
+            r"sel_planted_org\.requestParameters\.policy"),
         "azure_subscription": (
             # The caller holds its role at the subscription of the recordings.
             "T1098.003/azure_privileged_role_assignment.yml",
@@ -959,6 +978,10 @@ class CheckSufficiency(gatelib.StartedTogether):
                                  *cls.together_args())
 
     @classmethod
+    def begin_keyed_aws_organization(cls, tree):
+        return cls.begin_keyed(tree, "aws_organization")
+
+    @classmethod
     def begin_keyed_azure_subscription(cls, tree):
         return cls.begin_keyed(tree, "azure_subscription")
 
@@ -1012,6 +1035,9 @@ class CheckSufficiency(gatelib.StartedTogether):
                             exit_code=1)
         # One planted defect, one failure.
         self.assertEqual(len(re.findall(r"(?m)^\[R\d\]", result.stdout)), 1, result.describe())
+
+    def test_rejects_rule_keyed_on_the_aws_organization(self):
+        self.assert_rejects_rule_keyed_on("aws_organization")
 
     def test_rejects_rule_keyed_on_the_azure_subscription(self):
         self.assert_rejects_rule_keyed_on("azure_subscription")
@@ -1115,18 +1141,22 @@ class CheckSufficiency(gatelib.StartedTogether):
         self.assertEqual([c["value"] for c in table if not (c["kind"] and c["why"])], [])
         self.assertEqual(len({c["value"].lower() for c in table}), len(table))
 
-    # What the replacement of a constant keeps, by its form.
-    FORMS = {"digits": (re.compile(r"\d{12}"), (string.digits,)),
+    # What the replacement of a constant keeps, by its form: its shape, the classes
+    # of the characters that change, and the start that stays.
+    FORMS = {"digits": (re.compile(r"\d{12}"), (string.digits,), ""),
              "guid": (re.compile(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}"),
-                      (string.digits + "abcdef",)),
+                      (string.digits + "abcdef",), ""),
              "name": (re.compile(r"[a-z][a-z0-9-]*[a-z0-9]"),
-                      (string.ascii_lowercase, string.digits))}
+                      (string.ascii_lowercase, string.digits), ""),
+             "aws-organization": (re.compile(r"o-[a-z0-9]{10,32}"),
+                                  (string.ascii_lowercase, string.digits), "o-")}
 
     def test_each_replacement_keeps_the_form_and_is_in_no_rule_case_or_fixture(self):
         """Each replacement of the run keeps the form of its constant (12 digits stay
         12 digits, a GUID stays a GUID, a name keeps its length, and each of its
-        letters, digits and hyphens its place), changes each character that is not
-        `-`, and occurs in no rule, case or fixture of the tree."""
+        letters, digits and hyphens its place, an AWS organization id keeps its `o-`),
+        changes each other character that is not `-`, and occurs in no rule, case or
+        fixture of the tree."""
         good = self.good()
         texts = []
         for top in ("detections/sigma", "detections/cloud"):
@@ -1140,11 +1170,12 @@ class CheckSufficiency(gatelib.StartedTogether):
         for c in table:
             with self.subTest(constant=c["value"]):
                 old, new = c["value"].lower(), c["replacement"]
-                shape, classes = self.FORMS[c["form"]]
+                shape, classes, kept = self.FORMS[c["form"]]
                 self.assertRegex(old, "^" + shape.pattern + "$")
                 self.assertRegex(new, "^" + shape.pattern + "$")
                 self.assertEqual(len(new), len(old))
-                for was, now in zip(old, new):
+                self.assertEqual(new[:len(kept)], old[:len(kept)])
+                for was, now in zip(old[len(kept):], new[len(kept):]):
                     pool = next((p for p in classes if was in p), None)
                     if pool is None:
                         self.assertEqual(now, was)

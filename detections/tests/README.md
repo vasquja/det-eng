@@ -551,6 +551,7 @@ it does not see one test in the place of a different one.
   - `detections/sigma/T1098.003/azure_privileged_role_assignment.yml`
   - `detections/sigma/T1098.006/k8s_rbac_write.yml`
   - `detections/sigma/T1134/k8s_impersonation_privileged.yml`
+  - `detections/sigma/T1537/aws_efs_file_system_policy_made_public.yml`
   - `detections/sigma/T1537/aws_snapshot_or_ami_made_public.yml`
   - `detections/sigma/T1543.005/k8s_cri_static_pod_start.yml`
   - `detections/sigma/T1543.005/k8s_static_pod_mirror_create.yml`
@@ -581,13 +582,15 @@ it does not see one test in the place of a different one.
 
   `CheckSufficiency` (`test_sufficiency.py`) takes the positive cases of these
   sidecars, for its proof that a rule that needs one fixture constant (an account
-  id, a subscription, a tenant, a project, a node of the lab cluster) is bad:
+  id, an organization id, a subscription, a tenant, a project, a node of the lab
+  cluster) is bad:
 
   - `detections/sigma/T1078.004/aws_leaked_access_key_recon.cases.jsonl`
   - `detections/sigma/T1098.001/entra_app_federated_credential_backdoor.cases.jsonl`
   - `detections/sigma/T1098.001/gcp_workload_identity_pool_provider_created.cases.jsonl`
   - `detections/sigma/T1098.003/azure_privileged_role_assignment.cases.jsonl`
   - `detections/sigma/T1134/k8s_impersonation_privileged.cases.jsonl`
+  - `detections/sigma/T1537/aws_efs_file_system_policy_made_public.cases.jsonl`
 
   `CheckSufficiency` also reads every sidecar for the table `FIXTURE_CONSTANTS` of
   `check_sufficiency.py`: each constant of the table must occur in a sidecar. A

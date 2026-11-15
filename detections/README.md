@@ -366,16 +366,17 @@ it declares. An unrelated event cannot pass as a near-miss.
   holds one, and the unit must still fire. A fixture constant identifies the
   environment that the cases and fixtures were recorded in, and the data of more
   than one rule share it: the AWS account `123456789012` (the GCP data give the
-  same digits to a project and an organization), the Azure subscription, the Entra
-  tenants, the GCP project number and project id, and the name and the uid of the
+  same digits to a project and an organization) and its AWS organization
+  `o-exampleorgid`, the Azure subscription, the Entra tenants, the GCP project number and project id, and the name and the uid of the
   node of the API server lab's kind cluster (`apiserver-control-plane`; also
   `kind-control-plane`, the node of a kind cluster with the default name). The
   table `FIXTURE_CONSTANTS` in `check_sufficiency.py` holds each constant with its
   reason. A rule that requires one fires in no other account, subscription,
   tenant, project or cluster, and it passes every case. Each constant gets one
   random replacement for each run, of the same form: an id of 12 digits stays 12
-  digits, a GUID stays a GUID, and a name keeps its length and the place of each
-  letter, digit and hyphen. The replacement is in no rule, case or fixture of the
+  digits, a GUID stays a GUID, a name keeps its length and the place of each
+  letter, digit and hyphen, and an AWS organization id keeps its `o-` and its
+  length. The replacement is in no rule, case or fixture of the
   tree. A constant matches as a whole token, in any case: no character of its
   form is next to it (a digit for an id of digits, a hex digit for a GUID, a
   letter or a digit for a name), so `projects/745678901234/locations` holds one
