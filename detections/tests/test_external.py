@@ -2230,6 +2230,7 @@ class ExternalLoaders(gatelib.GateCase):
         out = probe(self.good(), self.DEADLINE_PROBE,
                     env={"no_proxy": "127.0.0.1", "NO_PROXY": "127.0.0.1"})
         slack = 3.0                         # a loaded runner
+        run_slack = 15.0                    # a whole run of the gate, on a loaded runner
         hang = out["hang"]
         self.assertFalse({"hang", "crash"} & set(hang), hang)
         late = [m for m, _, _ in hang["got"] if "not requested: the network deadline of the "
@@ -2266,7 +2267,12 @@ class ExternalLoaders(gatelib.GateCase):
                 run = out[name]
                 self.assertFalse({"hang", "crash"} & set(run), run)
                 self.assertEqual(run["code"], 2)
-                self.assertLess(run["elapsed"], 1.0 + slack)
+                # The count of late requests below, and the trickle run that is given up
+                # at the deadline, prove the deadline. A whole run also loads every rule
+                # and writes the report, which takes some seconds of CPU on a loaded
+                # runner (4.5 s was seen with two suites on 4 CPUs), so its time only
+                # shows that it does not hang.
+                self.assertLess(run["elapsed"], 1.0 + run_slack)
                 report = run["report"]
                 self.assertEqual(len(report["unavailable"]), datasets + 2)
                 late = [u["dataset"] for u in report["unavailable"]
