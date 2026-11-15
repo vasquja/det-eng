@@ -814,6 +814,12 @@ The `platform-coverage` job of the same workflow runs
 On a pull request it runs only when the pull request changes one of its inputs; it is
 not a required check.
 
+The `external-records` job of the same workflow runs
+`python3 detections/check_external_records.py --lint` and then the shadow report on
+every pull request, on push to `main` and weekly. A verdict never fails it; a
+structural fault does. It is not a required check (see
+[External records](#external-records-splunkattack_data)).
+
 **Weekly scheduled runs.** Each workflow file with a `schedule:` trigger (the
 cron line is in the file) runs once a week, so CI proves a rule again when only
 pySigma, the runner image or the kernel changed. GitHub can start a scheduled run

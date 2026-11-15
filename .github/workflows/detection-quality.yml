@@ -115,6 +115,13 @@ name: detection-quality
 #                      reject it; the job summary lists the known gaps. The gates
 #                      under test are those above and the validators and lints of the
 #                      other workflows, in their offline modes. Not a required check.
+#   external-records   SHADOW. Each rule on the datasets of splunk/attack_data of its
+#                      technique, pinned by a full commit and a sha256 in
+#                      detections/external/SOURCES.json (detections/
+#                      check_external_records.py; detections/README.md, "External
+#                      records"). A verdict (a MISS, a declaration that does not hold)
+#                      never fails this job; a structural fault does (exit 2). Not a
+#                      required check: roadmap item R3b makes it --enforce.
 #
 # No paths: filter on pull_request, so these checks ALWAYS report on a PR. None of
 # them is a required check in the main ruleset yet, and GitHub's native auto-merge
@@ -894,3 +901,49 @@ jobs:
         run: |
           python3 -B detections/tests/gatelib.py --run --no-skips \
             --summary "$GITHUB_STEP_SUMMARY"
+
+  external-records:
+    # SHADOW (roadmap item R3). Each rule on the datasets of splunk/attack_data of its
+    # technique (detections/README.md, "External records"). The datasets are pinned by
+    # a full commit and a sha256 in detections/external/SOURCES.json. No verdict fails
+    # this job: a MISS is a row of the report. A structural fault fails it (exit 2): a
+    # malformed SOURCES.json or expectations.json, a HASH MISMATCH, a record count or a
+    # yml at the commit that does not agree with the pin, a line that is not a record of
+    # its format, or a run that read no dataset. The job downloads the datasets on each
+    # run (about 1.4 MB from media.githubusercontent.com; the ymls, the LICENSE and the
+    # kernel's syscall table from raw.githubusercontent.com) and uses no cache action.
+    # The job summary and the uploaded report hold dataset ids, sha256 values, counts
+    # and the names of rule items, never a value of a record. No `if:`, no `needs:` and
+    # no paths filter: it runs on every pull request, push and schedule.
+    name: external-records
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install requirements
+        run: pip install --quiet -r detections/requirements.txt
+
+      - name: Lint the pins and the declarations (offline)
+        run: python3 detections/check_external_records.py --lint
+
+      - name: Run each rule on the pinned datasets of its technique (shadow)
+        # No pipe: the step's exit code is the script's.
+        run: |
+          python3 detections/check_external_records.py \
+            --markdown "$GITHUB_STEP_SUMMARY" --json "$RUNNER_TEMP/external-records.json"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: external-records-report
+          path: ${{ runner.temp }}/external-records.json
+          if-no-files-found: warn
+          retention-days: 30
