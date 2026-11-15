@@ -351,12 +351,21 @@ The validator
 [`detections/validate_cloud_detections.py`](../../../detections/validate_cloud_detections.py)
 runs each rule over the recorded attack fixture (it must fire, and the match must carry
 the `trr9022` marker) and over the benign baseline (it must fire on nothing). The benign
-baseline is hard: it includes the **same** IRSA exchange and use from the cluster's own
-NAT egress (differing only on `sourceIPAddress`), a **GitHub Actions** OIDC exchange from
-an external IP (a different provider, not `oidc.eks`), and an **EKS Pod Identity** call
-from an external IP (empty `webIdFederationData`). A pass therefore proves each rule keys
-on the off-cluster source **and** on the EKS IRSA provenance, not on the identity shape,
-the marker, or the source IP alone.
+baseline includes the **same** IRSA exchange and use from the cluster's own NAT egress
+(differing only on `sourceIPAddress`), a **GitHub Actions** OIDC exchange from an external
+IP (a different provider, not `oidc.eks`), an **EKS Pod Identity** call from an external IP
+(empty `webIdFederationData`), and the **same** exchange from a self-managed (kubeadm)
+cluster of the platform team, whose provider is an S3-hosted issuer and not `oidc.eks`
+(record #4). The NAT egress is in `203.0.113.0/24`, a documentation range that the rules
+allowlist only as a placeholder for the operator's own egress. A record that only a
+placeholder filters proves nothing about a real allowlist, so the validator does not count
+the two NAT-egress records as hard records. The hard record of the exchange rule is the
+self-managed exchange (a near-miss on `selection_eks_irsa.responseElements.provider`), and
+the hard record of the use rule is the Pod Identity call (a near-miss on
+`selection_eks_irsa.userIdentity.sessionContext.webIdFederationData.federatedProvider`). A
+pass therefore proves that each rule keys on the EKS IRSA provenance, not on the identity
+shape or the marker. The NAT-egress records show the allowlist filter at work on the
+placeholder range only.
 
 The off-cluster-IRSA detection idea has prior production art — Elastic's two rules (the
 external-ASN exchange rule and the ES|QL lateral-movement correlation on the use leg) —

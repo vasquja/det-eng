@@ -247,11 +247,14 @@ MANIFEST = [
     #     it lands in the Azure Activity Log (Microsoft.Authorization/roleAssignments/write),
     #     the same log as the TRR9013 managed-identity FIC rule above. The role + scope are
     #     only on the START record, in properties.requestbody (a JSON string), so the rule
-    #     fires on resultType '^start' -- the opposite of TRR9013's filter_start. The hard
-    #     benign (benign.json) is a Terraform grant of the non-privileged Key Vault Secrets
-    #     User role at a Key Vault (resource-group) scope, differing from the attack only on
-    #     the requestbody RoleDefinitionId + Scope. The marker 'trr9036-attacker' sits in
-    #     identity.claims.name, which the rule does not read (the rule keys on requestbody).
+    #     fires on resultType '^start' -- the opposite of TRR9013's filter_start. The benign
+    #     baseline (benign.json) holds a Terraform grant of the non-privileged Key Vault
+    #     Secrets User role at a Key Vault (resource-group) scope (records #0 and #1: they
+    #     differ in the role and the scope, so they grade distant), and the hard record #2:
+    #     the attack's Start record with the Owner role changed to Reader: of the values
+    #     that the rule tests, only the role (requestbody RoleDefinitionId) differs. The marker
+    #     'trr9036-attacker' sits in identity.claims.name, which the rule does not read
+    #     (the rule keys on requestbody).
     ("TRR9036", "T1098.003", "azure_privileged_role_assignment.yml",
      "trr9036/attack.json", "trr9036/benign.json", "Azure",
      "privileged built-in role assigned at subscription / management-group scope",
