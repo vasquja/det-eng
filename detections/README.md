@@ -1491,8 +1491,16 @@ namespace) in E's window. Controller and kubelet reads (`system:*`) are left out
 background traffic cannot flake the check. The check also fails when E did not run or
 failed, and when a matching event has no `requestReceivedTimestamp` to place it in time.
 A ledger line that does not parse, or is not a row with `trr` and `procedure`, fails
-the run, because a corrupt ledger proves nothing. The TRR9002 and TRR9003 validators
-do the same.
+the run, because a corrupt ledger proves nothing. So does a line with bytes that are
+not UTF-8, and a ledger that is a directory. A row whose start is after its end fails
+the run too, with an error that names the procedure and the two times as the ledger
+holds them (`line 2 (9004.b): the window of the procedure starts after it ends (start
+'...', end '...'), so no record can be in it: the clock that wrote the ledger is
+wrong`). Before this check, the gates of such a procedure missed rules that matched,
+and the run reported a `MISS` (2026-11-13). A start equal to the end is a window.
+After any of these problems the TRR9002, TRR9003 and API server validators judge no
+rule. A `--json` path that a validator cannot write (a directory) is an `ERROR`, and
+the run exits 1.
 
 The emulation scripts take `start` and `end` from bash (`EPOCHREALTIME`, bash 5.0 or
 later) and not from `date +%6N`. `date` of uutils coreutils 0.10.0 (Ubuntu 26.04)

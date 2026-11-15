@@ -12,8 +12,9 @@ detection-quality.yml job schedule-freshness).
     K8sValidator           detections/validate_k8s_detections.py: --dry-run, and
                            the negative-control step (--expect-miss), which must
                            get each pre-emulation log and read a record; a log
-                           line that is not a record, and a log that is a
-                           directory, fail each run
+                           line that is not a record, a log that is a directory
+                           and a ledger window whose start is after its end fail
+                           each run
     StaticPodValidator     detections/validate_staticpod_detections.py: the same
     ApiserverValidator     detections/validate_apiserver_detections.py: the same
     LogReaderText          the log reader of the three Kubernetes validators is one
@@ -269,6 +270,80 @@ def rejects_a_line_that_is_not_a_record_in_each_log(test):
             test.assert_rejects(result, rf"^ERROR: the {log} \S+/{re.escape(name)}, line "
                                         rf"{counts[source] + 1}: {NOT_A_RECORD[line][source]}$",
                                 exit_code=1)
+
+
+# The text of the ledger problem of a row with the times LATE_START and EARLY_END below.
+LEDGER_REVERSED = (r"the window of the procedure starts after it ends \(start "
+                   r"'2026-11-13T20:08:08\.317584Z', end '2026-11-13T20:08:08\.186748Z'\), so "
+                   r"no record can be in it: the clock that wrote the ledger is wrong$")
+# A ledger row of 2026-11-13 (the run of commit 9ce292f): the `date` of the runner image
+# dropped the leading zeros of the fraction, and the start of the row is after its end.
+LATE_START, EARLY_END = "2026-11-13T20:08:08.317584Z", "2026-11-13T20:08:08.186748Z"
+
+
+def ledger_rows(trr, procedures, reversed_window, instant):
+    """The rows of an emulation ledger: one for each procedure, each with a window of
+    2 s and exit 0, in order of time. The row of the procedure `reversed_window` has
+    the start LATE_START and the end EARLY_END, so its start is after its end. The row
+    of `instant` has a start equal to its end, which is a window."""
+    rows = []
+    for second, procedure in enumerate(procedures):
+        start = f"2026-11-13T20:09:{2 * second:02d}.250000Z"
+        end = f"2026-11-13T20:09:{2 * second + 2:02d}.250000Z"
+        if procedure == reversed_window:
+            start, end = LATE_START, EARLY_END
+        elif procedure == instant:
+            end = start
+        rows.append({"trr": trr, "procedure": procedure, "start": start, "end": end,
+                     "exit": 0, "expect": 0})
+    return rows
+
+
+def ledger_window_runs(test, step, rows):
+    """Two runs of `step`, the step of CI that validates on the logs of the emulation
+    with --ledger "${DETENG_LEDGER}", in good() (the test writes the logs of the step
+    first): one with the ledger `rows`, and the control, with the same rows and the
+    start and the end of each row in order. Returns (the path of the ledger `rows`,
+    its result, the result of the control)."""
+    good = test.good()
+    runs = []
+    for name, ledger in (("ledger-reversed.jsonl", rows),
+                         ("ledger-in-order.jsonl",
+                          [dict(row, start=min(row["start"], row["end"]),
+                                end=max(row["start"], row["end"])) for row in rows])):
+        write_text_log(good, name, "".join(json.dumps(row) + "\n" for row in ledger))
+        runs.append((good.tmp_path(name),
+                     good.start_step(step, env={"DETENG_LEDGER": good.tmp_path(name)})))
+    return runs[0][0], runs[0][1].result(), runs[1][1].result()
+
+
+def rejects_paths_that_the_run_cannot_use(test, *log):
+    """Three runs of a Kubernetes validator, started together, each with one path that
+    it cannot use: --ledger names a directory; --ledger names a ledger whose one row
+    holds a byte that is not UTF-8 (in the name of its procedure: with the byte
+    replaced, the row would be the row of no procedure, and the run would go on);
+    and --json names a directory, in a dry run (which exits 0 without it). `log` is
+    the option and the path of a log of the strict runs. Asserts the third run, and
+    returns (the directory, the ledger, the character of the byte in its line (from
+    1), the results of the first two runs): the caller asserts the line of each."""
+    good = test.good()
+    folder = good.tmp_path("path-that-is-a-directory")
+    os.makedirs(folder, exist_ok=True)
+    ledger = good.tmp_path("ledger-not-utf8.jsonl")
+    row = (b'{"trr": "TRR9002", "procedure": "A\xe9", "start": "2026-11-13T20:09:00.250000Z", '
+           b'"end": "2026-11-13T20:09:02.250000Z", "exit": 0, "expect": 0}')
+    with open(ledger, "wb") as fh:
+        fh.write(row + b"\n")
+    runs = [good.start(test.GATE, *log, "--ledger", folder),
+            good.start(test.GATE, *log, "--ledger", ledger),
+            good.start(test.GATE, "--dry-run", "--json", folder)]
+    results = [run.result() for run in runs]
+    for result in results[:2]:
+        test.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+    test.assert_saw(results[2], r"^Dry run OK: ")
+    test.assert_rejects(results[2], rf"^ERROR: the --json report cannot be written to "
+                                    rf"{re.escape(folder)} \(Is a directory\)\.$", exit_code=1)
+    return folder, ledger, row.index(b"\xe9") + 1, results[:2]
 
 
 class CloudValidator(gatelib.GateCase):
@@ -2245,6 +2320,39 @@ class K8sValidator(gatelib.GateCase):
     def test_rejects_strict_run_on_a_log_that_is_a_directory(self):
         strict_run_on_a_directory(self)
 
+    def test_rejects_a_ledger_window_that_starts_after_it_ends(self):
+        """The validate step of CI (a strict run with --ledger) on the records of the
+        control. The row of Procedure A has the times of a row of 2026-11-13: its start
+        is after its end, so no record can be in its window. Before, each gate of A
+        missed its rule, and nothing said that the window was wrong. The other rows
+        have a window of 2 s, and the row of E a start equal to its end, which is a
+        window. Control: the same ledger with the times of A in order is read, and
+        the rules are judged."""
+        write_log(self.good(), "kube-apiserver-audit.log", self.CASES, *self.BENIGN)
+        path, result, control = ledger_window_runs(
+            self, gatelib.ci_step("validate-k8s-detections.yml", "validate", "--ledger"),
+            ledger_rows("TRR9002", "ABCDEF", "A", "E"))
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assertEqual(len(re.findall(r"^ERROR", result.stdout, re.M)), 1, result.describe())
+        self.assert_rejects(result, rf"^ERROR: ledger {re.escape(path)} line 1 \(TRR9002\.A\): "
+                                    + LEDGER_REVERSED, exit_code=1)
+        self.assertNotRegex(control.output, r"(?m)^ERROR|Traceback")
+        self.assert_saw(control, r"^Loaded 6 ledger row\(s\) from \S+; TRR9002: A exit 0, ")
+        self.assert_saw(control, r"^(PASS|MISS)  \[A/B/C\] k8s_pod_exec_attach\.yml: ")
+
+    def test_rejects_a_ledger_or_a_json_report_path_that_the_run_cannot_use(self):
+        """A --ledger that is a directory, a ledger line that is not UTF-8, and a --json
+        path that is a directory: each is an ERROR line, not a traceback."""
+        log = write_log(self.good(), "strict-ledger-paths.log", self.CASES, *self.BENIGN)
+        self.assertGreater(log, 0)
+        folder, ledger, at, (directory, not_utf8) = rejects_paths_that_the_run_cannot_use(
+            self, "--audit-log", self.good().tmp_path("strict-ledger-paths.log"))
+        self.assert_rejects(directory, rf"^ERROR: ledger {re.escape(folder)} is a directory, not "
+                                       r"a file\.$", exit_code=1)
+        self.assert_rejects(not_utf8, rf"^ERROR: ledger {re.escape(ledger)} line 1: bytes that "
+                                      rf"are not UTF-8 \(the byte 0xe9 at character {at} of the "
+                                      r"line\)$", exit_code=1)
+
 
 class StaticPodValidator(gatelib.GateCase):
     """detections/validate_staticpod_detections.py (TRR9003, sigma/T1543.005/).
@@ -2683,6 +2791,47 @@ class StaticPodValidator(gatelib.GateCase):
 
     def test_rejects_strict_run_on_a_log_that_is_a_directory(self):
         strict_run_on_a_directory(self)
+
+    def test_rejects_a_ledger_window_that_starts_after_it_ends(self):
+        """The validate step of CI (a strict run with --ledger) on the benign records of
+        the three sensors. The row of Procedure A has the times of a row of
+        2026-11-13: its start is after its end. Before, each gate of A missed its rule
+        (MISS rows for the three rules). The row of GAP has a start equal to its end,
+        which is a window. Control: the same ledger with the times of A in order is
+        read, and the rules are judged."""
+        good = self.good()
+        for name, sidecar, cases in (
+                ("kube-apiserver-audit.log", "k8s_static_pod_mirror_create.cases.jsonl",
+                 ("user-creates-pod", "scheduler-binding")),
+                ("cri-pods.jsonl", "k8s_cri_static_pod_start.cases.jsonl",
+                 ("api-scheduled-target-pod", "coredns-deployment-pod")),
+                ("node-file-events.jsonl", "linux_static_pod_manifest_write.cases.jsonl",
+                 ("kubeadm-bootstrap-manifest", "writes-pki-not-manifests"))):
+            write_log(good, name, self.FOLDER + sidecar, *cases)
+        path, result, control = ledger_window_runs(
+            self, gatelib.ci_step("validate-staticpod-detections.yml", "validate", "--ledger"),
+            ledger_rows("TRR9003", ("A", "B", "GAP"), "A", "GAP"))
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assertEqual(len(re.findall(r"^ERROR", result.stdout, re.M)), 1, result.describe())
+        self.assert_rejects(result, rf"^ERROR: ledger {re.escape(path)} line 1 \(TRR9003\.A\): "
+                                    + LEDGER_REVERSED, exit_code=1)
+        self.assertNotRegex(control.output, r"(?m)^ERROR|Traceback")
+        self.assert_saw(control, r"^Loaded 3 ledger row\(s\) from \S+; TRR9003: A exit 0, ")
+        self.assert_saw(control, r"^(PASS|MISS)  \[A/B\] k8s_static_pod_mirror_create\.yml: ")
+
+    def test_rejects_a_ledger_or_a_json_report_path_that_the_run_cannot_use(self):
+        """A --ledger that is a directory, a ledger line that is not UTF-8, and a --json
+        path that is a directory: each is an ERROR line, not a traceback."""
+        good = self.good()
+        audit, _, _ = self.write_logs(good)
+        self.assertGreater(audit, 0)
+        folder, ledger, at, (directory, not_utf8) = rejects_paths_that_the_run_cannot_use(
+            self, "--audit-log", good.tmp_path(self.AUDIT))
+        self.assert_rejects(directory, rf"^ERROR: ledger {re.escape(folder)} is a directory, not "
+                                       r"a file\.$", exit_code=1)
+        self.assert_rejects(not_utf8, rf"^ERROR: ledger {re.escape(ledger)} line 1: bytes that "
+                                      rf"are not UTF-8 \(the byte 0xe9 at character {at} of the "
+                                      r"line\)$", exit_code=1)
 
     def test_control_strict_run_with_only_the_audit_log_skips_the_other_rules(self):
         """CONTROL of a strict run with one log (a local run on an audit log): the
@@ -3329,6 +3478,56 @@ class ApiserverValidator(gatelib.GateCase):
 
     def test_rejects_strict_run_on_a_log_that_is_a_directory(self):
         strict_run_on_a_directory(self)
+
+    def test_rejects_a_ledger_window_that_starts_after_it_ends(self):
+        """The validate step of CI (a strict run with --ledger) on the benign records of
+        the three sensors. The row of 9004.b (line 2) has the times of a row of
+        2026-11-13: its start is after its end. Before, the gates of 9004 B missed
+        their rule (`a procedure has no record of its own`), and the run judged each
+        rule before it failed on the ledger. Now it judges no rule. The row of 9004.c
+        has a start equal to its end, which is a window. Control: the same ledger with
+        the times of 9004.b in order is read, and the rules are judged."""
+        good = self.good()
+        for name, sidecar, cases in (
+                ("kube-apiserver-audit.log", "T1098.006/k8s_rbac_write.cases.jsonl",
+                 ("crb-get-recon", "selfsubjectaccessreview-can-i")),
+                ("cri-pods.jsonl", "T1053.007/k8s_cri_job_pod.cases.jsonl",
+                 ("deployment-pod", "static-pod-no-job-label")),
+                ("node-file-events.jsonl", "T1552.007/linux_k8s_sa_token_read.cases.jsonl",
+                 ("reads-ca-crt-not-token", "kubelet-writes-projected-token"))):
+            write_log(good, name, "detections/sigma/" + sidecar, *cases)
+        path, result, control = ledger_window_runs(
+            self, gatelib.ci_step("validate-apiserver-detections.yml", "validate", "--ledger"),
+            ledger_rows("TRR9004", "abc", "b", "c"))
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assertEqual(len(re.findall(r"^  \[ledger\] PROBLEM: ", result.stdout, re.M)), 1,
+                         result.describe())
+        self.assert_saw(result, r"^  \[ledger\] PROBLEM: line 2 \(9004\.b\): " + LEDGER_REVERSED)
+        self.assert_rejects(result, r"^FAILED: the emulation ledger has 1 line\(s\) that are not a "
+                                    r"usable ledger row \(see \[ledger\] PROBLEM above\); a "
+                                    r"corrupt ledger proves nothing, so no rule is judged\.$",
+                            exit_code=1)
+        self.assertNotRegex(control.output, r"(?m)PROBLEM|^ERROR|Traceback")
+        self.assert_saw(control, rf"^Loaded 3 procedure window\(s\) from the emulation ledger "
+                                 r"\S+/ledger-in-order\.jsonl$")
+        self.assert_saw(control, r"^(PASS|MISS)  \[9004 A-E,G\] k8s_rbac_write\.yml: ")
+        self.assertNotIn(path, control.output)
+
+    def test_rejects_a_ledger_or_a_json_report_path_that_the_run_cannot_use(self):
+        """A --ledger that is a directory, a ledger line that is not UTF-8 (before, the
+        byte became U+FFFD and the row was the row of no procedure), and a --json path
+        that is a directory: each is a line that names the path, not a traceback."""
+        good = self.good()
+        audit, _, _ = self.write_logs(good)
+        self.assertGreater(audit, 0)
+        folder, ledger, at, (directory, not_utf8) = rejects_paths_that_the_run_cannot_use(
+            self, "--audit-log", good.tmp_path(self.AUDIT))
+        self.assert_rejects(directory, rf"^ERROR: the emulation ledger {re.escape(folder)} is a "
+                                       r"directory, not a file\.$", exit_code=1)
+        self.assert_saw(not_utf8, r"^  \[ledger\] PROBLEM: line 1: bytes that are not UTF-8 \(the "
+                                  rf"byte 0xe9 at character {at} of the line\)$")
+        self.assert_rejects(not_utf8, r"^FAILED: the emulation ledger has 1 line\(s\) that are "
+                                      r"not a usable ledger row ", exit_code=1)
 
     def test_control_strict_run_with_only_the_audit_log_gets_no_negative_control(self):
         """CONTROL of a strict run with one log (a local run on an audit log), with

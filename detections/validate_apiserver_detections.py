@@ -170,11 +170,17 @@ Modes:
                         id the log held before is not counted again.
     --report            Report misses instead of failing on them.
     --json PATH         Also write a machine-readable report (status, detail and the
-                        explanation lines of every rule) to PATH.
+                        explanation lines of every rule) to PATH. A PATH that the run
+                        cannot write (a directory) is an ERROR, and the run exits 1.
     --ledger PATH       Emulation ledger (JSON lines, one per procedure). Binds each
                         procedure gate to its window and exit status, and runs the
-                        ABSENCE and MISS_MANIFEST checks. A missing file, or a line that
-                        does not parse, fails the run.
+                        ABSENCE and MISS_MANIFEST checks. A ledger that is missing or
+                        is a directory fails the run. So does a [ledger] PROBLEM line:
+                        a line that does not parse or is not UTF-8, and a row whose
+                        start is after its end (no record can be in that window: the
+                        clock that wrote the ledger is wrong; the line names the
+                        procedure and the two times as the ledger holds them; a start
+                        equal to the end is a window). The run then judges no rule.
     --policy NAME       The audit policy the cluster ran: lab (default; the API server
                         lab policy, detections/k8s/audit-policy-apiserver.yaml) or
                         recommended (detections/k8s/audit-policy-recommended.yaml).
@@ -1759,12 +1765,21 @@ def load_ledger(path):
     row whose start or end does not parse is kept with None, and its gates report
     'no start/end timestamp'. A second row for the same procedure (an atomic run twice)
     replaces the first and is only noted: the earlier run's records then fall outside
-    the window, so a duplicate can make a gate miss but never pass."""
+    the window, so a duplicate can make a gate miss but never pass. A line with bytes
+    that are not UTF-8 is a PROBLEM too, and so is a row whose start is after its end
+    (the clock that wrote the ledger is wrong). An OSError of open() goes to the
+    caller."""
     windows, problems, notes = {}, [], []
-    with open(path, encoding="utf-8", errors="replace") as fh:
-        for n, line in enumerate(fh, 1):
-            line = line.strip()
+    with open(path, encoding="utf-8", errors="surrogateescape") as fh:
+        for n, text in enumerate(fh, 1):
+            line = text.strip()
             if not line:
+                continue
+            bad = next((i for i, ch in enumerate(text) if 0xDC80 <= ord(ch) <= 0xDCFF), None)
+            if bad is not None:
+                problems.append(f"line {n}: bytes that are not UTF-8 (the byte "
+                                f"0x{ord(text[bad]) - 0xdc00:02x} at character {bad + 1} of the "
+                                "line)")
                 continue
             try:
                 row = json.loads(line)
@@ -1781,10 +1796,20 @@ def load_ledger(path):
                 problems.append(f"line {n} ({key[0]}.{key[1]}): exit {row.get('exit')!r} / "
                                 f"expect {row.get('expect', 0)!r} is not an integer")
                 continue
+            start, end = _ts(row.get("start")), _ts(row.get("end"))
+            if start is not None and end is not None and start > end:
+                # A window of no time at all is a window (start equal to end); a window
+                # whose start is after its end holds no record, so each gate of the
+                # procedure would miss a rule that matched (2026-11-13).
+                problems.append(f"line {n} ({key[0]}.{key[1]}): the window of the procedure "
+                                f"starts after it ends (start {row.get('start')!r}, end "
+                                f"{row.get('end')!r}), so no record can be in it: the clock "
+                                "that wrote the ledger is wrong")
+                continue
             if key in windows:
                 notes.append(f"line {n} ({key[0]}.{key[1]}): a second row for this "
                              "procedure; the later row's window is used")
-            windows[key] = (_ts(row.get("start")), _ts(row.get("end")), rc, expect)
+            windows[key] = (start, end, rc, expect)
     return windows, problems, notes
 
 
@@ -2344,7 +2369,14 @@ def main():
     code = validate(args, report)
     if args.json:
         report["exit"] = code
-        write_json(args.json, report)
+        try:
+            write_json(args.json, report)
+        except OSError as e:
+            # A --json path that is a directory, or that the run cannot write: the
+            # report that the caller asked for does not exist, so the run fails.
+            print(f"ERROR: the --json report cannot be written to {args.json} "
+                  f"({e.strerror or e}).")
+            return code or 1
     return code
 
 
@@ -2512,11 +2544,21 @@ def validate(args, report):
               "runs on the field gates only).")
         return 2
     if args.ledger:
+        if os.path.isdir(args.ledger):
+            print(f"ERROR: the emulation ledger {args.ledger} is a directory, not a file.")
+            report["ledger"] = {"path": args.ledger, "problems": ["a directory, not a file"]}
+            return 1
         if not os.path.isfile(args.ledger):
             print(f"ERROR: emulation ledger not found: {args.ledger}")
             report["ledger"] = {"path": args.ledger, "problems": ["file not found"]}
             return 1
-        ledger, ledger_problems, ledger_notes = load_ledger(args.ledger)
+        try:
+            ledger, ledger_problems, ledger_notes = load_ledger(args.ledger)
+        except OSError as e:
+            print(f"ERROR: the emulation ledger {args.ledger} cannot be read "
+                  f"({e.strerror or e}).")
+            report["ledger"] = {"path": args.ledger, "problems": [str(e)]}
+            return 1
         print(f"Loaded {len(ledger)} procedure window(s) from the emulation ledger "
               f"{args.ledger}")
         for line in ledger_notes:
@@ -2526,6 +2568,13 @@ def validate(args, report):
         report["ledger"] = {"path": args.ledger, "windows": len(ledger),
                             "problems": ledger_problems, "notes": ledger_notes}
         print()
+        if ledger_problems:
+            # As the TRR9002 and TRR9003 validators do: a rule judged on a corrupt
+            # ledger proves nothing, and its MISS rows would only mislead.
+            print(f"FAILED: the emulation ledger has {len(ledger_problems)} line(s) that are "
+                  "not a usable ledger row (see [ledger] PROBLEM above); a corrupt ledger "
+                  "proves nothing, so no rule is judged.")
+            return 1
 
     passes = misses = skipped = 0
     xmisses, xfails = 0, []
@@ -2744,11 +2793,6 @@ def validate(args, report):
             return 1
         print("Negative control held: the baseline alone does not pass any rule.")
         return 0
-    if ledger_problems:
-        print(f"FAILED: the emulation ledger has {len(ledger_problems)} line(s) that do not "
-              "parse as a ledger row (see [ledger] PROBLEM above); a corrupt ledger proves "
-              "nothing.")
-        return 1
     if absent_fail:
         print(f"FAILED: {absent_fail} absence check(s) did not prove the documented gap "
               "(an API event in the window, an untimed match, or a procedure that did not "
