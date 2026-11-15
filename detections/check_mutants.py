@@ -92,6 +92,10 @@ items: a condition with its terms in another order). An equivalent rewrite that
 the gate cannot see as equivalent (a regular expression written in another form)
 fails as a change not proven: no case can prove it, and a human decides.
 
+COST. The head and all its undo mutants share one store for each event set: its
+records and tables under each representation, and the records on which each item
+holds. An undo pays only for its own query and for the items that it changes.
+
 OUTPUT. For each mutant that is not killed:
 
   [RATCHET] <rule>: change not proven: <key>
@@ -154,6 +158,26 @@ UNORDERED_KEYS = ("group-by",)      # a list whose order the correlation does no
 
 class Fault(Exception):
     """A structural fault: the gate cannot judge (exit 2)."""
+
+
+def remember_compiles():
+    """sigma_explain compiles a rule and each of its items alone with pySigma, and an
+    undo mutant has all the items of the head but the one it changes. The query of a
+    document is a function of the document: keep each one, keyed by the JSON text of
+    the document (in its own key order), for the rest of this process."""
+    compile_doc = sigma_explain._compile_doc
+    if getattr(compile_doc, "remembers", False):
+        return
+    known = {}
+
+    def remembered(doc):
+        key = json.dumps(doc, default=str)
+        if key not in known:
+            known[key] = compile_doc(doc)
+        return known[key]
+
+    remembered.remembers = True
+    sigma_explain._compile_doc = remembered
 
 
 # ---- rule files as data ------------------------------------------------------
@@ -785,26 +809,175 @@ def kills(evidence, head, mutant):
     return bool(covered(mutant) - covered(head))        # a corpus slice gains a hit
 
 
+class Store:
+    """What one event set gives to every rule that is judged on it: its records and
+    tables under each representation, and the records on which each item holds
+    (keyed by the item's SQL). The head and all its undo mutants share one store, so
+    an undo pays only for the items that it changes and for its own query."""
+
+    def __init__(self, raw, ctx):
+        self.raw, self.ctx = raw, ctx
+        self.flat = ctx.default_records(raw)
+        self.table = sigma_eval.EventTable(self.flat)
+        self.lists = any(check_variants.has_list(e) for e in raw)
+        self.records = {}       # compact, sorted -> the flattened records
+        self.tables = {}        # input -> EventTable
+        self.inputs = {}        # compact, sorted -> the input (check_variants.Run.input_of)
+        self.holds = {}         # (input, item SQL) -> {record index}
+        self.elements = None    # the table of the multi-valued model, see element_rows()
+        self.fields = None      # the list fields of the records (lower case)
+        self.computed = 0       # item queries run on this store (the self-test reads it)
+
+    def record_input(self, variant, run):
+        if variant not in self.inputs:
+            self.inputs[variant] = check_variants.Run.input_of(run, variant)
+        return self.inputs[variant]
+
+    def item_holds(self, key, sql, table):
+        if (key, sql) not in self.holds:
+            self.computed += 1
+            self.holds[(key, sql)] = {i for hit in table.hit_indices(sql) for i in hit}
+        return self.holds[(key, sql)]
+
+    def list_fields(self):
+        _table, _base, element = self.element_rows()
+        if self.fields is None:
+            self.fields = {name for ids in element for name in ids}
+        return self.fields
+
+    def multi_holds(self, field, sql):
+        """The records on which an item on `field` holds in the multi-valued model: on
+        one element of the list when the record holds the field as a list, else on
+        the record's scalar row."""
+        if ("multi", field, sql) not in self.holds:
+            table, base, element = self.element_rows()
+            rows = self.item_holds("multi-rows", sql, table)
+            self.holds[("multi", field, sql)] = {
+                i for i in range(len(self.raw))
+                if (any(r in rows for r in element[i][field]) if element[i].get(field)
+                    else base[i] in rows)}
+        return self.holds[("multi", field, sql)]
+
+    def element_rows(self):
+        """(table, base, element) as check_variants.multi_truth() builds them: one row
+        for each record (its scalar fields) and one for each element of a list."""
+        if self.elements is None:
+            rows, base, element = [], [], []
+            for raw in self.raw:
+                scalars, lists = check_variants.split_lists(raw)
+                base.append(len(rows))
+                rows.append(scalars)
+                ids = {}
+                for name, values in lists.items():
+                    ids[name.lower()] = list(range(len(rows), len(rows) + len(values)))
+                    rows += [dict(scalars, **{name: v}) for v in values]
+                element.append(ids)
+            self.elements = (sigma_eval.EventTable(rows), base, element)
+        return self.elements
+
+
+def holding(node, sets, every):
+    """The records on which a condition tree of sigma_explain holds, from the records
+    on which each item holds: two-valued, as PlainRule.evaluate() reads a row."""
+    op = node[0]
+    if op == "id":
+        return sets[node[1]]
+    if op == "not":
+        return every - holding(node[1], sets, every)
+    parts = [holding(child, sets, every) for child in node[1]]
+    if op == "and":
+        return set.intersection(every, *parts)
+    return set().union(*parts)
+
+
+class SharedRun(check_variants.Run):
+    """check_variants.Run on a Store. It gives the same hits as Run: the tables and
+    the records on which each item holds come from the store, and the hits of the
+    multi variant are composed from sets of records, not from one row per record."""
+
+    def __init__(self, rule, sql, store):     # noqa: super().__init__ builds new tables
+        self.rule, self.sql, self.raw, self.ctx = rule, sql, store.raw, store.ctx
+        self.store = store
+        self.flat, self.table, self.lists = store.flat, store.table, store.lists
+        self.hits = check_variants._canon(self.table.hit_indices(sql))
+        self.words = check_variants.sql_words(rule, sql)
+        self._records, self._tables = store.records, store.tables
+        self._input, self._hits, self._truth, self._flips = {}, {}, {}, {}
+
+    def input_of(self, variant):
+        if variant in ("compact", "sorted") and self.ctx.shortcuts:
+            return self.store.record_input(variant, self)
+        return super().input_of(variant)
+
+    def item_sets(self, key):
+        """{atom: records on which the item holds} on one input: None (the default
+        records) or "multi" (check_variants.multi_truth(): an item on a list field
+        holds when it holds on one element)."""
+        rule = self.rule
+        if key != "multi":
+            table = self.variant_table(key)
+            return {atom: self.store.item_holds(key, sql, table) for atom, sql in rule.items.items()}
+        out = {}
+        for atom in rule.items:
+            field = (rule.item_field[atom] or "").lower()
+            if field in self.store.list_fields() and rule.item_negates(atom):
+                raise ValueError(f"item {atom} negates inside itself (`|neq`) on a list: the "
+                                 "multi-valued model does not say if one value or every value "
+                                 "must differ")
+            out[atom] = self.store.multi_holds(field, rule.item_sql(atom))
+        return out
+
+    def variant_hits(self, variant):
+        if variant != "multi" or self.rule.is_correlation or self.input_of(variant) is None:
+            return super().variant_hits(variant)
+        if variant not in self._hits:
+            every = set(range(len(self.raw)))
+            composed = [[i] for i in sorted(holding(self.rule.tree, self.item_sets(None), every))]
+            if composed != self.hits:
+                raise ValueError("internal error: the items' default values, composed "
+                                 f"through the condition, give hits {composed}; the "
+                                 f"compiled rule gives {self.hits} (report it)")
+            self._hits[variant] = [[i] for i in sorted(holding(self.rule.tree,
+                                                                self.item_sets("multi"), every))]
+        return self._hits[variant]
+
+
 class Verdicts:
     """The hits of one rule on one event set, for each representation, computed when
     asked. None: the representation cannot judge the set (check_variants.py names
     such a rule itself)."""
 
-    def __init__(self, rule, sql, evidence, ctx):
+    def __init__(self, rule, sql, evidence, ctx, store=None):
         self.rule, self.sql, self.evidence, self.ctx = rule, sql, evidence, ctx
+        self.store = store
         self.run, self.cache = None, {}
 
     def get(self, representation):
         if representation not in self.cache:
             try:
                 if self.run is None:
-                    self.run = check_variants.Run(self.rule, self.sql, self.evidence.raw, self.ctx)
+                    self.run = (check_variants.Run(self.rule, self.sql, self.evidence.raw, self.ctx)
+                                if self.store is None else
+                                SharedRun(self.rule, self.sql, self.store.get()))
                 hits = (self.run.hits if representation == "default"
                         else self.run.variant_hits(representation))
                 self.cache[representation] = {tuple(h) for h in hits}
             except Exception:  # noqa: BLE001 - that representation does not judge the set
                 self.cache[representation] = None
         return self.cache[representation]
+
+
+class LazyStore:
+    """The Store of one event set, built on first use (an undo that the first event
+    set kills needs no table of the others)."""
+
+    def __init__(self, raw, ctx):
+        self.raw, self.ctx, self.store = raw, ctx, None
+
+    def get(self):
+        if self.store is None:
+            self.store = Store(self.raw, self.ctx)
+        return self.store
 
 
 SAME_LOGIC_ITEMS = 10   # at most 3**10 assignments of the items
@@ -852,7 +1025,9 @@ class Judge:
         self.rule = model or sigma_explain.from_docs(copy.deepcopy(head_docs))
         self.sql = self.rule.sql
         self.evidence = evidence
-        self.head = [Verdicts(self.rule, self.sql, e, ctx) for e in evidence]
+        self.stores = [LazyStore(e.raw, ctx) for e in evidence]
+        self.head = [Verdicts(self.rule, self.sql, e, ctx, s)
+                     for e, s in zip(evidence, self.stores)]
         self.failing = set()        # (evidence label, representation) that the head fails
 
     def judge(self, undo):
@@ -867,8 +1042,8 @@ class Judge:
         if sql == self.sql or same_logic(self.rule, rule):
             undo.status = "equivalent"
             return rule
-        for evidence, head in zip(self.evidence, self.head):
-            mutant = Verdicts(rule, sql, evidence, self.ctx)
+        for evidence, head, store in zip(self.evidence, self.head, self.stores):
+            mutant = Verdicts(rule, sql, evidence, self.ctx, store)
             for representation in self.representations:
                 before = head.get(representation)
                 if before is None:
@@ -1028,6 +1203,7 @@ def new_rule_report(report, head_docs, ctx, evidence, model=None):
 
 def run(base_tree, ctx):
     """(reports, header facts). Raises Fault."""
+    remember_compiles()
     if not os.path.isdir(base_tree):
         raise Fault(f"--base-tree {base_tree}: no such directory (give a checkout of the base "
                     "branch)")
@@ -1138,6 +1314,7 @@ def write_json(path, reports, facts, base_tree, ctx, code):
 
 
 def self_test():
+    remember_compiles()
     results = []
 
     def check(name, cond, detail=""):
@@ -1398,6 +1575,16 @@ def self_test():
                      [Evidence("case", "p", "positive", [{"name": "abc"}])])
     check("an undo that compiles to the query of the head is equivalent",
           [s for _, s, _ in states(report)] == ["equivalent"], states(report))
+    listed = head(lambda d: d["flt"]["comm"].extend(["nc", "socat"]))
+    judge = Judge(ctx, [listed], [Evidence("case", "pos", "positive", [dict(raw, tags=["a", "b"])])])
+    for value in ("nc", "socat"):
+        docs = [copy.deepcopy(listed)]
+        docs[0]["detection"]["flt"]["comm"].remove(value)
+        judge.judge(Undo("value", "flt.comm", docs, value=value))
+    computed = judge.stores[0].get().computed
+    check("an undo pays only for the item that it changes: 3 items of the head on 2 tables "
+          "(the default records and the elements of the list `tags`), then 1 item on 2 "
+          "tables for each of the 2 undos", computed == 3 * 2 + 2 * 2, computed)
     report = verdict(base, head(lambda d: d.__setitem__("condition", "not flt and sel")), [pos])
     check("a condition with its terms in another order is equivalent (the same value for "
           "each assignment of true, false and NULL to its items)",
