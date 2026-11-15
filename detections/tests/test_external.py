@@ -490,8 +490,8 @@ class ExternalRecords(gatelib.StartedTogether):
     RUNS = ("constructed", "constructed_enforce", "hash_mismatch", "miss_enforce", "miss_shadow",
             "declared_quiet_fired", "stale_na", "known_miss_fires", "unavailable_enforce",
             "unavailable_one_shadow", "not_a_record", "count_changed", "line_not_object",
-            "not_utf8", "case_clash", "yml_technique", "twin", "twin_attack_only",
-            "self_declared", "self_declared_plain")
+            "not_utf8", "case_clash", "unstorable_value", "yml_technique", "twin",
+            "twin_attack_only", "self_declared", "self_declared_plain")
     STEP = ("detection-quality.yml", "external-records", f"{GATE} --markdown")
 
     @classmethod
@@ -623,6 +623,15 @@ class ExternalRecords(gatelib.StartedTogether):
     def begin_case_clash(cls, tree):
         record = case(tree, "snapshot", SET["snapshot"][4])["events"][0]
         record["EventName"] = record["eventName"]       # a second spelling of one key
+        cls.standard(tree, snapshot=jsonl([record]))
+        return cls.start_gate(tree)
+
+    @classmethod
+    def begin_unstorable_value(cls, tree):
+        # An integer that one SQLite table cannot hold (above 2**63 - 1): the table of
+        # sigma_eval.py stops with OverflowError when the gate does not refuse it first.
+        record = case(tree, "snapshot", SET["snapshot"][4])["events"][0]
+        record["planted"] = 2 ** 70
         cls.standard(tree, snapshot=jsonl([record]))
         return cls.start_gate(tree)
 
@@ -818,6 +827,13 @@ class ExternalRecords(gatelib.StartedTogether):
         self.assert_rejects(result, rf"^ERROR {self.id_of('snapshot')}: keys that differ only in "
                             r"letter case: 'EventName' \(line 1\) / 'eventName' \(line 1\)\.",
                             exit_code=2)
+
+    def test_rejects_a_value_that_the_table_cannot_hold(self):
+        _, result = self.started("unstorable_value")
+        self.assert_rejects(result, rf"^ERROR {self.id_of('snapshot')}: line 1: the key 'planted' "
+                            r"holds an integer outside the signed 64-bit range of the table "
+                            r"\(SQLite INTEGER\)$", exit_code=2)
+        self.assertEqual(result.output.count("ERROR "), 1, result.describe())
 
     def test_rejects_techniques_that_are_not_those_of_the_yml(self):
         _, result = self.started("yml_technique")

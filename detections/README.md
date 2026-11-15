@@ -1826,8 +1826,10 @@ prints a draft for each `MISS`; its why starts with `TODO`, which the gate refus
 every mode: a malformed `SOURCES.json`, `expectations.json` or syscall table, a
 declaration for a rule or a dataset that does not exist, a `HASH MISMATCH` (a cached
 file of other bytes is deleted), a record count that is not the pin, a line that is
-not a record of its format, keys that differ only in letter case, a yml at the commit
-that does not agree with its entry, and a run that read no dataset. `--enforce`
+not a record of its format, a key or a value that one SQLite table cannot hold (an
+integer outside 64 bits, a NUL character, a lone surrogate, the key `_rowid`, a number
+that is not finite), keys that differ only in letter case, a yml at the commit that
+does not agree with its entry, and a run that read no dataset. `--enforce`
 (roadmap item R3b) also exits 1 on a `MISS` without a declaration and on a
 declaration that does not hold, and 2 on an `UNAVAILABLE` dataset.
 

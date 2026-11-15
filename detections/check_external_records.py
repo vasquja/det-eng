@@ -68,9 +68,11 @@ Exit codes:
   2  in every mode, a structural fault: a malformed SOURCES.json, expectations.json
      or syscall table, a declaration for a rule or a dataset that does not exist, a
      HASH MISMATCH (also of a cached file, which is deleted), a record count that
-     is not the pinned count, a line that is not a record of its format, keys that
-     differ only in letter case, a yml at the commit that does not agree with its
-     entry, a rule that does not compile, or a run in which no dataset was read. With
+     is not the pinned count, a line that is not a record of its format, a key or a
+     value that one SQLite table cannot hold (an integer outside 64 bits, a NUL, a
+     lone surrogate, the key _rowid, a number that is not finite), keys that differ
+     only in letter case, a yml at the commit that does not agree with its entry, a
+     rule that does not compile, or a run in which no dataset was read. With
      --enforce, an UNAVAILABLE dataset too.
 
 Usage:
@@ -527,8 +529,16 @@ def evaluate(report, ds, routed, rules, decls, stale, tables):
             continue
         key = (ds["id"], rule.logsource)
         if key not in tables:
-            tables[key] = sigma_eval.EventTable([r.event for r in records])
+            try:
+                tables[key] = sigma_eval.EventTable([r.event for r in records])
+            except Exception as e:      # noqa: BLE001 (a backstop: read_dataset refuses first)
+                tables[key] = None
+                report.error(f"{ds['id']}: the {rule.source_name} records cannot go into one "
+                             f"table ({type(e).__name__}); the loader must refuse such a "
+                             "record by its line (a fault of the gate)")
         table = tables[key]
+        if table is None:
+            continue
         events, wheres = [r.event for r in records], [r.where for r in records]
         try:
             hits = table.hit_indices(rule.sql())

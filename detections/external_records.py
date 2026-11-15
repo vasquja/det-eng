@@ -569,6 +569,8 @@ def _json_values(entry_id, text, envelope):
         doc = json.loads(text)
     except ValueError:
         pass
+    except RecursionError:
+        raise Fault(f"{entry_id}: the file nests JSON values too deep to read") from None
     else:
         if isinstance(doc, list):
             return [(f"record {n}", v) for n, v in enumerate(doc, 1)]
@@ -586,7 +588,63 @@ def _json_values(entry_id, text, envelope):
         except ValueError as e:
             raise Fault(f"{entry_id}: line {n} is not JSON ({e.msg} at column {e.colno})") \
                 from None
+        except RecursionError:
+            raise Fault(f"{entry_id}: line {n} nests JSON values too deep to read") from None
     return out
+
+
+# The range of an SQLite INTEGER. sigma_eval.EventTable stops with OverflowError on an
+# integer outside it.
+INT64 = (-2 ** 63, 2 ** 63 - 1)
+
+
+def _key_fault(key):
+    """Why sigma_eval.EventTable cannot hold this key as a column, or None."""
+    if key.lower() == sigma_eval._ROWID:
+        return "is the name of the row id of the table (sigma_eval.EventTable)"
+    if "\x00" in key:
+        return "holds a NUL character (SQLite refuses it in a column name)"
+    try:
+        key.encode("utf-8")
+    except UnicodeEncodeError:
+        return "holds a lone surrogate (it is not UTF-8)"
+    return None
+
+
+def _value_fault(value):
+    """Why the table cannot hold this value as it is, or None (no value is printed)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        if not INT64[0] <= value <= INT64[1]:
+            return "holds an integer outside the signed 64-bit range of the table (SQLite INTEGER)"
+    elif isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            return ("holds a number that is not finite (NaN or an infinity; SQLite keeps "
+                    "NaN as NULL)")
+    elif isinstance(value, str):
+        if "\x00" in value:
+            return ("holds text with a NUL character (the text functions of SQLite stop at "
+                    "it, so a rule does not see the text after it)")
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            return "holds text with a lone surrogate (it is not UTF-8)"
+    return None
+
+
+def unstorable(entry_id, records):
+    """A Fault for the first key or value of a record that one SQLite table (the table
+    of sigma_eval.py that runs the rules) cannot hold as it is. The Fault names the
+    record and the key, never the value."""
+    for r in records:
+        for key, value in r.event.items():
+            why = _key_fault(key)
+            if why:
+                raise Fault(f"{entry_id}: {r.where}: the key {key!r} {why}")
+            why = _value_fault(value)
+            if why:
+                raise Fault(f"{entry_id}: {r.where}: the key {key!r} {why}")
 
 
 def _cloudtrail(record):
@@ -647,7 +705,8 @@ def read_dataset(entry, data, syscalls):
     """(records, other): the Records of a dataset in its format, and the number of
     records of the log that are not events of the rules' schema (an auditd record of
     another type than SYSCALL). A Fault names a line or a record that is not a record
-    of the format, and keys of one log source that differ only in letter case."""
+    of the format, a key or a value that one SQLite table cannot hold, and keys of one
+    log source that differ only in letter case."""
     entry_id, fmt = entry["id"], entry["format"]
     text = _text(entry_id, data)
     if fmt == "auditd-raw":
@@ -663,7 +722,12 @@ def read_dataset(entry, data, syscalls):
                 logsource = shape(value)
             except ValueError as e:
                 raise Fault(f"{entry_id}: {where} {e}") from None
-            records.append(Record(where, logsource, sigma_eval.flatten(value)))
+            try:
+                event = sigma_eval.flatten(value)
+            except RecursionError:
+                raise Fault(f"{entry_id}: {where} nests objects too deep to read") from None
+            records.append(Record(where, logsource, event))
+    unstorable(entry_id, records)
     case_clashes(entry_id, records)
     return records, other
 
