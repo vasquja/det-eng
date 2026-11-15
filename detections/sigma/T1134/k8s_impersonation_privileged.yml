@@ -11,10 +11,20 @@ description: |
   service account. Impersonating any of these is an identity-swap straight to
   cluster control, attributed to the borrowed identity.
 
-  impersonatedUser.groups is a JSON-serialized array in the audit backend, so the
-  group match uses |contains. The privileged-user matches are split into separate
-  selections (an exact-name list and a kube-system service-account prefix) and
-  OR-ed, because two keys in one selection would be AND-ed and never match.
+  impersonatedUser.groups is a list. A store can keep it as JSON text, or give the
+  field one value for each group. So sel_priv_groups has two |re values for the
+  same group names: one value with the JSON quotes of an element (the list as
+  text), and one value anchored with ^ and $ (one value for each element). Each
+  value holds for one of the two forms. Neither value matches a longer group name
+  that has no quote and no line break in it (SEMANTICS.md section 4). A group name
+  that holds a listed name in quotes matches the value with the quotes: on a
+  multi-valued field (x"system:masters"y), and in the list text when the listed
+  name follows a quote inside the group name and ends it (x"cluster-admin). A |re
+  value compares letter case; the comment of sel_priv_groups says why that is
+  right for a group name. The privileged-user matches are split into
+  separate selections (an exact-name list and a kube-system service-account
+  prefix) and OR-ed, because two keys in one selection would be AND-ed and never
+  match.
 
   This is an add-on, not a replacement: an unlisted but powerful target is still
   caught by the base chokepoint rule. Metadata level is enough.
@@ -34,10 +44,24 @@ detection:
   select_impersonation:
     impersonatedUser.username: '*'
   sel_priv_groups:
-    impersonatedUser.groups|contains:
-      - '"system:masters"'
-      - '"cluster-admin"'
-      - '"system:cluster-admins"'
+    # Value 1 reads the list as JSON text (an element in its quotes). Value 2
+    # reads one value of a multi-valued field (the whole value).
+    # Letter case: the API server keeps each Impersonate-Group value as the
+    # client sent it, and its authorizers compare a group name with Go string
+    # equality (==). Source, kubernetes/kubernetes v1.36.4:
+    #   staging/src/k8s.io/apiserver/pkg/endpoints/filters/impersonation/
+    #   impersonation.go L97-99 and L229-231 (each header value is a group of
+    #   the impersonated user; L170 writes that user to the audit event);
+    #   staging/src/k8s.io/apiserver/pkg/authorization/authorizerfactory/
+    #   builtin.go L82 (system:masters: priv_group == attr_group);
+    #   pkg/registry/rbac/validation/rule.go L272-287 (a Group subject of a
+    #   binding: has(), s == ele).
+    # So a group name in another letter case does not get the access of a group
+    # that this item names, and a match that compares letter case is correct.
+    # A webhook authorizer can compare names in another way: not verified.
+    impersonatedUser.groups|re:
+      - '\"(system:masters|cluster-admin|system:cluster-admins)\"'
+      - '^(system:masters|cluster-admin|system:cluster-admins)$'
   sel_priv_users:
     impersonatedUser.username:
       - 'system:admin'

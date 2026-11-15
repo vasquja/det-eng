@@ -335,8 +335,8 @@ Refused installs:
 Match an accepted (`200`) `update` or `patch` of an installed MutatingWebhookConfiguration
 or ValidatingWebhookConfiguration whose request body sets a webhook's `clientConfig.url`.
 The rule reads the object-shaped body (PUT, strategic merge, JSON merge, client-side
-and server-side apply) with `|contains` against the serialized `webhooks` array, and
-the JSON-patch operation list with a small `|re` set. The set folds the case of the URL
+and server-side apply) with one `|re` value against the serialized `webhooks` array, and
+the JSON-patch operation list with a small `|re` set. Each value folds the case of the URL
 scheme with character classes (`[hH][tT][tT][pP]`), not with `|re|i`, because pySigma
 renders `|re|i` as `(?i)`, which Lucene reads as literal text. In that set the webhook index is
 any path token, because the API server's JSON patch library (`json-patch.v4` v4.13.0)
