@@ -337,8 +337,9 @@ slice of the benign corpus still end `score_benign.py` with a traceback (see
   the file and reads no rule. The guard and R0 are two implementations of one rule
   (R0 cannot import the guard), and a gate test plants each kind of name and
   compares the two lists. The walkers of `detections/sigma/` that do not use the
-  globs take the list of the guard (`sigma_eval.rule_files()`): the coverage report
-  and `k8s_policy_coverage.py`. `check_sigma_regex.py`, which does not import
+  globs take the list of the guard (`sigma_eval.rule_files()`): the coverage report,
+  `k8s_policy_coverage.py` and the self-test of `pipelines/convert_k8s.py` (it gets
+  the list before it prints a line). `check_sigma_regex.py`, which does not import
   `sigma_eval.py`, fails on a name that starts with a dot. `sigma check` (sigma-cli)
   reads a dotfile as a rule. The guard runs only when `sigma_eval.py` is first
   imported. It cannot stop a module that a script imports before it

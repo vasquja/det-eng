@@ -508,17 +508,24 @@ class SigmaEvalImportGuard(gatelib.GateCase):
                       "detections/ (R0); no rule was checked.\n", r0.stdout)
 
     # The rule lists of the walkers that do not use the globs: sigma_eval.rule_files()
-    # (the list of the guard), k8s_policy_coverage.audit_rules() and
-    # coverage_report.rule_paths(). The snippet imports the three modules in a sound
-    # copy (so the guard passes), then puts a copy of a Kubernetes audit rule under
-    # names that the guard refuses, and prints each list before and after.
+    # (the list of the guard), k8s_policy_coverage.audit_rules(),
+    # coverage_report.rule_paths() and convert_k8s.audit_rule_paths() (the self-test of
+    # the converter). The snippet imports the four modules in a sound copy (so the
+    # guard passes), then puts a copy of a Kubernetes audit rule under names that the
+    # guard refuses, and prints each list before and after.
     RULE_LISTS = (
-        "import json, os, shutil, sys\n"
+        "import importlib.util, json, os, shutil, sys\n"
         "sys.path[:0] = ['detections', 'research/tools']\n"
         "import sigma_eval, k8s_policy_coverage, coverage_report\n"
+        "spec = importlib.util.spec_from_file_location(\n"
+        "    'convert_k8s', 'detections/pipelines/convert_k8s.py')\n"
+        "convert_k8s = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(convert_k8s)\n"
         "def lists():\n"
         "    return [sigma_eval.rule_files(), k8s_policy_coverage.audit_rules(),\n"
-        "            coverage_report.rule_paths()]\n"
+        "            coverage_report.rule_paths(),\n"
+        "            [os.path.relpath(path, convert_k8s.SIGMA_DIR)\n"
+        "             for path in convert_k8s.audit_rule_paths()]]\n"
         "before = lists()\n"
         "real = 'detections/sigma/T1609/k8s_pod_exec_attach.yml'\n"
         "for name in sys.argv[1:]:\n"
@@ -532,7 +539,9 @@ class SigmaEvalImportGuard(gatelib.GateCase):
 
     # Each gate that reads the rules and imports sigma_eval, with the command of CI
     # (R0 of check_sufficiency.py has its own test in CheckSufficiency, the lint
-    # check_sigma_regex.py in test_validators.SigmaRegexLint).
+    # check_sigma_regex.py in test_validators.SigmaRegexLint). The self-test of
+    # detections/pipelines/convert_k8s.py needs pySigma-backend-kusto, which the suite
+    # does not install: RULE_LISTS tests the rule list of that self-test.
     GUARDED_GATES = (
         ("detections/rule_cases.py",),
         ("detections/score_benign.py", "--check", "--enforce"),
@@ -552,7 +561,8 @@ class SigmaEvalImportGuard(gatelib.GateCase):
     def test_every_gate_that_reads_the_rules_refuses_a_hidden_rule(self):
         """The hidden pair of RuleCases.test_rejects_hidden_rule_file stops each gate
         of GUARDED_GATES at the guard, which names the two files, before the gate
-        reads a rule. No gate reads the rules without the guard."""
+        reads a rule. No gate reads the rules without the guard (for the self-test of
+        convert_k8s.py, see RULE_LISTS)."""
         tree = self.tree(*gatelib.ALL)
         tree.plant("sufficiency/hidden_rule/hidden.yml", "detections/sigma/T1040/.hidden.yml")
         tree.plant("sufficiency/hidden_rule/hidden.cases.jsonl",
@@ -581,10 +591,11 @@ class SigmaEvalImportGuard(gatelib.GateCase):
         lists = json.loads(result.stdout)
         # Not vacuous: before the plant, each list holds the real rule; the list of
         # the guard and that of the report are the rules of the copy.
-        before_guard, before_k8s, before_report = lists["before"]
+        before_guard, before_k8s, before_report, before_convert = lists["before"]
         self.assertEqual(sorted(before_guard), rules)
         self.assertEqual(before_report, rules)
         self.assertIn("T1609/k8s_pod_exec_attach.yml", before_k8s)
+        self.assertIn("T1609/k8s_pod_exec_attach.yml", before_convert)
         self.assertEqual(lists["after"], lists["before"], "a walker reads a name that the "
                          "guard refuses as a rule")
 

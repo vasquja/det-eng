@@ -527,7 +527,9 @@ it does not see one test in the place of a different one.
   names in its table `NOT_RULE_MATERIAL` (and `RULE_MATERIAL`). A kind of name that
   is not in the table can be refused by one of the two and not by the other: add
   each new kind to the table. `sigma check` (sigma-cli, not run by the suite) reads a
-  rule in a dotfile.
+  rule in a dotfile. The suite does not run the self-test of
+  `pipelines/convert_k8s.py`, which needs pySigma-backend-kusto: `SigmaEvalImportGuard`
+  tests its rule list, and not its run.
 - `tree.run_step()` runs the `run:` text of a step. It models the shell of the
   step: `bash -e` when the step has no `shell:`, and bash with `-eo pipefail`
   for `shell: bash`. It also models `/tmp/`, the files behind
