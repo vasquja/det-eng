@@ -11,8 +11,12 @@ description: |
   It keys on two things. First, the method is in the set-IAM-policy family: the GCS
   quirk storage.setIamPermissions, the bare SetIamPolicy (project/folder/org), and
   the service forms google.cloud.run.v2.Services.SetIamPolicy,
-  iam.serviceAccounts.setIamPolicy, v1.compute.*.setIamPolicy, etc. -- matched
-  case-insensitively by the suffixes setiampolicy / setiampermissions. Second, a
+  iam.serviceAccounts.setIamPolicy, v1.compute.*.setIamPolicy, etc. -- matched by the
+  endings SetIamPolicy and setIamPermissions. Sigma matches without regard to letter
+  case, so the two endings cover the whole family. They are written in the letter case
+  of the records (C18), so a store whose match is case-sensitive still matches the GCS
+  method and the service forms that end in SetIamPolicy; for the forms in another
+  letter case (setIamPolicy), such a store needs a lower-case function. Second, a
   public principal is newly granted, evaluated over BOTH shapes: the delta path
   (protoPayload.serviceData.policyDelta.bindingDeltas, action ADD, member singular --
   GCS and legacy services) and the request path
@@ -48,9 +52,13 @@ logsource:
   service: gcp.audit
 detection:
   selection_set_iam:
+    # The endings in the letter case that the sources show (C18): rpc SetIamPolicy of
+    # service Services, package google.cloud.run.v2 (googleapis, service.proto), and
+    # "methodName": "storage.setIamPermissions" (a Cloud Storage audit record that
+    # Google Cloud publishes). The default match ignores letter case.
     protoPayload.methodName|endswith:
-      - 'setiampolicy'
-      - 'setiampermissions'
+      - 'SetIamPolicy'
+      - 'setIamPermissions'
   public_added_in_delta:
     # A public member inside an action==ADD delta object (bounded to one {...} object),
     # so a REMOVE of a public member does not fire. Portable regex (no lookahead): one

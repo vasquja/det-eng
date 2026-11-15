@@ -378,6 +378,11 @@ GitHub's auto-merge waits only for required checks. Until `null-safety` is
 required, a pull request can merge while that check is red. The check runs on each
 pull request (its workflow has no path filter), so it is safe to require.
 
+`representation-variants` (the representation gate, `detections/check_variants.py`)
+is a candidate in the same way: it is a job of the same workflow. You decide. To
+require it, do this step again with `representation-variants` in place of
+`null-safety`, after the job has run on `main`.
+
 First look at the check on `main`:
 
 ```bash
