@@ -562,10 +562,12 @@ def judge_hard(rule, key, benign, verdicts, ours):
     return bool(counted), counted, skipped
 
 
-def grade_benign(rule, benign, ours, key):
+def grade_benign(rule, benign, ours=(), key=None):
     """Grade every benign record against the rule, and judge whether the baseline is
     hard (judge_hard()): (one-line summary, details). `ours` are the marked attack
-    hits, and `key` is the rule's <folder>/<file> (for CHOKEPOINT)."""
+    hits, and `key` is the rule's <folder>/<file> (for CHOKEPOINT). Without marked
+    attack hits (the self-test of check_null_safety.py grades a constructed rule) the
+    detail says hard None: not judged."""
     rule = rule.stripped()  # without null guards and copies: no items of the rule
     verdicts = sigma_explain.judge_events(rule, benign)
     kinds = {}
