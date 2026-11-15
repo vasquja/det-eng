@@ -32,6 +32,11 @@ import sys
 # there would replace pySigma's own module inside every gate and validator. So
 # before pySigma is imported, the rule directory must hold only rule material:
 # T<id>/ directories of *.yml, *.cases.jsonl and *.md files, nothing else.
+# No name there may start with a dot: the gates find the rules with the globs
+# */*.yml and */*.cases.jsonl, which skip such a name, so a rule in a dotfile
+# would pass every gate unchecked. R0 of check_sufficiency.py refuses the same
+# names (a gate test plants each kind of name and compares the two lists), and
+# rule_files() below lists the rules by the same rule.
 # A module named `sigma` NEXT TO the rule directory is worse: in one sys.path entry
 # a module (sigma.py, a sourceless sigma.pyc, sigma.so, ...) wins over a namespace
 # portion, so it replaces pySigma whole. So detections/ may hold nothing else named
@@ -46,28 +51,47 @@ import sys
 _DETECTIONS = os.path.dirname(os.path.abspath(__file__))
 _RULE_DIR = os.path.join(_DETECTIONS, "sigma")
 _TECHNIQUE_DIR = re.compile(r"T\d{4}(\.\d{3})?")
-_RULE_MATERIAL = re.compile(r".+\.(yml|cases\.jsonl|md)")
+_RULE_MATERIAL = re.compile(r"[^.][^/]*\.(yml|cases\.jsonl|md)")
 _COMPILED_SUFFIXES = tuple(s.lower() for s in importlib.machinery.BYTECODE_SUFFIXES
                            + importlib.machinery.EXTENSION_SUFFIXES)
 
 
-def _rule_dir_intruders():
-    """Entries under detections/sigma/ that are not rule material."""
-    bad = []
+def _scan_rule_dir():
+    """(material, bad): the rule material under detections/sigma/ as `T<id>/<name>`
+    paths, and the entries that are not rule material, in the order of the walk
+    (each directory sorted by name)."""
+    material, bad = [], []
     try:
         entries = sorted(os.scandir(_RULE_DIR), key=lambda e: e.name)
     except FileNotFoundError:
-        return bad
+        return material, bad
     for entry in entries:
-        if entry.is_file(follow_symlinks=False) and entry.name.endswith(".md"):
+        if (entry.is_file(follow_symlinks=False) and entry.name.endswith(".md")
+                and not entry.name.startswith(".")):
             continue  # a top-level README cannot shadow a module
         if not (entry.is_dir(follow_symlinks=False) and _TECHNIQUE_DIR.fullmatch(entry.name)):
             bad.append(entry.name)
             continue
         for item in sorted(os.scandir(entry.path), key=lambda e: e.name):
-            if not (item.is_file(follow_symlinks=False) and _RULE_MATERIAL.fullmatch(item.name)):
-                bad.append(f"{entry.name}/{item.name}")
-    return bad
+            name = f"{entry.name}/{item.name}"
+            if item.is_file(follow_symlinks=False) and _RULE_MATERIAL.fullmatch(item.name):
+                material.append(name)
+            else:
+                bad.append(name)
+    return material, bad
+
+
+def _rule_dir_intruders():
+    """Entries under detections/sigma/ that are not rule material."""
+    return _scan_rule_dir()[1]
+
+
+def rule_files():
+    """Every rule file, as a `T<id>/<stem>.yml` path relative to detections/sigma/, in
+    the order of the walk of the import guard: the rule material that ends in .yml.
+    A name that the guard refuses is never in the list (a file that appeared after
+    the import, too)."""
+    return [p for p in _scan_rule_dir()[0] if p.endswith(".yml")]
 
 
 def _sibling_intruders():
@@ -89,10 +113,12 @@ _intruders = ([f"sigma/{p}" for p in _rule_dir_intruders()]
               + _sibling_intruders())
 if _intruders:
     sys.exit("refusing to import pySigma: detections/sigma/ may hold only *.md files "
-             "and T<id>/ directories of *.yml, *.cases.jsonl and *.md files, and nothing "
-             "else in detections/ may be named sigma.* (sigma.py, sigma.pyc, sigma.so, "
-             "sigma.pth, __pycache__/sigma.*, ...), because the rule directory shares the "
-             "`sigma` package namespace with pySigma: anything importable there would "
+             "and T<id>/ directories of *.yml, *.cases.jsonl and *.md files, and no name "
+             "there may start with a dot (the gates find the rules with the globs */*.yml "
+             "and */*.cases.jsonl, which skip such a name, so no gate would check a rule in "
+             "it); nothing else in detections/ may be named sigma.* (sigma.py, sigma.pyc, "
+             "sigma.so, sigma.pth, __pycache__/sigma.*, ...), because the rule directory "
+             "shares the `sigma` package namespace with pySigma: anything importable there would "
              "shadow pySigma's own modules, and a `sigma` module beside it would replace "
              "pySigma whole. Nor may any file in detections/ be compiled bytecode or an "
              "extension module (" + ", ".join("*" + s for s in _COMPILED_SUFFIXES) + "): "
