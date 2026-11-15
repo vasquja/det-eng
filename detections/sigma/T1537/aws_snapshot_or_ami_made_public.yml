@@ -22,17 +22,20 @@ description: |
   valuesToRemove) is a de-exposure and is intentionally excluded.
 
   Field-model note: each add-list is a JSON array. The two EC2 items match the element
-  {"group": "all"} as text, in the spaced and in the compact encoding (in a store that
-  gives the field one value for each element, an element that is an object is still its
-  JSON text). The elements of valuesToAdd (RDS) and of the legacy userGroups and
-  groupNames are strings, so each of these three items has two |re values:
-  \"[aA][lL][lL]\" reads the list as JSON text (the element all in its quotes), and
-  ^[aA][lL][lL]$ reads one value of a multi-valued field (the value all and nothing
-  more). The character classes accept each letter case, because a |re value compares
-  letter case. No case of the sidecar holds a legacy record, and no source in this
-  repository gives its shape: the two legacy selections are not proven by a case. Pair
-  with the image/snapshot ID and whether the resource holds sensitive data before
-  paging.
+  {"group": "all"} as text, in the spaced and in the compact encoding (in the gate's
+  variant multi an element that is an object is its JSON text; a store that explodes a
+  list of objects into leaf fields, such as Elasticsearch, has no value in this field:
+  SEMANTICS.md section 4). A structured backend should test the element membership
+  directly. The elements of valuesToAdd (RDS) are strings; in the EC2 API model the
+  elements of the legacy userGroups and groupNames are strings too, and the CloudTrail
+  form of those two fields is unverified. Each of these three items has two |re values
+  for a list of strings: \"[aA][lL][lL]\" reads the list as JSON text (the element all
+  in its quotes), and ^[aA][lL][lL]$ reads one value of a multi-valued field (the value
+  all and nothing more). The character classes accept each letter case, because a |re
+  value compares letter case. No case of the sidecar holds a legacy record, and no
+  source in this repository gives its shape: the two legacy selections are not proven
+  by a case. Pair with the image/snapshot ID and whether the resource holds sensitive
+  data before paging.
 references:
   - https://attack.mitre.org/techniques/T1537/
   - https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_ModifyImageAttribute.html

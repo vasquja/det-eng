@@ -88,7 +88,8 @@ detection:
   # space on each side of the colon, and the scheme with character classes (a
   # |contains value holds an upper-case scheme only on a store that ignores letter
   # case; the API server accepts HTTPS://). The key url is matched in lower case
-  # only: the API server decodes a JSON key with its letter case (closed entry K71).
+  # only: the API server decodes the key of a full object with its letter case; for
+  # the server-side-apply patch it is unverified (closed entry K71).
   sel_offcluster_url:
     requestObject.webhooks|re: '\"url\"\s*:\s*\"[hH][tT][tT][pP]'
   condition: (select_webhook_create or select_webhook_ssa_create) and sel_offcluster_url

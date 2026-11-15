@@ -15,9 +15,13 @@ description: |
   field one value for each group. So sel_priv_groups has two |re values for the
   same group names: one value with the JSON quotes of an element (the list as
   text), and one value anchored with ^ and $ (one value for each element). Each
-  value holds for one of the two forms, and neither value matches a longer group
-  name. A |re value compares letter case; the comment of sel_priv_groups says why
-  that is right for a group name. The privileged-user matches are split into
+  value holds for one of the two forms. Neither value matches a longer group name
+  that has no quote and no line break in it (SEMANTICS.md section 4). A group name
+  that holds a listed name in quotes matches the value with the quotes: on a
+  multi-valued field (x"system:masters"y), and in the list text when the listed
+  name follows a quote inside the group name and ends it (x"cluster-admin). A |re
+  value compares letter case; the comment of sel_priv_groups says why that is
+  right for a group name. The privileged-user matches are split into
   separate selections (an exact-name list and a kube-system service-account
   prefix) and OR-ed, because two keys in one selection would be AND-ed and never
   match.
