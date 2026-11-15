@@ -279,6 +279,8 @@ class RuleCases(gatelib.GateCase):
         ("no name", lambda case: case.pop("name"), r"missing name"),
         ("breaks that names no atom", lambda case: case.update(breaks={"sel.a1": True}),
          CASE + r"`breaks` must be an atom name or a list of atom names \(strings\)"),
+        ("breaks with an atom that is no string", lambda case: case.update(breaks=[1]),
+         CASE + r"`breaks` must be an atom name or a list of atom names \(strings\)"),
     )
 
     def test_rejects_case_line_that_is_not_a_case(self):
@@ -340,9 +342,10 @@ class RuleCases(gatelib.GateCase):
 
     # One changed near-miss (the second line of the sound sidecar), whose events
     # cannot be put in one event table, and the words of the gate for it. Without
-    # the check, a clash ends the gate with a traceback of EventTable, the null event
-    # with one of flatten() and `_ROWID` with one of sqlite3; `_rowid` and the two
-    # keys that flatten to one pass, and the gate judges an event that lost a value.
+    # the check, a clash ends the gate with a traceback of EventTable, an event that
+    # is not an object (null, a number, an array, a string) with one of flatten() and
+    # `_ROWID` with one of sqlite3; `_rowid` and the two keys that flatten to one
+    # pass, and the gate judges an event that lost a value.
     BAD_EVENTS = (
         # `comm` in the first event and `Comm` in the second: no event holds both.
         ("keys of two events", lambda event: [event, dict(
@@ -353,6 +356,12 @@ class RuleCases(gatelib.GateCase):
          r"event keys that differ only by case: proc\.Comm / proc\.comm \("),
         ("an event that is null", lambda event: [event, None],
          r"event 2 of 2 is not a JSON object \(null\): an event is one record of the log$"),
+        ("an event that is a number", lambda event: [event, 7],
+         r"event 2 of 2 is not a JSON object \(a number\): an event is one record of the log$"),
+        ("an event that is an array", lambda event: [event, [event]],
+         r"event 2 of 2 is not a JSON object \(an array\): an event is one record of the log$"),
+        ("an event that is a string", lambda event: [event, "comm=sniffer"],
+         r"event 2 of 2 is not a JSON object \(a string\): an event is one record of the log$"),
         ("the key _ROWID", lambda event: [dict(event, _ROWID=1)],
          r"event 1 of 1: the key '_ROWID' is the row id column of the event table of "
          r"sigma_eval\.py \(in any letter case\), so an event cannot hold it$"),
@@ -386,13 +395,14 @@ class RuleCases(gatelib.GateCase):
     def test_rejects_sidecar_line_that_is_json_and_not_an_object(self):
         """A line of a sidecar is one case, a JSON object. The planted second line is
         JSON of another type: the gate fails the file, and judges the other cases.
-        (Without the check, `null` and `7` end the gate with a traceback, and an array
-        or a string is `missing name, kind, why, events`.)"""
+        (Without the check, `null`, `7`, `true` and `false` end the gate with a
+        traceback, and an array or a string is `missing name, kind, why, events`.)"""
         tree = self.plant_bad_cases("sound")
         lines = tree.read(self.PLANTED_CASES).splitlines(keepends=True)
         for text, kind in (("null", "null"), ("7", "a number"), ('["packet-dgram-socket"]',
                                                                    "an array"),
-                           ('"packet-dgram-socket"', "a string")):
+                           ('"packet-dgram-socket"', "a string"), ("true", "true"),
+                           ("false", "false")):
             with self.subTest(text):
                 tree.write(self.PLANTED_CASES, "".join(lines[:1] + [text + "\n"] + lines[2:]))
                 result = tree.run(self.GATE, self.PLANTED_RULE)
