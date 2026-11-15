@@ -91,9 +91,9 @@ after each test or test class.
 |------|---------|
 | `gatelib.py` | The harness: `Tree`, `GateCase`, `StartedTogether`, `assert_rejects`, `assert_accepts`, `assert_saw`, `known_gap`, `ci_step`, `ci_commands`, and the parallel runner. |
 | `test_gatelib.py` | Tests of the harness, on constructed gates. |
-| `test_sufficiency.py` | `rule_cases.py` (and through it the event table of `sigma_eval.py`), the import guard of `sigma_eval.py`, `check_sufficiency.py` (R0 to R4 and the waiver digests), the sufficiency ratchet, the self-test of `sigma_explain.py`. |
-| `test_quality.py` | `score_benign.py` (also a line of a live capture, `--extra-slice`, that is JSON and not an object: an ERROR line names the capture and the line, and no rule is scored on it) and the benign ratchet, `check_null_safety.py`, `check_provider_mappings.py`, `k8s_policy_coverage.py`, `k8s_platforms_md.py`, `coverage_report.py`. |
-| `test_validators.py` | The cloud validator (a rule must fire on a marked record of its attack fixture and on no benign record; an attack or benign fixture that is missing or is a directory, and a benign baseline without a record, fail the run, also with `--report`), the Linux validator (dry run, with the check of its `CONTROLS` table; and its verdict code on canned results: the detections; the no-op baseline, which must own a record; each mutant and each re-run, which must be held by what it declares (an item of its rule, or the success gate); the limits of the exemption for a rule whose emulation is a SKIP; a live negative control for each rule), the three Kubernetes validators (dry run; the negative-control step, which fails when a rule passes on a pre-emulation log, when a pre-emulation log is not given or is missing, and when the audit log holds no record; an empty value of `--audit-log` counts as a log that is not given; with `--report` too, each validator fails a rule that passes on a pre-emulation log, and logs without a record; the `--json` report of each validator says that the control of a log without a record failed; for `validate_k8s_detections.py`, its `--json` report says the same for a log that is missing; for the static pod validator, also when the CRI log holds no API-scheduled sandbox or the file log holds no `kubeadm` write, with a line that names the log and the number of its records, and a strict run fails a CRI log without an API-scheduled sandbox with the same line; for the API server validator, also when the CRI log or the file log holds no record, and a CRI snapshot without a sandbox is no record; the lines of the capture step of that validator's workflow that make the pre-emulation file log, on a constructed raw audit log that holds the audit key of the canary watch of the file sensor step, and the line of that step that writes the raw log; and the strict run, which prints SKIP and exits 0 when it finds no log, also when the value of `--audit-log` is empty (a log that does not exist: the run does not read the default log), and gets no check of the negative control when it has a log; a line of a log that is not a record of the log fails each run, and no rule is judged: `[]` and `{}` in each log of each validator, an audit `EventList` and a core Event among records, a CRI snapshot whose item is not a sandbox (also an item with an id and a metadata object without a name, and an item with a name and no id) or whose `items` is not a list, a line of the file log with a `TargetFilename` and no `Image` or the other way round, bytes that are not UTF-8 in a JSON string and outside it, a byte order mark, JSON that is too deep or a number that is too long, a string, a number, `true`, `false` and `null` (each named with its type), and a `[]` line in a strict run with `--report` of each validator; a snapshot of two items that are not sandboxes is one line in the count of the FAILED line (and of the `--json` report), with an ERROR line for each item; a sandbox that a log holds on two lines counts once; the ERROR line names the log and the line, a log gets at most 10 of them and the number of the others, and so does the `--json` report, whose control of the log says `FAILED`; beside a log without a record, the API server and the static pod validator print the failed control line of that log before the FAILED line (for a CRI log or a file log of the static pod validator, the line of its CRI control or file control), and the `--json` control names both; a log that is a directory is an ERROR, in the negative-control step and in a strict run; the step of CI that validates with `--ledger` fails on a ledger row whose start is after its end, with an error that names the procedure and the two times, and judges no rule (the same ledger in order is read, and a row whose start is its end is a window); a `--ledger` that is a directory or holds a byte that is not UTF-8, and a `--json` path that is a directory, are ERROR lines; the verdict line of a strict run of the API server validator, and the description of its `--help`, name the TRRs that its `MANIFEST` grades, also in a copy whose `MANIFEST` holds the entries of two TRRs), the class `LogReaderText` (the log reader of the three Kubernetes validators is one text, and so is each entry of its table of records), the known gap `k8s-log-keys-differ-only-in-case` (a valid audit log whose keys differ only in letter case ends each Kubernetes validator with a traceback of the event table of `sigma_eval.py`), the converter of the node file sensor, `k8s/auditd_file_events.py` (one summary line on stderr for each run that read its log, only the JSON lines on stdout, and no workflow command that sends stderr to the file log), `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py`, `check_schedule_freshness.py`. |
+| `test_sufficiency.py` | `rule_cases.py` (and through it the event table of `sigma_eval.py`: a sidecar line that is not a case, a case whose events one event table cannot hold, a rule in a dotfile), the import guard of `sigma_eval.py` (each kind of name that it and R0 refuse, compared; each gate that reads the rules stops at it on a rule in a dotfile; the rule lists of the walkers that do not use the globs), `check_sufficiency.py` (R0 to R4 and the waiver digests), the sufficiency ratchet, the self-test of `sigma_explain.py`. |
+| `test_quality.py` | `score_benign.py` (also a line of a live capture, `--extra-slice`, that is JSON and not an object: an ERROR line names the capture and the line, and no rule is scored on it) and the benign ratchet, `check_null_safety.py`, `check_provider_mappings.py` (also a sidecar case that one event table cannot hold, with `--check` and `--write`), `k8s_policy_coverage.py`, `k8s_platforms_md.py`, `coverage_report.py` (also an entry of the defect tracker without its Summary row or its section, or with two of either, and a heading that starts with an ID and is not the heading of an entry, with `--check` and the generator; one error line for each such entry). |
+| `test_validators.py` | The cloud validator (a rule must fire on a marked record of its attack fixture and on no benign record; an attack or benign fixture that is missing or is a directory, and a benign baseline without a record, fail the run, also with `--report`), the Linux validator (dry run, with the check of its `CONTROLS` table; and its verdict code on canned results: the detections; the no-op baseline, which must own a record; each mutant and each re-run, which must be held by what it declares (an item of its rule, or the success gate); the limits of the exemption for a rule whose emulation is a SKIP; a live negative control for each rule), the three Kubernetes validators (dry run; the negative-control step, which fails when a rule passes on a pre-emulation log, when a pre-emulation log is not given or is missing, and when the audit log holds no record; an empty value of `--audit-log` counts as a log that is not given; with `--report` too, each validator fails a rule that passes on a pre-emulation log, and logs without a record; the `--json` report of each validator says that the control of a log without a record failed; for `validate_k8s_detections.py`, its `--json` report says the same for a log that is missing; for the static pod validator, also when the CRI log holds no API-scheduled sandbox or the file log holds no `kubeadm` write, with a line that names the log and the number of its records, and a strict run fails a CRI log without an API-scheduled sandbox with the same line; for the API server validator, also when the CRI log or the file log holds no record, and a CRI snapshot without a sandbox is no record; the lines of the capture step of that validator's workflow that make the pre-emulation file log, on a constructed raw audit log that holds the audit key of the canary watch of the file sensor step, and the line of that step that writes the raw log; and the strict run, which prints SKIP and exits 0 when it finds no log, also when the value of `--audit-log` is empty (a log that does not exist: the run does not read the default log), and gets no check of the negative control when it has a log; a line of a log that is not a record of the log fails each run, and no rule is judged: `[]` and `{}` in each log of each validator, an audit `EventList` and a core Event among records, a CRI snapshot whose item is not a sandbox (also an item with an id and a metadata object without a name, and an item with a name and no id) or whose `items` is not a list, a line of the file log with a `TargetFilename` and no `Image` or the other way round, bytes that are not UTF-8 in a JSON string and outside it, a byte order mark, JSON that is too deep or a number that is too long, a string, a number, `true`, `false` and `null` (each named with its type), and a `[]` line in a strict run with `--report` of each validator; a snapshot of two items that are not sandboxes is one line in the count of the FAILED line (and of the `--json` report), with an ERROR line for each item; a sandbox that a log holds on two lines counts once; the ERROR line names the log and the line, a log gets at most 10 of them and the number of the others, and so does the `--json` report, whose control of the log says `FAILED`; beside a log without a record, the API server and the static pod validator print the failed control line of that log before the FAILED line (for a CRI log or a file log of the static pod validator, the line of its CRI control or file control), and the `--json` control names both; a log that is a directory is an ERROR, in the negative-control step and in a strict run; the step of CI that validates with `--ledger` fails on a ledger row whose start is after its end, with an error that names the procedure and the two times, and judges no rule (the same ledger in order is read, and a row whose start is its end is a window); a `--ledger` that is a directory or holds a byte that is not UTF-8, and a `--json` path that is a directory, are ERROR lines; the verdict line of a strict run of the API server validator, and the description of its `--help`, name the TRRs that its `MANIFEST` grades, also in a copy whose `MANIFEST` holds the entries of two TRRs), the class `LogReaderText` (the log reader of the three Kubernetes validators is one text, and so is each entry of its table of records), the known gap `k8s-log-keys-differ-only-in-case` (a valid audit log whose keys differ only in letter case ends each Kubernetes validator with a traceback of the event table of `sigma_eval.py`), the converter of the node file sensor, `k8s/auditd_file_events.py` (one summary line on stderr for each run that read its log, only the JSON lines on stdout, and no workflow command that sends stderr to the file log), `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py` (also a name that starts with a dot), `check_schedule_freshness.py`. |
 | `test_suite.py` | Rules of the suite as a whole: each self-test has a runner, the CI job runs every test on every pull request, the `emulation-scripts` job does the same for `atomics/tests/`, no workflow step pipes a command into `tee` without pipefail, no step that runs a gate or the unit tests has `continue-on-error`, each known gap names a roadmap item, each planted artifact is used, this file agrees with the tests. |
 | `test_apt_install.py` | Tests of `.github/scripts/apt_install.sh`, the step that installs `auditd`, with a stub for `sudo`, `apt-get`, `unshare`, `mount`, `getent` and `timeout`. When the runner cannot resolve the package mirror, or apt printed a message about name resolution, or the mirror does not resolve after a failed run, apt gets one run with public resolvers in a private mount namespace; the script fails only after apt failed in a run with the resolver of the runner (but in the forced way of the CI job); a necessary package that is not installed fails the step; a text that is not a package name (also a name that ends with `-`, which apt reads as a removal) or not an address is refused. The class `DirectInstalls` (with two CONTROLs) fails when a workflow (a `run:` text, a `with:` or `env:` value), a composite action or a shell script (`*.sh`, or a shell on its first line) installs packages in a usual form (`apt-get install`, `apt update`, `dpkg -i`, `snap install`, also with options, a path or quotes) without the script. The one line that is allowed is `apt-get update -qq` in `detections/benign/linux/workload.sh`. It is a rule on text: a command that is built at run time, or that a different program starts, is not seen. The stubs do not show that the namespace works on a runner: the CI job `apt-install-fallback` does. It forces that way, and its CONTROL step gives a resolver that does not answer (`APT_INSTALL_RESOLVERS`) and fails if the install then passes. |
 | `test_labs.py` | Rules for the lab jobs that run on a GitHub runner (auditd on the runner, a kind cluster). No offline gate runs these jobs, and a new runner image can break them with no change in the repository. `AuditdStart`: each workflow step that starts auditd (with `systemctl` or `service`) waits for `audit-rules.service` after the start. Before the wait, and before the start, no line of the step changes the rules or a setting of the audit system (an `auditctl` command that is not a status or a list), and between the start and the wait no line runs a validator. auditd 4 loads its rule files in that oneshot unit, the start of auditd does not wait for it, and its rule file starts with `-D` and sets the backlog limit. The wait is in a guard, because auditd 3 has no such unit. It runs with `sudo`, because systemd refuses the start of a unit for a user that is not root and cannot give an authorization. A unit that ends with an error gives a `::warning` line and does not stop the step. The class also runs each such step from its first line to the end of its wait, the whole sensor step of the static pod lab and the whole start step of the `benign-linux-live` job, with a stub for `sudo`, `systemctl`, `service` and `auditctl`. The stubs model the fault that CI showed on 2026-11-13: a run of the unit that nobody waited for deletes the rule after the step saw it in the list, and sets the backlog limit back to the value of its rule file. They also model root: a start of the unit without `sudo` fails at once and waits for nothing. `FileSensorRule`: the two steps of the static pod lab that read the file events print an `::error` line when `auditctl -l` does not list the rule of the file sensor, and they go on. The line says which check of the validator fails when: the file gate, or the file control too. `DateWidth`: no shell script, file under `atomics/`, workflow or composite action gives `%N` a width (`%6N`, `%3N`): `date` of uutils coreutils 0.10.0 prints such a field without the leading zeros of the fraction. `LedgerClock`: the function that gives the times of the emulation ledger (`now_utc()`, or `now()`) is one accepted text in each shell script under `atomics/` and in each workflow step that defines it, and a script that appends to the ledger defines it one time. The class runs that text in bash with a stub `date` that prints a wrong time, in a zone that is not UTC: the result is the time of the test in UTC, a fraction that starts with zero keeps its zeros, and `date` is not called; without the clock of bash the function calls `date` with `%N` only. The stubs do not show what systemd, auditd and the `date` of a runner image do: the lab jobs show that. |
@@ -226,36 +226,41 @@ A gate is a child process, so runs that start together use the CPUs together.
 
 A known gap is an artifact that a gate should reject and does not reject today.
 Its test states the wanted behaviour and carries the marker. This is the test of
-the gap `hidden-rule-file` (`test_sufficiency.py`, class `RuleCases`):
+the gap `se-plain-source-shadow` (`test_sufficiency.py`, class
+`SigmaEvalImportGuard`):
 
 ```python
 @gatelib.known_gap(
-    "hidden-rule-file",
+    "se-plain-source-shadow",
     gate="detections/sigma_eval.py import guard (through detections/rule_cases.py)",
-    reason="A rule and its sidecar in dotfiles under detections/sigma/T<id>/ pass the "
-           "import guard, and the globs of the gates (`*/*.yml`, `*/*.cases.jsonl`) "
-           "skip them, so rule_cases.py accepts a tree with a rule that it did not "
-           "check. Only R0 of check_sufficiency.py refuses the two files: the "
-           "check-sufficiency, sufficiency-ratchet and coverage-report jobs, which run "
-           "that script, fail on the planted tree, and every other gate accepts it.",
-    closes="R2d")
-def test_gap_hidden_rule_file(self):
-    """WANTED: a rule file that the gates do not read is refused (as R0 refuses it),
-    or it is read, and then its positive that cannot fire fails."""
+    reason="A plain-source detections/glob.py is imported by rule_cases.py in place of "
+           "the standard-library module, because detections/ is first on sys.path and "
+           "the import guard refuses only sigma.* and compiled modules; the gate then "
+           "skips one sidecar, which holds a positive that cannot fire, and passes. On "
+           "the planted tree check_sufficiency.py still fails that positive (R3) and "
+           "score_benign.py stops, because budgets.json names the rule that the module "
+           "hides; and the merge policy needs a human approval for a new .py file. So "
+           "the planted change does not pass CI. The gap is that the rule-cases job "
+           "passes: it does not judge the sidecar that the module hides.",
+    closes="R1")
+def test_gap_plain_source_module_replaces_a_library_module(self):
+    """WANTED: the gate refuses a module in detections/ that replaces a library
+    module, or it still reads every sidecar and fails on the bad positive."""
     tree = self.tree()
-    tree.plant("sufficiency/hidden_rule/hidden.yml", "detections/sigma/T1040/.hidden.yml")
-    tree.plant("sufficiency/hidden_rule/hidden.cases.jsonl",
-               "detections/sigma/T1040/.hidden.cases.jsonl")
+    tree.plant("sufficiency/shadow/afinet_bad_positive.jsonl", AFINET_CASES, append=True)
+    tree.plant("sufficiency/shadow/glob_py.txt", "detections/glob.py")
     result = tree.run(self.GATE)
     if result.returncode == 0:
-        # The gate accepted the copy, and it printed nothing about the pair. Prove
-        # that the pair it did not read is bad: the gate fails the positive when
-        # the hidden rule is its argument (then it does not need the glob).
-        named = tree.run(self.GATE, "detections/sigma/T1040/.hidden.yml")
+        # The gate accepted the copy. Prove that this is the gap: the planted
+        # module hid one sidecar, ...
+        sidecars = len(tree.glob("detections/sigma/*/*.cases.jsonl"))
+        self.assert_saw(result, rf"^All cases hold \({sidecars - 1} rule file\(s\)\)\.$")
+        # ... and the planted positive is bad: the gate fails it when the rule is
+        # its argument (then the gate does not call glob).
+        named = tree.run(self.GATE, AFINET_RULE)
         self.assertEqual(named.returncode, 1, named.describe())
-        self.assertIn("FAIL  T1040/.hidden.yml :: positive   stream-socket-declared-positive: "
-                      "expected a match, got near-miss", named.stdout)
-    self.assert_rejects(result, r"T1040/\.hidden\.(yml|cases\.jsonl)")
+        self.assertRegex(named.stdout, re.compile(self.BAD_POSITIVE, re.MULTILINE))
+    self.assert_rejects(result, r"^  detections/glob\.py$|" + self.BAD_POSITIVE)
 ```
 
 The test passes while the gate accepts the artifact. It fails with `KNOWN GAP
@@ -269,9 +274,9 @@ Rules for a known gap:
 - **The last assertion is the wanted behaviour**: one `assert_rejects()`. Every
   assertion before it is a plain one.
 - **Prove that the artifact is bad**, with plain assertions (the one record of the
-  planted baseline holds no field; the gate fails the hidden rule when it gets the
-  rule as an argument). The gate has no check for the artifact, so without this
-  proof the test passes for a sound artifact too.
+  planted baseline holds no field; the gate fails the planted positive when it
+  gets its rule as an argument). The gate has no check for the artifact, so
+  without this proof the test passes for a sound artifact too.
 - **Prove that the gate read the artifact**, with `self.assert_saw(result,
   pattern)` before the last assertion. An artifact that the gate never read is
   also accepted. The pattern must hold today and after the gate is fixed (a row
@@ -325,6 +330,9 @@ and `gatelib.py --run` prints it after the tests, with the state that the run
 gave each gap: `open`, or `not run`. A run of the whole suite fails when the test
 of a gap did not run and was not skipped: the marker is then on a method that
 `unittest` does not collect, and nothing tests the gap.
+A test of the harness (`test_gatelib.py`) compares the list of `--gaps --json`
+with the markers that it reads from the source text of each `test_*.py`: a test
+module that the discovery of the tests drops makes that test fail.
 
 ## CI
 
@@ -539,6 +547,14 @@ it does not see one test in the place of a different one.
   them.
 - The network fence of a gate run is a proxy setting. It does not stop a gate
   that opens a socket without the proxy.
+- The import guard of `sigma_eval.py` and R0 of `check_sufficiency.py` are two
+  implementations of one rule. `SigmaEvalImportGuard` compares them on the kinds of
+  names in its table `NOT_RULE_MATERIAL` (and `RULE_MATERIAL`). A kind of name that
+  is not in the table can be refused by one of the two and not by the other: add
+  each new kind to the table. `sigma check` (sigma-cli, not run by the suite) reads a
+  rule in a dotfile. The suite does not run the self-test of
+  `pipelines/convert_k8s.py`, which needs pySigma-backend-kusto: `SigmaEvalImportGuard`
+  tests its rule list, and not its run.
 - `tree.run_step()` runs the `run:` text of a step. It models the shell of the
   step: `bash -e` when the step has no `shell:`, and bash with `-eo pipefail`
   for `shell: bash`. It also models `/tmp/`, the files behind
@@ -582,6 +598,7 @@ it does not see one test in the place of a different one.
   - `detections/sigma/T1078.004/aws_cognito_unauthenticated_identity_use.yml`
   - `detections/sigma/T1078.004/aws_leaked_access_key_recon.yml`
   - `detections/sigma/T1098.006/k8s_rbac_write.yml`
+  - `detections/sigma/T1485/k8s_volume_reclaim_set_to_delete.cases.jsonl`
   - `detections/sigma/T1537/aws_snapshot_or_ami_made_public.yml`
   - `detections/sigma/T1543.005/k8s_cri_static_pod_start.yml`
   - `detections/sigma/T1543.005/k8s_static_pod_mirror_create.yml`

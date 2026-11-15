@@ -8,7 +8,10 @@ read differently, so a rule that is green here can fail to convert, or convert
 to a query that matches something else, on Elasticsearch, Splunk or Sentinel.
 This lint walks detections/sigma/**/*.yml, finds every `|re` value (in any
 detection item, list or correlation document), and fails on anything outside
-the portable subset below.
+the portable subset below. It also fails on each name that starts with a dot
+(a file or a directory) in a directory that it walks, and does not read it: the
+gates do not read such a name as a rule, and the import guard of
+detections/sigma_eval.py refuses it.
 
 The subset is the intersection of:
 
@@ -341,15 +344,28 @@ def main(argv=None):
         print("ERROR: --require-re2 given but the re2 module is missing (pip install google-re2)")
         return 1
 
-    files = []
+    files, hidden = [], []
     for p in args.paths or [RULES]:
         if os.path.isdir(p):
-            for root, _dirs, names in os.walk(p):
-                files += [os.path.join(root, f) for f in names if f.endswith((".yml", ".yaml"))]
+            for root, dirs, names in os.walk(p):
+                # A name that starts with a dot is no rule material: the globs of the
+                # gates (*/*.yml) skip it, and the import guard of
+                # detections/sigma_eval.py refuses it. This lint refuses it too, and
+                # does not read it as a rule.
+                hidden += [os.path.join(root, d) + os.sep for d in dirs if d.startswith(".")]
+                hidden += [os.path.join(root, f) for f in names if f.startswith(".")]
+                dirs[:] = [d for d in dirs if not d.startswith(".")]
+                files += [os.path.join(root, f) for f in names
+                          if f.endswith((".yml", ".yaml")) and not f.startswith(".")]
         else:
             files.append(p)
 
     problems, values = 0, 0
+    for path in sorted(hidden):
+        print(f"FAIL {os.path.relpath(path, REPO)}{os.sep if path.endswith(os.sep) else ''}: "
+              "a name that starts with a dot is no rule material: the gates skip it, and the "
+              "import guard of detections/sigma_eval.py refuses it; move or delete it")
+        problems += 1
     for path in sorted(files):
         rel = os.path.relpath(path, REPO)
         try:

@@ -338,19 +338,23 @@ def _rule(fields, logsource=None):
 
 
 def audit_rule_paths():
-    """Every rule file whose logsource is product: kubernetes, service: audit."""
+    """Every rule file whose logsource is product: kubernetes, service: audit, from the
+    list of the import guard of detections/sigma_eval.py (sigma_eval.rule_files()). The
+    import runs the guard: a name that it refuses (a dotfile, a dot directory, a module)
+    stops the process with its message, and no such name is read as a rule."""
     import yaml
+    detections = os.path.dirname(HERE)
+    if detections not in sys.path:
+        sys.path.insert(0, detections)
+    import sigma_eval
     out = []
-    for root, _, files in sorted(os.walk(SIGMA_DIR)):
-        for name in sorted(files):
-            if not name.endswith(".yml"):
-                continue
-            path = os.path.join(root, name)
-            with open(path, encoding="utf-8") as fh:
-                docs = [d for d in yaml.safe_load_all(fh) if d]
-            ls = (docs[0] if docs else {}).get("logsource") or {}
-            if ls.get("product") == "kubernetes" and ls.get("service") == "audit":
-                out.append(path)
+    for rel in sigma_eval.rule_files():
+        path = os.path.join(SIGMA_DIR, rel)
+        with open(path, encoding="utf-8") as fh:
+            docs = [d for d in yaml.safe_load_all(fh) if d]
+        ls = (docs[0] if docs else {}).get("logsource") or {}
+        if ls.get("product") == "kubernetes" and ls.get("service") == "audit":
+            out.append(path)
     return out
 
 
@@ -360,6 +364,9 @@ def self_test():
     except ImportError:
         print(f"SELF-TEST ERROR: pySigma-backend-kusto is not installed ({INSTALL_HINT})")
         return 2
+    # The rule list first: the import guard of sigma_eval.py stops the self-test on a
+    # name that it refuses before any line is printed.
+    audit_rules = audit_rule_paths()
     import contextlib
     import io
     import tempfile
@@ -577,7 +584,7 @@ def self_test():
             return out
 
     refused_rules = set()
-    for path in audit_rule_paths():
+    for path in audit_rules:
         rel = os.path.relpath(path, SIGMA_DIR)
         with open(path, encoding="utf-8") as fh:
             rule_text = fh.read()

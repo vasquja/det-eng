@@ -873,18 +873,14 @@ def audit_rules():
     """Repo-relative paths (under detections/sigma/) of every rule whose logsource is
     product kubernetes, service audit, sorted."""
     out = []
-    for tdir in sorted(os.listdir(SIGMA)):
-        d = os.path.join(SIGMA, tdir)
-        if not os.path.isdir(d):
-            continue
-        for f in sorted(os.listdir(d)):
-            if not f.endswith(".yml"):
-                continue
-            with open(os.path.join(d, f), encoding="utf-8") as fh:
-                docs = [x for x in yaml.safe_load_all(fh) if isinstance(x, dict)]
-            ls = next((x.get("logsource") for x in docs if x.get("logsource")), {}) or {}
-            if ls.get("product") == "kubernetes" and ls.get("service") == "audit":
-                out.append(f"{tdir}/{f}")
+    # The list of the import guard of sigma_eval.py: no name that the guard refuses (a
+    # dotfile, a directory that is not T<id>/) is read as a rule.
+    for rel in sigma_eval.rule_files():
+        with open(os.path.join(SIGMA, rel), encoding="utf-8") as fh:
+            docs = [x for x in yaml.safe_load_all(fh) if isinstance(x, dict)]
+        ls = next((x.get("logsource") for x in docs if x.get("logsource")), {}) or {}
+        if ls.get("product") == "kubernetes" and ls.get("service") == "audit":
+            out.append(rel)
     return out
 
 
