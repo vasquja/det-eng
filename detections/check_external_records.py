@@ -20,9 +20,11 @@ A rule and a dataset make a pair when one of these is true:
                    of the dataset goes to the rule's log source. The rule must FIRE
                    on the dataset, unless a declaration says otherwise. When the
                    dataset has a `procedure` label (the CVE or the exploit that the
-                   description of its yml names; raw auditd only) and no cve.* tag
-                   of the rule is one of its CVEs, the pair is OTHER-PROCEDURE:
-                   reported, not expected.
+                   description of its yml names as a whole token; raw auditd only)
+                   and no cve.* tag of the rule is one of its CVEs, the pair is
+                   OTHER-PROCEDURE: reported, not expected. Each CVE of the label is
+                   in that description, or it is the cve.* tag of a rule of the
+                   technique whose title holds the label.
   related          another attack.t tag of the rule (not its folder) is a technique
                    of the dataset: RELATED, reported, not expected. A parent or a
                    sub-technique of a technique is not the technique.
@@ -76,7 +78,8 @@ Exit codes:
      table cannot hold (an integer outside 64 bits, of any length, a NUL, a lone
      surrogate, the key _rowid, a number that is not finite), keys that differ only
      in letter case, a yml at the commit that does not agree with its entry (its
-     path, techniques, sourcetype or procedure label), a cache entry that cannot be
+     path, techniques, sourcetype, procedure label or a CVE of the label; --lint: a
+     label in CVE form that is not one of its CVEs), a cache entry that cannot be
      read or written, a rule that does not compile, or a run in which no dataset was
      read. With --enforce, an UNAVAILABLE dataset, LICENSE or syscall_64.tbl too.
 
@@ -135,8 +138,7 @@ class Rule:
         tags = {str(t) for d in docs for t in (d.get("tags") or [])}
         self.techniques = {t[len("attack."):].upper() for t in tags
                            if re.fullmatch(r"attack\.t\d{4}(\.\d{3})?", t)}
-        self.cves = {"CVE-" + t[len("cve."):] for t in tags
-                     if re.fullmatch(r"cve\.\d{4}-\d{4,}", t)}
+        self.cves = xr.cve_tags(tags)
         self._sql = self._model = None
 
     @property

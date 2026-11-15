@@ -480,6 +480,10 @@ class ExternalLint(gatelib.StartedTogether):
          r": procedure must be \{label, cves, why\}"),
         ("procedure_key", ["datasets", "@auditd", "procedure", "planted"], 1,
          r": procedure must be \{label, cves, why\}"),
+        # A label in CVE form names its CVE: it must be one of the cves (a CVE cut short).
+        ("procedure_cve_label", ["datasets", "@auditd", "procedure", "label"], "CVE-2026-4350",
+         r": the procedure label 'CVE-2026-4350' is a CVE ID, and it is not one of the cves "
+         r"\[[^]]*\] of the entry$"),
         ("excluded_not_object", ["excluded", 0], 1, r"^SOURCES\.json excluded\[1\]: not an "
          r"object$"),
         ("excluded_key", ["excluded", 0, "planted"], 1, r"^SOURCES\.json excluded\[1\]: missing "
@@ -1419,6 +1423,11 @@ def k8s(**more):
             "objectRef": {"resource": "secrets", "namespace": "trr9000-ns"}, **more}
 
 
+def procedure(label, *cves):
+    """The procedure of an entry, as a change of the YMLS of ExternalLoaders."""
+    return {"procedure": {"label": label, "cves": list(cves), "why": "x"}}
+
+
 def nested(depth, leaf=b"1"):
     """A JSON text of `depth` nested objects {"a": {"a": ... 1}}."""
     return b'{"a":' * depth + leaf + b"}" * depth
@@ -1720,7 +1729,23 @@ class ExternalLoaders(gatelib.GateCase):
                 "    in attack range.\n"
                 "mitre_technique:\n- {technique}\n"
                 "datasets:\n- name: audit\n  sourcetype: {sourcetype}\n  path: /{path}\n")
-    # (name, the text of the yml, the problems: one regular expression each).
+    # The constructed rules of the procedure checks (a folder like detections/sigma/):
+    # {path: (title, cve.* tags)}.
+    RULE_DIR = {"T1068/planted_copyfail.yml": ("Planted Correlation (CopyFail CVE-2026-31431)",
+                                               ["cve.2026-31431"]),
+                "T1068/planted_dirtyfrag.yml": ("Planted Socket (DirtyFrag RxRPC CVE-2026-43500)",
+                                                ["cve.2026-43500"]),
+                "T1040/planted_afpacket.yml": ("Planted AF_PACKET Socket (CVE-2016-8655)",
+                                               ["cve.2016-8655"])}
+    LABEL = (r"^T1068/planted/audit: SOURCES\.json gives the procedure label '{}'; the "
+             r"description of the yml \S+ at the commit does not name it$")
+    NO_CVE = (r"^T1068/planted/audit: SOURCES\.json gives the procedure label '{}' the CVE {}; "
+              r"the description of the yml \S+ at the commit does not name the CVE, and no rule "
+              r"of T1068 with the tag cve\.{} has the label in its title$")
+
+    # (name, the change: the text of the yml, and the procedure of the entry; the
+    # problems: one regular expression each). The label of the yml is the text of its
+    # description; the label of the entry is CVE-2026-31431 unless the change gives one.
     YMLS = [
         ("sound", {}, []),
         ("label_folded", {"label": "CVE-2026-31431\n   "}, []),
@@ -1733,14 +1758,55 @@ class ExternalLoaders(gatelib.GateCase):
         ("other_technique", {"technique": "T1068.001"},
          [r"^T1068/planted/audit: SOURCES\.json pins the techniques \['T1068'\]; the yml at the "
           r"commit names \['T1068\.001'\]$"]),
-        ("no_label", {"label": "an exploit"},
-         [r"^T1068/planted/audit: SOURCES\.json gives the procedure label 'CVE-2026-31431'; the "
-          r"description of the yml \S+ at the commit does not name it$"]),
+        # (Its CVE is the tag of a rule whose title holds the label: no second problem.)
+        ("no_label", {"label": "an exploit"}, [LABEL.format("CVE-2026-31431")]),
+    ]
+    # The label is a whole token of the description: no letter, digit or hyphen next to it.
+    YMLS += [
+        ("label_in_a_word", {"label": "Copy Failure CVE-2026-31431",
+                             **procedure("Copy Fail", "CVE-2026-31431")},
+         [LABEL.format("Copy Fail")]),
+        ("label_after_a_hyphen", {"label": "Pre-Copy Fail CVE-2026-31431",
+                                  **procedure("Copy Fail", "CVE-2026-31431")},
+         [LABEL.format("Copy Fail")]),
+        ("label_cut_short", {"label": "CVE-2026-43500",
+                             **procedure("CVE-2026-4350", "CVE-2026-4350")},
+         [LABEL.format("CVE-2026-4350"), NO_CVE.format("CVE-2026-4350", "CVE-2026-4350",
+                                                        "2026-4350")]),
+    ]
+    # Each CVE is a whole token of the description, or the cve.* tag of a rule of the
+    # technique folder whose title holds the label (without white space and letter case).
+    YMLS += [
+        ("cve_by_a_rule", {"label": "Copy Fail", **procedure("Copy Fail", "CVE-2026-31431")},
+         []),
+        ("cve_by_the_description", {"label": "Planted Exploit CVE-1999-0001",
+                                    **procedure("Planted Exploit", "CVE-1999-0001")}, []),
+        ("cve_not_named", {"label": "Copy Fail",
+                           **procedure("Copy Fail", "CVE-2026-31431", "CVE-1999-0001")},
+         [NO_CVE.format("Copy Fail", "CVE-1999-0001", "1999-0001")]),
+        ("cve_of_another_title", {"label": "Copy Fail",
+                                  **procedure("Copy Fail", "CVE-2026-43500")},
+         [NO_CVE.format("Copy Fail", "CVE-2026-43500", "2026-43500")]),
+        ("cve_of_another_folder", {"label": "AF_PACKET",
+                                   **procedure("AF_PACKET", "CVE-2016-8655")},
+         [NO_CVE.format("AF_PACKET", "CVE-2016-8655", "2016-8655")]),
+        # A phrase of the description is not the procedure (review of PR-1, X3).
+        ("phrase_of_the_description", {"label": "Dirty Frag",
+                                       **procedure("privilege escalation", "CVE-2026-31431")},
+         [NO_CVE.format("privilege escalation", "CVE-2026-31431", "2026-31431")]),
     ]
     YML_PROBE = (
-        "entry, text, ymls = ARGS\n"
-        "out = {name: xr.check_yml(entry, text.format(**dict(base, **change)).encode())\n"
-        "       for name, change, base in ymls}\n"
+        "import os\n"
+        "entry, text, ymls, rules = ARGS\n"
+        "xr.SIGMA = os.path.join(os.environ['TMPDIR'], 'probe-sigma')\n"
+        "for rel, (title, tags) in rules.items():\n"
+        "    os.makedirs(os.path.dirname(os.path.join(xr.SIGMA, rel)), exist_ok=True)\n"
+        "    with open(os.path.join(xr.SIGMA, rel), 'w', encoding='utf-8') as fh:\n"
+        "        fh.write(json.dumps({'title': title, 'tags': tags}))\n"
+        "out = {}\n"
+        "for name, change, base in ymls:\n"
+        "    e = dict(entry, procedure=change.pop('procedure', entry['procedure']))\n"
+        "    out[name] = xr.check_yml(e, text.format(**dict(base, **change)).encode())\n"
         "out['old_schema'] = xr.check_yml(dict(entry, procedure=None), (\n"
         "    'description: x\\ndataset:\\n- https://media.githubusercontent.com/media/splunk/'\n"
         "    'attack_data/master/' + entry['path'] + '\\nsourcetypes:\\n- auditd\\n').encode())\n"
@@ -1749,11 +1815,14 @@ class ExternalLoaders(gatelib.GateCase):
         "print(json.dumps(out))\n")
 
     def test_the_yml_of_a_dataset_must_agree_with_its_entry(self):
+        """check_yml() on constructed ymls, with constructed rules in place of
+        detections/sigma/ (xr.SIGMA): the procedure label of the entry against the
+        description of its yml and the titles and cve.* tags of the rules."""
         entry = self.YML_ENTRY
         base = {"label": entry["procedure"]["label"], "technique": "T1068",
                 "sourcetype": "auditd", "path": entry["path"]}
         out = probe(self.good(), self.YML_PROBE, entry, self.YML_TEXT,
-                    [(n, change, base) for n, change, _ in self.YMLS])
+                    [(n, change, base) for n, change, _ in self.YMLS], self.RULE_DIR)
         for name, _, want in self.YMLS + [("old_schema", None, [])]:
             with self.subTest(name):
                 self.assertEqual(len(out[name]), len(want), out[name])
@@ -1763,6 +1832,28 @@ class ExternalLoaders(gatelib.GateCase):
                                                 f"{entry['yml']} cannot be read (ValueError)"])
         self.assertEqual(out["not_utf8"], ["T1068/planted/audit: the yml "
                                            f"{entry['yml']} cannot be read (UnicodeDecodeError)"])
+
+    REAL_LABELS = (
+        "doc = xr.load_json(xr.SOURCES, 'SOURCES.json')\n"
+        "text = ARGS[0]\n"
+        "out = {}\n"
+        "for e in doc['datasets']:\n"
+        "    if e.get('procedure'):\n"
+        "        yml = text.format(label=e['procedure']['label'],\n"
+        "                          technique='\\n- '.join(e['techniques']),\n"
+        "                          sourcetype=e['sourcetype'], path=e['path'])\n"
+        "        out[e['id']] = xr.check_yml(e, yml.encode())\n"
+        "print(json.dumps(out))\n")
+
+    def test_the_procedure_labels_of_sources_json_hold(self):
+        """The control of the procedure checks: each label of the real SOURCES.json, in a
+        constructed yml whose description has the form of the ymls of these datasets
+        ("Generated datasets for <label> privilege escalation in attack range."), against
+        the real rules: a label that is not a CVE ID has its CVEs from the titles and the
+        cve.* tags of the rules of its technique (detections/tests/README.md, Limits)."""
+        out = probe(self.good(), self.REAL_LABELS, self.YML_TEXT)
+        self.assertGreaterEqual(len(out), 5, "the labels of SOURCES.json were not read")
+        self.assertEqual({k: v for k, v in out.items() if v}, {})
 
     TABLE_PROBE = (
         "import argparse\n"

@@ -9,6 +9,8 @@ The gate check_external_records.py uses this module. It holds what a later reade
   load_syscalls()                   detections/external/syscalls_x86_64.json
   Cache, obtain()                   the content-addressed cache and the fixed origins
   check_yml()                       a dataset's yml at the commit against its entry
+  check_procedure()                 its procedure label against the yml and the
+                                    titles and cve.* tags of the rules of its technique
   read_dataset()                    the loader of each format: one Record for each
                                     record, routed to a log source by its own shape
 
@@ -22,6 +24,7 @@ dataset, the line or the record and, for a key, the key with repr().
 """
 
 import collections
+import glob
 import hashlib
 import http.client
 import json
@@ -37,6 +40,7 @@ import sigma_eval
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
+SIGMA = os.path.join(HERE, "sigma")
 ROOT = os.path.join(HERE, "external")
 SOURCES = os.path.join(ROOT, "SOURCES.json")
 EXPECTATIONS = os.path.join(ROOT, "expectations.json")
@@ -75,6 +79,7 @@ COMMIT = re.compile(r"[0-9a-f]{40}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 TECHNIQUE = re.compile(r"T\d{4}(\.\d{3})?")
 CVE = re.compile(r"CVE-\d{4}-\d{4,}")
+CVE_TAG = re.compile(r"cve\.(\d{4}-\d{4,})")           # the cve.* tag of a rule
 # A path of the repository at the commit: no `..`, no empty part, no leading slash.
 PATH = re.compile(r"datasets/[A-Za-z0-9_.()+-]+(/[A-Za-z0-9_.()+-]+)*")
 DATA_PATH = re.compile(r"datasets/attack_techniques/(T\d{4}(?:\.\d{3})?)/([A-Za-z0-9_.()+-]+)/"
@@ -267,6 +272,10 @@ def lint_sources(doc, repo=REPO):
                 problems.append(f"{where}: procedure must be {{label, cves, why}}: the CVE or "
                                 "exploit name that the yml names, its CVE IDs (CVE-YYYY-N), "
                                 "and why")
+            elif CVE.fullmatch(" ".join(proc["label"].split())) and \
+                    " ".join(proc["label"].split()) not in proc["cves"]:
+                problems.append(f"{where}: the procedure label {proc['label']!r} is a CVE ID, "
+                                f"and it is not one of the cves {proc['cves']} of the entry")
     for n, e in enumerate(excluded, 1):
         where = f"SOURCES.json excluded[{n}]"
         if not isinstance(e, dict):
@@ -546,21 +555,85 @@ def yml_facts(text, path):
             named, description)
 
 
-def check_yml(entry, data):
+def cve_tags(tags):
+    """The CVE IDs (CVE-YYYY-N) of the cve.* tags of a rule."""
+    return {"CVE-" + m.group(1) for m in map(CVE_TAG.fullmatch, map(str, tags)) if m}
+
+
+def _bounded(token, text):
+    """True when `token` is in `text` with no letter, digit or hyphen right before or
+    after it (so "CVE-2026-4350" is not in "CVE-2026-43500", nor "Frag" in "Fragment")."""
+    edge = r"(?:[^\W_]|-)"
+    return re.search(rf"(?<!{edge}){re.escape(token)}(?!{edge})", text) is not None
+
+
+def _squeezed(text):
+    """The text without white space and letter case: "Copy Fail" is in "(CopyFail ...)"."""
+    return "".join(text.split()).casefold()
+
+
+def technique_rules(techniques, sigma=None):
+    """[(rule key, title, CVE IDs)] of each rule file of the technique folders
+    (<sigma>/<technique>/*.yml; sigma None: SIGMA, detections/sigma/): the title of its
+    first document, and the cve.* tags of all its documents (as
+    check_external_records.Rule reads them)."""
+    import yaml
+
+    sigma = sigma or SIGMA
+    out = []
+    for technique in sorted(set(techniques)):
+        for path in sorted(glob.glob(os.path.join(sigma, technique, "*.yml"))):
+            with open(path, encoding="utf-8") as fh:
+                docs = [d for d in yaml.safe_load_all(fh) if isinstance(d, dict)]
+            title = next((str(d["title"]) for d in docs if d.get("title")), "")
+            tags = [t for d in docs for t in (d.get("tags") or [])]
+            out.append((f"{technique}/{os.path.basename(path)}", title, cve_tags(tags)))
+    return out
+
+
+def check_procedure(entry, description, sigma=None):
+    """The problems of the procedure label of an entry against the description of its
+    yml. A label makes the pair of a rule of another CVE OTHER-PROCEDURE, which no mode
+    fails, so it must come from the yml:
+
+      - the label (white space folded) is in the description as a whole token (no
+        letter, digit or hyphen next to it);
+      - each CVE of `cves` is in the description as a whole token, or it is the cve.*
+        tag of a rule of the technique folder whose title holds the label (both
+        without white space and letter case: "Copy Fail" and "(CopyFail ...)").
+
+    A label in CVE form must be one of the cves: lint_sources() checks that (offline)."""
+    proc = entry.get("procedure") or {}
+    label = proc.get("label")
+    if label is None:
+        return []
+    problems, rules = [], None
+    folded = " ".join(label.split())
+    if not _bounded(folded, description):
+        problems.append(f"{entry['id']}: SOURCES.json gives the procedure label {label!r}; the "
+                        f"description of the yml {entry['yml']} at the commit does not name it")
+    for cve in proc.get("cves") or []:
+        if _bounded(cve, description):
+            continue
+        if rules is None:
+            rules = technique_rules(entry["techniques"], sigma)
+        if any(cve in cves and _squeezed(folded) in _squeezed(title) for _, title, cves in rules):
+            continue
+        problems.append(f"{entry['id']}: SOURCES.json gives the procedure label {label!r} the "
+                        f"CVE {cve}; the description of the yml {entry['yml']} at the commit "
+                        f"does not name the CVE, and no rule of {', '.join(entry['techniques'])} "
+                        f"with the tag cve.{cve[len('CVE-'):]} has the label in its title")
+    return problems
+
+
+def check_yml(entry, data, sigma=None):
     """The problems of a dataset entry against the bytes of its yml (already hashed)."""
     try:
         techniques, sourcetype, named, description = yml_facts(data.decode("utf-8"),
                                                                entry["path"])
     except Exception as e:      # noqa: BLE001 (not UTF-8, a YAML error, not a mapping)
         return [f"{entry['id']}: the yml {entry['yml']} cannot be read ({type(e).__name__})"]
-    problems = []
-    # A procedure label is the CVE or the exploit name that the yml gives (it makes the
-    # pair of a rule of another CVE OTHER-PROCEDURE): a label that the yml does not give
-    # would turn the MISS of any rule into a pair that is not expected.
-    label = (entry.get("procedure") or {}).get("label")
-    if label is not None and " ".join(label.split()) not in description:
-        problems.append(f"{entry['id']}: SOURCES.json gives the procedure label {label!r}; the "
-                        f"description of the yml {entry['yml']} at the commit does not name it")
+    problems = check_procedure(entry, description, sigma)
     if not named:
         problems.append(f"{entry['id']}: the yml {entry['yml']} at the commit does not name "
                         f"the path {entry['path']}")
