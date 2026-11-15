@@ -259,7 +259,7 @@ class RuleCases(gatelib.GateCase):
 
     # One changed value in the second line of the sound sidecar (its near-miss), and
     # the words of the gate for it. Without the check, the first, the second and the
-    # last would pass as cases, and the others would end the gate with a traceback.
+    # fifth would pass as cases, and the others would end the gate with a traceback.
     MALFORMED_LINES = (
         ("a kind that is no kind", lambda case: case.update(kind="negative"),
          r"unknown kind 'negative'"),
@@ -269,6 +269,13 @@ class RuleCases(gatelib.GateCase):
         ("no event", lambda case: case.update(events=[]), r"events must be a non-empty list"),
         ("the name of another case", lambda case: case.update(name="packet-raw-socket"),
          r"duplicate name 'packet-raw-socket'"),
+        ("a kind that is no string", lambda case: case.update(kind=["near-miss"]),
+         r"unknown kind \['near-miss'\]"),
+        ("a name that is no string", lambda case: case.update(name=["packet-dgram-socket"]),
+         r"the name is an array, not a string"),
+        ("breaks that names no atom", lambda case: case.update(breaks={"sel.a1": True}),
+         r"case 'packet-dgram-socket': `breaks` must be an atom name or a list of atom names "
+         r"\(strings\)"),
     )
 
     def test_rejects_case_line_that_is_not_a_case(self):
@@ -301,19 +308,11 @@ class RuleCases(gatelib.GateCase):
             exit_code=1)
         self.assertIn("\nFAILED: 1 case problem(s).\n", result.stdout)
 
-    @gatelib.known_gap(
-        "rc-case-clash-is-a-traceback",
-        gate="detections/rule_cases.py (the event table of detections/sigma_eval.py)",
-        reason="A sidecar event with two keys that differ only in letter case (`comm` and "
-               "`Comm`) ends rule_cases.py with an uncaught ValueError of "
-               "sigma_eval.EventTable. The rule-cases job fails, but with a traceback: no "
-               "FAIL or ERROR line names the rule and the case, and the gate judges no "
-               "case after it. check_sufficiency.py catches the same error and reports "
-               "it as an R3 failure of the rule.",
-        closes="R2d", today="crash")
-    def test_gap_event_keys_that_differ_only_in_letter_case(self):
-        """WANTED: the gate reports the event as a failure of its rule, in a FAIL or
-        ERROR line that names the rule and says that two keys differ only by case."""
+    def test_rejects_event_keys_that_differ_only_in_letter_case(self):
+        """One event of the planted positive has the keys `comm` and `Comm`. The events
+        of a case share one SQLite table, whose column names have no letter case, so
+        the case cannot be judged: the gate names the rule, the line and the case in
+        an ERROR line, and does not stop with a traceback."""
         tree = self.plant_bad_cases("keys_differ_by_case")
         # The artifact is bad in one way: one event has the keys `comm` and `Comm`.
         case, = tree.read_jsonl(self.PLANTED_CASES)
@@ -328,11 +327,77 @@ class RuleCases(gatelib.GateCase):
         self.assertIn(f"ok    T9999/planted_rule.yml :: positive   {case['name']}: fires\n",
                       accepted.stdout)
         result = tree.run(self.GATE, self.PLANTED_RULE)
-        # The gate read the planted event: its output names the two keys (today in
-        # the last line of the traceback).
-        self.assert_saw(result, r"differ only by case.*\bComm / comm\b")
-        self.assert_rejects(result, r"^(FAIL|ERROR) +T9999/planted_rule\.yml.*differ only by case")
+        self.assert_rejects(
+            result,
+            r"^ERROR T9999/planted_rule\.yml: line 1: case 'packet-raw-socket-two-comm-keys': "
+            r"event keys that differ only by case: Comm / comm \(the events of a case share "
+            r"one SQLite table, whose column names have no letter case, so the case cannot be "
+            r"judged\)$", exit_code=1)
+        self.assertIn("\nFAILED: 1 case problem(s).\n", result.stdout)
 
+    # One changed near-miss (the second line of the sound sidecar), whose events
+    # cannot be put in one event table, and the words of the gate for it. Without
+    # the check, a clash ends the gate with a traceback of EventTable, the null event
+    # with one of flatten() and `_ROWID` with one of sqlite3; `_rowid` and the two
+    # keys that flatten to one pass, and the gate judges an event that lost a value.
+    BAD_EVENTS = (
+        # `comm` in the first event and `Comm` in the second: no event holds both.
+        ("keys of two events", lambda event: [event, dict(
+            {key: value for key, value in event.items() if key != "comm"}, Comm="sniffer")],
+         r"event keys that differ only by case: Comm / comm \(the events of a case share "),
+        ("flat keys of one event", lambda event: [dict(event, proc={"Comm": "x"},
+                                                       **{"proc.comm": "x"})],
+         r"event keys that differ only by case: proc\.Comm / proc\.comm \("),
+        ("an event that is null", lambda event: [event, None],
+         r"event 2 of 2 is not a JSON object \(null\): an event is one record of the log$"),
+        ("the key _ROWID", lambda event: [dict(event, _ROWID=1)],
+         r"event 1 of 1: the key '_ROWID' is the row id column of the event table of "
+         r"sigma_eval\.py \(in any letter case\), so an event cannot hold it$"),
+        ("the key _rowid", lambda event: [dict(event, _rowid=1)],
+         r"event 1 of 1: the key '_rowid' is the row id column of the event table "),
+        ("two keys that flatten to one", lambda event: [dict(event, a={"b": 1}, **{"a.b": 2})],
+         r"event 1 of 1: the keys \['a', 'b'\] and \['a\.b'\] both flatten to 'a\.b', and "
+         r"the flat event keeps only the last value$"),
+    )
+
+    def test_rejects_events_that_one_table_cannot_hold_and_judges_the_other_cases(self):
+        """The bad case is an ERROR line that names its line and its name. The gate
+        judges every other case of the file, in the order of the file."""
+        tree = self.plant_bad_cases("sound")
+        sound = tree.read(self.PLANTED_CASES)
+        names = [case["name"] for case in tree.read_jsonl(self.PLANTED_CASES)]
+        for label, change, message in self.BAD_EVENTS:
+            with self.subTest(label):
+                tree.write(self.PLANTED_CASES, sound)
+                cases = tree.read_jsonl(self.PLANTED_CASES)
+                self.assertEqual(cases[1]["kind"], "near-miss")
+                cases[1]["events"] = change(cases[1]["events"][0])
+                tree.write_jsonl(self.PLANTED_CASES, cases)
+                result = tree.run(self.GATE, self.PLANTED_RULE)
+                self.assert_rejects(result, r"^ERROR T9999/planted_rule\.yml: line 2: case "
+                                            r"'packet-dgram-socket': " + message, exit_code=1)
+                self.assertIn("\nFAILED: 1 case problem(s).\n", result.stdout)
+                self.assertEqual(re.findall(r"(?m)^ok    T9999/planted_rule\.yml :: \S+ +(\S+): ",
+                                            result.stdout), names[:1] + names[2:])
+
+    def test_rejects_sidecar_line_that_is_json_and_not_an_object(self):
+        """A line of a sidecar is one case, a JSON object. The planted second line is
+        JSON of another type: the gate fails the file, and judges the other cases.
+        (Without the check, `null` and `7` end the gate with a traceback, and an array
+        or a string is `missing name, kind, why, events`.)"""
+        tree = self.plant_bad_cases("sound")
+        lines = tree.read(self.PLANTED_CASES).splitlines(keepends=True)
+        for text, kind in (("null", "null"), ("7", "a number"), ('["packet-dgram-socket"]',
+                                                                   "an array"),
+                           ('"packet-dgram-socket"', "a string")):
+            with self.subTest(text):
+                tree.write(self.PLANTED_CASES, "".join(lines[:1] + [text + "\n"] + lines[2:]))
+                result = tree.run(self.GATE, self.PLANTED_RULE)
+                self.assert_rejects(result, rf"^ERROR T9999/planted_rule\.yml: line 2: not a JSON "
+                                            rf"object \({kind}\): each line of a sidecar is one "
+                                            r"case, an object$", exit_code=1)
+                self.assertIn("\nFAILED: 1 case problem(s).\n", result.stdout)
+                self.assertIn(self.POSITIVE_FIRES, result.stdout)
 
 class SigmaEvalImportGuard(gatelib.GateCase):
     """The import guard of detections/sigma_eval.py. It is no script: it runs when a
