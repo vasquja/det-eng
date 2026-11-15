@@ -8,10 +8,17 @@ description: |
   secrets, or internal references that any AWS account can then read.
 
   It keys on the default-logged CloudTrail management event ssm.amazonaws.com /
-  ModifyDocumentPermission whose requestParameters.accountIdsToAdd contains "All"
-  (case-insensitive; the CLI constrains the value to (?i)all | a 12-digit account id), requiring
-  success (no errorCode). The remove direction (accountIdsToRemove) is a de-exposure and is
-  excluded -- the rule only matches the add list.
+  ModifyDocumentPermission whose requestParameters.accountIdsToAdd holds the element All in
+  any letter case, requiring success (no errorCode). The API model of SSM gives each element
+  the pattern ^(?i)all|[0-9]{12}$ (shape AccountId of ssm 2014-11-06 in aws/api-models-aws;
+  botocore writes (?i)all|[0-9]{12}): the word all in any letter case, or a 12-digit account
+  id. The remove direction (accountIdsToRemove) is a de-exposure and is excluded -- the rule
+  only matches the add list.
+
+  Field-model note: accountIdsToAdd is a list of strings, so selection_public has two |re
+  values: \"[aA][lL][lL]\" reads the list as JSON text (the element in its quotes), and
+  ^[aA][lL][lL]$ reads one value of a multi-valued field (the value and nothing more). The
+  character classes accept each letter case, because a |re value compares letter case.
 references:
   - https://attack.mitre.org/techniques/T1537/
   - https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_ModifyDocumentPermission.html
@@ -32,7 +39,10 @@ detection:
     eventSource: 'ssm.amazonaws.com'
     eventName: 'ModifyDocumentPermission'
   selection_public:
-    requestParameters.accountIdsToAdd|contains: '"All"'
+    # Value 1: the list as JSON text. Value 2: one value of a multi-valued field.
+    requestParameters.accountIdsToAdd|re:
+      - '\"[aA][lL][lL]\"'
+      - '^[aA][lL][lL]$'
   filter_failed:
     errorCode: '*'
   # Null-safe negation: a backend with three-valued logic (ES|QL and other SQL
