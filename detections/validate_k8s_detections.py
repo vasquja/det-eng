@@ -375,7 +375,8 @@ def write_json(path, report):
 # standalone. Each emulation run appends one JSON line per procedure:
 #   {"trr": "TRR9002", "procedure": "A", "start": "...Z", "end": "...Z",
 #    "exit": 0, "expect": 0}
-# start and end are UTC ISO 8601 with microseconds (date -u +%Y-%m-%dT%H:%M:%S.%6NZ).
+# start and end are UTC ISO 8601 with microseconds (YYYY-MM-DDTHH:MM:SS.ffffffZ, from
+# now() of the emulation script, which reads EPOCHREALTIME of bash).
 # The kind node is a container on the runner, so the audit timestamps and the
 # ledger read the same kernel clock.
 
