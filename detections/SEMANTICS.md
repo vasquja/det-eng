@@ -363,7 +363,8 @@ changed items, a reason, a `why` and, where one exists, the open entry of
 
 The `why` of an entry says why the rule needs the key order, the letter case or the
 text of the list. A person judges that sentence. The gate does not judge its words:
-it fails only a `why` that is empty or is still the `TODO` text of `--propose`.
+it fails only a `why` that is empty, or that starts with `TODO` after any white space
+(the text that `--propose` writes starts so).
 
 The gate fails on a difference that is not in the list. It also fails on an entry
 whose fault, hits or items changed, on an entry with no difference (stale), on a

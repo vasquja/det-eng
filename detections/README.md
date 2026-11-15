@@ -772,8 +772,9 @@ the variant: the item needs the key order of the record, the item is a `LIKE` te
 or the item reads a field that is a list. The gate refuses a reason of another
 variant, and it proves one thing about a reason: it refuses `KEY_ORDER` when the
 event set differs as `compact` text too. The `why` sentence says why the rule needs
-that, and a person judges it: the gate fails only a `why` that is empty or is still
-the `TODO` text of `--propose`. An entry is a human approval,
+that, and a person judges it: the gate fails only a `why` that is empty, or that
+starts with `TODO` after any white space (the text that `--propose` writes starts
+so). An entry is a human approval,
 as a waiver or a budget is: propose it in the pull request (`--propose` prints the
 list that a run shows), and the maintainer approves it when the pull request merges.
 The gate fails on a difference that is not listed, on an entry whose difference

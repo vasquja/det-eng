@@ -557,11 +557,12 @@ These rejections have no planted artifact and no test:
   rule on records with a list, or an item with `|neq` on a list), a rule with no
   case and no fixture, a rule file that cannot be checked, an entry with the
   reason `KEY_ORDER` on a set that differs as compact text too, an entry whose
-  `why` is still the `TODO` text of `--propose`, and a `compact`, `cs_like` or
-  `re2` variant that is not in force. Its self-test holds a constructed rule, or a
-  constructed variant, for each (for `re2`, where the module is installed). The gate
-  test of the in-force check plants a `sorted` that lost its key sort. No test and
-  no self-test check switches `multi` off.
+  `why` starts with `TODO` (the text of `--propose`; also after a blank), and a
+  `compact`, `cs_like` or `re2` variant that is not in force (for `compact`, also
+  a default run that reads the compact text). Its self-test holds a constructed
+  rule, or a constructed variant or default run, for each (for `re2`, where the
+  module is installed). The gate test of the in-force check plants a `sorted` that
+  lost its key sort. No test and no self-test check switches `multi` off.
 - Two checks of `check_variants.py` have no test, because no artifact can fail
   them: an entry with the reason `LIKE_CASE` whose changed item is not a `LIKE`
   test, and an entry with the reason `LIST_TEXT` or `KEY_ORDER` whose changed item

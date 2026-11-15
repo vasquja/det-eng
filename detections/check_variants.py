@@ -82,8 +82,9 @@ The run fails on
   - a listed entry that shows no difference (stale): delete it;
   - a reason that is not one of REASONS for that variant, or a KEY_ORDER entry
     whose event set differs as `compact` text too;
-  - an entry without a `why` (empty, or still the TODO text of --propose), or a
-    second entry for one event set and variant;
+  - an entry without a `why`: empty, or starting with TODO (the text that
+    --propose writes), also after white space; or a second entry for one event
+    set and variant;
   - a `defect` that is not an open entry of RULE_DEFECTS.md that names the rule;
   - an entry of a variant that did not run, with --require-re2.
 --baseline-expected FILE only compares the list with the list of the base branch
@@ -280,7 +281,8 @@ def sql_words(rule, sql):
 
 
 class Context:
-    """The matchers of this run: which variants run, and why one does not.
+    """The matchers of this run: the records of the default run, which variants
+    run, and why one does not.
 
     shortcuts=False runs each variant on its own table, also where its input is
     the input of an earlier run (see SAME INPUT in the module text). Only the
@@ -293,6 +295,13 @@ class Context:
         self.variants = [v for v in variants if v != "re2" or self.search]
         self.skipped = {"re2": self.re2_missing} if "re2" in variants and not self.search else {}
         self.shortcuts = shortcuts
+
+    @staticmethod
+    def default_records(raw_events):
+        """The flattened records of the default run: sigma_eval.flatten() with its
+        defaults, as each validator and gate reads a record. (The self-test
+        replaces it to prove the in-force check.)"""
+        return [sigma_eval.flatten(e) for e in raw_events]
 
     @staticmethod
     def records(variant, raw_events):
@@ -321,7 +330,7 @@ class Run:
 
     def __init__(self, rule, sql, raw_events, ctx, words=None):
         self.rule, self.sql, self.raw, self.ctx = rule, sql, raw_events, ctx
-        self.flat = [sigma_eval.flatten(e) for e in raw_events]
+        self.flat = ctx.default_records(raw_events)
         self.table = sigma_eval.EventTable(self.flat)
         self.hits = _canon(self.table.hit_indices(sql))
         self.lists = any(has_list(e) for e in raw_events)
@@ -781,7 +790,7 @@ def judge_expected(differences, entries, ctx, checked_rules, require_re2=False, 
         elif not str(entry["why"]).strip():
             bad = "`why` is empty"
         elif str(entry["why"]).lstrip().startswith("TODO"):
-            bad = "`why` is still the TODO text that --propose writes"
+            bad = "`why` starts with TODO (the text that --propose writes)"
         else:
             bad = _proof(entry, diff, compact)
         if not bad and entry.get("defect") is not None:
@@ -1381,6 +1390,13 @@ def self_test():
                 return [sigma_eval.flatten(e) for e in raw_events]
             return Context.records(variant, raw_events)
 
+    class DefaultTextIsCompact(Context):
+        # The default run reads the text of `compact`: each probe cell of `compact`
+        # holds, and no answer of `compact` differs from the default answer.
+        @staticmethod
+        def default_records(raw_events):
+            return Context.records("compact", raw_events)
+
     class LikeThatFoldsCase(Context):
         def table(self, variant, flat):
             if variant == "cs_like":
@@ -1402,6 +1418,11 @@ def self_test():
     dead = in_force(CompactAsDefaultText())
     check("a `compact` variant that writes the default text is not in force, and `sorted` "
           "is not named with it", list(dead) == ["compact"], dead)
+    dead = in_force(DefaultTextIsCompact())
+    check("a default run that reads the compact text makes `compact` a variant that is not "
+          "in force (its cells hold, and none differs from the default), and no other "
+          "variant is named", list(dead) == ["compact"]
+          and dead["compact"].startswith("no probe that names it gives another answer"), dead)
     dead = in_force(LikeThatFoldsCase())
     check("a `cs_like` variant whose LIKE folds letter case is not in force, and no other "
           "variant is named", list(dead) == ["cs_like"], dead)
@@ -1449,7 +1470,9 @@ def self_test():
             ("an unknown reason", {"reason": "BECAUSE"}, "is not a reason of the variant"),
             ("no why", {"why": " "}, "`why` is empty"),
             ("a why that is still the text of --propose",
-             {"why": "TODO: one line, what the rule relies on"}, "`why` is still the TODO text"),
+             {"why": "TODO: one line, what the rule relies on"}, "`why` starts with TODO"),
+            ("a why that starts with TODO after a blank", {"why": " TODO: x"},
+             "`why` starts with TODO"),
             ("other hits", {"gained": [[0], [1]]}, "the hits changed"),
             ("a defect that is not open", {"defect": "K999"}, "is not an open entry")):
         _, diffs, problems, _ = judged(
