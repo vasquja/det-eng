@@ -114,7 +114,8 @@ def open_defects(rule_stems):
     Procedures bullet (a defect in one branch of a rule): such an entry marks only the
     procedures it lists, and every other entry marks each procedure its rules prove.
     It stops the report with an error that names the entry when an entry has a section
-    and no Summary row, a row and no section, or two rows or two sections."""
+    and no Summary row, a row and no section, or two rows or two sections, and when a
+    heading starts with an ID and is not the heading of an entry (`### <ID>. `)."""
     text = (REPO / "detections" / "RULE_DEFECTS.md").read_text()
     summary = text.split("## Summary", 1)[1].split("\n## ", 1)[0]
     sections = re.split(r"\n### ", text)
@@ -124,8 +125,19 @@ def open_defects(rule_stems):
     # row or section, would read one entry in two ways.
     rows = Counter(re.findall(r"(?m)^\|\s*\[(\w+)\]", summary))
     heads = Counter(re.findall(r"(?m)^### ([A-Z]+\d+)\. ", text))
+    # A heading that starts with an ID in another form (`### L14: `, `### L14.Title`)
+    # is no section of an entry for the report, so it is refused too.
+    misshapen = {}
+    for heading, did in re.findall(r"(?m)^(### ([A-Z]+\d+)\b(?!\. ).*)$", text):
+        misshapen.setdefault(did, []).append(heading)
     problems = []
-    for did in sorted(set(rows) | set(heads)):
+    for did in sorted(set(rows) | set(heads) | set(misshapen)):
+        for heading in misshapen.get(did, []):
+            problems.append((did, f"the heading `{heading}` starts with an ID and is not the "
+                                  f"heading of an entry (### {did}. <title>), so the report "
+                                  f"does not read it; write it as `### {did}. <title>`"))
+        if did not in rows and did not in heads:
+            continue
         if not rows[did]:
             problems.append((did, f"the entry has a section (### {did}.) and no row in the "
                                   "Summary table, so the report would not count it; add its "

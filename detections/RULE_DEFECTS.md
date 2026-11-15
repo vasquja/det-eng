@@ -56,9 +56,10 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
   fix lands, so the fix is proven, not just claimed.
 
 Each open entry has one row in the Summary table and one section whose heading
-starts with its ID (`L14.`). The coverage report reads the rows, so it stops with an
-error that names the entry when a section has no row, a row has no section, or an ID
-has two rows or two sections.
+starts with its ID and a full stop (`### L14. <title>`). The coverage report reads the
+rows, so it stops with an error that names the entry when a section has no row, a row
+has no section, or an ID has two rows or two sections. It also refuses a heading that
+starts with an ID in another form (`### L14: <title>`).
 
 ## Summary
 

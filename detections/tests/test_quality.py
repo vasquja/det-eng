@@ -1093,5 +1093,35 @@ class CoverageReport(gatelib.GateCase):
                                append=True)
                 self.assert_one_entry_problem(tree.run(self.GATE, "--check"), problem)
 
+    def test_names_each_entry_that_it_cannot_read(self):
+        """Two entries that the gate cannot read, L98 and L99 (each a section without a
+        Summary row): one error line for each entry, in the order of the IDs."""
+        tree = self.tree()
+        tree.plant("quality/defect_without_summary_row/section.md.txt", self.DEFECTS, append=True)
+        tree.replace(self.DEFECTS, "\n### L99. PLANTED", "\n### L98. PLANTED")
+        tree.plant("quality/defect_without_summary_row/section.md.txt", self.DEFECTS, append=True)
+        result = tree.run(self.GATE, "--check")
+        self.assert_rejects(result, r"^coverage_report: RULE_DEFECTS\.md L99: the entry has a "
+                                    r"section \(### L99\.\) and no row ", exit_code=1)
+        self.assertEqual(result.stderr.splitlines(), [
+            f"coverage_report: RULE_DEFECTS.md {did}: the entry has a section (### {did}.) and "
+            "no row in the Summary table, so the report would not count it; add its row to "
+            "the Summary table" for did in ("L98", "L99")], result.describe())
+        self.assertEqual(result.stdout, "", result.describe())
+
+    def test_rejects_heading_that_starts_with_an_id_and_is_not_an_entry(self):
+        """A heading of a section that starts with an ID and is not the heading of an
+        entry (`### L99. <title>`): the planted section with `### L99:` and no Summary
+        row. The report would read it as no entry, and count nothing for it."""
+        tree = self.tree()
+        tree.plant("quality/defect_without_summary_row/section.md.txt", self.DEFECTS, append=True)
+        tree.replace(self.DEFECTS, "\n### L99. PLANTED", "\n### L99: PLANTED")
+        self.assertNotRegex(tree.read(self.DEFECTS), r"(?m)^### L99\. |^\| \[L99\]")
+        self.assert_one_entry_problem(
+            tree.run(self.GATE, "--check"),
+            r"the heading `### L99: PLANTED known-bad artifact: [^`]+` starts with an ID and is "
+            r"not the heading of an entry \(### L99\. <title>\), so the report does not read "
+            r"it; write it as `### L99\. <title>`$")
+
 if __name__ == "__main__":
     unittest.main()
