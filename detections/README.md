@@ -765,9 +765,9 @@ pre-emulation audit log and a live Ubuntu-runner workload are scored in CI too, 
 shadow mode. A hit that a rule defect explains is tracked in
 [`RULE_DEFECTS.md`](RULE_DEFECTS.md). The gate puts the events of each slice in one
 SQLite table, so a slice whose events hold two keys that differ only in letter case
-(`eventName`, `EventName`) ends it with a traceback that names neither the slice nor
-the keys: the known gap `sb-slice-keys-differ-by-case` of the gate tests, which
-roadmap item R2d closes.
+(`eventName`, `EventName`) ends it with a traceback, and no line names the slice (the
+last line of the traceback names the two keys): the known gap
+`sb-slice-keys-differ-by-case` of the gate tests, which roadmap item R2d closes.
 
 ```
 python3 detections/score_benign.py                  # report

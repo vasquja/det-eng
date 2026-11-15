@@ -262,11 +262,11 @@ class ScoreBenign(gatelib.GateCase):
         gate="detections/score_benign.py --check --enforce",
         reason="A benign slice whose event has two keys that differ only in letter case "
                "(`eventName` and `EventName`) ends score_benign.py --check --enforce with an "
-               "uncaught ValueError of sigma_eval.EventTable: no line names the slice or "
-               "the keys, and no rule is scored. The benign-corpus job fails, but with a "
-               "traceback. The loader of the corpus (benign_corpus.py) does not check the "
-               "keys of an event; rule_cases.py names the same clash in a sidecar case "
-               "with the rule, the line and the case.",
+               "uncaught ValueError of sigma_eval.EventTable: no line names the slice (the "
+               "last line of the traceback names the two keys), and no rule is scored. The "
+               "benign-corpus job fails, but with a traceback. The loader of the corpus "
+               "(benign_corpus.py) does not check the keys of an event; rule_cases.py names "
+               "the same clash in a sidecar case with the rule, the line and the case.",
         closes="R2d", today="crash")
     def test_gap_slice_event_keys_that_differ_only_in_letter_case(self):
         """WANTED: the gate names the slice and the two keys, and does not stop with a
@@ -294,11 +294,13 @@ class ScoreBenign(gatelib.GateCase):
         self.assert_saw(result, r"differ only by case.*\bEventName / eventName\b")
         if result.crashed:
             # Today. Prove the sentences of the `reason`: the error of EventTable,
-            # raised where the gate scores the slices, and no line names the slice.
+            # raised where the gate scores the slices, is the last line, and it names
+            # the two keys; no line names the slice.
             self.assertRegex(result.stderr, r'(?m)^  File ".*score_benign\.py", line \d+, in '
                                             r'score\b', result.describe())
-            self.assertRegex(result.stderr, r'(?m)^ValueError: event keys that differ only by '
-                                            r'case cannot share one table: ', result.describe())
+            self.assertRegex(result.stderr.rstrip("\n").splitlines()[-1],
+                             r'^ValueError: event keys that differ only by case cannot share '
+                             r'one table: EventName / eventName \(', result.describe())
             self.assertNotIn("planted-key-case-clash", result.output, result.describe())
         self.assert_rejects(result, r"planted-key-case-clash.*\bEventName\b.*\beventName\b"
                                     r"|\beventName\b.*\bEventName\b.*planted-key-case-clash")
