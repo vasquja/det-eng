@@ -2861,6 +2861,58 @@ class StaticPodValidator(gatelib.GateCase):
         LogReaderText) and runs the first of the three."""
         rejects_snapshots_that_hold_no_sandbox(self, BAD_SNAPSHOTS)
 
+    def test_rejects_a_line_that_is_not_a_record_beside_a_log_without_a_record(self):
+        """Two defects in two logs, and the run names both (two runs, each in a private
+        copy, started together): the CRI log holds no record and the file log holds a
+        `[]` line after its file events, and the other way round. (Each defect alone
+        is rejected by another test of this class.) The bad line ends the run before
+        the CRI control and the file control, so the control of the pre-emulation logs
+        gives the CONTROL FAILED line of the empty log, before the FAILED line of the
+        bad line. Its --json entry says FAILED and names both. (The step with --json
+        is a variant: no workflow runs it.)"""
+        empty_lines = {
+            "cri": r"no API-scheduled sandbox \(config\.source=api\) in the CRI log, so the "
+                   r"false-positive control proves nothing; does the sensor record carry the "
+                   r"pod annotations\? \(the CRI log \S+/pre-emulation-cri\.jsonl holds 0 pod "
+                   r"sandbox\(es\)\)",
+            "file": r"no /usr/bin/kubeadm write under /etc/kubernetes/manifests/ in the file "
+                    r"log, so the false-positive control proves nothing; was the watch added "
+                    r"before the cluster was created\? \(the file log \S+/pre-emulation-file"
+                    r"\.jsonl holds 0 file event\(s\)\)"}
+        runs = []
+        for empty, bad, name, log in (("cri", "file", self.FILE, "file log"),
+                                      ("file", "cri", self.CRI, "CRI log")):
+            tree = self.tree()
+            counts = dict(zip(("audit", "cri", "file"), self.write_logs(tree)))
+            counts[empty] = write_log(tree, self.CRI if empty == "cri" else self.FILE)
+            self.assertEqual(counts[empty], 0)
+            with open(tree.tmp_path(name), "a", encoding="utf-8") as fh:
+                fh.write("[]\n")
+            step = with_options(self, self.negative_control_step(),
+                                "--json /tmp/staticpodbad.json")
+            runs.append((empty, bad, name, log, counts, tree, tree.start_step(step)))
+        for empty, bad, name, log, counts, tree, pending in runs:
+            with self.subTest(empty=empty, bad=bad):
+                result = pending.result()
+                problem = f"line {counts[bad] + 1}: JSON that is not an object (a list)"
+                self.assert_saw(result, rf"^ERROR: the {log} \S+/{re.escape(name)}, "
+                                        + re.escape(problem) + "$")
+                self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+                self.assertEqual(len(re.findall(r"^  CONTROL FAILED: ", result.stdout, re.M)),
+                                 1, result.describe())
+                self.assert_rejects(result, r"^  CONTROL FAILED: " + empty_lines[empty] + r"\n\n"
+                                            + LINES_NOT_RECORDS.format(1)[1:], exit_code=1)
+                with open(tree.tmp_path("staticpodbad.json"), encoding="utf-8") as fh:
+                    report = json.load(fh)
+                self.assertEqual([(c["control"], c["status"]) for c in report["controls"]],
+                                 [("each rule has its pre-emulation log, and the audit log "
+                                   "holds a record", "FAILED")])
+                self.assertRegex(report["controls"][0]["detail"],
+                                 "^" + empty_lines[empty] + r"; 1 line\(s\) of the "
+                                 r"pre-emulation logs are not records of their log$")
+                self.assertEqual([(p["log"], p["lines"], p["shown"])
+                                  for p in report["log_problems"]], [(log, 1, [problem])])
+
     def test_rejects_a_file_log_line_that_is_not_utf8(self):
         """After the healthy file events, the file log holds one more kubeadm write with
         one byte that is not UTF-8 in its Image. A reader that replaced the byte would

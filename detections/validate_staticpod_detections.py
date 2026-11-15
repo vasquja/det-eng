@@ -74,7 +74,9 @@ Logs:
     (too deep, or a number that is too long). One ERROR line names the log, the
     line (and the item) and the problem (at most 10 for each log, then the number
     of the others), and a FAILED line ends the run with exit 1. With --expect-miss
-    the failed control lines of the pre-emulation logs come before the FAILED line,
+    the failed control lines of the pre-emulation logs (a log that is not given, an
+    audit log without a record, and a CRI log or a file log without a record, with
+    the line of the CRI control or the file control) come before the FAILED line,
     and the --json control of those logs says FAILED; --json gets `log_problems` (with
     the same limit) when a log holds such a line. A log that is a directory, or
     that the run cannot open, is an ERROR (exit 1) at once.
@@ -531,6 +533,9 @@ def report_inputs(args, logs, only_failures=False):
     or file log that holds no baseline record, so this control does not count them.
     only_failures: print the failures only (for a run that a line of a log that is
     not a record ends: the control does not hold, and it has no line that says so).
+    That run does not get to report_cri() and report_file(), so this control then
+    also gives the line of their control for a CRI log or a file log that holds no
+    record.
     """
     failures = []
     if not args.audit_log:
@@ -549,6 +554,9 @@ def report_inputs(args, logs, only_failures=False):
             failures.append(f"no pre-emulation {name} log was given ({option}), so the "
                             f"negative control read no record for the {name} rule and "
                             "proves nothing for it")
+        elif only_failures and not logs[source]:
+            failures.append(no_api_sandbox(args.cri_log, 0) if source == "cri"
+                            else no_kubeadm_write(args.file_log, 0))
     if only_failures and not failures:
         return failures
     print("\nPre-emulation logs — a negative control that read no record cannot fail:")
@@ -633,6 +641,24 @@ def report_audit(events):
         print(f"  note: no '{GHOST_NAME}' mirror-create seen.")
 
 
+def no_api_sandbox(path, sandboxes):
+    """The failure of the CRI control for a CRI log (`path`) of `sandboxes` sandboxes
+    of which none is API-scheduled: the control proves nothing."""
+    return ("no API-scheduled sandbox (config.source=api) in the CRI "
+            "log, so the false-positive control proves nothing; does "
+            "the sensor record carry the pod annotations? (the CRI log "
+            f"{path} holds {sandboxes} pod sandbox(es))")
+
+
+def no_kubeadm_write(path, events):
+    """The failure of the file control for a file log (`path`) of `events` file events
+    of which none is a kubeadm manifest write: the control proves nothing."""
+    return (f"no {KUBEADM_IMAGE} write under {MANIFESTS_DIR} in the file log, so "
+            "the false-positive control proves nothing; was the watch added "
+            f"before the cluster was created? (the file log {path} holds "
+            f"{events} file event(s))")
+
+
 def report_cri(sandboxes, cri_hits, path):
     """The static sandboxes the sensor saw, and the API-pod false-positive control.
 
@@ -657,10 +683,7 @@ def report_cri(sandboxes, cri_hits, path):
     failures = []
     api_hits = [s for s in cri_hits if s.get(CONFIG_SOURCE) == "api"]
     if not api:
-        failures.append("no API-scheduled sandbox (config.source=api) in the CRI "
-                        "log, so the false-positive control proves nothing; does "
-                        "the sensor record carry the pod annotations? (the CRI log "
-                        f"{path} holds {len(sandboxes)} pod sandbox(es))")
+        failures.append(no_api_sandbox(path, len(sandboxes)))
     if api_hits:
         failures.append("the CRI rule matched API-scheduled sandbox(es): "
                         + ", ".join(sorted(s.get("metadata.name") or "?" for s in api_hits)))
@@ -700,10 +723,7 @@ def report_file(events, file_hits, path):
     boot_ids = {id(e) for e in boot}
     boot_hits = [e for e in file_hits if id(e) in boot_ids]
     if not boot:
-        failures.append(f"no {KUBEADM_IMAGE} write under {MANIFESTS_DIR} in the file log, so "
-                        "the false-positive control proves nothing; was the watch added "
-                        f"before the cluster was created? (the file log {path} holds "
-                        f"{len(events)} file event(s))")
+        failures.append(no_kubeadm_write(path, len(events)))
     if boot_hits:
         failures.append("the file-event rule matched kubeadm's control-plane manifest "
                         "write(s): " + ", ".join(sorted(str(e.get("TargetFilename"))
@@ -1142,7 +1162,9 @@ def validate(args, report):
     if bad:
         if args.expect_miss:
             # The lines of the control of the pre-emulation logs that failed (a log
-            # that is not given, an audit log without a record), and its --json entry.
+            # that is not given, an audit log without a record, and a CRI log or a
+            # file log without a record, with the line of its control), and its
+            # --json entry.
             failures = report_inputs(args, logs, only_failures=True)
             report["controls"].append({
                 "control": INPUTS_CONTROL, "status": "FAILED",

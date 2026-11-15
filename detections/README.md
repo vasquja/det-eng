@@ -1248,7 +1248,10 @@ Lines, items and characters count from 1. A log gets at most 10 `ERROR` lines of
 problems, and one more line gives the number of its other problems. The `Loaded`
 line counts the records only. With `--expect-miss`, the lines of the negative control
 that fail (a log that is not given, was not found or holds no record) come before the
-`FAILED` line, and the `--json` control of the pre-emulation logs says `FAILED`. The
+`FAILED` line, and the `--json` control of the pre-emulation logs says `FAILED`. For a
+CRI log or a file log of the static pod validator that holds no record, that line is
+the `CONTROL FAILED` line of its CRI control or file control: the run stops before
+those controls. The
 `--json` report gets `log_problems` (one entry for each log that has a problem, with
 the same limit) only then, so the report of a healthy run does not change.
 
