@@ -1239,9 +1239,23 @@ class ExternalRecords(gatelib.StartedTogether):
                             exit_code=2)
 
     def test_rejects_a_record_count_that_is_not_the_pin(self):
-        _, result = self.started("count_changed")
+        """The CI step. Its Summary line, its step summary and its JSON report say that
+        the run had a fault, and the step summary shows the ERROR line before the
+        collapsed rows."""
+        tree, result = self.started("count_changed")
         self.assert_rejects(result, rf"^ERROR {self.id_of('snapshot')}: the loader read 1 "
                             r"record\(s\); SOURCES\.json pins 2\.", exit_code=2)
+        summary = row(result, r"^Summary: .*$")
+        self.assertRegex(summary, r"; shadow: \d+ verdict\(s\) would fail --enforce; 1 error\(s\)$")
+        error = row(result, r"^ERROR .*$")
+        with open(tree.out("github/github_step_summary"), encoding="utf-8") as fh:
+            text = fh.read()
+        head, details = text.split("<details>", 1)
+        self.assertIn(f"\n{summary}\n\n```text\n{error}\n```\n", head)
+        self.assertNotIn("ERROR ", details)
+        with open(tree.out("runner-temp/external-records.json"), encoding="utf-8") as fh:
+            report = json.load(fh)
+        self.assertEqual((report["summary"], report["exit"]), (summary, 2))
 
     def test_rejects_a_line_that_is_json_and_not_an_object(self):
         _, result = self.started("line_not_object")
@@ -1383,6 +1397,25 @@ class ExternalRecordsJob(unittest.TestCase):
                          "the job downloads each run: a cache action is the owner's decision")
         for step in self.job["steps"]:
             self.assertNotIn("continue-on-error", step)
+
+    def test_the_network_time_of_a_run_ends_inside_the_job(self):
+        """TIMEOUT (one step of a request) and DEADLINE (all the network work of a run)
+        of external_records.py against the timeout of the job: a run whose origins do
+        not answer makes at most 2 + one request for each dataset that waits (the
+        LICENSE, the syscall table, the yml of each dataset), and ends before the
+        deadline; the deadline leaves 300 s of the job for the other steps."""
+        consts = {}
+        with open(os.path.join(gatelib.REPO, "detections", "external_records.py"),
+                  encoding="utf-8") as fh:
+            for node in ast.parse(fh.read()).body:
+                if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                        and getattr(node.targets[0], "id", None) in ("TIMEOUT", "DEADLINE"):
+                    consts[node.targets[0].id] = ast.literal_eval(node.value)
+        with open(os.path.join(gatelib.REPO, SOURCES), encoding="utf-8") as fh:
+            datasets = len(json.load(fh)["datasets"])
+        self.assertEqual(consts, {"TIMEOUT": 15, "DEADLINE": 600})
+        self.assertLessEqual((2 + datasets) * consts["TIMEOUT"], consts["DEADLINE"])
+        self.assertLessEqual(consts["DEADLINE"] + 300, self.job["timeout-minutes"] * 60)
 
     def test_the_artifact_is_the_json_report_only(self):
         uploads = [s for s in self.job["steps"] if s.get("uses", "").startswith(
@@ -2092,6 +2125,135 @@ class ExternalLoaders(gatelib.GateCase):
                              r"\S+ cannot be written \(\w+Error: .*\); delete it or give another "
                              r"--cache$")
             self.assertEqual(out["write_fails_left"], ["sha256"], "the temporary file was removed")
+
+    DEADLINE_PROBE = (
+        "import http.server, os, threading, time\n"
+        "seen, stop, mode = [], threading.Event(), {'proxy': 'silent'}\n"
+        "class Silent(http.server.BaseHTTPRequestHandler):\n"
+        "    # Accepts and never answers (a CONNECT of the proxy too). /trickle, and a\n"
+        "    # CONNECT in the mode 'trickle', send a header a byte at a time: no step of\n"
+        "    # the request waits longer than the timeout.\n"
+        "    def log_message(self, *a):\n"
+        "        pass\n"
+        "    def do_GET(self):\n"
+        "        seen.append(self.path)\n"
+        "        if self.path == '/trickle' or (self.command == 'CONNECT'\n"
+        "                                       and mode['proxy'] == 'trickle'):\n"
+        "            self.wfile.write(b'HTTP/1.0 200 OK\\r\\nX-Planted: ')\n"
+        "            while not stop.wait(0.05):\n"
+        "                self.wfile.write(b'x')\n"
+        "                self.wfile.flush()\n"
+        "        stop.wait()\n"
+        "    do_CONNECT = do_GET\n"
+        "server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Silent)\n"
+        "threading.Thread(target=server.serve_forever, daemon=True).start()\n"
+        "base = f'http://127.0.0.1:{server.server_address[1]}'\n"
+        "def within(seconds, call):\n"
+        "    # A regression must fail the test, not hang it.\n"
+        "    box = {}\n"
+        "    def work():\n"
+        "        try:\n"
+        "            box['value'] = call()\n"
+        "        except Exception as e:\n"
+        "            box['value'] = {'crash': f'{type(e).__name__}: {e}'}\n"
+        "    t = threading.Thread(target=work, daemon=True)\n"
+        "    t.start()\n"
+        "    t.join(seconds)\n"
+        "    return box.get('value', {'hang': f'no answer in {seconds} s'})\n"
+        "def requests(deadline, paths):\n"
+        "    got, start = [], time.monotonic()\n"
+        "    for path in paths:\n"
+        "        t0 = time.monotonic()\n"
+        "        try:\n"
+        "            xr.fetch(base + path, 100, deadline)\n"
+        "            got.append(['read', 0])\n"
+        "        except xr.Unavailable as e:\n"
+        "            got.append([str(e), time.monotonic() - t0])\n"
+        "    return {'got': got, 'elapsed': time.monotonic() - start}\n"
+        "out = {'hang': within(30, lambda: requests(xr.Deadline(1.0, 0.3),\n"
+        "                                         [f'/hang{n}' for n in range(6)]))}\n"
+        "out['hang']['seen'] = len(seen)\n"
+        "out['trickle'] = within(30, lambda: requests(xr.Deadline(0.8, 0.5), ['/trickle']))\n"
+        "# The run: one deadline for all its requests (the origins through the proxy).\n"
+        "for name in ('https_proxy', 'HTTPS_PROXY'):\n"
+        "    os.environ[name] = base\n"
+        "xr.DEADLINE, xr.TIMEOUT = 1.0, 0.25\n"
+        "def run():\n"
+        "    t0 = time.monotonic()\n"
+        "    code = cer.main(['--cache', os.path.join(os.environ['TMPDIR'], 'deadline-cache'),\n"
+        "                     '--json', report])\n"
+        "    return {'code': code, 'elapsed': time.monotonic() - t0}\n"
+        "for name in ('silent', 'trickle'):\n"
+        "    mode['proxy'] = name\n"
+        "    del seen[:]\n"
+        "    report = os.path.join(os.environ['TMPDIR'], f'deadline-{name}.json')\n"
+        "    out[name + '_run'] = within(60, run)\n"
+        "    out[name + '_run']['seen'] = len(seen)\n"
+        "    if os.path.exists(report):\n"
+        "        with open(report, encoding='utf-8') as fh:\n"
+        "            out[name + '_run']['report'] = json.load(fh)\n"
+        "stop.set()\n"
+        "print(json.dumps(out))\n")
+
+    def test_the_network_work_of_a_run_ends_at_its_deadline(self):
+        """xr.fetch() against a server of the probe on 127.0.0.1 that accepts and never
+        answers, with a deadline of 1 s and 0.3 s for each step: each request waits one
+        step, and after the deadline a request is UNAVAILABLE without a connection. A
+        header that comes a byte at a time is given up at the deadline. The report, with
+        the origins behind that server (as a proxy that does not answer, or that sends
+        a header a byte at a time) and a deadline of 1 s, ends in about 1 s with an
+        UNAVAILABLE row for each file (review of PR-1, N2)."""
+        out = probe(self.good(), self.DEADLINE_PROBE,
+                    env={"no_proxy": "127.0.0.1", "NO_PROXY": "127.0.0.1"})
+        slack = 3.0                         # a loaded runner
+        hang = out["hang"]
+        self.assertFalse({"hang", "crash"} & set(hang), hang)
+        late = [m for m, _ in hang["got"] if "not requested: the network deadline of the run "
+                "(1 s) has passed" in m]
+        asked = len(hang["got"]) - len(late)
+        self.assertGreaterEqual(len(late), 2, hang)
+        self.assertEqual([m for m, _ in hang["got"][asked:]], late, "a request after a late one")
+        self.assertEqual(hang["seen"], asked, "a late request made a connection")
+        for message, elapsed in hang["got"][:asked]:
+            self.assertRegex(message, r"timed out|given up: the network deadline")
+            self.assertLess(elapsed, 0.3 + slack)
+        # The first request waits one step (0.3 s), not until the deadline.
+        self.assertRegex(hang["got"][0][0], r"/hang0: TimeoutError: timed out$")
+        for _, elapsed in hang["got"][asked:]:
+            self.assertLess(elapsed, 0.1)
+        self.assertLess(hang["elapsed"], 1.0 + slack)
+        trickle = out["trickle"]
+        self.assertFalse({"hang", "crash"} & set(trickle), trickle)
+        (message, elapsed), = trickle["got"]
+        self.assertRegex(message, r"/trickle: given up: the network deadline of the run "
+                                  r"\(0\.8 s\) passed during the request$")
+        self.assertGreater(elapsed, 0.7)
+        self.assertLess(elapsed, 0.8 + slack)
+        datasets = len(self.good().read_json(SOURCES)["datasets"])
+        for name in ("silent_run", "trickle_run"):
+            with self.subTest(name):
+                run = out[name]
+                self.assertFalse({"hang", "crash"} & set(run), run)
+                self.assertEqual(run["code"], 2)
+                self.assertLess(run["elapsed"], 1.0 + slack)
+                report = run["report"]
+                self.assertEqual(len(report["unavailable"]), datasets + 2)
+                late = [u["dataset"] for u in report["unavailable"]
+                        if "not requested: the network deadline" in u["why"]]
+                self.assertEqual(run["seen"], datasets + 2 - len(late), report["unavailable"])
+                self.assertIn("no dataset was read, so the run checked nothing (every dataset "
+                              "is UNAVAILABLE)", report["errors"])
+                if name == "silent_run":
+                    self.assertGreaterEqual(len(late), datasets + 2 - 6, report["unavailable"])
+                    self.assertEqual(report["unavailable"][0]["dataset"], "LICENSE")
+                    self.assertRegex(report["unavailable"][0]["why"], r": URLError: timed out$")
+                else:
+                    # One deadline for the run: the first request (the LICENSE) is given
+                    # up at the deadline, and no other request is made.
+                    first = report["unavailable"][0]
+                    self.assertEqual(first["dataset"], "LICENSE")
+                    self.assertIn("given up: the network deadline of the run (1 s)", first["why"])
+                    self.assertEqual(run["seen"], 1, report["unavailable"])
 
     def test_every_syscall_that_an_auditd_rule_names_is_in_the_table(self):
         import yaml

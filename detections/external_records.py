@@ -32,6 +32,8 @@ import os
 import re
 import stat
 import tempfile
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -59,7 +61,17 @@ META_ORIGIN = "https://raw.githubusercontent.com/{repository}/{commit}/{path}"
 # The kernel's syscall table, at the tag that syscalls_x86_64.json names.
 KERNEL_REPOSITORY = "torvalds/linux"
 MAX_BYTES = 50 * 1024 * 1024        # no file larger than this is fetched or read
-TIMEOUT = 60                        # seconds, for one request
+# The network time. Each step of a request (the connection, each read) waits at most
+# TIMEOUT seconds, and the network work of one run ends DEADLINE seconds after it
+# starts (Deadline): a later request is UNAVAILABLE without a connection, and a request
+# that still runs then is given up. An origin that does not answer costs one step for
+# each request, and a report makes at most 2 + one for each dataset of such requests
+# (the LICENSE, the syscall table, the yml of each dataset: a dataset whose yml does not
+# come is not downloaded), so 29 x 15 s = 435 s at the pin of 27 datasets. DEADLINE caps
+# a slow origin. Both are under the 15 minutes of the job external-records
+# (test_external.py, ExternalRecordsJob, checks the sums).
+TIMEOUT = 15
+DEADLINE = 600
 
 FORMATS = ("cloudtrail-json", "azure-monitor-json", "k8s-audit-json", "auditd-raw")
 PRODUCTS = ("aws", "azure", "gcp", "kubernetes", "linux")
@@ -467,11 +479,55 @@ class _SameHost(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def fetch(url, limit):
-    """At most limit+1 bytes of url (the caller checks the length and the sha256)."""
+class Deadline:
+    """The network time of one run: `total` seconds from now (DEADLINE), and `timeout`
+    seconds for each step of a request (TIMEOUT). None: the value of the module when
+    the deadline is made."""
+
+    def __init__(self, total=None, timeout=None):
+        self.total = DEADLINE if total is None else total
+        self.timeout = TIMEOUT if timeout is None else timeout
+        self.end = time.monotonic() + self.total
+
+    def left(self):
+        return self.end - time.monotonic()
+
+
+def fetch(url, limit, deadline=None):
+    """At most limit+1 bytes of url (the caller checks the length and the sha256).
+
+    Unavailable when the deadline of the run has passed (the request makes no
+    connection), when a step of the request waits longer than deadline.timeout, and
+    when the request still runs at the deadline (the run does not wait for it).
+    deadline None: a deadline for this request alone."""
+    deadline = deadline or Deadline()
+    left = deadline.left()
+    if left <= 0:
+        raise Unavailable(f"{url}: not requested: the network deadline of the run "
+                          f"({deadline.total:g} s) has passed")
+    done = {}
+
+    def get():
+        try:
+            done["data"] = _get(url, limit, deadline.timeout)
+        except BaseException as e:      # noqa: BLE001 (raised again in the caller)
+            done["error"] = e
+
+    worker = threading.Thread(target=get, name="fetch", daemon=True)
+    worker.start()
+    worker.join(left)
+    if worker.is_alive():
+        raise Unavailable(f"{url}: given up: the network deadline of the run "
+                          f"({deadline.total:g} s) passed during the request")
+    if "error" in done:
+        raise done["error"]
+    return done["data"]
+
+
+def _get(url, limit, timeout):
     opener = urllib.request.build_opener(_SameHost)
     try:
-        with opener.open(url, timeout=TIMEOUT) as resp:
+        with opener.open(url, timeout=timeout) as resp:
             return resp.read(limit + 1)
     except Unavailable:
         raise
@@ -496,12 +552,13 @@ def _size(size):
     return "" if size is None else f" ({size} bytes)"
 
 
-def obtain(cache, sha, size, url, offline, what):
+def obtain(cache, sha, size, url, offline, what, deadline=None):
     """(bytes, 'cache' or 'download', HashMismatch of a bad cached copy or None).
 
-    Raises Unavailable when the file is not in the cache and cannot be downloaded,
-    and HashMismatch when a download gives other bytes than the pin. size None:
-    the pin names only the sha256 (a yml, the LICENSE); at most MAX_BYTES are read."""
+    Raises Unavailable when the file is not in the cache and cannot be downloaded
+    (also by the deadline of the run, see fetch()), and HashMismatch when a download
+    gives other bytes than the pin. size None: the pin names only the sha256 (a yml,
+    the LICENSE); at most MAX_BYTES are read."""
     if size is not None and size > MAX_BYTES:
         raise Fault(f"{what}: size {size} is over the cap of {MAX_BYTES} bytes")
     bad = None
@@ -516,7 +573,7 @@ def obtain(cache, sha, size, url, offline, what):
             raise bad
         raise Unavailable("not in the cache, and the run is --offline")
     try:
-        data = fetch(url, MAX_BYTES if size is None else size)
+        data = fetch(url, MAX_BYTES if size is None else size, deadline)
     except Unavailable as e:
         if bad:                 # the bad copy is the fault, also without a new download
             raise HashMismatch(f"{bad}. A new download failed: {e}") from None

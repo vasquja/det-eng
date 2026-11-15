@@ -49,8 +49,13 @@ Rows (one for each dataset and for each pair; no row holds a value of a record):
                         listed, or it is redundant): the default verdict applies
   EXCLUDED <rule> on <id>     a dataset that SOURCES.json leaves out, with its why
   UNAVAILABLE <id>      not in the cache and no download (also a ::warning); also
-                        the LICENSE or syscall_64.tbl of an online run
-  ERROR ...             a structural fault (exit 2)
+                        the LICENSE or syscall_64.tbl of an online run. Each step of
+                        a request waits at most 15 s, and the network work of a run
+                        ends at 600 s (external_records.TIMEOUT and DEADLINE): a
+                        request after that is UNAVAILABLE without a connection
+  ERROR ...             a structural fault (exit 2). The Summary line then ends with
+                        "; N error(s)", and the step summary (--markdown) gives the
+                        ERROR lines above the rows
 
 Declarations are in detections/external/expectations.json (a human decision; the
 file is not content for the merge policy). Each one names a rule, a dataset id,
@@ -301,16 +306,23 @@ class Report:
     def note(self, text):
         print(text, flush=True)
 
+    def summary_line(self, summary):
+        """The Summary line, with the number of errors when the run has errors (a
+        healthy run's line does not change)."""
+        return summary + (f"; {len(self.errors)} error(s)" if self.errors else "")
+
     def write(self, summary, meta, code):
         args = self.args
         if args.markdown:
             mode = "enforce" if args.enforce else "shadow"
-            body = "\n".join(t for _, t in self.rows
-                             + [("error", "ERROR " + e) for e in self.errors]).replace("```", "'''")
+            body = "\n".join(t for _, t in self.rows).replace("```", "'''")
+            # The ERROR lines come before the collapsed rows: they are why the step failed.
+            errors = "".join(f"ERROR {e}\n" for e in self.errors).replace("```", "'''")
             with open(args.markdown, "a", encoding="utf-8") as fh:
                 fh.write(f"## External records ({xr.REPOSITORY}, {mode})\n\n"
                          f"{summary.replace('|', '/')}\n\n"
-                         "Rows hold dataset ids, sha256 values, counts and the names of rule "
+                         + (f"```text\n{errors}```\n\n" if errors else "")
+                         + "Rows hold dataset ids, sha256 values, counts and the names of rule "
                          "items, never a value of a record.\n\n"
                          f"<details><summary>{len(self.rows)} row(s)</summary>\n\n"
                          f"```text\n{body}\n```\n\n</details>\n\n")
@@ -432,12 +444,12 @@ def origin_unavailable(report, name, e, of=""):
     report.unavailable.append({"dataset": name, "why": str(e)})
 
 
-def verify_origins(report, sources, table_doc, cache):
+def verify_origins(report, sources, table_doc, cache, deadline):
     """Online only: the LICENSE and the kernel's syscall table at their origins."""
     url = xr.meta_url(sources["commit"], sources["licence_file"])
     try:
         _, origin, bad = xr.obtain(cache, sources["licence_sha256"], None, url, False,
-                                   "LICENSE")
+                                   "LICENSE", deadline)
         if bad:
             report.error(bad)
         report.note(f"SOURCE    LICENSE of {xr.REPOSITORY} at the commit: sha256 "
@@ -449,7 +461,8 @@ def verify_origins(report, sources, table_doc, cache):
     src = table_doc["source"]
     try:
         data, origin, bad = xr.obtain(cache, src["sha256"], src["size"],
-                                      xr.syscall_table_url(src), False, "syscall_64.tbl")
+                                      xr.syscall_table_url(src), False, "syscall_64.tbl",
+                                      deadline)
         if bad:
             report.error(bad)
         derived = xr.derive_syscalls(data.decode("utf-8"), src["abis"])
@@ -466,11 +479,11 @@ def verify_origins(report, sources, table_doc, cache):
         report.error(e)
 
 
-def read_one(report, ds, commit, cache, offline, syscalls):
+def read_one(report, ds, commit, cache, offline, syscalls, deadline):
     """The routed records of one dataset, or None (UNAVAILABLE or a fault)."""
     try:
         yml, _, bad = xr.obtain(cache, ds["yml_sha256"], None, xr.meta_url(commit, ds["yml"]),
-                                offline, f"{ds['id']} (yml {ds['yml']})")
+                                offline, f"{ds['id']} (yml {ds['yml']})", deadline)
         if bad:
             report.error(bad)
         problems = xr.check_yml(ds, yml)
@@ -479,7 +492,8 @@ def read_one(report, ds, commit, cache, offline, syscalls):
                 report.error(p)
             return None
         data, origin, bad = xr.obtain(cache, ds["sha256"], ds["size"],
-                                      xr.data_url(commit, ds["path"]), offline, ds["id"])
+                                      xr.data_url(commit, ds["path"]), offline, ds["id"],
+                                      deadline)
         if bad:
             report.error(bad)
     except xr.Unavailable as e:
@@ -677,8 +691,9 @@ def run(args):
     report = Report(args)
     inputs = load_inputs(report)
     if inputs is None:
-        report.write("Summary: the inputs are not sound (see the errors)", {}, 2)
-        print("Summary: the inputs are not sound (see the errors above)")
+        report.write(report.summary_line("Summary: the inputs are not sound (see the errors)"),
+                     {}, 2)
+        print(report.summary_line("Summary: the inputs are not sound (see the errors above)"))
         return 2
     sources, table_doc, syscalls, expectations = inputs
     meta = {"repository": xr.REPOSITORY, "commit": sources["commit"],
@@ -705,21 +720,24 @@ def run(args):
                 f"{sources['licence_copy']} sha256 ok); syscalls_x86_64.json: "
                 f"{len(syscalls)} syscall(s) of Linux {table_doc['source']['tag']}; "
                 f"expectations.json: {len(decls)} declaration(s); {len(stale)} stale")
+        line = report.summary_line(line)
         print(line)
         report.write(line, meta, 2 if report.errors else (1 if args.enforce and stale else 0))
         if report.errors:
             return 2
         return 1 if args.enforce and stale else 0
     cache = xr.Cache(args.cache)
+    deadline = xr.Deadline()            # all the network work of the run
     if args.offline:
         report.note("offline: the LICENSE and the syscall table are not compared with their "
                     "origins; only files in the cache are read")
     else:
-        verify_origins(report, sources, table_doc, cache)
+        verify_origins(report, sources, table_doc, cache, deadline)
     tables, read = {}, 0
     chosen.sort(key=lambda r: r.key)
     for ds in sorted(sources["datasets"], key=lambda d: d["id"]):
-        routed = read_one(report, ds, sources["commit"], cache, args.offline, syscalls)
+        routed = read_one(report, ds, sources["commit"], cache, args.offline, syscalls,
+                          deadline)
         if routed is None:
             continue
         read += 1
@@ -750,6 +768,7 @@ def run(args):
         code = 1
     else:
         code = 0
+    summary = report.summary_line(summary)
     report.write(summary, meta, code)
     print(summary)
     return code
@@ -766,19 +785,20 @@ def run_draft(args):
     if not xr.COMMIT.fullmatch(commit):
         print(f"ERROR --commit {commit!r} is not a full commit SHA")
         return 2
-    cache, code = xr.Cache(args.cache), 0
+    cache, code, deadline = xr.Cache(args.cache), 0, xr.Deadline()
     for path, yml in args.draft:
         try:
             if xr.dataset_id(path) is None or not yml.endswith(".yml"):
                 raise xr.Fault(f"{path!r}: not datasets/attack_techniques/<T>/<dir>/<file> "
                                "with a .yml")
-            pointer = xr.parse_pointer(xr.fetch(xr.meta_url(commit, path), 1024))
+            pointer = xr.parse_pointer(xr.fetch(xr.meta_url(commit, path), 1024, deadline))
             if pointer is None:
                 raise xr.Fault(f"{path}: the raw origin gives no Git LFS pointer, so the "
                                "media origin does not serve the file")
             sha, size = pointer
-            data, _, _ = xr.obtain(cache, sha, size, xr.data_url(commit, path), False, path)
-            ymlb = xr.fetch(xr.meta_url(commit, yml), xr.MAX_BYTES)
+            data, _, _ = xr.obtain(cache, sha, size, xr.data_url(commit, path), False, path,
+                                   deadline)
+            ymlb = xr.fetch(xr.meta_url(commit, yml), xr.MAX_BYTES, deadline)
             techniques, sourcetype, named, _ = xr.yml_facts(ymlb.decode("utf-8"), path)
         except (xr.Fault, xr.Unavailable, ValueError, UnicodeDecodeError) as e:
             print(f"ERROR {e}")
