@@ -309,6 +309,9 @@ and `gatelib.py --run` prints it after the tests, with the state that the run
 gave each gap: `open`, or `not run`. A run of the whole suite fails when the test
 of a gap did not run and was not skipped: the marker is then on a method that
 `unittest` does not collect, and nothing tests the gap.
+A test of the harness (`test_gatelib.py`) compares the list of `--gaps --json`
+with the markers that it reads from the source text of each `test_*.py`: a test
+module that the discovery of the tests drops makes that test fail.
 
 ## CI
 
