@@ -436,7 +436,7 @@ class CheckSufficiency(gatelib.StartedTogether):
             "emulation_name", "name_keyed", "fixture_constant", "self_added_waiver",
             "keyed_good", "keyed_aws_organization", "keyed_azure_subscription", "keyed_entra_tenant",
             "keyed_gcp_project_number", "keyed_gcp_project_id", "keyed_k8s_node_name",
-            "keyed_k8s_node_uid", "keyed_together", "constant_table")
+            "keyed_k8s_node_uid", "keyed_together", "constant_table", "constant_probe")
 
     @classmethod
     def start_gate(cls, tree):
@@ -715,13 +715,14 @@ class CheckSufficiency(gatelib.StartedTogether):
 
     @classmethod
     def begin_fixture_constant(cls, tree):
-        # The real rule with one more required item: the account id that every cloud
-        # fixture and every sidecar case of the repository carries.
-        tree.replace("detections/sigma/" + LEAKED_KEY,
-                     "  selection_iam_user:\n    userIdentity.type: 'IAMUser'\n",
-                     "  selection_iam_user:\n    userIdentity.type: 'IAMUser'\n"
-                     "    recipientAccountId: '123456789012'\n")
+        tree.replace("detections/sigma/" + LEAKED_KEY, *cls.ACCOUNT_ITEM)
         return cls.start_gate(tree)
+
+    # The real rule with one more required item: the account id that every cloud
+    # fixture and every sidecar case of the repository carries.
+    ACCOUNT_ITEM = ("  selection_iam_user:\n    userIdentity.type: 'IAMUser'\n",
+                    "  selection_iam_user:\n    userIdentity.type: 'IAMUser'\n"
+                    "    recipientAccountId: '123456789012'\n")
 
     # The positive cases of a rule's sidecar (argument 1: the rule) on which the rule
     # fires when every event carries another account id, and the number of the cases.
@@ -1121,6 +1122,106 @@ class CheckSufficiency(gatelib.StartedTogether):
     @classmethod
     def begin_constant_table(cls, tree):
         return cls.in_background(cls.good().run_python, cls.CONSTANT_TABLE)
+
+    # The constant rename on built inputs, through the gate's own functions, with a
+    # table of three constants: rename_constants() on the values of argument 4 (a JSON
+    # object); rename_test() with the rule of argument 1 changed as arguments 2 and 3
+    # say (written to a temporary file: the good copy does not change), on a unit
+    # whose constant is only in its second event and on a unit that also holds a
+    # constant that the rule does not read; and constant_renames() for a constant
+    # whose every replacement is in a file of the tree.
+    CONSTANT_PROBE = (
+        "import json, os, sys, tempfile\n"
+        "sys.path.insert(0, 'detections')\n"
+        "import check_sufficiency as gate\n"
+        "import sigma_eval, sigma_explain\n"
+        "C = gate.FixtureConstant\n"
+        "table = (C('123456789012', 'digits', 'AWS account', '-'),\n"
+        "         C('11111111-2222-3333-4444-555555555555', 'guid', 'Azure subscription', '-'),\n"
+        "         C('8f3b2c1a-9d4e-4f6a-b1c2-3d4e5f6a7b8c', 'guid', 'Entra tenant', '-'))\n"
+        "renames = gate.constant_renames(table)\n"
+        "rule_path, old, new, values = sys.argv[1:5]\n"
+        "renamed = gate.rename_constants(json.loads(values), gate.constant_pattern(table),\n"
+        "                                renames)\n"
+        "with open(rule_path, encoding='utf-8') as fh:\n"
+        "    text = fh.read()\n"
+        "planted = os.path.join(tempfile.mkdtemp(), 'planted.yml')\n"
+        "with open(planted, 'w', encoding='utf-8') as fh:\n"
+        "    fh.write(text.replace(old, new))\n"
+        "rule = sigma_explain.load(planted).stripped()\n"
+        "os.remove(planted)\n"
+        "os.rmdir(os.path.dirname(planted))\n"
+        "with open(rule_path[:-len('.yml')] + '.cases.jsonl', encoding='utf-8') as fh:\n"
+        "    cases = [json.loads(line) for line in fh if line.strip()]\n"
+        "event = sigma_eval.flatten(next(c for c in cases if c['kind'] == 'positive')['events'][0])\n"
+        "quiet = sigma_eval.flatten({'eventSource': 's3.amazonaws.com', 'eventName': 'HeadObject'})\n"
+        "units = [('second', [quiet, event]),\n"
+        "         ('both', [dict(event, note='8f3b2c1a-9d4e-4f6a-b1c2-3d4e5f6a7b8c')])]\n"
+        "result = gate.rename_test(rule, units, gate.rename_pattern(), constants=table)\n"
+        "try:\n"
+        "    gate.constant_renames((C('7', 'digits', 'one digit', '-'),))\n"
+        "    seen = 'no error'\n"
+        "except RuntimeError as e:\n"
+        "    seen = str(e)\n"
+        "print(json.dumps({'renames': renames, 'renamed': renamed, 'seen': seen,\n"
+        "                  'fired': [bool(sigma_eval.evaluate(rule.sql, own)) for _, own in units],\n"
+        "                  'constants': result['constants']}))\n")
+
+    # The values for CONSTANT_PROBE, and what each must be after the rename ({x}: the
+    # replacement of x, {X}: it in upper case, {Xx}: with the case of each character of
+    # the constant as written there).
+    CONSTANT_VALUES = {
+        "upper": ("TENANT=8F3B2C1A-9D4E-4F6A-B1C2-3D4E5F6A7B8C;", "TENANT={T};"),
+        "mixed": ("tenant 8F3b2c1a-9d4e-4f6a-b1c2-3d4e5f6a7b8c", "tenant {Tt}"),
+        "in a longer number": ("1123456789012", "1123456789012"),
+        "next to a hex digit": ("a8f3b2c1a-9d4e-4f6a-b1c2-3d4e5f6a7b8c",
+                                "a8f3b2c1a-9d4e-4f6a-b1c2-3d4e5f6a7b8c"),
+        "in a token": ("arn:aws:iam::123456789012:root", "arn:aws:iam::{a}:root"),
+        "no letter, upper-case value": (
+            "/SUBSCRIPTIONS/11111111-2222-3333-4444-555555555555/RESOURCEGROUPS/RG-1",
+            "/SUBSCRIPTIONS/{S}/RESOURCEGROUPS/RG-1"),
+        "no letter, lower-case value": (
+            "/subscriptions/11111111-2222-3333-4444-555555555555/resourcegroups/rg-1",
+            "/subscriptions/{s}/resourcegroups/rg-1"),
+    }
+
+    @classmethod
+    def begin_constant_probe(cls, tree):
+        return cls.in_background(
+            cls.good().run_python, cls.CONSTANT_PROBE, "detections/sigma/" + LEAKED_KEY,
+            *cls.ACCOUNT_ITEM, json.dumps({k: v for k, (v, _) in cls.CONSTANT_VALUES.items()}))
+
+    def test_constant_rename_matches_whole_tokens_in_any_case_and_in_each_event(self):
+        """The constant rename finds a constant as a whole token (not inside a longer
+        number, not next to a hex digit of a GUID), in any case and in each event of a
+        unit; the replacement takes the case of the constant (or, for a constant with
+        no letter, of its value); the failure names only the constant whose rename
+        stops the unit; and no replacement is a text of the tree."""
+        _, probe = self.started("constant_probe")
+        self.assertEqual(probe.returncode, 0, probe.describe())
+        data = json.loads(probe.stdout)
+        renames = data["renames"]
+        tenant = renames["8f3b2c1a-9d4e-4f6a-b1c2-3d4e5f6a7b8c"]
+        written = "8F3b2c1a-9d4e-4f6a-b1c2-3d4e5f6a7b8c"
+        fields = {"T": tenant.upper(),
+                  "Tt": "".join(n.upper() if o.isupper() else n for o, n in zip(written, tenant)),
+                  "a": renames["123456789012"],
+                  "S": renames["11111111-2222-3333-4444-555555555555"].upper(),
+                  "s": renames["11111111-2222-3333-4444-555555555555"]}
+        self.assertEqual(data["renamed"], {k: want.format(**fields)
+                                           for k, (_, want) in self.CONSTANT_VALUES.items()})
+        # rename_test(): the planted rule fires on each unit as written, and the
+        # rename stops each, also when the constant is only in the second event. The
+        # unit that also holds a tenant names only the account: the rename of the
+        # tenant alone leaves it firing.
+        self.assertEqual(data["fired"], [True, True])
+        self.assertEqual(data["constants"]["units"], 2)
+        self.assertEqual([(s["unit"], s["constants"]) for s in data["constants"]["stopped"]],
+                         [("second", ["123456789012"]), ("both", ["123456789012"])])
+        for stopped in data["constants"]["stopped"]:
+            self.assertIn("selection_iam_user.recipientAccountId", stopped["flipped"])
+        # Each replacement of a one-digit constant is in a file of the tree.
+        self.assertEqual(data["seen"], "no replacement found for the fixture constant '7'")
 
     def constant_table(self):
         _, probe = self.started("constant_table")

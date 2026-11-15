@@ -156,9 +156,14 @@ backend (sigma_eval) and the same item-by-item grading (sigma_explain):
                    on a token's prefix before the emulation name, or on another
                    value of an emulation run (an attack fixture's source IP, an
                    instance or key id, a timestamp, the id of one object or
-                   record, a constant that the data of one rule only holds, or
-                   a constant that a new case shares and the table does not
-                   list yet), still passes here. Outside the auditd validator
+                   record, the uid of a principal of the lab cluster (a
+                   controller's service account), a constant that the data of
+                   one rule only holds, or a constant that a new case shares
+                   and the table does not list yet), still passes here. Only
+                   positive units are renamed, so a filter keyed on a fixture
+                   constant (an allowlist of the recording account or node)
+                   passes too; the benign corpus (score_benign.py) is the check
+                   for that. Outside the auditd validator
                    the units come from the sidecar and the attack fixtures as
                    written, so a positive that carries an identity only in a
                    field the rule does not read, with the field the rule keys
@@ -1302,12 +1307,17 @@ def constant_pattern(constants=FIXTURE_CONSTANTS):
 
 def _tree_text():
     """The text of every rule, case and fixture (detections/sigma/, detections/cloud/),
-    in lowercase: what a replacement of a constant must not occur in."""
+    in lowercase: what a replacement of a constant must not occur in. Only regular
+    files are read: a link (to /dev/zero, say) or a device is not text of the tree,
+    and R0 or the review refuses it."""
     texts = []
     for top in (SIGMA, os.path.join(REPO, "detections", "cloud")):
         for root, _, files in os.walk(top):
             for name in sorted(files):
-                with open(os.path.join(root, name), encoding="utf-8", errors="replace") as fh:
+                path = os.path.join(root, name)
+                if os.path.islink(path) or not os.path.isfile(path):
+                    continue
+                with open(path, encoding="utf-8", errors="replace") as fh:
                     texts.append(fh.read().lower())
     return "\n".join(texts)
 

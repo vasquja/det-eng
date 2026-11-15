@@ -596,7 +596,10 @@ it does not see one test in the place of a different one.
   `check_sufficiency.py`: each constant of the table must occur in a sidecar. A
   change to the cases that removes the last occurrence of a constant makes
   `gate-tests` red. The repair is to delete the entry from the table
-  (`check_sufficiency.py`, which the maintainer merges by hand). No test finds a
+  (`check_sufficiency.py`, which the maintainer merges by hand). If a rejection
+  test of `CheckSufficiency` (`KEYED_ON`, or the test of the account) plants that
+  constant, that test fails too: point it at another constant of its kind, or
+  delete the kind with its test when no constant of the kind is left. No test finds a
   constant that the table does not list: when new cases of two rules share a new
   value of the recording environment, R4 does not rename it until a human adds it
   to the table.

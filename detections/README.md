@@ -393,8 +393,11 @@ it declares. An unrelated event cannot pass as a near-miss.
   rule only hold. A gate test fails when a constant of the table is in no sidecar.
 
   Not renamed: what precedes the name in its token (the AWS key type in
-  `AKIATRR9012...`), source IPs, instance and key ids, timestamps, and a constant
-  that the table does not list. Outside the auditd rules the units are the
+  `AKIATRR9012...`), source IPs, instance and key ids, timestamps, the uid of a
+  principal of the lab cluster, and a constant that the table does not list. Only
+  positives are renamed, so a filter keyed on a fixture constant (an allowlist of
+  the recording account or node) is not caught here; the benign corpus is the
+  check for that. Outside the auditd rules the units are the
   sidecar and the attack fixtures as written, so a positive that carries an
   identity only in a field the rule does not read passes too. A human reviewer
   must catch a rule keyed on any of those.
