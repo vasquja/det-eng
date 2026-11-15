@@ -285,34 +285,51 @@ def rejects_a_line_that_is_not_a_record_in_each_log(test):
 
 
 # CRI snapshots that hold no sandbox of the R2d reader, and the end of the ERROR line
-# of each, after `line N` (a regular expression).
+# of each, after `line N` (a regular expression). A sandbox needs an id and a metadata
+# object with a name: the last two items have one of the two only.
 BAD_SNAPSHOTS = {
     json.dumps({"items": [{}]}): ", item 1 of the snapshot: " + NOT_A_RECORD["{}"]["cri"],
     json.dumps({"items": None}): r': a snapshot whose "items" is not a list \(null\)',
-    json.dumps({"items": {}}): r': a snapshot whose "items" is not a list \(an object\)'}
+    json.dumps({"items": {}}): r': a snapshot whose "items" is not a list \(an object\)',
+    json.dumps({"items": [{"id": "x", "metadata": {}}]}):
+        ", item 1 of the snapshot: " + NOT_A_RECORD["{}"]["cri"],
+    json.dumps({"items": [{"metadata": {"name": "x"}}]}):
+        ", item 1 of the snapshot: " + NOT_A_RECORD["{}"]["cri"]}
+# Lines of the file log that have one of the two fields of a file event only (a
+# TargetFilename and an Image), and the end of the ERROR line of each, after `line N`.
+BAD_FILE_EVENTS = {
+    json.dumps({"TargetFilename": "/etc/kubernetes/manifests/etcd.yaml"}):
+        ": " + NOT_A_RECORD["{}"]["file"],
+    json.dumps({"Image": "/usr/bin/kubeadm"}): ": " + NOT_A_RECORD["{}"]["file"]}
 
 
-def rejects_snapshots_that_hold_no_sandbox(test, snapshots):
+def rejects_lines_that_are_not_records(test, source, lines):
     """Runs of the negative-control step of the static pod or the API server validator,
-    one for each of `snapshots` (keys of BAD_SNAPSHOTS), each in a private copy, started
-    together: the healthy logs of test.write_logs(), and one more line of the CRI log,
-    the snapshot. In each run the validator names the line (and the item), counts the
-    sandboxes of the healthy lines, and judges no rule."""
+    one for each of `lines` (keys of BAD_SNAPSHOTS for the source "cri", of
+    BAD_FILE_EVENTS for "file"), each in a private copy, started together: the healthy
+    logs of test.write_logs(), and one more line of the log of `source`. In each run the
+    validator names the line (and the item) in its one ERROR line, counts the records
+    of the healthy lines, and judges no rule."""
+    name, log, what, ends = {
+        "cri": (test.CRI, "CRI log", r"pod sandbox\(es\)", BAD_SNAPSHOTS),
+        "file": (test.FILE, "file log", r"file event\(s\)", BAD_FILE_EVENTS)}[source]
     runs = []
-    for snapshot in snapshots:
+    for line in lines:
         tree = test.tree()
-        _, cri, _ = test.write_logs(tree)
-        with open(tree.tmp_path(test.CRI), "a", encoding="utf-8") as fh:
-            fh.write(snapshot + "\n")
-        runs.append((snapshot, cri, tree.start_step(test.negative_control_step())))
-    for snapshot, cri, pending in runs:
-        with test.subTest(snapshot=snapshot):
+        count = dict(zip(("audit", "cri", "file"), test.write_logs(tree)))[source]
+        with open(tree.tmp_path(name), "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+        runs.append((line, count, tree.start_step(test.negative_control_step())))
+    for line, count, pending in runs:
+        with test.subTest(line=line):
             result = pending.result()
-            test.assert_saw(result, rf"^Loaded {cri} pod sandbox\(es\) from ")
+            test.assert_saw(result, rf"^Loaded {count} {what} from ")
             test.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+            test.assertEqual(len(re.findall(r"^ERROR: ", result.stdout, re.MULTILINE)), 1,
+                             result.describe())
             test.assert_saw(result, LINES_NOT_RECORDS.format(1))
-            test.assert_rejects(result, r"^ERROR: the CRI log \S+/pre-emulation-cri\.jsonl, "
-                                        rf"line {cri + 1}{BAD_SNAPSHOTS[snapshot]}$", exit_code=1)
+            test.assert_rejects(result, rf"^ERROR: the {log} \S+/{re.escape(name)}, "
+                                        rf"line {count + 1}{ends[line]}$", exit_code=1)
 
 
 # The text of the ledger problem of a row with the times LATE_START and EARLY_END below.
@@ -2866,13 +2883,21 @@ class StaticPodValidator(gatelib.GateCase):
         rejects_a_line_that_is_not_a_record_in_each_log(self)
 
     def test_rejects_a_snapshot_that_holds_no_sandbox(self):
-        """After the healthy sandboxes, the CRI log holds one more snapshot (three runs):
-        one whose one item is `{}` (an object without an id and a name), and two whose
-        "items" is not a list (`null`, `{}`). Before, the first counted as one sandbox
-        (the objects without an id shared the id None), and the other two as snapshots
-        without a sandbox. The API server validator has the same reader (class
-        LogReaderText) and runs the first of the three."""
-        rejects_snapshots_that_hold_no_sandbox(self, BAD_SNAPSHOTS)
+        """After the healthy sandboxes, the CRI log holds one more snapshot (five runs):
+        one whose one item is `{}` (an object without an id and a name), two whose
+        "items" is not a list (`null`, `{}`), and two whose one item has an id and a
+        metadata object without a name, or a name and no id. Before, the first counted
+        as one sandbox (the objects without an id shared the id None), and the next two
+        as snapshots without a sandbox. The API server validator has the same reader
+        (class LogReaderText) and runs the first of the five."""
+        rejects_lines_that_are_not_records(self, "cri", BAD_SNAPSHOTS)
+
+    def test_rejects_a_file_log_line_with_one_field_of_a_file_event(self):
+        """After the healthy file events, the file log holds one more line that has one
+        of the two fields of a file event only (two runs): a TargetFilename and no
+        Image, and an Image and no TargetFilename. The API server validator has the same
+        reader (class LogReaderText) and the same entry of RECORDS for its file log."""
+        rejects_lines_that_are_not_records(self, "file", BAD_FILE_EVENTS)
 
     def test_rejects_a_line_that_is_not_a_record_beside_a_log_without_a_record(self):
         """Two defects in two logs, and the run names both (two runs, each in a private
@@ -3556,10 +3581,10 @@ class ApiserverValidator(gatelib.GateCase):
     def test_rejects_a_snapshot_item_that_is_not_a_sandbox(self):
         """After the healthy sandboxes, the CRI log holds one snapshot whose one item is
         `{}`: an object without an id and a name. Before, it counted as one sandbox (the
-        objects without an id shared the id None). StaticPodValidator runs the two
-        snapshots whose "items" is not a list too: the reader is one text (class
-        LogReaderText)."""
-        rejects_snapshots_that_hold_no_sandbox(self, list(BAD_SNAPSHOTS)[:1])
+        objects without an id shared the id None). StaticPodValidator runs the other
+        snapshots of BAD_SNAPSHOTS and the lines of BAD_FILE_EVENTS too: the reader is
+        one text, and so is each entry of its table of records (class LogReaderText)."""
+        rejects_lines_that_are_not_records(self, "cri", list(BAD_SNAPSHOTS)[:1])
 
     def test_rejects_a_cri_log_line_that_is_not_utf8(self):
         """After the healthy sandboxes, the CRI log holds one more sandbox with one byte
