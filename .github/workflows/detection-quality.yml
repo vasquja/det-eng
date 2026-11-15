@@ -915,9 +915,12 @@ jobs:
     # action.
     # The job summary and the uploaded report hold dataset ids, sha256 values, counts
     # and the names of rule items, never a value of a record. No `if:`, no `needs:` and
-    # no paths filter: it runs on every pull request, push and schedule.
+    # no paths filter: it runs on every pull request, on push to main, weekly and on
+    # workflow_dispatch.
     name: external-records
     runs-on: ubuntu-latest
+    # The network work of the gate ends at 600 s (DEADLINE of
+    # detections/external_records.py); test_external.py checks that 300 s are left.
     timeout-minutes: 15
     permissions:
       contents: read

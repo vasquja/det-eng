@@ -1798,9 +1798,18 @@ event (kind `Event`, apiVersion `audit.k8s.io/*`) or a raw auditd SYSCALL record
 auditd records are built by `auditd_records.syscall_event()`, the function of the
 Linux validator, with the syscall names of `external/syscalls_x86_64.json` (Linux
 v6.18). Another attack tag of the rule gives `RELATED`. A parent or a sub-technique of
-the technique gives no pair. A raw auditd dataset of a CVE exploit has a `procedure` label in
-`SOURCES.json` (the CVE or the exploit name that the description of its yml gives),
-and a rule whose `cve.*` tags do not include its CVE gives `OTHER-PROCEDURE`. `RELATED` and `OTHER-PROCEDURE` are reported, not expected.
+the technique gives no pair. A raw auditd dataset of a CVE exploit has a `procedure`
+label in `SOURCES.json`, and a rule whose `cve.*` tags do not include one of its CVEs
+gives `OTHER-PROCEDURE`. `RELATED` and `OTHER-PROCEDURE` are reported, not expected.
+The label is the CVE or the exploit name that the description of the yml gives as a
+whole token (no letter, digit or hyphen next to it). Each CVE of the label is a whole
+token of that description too, or it is the `cve.*` tag of a rule of the technique
+whose title holds the label, both compared without white space and letter case
+("Copy Fail" and "(CopyFail CVE-2026-31431)"). A label in CVE form must be one of its
+CVEs (`--lint`). The check does not prove that the label is the procedure: a generic
+phrase that is a whole token of the description, and that the title of a rule with the
+listed CVE also holds, still passes. The owner's review of `SOURCES.json`
+(`.github/CODEOWNERS`) is the control for that.
 
 **Rows.** `DATASET` (a file that was read), `FIRE`, `MISS` (with the nearest record
 and the items of the rule that it fails), `RELATED`, `OTHER-PROCEDURE`, `NOT READ`
@@ -1829,22 +1838,39 @@ declaration for a rule or a dataset that does not exist, a `HASH MISMATCH` (a ca
 file of other bytes is deleted), a record count that is not the pin, a line that is
 not a record of its format, a key or a value that one SQLite table cannot hold (an
 integer outside 64 bits, a NUL character, a lone surrogate, the key `_rowid`, a number
-that is not finite), keys that differ only in letter case, a yml at the commit that
-does not agree with its entry, and a run that read no dataset. `--enforce`
-(roadmap item R3b) also exits 1 on a `MISS` without a declaration and on a
-declaration that does not hold, and 2 on an `UNAVAILABLE` dataset, LICENSE or syscall
-table.
+that is not finite), keys that differ only in letter case, records of one log source
+with more than 1900 distinct keys (a table holds 2000 columns, less the row id and the
+fields that the rules add), a yml at the commit that does not agree with its entry
+(also its procedure label and CVEs), a cache entry that is not a regular file or
+cannot be read, and a run that read no dataset. A run with an error ends its
+`Summary` line with `; N error(s)`, and its step summary gives the `ERROR` lines above
+the rows. `--enforce` (roadmap item R3b) also exits 1 on a `MISS` without a
+declaration and on a declaration that does not hold, and 2 on an `UNAVAILABLE`
+dataset, LICENSE or syscall table.
 
 **Origins and cache.** The gate makes each URL from the pinned full commit and the
 path: the data from `media.githubusercontent.com`, the ymls and the LICENSE from
 `raw.githubusercontent.com`. It follows no redirect to another scheme or host, reads at
 most 50 MB of a file, and checks the sha256 before it parses a byte. A JSON record must
-be one record: an object that holds a key two times, two keys that give one field when
-the record is flattened, and NaN or Infinity are faults. A file is kept in a
-cache by its sha256 (`~/.cache/det-eng/external`, or `--cache DIR`); `--offline` reads
-only the cache. CI downloads on each run (about 1.3 MB). Only the job reads the real
-datasets: the gate tests build their datasets from sidecar cases, and no record of
-`splunk/attack_data` is in this repository.
+be one record: an object that holds a key two times (the envelope `{"Records": [...]}`
+too), two keys that give one field when the record is flattened, and NaN or Infinity
+are faults. An integer outside 64 bits is refused when it is parsed, by its length
+before its value (Python's `int()` stops at 4300 digits). A file is kept in a cache by
+its sha256 (`~/.cache/det-eng/external`, or `--cache DIR`); `--offline` reads only the
+cache. A cache entry that is not a regular file (a FIFO, a directory) is a fault: the
+gate does not wait on it. CI downloads on each run (about 1.3 MB). Only the job reads
+the real datasets: the gate tests build their datasets from sidecar cases, and no
+record of `splunk/attack_data` is in this repository.
+
+**Network time.** Each step of a request (the connection, each read) waits at most
+15 s, and the network work of a run ends 600 s after it starts: a request after that
+is `UNAVAILABLE` and makes no connection, and a request that still runs then is given
+up. An origin that does not answer costs one step for each request. A report makes at
+most 2 + 27 such requests (the LICENSE, the syscall table and the yml of each of the 27
+datasets; a dataset whose yml is `UNAVAILABLE` is not downloaded), so 29 x 15 s =
+435 s. The deadline caps a slow origin at 600 s, which leaves 300 s of the 15 minutes
+of the job for its other steps (`test_external.py` checks both sums). The name lookup
+of a host has no step limit of its own; the deadline covers it too.
 
 ```bash
 python3 detections/check_external_records.py --lint      # offline: the two files and the syscall table

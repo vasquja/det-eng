@@ -8,6 +8,7 @@ The gate check_external_records.py uses this module. It holds what a later reade
   load_sources() / lint_sources()   detections/external/SOURCES.json and its rules
   load_syscalls()                   detections/external/syscalls_x86_64.json
   Cache, obtain()                   the content-addressed cache and the fixed origins
+  Deadline, fetch()                 the network time of a run (TIMEOUT, DEADLINE)
   check_yml()                       a dataset's yml at the commit against its entry
   check_procedure()                 its procedure label against the yml and the
                                     titles and cve.* tags of the rules of its technique

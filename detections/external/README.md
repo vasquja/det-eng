@@ -61,12 +61,13 @@ row), which is GPL-2.0 WITH Linux-syscall-note.
   one entry; `aliases` holds the other paths).
 - `format` is `cloudtrail-json`, `azure-monitor-json`, `k8s-audit-json` or
   `auditd-raw`: native records only. A JSON file is one record for each line, a JSON
-  array, one object, or (CloudTrail) `{"Records": [...]}`. A raw auditd line can carry
-  the ENRICHED fields of auditd with no GS byte before them (`key="x"ARCH=x86_64
-  SYSCALL=unshare AUID="ubuntu"`, as in `T1068/linux_dirtyfrag/audit`). The loader
-  takes only the lower-case fields of the kernel record (`auditd_records.py`, as the
-  Linux validator does), so such a file is read: its upper-case fields are not keys of
-  the event, and no key differs from another only in letter case.
+  array, one object, or (CloudTrail) `{"Records": [...]}`, with each key one time (the
+  envelope too). A raw auditd line can carry the ENRICHED fields of auditd with no GS
+  byte before them (`key="x"ARCH=x86_64 SYSCALL=unshare AUID="ubuntu"`, as in
+  `T1068/linux_dirtyfrag/audit`). The loader takes only the lower-case fields of the
+  kernel record (`auditd_records.py`, as the Linux validator does), so such a file is
+  read: its upper-case fields are not keys of the event, and no key differs from
+  another only in letter case.
 - `records` is the number of records that the loader must read (for auditd, the
   SYSCALL records). Another number is a fault: a loader that drops records cannot
   make a pass.
@@ -78,18 +79,33 @@ row), which is GPL-2.0 WITH Linux-syscall-note.
 - `procedure` (optional): `{label, cves, why}` for the raw auditd dataset of a CVE
   exploit (`--lint` refuses it on another format). The label is the CVE or the exploit
   name that the yml names, and `cves` its CVE IDs. A rule whose `cve.*` tags include
-  none of them gives `OTHER-PROCEDURE`, not an expected fire. The report fails when the
-  `description` of the yml at the commit does not hold the label: a label turns a
-  `MISS` into a pair that no mode fails, so it must come from the yml. The `cves` are
-  not in every yml (the yml of Copy Fail names only the exploit): the owner reviews
-  each label and its CVEs.
+  none of them gives `OTHER-PROCEDURE`, not an expected fire. A label turns a `MISS`
+  into a pair that no mode fails, so it must come from the yml:
+  - the report fails when the `description` of the yml at the commit does not hold the
+    label (white space folded) as a whole token, with no letter, digit or hyphen next
+    to it (`CVE-2026-4350` is not in `CVE-2026-43500`);
+  - the report fails when a CVE of `cves` is not a whole token of that description and
+    not the `cve.*` tag of a rule of the technique folder whose title holds the label,
+    both without white space and letter case. The yml of Copy Fail names only the
+    exploit, so its CVE comes from `T1068/copyfail_af_alg_authencesn.yml` ("... (CopyFail
+    CVE-2026-31431)", `cve.2026-31431`), and the two CVEs of Dirty Frag from the two
+    dirtyfrag rules of T1068. A change to the title or the `cve.*` tags of such a rule
+    makes the report fail for that dataset;
+  - `--lint` fails when a label in CVE form is not one of its `cves`.
+
+  These checks do not prove that the label is the procedure: a generic phrase that is
+  a whole token of the description, and that the title of a rule with the listed CVE
+  also holds, still passes. The owner reviews each label and its CVEs
+  (`.github/CODEOWNERS`): that review is the control for it.
 - `excluded` holds each file of the log sources of the rules that the gate does not
   read, with a reason that is true: a format that is not native (OCSF, a Splunk search
   export, Activity Log events in the shape of the REST API, Splunk risk events, Office
-  365 Management Activity). `product` selects the rules that get an `EXCLUDED` row:
-  those of the product whose folder is a technique of the file. No adapter converts
-  such a file: a record that an agent converts is not a record that the agent did not
-  write.
+  365 Management Activity), or records of one log source with more than 1900 distinct
+  keys (one table of the gate cannot hold them with the fields of the rules; the
+  report fails on such a dataset). `product` selects the rules that get an `EXCLUDED`
+  row: those of the product whose folder is a technique of the file. No adapter
+  converts such a file: a record that an agent converts is not a record that the agent
+  did not write.
 
 A dataset is in scope when a yml names it, the yml names the folder technique of a
 rule, and the file is a log of the product of that rule. A file that no yml names is

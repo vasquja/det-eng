@@ -123,8 +123,8 @@ Design 4.3 gives 39, 18, 12, 112 and 6; these numbers match none of these bases.
   gives `OTHER-PROCEDURE`. Both are reported, not expected.
 - **Formats.** Only native records: CloudTrail, Azure Monitor (Entra) by `category`,
   Kubernetes audit events and raw auditd lines. No adapter: OCSF, Splunk search exports,
-  Activity Log records in the shape of the REST API, Splunk risk events, interpreted
-  auditd and Office 365 Management Activity go to the `excluded` list with their reason.
+  Activity Log records in the shape of the REST API, Splunk risk events and Office 365
+  Management Activity go to the `excluded` list with their reason.
 - **The first run** (shadow; 27 datasets of 1.2 MB, 1.3 MB with their ymls, the LICENSE
   and the syscall table; 19 excluded): 21 of 91 rules have a same-technique dataset of
   their log source; 37 expected pairs give 7 FIRE and 30 MISS; 18 pairs are related, 30
