@@ -575,8 +575,8 @@ it does not see one test in the place of a different one.
   - `detections/sigma/T1040/afxdp_socket.cases.jsonl`
   - `detections/sigma/T1078.004/aws_cognito_unauthenticated_identity_use.yml`
   - `detections/sigma/T1078.004/aws_leaked_access_key_recon.yml`
-  - `detections/sigma/T1098.006/k8s_rbac_privileged_grant.cases.jsonl`
   - `detections/sigma/T1098.006/k8s_rbac_write.yml`
+  - `detections/sigma/T1485/k8s_volume_reclaim_set_to_delete.cases.jsonl`
   - `detections/sigma/T1537/aws_snapshot_or_ami_made_public.yml`
   - `detections/sigma/T1543.005/k8s_cri_static_pod_start.yml`
   - `detections/sigma/T1543.005/k8s_static_pod_mirror_create.yml`

@@ -561,8 +561,10 @@ class ProviderMappings(gatelib.GateCase):
     # The gate loads .github/scripts/check_sigma_regex.py by path.
     PARTS = ("detections", ".github/scripts/check_sigma_regex.py")
     REAL = "T1611/k8s_podspec_host_access.yml"      # the rule the planted one is derived from
-    CLASH_RULE = "T1098.006/k8s_rbac_privileged_grant.yml"   # a rule with approvals
-    CLASH_CASES = "detections/sigma/T1098.006/k8s_rbac_privileged_grant.cases.jsonl"
+    # A rule with approvals for GKE (an EXPECTED_LOSS entry and a NOT_PORTABLE entry)
+    # whose sidecar no other list of detections/tests/README.md (Limits) names.
+    CLASH_RULE = "T1485/k8s_volume_reclaim_set_to_delete.yml"
+    CLASH_CASES = "detections/sigma/T1485/k8s_volume_reclaim_set_to_delete.cases.jsonl"
     PLANTED = "T9999/planted_json_separator_k8s.yml"
     OK = (r"^OK: every mapped rule keeps its verdicts and block truth on every case, or the "
           r"difference is approved\.$")
