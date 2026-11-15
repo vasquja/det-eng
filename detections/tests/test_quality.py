@@ -513,6 +513,8 @@ class ProviderMappings(gatelib.GateCase):
     # The gate loads .github/scripts/check_sigma_regex.py by path.
     PARTS = ("detections", ".github/scripts/check_sigma_regex.py")
     REAL = "T1611/k8s_podspec_host_access.yml"      # the rule the planted one is derived from
+    CLASH_RULE = "T1098.006/k8s_rbac_privileged_grant.yml"   # a rule with approvals
+    CLASH_CASES = "detections/sigma/T1098.006/k8s_rbac_privileged_grant.cases.jsonl"
     PLANTED = "T9999/planted_json_separator_k8s.yml"
     OK = (r"^OK: every mapped rule keeps its verdicts and block truth on every case, or the "
           r"difference is approved\.$")
@@ -534,6 +536,15 @@ class ProviderMappings(gatelib.GateCase):
         cls.bad = cls.class_tree()
         cls.bad.plant("quality/one_json_serialisation_k8s", "detections/sigma/T9999")
         cls.rejection = cls.in_background(cls.bad.run, cls.GATE, *cls.ci_arguments)
+        # pm-sidecar-case-clash: one more case in the sidecar of a rule that has
+        # approvals, whose event has the keys `verb` and `Verb`. rule_cases.load_cases()
+        # refuses that case; the gate must name it, check every other rule, and leave
+        # the results file as it is (--write) and not compare it (--check).
+        cls.clash, cls.clash_write = cls.class_tree(), cls.class_tree()
+        for tree in (cls.clash, cls.clash_write):
+            tree.plant("quality/provider_case_clash.jsonl", cls.CLASH_CASES, append=True)
+        cls.clash_run = cls.in_background(cls.clash.run, cls.GATE, *cls.ci_arguments)
+        cls.clash_write_run = cls.in_background(cls.clash_write.run, cls.GATE, "--write")
 
     def test_ci_passes_check_and_require_re2(self):
         self.assert_ci_runs(self.GATE, "--check", "--require-re2")
@@ -590,6 +601,38 @@ class ProviderMappings(gatelib.GateCase):
         self.assertEqual(len(others), 1, result.describe())
         self.assertRegex(others[0], r"^  detections/pipelines/mapping_results\.json is stale: ")
         self.assertNotIn("configmap-emptydir-volumes", result.stdout)
+
+    def clash_error(self):
+        """The ERROR line for the planted case: the rule, the line and the case."""
+        line = len(self.good().read_jsonl(self.CLASH_CASES)) + 1
+        return (rf"^ERROR {re.escape(self.CLASH_RULE)}: sidecar error: line {line}: case "
+                r"'planted-two-verb-keys': event keys that differ only by case: Verb / verb "
+                r"\(the events of a case share one SQLite table")
+
+    def test_rejects_sidecar_case_that_one_table_cannot_hold(self):
+        """pm-sidecar-case-clash (planted in setUpClass), with the command line of the
+        job: an ERROR line names the rule, the line and the case, with no traceback.
+        It is the one problem: the gate checks every other rule for both gating
+        providers, and the approvals of the rule are not stale."""
+        result = self.clash_run.result()
+        self.assert_rejects(result, self.clash_error(), exit_code=1)
+        self.assertIn("\nFAILED: 1 problem(s).\n", result.stdout)
+        rules = [rule for rule in k8s_audit_rules(self.good(), sidecar=True)
+                 if rule != self.CLASH_RULE]
+        for provider in ("aks", "gke"):
+            judged = found(result, rf"^\[{provider}\] (?:SAME|EXPECTED LOSS|NOT PORTABLE) +"
+                                   r"(T\S+\.yml) \([1-9]\d* cases")
+            self.assertEqual(sorted(judged), rules, provider)
+
+    def test_write_keeps_the_results_file_when_a_sidecar_case_is_refused(self):
+        """pm-sidecar-case-clash with --write: the results would not hold the rule, so
+        the gate does not write them, and fails."""
+        result = self.clash_write_run.result()
+        self.assert_rejects(result, self.clash_error(), exit_code=1)
+        self.assertIn("\ndid not write detections/pipelines/mapping_results.json: 1 rule(s) with "
+                      "a sidecar error were not checked\n", result.stdout)
+        results = "detections/pipelines/mapping_results.json"
+        self.assertEqual(self.clash_write.read(results), self.good().read(results))
 
     def test_rejects_match_on_one_json_serialisation_by_rule_path(self):
         """The same pair with the rule-path form, which skips the results file: the
