@@ -1490,6 +1490,8 @@ def self_test():
              {"why": "TODO: one line, what the rule relies on"}, "`why` starts with TODO"),
             ("a why that starts with TODO after a blank", {"why": " TODO: x"},
              "`why` starts with TODO"),
+            ("a why with a tab before TODO and no colon", {"why": "\tTODO x"},
+             "`why` starts with TODO"),
             ("other hits", {"gained": [[0], [1]]}, "the hits changed"),
             ("a defect that is not open", {"defect": "K999"}, "is not an open entry")):
         _, diffs, problems, _ = judged(

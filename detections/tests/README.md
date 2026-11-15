@@ -557,7 +557,8 @@ These rejections have no planted artifact and no test:
   rule on records with a list, or an item with `|neq` on a list), a rule with no
   case and no fixture, a rule file that cannot be checked, an entry with the
   reason `KEY_ORDER` on a set that differs as compact text too, an entry whose
-  `why` starts with `TODO` (the text of `--propose`; also after a blank), and a
+  `why` starts with `TODO` (the text of `--propose`; also after a blank, and after
+  a tab with no colon after `TODO`), and a
   `compact`, `cs_like` or `re2` variant that is not in force (for `compact`, also
   a default run that reads the compact text). Its self-test holds a constructed
   rule, or a constructed variant or default run, for each (for `re2`, where the
