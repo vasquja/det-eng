@@ -749,7 +749,8 @@ class Variants(gatelib.GateCase):
         assert_cases_hold(tree, rule)
         self.assert_accepts(tree.run("detections/check_null_safety.py", "detections/sigma/" + rule),
                             r"^OK: 1 rule\(s\), \d+ event set\(s\): every hit is the same")
-        result = tree.run(self.GATE, "detections/sigma/" + rule)
+        report_path = tree.out("variants.json")
+        result = tree.run(self.GATE, "--json", report_path, "detections/sigma/" + rule)
         self.assert_saw(result, rf"^(ok   |FAIL ) {re.escape(rule)}\b")
         # The wanted row of the gap (`FAIL  <rule> :: case positive <case>: `), with
         # the words of this gate that name the defect.
@@ -772,6 +773,16 @@ class Variants(gatelib.GateCase):
         self.assertEqual(len(found(result, r"^FAIL .*$")), 2, result.describe())
         self.assertEqual(self.entries_of(tree, rule), 0)
         self.assertNotRegex(result.stdout, r"(?m)^known ")
+        # The report of --json holds the same two differences, and says that each
+        # variant that needs no module ran: `multi` gives no difference here because it
+        # ran on each list of the rule, not because it did not run.
+        with open(report_path, encoding="utf-8") as fh:
+            report = json.load(fh)
+        self.assertEqual([(d["variant"], d["name"]) for d in report["differences"]],
+                         [("compact", case), ("sorted", case)])
+        self.assertEqual([v for v in ("compact", "sorted", "multi", "cs_like")
+                          if report["variants"].get(v, {}).get("ran")],
+                         ["compact", "sorted", "multi", "cs_like"])
 
     def test_rejects_expected_entry_that_shows_no_difference(self):
         """vr-stale-entry. An entry of the expected list for a difference that the run
