@@ -96,6 +96,16 @@ Two live captures are also scored in CI, in shadow mode only. Neither is committ
 
 A human can sanitize a live capture and promote it into a `recorded` slice.
 
+`score_benign.py --extra-slice` reads a live capture with its own loader, not with
+the reader of the Kubernetes validators (see
+[`../README.md`](../README.md#a-record-of-each-log)). It also reads a file that is
+one JSON array, and logsources whose records have no definition there
+(`linux/auditd`). A line of the capture that is JSON and not an object (`[]`) ends
+the run with a traceback today, and no line names the capture or the line. The
+known gap `sb-extra-slice-line-not-an-object` of the gate tests holds the case;
+roadmap item R2d closes it. The shadow step of the API server lab fails no job, and
+the negative control of that job reads the same log and names such a line.
+
 ## What is measured
 
 For every rule, [`../score_benign.py`](../score_benign.py) reports:
