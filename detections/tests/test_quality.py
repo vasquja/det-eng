@@ -923,31 +923,84 @@ class CoverageReport(gatelib.GateCase):
         self.assertRegex(now, r"(?m)^\| \[TRR9001\]\(trr9001/lin/README\.md\) \|.*\| A:\*\*C\*\* ")
         self.assertRegex(now, r"(?m)^\| `TRR9001\.LIN\.A` \| [^|]+ \| Claimed \| backlog \| ")
 
-    @gatelib.known_gap(
-        "cr-defect-heading-without-summary-row",
-        gate="research/tools/coverage_report.py --check",
-        reason="An entry of detections/RULE_DEFECTS.md that has a section and no Summary row "
-               "is not an open defect for the report: open_defects() reads only the Summary "
-               "table, so COVERAGE.md keeps `Proven` for the procedures that the named rule "
-               "proves, and the gate says the report is current.",
-        closes="R2d")
-    def test_gap_defect_section_without_summary_row(self):
-        """cr-defect-heading-without-summary-row (planted in setUpClass). WANTED: the
-        entry marks the procedures of its rule (COVERAGE.md is stale), or the gate
-        refuses an entry that has no Summary row."""
+    # The words of the gate for an entry of the defect tracker that it cannot read.
+    ENTRY = r"^coverage_report: RULE_DEFECTS\.md L99: "
+
+    def assert_one_entry_problem(self, result, problem):
+        """The gate stops with one error line, for entry L99, before it writes or
+        compares anything."""
+        self.assert_rejects(result, self.ENTRY + problem, exit_code=1)
+        self.assertEqual(len(result.stderr.splitlines()), 1, result.describe())
+        self.assertEqual(result.stdout, "", result.describe())
+
+    def test_rejects_defect_section_without_summary_row(self):
+        """cr-defect-heading-without-summary-row (planted in setUpClass): an entry of
+        the defect tracker that has a section and no Summary row. The report reads the
+        Summary table, so it would not count the entry: the gate refuses it."""
         # The entry is effective when the gate reads it: with its Summary row the
-        # report is stale, and the unmodified copy is current. (Plain assertions:
-        # they must not count as the gap, and a copy that is stale for another
-        # reason must not count as the gap closed.)
+        # report is stale, and the unmodified copy is current.
         self.control_is_current()
         with_row = self.with_row_run.result()
         self.assertEqual(with_row.returncode, 1, with_row.describe())
         self.assertRegex(with_row.stdout, "(?m)" + self.STALE, with_row.describe())
         self.assertIn("\n### L99. PLANTED known-bad artifact", self.no_row.read(self.DEFECTS))
         self.assertNotIn("| [L99](", self.no_row.read(self.DEFECTS))
-        self.assert_rejects(self.no_row_run.result(),
-                            self.STALE + r"|^coverage_report: .*RULE_DEFECTS\.md.*\bL99\b")
+        self.assert_one_entry_problem(
+            self.no_row_run.result(),
+            r"the entry has a section \(### L99\.\) and no row in the Summary table, so the "
+            r"report would not count it; add its row to the Summary table$")
 
+    def test_generator_refuses_defect_section_without_summary_row(self):
+        """The same entry stops the generator (no --check), and it writes nothing."""
+        tree = self.tree()
+        tree.plant("quality/defect_without_summary_row/section.md.txt", self.DEFECTS, append=True)
+        before = tree.fingerprint()
+        self.assert_one_entry_problem(tree.run(self.GATE),
+                                      r"the entry has a section \(### L99\.\) and no row ")
+        self.assertEqual(tree.fingerprint(), before, "the generator wrote a file")
+
+    def test_rejects_defect_section_whose_id_starts_the_id_of_a_row(self):
+        """The ID of a section must be the ID of a row, not the start of one: the
+        section `### L1.` has no row while the row L14 is in the table."""
+        tree = self.tree()
+        self.assertIn("| [L14](", tree.read(self.DEFECTS))
+        tree.plant("quality/defect_without_summary_row/section.md.txt", self.DEFECTS, append=True)
+        tree.replace(self.DEFECTS, "\n### L99. PLANTED", "\n### L1. PLANTED")
+        result = tree.run(self.GATE, "--check")
+        self.assert_rejects(result, r"^coverage_report: RULE_DEFECTS\.md L1: the entry has a "
+                                    r"section \(### L1\.\) and no row in the Summary table",
+                            exit_code=1)
+        self.assertEqual(len(result.stderr.splitlines()), 1, result.describe())
+
+    def test_rejects_summary_row_without_a_section(self):
+        """A Summary row whose entry has no section: the report would read the entry
+        from its row alone. The planted row is the row of L99, without the section."""
+        tree = self.tree()
+        separator = "|----|------|---------|------|----------|\n"
+        tree.replace(self.DEFECTS, separator, separator + self.SUMMARY_ROW)
+        self.assert_one_entry_problem(
+            tree.run(self.GATE, "--check"),
+            r"the Summary table has a row for it and the file has no section \(### L99\.\); "
+            r"add its section, or delete the row of an entry that is closed$")
+
+    def test_rejects_two_rows_or_two_sections_for_one_entry(self):
+        """Entry L99 with its section and its row, and then a second row or a second
+        section: the report would read one entry in two ways."""
+        separator = "|----|------|---------|------|----------|\n"
+        for twice, problem in (
+                ("row", r"the Summary table has 2 rows for it; give each entry one row$"),
+                ("section", r"the file has 2 sections for it \(### L99\.\); give each entry "
+                            r"one section$")):
+            with self.subTest(twice):
+                tree = self.tree()
+                tree.plant("quality/defect_without_summary_row/section.md.txt", self.DEFECTS,
+                           append=True)
+                tree.replace(self.DEFECTS, separator, separator + self.SUMMARY_ROW
+                             * (2 if twice == "row" else 1))
+                if twice == "section":
+                    tree.plant("quality/defect_without_summary_row/section.md.txt", self.DEFECTS,
+                               append=True)
+                self.assert_one_entry_problem(tree.run(self.GATE, "--check"), problem)
 
 if __name__ == "__main__":
     unittest.main()

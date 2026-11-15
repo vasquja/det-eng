@@ -112,10 +112,37 @@ def open_defects(rule_stems):
     """({defect ID: set of rule stems}, {defect ID: set of procedure IDs}) from the
     Summary table of RULE_DEFECTS.md. The second map holds only the entries with a
     Procedures bullet (a defect in one branch of a rule): such an entry marks only the
-    procedures it lists, and every other entry marks each procedure its rules prove."""
+    procedures it lists, and every other entry marks each procedure its rules prove.
+    It stops the report with an error that names the entry when an entry has a section
+    and no Summary row, a row and no section, or two rows or two sections."""
     text = (REPO / "detections" / "RULE_DEFECTS.md").read_text()
     summary = text.split("## Summary", 1)[1].split("\n## ", 1)[0]
     sections = re.split(r"\n### ", text)
+    # Fail closed, and name the entry: each open entry has one Summary row and one
+    # section (`### <ID>. `, anywhere in the file). The report reads the rows, so a
+    # section without a row would not count; a row without a section, or a second
+    # row or section, would read one entry in two ways.
+    rows = Counter(re.findall(r"(?m)^\|\s*\[(\w+)\]", summary))
+    heads = Counter(re.findall(r"(?m)^### ([A-Z]+\d+)\. ", text))
+    problems = []
+    for did in sorted(set(rows) | set(heads)):
+        if not rows[did]:
+            problems.append((did, f"the entry has a section (### {did}.) and no row in the "
+                                  "Summary table, so the report would not count it; add its "
+                                  "row to the Summary table"))
+        elif not heads[did]:
+            problems.append((did, f"the Summary table has a row for it and the file has no "
+                                  f"section (### {did}.); add its section, or delete the row "
+                                  "of an entry that is closed"))
+        if rows[did] > 1:
+            problems.append((did, f"the Summary table has {rows[did]} rows for it; give each "
+                                  "entry one row"))
+        if heads[did] > 1:
+            problems.append((did, f"the file has {heads[did]} sections for it (### {did}.); "
+                                  "give each entry one section"))
+    if problems:
+        sys.exit("\n".join(f"coverage_report: RULE_DEFECTS.md {did}: {problem}"
+                           for did, problem in problems))
     out, scopes = {}, {}
     for line in summary.splitlines():
         m = re.match(r"\|\s*\[(\w+)\]", line)
@@ -162,8 +189,10 @@ def rule_paths():
 
 def collect():
     rule_files = rule_paths()
-    suff = sufficiency()
+    # The defect tracker first: an entry that the report cannot read stops it before
+    # the check_sufficiency.py run of several seconds.
     defects, scopes = open_defects({Path(r).stem for r in rule_files})
+    suff = sufficiency()
     validators = "".join(p.read_text() for p in (REPO / "detections").glob("validate_*.py"))
     gates = procedure_gates()
 

@@ -55,6 +55,11 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
 - **Fix** is the proposed change. **Then** says which case or budget changes once the
   fix lands, so the fix is proven, not just claimed.
 
+Each open entry has one row in the Summary table and one section whose heading
+starts with its ID (`L14.`). The coverage report reads the rows, so it stops with an
+error that names the entry when a section has no row, a row has no section, or an ID
+has two rows or two sections.
+
 ## Summary
 
 | ID | Rule | Problem | Kind | Severity |
@@ -2681,8 +2686,9 @@ points here.
    `score_benign.py --check --enforce`; regenerate `scores.json` with `--update`.
 4. Propose the lower budget (`score_benign.py --reseeds 10`) in `budgets.json`,
    which a human approves, and update its `why`.
-5. Delete the entry here and add a row to [Closed entries](#closed-entries); a sidecar
-   `why` may keep the retired ID as a pointer.
+5. Delete the entry here (its section and its Summary row) and add a row to
+   [Closed entries](#closed-entries); a sidecar `why` may keep the retired ID as a
+   pointer.
 
 ## Reproducing a probe
 
