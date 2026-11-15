@@ -51,6 +51,7 @@ class SelfTests(gatelib.GateCase):
     # then has a test that runs its self-test.
     RUN_HERE = {
         "detections/sigma_explain.py": r"^All self-test checks hold\.$",
+        "detections/check_mutants.py": r"^self-test: all \d+ checks hold$",
     }
 
     def self_test_scripts(self):
