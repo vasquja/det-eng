@@ -30,9 +30,10 @@ A detection change is done only when CI shows all of these:
      control: a wrong-argument mutant, another mutant, or a re-run under an
      allowlisted process name. Each one must be held by the item that it declares
      (`CONTROLS` in `detections/validate_detections.py`).
-   - Kubernetes: the audit log captured before the emulation (`--expect-miss`).
+   - Kubernetes: the logs captured before the emulation (`--expect-miss`). Each
+     log must be given and must hold a record.
    - Cloud: a hard benign baseline that differs from the attack only in the
-     discriminating field.
+     discriminating field. It must hold a record.
 3. **Has sufficient checks.** The rule's sidecar
    `detections/sigma/<ATT&CK-ID>/<stem>.cases.jsonl` holds a positive and at least
    one near-miss: a variant that shares the chokepoint but breaks one required
@@ -75,7 +76,7 @@ For any TRR or new detection, load the `trr` skill first:
 | Sigma rule | `detections/sigma/<ATT&CK-ID>/*.yml`, `status: experimental` |
 | Rule cases | `detections/sigma/<ATT&CK-ID>/<stem>.cases.jsonl`: positive, near-miss, filtered, confounder and benign cases |
 | Cloud fixtures | `detections/cloud/fixtures/<trr>/`: attack + benign |
-| Validator entry | The `MANIFEST` list in the matching `detections/validate_*.py` |
+| Validator entry | The `MANIFEST` list in the matching `detections/validate_*.py`. Cloud: add the entry in the change that adds its rule and its two fixtures; when the rule file is in the tree, a missing fixture fails the run. |
 | CI wiring | In the matching `.github/workflows/validate-*.yml`, add the new `detections/sigma/<ATT&CK-ID>/` and `atomics/<ATT&CK-ID>/` paths to both the `push: paths:` list and the `changes`-job pattern list. Keep the two in sync, or the PR skips behavioral validation. In `validate-apiserver-detections.yml` the `changes` job has a third list, step `r` (it gates `validate-apiserver-recommended`): add the two prefixes there too, and add the new emulate step to `validate-recommended` as an alias (`*apiserver-emulate-NNNN`). |
 
 ## Conventions

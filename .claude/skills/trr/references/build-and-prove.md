@@ -25,6 +25,10 @@ For each rule, `detections/validate_cloud_detections.py` asserts, over committed
 > the recorded **attack** fixture makes the rule fire **and** the firing record carries the
 > emulation **marker**; AND the **benign** baseline makes the rule fire on **nothing**.
 
+Both fixtures must exist, and the benign baseline must hold a record. A missing fixture is
+an `ERROR` row, and a baseline without a record is a `FAIL` row with
+`NEGATIVE CONTROL VACUOUS`. Each fails the run, also with `--report`.
+
 The benign baseline must be **hard**: same log source / method / structural fields as the
 attack, differing only on the discriminating field (the off-instance source IP, the
 identity type, the public-vs-scoped principal, the `oidc.eks` provenance, etc.). A pass
@@ -430,7 +434,9 @@ PascalCase — match `subjectFromWebIdentityToken`, not `SubjectFromWebIdentityT
 - Register each rule in the `MANIFEST` in `detections/validate_cloud_detections.py`:
   `(TRR, folder, rulefile, attack.json, benign.json, provider, note, marker(substr, *fields))`.
   The `marker()` gate checks that at least one named flattened field of a firing attack
-  record contains the substring.
+  record contains the substring. Add the entry in the change that adds the two fixtures:
+  the validator has no pending state for a fixture, and a rule whose attack or benign
+  fixture is missing fails the run.
 - The Kubernetes API-server validator (`detections/validate_apiserver_detections.py`)
   registers `(folder, rulefile, source, label, note, gate)`, where `source` is `audit`,
   `cri` or `file` (a node file event, `linux/file_event`; its gate is built with
@@ -439,7 +445,8 @@ PascalCase — match `subjectFromWebIdentityToken`, not `SubjectFromWebIdentityT
   then the entry passes only when every procedure has a matching record of its own, so
   a procedure that fails silently — or whose write the API server refused — fails the
   entry (`--expect-miss` inverts this: any one procedure matching fails the negative
-  control). Build each gate with
+  control; the negative control also fails when a pre-emulation log is not given, does
+  not exist or holds no record). Build each gate with
   `rec(verb, resource, sub, name|prefix, ns, user, also, code, window)`, or bind a precise
   helper gate (a body sentinel, a JSON-patch operation list) with `win(gate, window, code)`.
   Both require an accepted response (2xx, or 101 for a streaming upgrade) by default. A

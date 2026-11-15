@@ -29,6 +29,20 @@ The loop this proves, for each rule:
     (and the match carries the emulation's own marker)
     AND the benign baseline -> the same rule matches nothing (negative control)
 
+Both fixtures that MANIFEST names for a rule must be files, and the benign baseline
+must hold a record: a negative control that read no record cannot fail, so it proves
+nothing. A fixture that is missing gives an ERROR row, and a baseline without a
+record gives a FAIL row with `NEGATIVE CONTROL VACUOUS`. Each fails the run (exit 1),
+also with --report. The count is the number of records that load_fixture() returns,
+which is the set that the rule is run on (no filter stands between the file and the
+rule): `[]`, a file of zero bytes or of blank lines, and an envelope with an empty
+list (`{"Records": []}`) hold no record. The run does not fail a baseline whose
+records are all far from the rule (`[{}]` passes); the grading line below is
+informational.
+
+A MANIFEST entry whose rule file does not exist is PENDING: the run prints it, does
+not count it, and does not fail on it. (check_sufficiency.py fails that tree.)
+
 The benign baseline is the control, and it is built to be HARD: it hits the same
 log source / method / structural fields as the attack and differs only on the
 discriminating field (the off-instance source IP, the identity type, the FIC issuer,
@@ -44,7 +58,10 @@ that it separates a good issuer from a bad one), not an "issuer differs only" co
 
 Modes:
     --dry-run       Compile every cloud rule; no fixtures needed.
-    --report        Report misses instead of failing on them.
+    --report        Report misses instead of failing on them. A miss is a rule that
+                    did not fire on a marked record of its attack fixture, or that
+                    fired on a benign record. --report does not waive a missing
+                    fixture or a benign baseline that holds no record.
     --json PATH     Also write a machine-readable report (status, detail and the
                     explanation lines of every rule) to PATH.
 
@@ -434,7 +451,8 @@ def main():
     ap.add_argument("--dry-run", action="store_true",
                     help="Compile every cloud rule; no fixtures needed.")
     ap.add_argument("--report", action="store_true",
-                    help="Report misses instead of failing on them.")
+                    help="Report misses instead of failing on them (a missing fixture "
+                         "and a benign baseline without a record still fail).")
     ap.add_argument("--json", metavar="PATH",
                     help="Also write a machine-readable report (results + explanations).")
     args = ap.parse_args()
@@ -498,17 +516,27 @@ def validate(args, report):
         return 0
 
     print()
-    passes = fails = 0
+    # unproven: the rules of MANIFEST that this run cannot prove, because a fixture
+    # that MANIFEST names is missing or because the benign baseline holds no record
+    # (a negative control that read no record cannot fail). They fail the run, also
+    # with --report. fails: the other rules that are not a PASS.
+    passes = fails = unproven = 0
     for trr, folder, fname, attack_f, benign_f, provider, note, gate in MANIFEST:
         key = (folder, fname)
         if key not in queries:
             continue
         attack_path = os.path.join(FIX, attack_f)
         benign_path = os.path.join(FIX, benign_f)
-        if not (os.path.exists(attack_path) and os.path.exists(benign_path)):
-            print(f"PENDING [{trr}] {fname}: fixtures not present -- skipped")
-            results.append({"rule": f"{folder}/{fname}", "trr": trr, "status": "PENDING",
-                            "detail": "fixtures not present", "explanation": []})
+        missing = [f"the {kind} fixture {os.path.relpath(path, REPO)}"
+                   for kind, path in (("attack", attack_path), ("benign", benign_path))
+                   if not os.path.isfile(path)]
+        if missing:
+            unproven += 1
+            why = (f"MANIFEST names {' and '.join(missing)}, and no such file exists: "
+                   "nothing proves the rule")
+            print(f"ERROR [{trr} {provider}] {fname}: {why} -- {note}")
+            results.append({"rule": f"{folder}/{fname}", "trr": trr, "provider": provider,
+                            "status": "ERROR", "detail": why, "explanation": []})
             continue
         attack = load_fixture(attack_path)
         benign = load_fixture(benign_path)
@@ -533,6 +561,14 @@ def validate(args, report):
             detail.append(f"rule fired ({len(attack_hits)}) but no match carried the "
                           f"emulation marker")
             explanation += explained(explain_gate_miss, gate, attack, attack_idx)
+        # The count is what load_fixture() returned: the records that the rule is
+        # run on. No filter stands between the file and the rule.
+        vacuous = not benign
+        if vacuous:
+            ok = False
+            detail.append("NEGATIVE CONTROL VACUOUS: the benign baseline "
+                          f"{os.path.relpath(benign_path, REPO)} holds no record (0 records), "
+                          "so the negative control cannot fail")
         if benign_hits:
             ok = False
             detail.append(f"NEGATIVE CONTROL FAILED: rule fired on {len(benign_hits)} "
@@ -552,7 +588,10 @@ def validate(args, report):
                   f"record(s) match; benign baseline clean ({len(benign)} record(s)) "
                   f"-- {note}")
         else:
-            fails += 1
+            if vacuous:
+                unproven += 1
+            else:
+                fails += 1
             print(f"FAIL  [{trr} {provider}] {fname}: " + "; ".join(detail) + f" -- {note}")
         for line in explanation + [grade_line]:
             print("        " + line)
@@ -568,12 +607,19 @@ def validate(args, report):
     if parse_errors:
         print(f"FAILED: {parse_errors} compile error(s).")
         return 1
+    if unproven:
+        print(f"FAILED: {unproven} rule(s) of MANIFEST have no proof: a fixture that MANIFEST "
+              "names is missing, or a benign baseline holds no record (see the ERROR rows "
+              "and the NEGATIVE CONTROL VACUOUS rows). --report does not make this "
+              "non-fatal.")
     if fails and not args.report:
         print(f"FAILED: {fails} technique(s) did not satisfy attack-fires + "
               f"control-holds. (Use --report to treat as non-fatal.)")
+    elif fails:
+        print(f"Reported {fails} failure(s); not gated (--report).")
+    if unproven or (fails and not args.report):
         return 1
     if fails:
-        print(f"Reported {fails} failure(s); not gated (--report).")
         return 0
     print(f"All {passes} external-cloud detection(s) fired on their recorded attack "
           f"fixtures, and every negative control held.")
