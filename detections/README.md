@@ -488,13 +488,15 @@ hits do not rise, and the ratchet compares cases, not what the rule matches.
 as data: no script and no requirement of the base runs. It pairs each head rule
 with a base rule by its Sigma `id`, then by its path. A pair whose `detection`,
 `correlation` and `logsource` blocks are equal is unchanged and not judged (a
-reworded title, description, tag or falsepositive is no change). For each change of
-a changed pair, the gate builds an **undo mutant**: the head rule with that one
+reworded title, description, tag or falsepositive, or a new id, is no change). The
+base rules of a correlation are paired by `name`, then by `id`; one base rule left on
+each side is a pair (a new name and a new id), and more fail closed. For each change
+of a changed pair, the gate builds an **undo mutant**: the head rule with that one
 change undone.
 
 | Change in the head | Undo mutant | Key (example) |
 |---|---|---|
-| an added block | the block never holds (also through `1 of x_*`) | `sel-block:sel_pod_procmount` |
+| an added block | the value that its operator in the head condition ignores: under an `or` (also `1 of x_*`) the block never holds, under an `and` (also `all of x_*`) it always holds; each `not` between them turns this round | `sel-block:sel_pod_procmount` |
 | an added map of a list of maps | the map is dropped | `sel-map:sel[1]` |
 | an added item | the item is dropped | `sel-item:afinet_raw_socket.success` |
 | an added list value | the value is dropped | `flt-value:allowed_processes.comm="nc"` |
@@ -506,23 +508,35 @@ change undone.
 The item is named as `rule_cases.py --atoms` names it, after `<base rule>/` in a
 correlation file. The side is `sel` (under no `not`), `flt` (under a `not`), `mix`
 or `unused`. A list that is only reordered is no change (but the `rules` of a
-correlation keep their order). A change that cannot be undone alone fails closed,
-and a human decides: a renamed block (a removed block and an added block with the
-same definition), maps that moved, maps that changed where maps were also added or
-removed, an undo that does not compile. A changed `logsource` is never proven: the
-compiled query does not read it (the ratchet above fails it too).
+`temporal_ordered` correlation keep their order). A change that cannot be undone
+alone fails closed, and a human decides: a renamed block (a removed block and an
+added block with the same definition), an added block that must hold in one place
+of the condition and must not hold in another, maps that moved, maps that changed
+where maps were also added or removed, a switch between a plain rule and a
+correlation, an undo that does not compile. An added block that is the whole
+condition has no undo of its own: the undo of the condition holds it. A changed
+`logsource` is never proven: the compiled query does not read it (the ratchet above
+fails it too).
 
 An undo mutant is **killed** when one event set of the head tells it apart from the
 head rule: a positive case stops firing; any other case starts firing; the attack
 fixture of a cloud rule loses a hit; the benign fixture, or a slice of the benign
-corpus that the rule reads, gains a hit. A corpus slice that loses a hit does not
-kill: that undo is the quieter rule. An event set on which the head itself fails is
-skipped. Each event set is judged by default and under each variant of
-[`check_variants.py`](#representation-variants-one-oracle-other-stores)
+corpus that the rule reads, gains a hit. A fixture or a corpus slice compares the
+events that the hits hold, not the hits: a correlation with a wider timespan groups
+the same events in other alerts, and that is no hit gained. A corpus slice that
+loses a hit does not kill: that undo is the quieter rule. An event set on which the
+head itself fails is skipped. Each event set is judged by default and under each
+variant of [`check_variants.py`](#representation-variants-one-oracle-other-stores)
 (`compact`, `sorted`, `multi`, `cs_like`, and `re2` when the module is installed),
 and one representation is enough: an anchored value for the elements of a list
-(K72) is proven under `multi`, and a letter-case fix (C18) under `cs_like`. An undo
-whose compiled query is the head's query is equivalent: nothing to prove.
+(K72) is proven under `multi`, a letter-case fix (C18) under `cs_like`, and a blank
+after a colon of a JSON text (C17) under `compact`. An undo is equivalent, with
+nothing to prove, when its compiled query is the head's query, or when its items
+compile to the head's items and the two conditions give the same value for each
+assignment of true, false and NULL to the items (up to 10 items; for example the
+terms of a condition in another order). The head and its undo mutants share the
+tables of each event set and the truth of each item, so an undo pays only for its
+own query and the items that it changes.
 
 For each undo mutant that is not killed the gate prints
 `  [RATCHET] <rule>: change not proven: <key>`, and for each change that cannot be
@@ -530,17 +544,22 @@ undone alone `  [RATCHET] <rule>: change cannot be undone alone: <what>; a human
 decides`. Exit 0 when it prints no such line, 1 when it does, 2 on a structural
 fault (no base tree, a base tree without a rule file, a rule file that cannot be
 read, a changed or new head rule that does not compile or whose sidecar has an
-error). To make a change pass, add the case that tells it apart: for an allowlist
-name, a filtered case of that name; for a new value, a positive that needs it; for a
-narrowing, a negative that the base rule fires on. A rule with no base pair is new:
-the gate prints the discriminating items whose drop no evidence tells apart
+error, a variant that is not in force). To make a change pass, add the case that
+tells it apart: for an allowlist name, a filtered case of that name; for a new value,
+a positive that needs it; for a narrowing, a negative that the base rule fires on.
+No case can tell apart an equivalent rewrite that the gate does not see as
+equivalent (a regular expression written in another form, for example): it fails as
+a change not proven, and a human decides (merge the pull request by hand). A rule
+with no base pair is new: the gate prints the discriminating items whose drop no
+evidence tells apart
 (`check_sufficiency.discriminating_atoms`), and does not fail on them. `--json`
 writes the report, and `--self-test` checks the undo builder and the kill test on
 constructed rules.
 
 The gate runs no witness search and samples no regular expression, so two runs give
 the same report. It does not judge what the head rule matches as a whole, only the
-change: a rule that the base already held as it is passes. The evidence is the
+change: a rule that the base already held as it is passes. A rule split into two
+files moves logic into a new rule, which is report only. The evidence is the
 head's own: a pull request can add an item together with the synthetic case that
 kills its undo ([`docs/ROADMAP.md`](../docs/ROADMAP.md), R6). The
 `sufficiency-ratchet` job runs the gate after the sufficiency ratchet, also when the

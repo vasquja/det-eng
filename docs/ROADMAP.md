@@ -148,6 +148,34 @@ Notes from R6, for the items after it (2026-11-15).
   kill by a sidecar case that the same pull request added.
 - A list item that gains values and loses others is undone as a whole (its base
   value in place): one kill proves each value of that change.
+- A check of the first build found three ways to pass with no proof, now closed
+  (each has a gate test): an added block under an `and` was undone as a block that
+  never holds, so every positive "proved" a dead block; its undo now takes the value
+  that its operator ignores (an `and`: always holds). The hits of a correlation were
+  compared as alerts, so a wider timespan was "proven" by a corpus slice that the
+  undo grouped in other alerts; the gate now compares the events that the hits
+  hold. A base rule of a correlation with a new name and a new id was undone only
+  with `rules`, as one bundle; one such base rule left on each side is now a pair,
+  undone item by item.
+- An equivalent rewrite fails when the gate cannot see it as equivalent: a regular
+  expression written in another form, for example. No case can prove it, so a human
+  decides. The gate sees as equivalent an undo with the same query, and an undo with
+  the same items whose condition gives the same value for each assignment of true,
+  false and NULL (up to 10 items: the terms of a condition in another order).
+- A rule split into two files moves logic into a new rule, and a new rule is report
+  only: what the new file holds is not gated (an allowlist name that it adds, for
+  example). A near-miss of the moved value in the old file's sidecar even proves its
+  removal there. A later item can pair a new rule with the base rule whose detection
+  it largely copies.
+- A kill under a variant can come from an event set that
+  `detections/variants/expected.json` lists for that rule and variant (an expected
+  difference that the change removes). `check_variants.py` then fails the head in
+  the same pull request (an expected entry that does not hold), so this gate does
+  not count such kills apart.
+- Cost: the head and its undo mutants share the tables of each event set and the
+  records on which each item holds, and the gate keeps the pySigma query of each
+  document. A rule whose 96 regular expressions are rewritten in place (96 undos, 56
+  event sets) took 676 s before and takes 43 s.
 - The job `sufficiency-ratchet` runs Python `3.x` and does not install google-re2,
   so the variant `re2` does not judge there (the gate prints `NOT RUN`). A
   correction that only RE2 can prove is not proven there. The portable `|re`
