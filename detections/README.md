@@ -1807,7 +1807,8 @@ and the items of the rule that it fails), `RELATED`, `OTHER-PROCEDURE`, `NOT REA
 (the dataset holds no record of the rule's log source), `QUIET`, `N/A`,
 `KNOWN-MISS <ID>`, `DECLARED QUIET, FIRED`, `STALE N/A`, `KNOWN-MISS FIRES`, `STALE`
 (a declaration that no longer applies), `EXCLUDED` (a dataset that `SOURCES.json`
-leaves out, with the reason) and `UNAVAILABLE`. A correlation rule gives its alerts
+leaves out, with the reason) and `UNAVAILABLE` (a dataset, or in an online run the
+LICENSE or the syscall table, that could not be read). A correlation rule gives its alerts
 and the distinct records that are their evidence. The last line is the `Summary`. No
 row holds a value of a record: rows name datasets, rules, lines and the items of a
 rule. `--explain` also prints, on the console only, the explanation of
@@ -1831,12 +1832,15 @@ integer outside 64 bits, a NUL character, a lone surrogate, the key `_rowid`, a 
 that is not finite), keys that differ only in letter case, a yml at the commit that
 does not agree with its entry, and a run that read no dataset. `--enforce`
 (roadmap item R3b) also exits 1 on a `MISS` without a declaration and on a
-declaration that does not hold, and 2 on an `UNAVAILABLE` dataset.
+declaration that does not hold, and 2 on an `UNAVAILABLE` dataset, LICENSE or syscall
+table.
 
 **Origins and cache.** The gate makes each URL from the pinned full commit and the
 path: the data from `media.githubusercontent.com`, the ymls and the LICENSE from
-`raw.githubusercontent.com`. It follows no redirect to another host, reads at most
-50 MB of a file, and checks the sha256 before it parses a byte. A file is kept in a
+`raw.githubusercontent.com`. It follows no redirect to another scheme or host, reads at
+most 50 MB of a file, and checks the sha256 before it parses a byte. A JSON record must
+be one record: an object that holds a key two times, two keys that give one field when
+the record is flattened, and NaN or Infinity are faults. A file is kept in a
 cache by its sha256 (`~/.cache/det-eng/external`, or `--cache DIR`); `--offline` reads
 only the cache. CI downloads on each run (about 1.4 MB). Only the job reads the real
 datasets: the gate tests build their datasets from sidecar cases, and no record of

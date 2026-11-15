@@ -386,10 +386,14 @@ class Cache:
         it holds other bytes (the file is deleted first). size None: the pin names
         no size (a yml, the LICENSE), and only the sha256 is compared."""
         path = self.path(sha)
-        if not os.path.isfile(path):
+        if not os.path.lexists(path):
             return None
-        with open(path, "rb") as fh:
-            data = fh.read((MAX_BYTES if size is None else size) + 1)
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read((MAX_BYTES if size is None else size) + 1)
+        except OSError as e:
+            raise Fault(f"{what}: the cache entry {path} cannot be read ({type(e).__name__}: "
+                        f"{e.strerror}); delete it or give another --cache") from None
         got = hashlib.sha256(data).hexdigest()
         if got != sha or (size is not None and len(data) != size):
             try:
@@ -401,18 +405,28 @@ class Cache:
                                "was deleted")
         return data
 
-    def write(self, sha, data):
-        os.makedirs(os.path.dirname(self.path(sha)), exist_ok=True)
-        fd, tmp = tempfile.mkstemp(prefix="tmp-", dir=self.root)
+    def write(self, sha, data, what):
+        """Keep the bytes (already hashed) under their sha256; a Fault that names the
+        cache when it cannot."""
+        try:
+            os.makedirs(os.path.dirname(self.path(sha)), exist_ok=True)
+            fd, tmp = tempfile.mkstemp(prefix="tmp-", dir=self.root)
+        except OSError as e:
+            raise Fault(f"{what}: the cache {self.root} cannot keep the file "
+                        f"({type(e).__name__}: {e.strerror}); give another --cache") from None
         try:
             with os.fdopen(fd, "wb") as fh:
                 fh.write(data)
             os.replace(tmp, self.path(sha))
-        except BaseException:
+        except BaseException as e:
             try:
                 os.remove(tmp)
             except OSError:
                 pass
+            if isinstance(e, OSError):
+                raise Fault(f"{what}: the cache entry {self.path(sha)} cannot be written "
+                            f"({type(e).__name__}: {e.strerror}); delete it or give another "
+                            "--cache") from None
             raise
 
 
@@ -422,8 +436,9 @@ class _SameHost(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         old, new = urllib.parse.urlsplit(req.full_url), urllib.parse.urlsplit(newurl)
         if (new.scheme, new.netloc) != (old.scheme, old.netloc):
-            raise Unavailable(f"{req.full_url} redirects to another host ({new.netloc!r}); "
-                              "no redirect off the origin is followed")
+            raise Unavailable(f"{req.full_url} redirects to another origin "
+                              f"({new.scheme + '://' + new.netloc!r}); no redirect off the "
+                              "origin is followed")
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
@@ -485,7 +500,7 @@ def obtain(cache, sha, size, url, offline, what):
     if got != sha or (size is not None and len(data) != size):
         raise HashMismatch(f"HASH MISMATCH {what}: the pin is {sha}{_size(size)}; got {got} "
                            f"({len(data)} bytes) from {url}")
-    cache.write(sha, data)
+    cache.write(sha, data, what)
     return data, "download", bad
 
 
@@ -574,31 +589,67 @@ def _text(entry_id, data):
                     "UTF-8)") from None
 
 
+class _NotJSON(Exception):
+    """NaN, Infinity or -Infinity: the json module reads them, RFC 8259 has no such value."""
+
+
+def _constant(name):
+    raise _NotJSON(f"{name}, which is not a JSON value (RFC 8259)")
+
+
+class _Twice(dict):
+    """A JSON object that holds one key two times. json keeps the last value, and
+    another reader can keep the first, so the record is not one record."""
+    twice = None
+
+
+def _pairs(pairs):
+    seen = set()
+    for key, _ in pairs:
+        if key in seen:
+            out = _Twice(pairs)
+            out.twice = key
+            return out
+        seen.add(key)
+    return dict(pairs)
+
+
+def _strict(text):
+    return json.loads(text, object_pairs_hook=_pairs, parse_constant=_constant)
+
+
 def _json_values(entry_id, text, envelope):
     """[(where, value)]: a JSON array, an envelope {"<envelope>": [...]}, one JSON value
     for the whole file, or one JSON value for each line that is not blank."""
     if not text.strip():
         return []
     try:
-        doc = json.loads(text)
+        json.loads(text)        # the shape: one document, or one value for each line
     except ValueError:
         pass
     except RecursionError:
         raise Fault(f"{entry_id}: the file nests JSON values too deep to read") from None
     else:
+        lines = [n for n, line in enumerate(text.split("\n"), 1) if line.strip()]
+        try:
+            doc = _strict(text)
+        except _NotJSON as e:
+            where = f"line {lines[0]}" if len(lines) == 1 else "the JSON document"
+            raise Fault(f"{entry_id}: {where} holds {e}") from None
         if isinstance(doc, list):
             return [(f"record {n}", v) for n, v in enumerate(doc, 1)]
         if (envelope and isinstance(doc, dict) and set(doc) == {envelope}
                 and isinstance(doc[envelope], list)):
             return [(f"record {n}", v) for n, v in enumerate(doc[envelope], 1)]
-        lines = [n for n, line in enumerate(text.split("\n"), 1) if line.strip()]
         return [(f"line {lines[0]}" if len(lines) == 1 else "record 1", doc)]
     out = []
     for n, line in enumerate(text.split("\n"), 1):
         if not line.strip():
             continue
         try:
-            out.append((f"line {n}", json.loads(line)))
+            out.append((f"line {n}", _strict(line)))
+        except _NotJSON as e:
+            raise Fault(f"{entry_id}: line {n} holds {e}") from None
         except ValueError as e:
             raise Fault(f"{entry_id}: line {n} is not JSON ({e.msg} at column {e.colno})") \
                 from None
@@ -644,6 +695,35 @@ def _value_fault(value):
             value.encode("utf-8")
         except UnicodeEncodeError:
             return "holds text with a lone surrogate (it is not UTF-8)"
+    return None
+
+
+def _shape_fault(value):
+    """Why one JSON record is not one record of the log, or None: an object that holds
+    a key two times, or two keys that give one field when the record is flattened
+    (`{"a.b": 1, "a": {"b": 2}}`; sigma_eval.flatten keeps one of them)."""
+    fields, stack = set(), [("", value, True)]
+    while stack:
+        prefix, node, flat = stack.pop()
+        if isinstance(node, list):
+            stack.extend(("", item, False) for item in node)
+            continue
+        if not isinstance(node, dict):
+            continue
+        if isinstance(node, _Twice):
+            return (f"an object holds the key {node.twice!r} two times (one reader keeps the "
+                    "first value, another the last)")
+        for key, item in node.items():
+            name = prefix + key
+            if flat and isinstance(item, dict):
+                stack.append((name + ".", item, True))
+                continue
+            if flat:
+                if name in fields:
+                    return (f"two keys give the field {name!r} when the record is flattened "
+                            "(sigma_eval.flatten keeps one of them)")
+                fields.add(name)
+            stack.append(("", item, False))
     return None
 
 
@@ -736,6 +816,9 @@ def read_dataset(entry, data, syscalls):
                 logsource = shape(value)
             except ValueError as e:
                 raise Fault(f"{entry_id}: {where} {e}") from None
+            why = _shape_fault(value)
+            if why:
+                raise Fault(f"{entry_id}: {where}: {why}")
             try:
                 event = sigma_eval.flatten(value)
             except RecursionError:

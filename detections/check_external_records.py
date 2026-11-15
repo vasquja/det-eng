@@ -46,7 +46,8 @@ Rows (one for each dataset and for each pair; no row holds a value of a record):
                         the dataset's sha256 changed, a defect it cites is not
                         listed, or it is redundant): the default verdict applies
   EXCLUDED <rule> on <id>     a dataset that SOURCES.json leaves out, with its why
-  UNAVAILABLE <id>      not in the cache and no download (also a ::warning)
+  UNAVAILABLE <id>      not in the cache and no download (also a ::warning); also
+                        the LICENSE or syscall_64.tbl of an online run
   ERROR ...             a structural fault (exit 2)
 
 Declarations are in detections/external/expectations.json (a human decision; the
@@ -69,13 +70,15 @@ Exit codes:
   2  in every mode, a structural fault: a malformed SOURCES.json, expectations.json
      or syscall table, a declaration for a rule or a dataset that does not exist, a
      HASH MISMATCH (also of a cached file, which is deleted), a record count that
-     is not the pinned count, a line that is not a record of its format, a key or a
-     value that one SQLite table cannot hold (an integer outside 64 bits, a NUL, a
-     lone surrogate, the key _rowid, a number that is not finite), keys that differ
-     only in letter case, a yml at the commit that does not agree with its entry (its
-     path, techniques, sourcetype or procedure label), a rule that does not compile,
-     or a run in which no dataset was read. With --enforce, an UNAVAILABLE dataset
-     too.
+     is not the pinned count, a line that is not a record of its format (also a JSON
+     object that holds a key two times, two keys that flatten to one field, NaN or
+     Infinity), a key or a value that one SQLite table cannot hold (an integer
+     outside 64 bits, a NUL, a lone surrogate, the key _rowid, a number that is not
+     finite), keys that differ only in letter case, a yml at the commit that does not
+     agree with its entry (its path, techniques, sourcetype or procedure label), a
+     cache entry that cannot be read or written, a rule that does not compile, or a
+     run in which no dataset was read. With --enforce, an UNAVAILABLE dataset,
+     LICENSE or syscall_64.tbl too.
 
 Usage:
     python3 detections/check_external_records.py --lint      # offline: the two files
@@ -413,6 +416,18 @@ def check_declarations(report, sources, expectations, all_rules):
     return decls, stale
 
 
+# The two files that an online run compares with their origins (no dataset).
+ORIGINS = ("LICENSE", "syscall_64.tbl")
+
+
+def origin_unavailable(report, name, e, of=""):
+    """An origin file that could not be compared: a row and a ::warning; --enforce
+    fails the run (exit 2), as for a dataset."""
+    report.row("unavailable", f"UNAVAILABLE {name}: {e}")
+    report.warn(f"UNAVAILABLE {name}{of}: {e}")
+    report.unavailable.append({"dataset": name, "why": str(e)})
+
+
 def verify_origins(report, sources, table_doc, cache):
     """Online only: the LICENSE and the kernel's syscall table at their origins."""
     url = xr.meta_url(sources["commit"], sources["licence_file"])
@@ -424,8 +439,7 @@ def verify_origins(report, sources, table_doc, cache):
         report.note(f"SOURCE    LICENSE of {xr.REPOSITORY} at the commit: sha256 "
                     f"{sources['licence_sha256'][:12]} ok ({origin})")
     except xr.Unavailable as e:
-        report.warn(f"UNAVAILABLE LICENSE: {e}")
-        report.unavailable.append({"dataset": "LICENSE", "why": str(e)})
+        origin_unavailable(report, ORIGINS[0], e)
     except xr.Fault as e:
         report.error(e)
     src = table_doc["source"]
@@ -443,8 +457,7 @@ def verify_origins(report, sources, table_doc, cache):
             report.note(f"SOURCE    syscall_64.tbl of Linux {src['tag']}: sha256 "
                         f"{src['sha256'][:12]} ok ({origin}); {len(derived)} syscall(s) agree")
     except xr.Unavailable as e:
-        report.warn(f"UNAVAILABLE syscall_64.tbl of Linux {src['tag']}: {e}")
-        report.unavailable.append({"dataset": "syscall_64.tbl", "why": str(e)})
+        origin_unavailable(report, ORIGINS[1], e, f" of Linux {src['tag']}")
     except (xr.Fault, UnicodeDecodeError) as e:
         report.error(e)
 
@@ -652,7 +665,7 @@ def summarise(report, rules, args):
 
 
 def dataset_unavailable(report):
-    return [u for u in report.unavailable if u["dataset"] not in ("LICENSE", "syscall_64.tbl")]
+    return [u for u in report.unavailable if u["dataset"] not in ORIGINS]
 
 
 def run(args):
@@ -718,11 +731,16 @@ def run(args):
     summary = summarise(report, chosen, args)
     meta["rules_without_dataset"] = report.without
     ds_unavailable = dataset_unavailable(report)
+    origins = [u["dataset"] for u in report.unavailable if u["dataset"] in ORIGINS]
     if report.errors:
         code = 2
-    elif args.enforce and ds_unavailable:
+    elif args.enforce and (ds_unavailable or origins):
         code = 2
-        report.error(f"--enforce: {len(ds_unavailable)} dataset(s) UNAVAILABLE")
+        if ds_unavailable:
+            report.error(f"--enforce: {len(ds_unavailable)} dataset(s) UNAVAILABLE")
+        if origins:
+            report.error(f"--enforce: {' and '.join(origins)} UNAVAILABLE: not compared with "
+                         "the origin")
     elif args.enforce and report.failing:
         code = 1
     else:
@@ -787,7 +805,7 @@ def main(argv=None):
     ap.add_argument("--enforce", action="store_true",
                     help="exit 1 on a miss without a declaration, a stale declaration or a "
                          "declaration that a hit contradicts; exit 2 on an unavailable "
-                         "dataset")
+                         "dataset, LICENSE or syscall table")
     ap.add_argument("--offline", action="store_true",
                     help="read only the cache; a dataset that it does not hold is UNAVAILABLE")
     ap.add_argument("--cache", metavar="DIR", default=xr.DEFAULT_CACHE,

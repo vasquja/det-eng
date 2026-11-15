@@ -16,6 +16,7 @@ ExternalLoaders     the auditd loader builds the events that the Linux validator
 
 import ast
 import hashlib
+import itertools
 import json
 import os
 import re
@@ -50,6 +51,17 @@ SET = {
     "copyfail": ("datasets/attack_techniques/T1068/planted_copyfail/audit.log",
                  "auditd-raw", "auditd", "T1068", "afalg-then-splice"),
 }
+# The log source that the records of each constructed dataset go to.
+SOURCE = {"snapshot": ("aws", "cloudtrail"), "secret": ("kubernetes", "audit"),
+          "consent": ("azure", "auditlogs"), "copyfail": ("linux", "auditd")}
+# One constructed entry of `excluded`: the gate reads no file of it, and it gives an
+# EXCLUDED row for each rule of its technique and product.
+EXCLUDED_BYTES = b"constructed by detections/tests: no file of splunk/attack_data\n"
+EXCLUDED = {"id": "T1537/planted_ocsf/asl_ocsf",
+            "path": "datasets/attack_techniques/T1537/planted_ocsf/asl_ocsf.json",
+            "sha256": hashlib.sha256(EXCLUDED_BYTES).hexdigest(), "size": len(EXCLUDED_BYTES),
+            "techniques": ["T1537"], "product": "aws",
+            "why": "constructed by detections/tests: OCSF records, not CloudTrail records"}
 SNAPSHOT_NEAR_MISS = "ebs-snapshot-shared-with-dr-account"
 COPYFAIL_CVE = {"label": "CVE-2026-31431", "cves": ["CVE-2026-31431"],
                 "why": "constructed by detections/tests from the positive case of the rule"}
@@ -138,7 +150,8 @@ def plant_set(tree, bodies, records=None, edit=None, describe=None):
             entries[key]["procedure"] = COPYFAIL_CVE
     if edit:
         edit(entries)
-    tree.edit_json(SOURCES, lambda doc: doc.update(datasets=list(entries.values()), excluded=[]))
+    tree.edit_json(SOURCES, lambda doc: doc.update(datasets=list(entries.values()),
+                                                   excluded=[dict(EXCLUDED)]))
     return entries
 
 
@@ -162,6 +175,52 @@ def rule_key(path):
     return path[len("detections/sigma/"):]
 
 
+PROBE = ("import json, sys\nsys.path.insert(0, 'detections')\n"
+         "import external_records as xr, check_external_records as cer\n"
+         "ARGS = []\n"
+         "for _path in sys.argv[1:]:\n"
+         "    with open(_path, encoding='utf-8') as _fh:\n"
+         "        ARGS.append(json.load(_fh))\n")
+_PROBES = itertools.count(1)
+
+
+def probe(tree, code, *args, env=None):
+    """Run `code` (after PROBE) in the copy, with each argument as JSON in ARGS (the
+    arguments go through files beside the copy: a deep input is longer than a command
+    line can be); returns the JSON of the last line that it prints. For the faster
+    path of a check: one process for many inputs of the function that the command line
+    calls."""
+    paths = []
+    for arg in args:
+        paths.append(tree.out(f"probe/{next(_PROBES)}.json"))
+        with open(paths[-1], "w", encoding="utf-8") as fh:
+            json.dump(arg, fh)
+    result = tree.run_python(PROBE + code, *paths, env=env)
+    lines = result.stdout.strip().split("\n")
+    if result.returncode != 0 or not lines[-1].startswith("{"):
+        raise AssertionError("the probe failed:\n" + result.describe())
+    return json.loads(lines[-1])
+
+
+def rule_facts(tree):
+    """{rule key: facts} of each rule file of the copy, read as the gate reads them:
+    the folder, the log source, the attack.t* and cve.* tags. The tests take the rules
+    of a kind of row from these facts, and name no rule for it."""
+    import yaml
+    out = {}
+    for rel in tree.glob("detections/sigma/*/*.yml"):
+        docs = [d for d in yaml.safe_load_all(tree.read(rel)) if isinstance(d, dict)]
+        ls = next((d["logsource"] for d in docs if isinstance(d.get("logsource"), dict)), {})
+        tags = {str(t) for d in docs for t in (d.get("tags") or [])}
+        out[rule_key(rel)] = {
+            "path": rel, "folder": rule_key(rel).split("/", 1)[0],
+            "source": (ls.get("product"), ls.get("service") or ls.get("category")),
+            "techniques": {t[len("attack."):].upper() for t in tags
+                           if re.fullmatch(r"attack\.t\d{4}(\.\d{3})?", t)},
+            "cves": {"CVE-" + t[len("cve."):] for t in tags if re.fullmatch(r"cve\.\d{4}-\d{4,}", t)}}
+    return out
+
+
 def row(result, pattern):
     """The one output line that matches `pattern` (re.MULTILINE)."""
     found = re.findall(pattern, result.output, re.MULTILINE)
@@ -182,7 +241,7 @@ class ExternalLint(gatelib.StartedTogether):
             "over_cap", "licence", "licence_copy", "no_dataset", "unknown_rule",
             "unknown_dataset", "stale_digest", "stale_digest_enforce", "sha_mismatch",
             "unknown_word", "todo_why", "bad_prefix", "untracked_defect", "redundant_fire",
-            "duplicate_pair", "bad_procedure", "procedure_not_auditd")
+            "duplicate_pair", "bad_procedure", "procedure_not_auditd", "unknown_rule_path")
 
     @classmethod
     def start_gate(cls, tree, *more):
@@ -338,6 +397,11 @@ class ExternalLint(gatelib.StartedTogether):
         return cls.start_gate(tree)
 
     @classmethod
+    def begin_unknown_rule_path(cls, tree):
+        # A --rule path that is not a rule file: the run would check fewer rules.
+        return cls.start_gate(tree, "--rule", "detections/sigma/T9999/planted_no_such_rule.yml")
+
+    @classmethod
     def begin_procedure_not_auditd(cls, tree):
         # A procedure label on a dataset that is not raw auditd (C5: the label is for the
         # raw auditd capture of a CVE exploit).
@@ -361,6 +425,180 @@ class ExternalLint(gatelib.StartedTogether):
                             rf"Apache-2\.0 \(copy \S+ sha256 ok\); syscalls_x86_64\.json: "
                             rf"{syscalls} syscall\(s\) of Linux v[\d.]+; expectations\.json: "
                             rf"{declared} declaration\(s\); 0 stale$")
+
+    # One malformed field each: (name, path in SOURCES.json, value, the one problem).
+    # A path element "@auditd" is the first raw auditd dataset; the value DELETE
+    # removes the key; the path [] replaces the whole document.
+    DELETE = "<delete>"
+    FIELDS = [
+        ("top_key", ["planted"], 1, r"^SOURCES\.json: unknown key\(s\) \['planted'\], missing "
+         r"key\(s\) \[\]$"),
+        ("schema", ["schema"], 2, r"^SOURCES\.json: schema 2 is not 1$"),
+        ("repository", ["repository"], "planted/attack_data",
+         r"^SOURCES\.json: repository 'planted/attack_data' is not 'splunk/attack_data'$"),
+        ("licence_file", ["licence_file"], "COPYING", r"^SOURCES\.json: licence_file must be "
+         r"'LICENSE' \(the licence file of splunk/attack_data at the commit\)$"),
+        ("licence_copy_outside", ["licence_copy"], "LICENSE", r"^SOURCES\.json: licence_copy "
+         r"'LICENSE' is not a file under detections/external/LICENSES/$"),
+        ("licence_copy_missing", ["licence_copy"], "detections/external/LICENSES/planted.txt",
+         r"^SOURCES\.json: the licence copy detections/external/LICENSES/planted\.txt cannot be "
+         r"read \(No such file or directory\)$"),
+        ("notice", ["notice"], 1, r"^SOURCES\.json: notice must say what NOTICE file the commit "
+         r"holds$"),
+        ("not_lists", ["excluded"], {}, r"^SOURCES\.json: datasets and excluded must be lists$"),
+        ("not_object", [], [], r"^SOURCES\.json: the file is not a JSON object$"),
+        ("dataset_not_object", ["datasets", 0], 1, r"^SOURCES\.json datasets\[1\]: not an "
+         r"object$"),
+        ("dataset_key", ["datasets", 0, "planted"], 1, r"^SOURCES\.json datasets\[1\]: missing "
+         r"key\(s\) \[\], unknown key\(s\) \['planted'\]$"),
+        ("dataset_missing_key", ["datasets", 0, "yml"], DELETE, r"^SOURCES\.json datasets\[1\]: "
+         r"missing key\(s\) \['yml'\], unknown key\(s\) \[\]$"),
+        ("id_of_path", ["datasets", 0, "id"], "T1053.007/planted/other",
+         r": id 'T1053\.007/planted/other' is not '[^']+', the <technique>/<directory>/<file "
+         r"stem> of its path$"),
+        ("size", ["datasets", 0, "size"], 0, r": size 0 is not a positive integer$"),
+        ("size_bool", ["datasets", 0, "size"], True, r": size True is not a positive integer$"),
+        ("techniques_form", ["datasets", 0, "techniques"], ["t1053.007"],
+         r": techniques \['t1053\.007'\] is not a list of ATT&CK IDs"),
+        ("techniques_twice", ["datasets", 0, "techniques"], ["T1053.007", "T1053.007"],
+         r": techniques \['T1053\.007', 'T1053\.007'\] is not a list of ATT&CK IDs"),
+        ("records_zero", ["datasets", 0, "records"], 0, r": records 0 is not a positive integer"),
+        ("records_bool", ["datasets", 0, "records"], True, r": records True is not a positive "
+         r"integer"),
+        ("format", ["datasets", 0, "format"], "ocsf-json", r": format 'ocsf-json' is not one of "
+         r"\('cloudtrail-json', 'azure-monitor-json', 'k8s-audit-json', 'auditd-raw'\)$"),
+        ("sourcetype", ["datasets", 0, "sourcetype"], "", r": sourcetype must be the text \(or "
+         r"the list\) that the yml gives$"),
+        ("yml_path", ["datasets", 0, "yml"],
+         "datasets/attack_techniques/T1053.007/planted/readme.txt",
+         r": yml '\S+/readme\.txt' is not the path of a \.yml file of splunk/attack_data$"),
+        ("yml_sha256", ["datasets", 0, "yml_sha256"], "planted",
+         r": yml_sha256 is not 64 lower-case hex digits$"),
+        ("aliases", ["datasets", 0, "aliases"], ["datasets/attack_techniques/../planted"],
+         r": aliases must be a list of other paths of splunk/attack_data$"),
+        ("procedure_todo", ["datasets", "@auditd", "procedure", "label"], "TODO",
+         r": procedure must be \{label, cves, why\}"),
+        ("procedure_key", ["datasets", "@auditd", "procedure", "planted"], 1,
+         r": procedure must be \{label, cves, why\}"),
+        ("excluded_not_object", ["excluded", 0], 1, r"^SOURCES\.json excluded\[1\]: not an "
+         r"object$"),
+        ("excluded_key", ["excluded", 0, "planted"], 1, r"^SOURCES\.json excluded\[1\]: missing "
+         r"key\(s\) \[\], unknown key\(s\) \['planted'\]$"),
+        ("excluded_product", ["excluded", 0, "product"], "windows",
+         r": product 'windows' is not one of \('aws', 'azure', 'gcp', 'kubernetes', 'linux'\)$"),
+        ("excluded_why_todo", ["excluded", 0, "why"], "TODO: later",
+         r": why must say why the dataset is left out \(not TODO\)$"),
+        ("excluded_why_empty", ["excluded", 0, "why"], " ",
+         r": why must say why the dataset is left out \(not TODO\)$"),
+    ]
+    LINT = (
+        "import copy\n"
+        "doc0 = xr.load_json(xr.SOURCES, 'SOURCES.json')\n"
+        "auditd = next(n for n, d in enumerate(doc0['datasets']) if d['format'] == 'auditd-raw')\n"
+        "out = {'control': xr.lint_sources(doc0, '.')}\n"
+        "fields, delete = ARGS\n"
+        "for name, path, value in fields:\n"
+        "    doc = copy.deepcopy(doc0)\n"
+        "    if not path:\n"
+        "        doc = value\n"
+        "    else:\n"
+        "        node = doc\n"
+        "        path = [auditd if p == '@auditd' else p for p in path]\n"
+        "        for p in path[:-1]:\n"
+        "            node = node[p]\n"
+        "        if value == delete:\n"
+        "            del node[path[-1]]\n"
+        "        else:\n"
+        "            node[path[-1]] = value\n"
+        "    out[name] = xr.lint_sources(doc, '.')\n"
+        "print(json.dumps(out))\n")
+
+    def test_lint_names_each_malformed_field(self):
+        """The faster path of `--lint` (its function lint_sources(), one process): each
+        malformed field of a copy of the real SOURCES.json gives one problem, which
+        names the field."""
+        out = probe(self.good(), self.LINT, [f[:3] for f in self.FIELDS], self.DELETE)
+        self.assertEqual(out["control"], [], "the real SOURCES.json is sound")
+        for name, _, _, reason in self.FIELDS:
+            with self.subTest(name):
+                self.assertEqual(len(out[name]), 1, out[name])
+                self.assertRegex(out[name][0], reason)
+
+    # One malformed declaration each: (name, the change to a sound declaration, the one
+    # problem). A change {"<key>": DELETE} removes the key.
+    DECLARATIONS = [
+        ("key", {"planted": 1}, r": wants exactly the keys \['dataset', 'expect', 'rule', "
+         r"'rule_digest', 'sha256', 'why'\]$"),
+        ("missing_key", {"sha256": DELETE}, r": wants exactly the keys "),
+        ("not_text", {"rule": 1}, r": the rule and the dataset must be text$"),
+        ("rule_form", {"rule": "T1537/../planted.yml"}, r": names the rule 'T1537/\.\./planted"
+         r"\.yml', which does not exist"),
+        ("digest_form", {"rule_digest": "PLANTED"}, r": rule_digest is not 64 lower-case hex "
+         r"digits$"),
+        ("sha256_form", {"sha256": "A" * 64}, r": sha256 is not 64 lower-case hex digits$"),
+        ("no_why", {"why": " "}, r": gives no why$"),
+        ("known_miss_prefix", {"expect": "known-miss", "why": "the rule misses it"},
+         r": a known-miss why starts 'rule defect, tracked in detections/RULE_DEFECTS\.md "
+         r"<ID>:'$"),
+        ("quiet_prefix_only", {"expect": "quiet", "why": "quiet:"},
+         r": a quiet why starts 'quiet:' and says more$"),
+        ("na_prefix_only", {"why": "not in the capture: "},
+         r": a n/a why starts 'another procedure:' or 'not in the capture:' and says more$"),
+        ("fire_prefix", {"expect": "fire", "why": "it fires"},
+         r": a fire why starts 'same procedure:' and says more$"),
+    ]
+    # (expect, the relation of the pair, the reason that the declaration is redundant).
+    REDUNDANT = [
+        ("n/a", "related", r"^the pair is related, not an expected pair, so a n/a declaration "
+         r"changes nothing$"),
+        ("known-miss", "other-procedure", r"^the pair is other-procedure, not an expected pair, so "
+         r"a known-miss declaration changes nothing$"),
+        ("quiet", None, r"^the rule and the dataset have no technique in common, so the gate does "
+         r"not run the rule on the dataset and a quiet declaration changes nothing$"),
+        ("n/a", None, r"have no technique in common"),
+        ("fire", "same", r"^the pair is same technique and procedure, so the rule must fire "
+         r"already$"),
+        ("quiet", "same", None), ("quiet", "related", None), ("n/a", "same", None),
+        ("known-miss", "same", None), ("fire", "related", None), ("fire", None, None),
+        ("fire", "other-procedure", None),
+    ]
+    DECLARE = (
+        "sources = xr.load_json(xr.SOURCES, 'SOURCES.json')\n"
+        "by_id = {d['id']: d for d in sources['datasets']}\n"
+        "rules = {cer.Rule(p).key for p in cer.rule_paths()}\n"
+        "base, changes, delete, redundant = ARGS\n"
+        "out = {'control': cer.parse_declarations({'schema': 1, 'declarations': [base]}, by_id,\n"
+        "                                         rules)[1],\n"
+        "       'schema': cer.parse_declarations({'schema': 2, 'declarations': []}, by_id,\n"
+        "                                        rules)[1]}\n"
+        "for name, change in changes:\n"
+        "    d = dict(base, **change)\n"
+        "    for k in [k for k, v in change.items() if v == delete]:\n"
+        "        del d[k]\n"
+        "    out[name] = cer.parse_declarations({'schema': 1, 'declarations': [d]}, by_id,\n"
+        "                                       rules)[1]\n"
+        "out['redundant'] = [cer.redundant({'expect': e}, rel) for e, rel in redundant]\n"
+        "print(json.dumps(out))\n")
+
+    def test_declarations_name_each_malformed_field(self):
+        """The faster path of the declaration checks (parse_declarations() and
+        redundant(), which `--lint` calls): each malformed field gives one problem."""
+        out = probe(self.good(), self.DECLARE, self.pair(), [d[:2] for d in self.DECLARATIONS],
+                    self.DELETE, [r[:2] for r in self.REDUNDANT])
+        self.assertEqual(out["control"], [], "the declaration of pair() is sound")
+        self.assertEqual(out["schema"], ['expectations.json: wants {"schema": 1, "declarations": '
+                                         '[...]}'])
+        for name, _, reason in self.DECLARATIONS:
+            with self.subTest(name):
+                self.assertEqual(len(out[name]), 1, out[name])
+                self.assertRegex(out[name][0], r"^expectations\.json(:| declarations\[1\]:)")
+                self.assertRegex(out[name][0], reason)
+        for (expect, rel, reason), got in zip(self.REDUNDANT, out["redundant"]):
+            with self.subTest(f"redundant {expect} on {rel}"):
+                if reason is None:
+                    self.assertIsNone(got)
+                else:
+                    self.assertRegex(got or "", reason)
 
     def test_rejects_a_path_that_leaves_the_datasets(self):
         _, result = self.started("dotdot_path")
@@ -484,6 +722,12 @@ class ExternalLint(gatelib.StartedTogether):
         self.assert_rejects(result, r"^ERROR expectations\.json: the declaration for .*: the pair "
                             r"is declared twice$", exit_code=2)
 
+    def test_rejects_a_rule_path_that_is_not_a_rule(self):
+        _, result = self.started("unknown_rule_path")
+        self.assert_rejects(result, r"^ERROR --rule 'detections/sigma/T9999/planted_no_such_rule"
+                            r"\.yml' is not a rule file under detections/sigma/$", exit_code=2)
+        self.assertEqual(result.output.count("ERROR "), 1, result.describe())
+
     def test_rejects_a_procedure_label_on_a_dataset_that_is_not_raw_auditd(self):
         _, result = self.started("procedure_not_auditd")
         self.assert_rejects(result, r"^ERROR SOURCES\.json dataset '[^']+': a procedure label is for "
@@ -511,7 +755,8 @@ class ExternalRecords(gatelib.StartedTogether):
     GATE = GATE
     PARTS = gatelib.DETECTIONS
     RUNS = ("constructed", "constructed_enforce", "hash_mismatch", "miss_enforce", "miss_shadow",
-            "declared_quiet_fired", "stale_na", "known_miss_fires", "unavailable_enforce",
+            "declared_quiet_fired", "stale_na", "known_miss_fires", "declared_fire_miss",
+            "declared_no_record", "unavailable_enforce", "origins_enforce",
             "unavailable_one_shadow", "not_a_record", "count_changed", "line_not_object",
             "not_utf8", "case_clash", "unstorable_value", "label_not_in_yml", "yml_technique",
             "twin", "twin_attack_only", "self_declared", "self_declared_plain")
@@ -524,14 +769,51 @@ class ExternalRecords(gatelib.StartedTogether):
 
     @classmethod
     def start_enforce(cls, tree, *keys):
-        """The documented --enforce, for the rules of `keys` (default: all four)."""
-        return tree.start(cls.GATE, "--enforce",
+        """The documented --enforce, for the rules of `keys` (default: all four), with
+        --offline: the suite has no network, so an online run cannot compare the
+        LICENSE and the syscall table with their origins, and --enforce fails such a
+        run (the run `origins_enforce`). --offline reads the datasets and their ymls
+        from the cache as an online run does when the cache holds them."""
+        return tree.start(cls.GATE, "--enforce", "--offline",
                           *[a for k in (keys or RULES) for a in ("--rule", RULES[k])])
 
     @classmethod
     def standard(cls, tree, **bodies):
         """The four constructed datasets; `bodies` replaces the bytes of some."""
         return plant_set(tree, {k: bodies.get(k, body_of(tree, k)) for k in SET})
+
+    @classmethod
+    def facts(cls):
+        if "_facts" not in cls.__dict__:
+            cls._facts = rule_facts(cls.good())
+        return cls._facts
+
+    @classmethod
+    def kind(cls, name):
+        """The rules of the tree that give one kind of row on the constructed set.
+
+        not-read   T1528 rules of another Azure log than AuditLogs (the consent set)
+        other-cve  T1068 rules whose cve tags do not hold the label of the CopyFail set
+        related    rules outside T1552.007 with that tag, on the Kubernetes audit log
+        other-product  rules of the folder of a set that read another product
+        miss       the other T1537 rules of CloudTrail (the snapshot set)
+        excluded   the T1537 rules of AWS (the excluded entry)"""
+        facts = cls.facts()
+        pick = {
+            "not-read": lambda f: f["folder"] == SET["consent"][3]
+            and f["source"][0] == "azure" and f["source"] != SOURCE["consent"],
+            "other-cve": lambda f: f["folder"] == SET["copyfail"][3]
+            and COPYFAIL_CVE["label"] not in f["cves"],
+            "related": lambda f: f["folder"] != SET["secret"][3]
+            and SET["secret"][3] in f["techniques"] and f["source"] == SOURCE["secret"],
+            "other-product": lambda f: any(f["folder"] == SET[k][3]
+                                           and f["source"][0] != SOURCE[k][0] for k in SET),
+            "miss": lambda f: f["folder"] == SET["snapshot"][3] and f["source"] == SOURCE["snapshot"]
+            and f["path"] != RULES["snapshot"],
+            "excluded": lambda f: f["folder"] in EXCLUDED["techniques"]
+            and f["source"][0] == EXCLUDED["product"],
+        }[name]
+        return sorted(key for key, f in facts.items() if pick(f))
 
     @classmethod
     def rule_digests(cls):
@@ -608,9 +890,39 @@ class ExternalRecords(gatelib.StartedTogether):
         os.remove(os.path.join(tree.home, CACHE, entry["sha256"]))
 
     @classmethod
+    def begin_declared_fire_miss(cls, tree):
+        # A fire declaration on a RELATED pair whose rule does not fire on the record.
+        entries = cls.standard(tree)
+        rule = cls.facts()[cls.kind("related")[0]]["path"]
+        declare(tree, {"rule": rule_key(rule), "dataset": entries["secret"]["id"],
+                       "expect": "fire", "why": "same procedure: planted by detections/tests",
+                       "rule_digest": digests(tree, rule)[rule],
+                       "sha256": entries["secret"]["sha256"]})
+        return tree.start(cls.GATE, "--enforce", "--offline", "--rule", rule)
+
+    @classmethod
+    def begin_declared_no_record(cls, tree):
+        # A quiet declaration on a same-technique pair whose log source the dataset does
+        # not hold: it applies to nothing.
+        entries = cls.standard(tree)
+        rule = cls.facts()[cls.kind("not-read")[0]]["path"]
+        declare(tree, {"rule": rule_key(rule), "dataset": entries["consent"]["id"],
+                       "expect": "quiet", "why": "quiet: planted by detections/tests",
+                       "rule_digest": digests(tree, rule)[rule],
+                       "sha256": entries["consent"]["sha256"]})
+        return tree.start(cls.GATE, "--enforce", "--offline", "--rule", rule)
+
+    @classmethod
     def begin_unavailable_enforce(cls, tree):
         cls.remove_cached(tree, cls.standard(tree)["snapshot"])
         return cls.start_enforce(tree)
+
+    @classmethod
+    def begin_origins_enforce(cls, tree):
+        # Online and with no network: the datasets are in the cache, the LICENSE and the
+        # syscall table of the kernel are not, so the run cannot compare them.
+        cls.standard(tree)
+        return tree.start(cls.GATE, "--enforce", "--rule", RULES["snapshot"])
 
     @classmethod
     def begin_unavailable_one_shadow(cls, tree):
@@ -720,8 +1032,12 @@ class ExternalRecords(gatelib.StartedTogether):
         good = self.good()
         n = len(good.read_json(SOURCES)["datasets"])
         _, result = self.started()
-        self.assertEqual(len(re.findall(r"^UNAVAILABLE \S+: ", result.output, re.MULTILINE)), n,
-                         result.describe())
+        # A row for each dataset, and one for each of the two origin files.
+        self.assertEqual(len(re.findall(r"^UNAVAILABLE \S+: ", result.output, re.MULTILINE)),
+                         n + 2, result.describe())
+        for name in ("LICENSE", "syscall_64.tbl"):
+            self.assertRegex(result.output, re.compile(rf"^UNAVAILABLE {re.escape(name)}: ",
+                                                       re.MULTILINE))
         self.assertEqual(len(re.findall(r"^::warning title=external-records::UNAVAILABLE ",
                                         result.output, re.MULTILINE)), n + 2, result.describe())
         self.assert_rejects(result, r"^ERROR no dataset was read, so the run checked nothing",
@@ -742,25 +1058,55 @@ class ExternalRecords(gatelib.StartedTogether):
             rf"^FIRE      {re.escape(rule_key(RULES['copyfail']))} on {self.id_of('copyfail')}  "
             r"1 alert\(s\), 2 distinct evidence record\(s\) of 2 record\(s\)  \[same technique "
             r"T1068\]$", re.MULTILINE))
-        # Another rule of the technique and log source must fire too: a MISS row.
-        self.assertRegex(result.output, re.compile(
-            rf"^MISS      T1537/\S+ on {self.id_of('snapshot')}  0 of 1 record\(s\); nearest "
-            r"line 1 \(", re.MULTILINE))
+        facts, limits = self.facts(), "(detections/tests/README.md, Limits)"
+        # Every other rule of the technique and log source must fire too: a MISS row.
+        for key in self.kind("miss"):
+            self.assertRegex(result.output, re.compile(
+                rf"^MISS      {re.escape(key)} on {self.id_of('snapshot')}  0 of 1 record\(s\); "
+                r"nearest line 1 \(", re.MULTILINE))
         # A rule of the technique whose log source the dataset does not hold.
-        self.assertRegex(result.output, re.compile(
-            rf"^NOT READ  T1528/entra_device_code_authentication\.yml on {self.id_of('consent')}: "
-            r"no azure/signinlogs record \(the dataset holds: azure/auditlogs\)$", re.MULTILINE))
+        self.assertTrue(self.kind("not-read"), "no T1528 rule reads another Azure log " + limits)
+        for key in self.kind("not-read"):
+            self.assertRegex(result.output, re.compile(
+                rf"^NOT READ  {re.escape(key)} on {self.id_of('consent')}: no "
+                rf"{re.escape('/'.join(facts[key]['source']))} record \(the dataset holds: "
+                r"azure/auditlogs\)$", re.MULTILINE))
+        # NOT READ is for a rule of the product of the dataset only.
+        self.assertTrue(self.kind("other-product"),
+                        "no rule of the folder of a constructed set reads another product " + limits)
+        for key in self.kind("other-product"):
+            self.assertNotRegex(result.output, re.compile(rf"^NOT READ  {re.escape(key)} on ",
+                                                          re.MULTILINE))
         # A rule of another CVE than the label of the dataset.
-        self.assertRegex(result.output, re.compile(
-            rf"^OTHER-PROCEDURE T1068/dirtypipe_splice_readonly\.yml on {self.id_of('copyfail')} "
-            r".*\[same technique T1068; the dataset is CVE-2026-31431, the CVE tags of the rule: "
-            r"CVE-2022-0847; not expected\]$", re.MULTILINE))
+        self.assertTrue(self.kind("other-cve"), "no T1068 rule of another CVE " + limits)
+        for key in self.kind("other-cve"):
+            cves = ", ".join(sorted(facts[key]["cves"])) or "none"
+            self.assertRegex(result.output, re.compile(
+                rf"^OTHER-PROCEDURE {re.escape(key)} on {self.id_of('copyfail')}  .*\[same "
+                rf"technique T1068; the dataset is {COPYFAIL_CVE['label']}, the CVE tags of the "
+                rf"rule: {re.escape(cves)}; not expected\]$", re.MULTILINE))
         # A rule whose other attack tag is the technique of the dataset.
-        self.assertRegex(result.output, re.compile(
-            rf"^RELATED   T1609/k8s_node_proxy_kubelet_api\.yml on {self.id_of('secret')}  0/1 "
-            r"record\(s\)  \[tag T1552\.007; not expected\]$", re.MULTILINE))
+        self.assertTrue(self.kind("related"), "no rule outside T1552.007 has its tag " + limits)
+        for key in self.kind("related"):
+            self.assertRegex(result.output, re.compile(
+                rf"^RELATED   {re.escape(key)} on {self.id_of('secret')}  0/1 record\(s\)  "
+                r"\[tag T1552\.007; not expected\]$", re.MULTILINE))
+        # The excluded entry: a row for each rule of its technique and product, with its why.
+        self.assertTrue(self.kind("excluded"))
+        for key in self.kind("excluded"):
+            self.assertRegex(result.output, re.compile(
+                rf"^EXCLUDED  {re.escape(key)} on {re.escape(EXCLUDED['id'])}: "
+                rf"{re.escape(EXCLUDED['why'])}$", re.MULTILINE))
+        # The step summary holds each row of the console, and no other.
+        rows = [line for line in result.output.split("\n")
+                if re.match(r"(DATASET|FIRE|MISS|NOT READ|RELATED|OTHER-PROCEDURE|EXCLUDED"
+                            r"|UNAVAILABLE) ", line)]
         with open(tree.out("github/github_step_summary"), encoding="utf-8") as fh:
-            self.assertIn("## External records (splunk/attack_data, shadow)", fh.read())
+            summary = fh.read()
+        self.assertIn("## External records (splunk/attack_data, shadow)", summary)
+        self.assertIn(f"<details><summary>{len(rows)} row(s)</summary>", summary)
+        body = summary.split("```text\n", 1)[1].split("\n```", 1)[0].split("\n")
+        self.assertEqual(body, rows)
         with open(tree.out("runner-temp/external-records.json"), encoding="utf-8") as fh:
             report = json.load(fh)
         self.assertEqual((report["mode"], report["exit"], len(report["datasets"])),
@@ -819,11 +1165,41 @@ class ExternalRecords(gatelib.StartedTogether):
                             rf"{defect} in detections/RULE_DEFECTS\.md and remove the declaration$",
                             exit_code=1)
 
+    def test_enforce_rejects_a_declared_fire_that_misses(self):
+        key = self.kind("related")[0]
+        _, result = self.started("declared_fire_miss")
+        self.assert_rejects(result, rf"^MISS      {re.escape(key)} on {self.id_of('secret')}  0 of 1 "
+                            r"record\(s\); nearest line 1 \(.*\)  \[tag T1552\.007; declared "
+                            r"fire\]$", exit_code=1)
+
+    def test_enforce_rejects_a_declaration_on_a_pair_without_records(self):
+        key = self.kind("not-read")[0]
+        source = "/".join(self.facts()[key]["source"])
+        _, result = self.started("declared_no_record")
+        self.assertRegex(result.output, re.compile(
+            rf"^NOT READ  {re.escape(key)} on {self.id_of('consent')}: ", re.MULTILINE))
+        self.assert_rejects(result, rf"^STALE     {re.escape(key)} on {self.id_of('consent')}: the "
+                            rf"quiet declaration applies to nothing: the dataset holds no "
+                            rf"{re.escape(source)} record$", exit_code=1)
+
     def test_enforce_rejects_an_unavailable_dataset(self):
         _, result = self.started("unavailable_enforce")
         self.assertRegex(result.output, re.compile(
             rf"^UNAVAILABLE {self.id_of('snapshot')}: ", re.MULTILINE))
         self.assert_rejects(result, r"^ERROR --enforce: 1 dataset\(s\) UNAVAILABLE$", exit_code=2)
+
+    def test_enforce_rejects_origins_that_it_could_not_compare(self):
+        """An online --enforce run that cannot read the LICENSE and the syscall table at
+        their origins fails, as for a dataset: it did not check what it pins."""
+        _, result = self.started("origins_enforce")
+        for name in ("LICENSE", "syscall_64.tbl"):
+            self.assertRegex(result.output, re.compile(rf"^UNAVAILABLE {re.escape(name)}: ",
+                                                       re.MULTILINE))
+        self.assertRegex(result.output, re.compile(
+            rf"^DATASET   {self.id_of('snapshot')}  ", re.MULTILINE))
+        self.assert_rejects(result, r"^ERROR --enforce: LICENSE and syscall_64\.tbl UNAVAILABLE: "
+                            r"not compared with the origin$", exit_code=2)
+        self.assertEqual(result.output.count("ERROR "), 1, result.describe())
 
     def test_shadow_reports_one_unavailable_dataset_and_exits_0(self):
         _, result = self.started("unavailable_one_shadow")
@@ -977,11 +1353,50 @@ class ExternalRecordsJob(unittest.TestCase):
                          "ids, sha256 values, counts and item names")
 
 
+def ct(**more):
+    """One CloudTrail record (constructed: the safe markers of AGENTS.md)."""
+    return {"eventSource": "ec2.amazonaws.com", "eventName": "DescribeSnapshots",
+            "recipientAccountId": "123456789012", **more}
+
+
+def line_of(record):
+    return (json.dumps(record) + "\n").encode()
+
+
+def syscall_line(fields, serial=7101):
+    return (f"type=SYSCALL msg=audit(1791813600.000:{serial}): {fields}\n").encode()
+
+
+SYSCALL_FIELDS = ("arch=c000003e syscall=41 success=yes exit=3 a0=26 a1=5 a2=0 a3=0 items=0 "
+                  "ppid=4400 pid=4401 auid=1000 uid=1000 euid=1000 comm=\"trr9000-x\" "
+                  "exe=\"/tmp/trr9000-x\" key=\"det-eng\"")
+
+
+def azure(category):
+    return {"category": category, "operationName": "Add service principal credentials",
+            "properties": {"tenantId": "00000000-0000-0000-0000-000000000000"}}
+
+
+def k8s(**more):
+    return {"kind": "Event", "apiVersion": "audit.k8s.io/v1", "verb": "get",
+            "objectRef": {"resource": "secrets", "namespace": "trr9000-ns"}, **more}
+
+
+def nested(depth, leaf=b"1"):
+    """A JSON text of `depth` nested objects {"a": {"a": ... 1}}."""
+    return b'{"a":' * depth + leaf + b"}" * depth
+
+
 class ExternalLoaders(gatelib.GateCase):
     """The raw auditd loader of the gate and the Linux validator build the same event
     from the same line: a plain SYSCALL record, a record with its ENRICHED fields
     after a GS byte, a record with them inline (no GS byte, as in the Dirty Frag
-    dataset of attack_data), an untrusted string in hex, and a PROCTITLE record."""
+    dataset of attack_data), an untrusted string in hex, and a PROCTITLE record.
+
+    The other tests are the faster path of the report (the functions that it calls,
+    in one process for many inputs): the loader of each format on constructed lines,
+    the sniff of --draft, the check of a yml, the table of evaluate(), and the fetch
+    and the cache against a server on 127.0.0.1 (no other network)."""
 
     PARTS = gatelib.DETECTIONS
     LINES = [
@@ -1029,6 +1444,399 @@ class ExternalLoaders(gatelib.GateCase):
                          ("1000", "0"))
         self.assertNotIn("UID", by_syscall["unshare"])
         self.assertEqual(by_syscall["ptrace"]["comm"], "Attach Listener")
+
+    # (name, format, bytes of the file, what the loader gives). The expectation is a
+    # regular expression of the Fault, or a list of (where, log source) of the records
+    # (log source None: a record that no rule reads), or a dict {key: value} that the
+    # event of the first record holds, or ("or read", a regular expression): a Fault
+    # that matches, or the records (the json module of Python 3.14 reads an array
+    # nested 100000 deep when the stack is large, and 3.13 stops; neither may crash).
+    READ = [
+        ("bom", "cloudtrail-json", b"\xef\xbb\xbf" + line_of(ct()),
+         r": the file starts with a byte order mark \(U\+FEFF\)"),
+        ("cloudtrail_line", "cloudtrail-json", line_of(ct()), [("line 1", "aws/cloudtrail")]),
+        ("cloudtrail_array", "cloudtrail-json", b"[" + line_of(ct()) + b"," + line_of(ct()) + b"]",
+         [("record 1", "aws/cloudtrail"), ("record 2", "aws/cloudtrail")]),
+        ("cloudtrail_envelope", "cloudtrail-json", json.dumps({"Records": [ct()]}).encode(),
+         [("record 1", "aws/cloudtrail")]),
+        ("cloudtrail_object", "cloudtrail-json", json.dumps(ct(), indent=1).encode(),
+         [("record 1", "aws/cloudtrail")]),
+        ("blank", "cloudtrail-json", b"\n \n", []),
+        ("cloudtrail_not_record", "cloudtrail-json", line_of({"eventSource": "s3.amazonaws.com"}),
+         r": line 1 is not a CloudTrail record \(no eventSource and eventName text\)$"),
+        ("azure_routes", "azure-monitor-json", b"".join(line_of(azure(c)) for c in (
+            "AuditLogs", "SignInLogs", "NonInteractiveUserSignInLogs", "ServicePrincipalSignInLogs",
+            "ManagedIdentitySignInLogs", "Administrative", "MicrosoftGraphActivityLogs")),
+         [("line 1", "azure/auditlogs")] + [(f"line {n}", "azure/signinlogs") for n in (2, 3, 4, 5)]
+         + [("line 6", "azure/activitylogs"), ("line 7", None)]),
+        ("azure_not_record", "azure-monitor-json", line_of({"category": "AuditLogs"}),
+         r": line 1 is not an Azure Monitor record \(no category and operationName text\)$"),
+        ("k8s_event", "k8s-audit-json", line_of(k8s()), [("line 1", "kubernetes/audit")]),
+        ("k8s_api_version", "k8s-audit-json", line_of(k8s(apiVersion="v1")),
+         r": line 1 is not a Kubernetes audit event \(kind Event, apiVersion audit\.k8s\.io/\*\)$"),
+        ("k8s_kind", "k8s-audit-json", line_of(k8s(kind="EventList")),
+         r": line 1 is not a Kubernetes audit event"),
+        ("auditd_x86_64", "auditd-raw", syscall_line(SYSCALL_FIELDS), {"syscall": "socket"}),
+        # Another arch: the number stays a number (41 is dup on i386, not socket).
+        ("auditd_i386", "auditd-raw",
+         syscall_line(SYSCALL_FIELDS.replace("arch=c000003e", "arch=40000003")), {"syscall": "41"}),
+        ("auditd_no_pid", "auditd-raw", syscall_line(SYSCALL_FIELDS.replace(" pid=4401", "")),
+         r": line 1 is a SYSCALL record without pid \(a decimal number each, and an arch\)$"),
+        ("auditd_pid_text", "auditd-raw",
+         syscall_line(SYSCALL_FIELDS.replace(" pid=4401", " pid=x4401")),
+         r": line 1 is a SYSCALL record without pid "),
+        ("auditd_no_arch", "auditd-raw", syscall_line(SYSCALL_FIELDS.replace("arch=c000003e ", "")),
+         r": line 1 is a SYSCALL record without arch "),
+        ("auditd_not_raw", "auditd-raw", b"SYSCALL arch=c000003e syscall=41\n",
+         r": line 1 is not a raw auditd record \(type=<TYPE> msg=audit"),
+        ("auditd_other_types", "auditd-raw",
+         b'type=PROCTITLE msg=audit(1791813600.000:7101): proctitle=6A617661\n', []),
+        # A key or a value that one SQLite table cannot hold.
+        ("big_int", "cloudtrail-json", line_of(ct(planted=2 ** 63)),
+         r": line 1: the key 'planted' holds an integer outside the signed 64-bit range of "
+         r"the table \(SQLite INTEGER\)$"),
+        ("small_int", "cloudtrail-json", line_of(ct(planted=-2 ** 63 - 1)),
+         r": line 1: the key 'planted' holds an integer outside the signed 64-bit range"),
+        ("int_edges", "cloudtrail-json", line_of(ct(high=2 ** 63 - 1, low=-2 ** 63)),
+         {"high": 2 ** 63 - 1, "low": -2 ** 63}),
+        ("auditd_big_pid", "auditd-raw",
+         syscall_line(SYSCALL_FIELDS.replace(" pid=4401", " pid=99999999999999999999")),
+         r": line 1: the key 'pid' holds an integer outside the signed 64-bit range"),
+        ("rowid_key", "cloudtrail-json", line_of(ct(_ROWID=1)),
+         r": line 1: the key '_ROWID' is the name of the row id of the table"),
+        ("nul_key", "cloudtrail-json", line_of(ct(**{"planted\x00": 1})),
+         r": line 1: the key 'planted\\x00' holds a NUL character \(SQLite refuses it in a "
+         r"column name\)$"),
+        ("nul_value", "cloudtrail-json", line_of(ct(planted="a\x00b")),
+         r": line 1: the key 'planted' holds text with a NUL character"),
+        ("surrogate_key", "cloudtrail-json", line_of(ct(**{"\ud800": 1})),
+         r": line 1: the key '\\ud800' holds a lone surrogate \(it is not UTF-8\)$"),
+        ("surrogate_value", "cloudtrail-json", line_of(ct(planted="\ud800")),
+         r": line 1: the key 'planted' holds text with a lone surrogate \(it is not UTF-8\)$"),
+        ("not_finite", "cloudtrail-json", line_of(ct())[:-2] + b', "planted": 1e999}\n',
+         r": line 1: the key 'planted' holds a number that is not finite"),
+        ("deep_array", "cloudtrail-json", line_of(ct())[:-2] + b', "planted": '
+         + b"[" * 100000 + b"]" * 100000 + b"}\n",
+         ("or read", r": the file nests JSON values too deep to read$")),
+        ("deep_array_lines", "cloudtrail-json", line_of(ct()) + line_of(ct())[:-2]
+         + b', "planted": ' + b"[" * 100000 + b"]" * 100000 + b"}\n",
+         ("or read", r": line 2 nests JSON values too deep to read$")),
+        ("deep_object", "cloudtrail-json", line_of(ct())[:-2] + b', "planted": ' + nested(1500)
+         + b"}\n", r": line 1 nests objects too deep to read$"),
+        # A JSON record that is not one record of the log.
+        ("twice", "cloudtrail-json", line_of(ct())[:-2] + b', "eventName": "ModifySnapshot"}\n',
+         r": line 1: an object holds the key 'eventName' two times \(one reader keeps the first "
+         r"value, another the last\)$"),
+        ("twice_in_list", "cloudtrail-json", line_of(ct()) + line_of(ct())[:-2]
+         + b', "planted": [{"k": 1, "k": 2}]}\n', r": line 2: an object holds the key 'k' two times"),
+        ("twice_in_array", "cloudtrail-json", b"[" + line_of(ct()) + b"," + line_of(ct())[:-2]
+         + b', "planted": {"k": 1, "k": 2}}]', r": record 2: an object holds the key 'k' two times"),
+        ("one_field", "cloudtrail-json", line_of(ct(**{"a.b": 1, "a": {"b": 2}})),
+         r": line 1: two keys give the field 'a\.b' when the record is flattened "
+         r"\(sigma_eval\.flatten keeps one of them\)$"),
+        ("two_fields", "cloudtrail-json", line_of(ct(**{"a.c": 1, "a": {"b": 2}, "l": [{"a": 1}]})),
+         {"a.c": 1, "a.b": 2, "l": '[{"a": 1}]'}),
+        ("nan", "cloudtrail-json", line_of(ct())[:-2] + b', "planted": NaN}\n',
+         r": line 1 holds NaN, which is not a JSON value \(RFC 8259\)$"),
+        ("infinity_in_list", "cloudtrail-json", line_of(ct()) + line_of(ct())[:-2]
+         + b', "planted": [-Infinity]}\n',
+         r": line 2 holds -Infinity, which is not a JSON value \(RFC 8259\)$"),
+        ("nan_in_array", "cloudtrail-json", b"[" + line_of(ct()) + b"," + line_of(ct())[:-2]
+         + b', "planted": NaN}]', r": the JSON document holds NaN, which is not a JSON value"),
+    ]
+    READ_PROBE = (
+        "import base64, traceback\n"
+        "_, table = xr.load_syscalls()\n"
+        "out = {}\n"
+        "for name, fmt, body in ARGS[0]:\n"
+        "    try:\n"
+        "        records, other = xr.read_dataset({'id': 'T9999/probe/' + name, 'format': fmt},\n"
+        "                                         base64.b64decode(body), table)\n"
+        "        out[name] = {'records': [[r.where, '/'.join(r.logsource) if r.logsource else None]\n"
+        "                                 for r in records],\n"
+        "                     'first': records[0].event if records else None, 'other': other}\n"
+        "    except xr.Fault as e:\n"
+        "        out[name] = {'fault': str(e)}\n"
+        "    except Exception:\n"
+        "        out[name] = {'crash': traceback.format_exc()}\n"
+        "print(json.dumps(out))\n")
+
+    READ_BODY = {name: body for name, _, body, _ in READ}
+
+    def test_the_loaders_read_each_format_and_refuse_what_is_not_a_record(self):
+        import base64
+        cases = [(name, fmt, base64.b64encode(body).decode()) for name, fmt, body, _ in self.READ]
+        out = probe(self.good(), self.READ_PROBE, cases)
+        for name, _, _, want in self.READ:
+            with self.subTest(name):
+                got = out[name]
+                self.assertNotIn("crash", got, got.get("crash"))
+                if isinstance(want, tuple):
+                    if "fault" in got:
+                        self.assertRegex(got["fault"], rf"^T9999/probe/{name}" + want[1])
+                    else:
+                        self.assertEqual(len(got["records"]), len(self.READ_BODY[name].split(b"\n")) - 1)
+                elif isinstance(want, str):
+                    self.assertIn("fault", got, got)
+                    self.assertRegex(got["fault"], rf"^T9999/probe/{name}" + want)
+                elif isinstance(want, list):
+                    self.assertEqual(got.get("records"), [list(w) for w in want], got)
+                else:
+                    self.assertIn("first", got, got)
+                    self.assertEqual({k: got["first"].get(k) for k in want}, want)
+        self.assertEqual(out["auditd_other_types"]["other"], 1)
+
+    SNIFF = [
+        ("k8s", line_of(k8s()), "k8s-audit-json"),
+        ("cloudtrail", line_of(ct()), "cloudtrail-json"),
+        ("azure", line_of(azure("AuditLogs")), "azure-monitor-json"),
+        ("auditd", syscall_line(SYSCALL_FIELDS), "auditd-raw"),
+        # Records of no log source of the rules: no format, and a reason for each.
+        ("azure_unrouted", line_of(azure("MicrosoftGraphActivityLogs")), None),
+        ("ocsf", line_of({"class_uid": 6003, "api": {"operation": "ModifySnapshotAttribute"}}),
+         None),
+    ]
+    SNIFF_PROBE = (
+        "import base64\n"
+        "_, table = xr.load_syscalls()\n"
+        "out = {}\n"
+        "for name, body in ARGS[0]:\n"
+        "    fmt, records, _ = xr.sniff('T9999/probe/' + name, base64.b64decode(body), table)\n"
+        "    out[name] = [fmt, len(records) if fmt else records]\n"
+        "print(json.dumps(out))\n")
+
+    def test_the_sniff_of_draft_names_the_native_format(self):
+        import base64
+        out = probe(self.good(), self.SNIFF_PROBE,
+                    [(n, base64.b64encode(b).decode()) for n, b, _ in self.SNIFF])
+        for name, _, fmt in self.SNIFF:
+            with self.subTest(name):
+                self.assertEqual(out[name][0], fmt, out[name])
+                if fmt:
+                    self.assertEqual(out[name][1], 1)
+                else:
+                    self.assertEqual(len(out[name][1]), 4, out[name])
+        self.assertIn("azure-monitor-json: no record routes to a log source of the repository",
+                      out["azure_unrouted"][1])
+
+    YML_ENTRY = {"id": "T1068/planted/audit", "path": "datasets/attack_techniques/T1068/planted/audit.log",
+                 "techniques": ["T1068"], "sourcetype": "auditd",
+                 "yml": "datasets/attack_techniques/T1068/planted/planted.yml",
+                 "procedure": {"label": "CVE-2026-31431", "cves": ["CVE-2026-31431"], "why": "x"}}
+    YML_TEXT = ("description: Generated datasets for {label} privilege escalation\n"
+                "    in attack range.\n"
+                "mitre_technique:\n- {technique}\n"
+                "datasets:\n- name: audit\n  sourcetype: {sourcetype}\n  path: /{path}\n")
+    # (name, the text of the yml, the problems: one regular expression each).
+    YMLS = [
+        ("sound", {}, []),
+        ("label_folded", {"label": "CVE-2026-31431\n   "}, []),
+        ("other_path", {"path": "datasets/attack_techniques/T1068/planted/other.log"},
+         [r"^T1068/planted/audit: the yml \S+ at the commit does not name the path "
+          r"datasets/attack_techniques/T1068/planted/audit\.log$"]),
+        ("other_sourcetype", {"sourcetype": "linux_audit"},
+         [r"^T1068/planted/audit: SOURCES\.json pins the sourcetype 'auditd'; the yml at the "
+          r"commit gives \['linux_audit'\]$"]),
+        ("other_technique", {"technique": "T1068.001"},
+         [r"^T1068/planted/audit: SOURCES\.json pins the techniques \['T1068'\]; the yml at the "
+          r"commit names \['T1068\.001'\]$"]),
+        ("no_label", {"label": "an exploit"},
+         [r"^T1068/planted/audit: SOURCES\.json gives the procedure label 'CVE-2026-31431'; the "
+          r"description of the yml \S+ at the commit does not name it$"]),
+    ]
+    YML_PROBE = (
+        "entry, text, ymls = ARGS\n"
+        "out = {name: xr.check_yml(entry, text.format(**dict(base, **change)).encode())\n"
+        "       for name, change, base in ymls}\n"
+        "out['old_schema'] = xr.check_yml(dict(entry, procedure=None), (\n"
+        "    'description: x\\ndataset:\\n- https://media.githubusercontent.com/media/splunk/'\n"
+        "    'attack_data/master/' + entry['path'] + '\\nsourcetypes:\\n- auditd\\n').encode())\n"
+        "out['not_a_mapping'] = xr.check_yml(entry, b'- a list\\n')\n"
+        "out['not_utf8'] = xr.check_yml(entry, b'description: \\xff\\n')\n"
+        "print(json.dumps(out))\n")
+
+    def test_the_yml_of_a_dataset_must_agree_with_its_entry(self):
+        entry = self.YML_ENTRY
+        base = {"label": entry["procedure"]["label"], "technique": "T1068",
+                "sourcetype": "auditd", "path": entry["path"]}
+        out = probe(self.good(), self.YML_PROBE, entry, self.YML_TEXT,
+                    [(n, change, base) for n, change, _ in self.YMLS])
+        for name, _, want in self.YMLS + [("old_schema", None, [])]:
+            with self.subTest(name):
+                self.assertEqual(len(out[name]), len(want), out[name])
+                for got, reason in zip(out[name], want):
+                    self.assertRegex(got, reason)
+        self.assertEqual(out["not_a_mapping"], ["T1068/planted/audit: the yml "
+                                                f"{entry['yml']} cannot be read (ValueError)"])
+        self.assertEqual(out["not_utf8"], ["T1068/planted/audit: the yml "
+                                           f"{entry['yml']} cannot be read (UnicodeDecodeError)"])
+
+    TABLE_PROBE = (
+        "import argparse\n"
+        "rules = [cer.Rule(p) for p in cer.rule_paths() if '/T1537/' in p]\n"
+        "args = argparse.Namespace(explain=False, suggest=False, markdown=None, json=None,\n"
+        "                          enforce=False)\n"
+        "report = cer.Report(args)\n"
+        "ds = {'id': 'T1537/probe/cloudtrail', 'format': 'cloudtrail-json',\n"
+        "      'techniques': ['T1537']}\n"
+        "record = xr.Record('line 1', ('aws', 'cloudtrail'), {'eventSource': 'ec2.amazonaws.com',\n"
+        "                   'eventName': 'ModifySnapshotAttribute', 'planted': 2 ** 70})\n"
+        "cer.evaluate(report, ds, {('aws', 'cloudtrail'): [record]}, rules, {}, {}, {})\n"
+        "print(json.dumps({'rules': len(rules), 'errors': report.errors, 'pairs': report.pairs}))\n")
+
+    def test_the_report_refuses_a_table_that_it_cannot_build(self):
+        """The backstop of evaluate(): a record that read_dataset() would refuse (here
+        given to evaluate() directly) is one ERROR for the dataset and the log source,
+        not a traceback, and no rule is judged on it."""
+        out = probe(self.good(), self.TABLE_PROBE)
+        self.assertGreater(out["rules"], 1)
+        self.assertEqual(out["errors"], [
+            "T1537/probe/cloudtrail: the aws/cloudtrail records cannot go into one table "
+            "(OverflowError); the loader must refuse such a record by its line (a fault of the "
+            "gate)"])
+        self.assertEqual(out["pairs"], [])
+
+    FETCH_PROBE = (
+        "import hashlib, http.server, os, threading\n"
+        "GOOD, OTHER = b'constructed by detections/tests\\n', b'other bytes\\n'\n"
+        "SHA = hashlib.sha256(GOOD).hexdigest()\n"
+        "class Handler(http.server.BaseHTTPRequestHandler):\n"
+        "    def log_message(self, *a):\n"
+        "        pass\n"
+        "    def do_GET(self):\n"
+        "        routes = {'/good': GOOD, '/other': OTHER, '/long': GOOD + b'x'}\n"
+        "        if self.path in routes:\n"
+        "            self.send_response(200)\n"
+        "            self.end_headers()\n"
+        "            self.wfile.write(routes[self.path])\n"
+        "        elif self.path.startswith('/to/'):\n"
+        "            self.send_response(302)\n"
+        "            self.send_header('Location', self.path[len('/to/'):].replace('PORT2', str(port2))\n"
+        "                             .replace('PORT', str(port)))\n"
+        "            self.end_headers()\n"
+        "        else:\n"
+        "            self.send_response(404)\n"
+        "            self.end_headers()\n"
+        "servers = [http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler) for _ in (1, 2)]\n"
+        "for server in servers:\n"
+        "    threading.Thread(target=server.serve_forever, daemon=True).start()\n"
+        "port, port2 = (server.server_address[1] for server in servers)\n"
+        "base = f'http://127.0.0.1:{port}'\n"
+        "root = os.path.join(os.environ['TMPDIR'], 'probe-cache')\n"
+        "def fresh(name):\n"
+        "    return xr.Cache(os.path.join(root, name))\n"
+        "def put(cache, data):\n"
+        "    os.makedirs(os.path.dirname(cache.path(SHA)), exist_ok=True)\n"
+        "    with open(cache.path(SHA), 'wb') as fh:\n"
+        "        fh.write(data)\n"
+        "def held(cache):\n"
+        "    if not os.path.isfile(cache.path(SHA)):\n"
+        "        return None\n"
+        "    with open(cache.path(SHA), 'rb') as fh:\n"
+        "        return fh.read().decode()\n"
+        "def run(name, cache, url, offline=False, size=len(GOOD)):\n"
+        "    try:\n"
+        "        data, origin, bad = xr.obtain(cache, SHA, size, url, offline, name)\n"
+        "        got = {'data': data.decode(), 'origin': origin, 'bad': bad and str(bad)}\n"
+        "    except xr.HashMismatch as e:\n"
+        "        got = {'HashMismatch': str(e)}\n"
+        "    except xr.Fault as e:\n"
+        "        got = {'Fault': str(e)}\n"
+        "    except xr.Unavailable as e:\n"
+        "        got = {'Unavailable': str(e)}\n"
+        "    got['held'] = held(cache)\n"
+        "    out[name] = got\n"
+        "out = {'port': port, 'port2': port2}\n"
+        "run('good', fresh('good'), base + '/good')\n"
+        "run('cached', out_cache := fresh('cached'), base + '/good')\n"
+        "run('cached_again', out_cache, base + '/missing')\n"
+        "run('other_bytes', fresh('other'), base + '/other')\n"
+        "run('longer', fresh('longer'), base + '/long')\n"
+        "put(c := fresh('bad_then_good'), OTHER)\n"
+        "run('bad_then_good', c, base + '/good')\n"
+        "put(c := fresh('bad_then_none'), OTHER)\n"
+        "run('bad_then_none', c, base + '/missing')\n"
+        "put(c := fresh('bad_offline'), OTHER)\n"
+        "run('bad_offline', c, base + '/good', offline=True)\n"
+        "run('offline', fresh('offline'), base + '/good', offline=True)\n"
+        "run('missing', fresh('missing'), base + '/missing')\n"
+        "run('redirect_same', fresh('same'), base + '/to//good')\n"
+        "run('redirect_port', fresh('port'), base + '/to/http://127.0.0.1:PORT2/good')\n"
+        "run('redirect_host', fresh('host'), base + '/to/http://localhost:PORT/good')\n"
+        "os.makedirs(fresh('entry_dir').path(SHA))\n"
+        "run('entry_dir', fresh('entry_dir'), base + '/good')\n"
+        "os.makedirs(root, exist_ok=True)\n"
+        "open(os.path.join(root, 'a_file'), 'w').close()\n"
+        "run('root_file', fresh('a_file'), base + '/good')\n"
+        "run('over_cap', fresh('cap'), base + '/good', size=xr.MAX_BYTES + 1)\n"
+        "if os.path.isdir('/proc'):\n"
+        "    c = fresh('write_fails')\n"
+        "    os.makedirs(c.root)\n"
+        "    os.symlink('/proc', os.path.join(c.root, 'sha256'))\n"
+        "    run('write_fails', c, base + '/good')\n"
+        "    out['write_fails_left'] = sorted(os.listdir(c.root))\n"
+        "print(json.dumps(out))\n")
+
+    def test_the_fetch_checks_each_download_and_each_cached_copy(self):
+        """xr.obtain() and xr.fetch() against a server of the probe on 127.0.0.1: a
+        download of other bytes, a cached copy of other bytes, a redirect off the origin,
+        a cache that cannot hold the file. The proxy of the sandbox still refuses every
+        other host."""
+        out = probe(self.good(), self.FETCH_PROBE,
+                    env={"no_proxy": "127.0.0.1", "NO_PROXY": "127.0.0.1"})
+        port, port2 = out["port"], out["port2"]
+        good = "constructed by detections/tests\n"
+        sha = hashlib.sha256(good.encode()).hexdigest()
+        want = {
+            "good": {"data": good, "origin": "download", "bad": None, "held": good},
+            "cached": {"data": good, "origin": "download", "bad": None, "held": good},
+            "cached_again": {"data": good, "origin": "cache", "bad": None, "held": good},
+            "offline": {"Unavailable": "not in the cache, and the run is --offline", "held": None},
+            "missing": {"Unavailable": f"HTTP 404 from http://127.0.0.1:{port}/missing",
+                        "held": None},
+            "redirect_same": {"data": good, "origin": "download", "bad": None, "held": good},
+        }
+        for name, expected in want.items():
+            with self.subTest(name):
+                self.assertEqual(out[name], expected)
+        # A download of other bytes, or of more bytes than the pin: nothing is cached.
+        for name, url in (("other_bytes", "/other"), ("longer", "/long")):
+            with self.subTest(name):
+                self.assertRegex(out[name].get("HashMismatch", ""), rf"^HASH MISMATCH {name}: the "
+                                 rf"pin is {sha} \({len(good)} bytes\); got (?!{sha})[0-9a-f]{{64}} "
+                                 rf"\(\d+ bytes\) from http://127\.0\.0\.1:{port}{url}$")
+                self.assertIsNone(out[name]["held"])
+        # A cached copy of other bytes is deleted; after a good download the run still
+        # reports it, and without one the bad copy is the fault.
+        self.assertEqual((out["bad_then_good"]["data"], out["bad_then_good"]["held"]), (good, good))
+        self.assertRegex(out["bad_then_good"]["bad"] or "", r"^HASH MISMATCH bad_then_good: .* "
+                         r"from the cache \(.*\); the file was deleted$")
+        self.assertRegex(out["bad_then_none"].get("HashMismatch", ""), r"^HASH MISMATCH "
+                         r"bad_then_none: .*; the file was deleted\. A new download failed: HTTP 404")
+        self.assertRegex(out["bad_offline"].get("HashMismatch", ""), r"from the cache \(.*\); the "
+                         r"file was deleted$")
+        for name in ("bad_then_none", "bad_offline"):
+            self.assertIsNone(out[name]["held"])
+        # No redirect to another port or host is followed.
+        for name, origin in (("redirect_port", f"http://127.0.0.1:{port2}"),
+                             ("redirect_host", f"http://localhost:{port}")):
+            with self.subTest(name):
+                self.assertRegex(out[name].get("Unavailable", ""), rf"redirects to another origin "
+                                 rf"\('{re.escape(origin)}'\); no redirect off the origin is followed$")
+                self.assertIsNone(out[name]["held"])
+        # A cache that cannot hold the file is a fault that names it.
+        self.assertRegex(out["entry_dir"].get("Fault", ""), r"^entry_dir: the cache entry \S+ "
+                         r"cannot be read \(IsADirectoryError: Is a directory\); delete it or give "
+                         r"another --cache$")
+        self.assertRegex(out["root_file"].get("Fault", ""), r"^root_file: the cache \S+a_file "
+                         r"cannot keep the file \(\w+Error: .*\); give another --cache$")
+        self.assertEqual(out["over_cap"].get("Fault"), f"over_cap: size {50 * 1024 * 1024 + 1} is "
+                         "over the cap of 52428800 bytes")
+        if os.path.isdir("/proc"):       # Linux: the rename into /proc fails
+            self.assertRegex(out["write_fails"].get("Fault", ""), r"^write_fails: the cache entry "
+                             r"\S+ cannot be written \(\w+Error: .*\); delete it or give another "
+                             r"--cache$")
+            self.assertEqual(out["write_fails_left"], ["sha256"], "the temporary file was removed")
 
     def test_every_syscall_that_an_auditd_rule_names_is_in_the_table(self):
         import yaml
