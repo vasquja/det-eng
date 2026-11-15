@@ -279,20 +279,26 @@ Rules for a known gap:
   text on one line, without a backtick and without `|`:
   the Markdown list of the gaps puts it in a code span of a table cell.
 - **A gap is closed by a change to the gate, never by deleting the case.** Fix
-  the gate, and in the same pull request remove the marker: the test fails with
-  `KNOWN GAP CLOSED` until you do. The same test is then an ordinary rejection
-  test, and it keeps the gate from losing the check again. Do not delete the
-  test, and do not change its artifact or its reason to make it pass.
-- **Convert the test of a closed gap by one rule.** Remove the marker and its
-  `reason=`. Delete each branch that only proves sentences of that reason (an
-  `if result.returncode == 0:` or `if result.crashed:` block, and the runs and
-  the inputs that only such a branch reads): the reason goes with the marker, and
-  a branch that asserts the old behaviour would fail with a message that misleads.
-  Keep the artifact that the gate reads. Then assert the rejection: the last
-  `assert_rejects()`, with the exit code and the line that names the defect. When
-  the deleted branch was the only test of another gate on the same artifact, give
-  that gate a rejection test of its own in the same change. Say in the pull request
-  which inputs were deleted, and why.
+  the gate, and in the same pull request convert the test: it fails with
+  `KNOWN GAP CLOSED` until you do. One rule converts every gap:
+  - Remove the marker, and its `reason=` with it.
+  - Delete each branch that proves only sentences of that reason (a block under
+    `if result.returncode == 0:` or `if result.crashed:` that proves what the
+    gate did while it accepted the artifact or stopped on it). Such a branch
+    cannot run when the gate rejects the artifact, and it states a behaviour
+    that is gone. A run or an input that only a deleted branch read goes with it.
+  - Keep the artifact that the gate reads, and the plain assertions that prove
+    that it is bad.
+  - Assert the rejection: `assert_rejects()` with the exit code, and the line
+    of the gate that names the defect.
+  - When a deleted branch was the only test of another gate on the same
+    artifact, give that gate a rejection test of its own in the same change.
+    Say in the pull request which runs and inputs were deleted, and why.
+
+  The same test is then an ordinary rejection test, and it keeps the gate from
+  losing the check again. Rename it from `test_gap_...` to `test_rejects_...`.
+  Do not delete the test, and do not change its artifact, or the reason of an
+  open gap, to make it pass.
 - **A gap is a finding.** Report it in the pull request that adds it.
 
 `gatelib.KNOWN_GAPS` is the one list of all gaps; the markers are its source.
