@@ -85,8 +85,9 @@ row), which is GPL-2.0 WITH Linux-syscall-note.
     label (white space folded) as a whole token, with no letter, digit or hyphen next
     to it (`CVE-2026-4350` is not in `CVE-2026-43500`);
   - the report fails when a CVE of `cves` is not a whole token of that description and
-    not the `cve.*` tag of a rule of the technique folder whose title holds the label,
-    both without white space and letter case. The yml of Copy Fail names only the
+    not the `cve.*` tag of a rule of the technique folder whose title holds the label
+    as whole words, compared without white space, punctuation and letter case ("in"
+    is no word of "Keyring Stuffing", and "Dirty" no word of "DirtyPipe"). The yml of Copy Fail names only the
     exploit, so its CVE comes from `T1068/copyfail_af_alg_authencesn.yml` ("... (CopyFail
     CVE-2026-31431)", `cve.2026-31431`), and the two CVEs of Dirty Frag from the two
     dirtyfrag rules of T1068. A change to the title or the `cve.*` tags of such a rule
@@ -94,8 +95,8 @@ row), which is GPL-2.0 WITH Linux-syscall-note.
   - `--lint` fails when a label in CVE form is not one of its `cves`.
 
   These checks do not prove that the label is the procedure: a generic phrase that is
-  a whole token of the description, and that the title of a rule with the listed CVE
-  also holds, still passes. The owner reviews each label and its CVEs
+  a whole token of the description, and whole words of the title of a rule with the
+  listed CVE, still passes. The owner reviews each label and its CVEs
   (`.github/CODEOWNERS`): that review is the control for it.
 - `excluded` holds each file of the log sources of the rules that the gate does not
   read, with a reason that is true: a format that is not native (OCSF, a Splunk search

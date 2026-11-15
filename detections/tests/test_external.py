@@ -1783,7 +1783,11 @@ class ExternalLoaders(gatelib.GateCase):
                 "T1068/planted_dirtyfrag.yml": ("Planted Socket (DirtyFrag RxRPC CVE-2026-43500)",
                                                 ["cve.2026-43500"]),
                 "T1040/planted_afpacket.yml": ("Planted AF_PACKET Socket (CVE-2016-8655)",
-                                               ["cve.2016-8655"])}
+                                               ["cve.2016-8655"]),
+                "T1068/planted_keyring.yml": ("Planted add_key Burst (Keyring Stuffing)",
+                                              ["cve.2016-0728"]),
+                "T1068/planted_dirtypipe.yml": ("Planted Pipe Then splice (DirtyPipe "
+                                                "CVE-2022-0847)", ["cve.2022-0847"])}
     LABEL = (r"^T1068/planted/audit: SOURCES\.json gives the procedure label '{}'; the "
              r"description of the yml \S+ at the commit does not name it$")
     NO_CVE = (r"^T1068/planted/audit: SOURCES\.json gives the procedure label '{}' the CVE {}; "
@@ -1841,6 +1845,15 @@ class ExternalLoaders(gatelib.GateCase):
         ("phrase_of_the_description", {"label": "Dirty Frag",
                                        **procedure("privilege escalation", "CVE-2026-31431")},
          [NO_CVE.format("privilege escalation", "CVE-2026-31431", "2026-31431")]),
+        # The title holds the label as whole words, not as a part of a word: "in" (a
+        # whole token of the description) is in "Keyring", and "Dirty" in "DirtyPipe",
+        # only as letters of a longer word (second review of PR-1, S1).
+        ("label_inside_a_word_of_a_title", {"label": "Dirty Frag",
+                                            **procedure("in", "CVE-2016-0728")},
+         [NO_CVE.format("in", "CVE-2016-0728", "2016-0728")]),
+        ("label_a_part_of_a_word_of_a_title", {"label": "Dirty Frag",
+                                               **procedure("Dirty", "CVE-2022-0847")},
+         [NO_CVE.format("Dirty", "CVE-2022-0847", "2022-0847")]),
     ]
     YML_PROBE = (
         "import os\n"

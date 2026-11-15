@@ -24,7 +24,7 @@ A rule and a dataset make a pair when one of these is true:
                    and no cve.* tag of the rule is one of its CVEs, the pair is
                    OTHER-PROCEDURE: reported, not expected. Each CVE of the label is
                    in that description, or it is the cve.* tag of a rule of the
-                   technique whose title holds the label.
+                   technique whose title holds the label as whole words.
   related          another attack.t tag of the rule (not its folder) is a technique
                    of the dataset: RELATED, reported, not expected. A parent or a
                    sub-technique of a technique is not the technique.

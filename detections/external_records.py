@@ -641,9 +641,26 @@ def _bounded(token, text):
     return re.search(rf"(?<!{edge}){re.escape(token)}(?!{edge})", text) is not None
 
 
-def _squeezed(text):
-    """The text without white space and letter case: "Copy Fail" is in "(CopyFail ...)"."""
-    return "".join(text.split()).casefold()
+def _words(text):
+    """The words of a text (runs of letters and digits), in lower case."""
+    return re.findall(r"[^\W_]+", text.casefold())
+
+
+def _title_holds(label, title):
+    """True when the label is whole words of the title, compared without white space,
+    punctuation and letter case: "Copy Fail" is the word "CopyFail" of "(CopyFail
+    CVE-2026-31431)", and CVE-2026-31431 is its last three words. "in" is no word of
+    "Keyring Stuffing", and "Dirty" no word of "(DirtyPipe ...)"."""
+    key, words = "".join(_words(label)), _words(title)
+    for start in range(len(words)):
+        joined = ""
+        for word in words[start:]:
+            joined += word
+            if len(joined) >= len(key):
+                break
+        if key and joined == key:
+            return True
+    return False
 
 
 def technique_rules(techniques, sigma=None):
@@ -673,8 +690,9 @@ def check_procedure(entry, description, sigma=None):
       - the label (white space folded) is in the description as a whole token (no
         letter, digit or hyphen next to it);
       - each CVE of `cves` is in the description as a whole token, or it is the cve.*
-        tag of a rule of the technique folder whose title holds the label (both
-        without white space and letter case: "Copy Fail" and "(CopyFail ...)").
+        tag of a rule of the technique folder whose title holds the label as whole
+        words, compared without white space, punctuation and letter case ("Copy Fail"
+        and "(CopyFail ...)"; see _title_holds()).
 
     A label in CVE form must be one of the cves: lint_sources() checks that (offline)."""
     proc = entry.get("procedure") or {}
@@ -691,7 +709,7 @@ def check_procedure(entry, description, sigma=None):
             continue
         if rules is None:
             rules = technique_rules(entry["techniques"], sigma)
-        if any(cve in cves and _squeezed(folded) in _squeezed(title) for _, title, cves in rules):
+        if any(cve in cves and _title_holds(folded, title) for _, title, cves in rules):
             continue
         problems.append(f"{entry['id']}: SOURCES.json gives the procedure label {label!r} the "
                         f"CVE {cve}; the description of the yml {entry['yml']} at the commit "

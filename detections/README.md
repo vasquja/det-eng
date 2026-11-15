@@ -1804,11 +1804,12 @@ gives `OTHER-PROCEDURE`. `RELATED` and `OTHER-PROCEDURE` are reported, not expec
 The label is the CVE or the exploit name that the description of the yml gives as a
 whole token (no letter, digit or hyphen next to it). Each CVE of the label is a whole
 token of that description too, or it is the `cve.*` tag of a rule of the technique
-whose title holds the label, both compared without white space and letter case
-("Copy Fail" and "(CopyFail CVE-2026-31431)"). A label in CVE form must be one of its
-CVEs (`--lint`). The check does not prove that the label is the procedure: a generic
-phrase that is a whole token of the description, and that the title of a rule with the
-listed CVE also holds, still passes. The owner's review of `SOURCES.json`
+whose title holds the label as whole words, compared without white space, punctuation
+and letter case ("Copy Fail" is the word "CopyFail" of "(CopyFail CVE-2026-31431)";
+"in" is no word of "Keyring Stuffing"). A label in CVE form must be one of its CVEs
+(`--lint`). The check does not prove that the label is the procedure: a generic phrase
+that is a whole token of the description, and whole words of the title of a rule with
+the listed CVE, still passes. The owner's review of `SOURCES.json`
 (`.github/CODEOWNERS`) is the control for that.
 
 **Rows.** `DATASET` (a file that was read), `FIRE`, `MISS` (with the nearest record
