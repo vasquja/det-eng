@@ -27,9 +27,9 @@ python3 -B detections/tests/gatelib.py --gaps                                   
 
 `gatelib.py --run` runs the same tests as `unittest discover`, with one Python
 process for each test class, as many at a time as the machine has CPUs. Then it
-prints the known gaps. It takes about 100 seconds on a development machine with four
-CPUs, and about three and a half minutes on a GitHub runner (four CPUs). The
-tests in sequence take about four minutes on the development machine. It fails:
+prints the known gaps. It takes about two and a half minutes on a development machine
+with four CPUs, and about three and a half minutes on a GitHub runner (four CPUs). The
+tests in sequence take about seven minutes on the development machine. It fails:
 
 - when a class fails;
 - when a class did not run all of its tests;
@@ -93,7 +93,7 @@ after each test or test class.
 | `test_gatelib.py` | Tests of the harness, on constructed gates. |
 | `test_sufficiency.py` | `rule_cases.py` (and through it the event table of `sigma_eval.py`), the import guard of `sigma_eval.py`, `check_sufficiency.py` (R0 to R4 and the waiver digests), the sufficiency ratchet, the self-test of `sigma_explain.py`. |
 | `test_quality.py` | `score_benign.py` and the benign ratchet, `check_null_safety.py`, `check_provider_mappings.py`, `k8s_policy_coverage.py`, `k8s_platforms_md.py`, `coverage_report.py`. |
-| `test_validators.py` | The cloud validator, the Linux validator (dry run, with the check of its `CONTROLS` table; and its verdict code on canned results: the detections; the no-op baseline, which must own a record; each mutant and each re-run, which must be held by what it declares (an item of its rule, or the success gate); the limits of the exemption for a rule whose emulation is a SKIP; a live negative control for each rule), the three Kubernetes validators (dry run and negative control), `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py`, `check_schedule_freshness.py`. |
+| `test_validators.py` | The cloud validator (a rule must fire on a marked record of its attack fixture and on no benign record; an attack or benign fixture that is missing or is a directory, and a benign baseline without a record, fail the run, also with `--report`), the Linux validator (dry run, with the check of its `CONTROLS` table; and its verdict code on canned results: the detections; the no-op baseline, which must own a record; each mutant and each re-run, which must be held by what it declares (an item of its rule, or the success gate); the limits of the exemption for a rule whose emulation is a SKIP; a live negative control for each rule), the three Kubernetes validators (dry run; the negative-control step, which fails when a rule passes on a pre-emulation log, when a pre-emulation log is not given or is missing, and when the audit log holds no record; an empty value of `--audit-log` counts as a log that is not given; with `--report` too, each validator fails a rule that passes on a pre-emulation log, and logs without a record; the `--json` report of each validator says that the control of a log without a record failed; for `validate_k8s_detections.py`, its `--json` report says the same for a log that is missing; for the static pod validator, also when the CRI log holds no API-scheduled sandbox or the file log holds no `kubeadm` write, with a line that names the log and the number of its records, and a strict run fails a CRI log without an API-scheduled sandbox with the same line; for the API server validator, also when the CRI log or the file log holds no record, and a CRI snapshot without a sandbox is no record; the lines of the capture step of that validator's workflow that make the pre-emulation file log, on a constructed raw audit log that holds the audit key of the canary watch of the file sensor step, and the line of that step that writes the raw log; and the strict run, which prints SKIP and exits 0 when it finds no log, also when the value of `--audit-log` is empty (a log that does not exist: the run does not read the default log), and gets no check of the negative control when it has a log), the converter of the node file sensor, `k8s/auditd_file_events.py` (one summary line on stderr for each run that read its log, only the JSON lines on stdout, and no workflow command that sends stderr to the file log), `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py`, `check_schedule_freshness.py`. |
 | `test_suite.py` | Rules of the suite as a whole: each self-test has a runner, the CI job runs every test on every pull request, the `emulation-scripts` job does the same for `atomics/tests/`, no workflow step pipes a command into `tee` without pipefail, no step that runs a gate or the unit tests has `continue-on-error`, each known gap names a roadmap item, each planted artifact is used, this file agrees with the tests. |
 | `test_apt_install.py` | Tests of `.github/scripts/apt_install.sh`, the step that installs `auditd`, with a stub for `sudo`, `apt-get`, `unshare`, `mount`, `getent` and `timeout`. When the runner cannot resolve the package mirror, or apt printed a message about name resolution, or the mirror does not resolve after a failed run, apt gets one run with public resolvers in a private mount namespace; the script fails only after apt failed in a run with the resolver of the runner (but in the forced way of the CI job); a necessary package that is not installed fails the step; a text that is not a package name (also a name that ends with `-`, which apt reads as a removal) or not an address is refused. The class `DirectInstalls` (with two CONTROLs) fails when a workflow (a `run:` text, a `with:` or `env:` value), a composite action or a shell script (`*.sh`, or a shell on its first line) installs packages in a usual form (`apt-get install`, `apt update`, `dpkg -i`, `snap install`, also with options, a path or quotes) without the script. The one line that is allowed is `apt-get update -qq` in `detections/benign/linux/workload.sh`. It is a rule on text: a command that is built at run time, or that a different program starts, is not seen. The stubs do not show that the namespace works on a runner: the CI job `apt-install-fallback` does. It forces that way, and its CONTROL step gives a resolver that does not answer (`APT_INSTALL_RESOLVERS`) and fails if the install then passes. |
 | `test_labs.py` | Rules for the lab jobs that run on a GitHub runner (auditd on the runner, a kind cluster). No offline gate runs these jobs, and a new runner image can break them with no change in the repository. `AuditdStart`: each workflow step that starts auditd (with `systemctl` or `service`) waits for `audit-rules.service` after the start. Before the wait, and before the start, no line of the step changes the rules or a setting of the audit system (an `auditctl` command that is not a status or a list), and between the start and the wait no line runs a validator. auditd 4 loads its rule files in that oneshot unit, the start of auditd does not wait for it, and its rule file starts with `-D` and sets the backlog limit. The wait is in a guard, because auditd 3 has no such unit. It runs with `sudo`, because systemd refuses the start of a unit for a user that is not root and cannot give an authorization. A unit that ends with an error gives a `::warning` line and does not stop the step. The class also runs each such step from its first line to the end of its wait, the whole sensor step of the static pod lab and the whole start step of the `benign-linux-live` job, with a stub for `sudo`, `systemctl`, `service` and `auditctl`. The stubs model the fault that CI showed on 2026-11-13: a run of the unit that nobody waited for deletes the rule after the step saw it in the list, and sets the backlog limit back to the value of its rule file. They also model root: a start of the unit without `sudo` fails at once and waits for nothing. `FileSensorRule`: the two steps of the static pod lab that read the file events print an `::error` line when `auditctl -l` does not list the rule of the file sensor, and they go on. The line says which check of the validator fails when: the file gate, or the file control too. `DateWidth`: no shell script, file under `atomics/`, workflow or composite action gives `%N` a width (`%6N`, `%3N`): `date` of uutils coreutils 0.10.0 prints such a field without the leading zeros of the fraction. `LedgerClock`: the function that gives the times of the emulation ledger (`now_utc()`, or `now()`) is one accepted text in each shell script under `atomics/` and in each workflow step that defines it, and a script that appends to the ledger defines it one time. The class runs that text in bash with a stub `date` that prints a wrong time, in a zone that is not UTC: the result is the time of the test in UTC, a fraction that starts with zero keeps its zeros, and `date` is not called; without the clock of bash the function calls `date` with `%N` only. The stubs do not show what systemd, auditd and the `date` of a runner image do: the lab jobs show that. |
@@ -268,10 +268,10 @@ Rules for a known gap:
 
 - **The last assertion is the wanted behaviour**: one `assert_rejects()`. Every
   assertion before it is a plain one.
-- **Prove that the artifact is bad**, with plain assertions (the planted baseline
-  holds no record; the gate fails the hidden rule when it gets the rule as an
-  argument). The gate has no check for the artifact, so without this proof the
-  test passes for a sound artifact too.
+- **Prove that the artifact is bad**, with plain assertions (the one record of the
+  planted baseline holds no field; the gate fails the hidden rule when it gets the
+  rule as an argument). The gate has no check for the artifact, so without this
+  proof the test passes for a sound artifact too.
 - **Prove that the gate read the artifact**, with `self.assert_saw(result,
   pattern)` before the last assertion. An artifact that the gate never read is
   also accepted. The pattern must hold today and after the gate is fixed (a row
@@ -292,8 +292,9 @@ Rules for a known gap:
   wrong, for the planted artifact and for the repository. Where another job or
   the merge policy still stops the planted change, say so. A test can prove
   such a sentence with plain assertions inside `if result.returncode == 0:`, so
-  that the text cannot go out of date (the two known gaps of `CloudValidator`
-  do). `gate=` is plain text on one line, without a backtick and without `|`:
+  that the text cannot go out of date (the known gap
+  `cloud-benign-far-from-the-rule` of `CloudValidator` does). `gate=` is plain
+  text on one line, without a backtick and without `|`:
   the Markdown list of the gaps puts it in a code span of a table cell.
 - **A gap is closed by a change to the gate, never by deleting the case.** Fix
   the gate, and in the same pull request remove the marker: the test fails with
@@ -479,6 +480,31 @@ it does not see one test in the place of a different one.
   runs, the negative-control steps on logs that the test writes, and the verdict
   code of the Linux validator on canned events. The live runs stay in the
   `validate-*` workflows.
+- The suite runs two lines of the capture step of
+  `validate-apiserver-detections.yml`: the lines that convert the runner's audit
+  log into the pre-emulation file log. It runs them on a raw audit log that the
+  test constructs (one event with the canary key, one event with another key). The
+  canary key is the key of the `auditctl` line of the file sensor step: the test
+  reads that line, in the two jobs, and does not run the step. The test also reads
+  the line of the capture step that copies the audit log of the runner to the raw
+  log (it must write the path that the converter lines read; the test knows two
+  forms of the line, a pipe into `sudo tee` and a plain redirect), and does not run
+  it. No test shows that the runner's auditd records the canary read, or that the
+  capture of a real cluster holds it. Only the jobs `validate-apiserver` and
+  `validate-apiserver-recommended` show that.
+- Three runs read a path outside their sandbox, one for each Kubernetes
+  validator. The control of a strict run of a validator runs it without
+  `--audit-log`, so the validator looks for `/tmp/kube-apiserver-audit.log` on the
+  machine of the test. A CI runner of `gate-tests` does not have that file: the
+  test asserts the SKIP line and exit code 0. It asserts the same when the path
+  is a symbolic link to nothing, which the validator does not find. A machine
+  that ran the lab can have the file: the test then asserts only that the run
+  loads that log. When the path is a directory, the validator stops with a
+  traceback (roadmap item R2d), and the test asserts nothing of that run. Two more
+  runs of the same test read no path outside the sandbox: one names a log in the
+  sandbox that does not exist, and one gives `--audit-log` an empty value, which
+  is a log that does not exist too (the run does not read the default log). The
+  test asserts the SKIP line of these two runs on each machine.
 - No offline check compares the item that a row of the `CONTROLS` table of
   `detections/validate_detections.py` declares with the C program of that row.
   The canned events of a Linux control come from a rule sidecar, not from the C
