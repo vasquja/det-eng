@@ -10,10 +10,10 @@ description: |
   It keys on the default-logged CloudTrail management event ssm.amazonaws.com /
   ModifyDocumentPermission whose requestParameters.accountIdsToAdd holds the element All in
   any letter case, requiring success (no errorCode). The API model of SSM gives each element
-  the pattern (?i)all|[0-9]{12}: the word all in any letter case, or a 12-digit account id
-  (shape AccountId of ssm 2014-11-06 in aws/api-models-aws and in botocore). The remove
-  direction (accountIdsToRemove) is a de-exposure and is excluded -- the rule only matches
-  the add list.
+  the pattern ^(?i)all|[0-9]{12}$ (shape AccountId of ssm 2014-11-06 in aws/api-models-aws;
+  botocore writes (?i)all|[0-9]{12}): the word all in any letter case, or a 12-digit account
+  id. The remove direction (accountIdsToRemove) is a de-exposure and is excluded -- the rule
+  only matches the add list.
 
   Field-model note: accountIdsToAdd is a list of strings, so selection_public has two |re
   values: \"[aA][lL][lL]\" reads the list as JSON text (the element in its quotes), and
