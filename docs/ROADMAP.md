@@ -114,23 +114,20 @@ after the other:
   validators (a line that is not a record of its log, a log that is a directory,
   bytes that are not UTF-8, a byte order mark), a ledger window whose start is after
   its end (the API server validator now also judges no rule after any ledger
-  problem), and the verdict line of the API server validator. The known gaps
-  `k8s-log-line-not-an-object` and `k8s-log-object-not-an-audit-event` are rejection
-  tests.
+  problem), and the verdict line of the API server validator. The loader of
+  `score_benign.py --extra-slice` names a line of a live capture that is JSON and not
+  an object. The known gaps `k8s-log-line-not-an-object` and
+  `k8s-log-object-not-an-audit-event` are rejection tests.
 - 2/3: a rule file that the gates do not read (a dotfile), an entry of
   `detections/RULE_DEFECTS.md` that has no Summary row, and two keys of a sidecar
   case that differ only in letter case (`rule_cases.py`).
 - 3/3, after pull request 76 (R7) merges: the loader of the cloud fixtures
   (`validate_cloud_detections.py`) and the gates that read the fixtures
   (`check_null_safety.py`, `check_sufficiency.py`, `check_variants.py`). It also
-  takes the two known gaps that 1/3 plants. `k8s-log-keys-differ-only-in-case`: two
-  valid audit events whose keys differ only in letter case end each Kubernetes
-  validator with a `ValueError` of `sigma_eval.EventTable`. The reader must not
-  refuse a valid log, so the correction belongs in `sigma_eval.py`, which pull
-  request 76 changes. `sb-extra-slice-line-not-an-object`: the loader of
-  `score_benign.py --extra-slice` stops with a traceback on a line that is not an
-  object. The rule of the Kubernetes reader does not fit that loader as it is (the
-  reason of the gap says why).
+  takes the known gap that 1/3 plants, `k8s-log-keys-differ-only-in-case`: two valid
+  audit events whose keys differ only in letter case end each Kubernetes validator
+  with a `ValueError` of `sigma_eval.EventTable`. The reader must not refuse a valid
+  log, so the correction belongs in `sigma_eval.py`, which pull request 76 changes.
 
 Only the kind jobs show that each line of a real capture is a record by the new
 definitions. On `main` at `947055a` the healthy jobs loaded 885 audit events

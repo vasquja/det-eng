@@ -98,13 +98,22 @@ A human can sanitize a live capture and promote it into a `recorded` slice.
 
 `score_benign.py --extra-slice` reads a live capture with its own loader, not with
 the reader of the Kubernetes validators (see
-[`../README.md`](../README.md#a-record-of-each-log)). It also reads a file that is
-one JSON array, and logsources whose records have no definition there
-(`linux/auditd`). A line of the capture that is JSON and not an object (`[]`) ends
-the run with a traceback today, and no line names the capture or the line. The
-known gap `sb-extra-slice-line-not-an-object` of the gate tests holds the case;
-roadmap item R2d closes it. The shadow step of the API server lab fails no job, and
-the negative control of that job reads the same log and names such a line.
+[`../README.md`](../README.md#a-record-of-each-log)). It reads JSON lines or a file
+that is one JSON array, and logsources whose records have no definition there
+(`linux/auditd`), so it does not judge if an object is a record of its log. A line
+that is not JSON (a line that was cut at the end of a capture) is skipped. A line, or
+an element of the array, that is JSON and not an object (`[]`) ends the run with exit
+1 and one `ERROR` line that names the capture and the first such line (or element),
+and no rule is scored on the capture:
+
+```text
+ERROR: the live capture /tmp/pre-emulation-audit.log, line 429: JSON that is not an object (a list). No rule is scored on the live capture.
+```
+
+The shadow step of the API server lab fails no job; the negative control of that job
+reads the same log and names such a line too. Not covered: a capture that is a
+directory or holds bytes that are not UTF-8 ends the run with a traceback, and the
+loader skips line 1 when it starts with the byte order mark of UTF-8.
 
 ## What is measured
 

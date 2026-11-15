@@ -227,31 +227,16 @@ class ScoreBenign(gatelib.GateCase):
         self.plant_unclassed_budget(tree)
         self.assert_rejects(tree.run_step(step), self.WHY_NO_CLASS, exit_code=1)
 
-    # The shadow step of the API server lab that scores the pre-emulation audit log
-    # (SoftSteps.SHADOW in test_suite.py).
-    SHADOW = ("validate-apiserver-detections.yml", "validate",
-              "Score the pre-emulation log as a live benign slice (shadow)")
-
-    @gatelib.known_gap(
-        "sb-extra-slice-line-not-an-object",
-        gate="detections/score_benign.py --extra-slice (the shadow step of validate-apiserver)",
-        reason="score_benign.py --extra-slice, with the options of the shadow step that "
-               "scores the pre-emulation audit log of the API server lab, ends with an "
-               "uncaught AttributeError of sigma_eval.flatten on a line of the log that is "
-               "JSON and not an object (`[]`): no line names the log or the bad line. Its "
-               "loader (load_extra) does not use the reader of the Kubernetes validators, "
-               "and their rule does not fit it with a small change: it also reads a whole "
-               "file that is one JSON array (a file whose one line is `[]` is an array "
-               "without an event), and it reads logsources whose records R2d does not "
-               "define (linux/auditd in the benign-linux-live job). The shadow step has "
-               "continue-on-error, so it fails no job; the API server validator reads the "
-               "same log, and it names the line.",
-        closes="R2d", today="crash")
-    def test_gap_extra_slice_line_that_is_not_an_object(self):
-        """WANTED: score_benign.py --extra-slice names the log and the line that is not
-        a JSON object, and does not stop with a traceback."""
+    def test_rejects_extra_slice_line_that_is_not_an_object(self):
+        """score_benign.py --extra-slice, with the options of the shadow step that scores
+        the pre-emulation audit log of the API server lab, on a capture of audit events
+        and one more line that is JSON and not an object (`[]`). Before, the run ended
+        with an AttributeError of sigma_eval.flatten, and no line named the capture or
+        the line. Now an ERROR line names both, the run exits 1, and no rule is scored
+        on the capture. Control: the same capture without that line is scored (the two
+        runs start together)."""
         good = self.good()
-        name = "pre-emulation-audit.log"
+        name, control = "pre-emulation-audit.log", "pre-emulation-audit-control.log"
         events = [event for case in
                   good.read_jsonl("detections/sigma/T1609/k8s_pod_exec_attach.cases.jsonl")
                   if case["name"] in ("pod-logs-read", "pod-get-describe")
@@ -259,6 +244,8 @@ class ScoreBenign(gatelib.GateCase):
         records = len(events)
         with open(good.tmp_path(name), "w", encoding="utf-8") as fh:
             fh.write("".join(json.dumps(event) + "\n" for event in events) + "[]\n")
+        with open(good.tmp_path(control), "w", encoding="utf-8") as fh:
+            fh.write("".join(json.dumps(event) + "\n" for event in events))
         # The artifact is bad in one way: the last line of the log is a JSON list. The
         # lines before it are audit events (the log is not one JSON array).
         with open(good.tmp_path(name), encoding="utf-8") as fh:
@@ -270,37 +257,18 @@ class ScoreBenign(gatelib.GateCase):
         self.assert_ci_runs(self.GATE, "--extra-slice /tmp/pre-emulation-audit.log",
                             "--extra-logsource kubernetes/audit", "--extra-label kind-live",
                             "--examples 0")
-        validator = good.start("detections/validate_apiserver_detections.py", "--audit-log",
-                               good.tmp_path(name))
-        result = good.run(self.GATE, "--extra-slice", good.tmp_path(name), "--extra-logsource",
-                          "kubernetes/audit", "--extra-label", "kind-live", "--examples", "0")
-        validator = validator.result()
-        # The gate read the planted line: today the last line of the traceback names
-        # its type; a designed message names the log and the number of the line.
-        self.assert_saw(result, r"^AttributeError: 'list' object has no attribute 'items'|"
-                                rf"pre-emulation-audit\.log.*\bline {records + 1}\b")
-        if result.crashed:
-            # Today. Prove each sentence of the `reason`, so that the text cannot go out
-            # of date: the exception of sigma_eval.flatten through load_extra, no line
-            # that names the log, the shadow step that fails no job, and the validator
-            # that names the line.
-            self.assertRegex(result.output, r'(?m)^  File ".*sigma_eval\.py", line \d+, in '
-                                            r'flatten\b', result.describe())
-            self.assertRegex(result.output, r'(?m)^  File ".*score_benign\.py", line \d+, in '
-                                            r'load_extra\b', result.describe())
-            self.assertNotIn(name, result.stdout, result.describe())
-            shadow = [step for step in gatelib.ci_steps(self.GATE) if step[:3] == self.SHADOW]
-            self.assertEqual(len(shadow), 1, "the shadow step was not found by its name")
-            self.assertTrue(shadow[0].soft, "the shadow step has no continue-on-error now: "
-                                            "correct the `reason` of the marker")
-            self.assertIn("--extra-slice /tmp/pre-emulation-audit.log", shadow[0].run)
-            self.assert_rejects(validator, rf"^ERROR: the audit log \S+/{re.escape(name)}, line "
-                                           rf"{records + 1}: JSON that is not an object \(a "
-                                           r"list\)$", exit_code=1)
-        self.assert_rejects(
-            result,
-            r"(?i)^\s*(FAILED|ERROR)\b.*pre-emulation-audit\.log.*"
-            rf"\bline {records + 1}\b")
+        runs = [good.start(self.GATE, "--extra-slice", good.tmp_path(log), "--extra-logsource",
+                           "kubernetes/audit", "--extra-label", "kind-live", "--examples", "0")
+                for log in (name, control)]
+        result, accepted = (run.result() for run in runs)
+        self.assert_accepts(accepted, rf"^Live capture kind-live \(kubernetes/audit, {records} "
+                                      r"event\(s\)\) - shadow only")
+        self.assertNotRegex(result.stdout, r"(?m)^Live capture ")
+        self.assertEqual(len(re.findall(r"^ERROR", result.stdout, re.MULTILINE)), 1,
+                         result.describe())
+        self.assert_rejects(result, rf"^ERROR: the live capture \S+/{re.escape(name)}, line "
+                                    rf"{records + 1}: JSON that is not an object \(a list\)\. "
+                                    r"No rule is scored on the live capture\.$", exit_code=1)
 
     @gatelib.known_gap(
         "sb-budget-raised-as-documented-noise",
