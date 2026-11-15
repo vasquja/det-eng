@@ -459,6 +459,9 @@ it does not see one test in the place of a different one.
 
   - `detections/sigma/T1537/aws_snapshot_or_ami_made_public.cases.jsonl`
 
+  One test also needs `detections/sigma/T1537/aws_snapshot_or_ami_made_public.yml`
+  to have no entry in `detections/variants/expected.json`.
+
   `Variants` also needs two entries of `detections/variants/expected.json`, and
   what each one names. The first is the entry of the case
   `scale-smp-root-alias-retain-keys-with-count` of
