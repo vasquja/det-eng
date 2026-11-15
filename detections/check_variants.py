@@ -1567,6 +1567,18 @@ def self_test():
                                     + " (2 -> 1); the rule misses the technique on that "
                                     "representation") for d in diffs),
           [(d.variant, d.text()) for d in diffs])
+    # The checks above give check_rule() their sets. This one reads a real fixture of
+    # more than one record with the fixture loader of the gate, and compares the count
+    # of records with the JSON list of the file: a gate that reads a fixture as its
+    # first record only fails here.
+    real = "trr9021/attack.json"
+    with open(os.path.join(REPO, "detections", "cloud", "fixtures", real), encoding="utf-8") as fh:
+        in_file = len(json.load(fh))
+    loaded = [len(raw) for of_rule in cloud_fixtures().values()
+              for _, name, _, raw, _ in of_rule if name == real]
+    check(f"the fixture loader of the gate gives each record of {real} ({in_file} in the "
+          "file) to each rule that reads it",
+          in_file > 1 and loaded and set(loaded) == {in_file}, (in_file, loaded))
     _, diffs, _, _ = judged(
         filt, [("fixture", "benign.json", "benign",
                 [{"verb": "create", "groups": ["system:masters"]}], None)])

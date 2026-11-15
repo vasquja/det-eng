@@ -568,12 +568,16 @@ These rejections have no planted artifact and no test:
   test, and an entry with the reason `LIST_TEXT` or `KEY_ORDER` whose changed item
   does not read a list. The variant of each reason changes no other item
   ([`detections/SEMANTICS.md`](../SEMANTICS.md), section 9).
-- The control of `Variants` counts the event sets of each rule. It does not prove
-  that the gate read each record of a set (a fixture that is read as its first
-  record only). Only one entry of the expected list is for a fixture
-  (`trr9019/attack.json`), and it names record 0. The entry that named record 4 of
-  `trr9021/attack.json` is gone (closed entry C20). The self-test proves on
-  constructed fixtures of two records that the gate reads the second record.
+- The control of `Variants` counts the event sets of each rule, not their
+  records, and no entry of the expected list names a record after record 0. The
+  self-test of `check_variants.py` reads `trr9021/attack.json`, a fixture of more
+  than one record, with the fixture loader of the gate, and compares the count of
+  records with the JSON list of the file: a gate that reads a fixture as its first
+  record only fails it. The self-test also proves on constructed sets of two
+  records that `check_rule()` reads the second record of a set that it is given.
+  Not proven: that the loader gives each record of another fixture, and that the
+  gate reads each record of a sidecar case. A gate that reads each case as its
+  first record only passes each test and each self-test check.
 - `check_variants.py --check-doc` has three of them: a probe that the text of
   `detections/SEMANTICS.md` does not name, a document without one of its two
   marker lines, and a document that is not there. The self-test holds a
