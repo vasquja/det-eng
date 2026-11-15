@@ -3529,6 +3529,49 @@ class ApiserverValidator(gatelib.GateCase):
         self.assert_rejects(not_utf8, r"^FAILED: the emulation ledger has 1 line\(s\) that are "
                                       r"not a usable ledger row ", exit_code=1)
 
+    # The rule files of the entries of TRR9026 and TRR9033, whose positive cases pass
+    # their MANIFEST gates without a ledger (test_verdict_names_each_trr_that_manifest_grades).
+    VERDICT_RULES = ("T1572/k8s_pod_portforward", "T1572/k8s_node_proxy_portforward",
+                     "T1133/k8s_service_exposed_nodeport_loadbalancer")
+
+    def test_verdict_names_each_trr_that_manifest_grades(self):
+        """The verdict line of a strict run names the TRRs that MANIFEST grades, taken
+        from MANIFEST: a hand-written line named TRRs that a run did not grade, and
+        left out 9039, which it graded. In a private copy, MANIFEST holds only the
+        entries of TRR9026 and TRR9033 (a line before `if __name__ == "__main__":` of
+        the validator cuts it), and the audit log holds the positive cases of their
+        three rules: the run grades those two TRRs and no other. The description of
+        --help names the same TRRs; in the good copy it names the TRRs of the labels
+        of MANIFEST, as this test counts them."""
+        good = self.good()
+        labels = in_source(good, self.GATE, r'^    \("T[\d.]+", "\w+\.yml", "\w+",\s+"(\d+) ')
+        numbers = sorted({int(number) for number in labels})
+        ranges, start = [], numbers[0]
+        for low, high in zip(numbers, numbers[1:] + [None]):
+            if high != low + 1:
+                ranges.append(f"{start}-{low}" if low > start else f"{start}")
+                start = high
+        self.assertIn(9039, numbers)
+        tree = self.tree()
+        tree.replace(self.GATE, '\nif __name__ == "__main__":',
+                     '\nMANIFEST[:] = [entry for entry in MANIFEST '
+                     'if entry[3].split()[0] in ("9026", "9033")]\n\nif __name__ == "__main__":')
+        log = "verdict-audit.log"
+        events = [event for rule in self.VERDICT_RULES
+                  for case in tree.read_jsonl(f"detections/sigma/{rule}.cases.jsonl")
+                  if case["kind"] == "positive" for event in case["events"]]
+        write_text_log(tree, log, "".join(json.dumps(event) + "\n" for event in events))
+        runs = [tree.start(self.GATE, "--audit-log", tree.tmp_path(log)),
+                tree.start(self.GATE, "--help"), good.start(self.GATE, "--help")]
+        result, cut, full = [run.result() for run in runs]
+        self.assertEqual(re.findall(r"^PASS  \[(\d+) ", result.stdout, re.MULTILINE),
+                         ["9026", "9026", "9033"], result.describe())
+        self.assert_accepts(result, r"^All TRR9026, 9033 match-gated detections fired on the "
+                                    r"emulated telemetry\.$")
+        self.assert_accepts(cut, r"Validate\s+TRR9026,\s+9033\s+K8s\s+detections\.")
+        self.assert_accepts(full, r"Validate\s+TRR" + r",\s+".join(ranges)
+                            + r"\s+K8s\s+detections\.")
+
     def test_control_strict_run_with_only_the_audit_log_gets_no_negative_control(self):
         """CONTROL of a strict run with one log (a local run on an audit log), with
         --report: the rules of the CRI log and of the file log are skipped, the misses

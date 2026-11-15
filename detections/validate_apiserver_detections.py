@@ -1695,6 +1695,20 @@ def _build_procedures():
 PROCEDURES = _build_procedures()
 
 
+def graded_trrs(manifest):
+    """The TRR numbers that `manifest` grades, as text for the verdict line and the
+    description of --help: the first word of the label of each entry, sorted, with
+    each run of numbers in sequence written as a range ("9004-9010, 9025-9031,
+    9033-9035, 9039"). Taken from MANIFEST, so a TRR that gets entries is named."""
+    runs = []
+    for number in sorted({int(entry[3].split()[0]) for entry in manifest}):
+        if runs and number == runs[-1][1] + 1:
+            runs[-1][1] = number
+        else:
+            runs.append([number, number])
+    return ", ".join(f"{low}-{high}" if high > low else f"{low}" for low, high in runs)
+
+
 # ---- the emulation ledger (procedure windows, C1-3) ------------------------
 # Each emulation step appends one JSON line per procedure it ran, to $DETENG_LEDGER:
 #   {"trr": "TRR9004", "procedure": "a", "start": ISO, "end": ISO, "exit": 0, "expect": 0}
@@ -2335,8 +2349,7 @@ def write_json(path, report):
 
 
 def main():
-    ap = argparse.ArgumentParser(
-        description="Validate TRR9004-9010, 9025-9031, 9033-9035, 9039 K8s detections.")
+    ap = argparse.ArgumentParser(description=f"Validate TRR{graded_trrs(MANIFEST)} K8s detections.")
     ap.add_argument("--audit-log",
                     help="Path to the API server audit log (JSON lines). A strict run "
                          f"without it reads {DEFAULT_AUDIT_LOG}; --expect-miss needs it.")
@@ -2823,7 +2836,8 @@ def validate(args, report):
         print(f"The rule(s) with a log fired on the emulated telemetry; {skipped} "
               f"rule(s) skipped for lack of a log.{xnote}")
         return 0
-    print("All TRR9004-9010, 9025-9031, 9033-9035 match-gated detections fired on the emulated "
+    # The TRRs that MANIFEST grades, taken from it: a hand-written list left out 9039.
+    print(f"All TRR{graded_trrs(MANIFEST)} match-gated detections fired on the emulated "
           f"telemetry.{xnote}")
     return 0
 
