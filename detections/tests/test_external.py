@@ -2166,13 +2166,24 @@ class ExternalLoaders(gatelib.GateCase):
         "        t0 = time.monotonic()\n"
         "        try:\n"
         "            xr.fetch(base + path, 100, deadline)\n"
-        "            got.append(['read', 0])\n"
+        "            got.append(['read', 0, path])\n"
         "        except xr.Unavailable as e:\n"
-        "            got.append([str(e), time.monotonic() - t0])\n"
+        "            got.append([str(e), time.monotonic() - t0, path])\n"
         "    return {'got': got, 'elapsed': time.monotonic() - start}\n"
+        "def settled():\n"
+        "    # The worker thread of a request that was given up at the deadline can reach\n"
+        "    # the server after fetch() returned: wait until the server's list is still.\n"
+        "    last, t0 = None, time.monotonic()\n"
+        "    while time.monotonic() - t0 < 5:\n"
+        "        now = list(seen)\n"
+        "        if now == last:\n"
+        "            break\n"
+        "        last = now\n"
+        "        time.sleep(0.3)\n"
+        "    return list(seen)\n"
         "out = {'hang': within(30, lambda: requests(xr.Deadline(1.0, 0.3),\n"
         "                                         [f'/hang{n}' for n in range(6)]))}\n"
-        "out['hang']['seen'] = len(seen)\n"
+        "out['hang']['seen'] = settled()\n"
         "out['trickle'] = within(30, lambda: requests(xr.Deadline(0.8, 0.5), ['/trickle']))\n"
         "# The run: one deadline for all its requests (the origins through the proxy).\n"
         "for name in ('https_proxy', 'HTTPS_PROXY'):\n"
@@ -2188,7 +2199,7 @@ class ExternalLoaders(gatelib.GateCase):
         "    del seen[:]\n"
         "    report = os.path.join(os.environ['TMPDIR'], f'deadline-{name}.json')\n"
         "    out[name + '_run'] = within(60, run)\n"
-        "    out[name + '_run']['seen'] = len(seen)\n"
+        "    out[name + '_run']['seen'] = len(settled())\n"
         "    if os.path.exists(report):\n"
         "        with open(report, encoding='utf-8') as fh:\n"
         "            out[name + '_run']['report'] = json.load(fh)\n"
@@ -2208,23 +2219,30 @@ class ExternalLoaders(gatelib.GateCase):
         slack = 3.0                         # a loaded runner
         hang = out["hang"]
         self.assertFalse({"hang", "crash"} & set(hang), hang)
-        late = [m for m, _ in hang["got"] if "not requested: the network deadline of the run "
-                "(1 s) has passed" in m]
+        late = [m for m, _, _ in hang["got"] if "not requested: the network deadline of the "
+                "run (1 s) has passed" in m]
         asked = len(hang["got"]) - len(late)
         self.assertGreaterEqual(len(late), 2, hang)
-        self.assertEqual([m for m, _ in hang["got"][asked:]], late, "a request after a late one")
-        self.assertEqual(hang["seen"], asked, "a late request made a connection")
-        for message, elapsed in hang["got"][:asked]:
+        self.assertEqual([m for m, _, _ in hang["got"][asked:]], late,
+                         "a request after a late one")
+        asked_paths = [p for _, _, p in hang["got"][:asked]]
+        late_paths = [p for _, _, p in hang["got"][asked:]]
+        # No late request reaches the server, and each request that was made does (the
+        # server's list is read when it is still, so a request that was given up at the
+        # deadline is in it too).
+        self.assertFalse(set(hang["seen"]) & set(late_paths), "a late request made a connection")
+        self.assertEqual(sorted(hang["seen"]), sorted(asked_paths), hang)
+        for message, elapsed, _ in hang["got"][:asked]:
             self.assertRegex(message, r"timed out|given up: the network deadline")
             self.assertLess(elapsed, 0.3 + slack)
         # The first request waits one step (0.3 s), not until the deadline.
         self.assertRegex(hang["got"][0][0], r"/hang0: TimeoutError: timed out$")
-        for _, elapsed in hang["got"][asked:]:
+        for _, elapsed, _ in hang["got"][asked:]:
             self.assertLess(elapsed, 0.1)
         self.assertLess(hang["elapsed"], 1.0 + slack)
         trickle = out["trickle"]
         self.assertFalse({"hang", "crash"} & set(trickle), trickle)
-        (message, elapsed), = trickle["got"]
+        (message, elapsed, _), = trickle["got"]
         self.assertRegex(message, r"/trickle: given up: the network deadline of the run "
                                   r"\(0\.8 s\) passed during the request$")
         self.assertGreater(elapsed, 0.7)
