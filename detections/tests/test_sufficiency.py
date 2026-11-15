@@ -10,7 +10,8 @@ sufficiency-ratchet) and the libraries under them (sigma_eval, sigma_explain).
     CheckSufficiency      detections/check_sufficiency.py (R0, R1, R2 and its
                           waivers, R3, R4)
     SufficiencyRatchet    the sufficiency-ratchet job: check_sufficiency.py --json
-                          for the base, --baseline for the head
+                          for the base, --baseline for the head; and one run of its
+                          change proof, check_mutants.py (more in test_mutants.py)
     SigmaExplainSelfTest  detections/sigma_explain.py --self-test (the grader)
 
 Planted artifacts: detections/tests/known_bad/sufficiency/.
@@ -1274,8 +1275,10 @@ class SufficiencyRatchet(gatelib.StartedTogether):
     @classmethod
     def begin_widened_allowlist(cls, tree):
         # The real rule with one more allowlisted process name. No case is touched.
+        # The gate is the change proof of the same job (check_mutants.py), with the
+        # unmodified copy as the base tree.
         tree.replace(AFINET_RULE, "      - traceroute6\n", "      - traceroute6\n      - nc\n")
-        return cls.start_gate(tree)
+        return tree.start("detections/check_mutants.py", "--base-tree", cls.good().root)
 
     # A raw socket made by nc: the base rule fires on it, and the planted rule does not.
     NC_RAW_SOCKET = {
@@ -1295,17 +1298,13 @@ class SufficiencyRatchet(gatelib.StartedTogether):
             fh.write(json.dumps(self.NC_RAW_SOCKET) + "\n")
         return tree.run("detections/rule_cases.py", rule)
 
-    @gatelib.known_gap(
-        "ra-allowlist-widened-no-case",
-        gate="sufficiency-ratchet job: detections/check_sufficiency.py --baseline",
-        reason="The ratchet compares cases, verified negatives, exercised items and "
-               "logsources, not what the rule matches, so a rule whose allowlist grew (it "
-               "detects less than on the base branch) passes when no case was touched. No "
-               "other offline gate rejects the planted rule.",
-        closes="R6")
-    def test_gap_allowlist_widened_without_a_case(self):
-        """WANTED: a rule that detects less than on the base branch goes to a human: a
-        [RATCHET] line names the rule."""
+    def test_rejects_allowlist_widened_without_a_case(self):
+        """A rule that detects less than on the base branch goes to a human: the change
+        proof of the same job (check_mutants.py) undoes the new allowlist name, and no
+        case, fixture or corpus record of the head tells the undo apart from the head
+        rule. (This test was the known gap ra-allowlist-widened-no-case of
+        check_sufficiency.py --baseline, which compares cases and not what the rule
+        matches; roadmap item R6 closed it in check_mutants.py.)"""
         tree, result = self.started("widened_allowlist")
         # The planted rule detects less than the rule of the base.
         on_base, on_head = self.probe(self.good()), self.probe(tree)
@@ -1314,10 +1313,16 @@ class SufficiencyRatchet(gatelib.StartedTogether):
         self.assertEqual(on_head.returncode, 1, on_head.describe())
         self.assertIn(":: positive   nc-raw-socket: expected a match, got filtered (one flip "
                       "would fire it: allowed_processes.comm)\n", on_head.stdout)
-        # The head was compared with the base report (the gate prints nothing else
-        # about the planted line: the rule keeps its cases, negatives and items).
-        self.assert_saw(result, r"^Ratchet against .+ \(the base branch's report\):$")
-        self.assert_rejects(result, r"^  \[RATCHET\] T1040/afinet_raw_socket\.yml: ")
+        # The first comparison of the job, check_sufficiency.py --baseline, has no check
+        # for it: the rule keeps its cases, verified negatives and exercised items.
+        ratchet = tree.run(self.GATE, "--baseline", self.base_report())
+        self.assert_accepts(ratchet, r"^OK: every base rule is on the head, and none has fewer "
+                                     r"verified negatives, .* that is gone or changed\.$")
+        # The head was compared with the base tree, and only the planted rule changed.
+        self.assert_saw(result, r"^Change proof against the base tree .+: \d+ rule file\(s\) on "
+                                r"the head, \d+ on the base; 1 changed, ")
+        self.assert_rejects(result, r'^  \[RATCHET\] T1040/afinet_raw_socket\.yml: change not '
+                                    r'proven: flt-value:allowed_processes\.comm="nc"$', exit_code=1)
 
 
 class SigmaExplainSelfTest(gatelib.GateCase):

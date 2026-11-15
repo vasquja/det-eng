@@ -40,6 +40,8 @@ A detection change is done only when CI shows all of these:
    field (declared in `breaks`), which `rule_cases.py` proves is the single flip
    that would fire the rule. `check_sufficiency.py` fails a rule with no verified
    near-miss or filtered negative, or one that keys on the emulation's names.
+   In CI, `check_mutants.py` fails a change to a rule's logic that no case, fixture
+   or corpus record tells apart from the base rule.
 4. **Stays within its benign budget.** `score_benign.py --check --enforce` passes:
    the rule's hits on the benign corpus (`detections/benign/`) are within its
    budget (0 for a new rule), and `scores.json` is current.
@@ -128,6 +130,7 @@ python3 detections/validate_apiserver_detections.py --dry-run
 # Rule cases, the sufficiency gate and the benign corpus (offline)
 python3 detections/rule_cases.py
 python3 detections/check_sufficiency.py
+python3 detections/check_mutants.py --base-tree <base checkout>   # each change to a rule's logic is proven by a case
 python3 detections/score_benign.py --check --enforce
 
 # Null safety: every rule gives the same hits in two- and three-valued logic
