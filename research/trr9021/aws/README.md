@@ -132,8 +132,8 @@ The field that separates attack from benign is the **grantee token with no effec
   only if it grants access only to fixed values of those keys. The EFS policy sits in
   `requestParameters.policy`; the Glue policy sits in `requestParameters.policyInJson`.
 - **SSM (E):** `requestParameters.accountIdsToAdd` holding the element `All` in any letter case (the
-  API model of SSM gives each element the pattern `(?i)all|[0-9]{12}`: the word all in any letter
-  case, or a 12-digit account ID). A share to a named 12-digit account is not public.
+  API model of SSM gives each element the pattern `^(?i)all|[0-9]{12}$`; botocore writes
+  `(?i)all|[0-9]{12}`: the word all in any letter case, or a 12-digit account ID). A share to a named 12-digit account is not public.
 
 All five committed rules **require success** (`not errorCode`). This matters most for S3: since April
 2023 new buckets default to Object-Ownership "bucket owner enforced", which disables ACLs, so a
