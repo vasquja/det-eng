@@ -582,16 +582,6 @@ it does not see one test in the place of a different one.
   - `detections/sigma/T1053.007/k8s_cri_job_pod.cases.jsonl`
   - `detections/sigma/T1552.007/linux_k8s_sa_token_read.cases.jsonl`
 
-  The test of the verdict line of the API server validator
-  (`test_verdict_names_each_trr_that_manifest_grades`) takes every positive case of
-  these sidecars as the records of a log, and their MANIFEST entries must pass on
-  them without a ledger. It also cuts `MANIFEST` with a line before the text
-  `if __name__ == "__main__":` of the validator:
-
-  - `detections/sigma/T1572/k8s_pod_portforward.cases.jsonl`
-  - `detections/sigma/T1572/k8s_node_proxy_portforward.cases.jsonl`
-  - `detections/sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.cases.jsonl`
-
   `NullSafety` (`test_quality.py`) takes one case by name from this sidecar, for
   its probe of the two JSON texts of a list:
 
@@ -601,6 +591,16 @@ it does not see one test in the place of a different one.
   sidecar, for its proof that a rule that needs one account id is bad:
 
   - `detections/sigma/T1078.004/aws_leaked_access_key_recon.cases.jsonl`
+
+  The test of the verdict line of the API server validator
+  (`test_verdict_names_each_trr_that_manifest_grades`) takes every positive case of
+  these sidecars as the records of a log, and their MANIFEST entries must pass on
+  them without a ledger. It also cuts `MANIFEST` with a line before the text
+  `if __name__ == "__main__":` of the validator:
+
+  - `detections/sigma/T1572/k8s_pod_portforward.cases.jsonl`
+  - `detections/sigma/T1572/k8s_node_proxy_portforward.cases.jsonl`
+  - `detections/sigma/T1133/k8s_service_exposed_nodeport_loadbalancer.cases.jsonl`
 
   The offline run of the Linux validator takes its canned events from the
   sidecar of each rule of the `MANIFEST` of `detections/validate_detections.py`:
