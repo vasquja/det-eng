@@ -758,8 +758,9 @@ class ExternalRecords(gatelib.StartedTogether):
             "declared_quiet_fired", "stale_na", "known_miss_fires", "declared_fire_miss",
             "declared_no_record", "unavailable_enforce", "origins_enforce",
             "unavailable_one_shadow", "not_a_record", "count_changed", "line_not_object",
-            "not_utf8", "case_clash", "unstorable_value", "label_not_in_yml", "yml_technique",
-            "twin", "twin_attack_only", "self_declared", "self_declared_plain")
+            "not_utf8", "case_clash", "unstorable_value", "long_integer", "twice_envelope",
+            "label_not_in_yml", "yml_technique", "twin", "twin_attack_only", "self_declared",
+            "self_declared_plain")
     STEP = ("detection-quality.yml", "external-records", f"{GATE} --markdown")
 
     @classmethod
@@ -968,6 +969,24 @@ class ExternalRecords(gatelib.StartedTogether):
         record = case(tree, "snapshot", SET["snapshot"][4])["events"][0]
         record["planted"] = 2 ** 70
         cls.standard(tree, snapshot=jsonl([record]))
+        return cls.start_gate(tree)
+
+    @classmethod
+    def begin_long_integer(cls, tree):
+        # An integer of more than 4300 digits: Python's int() refuses its text with a
+        # ValueError that is not a JSONDecodeError.
+        record = case(tree, "snapshot", SET["snapshot"][4])["events"][0]
+        cls.standard(tree, snapshot=line_of(record)[:-2] + b', "planted": ' + b"7" * 4301 + b"}\n")
+        return cls.start_gate(tree)
+
+    @classmethod
+    def begin_twice_envelope(cls, tree):
+        # A CloudTrail envelope that holds "Records" two times: the first list holds the
+        # positive record, the second the near-miss (json keeps the second).
+        first = case(tree, "snapshot", SET["snapshot"][4])["events"]
+        second = case(tree, "snapshot", SNAPSHOT_NEAR_MISS)["events"]
+        body = f'{{"Records": {json.dumps(first)}, "Records": {json.dumps(second)}}}\n'.encode()
+        cls.standard(tree, snapshot=body)
         return cls.start_gate(tree)
 
     @classmethod
@@ -1238,9 +1257,25 @@ class ExternalRecords(gatelib.StartedTogether):
 
     def test_rejects_a_value_that_the_table_cannot_hold(self):
         _, result = self.started("unstorable_value")
-        self.assert_rejects(result, rf"^ERROR {self.id_of('snapshot')}: line 1: the key 'planted' "
-                            r"holds an integer outside the signed 64-bit range of the table "
-                            r"\(SQLite INTEGER\)$", exit_code=2)
+        self.assert_rejects(result, rf"^ERROR {self.id_of('snapshot')}: line 1 holds an integer "
+                            r"outside the signed 64-bit range of the table \(SQLite INTEGER\)$",
+                            exit_code=2)
+        self.assertEqual(result.output.count("ERROR "), 1, result.describe())
+
+    def test_rejects_an_integer_of_more_than_4300_digits(self):
+        """The CI step: one ERROR that names the dataset and the line, not a traceback."""
+        _, result = self.started("long_integer")
+        self.assert_rejects(result, rf"^ERROR {self.id_of('snapshot')}: line 1 holds an integer "
+                            r"outside the signed 64-bit range of the table \(SQLite INTEGER\)$",
+                            exit_code=2)
+        self.assertEqual(result.output.count("ERROR "), 1, result.describe())
+
+    def test_rejects_an_envelope_that_holds_its_key_two_times(self):
+        """The CI step: a doubled "Records" is a fault, not the MISS of the second list."""
+        _, result = self.started("twice_envelope")
+        self.assert_rejects(result, rf"^ERROR {self.id_of('snapshot')}: line 1: an object holds the "
+                            r"key 'Records' two times \(one reader keeps the first value, another "
+                            r"the last\)$", exit_code=2)
         self.assertEqual(result.output.count("ERROR "), 1, result.describe())
 
     def test_rejects_a_procedure_label_that_the_yml_does_not_name(self):
@@ -1493,14 +1528,28 @@ class ExternalLoaders(gatelib.GateCase):
          r": line 1 is not a raw auditd record \(type=<TYPE> msg=audit"),
         ("auditd_other_types", "auditd-raw",
          b'type=PROCTITLE msg=audit(1791813600.000:7101): proctitle=6A617661\n', []),
-        # A key or a value that one SQLite table cannot hold.
+        # A key or a value that one SQLite table cannot hold. A JSON integer outside 64
+        # bits is refused when it is parsed (by its value; one of more than 19 digits
+        # by its length, before int() reads it: Python stops at 4300 digits).
         ("big_int", "cloudtrail-json", line_of(ct(planted=2 ** 63)),
-         r": line 1: the key 'planted' holds an integer outside the signed 64-bit range of "
-         r"the table \(SQLite INTEGER\)$"),
+         r": line 1 holds an integer outside the signed 64-bit range of the table \(SQLite "
+         r"INTEGER\)$"),
         ("small_int", "cloudtrail-json", line_of(ct(planted=-2 ** 63 - 1)),
-         r": line 1: the key 'planted' holds an integer outside the signed 64-bit range"),
+         r": line 1 holds an integer outside the signed 64-bit range"),
         ("int_edges", "cloudtrail-json", line_of(ct(high=2 ** 63 - 1, low=-2 ** 63)),
          {"high": 2 ** 63 - 1, "low": -2 ** 63}),
+        ("long_int", "cloudtrail-json", line_of(ct())[:-2] + b', "planted": ' + b"7" * 4301
+         + b"}\n", r": line 1 holds an integer outside the signed 64-bit range of the table "
+         r"\(SQLite INTEGER\)$"),
+        ("long_int_lines", "cloudtrail-json", line_of(ct()) + line_of(ct())[:-2]
+         + b', "planted": [-' + b"7" * 4301 + b"]}\n",
+         r": line 2 holds an integer outside the signed 64-bit range"),
+        ("long_int_envelope", "cloudtrail-json", b'{"Records": [' + line_of(ct())[:-2]
+         + b', "planted": ' + b"7" * 4301 + b"}]}\n",
+         r": line 1 holds an integer outside the signed 64-bit range"),
+        ("long_int_document", "cloudtrail-json", b"[\n" + json.dumps(ct(), indent=1).encode()[:-2]
+         + b',\n "planted": ' + b"7" * 4301 + b"\n}\n]\n",
+         r": the JSON document holds an integer outside the signed 64-bit range"),
         ("auditd_big_pid", "auditd-raw",
          syscall_line(SYSCALL_FIELDS.replace(" pid=4401", " pid=99999999999999999999")),
          r": line 1: the key 'pid' holds an integer outside the signed 64-bit range"),
@@ -1533,6 +1582,14 @@ class ExternalLoaders(gatelib.GateCase):
          + b', "planted": [{"k": 1, "k": 2}]}\n', r": line 2: an object holds the key 'k' two times"),
         ("twice_in_array", "cloudtrail-json", b"[" + line_of(ct()) + b"," + line_of(ct())[:-2]
          + b', "planted": {"k": 1, "k": 2}}]', r": record 2: an object holds the key 'k' two times"),
+        # The envelope of CloudTrail is an object too: json keeps the last list.
+        ("twice_envelope", "cloudtrail-json", b'{"Records": [' + json.dumps(ct(eventName="A")).encode()
+         + b'], "Records": [' + json.dumps(ct()).encode() + b"]}\n",
+         r": line 1: an object holds the key 'Records' two times \(one reader keeps the first "
+         r"value, another the last\)$"),
+        ("twice_envelope_document", "cloudtrail-json",
+         b'{"Records": [\n' + line_of(ct()) + b'],\n"Records": []}\n',
+         r": the JSON document: an object holds the key 'Records' two times"),
         ("one_field", "cloudtrail-json", line_of(ct(**{"a.b": 1, "a": {"b": 2}})),
          r": line 1: two keys give the field 'a\.b' when the record is flattened "
          r"\(sigma_eval\.flatten keeps one of them\)$"),
@@ -1564,6 +1621,34 @@ class ExternalLoaders(gatelib.GateCase):
         "print(json.dumps(out))\n")
 
     READ_BODY = {name: body for name, _, body, _ in READ}
+
+    # The backstop of the JSON loader: a ValueError of the json module that is not a
+    # JSONDecodeError (the parse_int hook of the loader, put back to int(), lets json
+    # raise one on an integer of more than 4300 digits) is a Fault that names the line.
+    BACKSTOP_PROBE = (
+        "_, table = xr.load_syscalls()\n"
+        "xr._integer = int\n"
+        "line = '{\"eventSource\": \"s\", \"eventName\": \"n\", \"planted\": ' + '7' * 4301 + '}\\n'\n"
+        "first = '{\"eventSource\": \"s\", \"eventName\": \"n\"}\\n'\n"
+        "out = {}\n"
+        "for name, text in (('document', line), ('lines', first + line)):\n"
+        "    try:\n"
+        "        xr.read_dataset({'id': 'T9999/probe/' + name, 'format': 'cloudtrail-json'},\n"
+        "                        text.encode(), table)\n"
+        "        out[name] = 'read'\n"
+        "    except xr.Fault as e:\n"
+        "        out[name] = str(e)\n"
+        "    except Exception as e:\n"
+        "        out[name] = 'crash: ' + type(e).__name__\n"
+        "print(json.dumps(out))\n")
+
+    def test_a_value_error_of_the_json_module_names_the_line(self):
+        out = probe(self.good(), self.BACKSTOP_PROBE)
+        self.assertEqual(out, {
+            "document": "T9999/probe/document: line 1 is not JSON that the json module reads "
+                        "(ValueError)",
+            "lines": "T9999/probe/lines: line 2 is not JSON that the json module reads "
+                     "(ValueError)"})
 
     def test_the_loaders_read_each_format_and_refuse_what_is_not_a_record(self):
         import base64
@@ -1597,6 +1682,9 @@ class ExternalLoaders(gatelib.GateCase):
         ("azure_unrouted", line_of(azure("MicrosoftGraphActivityLogs")), None),
         ("ocsf", line_of({"class_uid": 6003, "api": {"operation": "ModifySnapshotAttribute"}}),
          None),
+        # A record that no format reads: an integer of more than 4300 digits (--draft
+        # prints an excluded entry; it does not stop).
+        ("long_int", line_of(ct())[:-2] + b', "planted": ' + b"7" * 4301 + b"}\n", None),
     ]
     SNIFF_PROBE = (
         "import base64\n"
@@ -1620,6 +1708,9 @@ class ExternalLoaders(gatelib.GateCase):
                     self.assertEqual(len(out[name][1]), 4, out[name])
         self.assertIn("azure-monitor-json: no record routes to a log source of the repository",
                       out["azure_unrouted"][1])
+        for fmt in ("k8s-audit-json", "cloudtrail-json", "azure-monitor-json"):
+            self.assertIn(f"{fmt}: T9999/probe/long_int: line 1 holds an integer outside the "
+                          "signed 64-bit range of the table (SQLite INTEGER)", out["long_int"][1])
 
     YML_ENTRY = {"id": "T1068/planted/audit", "path": "datasets/attack_techniques/T1068/planted/audit.log",
                  "techniques": ["T1068"], "sourcetype": "auditd",

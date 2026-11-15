@@ -71,14 +71,14 @@ Exit codes:
      or syscall table, a declaration for a rule or a dataset that does not exist, a
      HASH MISMATCH (also of a cached file, which is deleted), a record count that
      is not the pinned count, a line that is not a record of its format (also a JSON
-     object that holds a key two times, two keys that flatten to one field, NaN or
-     Infinity), a key or a value that one SQLite table cannot hold (an integer
-     outside 64 bits, a NUL, a lone surrogate, the key _rowid, a number that is not
-     finite), keys that differ only in letter case, a yml at the commit that does not
-     agree with its entry (its path, techniques, sourcetype or procedure label), a
-     cache entry that cannot be read or written, a rule that does not compile, or a
-     run in which no dataset was read. With --enforce, an UNAVAILABLE dataset,
-     LICENSE or syscall_64.tbl too.
+     object that holds a key two times, the envelope {"Records": [...]} too, two keys
+     that flatten to one field, NaN or Infinity), a key or a value that one SQLite
+     table cannot hold (an integer outside 64 bits, of any length, a NUL, a lone
+     surrogate, the key _rowid, a number that is not finite), keys that differ only
+     in letter case, a yml at the commit that does not agree with its entry (its
+     path, techniques, sourcetype or procedure label), a cache entry that cannot be
+     read or written, a rule that does not compile, or a run in which no dataset was
+     read. With --enforce, an UNAVAILABLE dataset, LICENSE or syscall_64.tbl too.
 
 Usage:
     python3 detections/check_external_records.py --lint      # offline: the two files

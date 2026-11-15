@@ -590,11 +590,35 @@ def _text(entry_id, data):
 
 
 class _NotJSON(Exception):
-    """NaN, Infinity or -Infinity: the json module reads them, RFC 8259 has no such value."""
+    """NaN, Infinity or -Infinity (the json module reads them, RFC 8259 has no such
+    value), or an integer that one SQLite table cannot hold."""
 
 
 def _constant(name):
     raise _NotJSON(f"{name}, which is not a JSON value (RFC 8259)")
+
+
+# The range of an SQLite INTEGER. sigma_eval.EventTable stops with OverflowError on an
+# integer outside it.
+INT64 = (-2 ** 63, 2 ** 63 - 1)
+INT64_DIGITS = len(str(INT64[1]))           # 19: a longer integer is outside the range
+
+
+def _integer(digits):
+    """The parse_int hook of _strict(): the json module gives it the text of each JSON
+    integer. A text of more digits than an int64 has is refused before int() reads it
+    (int() of a long text is slow, and Python stops at 4300 digits with a ValueError);
+    then the value."""
+    if len(digits.lstrip("-")) > INT64_DIGITS or not INT64[0] <= int(digits) <= INT64[1]:
+        raise _NotJSON("an integer outside the signed 64-bit range of the table (SQLite "
+                       "INTEGER)")
+    return int(digits)
+
+
+def _syntax_integer(_digits):
+    """The parse_int hook of the shape test: it reads no integer, so no integer can stop
+    the test of the shape (the strict parse refuses it with the line)."""
+    return 0
 
 
 class _Twice(dict):
@@ -615,7 +639,8 @@ def _pairs(pairs):
 
 
 def _strict(text):
-    return json.loads(text, object_pairs_hook=_pairs, parse_constant=_constant)
+    return json.loads(text, object_pairs_hook=_pairs, parse_constant=_constant,
+                      parse_int=_integer)
 
 
 def _json_values(entry_id, text, envelope):
@@ -624,18 +649,27 @@ def _json_values(entry_id, text, envelope):
     if not text.strip():
         return []
     try:
-        json.loads(text)        # the shape: one document, or one value for each line
+        # The shape: one document, or one value for each line.
+        json.loads(text, parse_int=_syntax_integer)
     except ValueError:
         pass
     except RecursionError:
         raise Fault(f"{entry_id}: the file nests JSON values too deep to read") from None
     else:
         lines = [n for n, line in enumerate(text.split("\n"), 1) if line.strip()]
+        where = f"line {lines[0]}" if len(lines) == 1 else "the JSON document"
         try:
             doc = _strict(text)
         except _NotJSON as e:
-            where = f"line {lines[0]}" if len(lines) == 1 else "the JSON document"
             raise Fault(f"{entry_id}: {where} holds {e}") from None
+        except ValueError as e:     # a backstop: the shape test read the same text
+            raise Fault(f"{entry_id}: {where} is not JSON that the json module reads "
+                        f"({type(e).__name__})") from None
+        # The document itself (an envelope {"Records": [...]}) must hold each key one
+        # time too: json keeps the last list, another reader the first.
+        if isinstance(doc, _Twice):
+            raise Fault(f"{entry_id}: {where}: an object holds the key {doc.twice!r} two "
+                        "times (one reader keeps the first value, another the last)")
         if isinstance(doc, list):
             return [(f"record {n}", v) for n, v in enumerate(doc, 1)]
         if (envelope and isinstance(doc, dict) and set(doc) == {envelope}
@@ -650,17 +684,15 @@ def _json_values(entry_id, text, envelope):
             out.append((f"line {n}", _strict(line)))
         except _NotJSON as e:
             raise Fault(f"{entry_id}: line {n} holds {e}") from None
-        except ValueError as e:
+        except json.JSONDecodeError as e:
             raise Fault(f"{entry_id}: line {n} is not JSON ({e.msg} at column {e.colno})") \
                 from None
+        except ValueError as e:     # a backstop: a ValueError that is not a JSONDecodeError
+            raise Fault(f"{entry_id}: line {n} is not JSON that the json module reads "
+                        f"({type(e).__name__})") from None
         except RecursionError:
             raise Fault(f"{entry_id}: line {n} nests JSON values too deep to read") from None
     return out
-
-
-# The range of an SQLite INTEGER. sigma_eval.EventTable stops with OverflowError on an
-# integer outside it.
-INT64 = (-2 ** 63, 2 ** 63 - 1)
 
 
 def _key_fault(key):
