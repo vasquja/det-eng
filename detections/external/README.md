@@ -61,7 +61,12 @@ row), which is GPL-2.0 WITH Linux-syscall-note.
   one entry; `aliases` holds the other paths).
 - `format` is `cloudtrail-json`, `azure-monitor-json`, `k8s-audit-json` or
   `auditd-raw`: native records only. A JSON file is one record for each line, a JSON
-  array, one object, or (CloudTrail) `{"Records": [...]}`.
+  array, one object, or (CloudTrail) `{"Records": [...]}`. A raw auditd line can carry
+  the ENRICHED fields of auditd with no GS byte before them (`key="x"ARCH=x86_64
+  SYSCALL=unshare AUID="ubuntu"`, as in `T1068/linux_dirtyfrag/audit`). The loader
+  takes only the lower-case fields of the kernel record (`auditd_records.py`, as the
+  Linux validator does), so such a file is read: its upper-case fields are not keys of
+  the event, and no key differs from another only in letter case.
 - `records` is the number of records that the loader must read (for auditd, the
   SYSCALL records). Another number is a fault: a loader that drops records cannot
   make a pass.

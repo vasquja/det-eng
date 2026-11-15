@@ -122,7 +122,8 @@ python3 detections/check_null_safety.py
 
 # External records (splunk/attack_data, pinned by sha256): each rule on the datasets of
 # its technique. CI runs the shadow report: no verdict fails it, a structural fault does.
-python3 detections/check_external_records.py --lint             # offline: SOURCES.json, expectations.json
+# --enforce exits 1 until the owner's declarations cover each MISS (ROADMAP, note for R3).
+python3 detections/check_external_records.py --lint             # offline: SOURCES.json, expectations.json, the syscall table
 python3 detections/check_external_records.py --lint --enforce   # also exit 1 on a stale declaration
 python3 detections/check_external_records.py                    # the report (cache: ~/.cache/det-eng/external)
 python3 detections/check_external_records.py --enforce          # exit 1 on a MISS or a declaration that fails

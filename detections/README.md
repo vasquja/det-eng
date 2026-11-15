@@ -1842,7 +1842,7 @@ most 50 MB of a file, and checks the sha256 before it parses a byte. A JSON reco
 be one record: an object that holds a key two times, two keys that give one field when
 the record is flattened, and NaN or Infinity are faults. A file is kept in a
 cache by its sha256 (`~/.cache/det-eng/external`, or `--cache DIR`); `--offline` reads
-only the cache. CI downloads on each run (about 1.4 MB). Only the job reads the real
+only the cache. CI downloads on each run (about 1.3 MB). Only the job reads the real
 datasets: the gate tests build their datasets from sidecar cases, and no record of
 `splunk/attack_data` is in this repository.
 

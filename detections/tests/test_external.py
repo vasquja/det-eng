@@ -1047,7 +1047,8 @@ class ExternalRecords(gatelib.StartedTogether):
         """The CI step (shadow) accepts the constructed set and reports each pair."""
         tree, result = self.started("constructed")
         self.assert_accepts(result, r"^Summary: \d+ of \d+ rule\(s\) have a same-technique "
-                            r"dataset; .*; 4 dataset\(s\) read, 0 unavailable; shadow: \d+ "
+                            r"dataset of their log source; .*; 4 dataset\(s\) read, 0 unavailable; "
+                            r"shadow: \d+ "
                             r"verdict\(s\) would fail --enforce$")
         for key in ("snapshot", "secret", "consent"):
             self.assertRegex(result.output, re.compile(
@@ -1115,7 +1116,8 @@ class ExternalRecords(gatelib.StartedTogether):
     def test_constructed_set_enforce_accepts_the_four_fires(self):
         self.assert_documented(f"python3 {GATE} --enforce")
         _, result = self.started("constructed_enforce")
-        self.assert_accepts(result, r"^Summary: 4 of 4 rule\(s\) have a same-technique dataset; 4 "
+        self.assert_accepts(result, r"^Summary: 4 of 4 rule\(s\) have a same-technique dataset of "
+                            r"their log source; 4 "
                             r"expected pair\(s\): 4 fire, 0 miss, 0 declared; .*enforce: 0 "
                             r"verdict\(s\) fail$")
 

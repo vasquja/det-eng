@@ -654,7 +654,8 @@ def summarise(report, rules, args):
     declared = count("quiet", "n/a", "known-miss")
     report.without = sorted(r.key for r in rules if r.key not in with_data)
     summary = (f"Summary: {len(with_data)} of {len(rules)} rule(s) have a same-technique "
-               f"dataset; {len(expected)} expected pair(s): {count('fire')} fire, "
+               f"dataset of their log source; {len(expected)} expected pair(s): "
+               f"{count('fire')} fire, "
                f"{count('miss')} miss, {declared} declared; {count('related')} related, "
                f"{count('other-procedure')} other procedure, {count('not read')} not read, "
                f"{len(report.excluded)} excluded; {len(report.datasets)} dataset(s) read, "

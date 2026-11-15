@@ -909,9 +909,10 @@ jobs:
     # this job: a MISS is a row of the report. A structural fault fails it (exit 2): a
     # malformed SOURCES.json or expectations.json, a HASH MISMATCH, a record count or a
     # yml at the commit that does not agree with the pin, a line that is not a record of
-    # its format, or a run that read no dataset. The job downloads the datasets on each
-    # run (about 1.4 MB from media.githubusercontent.com; the ymls, the LICENSE and the
-    # kernel's syscall table from raw.githubusercontent.com) and uses no cache action.
+    # its format, or a run that read no dataset. The job downloads the files on each run
+    # (about 1.3 MB: the datasets from media.githubusercontent.com; the ymls, the LICENSE
+    # and the kernel's syscall table from raw.githubusercontent.com) and uses no cache
+    # action.
     # The job summary and the uploaded report hold dataset ids, sha256 values, counts
     # and the names of rule items, never a value of a record. No `if:`, no `needs:` and
     # no paths filter: it runs on every pull request, push and schedule.
