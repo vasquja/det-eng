@@ -123,33 +123,24 @@ class RuleCases(gatelib.GateCase):
         tree.plant("sufficiency/trivial_near_miss", "detections/sigma/T9999")
         self.assert_rejects(tree.run_step(step), r"but the analysis grades it trivial", exit_code=1)
 
-    @gatelib.known_gap(
-        "hidden-rule-file",
-        gate="detections/sigma_eval.py import guard (through detections/rule_cases.py)",
-        reason="A rule and its sidecar in dotfiles under detections/sigma/T<id>/ pass the "
-               "import guard, and the globs of the gates (`*/*.yml`, `*/*.cases.jsonl`) "
-               "skip them, so rule_cases.py accepts a tree with a rule that it did not "
-               "check. Only R0 of check_sufficiency.py refuses the two files: the "
-               "check-sufficiency, sufficiency-ratchet and coverage-report jobs, which run "
-               "that script, fail on the planted tree, and every other gate accepts it.",
-        closes="R2d")
-    def test_gap_hidden_rule_file(self):
-        """WANTED: a rule file that the gates do not read is refused (as R0 refuses it),
-        or it is read, and then its positive that cannot fire fails."""
+    def test_rejects_hidden_rule_file(self):
+        """A rule and its sidecar in dotfiles under detections/sigma/T<id>/. The globs
+        of the gates (`*/*.yml`, `*/*.cases.jsonl`) skip such a name, so no gate would
+        check the rule: the import guard of sigma_eval.py refuses the two names before
+        the gate reads a rule (R0 of check_sufficiency.py refuses the same names)."""
         tree = self.tree()
         tree.plant("sufficiency/hidden_rule/hidden.yml", "detections/sigma/T1040/.hidden.yml")
         tree.plant("sufficiency/hidden_rule/hidden.cases.jsonl",
                    "detections/sigma/T1040/.hidden.cases.jsonl")
         result = tree.run(self.GATE)
-        if result.returncode == 0:
-            # The gate accepted the copy, and it printed nothing about the pair. Prove
-            # that the pair it did not read is bad: the gate fails the positive when
-            # the hidden rule is its argument (then it does not need the glob).
-            named = tree.run(self.GATE, "detections/sigma/T1040/.hidden.yml")
-            self.assertEqual(named.returncode, 1, named.describe())
-            self.assertIn("FAIL  T1040/.hidden.yml :: positive   stream-socket-declared-positive: "
-                          "expected a match, got near-miss", named.stdout)
-        self.assert_rejects(result, r"T1040/\.hidden\.(yml|cases\.jsonl)")
+        self.assert_rejects(result, r"^refusing to import pySigma: .*, and no name there may "
+                                    r"start with a dot \(the gates find the rules with the globs",
+                            exit_code=1)
+        self.assertEqual(result.stderr.split("Move or delete:\n")[1],
+                         "  detections/sigma/T1040/.hidden.cases.jsonl\n"
+                         "  detections/sigma/T1040/.hidden.yml\n",
+                         "the guard does not name exactly the two planted files")
+        self.assertEqual(result.stdout, "", "the gate read a rule before the guard stopped it")
 
     # ---- more defects of a sidecar ------------------------------------------------
     # known_bad/sufficiency/bad_cases/ holds one sound rule (two discriminating items,
@@ -269,16 +260,28 @@ class RuleCases(gatelib.GateCase):
 
     # One changed value in the second line of the sound sidecar (its near-miss), and
     # the words of the gate for it. Without the check, the first, the second and the
-    # last would pass as cases, and the others would end the gate with a traceback.
+    # fifth would pass as cases, and the others would end the gate with a traceback.
+    # Each error of a line that has a name (a string) names the case.
+    CASE = r"case 'packet-dgram-socket': "
     MALFORMED_LINES = (
         ("a kind that is no kind", lambda case: case.update(kind="negative"),
-         r"unknown kind 'negative'"),
-        ("no why", lambda case: case.pop("why"), r"missing why"),
+         CASE + r"unknown kind 'negative'"),
+        ("no why", lambda case: case.pop("why"), CASE + r"missing why"),
         ("a near-miss without breaks", lambda case: case.pop("breaks"),
-         r"a near-miss case must declare `breaks`"),
-        ("no event", lambda case: case.update(events=[]), r"events must be a non-empty list"),
+         CASE + r"a near-miss case must declare `breaks`"),
+        ("no event", lambda case: case.update(events=[]),
+         CASE + r"events must be a non-empty list"),
         ("the name of another case", lambda case: case.update(name="packet-raw-socket"),
          r"duplicate name 'packet-raw-socket'"),
+        ("a kind that is no string", lambda case: case.update(kind=["near-miss"]),
+         CASE + r"unknown kind \['near-miss'\]"),
+        ("a name that is no string", lambda case: case.update(name=["packet-dgram-socket"]),
+         r"the name is an array, not a string"),
+        ("no name", lambda case: case.pop("name"), r"missing name"),
+        ("breaks that names no atom", lambda case: case.update(breaks={"sel.a1": True}),
+         CASE + r"`breaks` must be an atom name or a list of atom names \(strings\)"),
+        ("breaks with an atom that is no string", lambda case: case.update(breaks=[1]),
+         CASE + r"`breaks` must be an atom name or a list of atom names \(strings\)"),
     )
 
     def test_rejects_case_line_that_is_not_a_case(self):
@@ -311,19 +314,11 @@ class RuleCases(gatelib.GateCase):
             exit_code=1)
         self.assertIn("\nFAILED: 1 case problem(s).\n", result.stdout)
 
-    @gatelib.known_gap(
-        "rc-case-clash-is-a-traceback",
-        gate="detections/rule_cases.py (the event table of detections/sigma_eval.py)",
-        reason="A sidecar event with two keys that differ only in letter case (`comm` and "
-               "`Comm`) ends rule_cases.py with an uncaught ValueError of "
-               "sigma_eval.EventTable. The rule-cases job fails, but with a traceback: no "
-               "FAIL or ERROR line names the rule and the case, and the gate judges no "
-               "case after it. check_sufficiency.py catches the same error and reports "
-               "it as an R3 failure of the rule.",
-        closes="R2d", today="crash")
-    def test_gap_event_keys_that_differ_only_in_letter_case(self):
-        """WANTED: the gate reports the event as a failure of its rule, in a FAIL or
-        ERROR line that names the rule and says that two keys differ only by case."""
+    def test_rejects_event_keys_that_differ_only_in_letter_case(self):
+        """One event of the planted positive has the keys `comm` and `Comm`. The events
+        of a case share one SQLite table, whose column names have no letter case, so
+        the case cannot be judged: the gate names the rule, the line and the case in
+        an ERROR line, and does not stop with a traceback."""
         tree = self.plant_bad_cases("keys_differ_by_case")
         # The artifact is bad in one way: one event has the keys `comm` and `Comm`.
         case, = tree.read_jsonl(self.PLANTED_CASES)
@@ -338,18 +333,92 @@ class RuleCases(gatelib.GateCase):
         self.assertIn(f"ok    T9999/planted_rule.yml :: positive   {case['name']}: fires\n",
                       accepted.stdout)
         result = tree.run(self.GATE, self.PLANTED_RULE)
-        # The gate read the planted event: its output names the two keys (today in
-        # the last line of the traceback).
-        self.assert_saw(result, r"differ only by case.*\bComm / comm\b")
-        self.assert_rejects(result, r"^(FAIL|ERROR) +T9999/planted_rule\.yml.*differ only by case")
+        self.assert_rejects(
+            result,
+            r"^ERROR T9999/planted_rule\.yml: line 1: case 'packet-raw-socket-two-comm-keys': "
+            r"event keys that differ only by case: Comm / comm \(the events of a case share "
+            r"one SQLite table, whose column names have no letter case, so the case cannot be "
+            r"judged\)$", exit_code=1)
+        self.assertIn("\nFAILED: 1 case problem(s).\n", result.stdout)
 
+    # One changed near-miss (the second line of the sound sidecar), whose events
+    # cannot be put in one event table, and the words of the gate for it. Without
+    # the check, a clash ends the gate with a traceback of EventTable, an event that
+    # is not an object (null, a number, an array, a string) with one of flatten() and
+    # `_ROWID` with one of sqlite3; `_rowid` and the two keys that flatten to one
+    # pass, and the gate judges an event that lost a value.
+    BAD_EVENTS = (
+        # `comm` in the first event and `Comm` in the second: no event holds both.
+        ("keys of two events", lambda event: [event, dict(
+            {key: value for key, value in event.items() if key != "comm"}, Comm="sniffer")],
+         r"event keys that differ only by case: Comm / comm \(the events of a case share "),
+        ("flat keys of one event", lambda event: [dict(event, proc={"Comm": "x"},
+                                                       **{"proc.comm": "x"})],
+         r"event keys that differ only by case: proc\.Comm / proc\.comm \("),
+        ("an event that is null", lambda event: [event, None],
+         r"event 2 of 2 is not a JSON object \(null\): an event is one record of the log$"),
+        ("an event that is a number", lambda event: [event, 7],
+         r"event 2 of 2 is not a JSON object \(a number\): an event is one record of the log$"),
+        ("an event that is an array", lambda event: [event, [event]],
+         r"event 2 of 2 is not a JSON object \(an array\): an event is one record of the log$"),
+        ("an event that is a string", lambda event: [event, "comm=sniffer"],
+         r"event 2 of 2 is not a JSON object \(a string\): an event is one record of the log$"),
+        ("the key _ROWID", lambda event: [dict(event, _ROWID=1)],
+         r"event 1 of 1: the key '_ROWID' is the row id column of the event table of "
+         r"sigma_eval\.py \(in any letter case\), so an event cannot hold it$"),
+        ("the key _rowid", lambda event: [dict(event, _rowid=1)],
+         r"event 1 of 1: the key '_rowid' is the row id column of the event table "),
+        ("two keys that flatten to one", lambda event: [dict(event, a={"b": 1}, **{"a.b": 2})],
+         r"event 1 of 1: the keys \['a', 'b'\] and \['a\.b'\] both flatten to 'a\.b', and "
+         r"the flat event keeps only the last value$"),
+    )
+
+    def test_rejects_events_that_one_table_cannot_hold_and_judges_the_other_cases(self):
+        """The bad case is an ERROR line that names its line and its name. The gate
+        judges every other case of the file, in the order of the file."""
+        tree = self.plant_bad_cases("sound")
+        sound = tree.read(self.PLANTED_CASES)
+        names = [case["name"] for case in tree.read_jsonl(self.PLANTED_CASES)]
+        for label, change, message in self.BAD_EVENTS:
+            with self.subTest(label):
+                tree.write(self.PLANTED_CASES, sound)
+                cases = tree.read_jsonl(self.PLANTED_CASES)
+                self.assertEqual(cases[1]["kind"], "near-miss")
+                cases[1]["events"] = change(cases[1]["events"][0])
+                tree.write_jsonl(self.PLANTED_CASES, cases)
+                result = tree.run(self.GATE, self.PLANTED_RULE)
+                self.assert_rejects(result, r"^ERROR T9999/planted_rule\.yml: line 2: case "
+                                            r"'packet-dgram-socket': " + message, exit_code=1)
+                self.assertIn("\nFAILED: 1 case problem(s).\n", result.stdout)
+                self.assertEqual(re.findall(r"(?m)^ok    T9999/planted_rule\.yml :: \S+ +(\S+): ",
+                                            result.stdout), names[:1] + names[2:])
+
+    def test_rejects_sidecar_line_that_is_json_and_not_an_object(self):
+        """A line of a sidecar is one case, a JSON object. The planted second line is
+        JSON of another type: the gate fails the file, and judges the other cases.
+        (Without the check, `null`, `7`, `true` and `false` end the gate with a
+        traceback, and an array or a string is `missing name, kind, why, events`.)"""
+        tree = self.plant_bad_cases("sound")
+        lines = tree.read(self.PLANTED_CASES).splitlines(keepends=True)
+        for text, kind in (("null", "null"), ("7", "a number"), ('["packet-dgram-socket"]',
+                                                                   "an array"),
+                           ('"packet-dgram-socket"', "a string"), ("true", "true"),
+                           ("false", "false")):
+            with self.subTest(text):
+                tree.write(self.PLANTED_CASES, "".join(lines[:1] + [text + "\n"] + lines[2:]))
+                result = tree.run(self.GATE, self.PLANTED_RULE)
+                self.assert_rejects(result, rf"^ERROR T9999/planted_rule\.yml: line 2: not a JSON "
+                                            rf"object \({kind}\): each line of a sidecar is one "
+                                            r"case, an object$", exit_code=1)
+                self.assertIn("\nFAILED: 1 case problem(s).\n", result.stdout)
+                self.assertIn(self.POSITIVE_FIRES, result.stdout)
 
 class SigmaEvalImportGuard(gatelib.GateCase):
     """The import guard of detections/sigma_eval.py. It is no script: it runs when a
     gate or a validator imports sigma_eval, before pySigma is imported and before
     any rule is read, and it ends the process with a message on stderr. The tests
     reach it through detections/rule_cases.py, with the command of the rule-cases
-    job. (The known gap hidden-rule-file, in RuleCases, is a gap of this guard too.)"""
+    job. (RuleCases.test_rejects_hidden_rule_file is a test of this guard too.)"""
 
     GATE = "detections/rule_cases.py"
     PARTS = gatelib.DETECTIONS
@@ -388,6 +457,161 @@ class SigmaEvalImportGuard(gatelib.GateCase):
         tree = self.tree()
         tree.plant("sufficiency/shadow/evil_py.txt", "detections/sigma/T1040/evil.py")
         self.assert_guard_refuses(tree.run(self.GATE), "detections/sigma/T1040/evil.py")
+
+    # The guard and R0 of check_sufficiency.py are two implementations of one rule (R0
+    # runs before detections/ is on sys.path, so it cannot import the guard). Each kind
+    # of name under detections/sigma/ that is not rule material, and how it is made:
+    # `file` holds the text of a real rule, `dir` holds such a file, `link` is a
+    # symbolic link to the real rule, `dangling` a link to nothing (the lock file of
+    # emacs). A new kind of name that one of the two checks refuses goes here.
+    NOT_RULE_MATERIAL = (
+        ("T1040/.hidden.yml", "file"),                  # a dotfile: the globs skip it
+        ("T1040/.hidden.cases.jsonl", "file"),
+        ("T1040/.notes.md", "file"),
+        ("T1040/._afinet_raw_socket.yml", "file"),      # AppleDouble, from tar or zip
+        ("T1040/.afinet_raw_socket.yml.swp", "file"),   # vim
+        ("T1040/.#afinet_raw_socket.yml", "dangling"),  # emacs lock
+        ("T1040/#afinet_raw_socket.yml#", "file"),      # emacs auto-save
+        ("T1040/afinet_raw_socket.yml~", "file"),       # editor backup
+        ("T1040/afinet_raw_socket.yml.orig", "file"),   # merge backup
+        ("T1040/hidden.yaml", "file"),
+        ("T1040/link.yml", "link"),
+        ("T1040/.old/", "dir"),
+        ("T1040/old/", "dir"),
+        (".notes.md", "file"),
+        ("notes.txt", "file"),
+        (".T1040/", "dir"),
+        ("rules/", "dir"),
+    )
+    # Rule material that the two checks accept (with the names above in the copy, so
+    # that the two runs stop before a rule is read).
+    RULE_MATERIAL = ("T1040/notes.md", "NOTES.md")
+
+    def plant_names(self, tree, names):
+        rule = tree.read(AFINET_RULE)
+        for name, kind in names:
+            path = "detections/sigma/" + name
+            if kind == "file":
+                tree.write(path, rule)
+            elif kind == "dir":
+                tree.write(path + "afinet_raw_socket.yml", rule)
+            else:
+                target = "afinet_raw_socket.yml" if kind == "link" else "user@host.4242:1700000000"
+                os.symlink(target, tree.path(path))
+
+    def test_guard_and_r0_refuse_the_same_names(self):
+        """The import guard and R0 refuse each name of NOT_RULE_MATERIAL, and no name
+        of RULE_MATERIAL: each run names exactly the planted names (the guard names a
+        directory without its trailing slash), before it reads a rule."""
+        tree = self.tree()
+        self.plant_names(tree, self.NOT_RULE_MATERIAL
+                         + tuple((name, "file") for name in self.RULE_MATERIAL))
+        guard = tree.run(self.GATE)
+        self.assert_rejects(guard, r"^refusing to import pySigma: .* Move or delete:$", exit_code=1)
+        self.assertEqual(sorted(guard.stderr.split("Move or delete:\n")[1].splitlines()),
+                         sorted(f"  detections/sigma/{name.rstrip('/')}"
+                                for name, _ in self.NOT_RULE_MATERIAL), guard.describe())
+        self.assertEqual(guard.stdout, "", "the gate read a rule before the guard stopped it")
+        r0 = tree.run("detections/check_sufficiency.py")
+        self.assert_rejects(r0, r"^  \[ERROR\] R0: unexpected `detections/sigma/", exit_code=1)
+        self.assertEqual(sorted(re.findall(r"(?m)^  \[ERROR\] R0: unexpected `([^`]+)`: ",
+                                           r0.stdout)),
+                         sorted(f"detections/sigma/{name}" for name, _ in self.NOT_RULE_MATERIAL),
+                         r0.describe())
+        self.assertIn(f"\nFAILED: {len(self.NOT_RULE_MATERIAL)} unexpected file(s) in "
+                      "detections/ (R0); no rule was checked.\n", r0.stdout)
+
+    # The rule lists of the walkers that do not use the globs: sigma_eval.rule_files()
+    # (the list of the guard), k8s_policy_coverage.audit_rules(),
+    # coverage_report.rule_paths() and convert_k8s.audit_rule_paths() (the self-test of
+    # the converter). The snippet imports the four modules in a sound copy (so the
+    # guard passes), then puts a copy of a Kubernetes audit rule under names that the
+    # guard refuses, and prints each list before and after.
+    RULE_LISTS = (
+        "import importlib.util, json, os, shutil, sys\n"
+        "sys.path[:0] = ['detections', 'research/tools']\n"
+        "import sigma_eval, k8s_policy_coverage, coverage_report\n"
+        "spec = importlib.util.spec_from_file_location(\n"
+        "    'convert_k8s', 'detections/pipelines/convert_k8s.py')\n"
+        "convert_k8s = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(convert_k8s)\n"
+        "def lists():\n"
+        "    return [sigma_eval.rule_files(), k8s_policy_coverage.audit_rules(),\n"
+        "            coverage_report.rule_paths(),\n"
+        "            [os.path.relpath(path, convert_k8s.SIGMA_DIR)\n"
+        "             for path in convert_k8s.audit_rule_paths()]]\n"
+        "before = lists()\n"
+        "real = 'detections/sigma/T1609/k8s_pod_exec_attach.yml'\n"
+        "for name in sys.argv[1:]:\n"
+        "    path = 'detections/sigma/' + name\n"
+        "    os.makedirs(os.path.dirname(path), exist_ok=True)\n"
+        "    if name.endswith('link.yml'):\n"
+        "        os.symlink('k8s_pod_exec_attach.yml', path)\n"
+        "    else:\n"
+        "        shutil.copyfile(real, path)\n"
+        "print(json.dumps({'before': before, 'after': lists()}))\n")
+
+    # Each gate that reads the rules and imports sigma_eval, with the command of CI
+    # (R0 of check_sufficiency.py has its own test in CheckSufficiency, the lint
+    # check_sigma_regex.py in test_validators.SigmaRegexLint). The self-test of
+    # detections/pipelines/convert_k8s.py needs pySigma-backend-kusto, which the suite
+    # does not install: RULE_LISTS tests the rule list of that self-test.
+    GUARDED_GATES = (
+        ("detections/rule_cases.py",),
+        ("detections/score_benign.py", "--check", "--enforce"),
+        ("detections/check_null_safety.py",),
+        ("detections/sigma_explain.py", "--self-test"),
+        ("detections/validate_cloud_detections.py",),
+        ("detections/validate_detections.py", "--dry-run"),
+        ("detections/validate_k8s_detections.py", "--dry-run"),
+        ("detections/validate_staticpod_detections.py", "--dry-run"),
+        ("detections/validate_apiserver_detections.py", "--dry-run"),
+        ("detections/k8s_policy_coverage.py", "--check"),
+        ("detections/check_provider_mappings.py", "--check"),
+        ("detections/k8s_platforms_md.py", "--check"),
+        ("research/tools/coverage_report.py", "--check"),
+    )
+
+    def test_every_gate_that_reads_the_rules_refuses_a_hidden_rule(self):
+        """The hidden pair of RuleCases.test_rejects_hidden_rule_file stops each gate
+        of GUARDED_GATES at the guard, which names the two files, before the gate
+        reads a rule. No gate reads the rules without the guard (for the self-test of
+        convert_k8s.py, see RULE_LISTS)."""
+        tree = self.tree(*gatelib.ALL)
+        tree.plant("sufficiency/hidden_rule/hidden.yml", "detections/sigma/T1040/.hidden.yml")
+        tree.plant("sufficiency/hidden_rule/hidden.cases.jsonl",
+                   "detections/sigma/T1040/.hidden.cases.jsonl")
+        runs = [(command, tree.start(*command)) for command in self.GUARDED_GATES]
+        for command, pending in runs:
+            with self.subTest(gate=" ".join(command)):
+                result = pending.result()
+                self.assert_rejects(result, r"^refusing to import pySigma: .*, and no name there "
+                                            r"may start with a dot ", exit_code=1)
+                self.assertEqual(result.stderr.split("Move or delete:\n")[1],
+                                 "  detections/sigma/T1040/.hidden.cases.jsonl\n"
+                                 "  detections/sigma/T1040/.hidden.yml\n", result.describe())
+                self.assertEqual(result.stdout, "", result.describe())
+
+    def test_rule_lists_hold_no_name_that_the_guard_refuses(self):
+        """The walkers that do not use the globs read the rules from the list of the
+        guard: a dotfile, a dot directory, a directory that is not T<id>/ and a
+        symbolic link are not rules there, also when the guard did not see them."""
+        tree = self.tree("detections", "research/tools")
+        rules = [path[len("detections/sigma/"):] for path in tree.glob("detections/sigma/*/*.yml")]
+        planted = ("T1609/.hidden.yml", ".T1609/k8s_pod_exec_attach.yml",
+                   "rules/k8s_pod_exec_attach.yml", "T1609/link.yml")
+        result = tree.run_python(self.RULE_LISTS, *planted)
+        self.assertEqual(result.returncode, 0, result.describe())
+        lists = json.loads(result.stdout)
+        # Not vacuous: before the plant, each list holds the real rule; the list of
+        # the guard and that of the report are the rules of the copy.
+        before_guard, before_k8s, before_report, before_convert = lists["before"]
+        self.assertEqual(sorted(before_guard), rules)
+        self.assertEqual(before_report, rules)
+        self.assertIn("T1609/k8s_pod_exec_attach.yml", before_k8s)
+        self.assertIn("T1609/k8s_pod_exec_attach.yml", before_convert)
+        self.assertEqual(lists["after"], lists["before"], "a walker reads a name that the "
+                         "guard refuses as a rule")
 
     BAD_POSITIVE = (r"^FAIL  T1040/afinet_raw_socket\.yml :: positive   "
                     r"planted-stream-socket-declared-positive: expected a match, got near-miss")
@@ -479,10 +703,10 @@ class CheckSufficiency(gatelib.StartedTogether):
     # ---- R0: repository hygiene -----------------------------------------------------
 
     def test_rejects_hidden_rule_file(self):
-        """R0 names each file that is not rule material. This is the artifact of the
-        known gap hidden-rule-file (RuleCases), planted the same way: the import guard
-        of sigma_eval.py accepts it, and R0 of this gate refuses it. The artifact is
-        two files, so the count is 2."""
+        """R0 names each file that is not rule material. This is the artifact of
+        RuleCases.test_rejects_hidden_rule_file, planted the same way: the import guard
+        of sigma_eval.py and R0 of this gate refuse it. The artifact is two files, so
+        the count is 2."""
         tree = self.tree()
         tree.plant("sufficiency/hidden_rule/hidden.yml", "detections/sigma/T1040/.hidden.yml")
         tree.plant("sufficiency/hidden_rule/hidden.cases.jsonl",

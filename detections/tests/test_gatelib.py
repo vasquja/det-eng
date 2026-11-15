@@ -9,6 +9,8 @@ No test here runs a gate of the repository; the whole file takes about ten secon
     python3 -B -m unittest discover -s detections/tests -p 'test_gatelib.py' -v
 """
 
+import ast
+import glob
 import json
 import os
 import shutil
@@ -262,6 +264,27 @@ class KnownGap(unittest.TestCase):
         self.assertEqual(len(rows), 2 + len(gaps))
         self.assertEqual({len(line.replace("\\|", "").split("|")) for line in rows}, {7})
 
+    @staticmethod
+    def markers_in_the_sources():
+        """{gap ID: `module.Class.test`} for each known_gap marker on a test method of
+        a test module (detections/tests/test_*.py), read from the source text with
+        ast: a list that does not depend on the discovery of the tests (_discover())."""
+        markers = {}
+        for path in sorted(glob.glob(os.path.join(gatelib.TESTS, "test_*.py"))):
+            module = os.path.basename(path)[:-len(".py")]
+            with open(path, encoding="utf-8") as fh:
+                source = ast.parse(fh.read(), path)
+            for cls in (node for node in source.body if isinstance(node, ast.ClassDef)):
+                for method in (node for node in cls.body if isinstance(node, ast.FunctionDef)):
+                    for marker in method.decorator_list:
+                        if (isinstance(marker, ast.Call)
+                                and isinstance(marker.func, ast.Attribute)
+                                and marker.func.attr == "known_gap"
+                                and isinstance(marker.func.value, ast.Name)
+                                and marker.func.value.id == "gatelib"):
+                            markers[marker.args[0].value] = f"{module}.{cls.name}.{method.name}"
+        return markers
+
     def test_command_line_lists_the_gaps_of_every_test_module(self):
         """KNOWN_GAPS is the one list of the suite: `gatelib.py --gaps` imports every
         test module and prints each marker with a roadmap item."""
@@ -271,7 +294,12 @@ class KnownGap(unittest.TestCase):
             env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
         self.assertEqual(listed.returncode, 0, listed.stderr)
         gaps = json.loads(listed.stdout)
-        self.assertIn("hidden-rule-file", [gap["id"] for gap in gaps])
+        # The command lists each marker of each test module, on its test: the markers
+        # in the source text (a property of the list, not one gap, which a later change
+        # can close; and not the list of the same discovery that the command uses).
+        markers = self.markers_in_the_sources()
+        self.assertGreater(len(markers), 0, "no test module has a known gap: vacuous")
+        self.assertEqual({gap["id"]: gap["test"] for gap in gaps}, markers)
         for gap in gaps:
             self.assertIn(gap["closes"], gatelib.ROADMAP)
             self.assertNotRegex(gap["gate"], r"[`|]")

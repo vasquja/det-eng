@@ -304,13 +304,30 @@ validators. It also uses [`sigma_explain.py`](sigma_explain.py) to verify that e
 `near-miss` / `filtered` case really is one item away from firing, on the exact item
 it declares. An unrelated event cannot pass as a near-miss.
 
+A sidecar line that `rule_cases.py` cannot judge is an `ERROR` line that names the
+rule and the line, and the case when the line has a name (a string). The gate judges
+the other cases of the file, and fails. Such a line is not JSON, or not a JSON object;
+it lacks a field, or its name, kind, events or breaks has the wrong type; or one event
+table cannot hold the events of its case. All the events of a case go in one SQLite table, so each event must be a
+JSON object, no key may be `_rowid` in any letter case, no two values of an event may
+get one flat key (`{"a": {"b": 1}, "a.b": 2}`), and no two keys of the events may
+differ only in letter case (`comm`, `Comm`): the column names of SQLite have no letter
+case. Two cases of one file can have such keys. `check_sufficiency.py` (R3),
+`check_null_safety.py`, `k8s_policy_coverage.py` and `check_provider_mappings.py` read
+the sidecars with the same loader, so they name such a case too. The same keys in a
+slice of the benign corpus still end `score_benign.py` with a traceback (see
+[The benign corpus](#the-benign-corpus-false-positive-scores)).
+
 `check_sufficiency.py` is the gate on top. It fails a rule that:
 
 - **R0** cannot be split into items, or sits in a `detections/sigma/` that holds
   anything but `*.md` notes and `T<id>/` directories of `*.yml`, `*.cases.jsonl`
   and `*.md`. The rules directory shares the `sigma` package namespace with
-  pySigma, so a stray `.py` there would replace pySigma modules. R0 also fails on
-  anything in `detections/` or `detections/__pycache__/` named `sigma.*` (a
+  pySigma, so a stray `.py` there would replace pySigma modules. No name there may
+  start with a dot: the gates find the rules with the globs `*/*.yml` and
+  `*/*.cases.jsonl`, which skip such a name, so a rule in a dotfile
+  (`T1040/.hidden.yml`) or in a dot directory would pass every gate unchecked. R0
+  also fails on anything in `detections/` or `detections/__pycache__/` named `sigma.*` (a
   `sigma.py` or `sigma.pyc` beside the directory would replace pySigma whole), and
   on any compiled module directly in `detections/`: a name ending in a bytecode or
   extension-module suffix of the running interpreter (on Linux `.pyc`, `.so`,
@@ -320,8 +337,16 @@ it declares. An unrelated event cannot pass as a near-miss.
   reviewed. The usual `__pycache__/<module>.cpython-*.pyc` files are allowed.
   `check_sufficiency.py` imports the standard library before `detections/` is on
   `sys.path`, so R0 runs before such a file can be imported. `sigma_eval.py`
-  refuses to load in each of these cases too, but its guard runs only when it is
-  first imported. It cannot stop a module that a script imports before it
+  refuses to load in each of these cases too, so every gate that imports it names
+  the file and reads no rule. The guard and R0 are two implementations of one rule
+  (R0 cannot import the guard), and a gate test plants each kind of name and
+  compares the two lists. The walkers of `detections/sigma/` that do not use the
+  globs take the list of the guard (`sigma_eval.rule_files()`): the coverage report,
+  `k8s_policy_coverage.py` and the self-test of `pipelines/convert_k8s.py` (it gets
+  the list before it prints a line). `check_sigma_regex.py`, which does not import
+  `sigma_eval.py`, fails on a name that starts with a dot. `sigma check` (sigma-cli)
+  reads a dotfile as a rule. The guard runs only when `sigma_eval.py` is first
+  imported. It cannot stop a module that a script imports before it
   (`validate_detections.py` and `sigma_explain.py` import PyYAML first, and the
   other gates import some of the standard library first), a plain-source
   `detections/<name>.py`, or a package directory. None of those paths is content,
@@ -487,7 +512,9 @@ The validators prove every rule with pySigma's SQLite backend, whose `REGEXP` is
 Python's `re`. Python accepts constructs that other Sigma backends reject or read
 differently, so every `|re` value must stay inside a subset that each main backend
 runs with the same meaning. [`check_sigma_regex.py`](../.github/scripts/check_sigma_regex.py)
-enforces it (CI: `validate-detections` / `sigma-lint`):
+enforces it (CI: `validate-detections` / `sigma-lint`). It also fails on each name that
+starts with a dot in a directory that it walks, and does not read it as a rule (see
+R0 above):
 
 ```
 python3 .github/scripts/check_sigma_regex.py                # every |re value in detections/sigma
@@ -739,7 +766,11 @@ each variant of a JSON list's text (key order kept, and keys sorted). A rule the
 provider cannot express fails conversion and is NOT PORTABLE, with the reason; an
 accepted difference is a human-approved `EXPECTED_LOSS` entry. Anchors
 (`pipelines/anchors/`) check the transforms against records or column references from
-Google- and Microsoft-authored sources.
+Google- and Microsoft-authored sources. A sidecar that `rule_cases.py` refuses is an
+`ERROR` line that names the rule and the line, and the case when the line has a name
+(as `rule_cases.py` names it): the run checks every other rule and fails, and it does
+not write `pipelines/mapping_results.json` (`--write`) or compare it (`--check`),
+because the rule is not in the results.
 
 ```
 python3 detections/check_provider_mappings.py --check   # CI job provider-mappings (not required)
@@ -874,7 +905,11 @@ also fails any rule with more hits than in the base branch's snapshot (fewer hit
 pass). The kind cluster's
 pre-emulation audit log and a live Ubuntu-runner workload are scored in CI too, in
 shadow mode. A hit that a rule defect explains is tracked in
-[`RULE_DEFECTS.md`](RULE_DEFECTS.md).
+[`RULE_DEFECTS.md`](RULE_DEFECTS.md). The gate puts the events of each slice in one
+SQLite table, so a slice whose events hold two keys that differ only in letter case
+(`eventName`, `EventName`) ends it with a traceback, and no line names the slice (the
+last line of the traceback names the two keys): the known gap
+`sb-slice-keys-differ-by-case` of the gate tests, which roadmap item R2d closes.
 
 ```
 python3 detections/score_benign.py                  # report
