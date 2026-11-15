@@ -2312,18 +2312,48 @@ class K8sValidator(gatelib.GateCase):
         """Two lines of JSON that is too deep: 100000 `[` (lists in lists), which
         json.loads() cannot read, and an audit event whose requestObject holds objects
         3000 deep, which json.loads() or sigma_eval.flatten() cannot read (it depends
-        on the version of Python). Each is a named problem, not a traceback."""
+        on the version of Python). A third line is an audit event with a number of
+        5000 digits: json.loads() refuses it with a ValueError when the limit of the
+        digits of an int (sys.get_int_max_str_digits(), from Python 3.10.7) is less
+        than 5000. Each is a named problem, not a traceback. (Without the limit the
+        third line is a record.)"""
         good = self.good()
         deep = ('{"kind": "Event", "apiVersion": "audit.k8s.io/v1", "verb": "get", '
                 '"requestObject": ' + '{"a": ' * 3000 + "1" + "}" * 3000 + "}")
-        records = self.log_with(good, "[" * 100000, deep)
+        long = ('{"kind": "Event", "apiVersion": "audit.k8s.io/v1", "verb": "get", '
+                '"stageTimestamp": ' + "1" * 5000 + "}")
+        limit = getattr(sys, "get_int_max_str_digits", lambda: 0)()
+        refused = 0 < limit < 5000
+        records = self.log_with(good, "[" * 100000, deep, long)
         result = good.run_step(self.negative_control_step())
-        self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+        self.assert_saw(result, rf"^Loaded {records + (0 if refused else 1)} audit event\(s\) "
+                                r"from ")
         self.assertEqual(re.findall(r"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
                                     r"(\d+): JSON that the validator cannot read "
                                     r"\(RecursionError: ", result.stdout, re.M),
                          [str(records + 1), str(records + 2)])
-        self.assert_rejects(result, LINES_NOT_RECORDS.format(2), exit_code=1)
+        self.assertEqual(re.findall(r"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+                                    r"(\d+): JSON that the validator cannot read "
+                                    r"\(ValueError: ", result.stdout, re.M),
+                         [str(records + 3)] if refused else [])
+        self.assert_rejects(result, LINES_NOT_RECORDS.format(3 if refused else 2), exit_code=1)
+
+    def test_rejects_json_values_that_are_not_objects(self):
+        """Five lines of JSON that is not an object, after the records of the control: a
+        string, a number, true, false and null. Each line is named with its JSON type,
+        is not counted, and no rule is judged."""
+        good = self.good()
+        values = {'"text"': "a string", "1": "a number", "true": "true", "false": "false",
+                  "null": "null"}
+        records = self.log_with(good, *values)
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+        self.assertEqual(re.findall(r"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+                                    r"(\d+): JSON that is not an object \((.+)\)$",
+                                    result.stdout, re.M),
+                         [(str(records + n), kind) for n, kind in enumerate(values.values(), 1)])
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_rejects(result, LINES_NOT_RECORDS.format(len(values)), exit_code=1)
 
     def test_json_report_holds_ten_problems_of_a_log_and_their_number(self):
         """A log of records and 12 lines that are not records. The console shows 10
@@ -2891,6 +2921,47 @@ class StaticPodValidator(gatelib.GateCase):
         as snapshots without a sandbox. The API server validator has the same reader
         (class LogReaderText) and runs the first of the five."""
         rejects_lines_that_are_not_records(self, "cri", BAD_SNAPSHOTS)
+
+    def test_rejects_a_snapshot_of_two_items_that_are_not_sandboxes_as_one_line(self):
+        """After the healthy sandboxes, the CRI log holds one snapshot of two items that
+        are not sandboxes (`{}`, `{}`). Each item gets its ERROR line, and the FAILED
+        line counts one line of the logs: it counts lines, not problems. So does the
+        --json report (`log_problems`: 1 line, 2 problems). (The step with --json is a
+        variant: no workflow runs it.)"""
+        good = self.good()
+        _, cri, _ = self.write_logs(good)
+        with open(good.tmp_path(self.CRI), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"items": [{}, {}]}) + "\n")
+        result = good.run_step(with_options(self, self.negative_control_step(),
+                                            "--json /tmp/staticpoditems.json"))
+        self.assert_saw(result, rf"^Loaded {cri} pod sandbox\(es\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assertEqual(re.findall(r"^ERROR: the CRI log \S+/pre-emulation-cri\.jsonl, line "
+                                    r"(\d+), item (\d+) of the snapshot: "
+                                    + NOT_A_RECORD["{}"]["cri"] + "$", result.stdout, re.M),
+                         [(str(cri + 1), "1"), (str(cri + 1), "2")])
+        self.assert_rejects(result, LINES_NOT_RECORDS.format(1), exit_code=1)
+        with open(good.tmp_path("staticpoditems.json"), encoding="utf-8") as fh:
+            report = json.load(fh)
+        self.assertEqual([(p["log"], p["lines"], p["problems"]) for p in report["log_problems"]],
+                         [("CRI log", 1, 2)])
+
+    def test_control_a_sandbox_counts_once_at_its_first_line(self):
+        """CONTROL of the count of a CRI log. The sensor writes a snapshot at each poll,
+        so one sandbox is on many lines. After the healthy sandboxes, the CRI log holds
+        each of them again, in one snapshot: the Loaded line counts each sandbox once,
+        and the negative control holds."""
+        good = self.good()
+        _, cri, _ = self.write_logs(good)
+        with open(good.tmp_path(self.CRI), encoding="utf-8") as fh:
+            sandboxes = [json.loads(line) for line in fh]
+        self.assertEqual(len({sandbox["id"] for sandbox in sandboxes}), cri)
+        with open(good.tmp_path(self.CRI), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"items": sandboxes}) + "\n")
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {cri} pod sandbox\(es\) from ")
+        self.assert_accepts(result, r"^Negative control held: the baseline alone does not pass "
+                                    r"any rule\.$")
 
     def test_rejects_a_file_log_line_with_one_field_of_a_file_event(self):
         """After the healthy file events, the file log holds one more line that has one
