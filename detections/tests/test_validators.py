@@ -2320,6 +2320,90 @@ class K8sValidator(gatelib.GateCase):
     def test_rejects_strict_run_on_a_log_that_is_a_directory(self):
         strict_run_on_a_directory(self)
 
+    @staticmethod
+    def configmap_create(number, key):
+        """A valid audit event of a ConfigMap create at level RequestResponse, whose
+        data holds one key: `key`. The requestObject is the body that the API server
+        logs at that level."""
+        name = f"app-settings-{number}"
+        return {"kind": "Event", "apiVersion": "audit.k8s.io/v1", "level": "RequestResponse",
+                "auditID": f"7e1c0b6a-1f2d-4c3b-9a8e-00000000000{number}",
+                "stage": "ResponseComplete", "verb": "create",
+                "requestURI": "/api/v1/namespaces/default/configmaps",
+                "user": {"username": "kubernetes-admin",
+                         "groups": ["system:masters", "system:authenticated"]},
+                "objectRef": {"resource": "configmaps", "namespace": "default", "name": name,
+                              "apiVersion": "v1"},
+                "responseStatus": {"metadata": {}, "code": 201},
+                "requestObject": {"kind": "ConfigMap", "apiVersion": "v1",
+                                  "metadata": {"name": name, "namespace": "default"},
+                                  "data": {key: "on"}},
+                "requestReceivedTimestamp": f"2026-11-13T20:10:0{number}.000000Z",
+                "stageTimestamp": f"2026-11-13T20:10:0{number}.002000Z"}
+
+    @gatelib.known_gap(
+        "k8s-log-keys-differ-only-in-case",
+        gate="detections/validate_k8s_detections.py --expect-miss",
+        reason="A pre-emulation audit log of three audit events: an exec into the target "
+               "pod, which is an emulation record (so the negative control must fail on "
+               "its rule), and two ConfigMap creates at level RequestResponse whose data "
+               "keys differ only in letter case (`key` and `KEY`). Each line is a record, "
+               "and a live log at that level can hold such keys. The validator ends with an "
+               "uncaught ValueError of sigma_eval.EventTable (`event keys that differ only "
+               "by case cannot share one table`) before it judges a rule, so no line names "
+               "the rule that passed. validate_staticpod_detections.py and "
+               "validate_apiserver_detections.py end in the same way on the same log. The "
+               "correction belongs in sigma_eval.EventTable (a table that holds keys that "
+               "differ only in letter case), after roadmap item R7 (pull request 76, which "
+               "changes sigma_eval.py) merges; the log readers must not refuse a valid log.",
+        closes="R2d", today="crash")
+    def test_gap_log_whose_keys_differ_only_in_letter_case(self):
+        """WANTED: the validator judges each rule on a valid log whose keys differ only
+        in letter case, and the negative control fails on the rule that passed."""
+        good = self.good()
+        exec_record = case_events(good, self.CASES, "exec-websocket-get-procA")
+        self.assertEqual(len(exec_record), 1)
+        keys = [self.configmap_create(1, "key"), self.configmap_create(2, "KEY")]
+        write_text_log(good, self.LOG, "".join(json.dumps(event) + "\n"
+                                               for event in exec_record + keys))
+        # The artifact is bad in one way: the log holds an emulation record. The same
+        # log without the two ConfigMap creates fails the negative control on its
+        # rule (a private copy: the step reads a fixed name in /tmp/).
+        alone = self.tree()
+        write_text_log(alone, self.LOG, json.dumps(exec_record[0]) + "\n")
+        alone = alone.start_step(self.negative_control_step())
+        # For the proof of the last sentences of the `reason`, below: a strict run of
+        # the two other validators on the same log.
+        others = {script: good.start(script, "--audit-log", good.tmp_path(self.LOG))
+                  for script in ("detections/validate_staticpod_detections.py",
+                                 "detections/validate_apiserver_detections.py")}
+        result = good.run_step(self.negative_control_step())
+        passed = (r"^PASS  \[A/B/C\] k8s_pod_exec_attach\.yml: 1 emulation event\(s\) match$"
+                  r"[\s\S]*^NEGATIVE CONTROL FAILED: 1 rule\(s\) passed on a log captured "
+                  r"before the emulation ran \(a procedure gate matched\)\.$")
+        self.assert_rejects(alone.result(), passed, exit_code=1)
+        # The two keys differ only in letter case, and each line is an audit event.
+        flat = [set(f"requestObject.data.{key}" for key in event["requestObject"]["data"])
+                for event in keys]
+        self.assertEqual([name.lower() for names in flat for name in names],
+                         ["requestobject.data.key"] * 2)
+        # The gate read the log: the reader counts the three records.
+        self.assert_saw(result, r"^Loaded 3 audit event\(s\) from \S+/pre-emulation-audit\.log$")
+        self.assertNotRegex(result.stdout, r"(?m)^ERROR: the audit log ")
+        if result.crashed:
+            # Today. Prove each sentence of the `reason`, so that the text cannot go
+            # out of date: the ValueError of sigma_eval.EventTable, no rule judged,
+            # and the same end of the other two validators.
+            clash = (r"(?m)^ValueError: event keys that differ only by case cannot share one "
+                     r"table: requestObject\.data\.KEY / requestObject\.data\.key")
+            for run in [result] + [pending.result() for pending in others.values()]:
+                self.assertTrue(run.crashed and run.returncode != 0, run.describe())
+                self.assertRegex(run.output, clash, run.describe())
+                self.assertRegex(run.output, r'(?m)^  File ".*sigma_eval\.py", line \d+, in '
+                                             r'__init__\b', run.describe())
+                self.assertNotRegex(run.stdout, r"(?m)^(PASS|MISS)  \[", run.describe())
+        self.assert_rejects(result, passed, exit_code=1)
+
     def test_rejects_a_ledger_window_that_starts_after_it_ends(self):
         """The validate step of CI (a strict run with --ledger) on the records of the
         control. The row of Procedure A has the times of a row of 2026-11-13: its start

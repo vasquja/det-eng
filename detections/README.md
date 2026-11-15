@@ -1259,6 +1259,14 @@ It is not a log that was not found: a strict run does not print `SKIP` for it.
 Only the kind jobs show that each line of a real capture is a record by these
 definitions: the log of a healthy job holds no `ERROR` line of the reader.
 
+Not covered: two audit events of one log whose keys differ only in letter case
+(`requestObject.data.key` of one ConfigMap and `requestObject.data.KEY` of another,
+in a log at level `RequestResponse`) are records, and each Kubernetes validator ends
+with a `ValueError` of the event table of `sigma_eval.py` before it judges a rule.
+The reader must not refuse a valid log, so the correction belongs in `sigma_eval.py`.
+The known gap `k8s-log-keys-differ-only-in-case` of the gate tests holds the case
+(see the note for R2d in [`docs/ROADMAP.md`](../docs/ROADMAP.md)).
+
 ### Node runtime sensor (TRR9003 Strategy 1)
 
 A static pod never passes through the API server, and the invalid-namespace
