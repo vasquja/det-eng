@@ -342,9 +342,20 @@ rules** have such items.
 The harness mode `exploded` (indexed keys, no pipeline) shows the loss case by case and
 never fails: all 16 rules show differences there, and the other 15 keep every verdict
 and block. A multi-valued backend should keep more of the string lists
-(`requestObject.dryRun|contains: All` can match one element), but not a pattern with JSON
-quotes (`impersonatedUser.groups|contains: '"system:masters"'`) nor a list of objects;
-this is reasoned from the item patterns, not run on such a backend.
+(`requestObject.dryRun|contains: All` can match one element), but not a pattern with
+the JSON quotes of an element alone, nor a list of objects; this is reasoned from the
+item patterns, not run on such a backend. `T1134/k8s_impersonation_privileged.yml`
+reads its group names with two `|re` values: one with the quotes (the list as text),
+and one anchored with `^` and `$` (one element) (closed entry K72 of
+[`RULE_DEFECTS.md`](../RULE_DEFECTS.md#closed-entries)).
+
+The gate [`check_variants.py`](../check_variants.py) now runs one model of a
+multi-valued field on every rule, the cloud rules too (its variant `multi`: one value
+for each element of a list, an object as its JSON text). Each difference that it
+shows is an entry of [`variants/expected.json`](../variants/expected.json). That
+model is not the `exploded` mode: a store that explodes a list into leaf fields or
+indexed keys cannot run a rule that reads a list as text, and the harness here keeps
+that mode as a warning. [`SEMANTICS.md`](../SEMANTICS.md#4-lists) states the contract.
 
 **What a backend pipeline must do:** map each such item to the field that holds the raw
 event JSON where the ingest keeps it (Splunk `_raw`, Elastic `event.original`, the

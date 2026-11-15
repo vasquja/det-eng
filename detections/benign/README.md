@@ -377,6 +377,8 @@ Configure the `Main` ruleset for this:
    before a failing case, gate or budget check finished. `null-safety` (the
    three-valued logic gate) is a candidate for this list, and the maintainer decides:
    until it is required, such a pull request can auto-merge with it red.
+   `representation-variants` (the representation gate, `check_variants.py`) is a
+   candidate in the same way.
 3. **Leave `sufficiency-ratchet` not required.** It fails by design on a change the
    maintainer may accept (an edited or relabelled case, a deliberate rise in benign
    hits with a raised budget). Made required, with no bypass actors, it would block

@@ -1,11 +1,17 @@
 """
 Evaluate Sigma rules with a real Sigma backend instead of a hand-written matcher.
 
-Shared by the three validators. Each rule file is compiled by pySigma's SQLite
-backend into the query a Sigma-driven engine would run, the events are loaded
-into an in-memory SQLite table named `logs`, and the query is executed. So a
-rule passes here only if its Sigma semantics actually match the events — the
-same answer any conforming backend would give.
+Shared by the validators and the gates. Each rule file is compiled by pySigma's
+SQLite backend into one query, the events are loaded into an in-memory SQLite
+table named `logs`, and the query is executed. So a rule passes here only if the
+query of a real Sigma backend matches the events.
+
+This is ONE backend on ONE representation of the events, not the answer of every
+backend: detections/SEMANTICS.md says what this oracle decides (the JSON text of
+a list, letter case for each modifier, a missing field, the regex dialect) and
+what other stores and backends do. The options of flatten() and EventTable below
+change one of those decisions at a time; detections/check_variants.py runs every
+case and fixture with each of them. The defaults are what every validator uses.
 
 Correlation rules (Sigma v2 `correlation:` with their base rules in the same
 file) are supported. Their result rows name the evidence events, so a caller
@@ -140,18 +146,22 @@ def compile_rule(path, three_valued=False):
     return queries[0]
 
 
-def flatten(obj, prefix=""):
+def flatten(obj, prefix="", *, separators=None, sort_keys=False):
     """Nested dict -> {"a.b.c": value}, the dotted field names Sigma rules use.
 
-    Lists become JSON text so they stay matchable with |contains.
+    Lists become JSON text so they stay matchable with |contains. The default text
+    is the one json.dumps writes: a blank after each `,` and `:`, and the key order
+    of the record. separators and sort_keys are those of json.dumps, for a store
+    that writes the text in another way (check_variants.py): separators=(",", ":")
+    is the text without blanks, sort_keys=True sorts the keys of each object.
     """
     out = {}
     for key, val in obj.items():
         name = f"{prefix}{key}"
         if isinstance(val, dict):
-            out.update(flatten(val, f"{name}."))
+            out.update(flatten(val, f"{name}.", separators=separators, sort_keys=sort_keys))
         elif isinstance(val, list):
-            out[name] = json.dumps(val)
+            out[name] = json.dumps(val, separators=separators, sort_keys=sort_keys)
         else:
             out[name] = val
     return out
@@ -169,11 +179,29 @@ class EventTable:
 
     three_valued: a regular expression on a missing field is NULL (as in SQL),
     not false. Use it with a query from compile_rule(path, three_valued=True).
+
+    case_sensitive_like: LIKE does not fold letter case (PRAGMA case_sensitive_like),
+    as on a store whose LIKE is case-sensitive. By default SQLite's LIKE folds the
+    ASCII letters, so |contains, |startswith, |endswith and a wildcard value ignore
+    their case.
+
+    regexp: search(pattern, text) -> truth, in place of Python's re.search, for a
+    `|re` item (for example a search with RE2). The pattern arrives as the backend
+    writes it, with its flags as a prefix (`(?i)`); the text is str(value).
     """
 
-    def __init__(self, events, three_valued=False):
+    def __init__(self, events, three_valued=False, *, case_sensitive_like=False, regexp=None):
         self.events = events
         self.db = sqlite3.connect(":memory:")
+        if case_sensitive_like:
+            # One connection for each table, so no other table sees the pragma.
+            # SQLite ignores a pragma that it does not know, without an error: prove
+            # that this one is in force.
+            self.db.execute("PRAGMA case_sensitive_like=ON")
+            if self.db.execute("SELECT 'a' LIKE 'A'").fetchone()[0]:
+                raise RuntimeError("PRAGMA case_sensitive_like=ON is not in force in this "
+                                   f"SQLite ({sqlite3.sqlite_version}): LIKE still folds case")
+        search = re.search if regexp is None else regexp
         # pySigma's SQLite backend compiles a `|re` match to the SQL `REGEXP`
         # operator, which SQLite leaves unimplemented by default. Register it with
         # Python's `re` (full syntax, including look-around) so `|re` rules
@@ -182,11 +210,11 @@ class EventTable:
             self.db.create_function(
                 "regexp", 2,
                 lambda pattern, value: None if value is None
-                else (1 if re.search(pattern, str(value)) else 0))
+                else (1 if search(pattern, str(value)) else 0))
         else:
             self.db.create_function(
                 "regexp", 2,
-                lambda pattern, value: 1 if value is not None and re.search(pattern, str(value)) else 0)
+                lambda pattern, value: 1 if value is not None and search(pattern, str(value)) else 0)
         columns = sorted({k for e in events for k in e} - {_ROWID})
         # SQLite column names are case-insensitive: 'level' and 'Level' would be one
         # column (a cryptic "duplicate column name" error), and a rule field would
