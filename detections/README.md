@@ -1867,9 +1867,69 @@ must hold a record, because a negative control that read no record cannot fail:
 - Each of the two fails the run (exit 1), and `--report` does not waive them.
   `--report` makes only a miss non-fatal: a rule that did not fire on a marked
   record of its attack fixture, or that fired on a benign record.
-- The validator counts the records of a baseline and does not grade them. A baseline
-  whose records are all far from the rule passes (`[{}]`); the grading line under
-  each row is informational (roadmap item R2e).
+
+A baseline that holds records must also be **hard** (roadmap item R2e). The
+validator grades each benign record against the rule (`sigma_explain.py`; the line
+`benign baseline graded: ...` under each row), and the baseline is hard when one
+record or more is a near-miss or a filtered negative of the rule through a flip item
+that meets three conditions:
+
+- **(a) The attack differs there.** Some marked attack hit (a record of the attack
+  fixture that fires the rule and carries the marker) differs from the record on the
+  field that the item reads: the item holds on the one and fails on the other. A
+  near-miss of a branch that the attack does not use does not count: the item fails
+  on the attack hit too (a ModifySnapshotAttribute look-alike, for a rule whose
+  attack shares an AMI).
+- **(b) The item is not surface only.** The item is a filter, or it reads a field
+  outside `SURFACE_FIELDS` of `check_sufficiency.py`, or the rule is in its
+  `CHOKEPOINT` table. A near-miss on `eventName` or `operationName` alone (a
+  `roleAssignments/delete` for a rule on `roleAssignments/write`) does not show that
+  the rule keys on its argument.
+- **(c) A filter is not a placeholder.** A filter item counts only when it holds on
+  the record through a value that is not a documentation address (RFC 5737:
+  `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24` and their hosts; RFC 3849:
+  `2001:db8::/32`). The rules list such ranges in an allowlist as a placeholder for
+  the operator's own ranges, so a record that only such an entry filters proves
+  nothing about a real environment.
+
+For a correlation rule the unit is the event set, and only a near-miss on a base
+atom (`base:<ref>`) counts: a repair of the group-by, the timespan, the order or the
+threshold moves the same events. (No cloud rule is a correlation today; the gate
+tests plant one.)
+
+Two rows fail a baseline that is not shown to be hard:
+
+- `NEGATIVE CONTROL NOT HARD: the benign baseline <path> holds no near-miss or
+  filtered record of the rule that differs from the attack in a discriminating field
+  (<grade counts>)`. The lines under the row name each near-miss or filtered flip
+  that does not count, and why. When sigma_explain disagrees with the compiled rule
+  on a record, that record cannot count, and the row says so.
+- `NEGATIVE CONTROL NOT GRADED: the benign baseline <path> could not be graded
+  (<why>)`, when `sigma_explain.py` or `check_sufficiency.py` does not import, or
+  sigma_explain cannot load the rule or grade the baseline. The check fails closed.
+
+Each of the two fails the run (exit 1), also with `--report`. In the `--json` report
+the result is a `FAIL`, `benign_grading.hard` is `false` (and `benign_grading` is
+`null` for a baseline that was not graded), and the report exits 1. A rule without a
+marked attack hit fails for its attack, and its baseline is not judged
+(`benign_grading.hard` is `null`).
+
+What the check does not cover:
+
+- One hard record is the bar, not one for each branch of the rule. A rule with many
+  branches (`aws_resource_policy_made_public.yml`: 87 items) passes with one
+  near-miss. The sidecar cases test the other branches, and `check_sufficiency.py`
+  warns on a rule whose negatives exercise few of its items (R5).
+- A hard record need not be a copy of an attack record. The check compares the flip
+  item with the attack, not the whole record: a record that differs from the attack
+  in many fields that the rule does not read still counts.
+- For a correlation rule, conditions (a) to (c) are not applied to the items of a
+  base, and a near-miss on `base:<ref>` also counts when the set only lacks the event
+  of that base (the grade cannot tell that from a base event that breaks one item).
+- `SURFACE_FIELDS` lists `properties.resultType` but not the top-level
+  `resultType` of the Azure Activity Log, so a near-miss on that field alone counts.
+- `check_sufficiency.py` still counts a fixture record that only a placeholder
+  filters as a verified negative of the rule (R2 does not apply condition (c)).
 - A `MANIFEST` entry whose rule file does not exist is still `PENDING`: the validator
   prints it, does not count it and does not fail on it. `check_sufficiency.py` fails
   that tree.
@@ -1877,13 +1937,14 @@ must hold a record, because a negative control that read no record cannot fail:
 The benign baseline is deliberately hard: it hits the same log source, method, and
 structural fields as the attack and differs only on the discriminating field (the
 off-instance source IP, the identity type, the FIC issuer, the public-vs-specific
-principal, the pinned-vs-wildcard OIDC subject). So a pass proves the rule keys on the
-technique's chokepoint, not on the fixture's shape or marker.
+principal, the pinned-vs-wildcard OIDC subject). The check above holds each baseline
+to that. So a pass proves the rule keys on the technique's chokepoint, not on the
+fixture's shape or marker.
 
 ```
 pip install -r detections/requirements.txt
 python3 detections/validate_cloud_detections.py --dry-run   # compile every cloud rule
-python3 detections/validate_cloud_detections.py             # attack fires + control holds
+python3 detections/validate_cloud_detections.py             # attack fires + hard control holds
 ```
 
 The runnable emulations (`atomics/<TECH>/src/`) perform the real attack in **your own**

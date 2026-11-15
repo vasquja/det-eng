@@ -1,0 +1,49 @@
+# Planted by detections/tests (CloudValidator): a cloud correlation rule. No cloud
+# rule of the repository is a correlation, so the tests plant this one to test the
+# hard-baseline check on an event set: an access key is created, and the same user
+# gets AdministratorAccess within one hour. The test writes its fixtures; each event
+# carries `timestamp`, the field that the correlation reads.
+title: Planted Access Key Then Administrator Policy (Correlation)
+id: 0b7d3c1e-2f4a-4b5c-8d6e-7f8091a2b3c4
+status: experimental
+correlation:
+  type: temporal
+  rules:
+    - planted_key_create
+    - planted_attach_admin
+  group-by:
+    - userIdentity.arn
+  timespan: 1h
+logsource:
+  product: aws
+  service: cloudtrail
+level: high
+---
+title: Planted Access Key Created (Base Event)
+id: 1c8e4d2f-3a5b-4c6d-9e7f-8091a2b3c4d5
+name: planted_key_create
+status: experimental
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventSource: 'iam.amazonaws.com'
+    eventName: 'CreateAccessKey'
+  condition: selection
+level: informational
+---
+title: Planted Administrator Policy Attached (Base Event)
+id: 2d9f5e3a-4b6c-4d7e-8f80-91a2b3c4d5e6
+name: planted_attach_admin
+status: experimental
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventSource: 'iam.amazonaws.com'
+    eventName: 'AttachUserPolicy'
+    requestParameters.policyArn|endswith: '/AdministratorAccess'
+  condition: selection
+level: informational

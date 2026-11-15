@@ -1054,7 +1054,7 @@ class SufficiencyRatchet(gatelib.StartedTogether):
     PARTS = gatelib.DETECTIONS
     # pull_request first: it does not need base_report(), which the others wait for.
     RUNS = ("pull_request", "deleted_near_miss", "edited_case", "changed_negative",
-            "renamed_rule", "widened_allowlist")
+            "lost_fixture_negatives", "renamed_rule", "widened_allowlist")
 
     @classmethod
     def base_report(cls):
@@ -1242,6 +1242,33 @@ class SufficiencyRatchet(gatelib.StartedTogether):
         self.assert_rejects(
             result, rf"^  \[RATCHET\] {re.escape(LEAKED_KEY)}: verified negative\(s\) changed: "
                     rf"{re.escape(source)}$", exit_code=1)
+        self.assert_only_the_ratchet_fails(tree, result)
+
+    @classmethod
+    def begin_lost_fixture_negatives(cls, tree):
+        # The hard benign fixture of the rule is replaced by one record that holds no
+        # field: its records that were verified negatives of the rule are gone. The
+        # rule keeps the near-miss cases of its sidecar, so the head alone passes.
+        tree.write(LEAKED_KEY_BENIGN, "[{}]\n")
+        return cls.start_gate(tree)
+
+    def test_rejects_lost_fixture_negatives(self):
+        """A content-only change must not take away the verified negatives that the
+        records of a hard benign fixture give. (The validate-cloud job rejects the
+        same artifact, as a baseline that is not hard: CloudValidator,
+        test_rejects_benign_baseline_far_from_the_rule, in test_validators.py.)"""
+        tree, result = self.started("lost_fixture_negatives")
+        self.assertEqual(tree.read_json(LEAKED_KEY_BENIGN), [{}])
+        with open(self.base_report(), encoding="utf-8") as fh:
+            base = next(rule for rule in json.load(fh)["rules"] if rule["rule"] == LEAKED_KEY)
+        lost = [n["source"] for n in base["negatives"]
+                if n["source"].startswith(f"fixture:{LEAKED_KEY_BENIGN} ")]
+        # On the base branch the records #1 and #2 of the fixture are verified negatives.
+        self.assertEqual(len(lost), 2, lost)
+        total = len(base["negatives"])
+        self.assert_rejects(
+            result, rf"^  \[RATCHET\] {re.escape(LEAKED_KEY)}: verified negatives {total} -> "
+                    rf"{total - len(lost)} \(gone: {re.escape(', '.join(lost))}\)", exit_code=1)
         self.assert_only_the_ratchet_fails(tree, result)
 
     RENAMED = "detections/sigma/T1040/afinet_raw_socket_v2"

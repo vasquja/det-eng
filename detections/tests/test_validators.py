@@ -5,7 +5,9 @@ detection-quality.yml job schedule-freshness).
 
     CloudValidator         detections/validate_cloud_detections.py (and --dry-run):
                            the fixtures of a rule must exist, and its benign
-                           baseline must hold a record
+                           baseline must hold a record and be hard (a near-miss or
+                           a filtered record that differs from the attack in a
+                           discriminating field)
     LinuxValidatorDryRun   detections/validate_detections.py --dry-run (needs gcc)
     LinuxValidatorOffline  detections/validate_detections.py, real mode, with the
                            host replaced by canned events (no root, no auditd)
@@ -31,6 +33,7 @@ How the harness works: gatelib.py and README.md in this directory.
 """
 
 import importlib.util
+import ipaddress
 import json
 import os
 import re
@@ -214,40 +217,28 @@ class CloudValidator(gatelib.GateCase):
                r"detections/cloud/fixtures/trr9012/{}\.json, and no such file exists: nothing "
                r"proves the rule ")
     NO_PROOF = r"^FAILED: 1 rule\(s\) of MANIFEST have no proof: "
-    # Other gates that read the rule or its fixtures. The `reason` of a known gap of
-    # this class says what they do with the planted tree, and the test proves it.
-    SUFFICIENCY = "detections/check_sufficiency.py"
-    NULL_SAFETY = "detections/check_null_safety.py"
-    RATCHET = (r"^  \[RATCHET\] T1078\.004/aws_leaked_access_key_recon\.yml: verified negatives "
-               r"(\d+) -> (\d+) \(gone: fixture:detections/cloud/fixtures/trr9012/benign\.json "
-               r"record #1 ")
+    # The verdict for a baseline that holds records and is not hard, before its counts.
+    NOT_HARD = (r"^FAIL  " + ROW + r"NEGATIVE CONTROL NOT HARD: the benign baseline "
+                r"detections/cloud/fixtures/trr9012/benign\.json holds no near-miss or "
+                r"filtered record of the rule that differs from the attack in a "
+                r"discriminating field \(")
+    NOT_GRADED = (r"^FAIL  " + ROW + r"NEGATIVE CONTROL NOT GRADED: the benign baseline "
+                  r"detections/cloud/fixtures/trr9012/benign\.json could not be graded \(")
+    # TRR9036: the Azure rule whose baseline the surface test plants.
+    AZURE_ROW = r"\[TRR9036 Azure\] azure_privileged_role_assignment\.yml: "
+    AZURE_ATTACK = "detections/cloud/fixtures/trr9036/attack.json"
+    AZURE_BENIGN = "detections/cloud/fixtures/trr9036/benign.json"
 
     def manifest_rules(self, tree):
         """The (folder, rule file) pairs of the gate's MANIFEST, read from its source."""
         return set(in_source(tree, self.GATE, r'^\s+\("TRR\d+", "(T[\d.]+)", "([^"]+\.yml)",'))
 
-    @classmethod
-    def start_base_report(cls):
-        """Start, once for the class and in the background, the report that the
-        sufficiency-ratchet job makes for the base branch: check_sufficiency.py
-        --json on the unmodified copy. It is the report of RULE only (--rule), the
-        faster path of the same code. ratchet() waits for it."""
-        if "_base" not in cls.__dict__:
-            good = cls.good()
-            report = good.out("base-report.json")
-            cls._base = (report, good.start(cls.SUFFICIENCY, "--rule", cls.RULE,
-                                            "--json", report))
-            cls.addClassCleanup(delattr, cls, "_base")
-
-    def ratchet(self, tree):
-        """The last step of the sufficiency-ratchet job in a copy, for RULE: the head
-        against the report of the base (check_sufficiency.py --baseline). The run
-        prints the verdict of check_sufficiency.py first, then that of the ratchet."""
-        self.start_base_report()
-        report, base = self._base
-        self.assert_accepts(base.result(),
-                            r"^OK: 1 rule\(s\): 1 pass, 0 pass with warnings, 0 fail\. ")
-        return tree.run(self.SUFFICIENCY, "--rule", self.RULE, "--baseline", report)
+    @staticmethod
+    def not_hard(row, fixture):
+        """The NOT HARD verdict of the rule of `row` on the baseline `fixture`."""
+        return (r"^FAIL  " + row + r"NEGATIVE CONTROL NOT HARD: the benign baseline "
+                + re.escape(fixture) + r" holds no near-miss or filtered record of the rule "
+                r"that differs from the attack in a discriminating field \(")
 
     def test_ci_runs_the_dry_run_and_the_validation(self):
         """The commands of these tests are the two commands of the validate-cloud job."""
@@ -480,67 +471,248 @@ class CloudValidator(gatelib.GateCase):
     def test_rejects_directory_in_the_place_of_the_attack_fixture(self):
         self.rejects_directory_in_the_place_of("attack")
 
-    @gatelib.known_gap(
-        "cloud-benign-far-from-the-rule",
-        gate="detections/validate_cloud_detections.py",
-        reason="A benign baseline whose only record is far from the rule (`[{}]`: a record "
-               "without a field) passes as `benign baseline clean (1 record(s))`. The "
-               "validator grades the record `trivial` in a line that it calls "
-               "informational, and the grade changes no verdict. Such a baseline shares "
-               "nothing with the attack, so it cannot show that the rule keys on the "
-               "discriminating field. check_sufficiency.py, rule_cases.py, "
-               "check_null_safety.py and score_benign.py accept the same tree. The "
-               "sufficiency-ratchet job rejects the planted change on a pull request, "
-               "because the records that are gone were verified negatives of a rule of the "
-               "base branch. So the gap is open for a new rule that comes with such a "
-               "baseline, and on every push and weekly run.",
-        closes="R2e")
-    def test_gap_benign_baseline_far_from_the_rule(self):
-        """WANTED: a rule fails when no record of its benign baseline is a near-miss or
-        a filtered negative of the rule (definition of done 2: a hard benign baseline
-        differs from the attack only in the discriminating field)."""
+    def test_rejects_benign_baseline_far_from_the_rule(self):
+        """Definition of done 2: a hard benign baseline differs from the attack only in
+        the discriminating field. A baseline whose only record is far from the rule
+        (`[{}]`: a record without a field) shares nothing with the attack, so it cannot
+        show that the rule keys on that field: the rule fails as not hard, also with
+        --report. (This was the known gap cloud-benign-far-from-the-rule. The
+        sufficiency ratchet rejects the same artifact on a pull request:
+        SufficiencyRatchet.test_rejects_lost_fixture_negatives, in test_sufficiency.py.)"""
         tree = self.tree()
-        self.start_base_report()        # for the proof of the `reason`, below
         tree.write(self.BENIGN, "[{}]\n")
         # The artifact is bad: the one record of the baseline holds no field, so it
         # has no item of the rule and shares nothing with the attack.
         self.assertEqual(tree.read_json(self.BENIGN), [{}])
-        others = {script: tree.start(script, *arguments) for script, arguments in (
-            ("detections/rule_cases.py", (self.RULE,)),
-            (self.NULL_SAFETY, (self.RULE,)),
-            ("detections/score_benign.py", ("--check", "--enforce")))}
-        result = tree.run(self.GATE)
+        result = self.rejected_as_unproven(tree, self.NOT_HARD + r"1 trivial\)")
         # The gate judged the rule: it prints this row for a PASS, a FAIL and an ERROR.
         self.assert_saw(result, r"^(?:PASS|FAIL|ERROR)\s+\[TRR9012 AWS\] aws_leaked_access_key_recon"
                                 r"\.yml: ")
-        if result.returncode == 0:
-            # Today the row shows that the gate read the planted file (one benign
-            # record), and the line below it gives the grade of that record.
-            self.assert_saw(result, r"^PASS  \[TRR9012 AWS\] aws_leaked_access_key_recon\.yml: "
-                                    r".*benign baseline clean \(1 record\(s\)\) .*\n"
-                                    r"        benign baseline graded \(informational\): "
-                                    r"1 trivial; atoms exercised 0/\d+$")
-            # Today. The `reason` of the marker says what the other jobs do with the
-            # planted tree; prove each sentence, so that the text cannot go out of
-            # date. Three gates accept the tree (for the one rule: the faster path
-            # of the same code).
-            for script, pending in others.items():
-                self.assertEqual(pending.result().returncode, 0,
-                                 f"{script} does not accept the tree any more: correct the "
-                                 "`reason` of the marker\n" + pending.result().describe())
-            # check_sufficiency.py accepts it too, and the ratchet of the pull request
-            # rejects it: the records of the good baseline were verified negatives.
-            ratchet = self.ratchet(tree)
-            self.assertRegex(ratchet.stdout,
-                             r"(?m)^OK: 1 rule\(s\): 1 pass, 0 pass with warnings, 0 fail\. ")
-            self.assertEqual(ratchet.returncode, 1, ratchet.describe())
-            gone = re.search(self.RATCHET, ratchet.stdout, re.MULTILINE)
-            self.assertIsNotNone(gone, ratchet.describe())
-            self.assertGreater(int(gone.group(1)), int(gone.group(2)))
         self.assert_rejects(
             result,
             r"^(FAIL|ERROR)\s+\[TRR9012 AWS\] aws_leaked_access_key_recon\.yml: .*benign.*"
-            r"(near-miss|filtered)")
+            r"(near-miss|filtered)",
+            exit_code=1)
+
+    def test_rejects_near_miss_that_breaks_only_a_surface_field(self):
+        """A near-miss counts only through an item that is a filter, reads a field
+        outside check_sufficiency.SURFACE_FIELDS, or belongs to a rule in CHOKEPOINT.
+        The planted baseline of TRR9036 is one record: the attack's Start record with
+        the operation roleAssignments/delete. It is a near-miss on operationName, a
+        surface field, and it keeps the Owner role at subscription scope, so it does
+        not show that the rule keys on the role or the scope."""
+        tree = self.tree()
+        attack = tree.read_json(self.AZURE_ATTACK)
+        record = json.loads(json.dumps(attack[0]))
+        record["operationName"] = "Microsoft.Authorization/roleAssignments/delete"
+        tree.write(self.AZURE_BENIGN, json.dumps([record], indent=2) + "\n")
+        # The artifact is bad: it differs from the attack record in operationName
+        # alone, a surface field, and CHOKEPOINT does not list the rule.
+        self.assertEqual([k for k in attack[0] if attack[0][k] != record[k]], ["operationName"])
+        sufficiency = tree.read("detections/check_sufficiency.py")
+        self.assertIn('"category", "operationName",', sufficiency)
+        self.assertNotIn('"T1098.003/azure_privileged_role_assignment.yml"', sufficiency)
+        result = self.rejected_as_unproven(
+            tree, self.not_hard(self.AZURE_ROW, self.AZURE_BENIGN) + r"1 near-miss\)")
+        self.assert_saw(result, r"^        benign record #0 is near-miss on "
+                                r"`selection_write\.operationName`, which does not count: it "
+                                r"reads operationName, a surface field ")
+
+    SNAPSHOT_ROW = r"\[TRR9019 AWS\] aws_snapshot_or_ami_made_public\.yml: "
+    SNAPSHOT_ENTRY = ('    ("TRR9019", "T1537", "aws_snapshot_or_ami_made_public.yml",\n'
+                      '     "trr9019/attack.json", "trr9019/benign.json", "AWS",\n')
+
+    def test_rejects_near_miss_of_a_branch_that_the_attack_does_not_use(self):
+        """A flip counts only when some marked attack hit differs from the record on the
+        field that the item reads: the item holds on the one and fails on the other.
+        The rule of TRR9019 fires on a public AMI (ModifyImageAttribute) or a public
+        snapshot (ModifySnapshotAttribute), and its attack fixture shares an AMI. The
+        planted baseline is one ModifySnapshotAttribute record that shares a snapshot
+        with one account: a near-miss of the snapshot branch, which no attack record
+        uses, so it tests nothing that the attack depends on. The baseline is a file of
+        its own, so the two other rules of TRR9019 keep their baseline."""
+        tree = self.tree()
+        attack = tree.read_json("detections/cloud/fixtures/trr9019/attack.json")
+        image = next(r for r in attack if r["eventName"] == "ModifyImageAttribute")
+        record = json.loads(json.dumps(image))
+        record["eventName"] = "ModifySnapshotAttribute"
+        record["requestParameters"] = {
+            "snapshotId": "snap-trr9019example", "attributeType": "CREATE_VOLUME_PERMISSION",
+            "createVolumePermission": {"add": {"items": [{"userId": "123456789013"}]}}}
+        tree.write("detections/cloud/fixtures/trr9019/benign_snapshot.json",
+                   json.dumps([record], indent=2) + "\n")
+        tree.replace(self.GATE, self.SNAPSHOT_ENTRY,
+                     self.SNAPSHOT_ENTRY.replace("trr9019/benign.json",
+                                                 "trr9019/benign_snapshot.json"))
+        # The artifact is bad: no attack record is a snapshot share, so the snapshot
+        # branch is one that the attack does not use.
+        self.assertNotIn("ModifySnapshotAttribute", [r["eventName"] for r in attack])
+        self.assertEqual(image["requestParameters"]["launchPermission"]["add"]["items"],
+                         [{"group": "all"}])
+        result = self.rejected_as_unproven(
+            tree, self.not_hard(self.SNAPSHOT_ROW,
+                                "detections/cloud/fixtures/trr9019/benign_snapshot.json")
+            + r"1 near-miss\)")
+        self.assert_saw(result, r"^        benign record #0 is near-miss on "
+                                r"`selection_ec2_snapshot\.requestParameters\.createVolumePermission"
+                                r"\.add\.items`, which does not count: the item fails on it and "
+                                r"on every marked attack hit")
+
+    def test_rejects_record_that_only_a_placeholder_allowlist_entry_filters(self):
+        """An allowlist entry in a documentation range (RFC 5737, RFC 3849) is a
+        placeholder for the operator's own ranges, so a record that only such an entry
+        filters proves nothing about a real environment. The planted baseline of
+        TRR9012 is its record #1 alone: a GetCallerIdentity call from 203.0.113.10,
+        which the allowlist filter holds only through its 203.0.113.0/24 entry."""
+        tree = self.tree()
+        record = tree.read_json(self.BENIGN)[1]
+        tree.write(self.BENIGN, json.dumps([record], indent=2) + "\n")
+        # The artifact is bad: the source is in the documentation range that the rule
+        # lists as a placeholder, and in no other range of the filter.
+        self.assertIn(ipaddress.ip_address(record["sourceIPAddress"]),
+                      ipaddress.ip_network("203.0.113.0/24"))
+        self.assertIn("      - '203.0.113.0/24'\n", tree.read(self.RULE))
+        result = self.rejected_as_unproven(tree, self.NOT_HARD + r"1 filtered\)")
+        self.assert_saw(result, r"^        benign record #0 is filtered on "
+                                r"`filter_known_egress\.sourceIPAddress`, which does not count: "
+                                r"the filter holds on it only through documentation addresses "
+                                r"\(203\.0\.113\.0/24, 2001:db8::/32\)")
+
+    def test_control_record_that_a_real_allowlist_entry_filters_is_hard(self):
+        """CONTROL of the placeholder rule: the same record from 10.20.30.40, which the
+        10.0.0.0/8 entry of the same filter item holds. The item also lists the two
+        documentation ranges, and the record still counts: the item holds on it through
+        an entry that is not a placeholder."""
+        tree = self.tree()
+        record = tree.read_json(self.BENIGN)[1]
+        record["sourceIPAddress"] = "10.20.30.40"
+        tree.write(self.BENIGN, json.dumps([record], indent=2) + "\n")
+        self.assertIn("      - '10.0.0.0/8'\n", tree.read(self.RULE))
+        result = tree.run(self.GATE)
+        self.assert_accepts(result, r"^All \d+ external-cloud detection\(s\) fired on their "
+                                    r"recorded attack fixtures, and every negative control held\.$")
+        self.assert_saw(result, r"^PASS  " + self.ROW + r".*benign baseline clean \(1 record\(s\)\) "
+                                r".*\n        benign baseline graded: 1 filtered; ")
+
+    def test_rejects_baseline_that_cannot_be_graded(self):
+        """The grade decides the check, so a baseline that sigma_explain cannot grade
+        fails closed, also with --report. The planted rule holds one more detection
+        block, which the condition does not use: pySigma compiles the rule (and the
+        rule fires on the attack and on no benign record), and sigma_explain, which
+        compiles each item of every block, cannot load it."""
+        tree = self.tree()
+        tree.replace(self.RULE, "  condition: selection_iam_user",
+                     "  planted_unused: []\n  condition: selection_iam_user")
+        # The artifact is bad: a block of no item, which no condition reads.
+        self.assertIn("\n  planted_unused: []\n", tree.read(self.RULE))
+        self.assertNotIn("planted_unused", tree.read(self.RULE).split("  condition: ")[1])
+        result = self.rejected_as_unproven(
+            tree, self.NOT_GRADED + r"sigma_explain could not load the rule: ")
+        self.assert_saw(result, r"^OK \(compile\)  T1078\.004/aws_leaked_access_key_recon\.yml  "
+                                r"\[TRR9012\]$")
+        self.assertNotIn("NEGATIVE CONTROL FAILED", result.stdout)
+        self.assertNotRegex(result.stdout, r"(?m)^FAIL  " + self.ROW + r"rule did NOT fire")
+
+    def json_row(self, tree):
+        """The --json report of a --report run of the copy, and the result of RULE."""
+        report = tree.out("cloud.json")
+        result = tree.run(self.GATE, "--report", "--json", report)
+        with open(report, encoding="utf-8") as fh:
+            data = json.load(fh)
+        row = next(r for r in data["results"] if r["rule"] == "/".join(self.RULE.split("/")[-2:]))
+        return result, data, row
+
+    def test_json_report_says_that_a_baseline_is_not_hard_or_cannot_be_graded(self):
+        """The --json report of the two verdicts, with --report: the result of the rule
+        is a FAIL, `benign_grading.hard` is false for a baseline that is not hard (and
+        no record counts), `benign_grading` is null for one that cannot be graded, and
+        the report exits 1."""
+        tree = self.tree()
+        tree.write(self.BENIGN, "[{}]\n")
+        result, data, row = self.json_row(tree)
+        self.assertEqual((result.returncode, data["exit"], row["status"]), (1, 1, "FAIL"),
+                         result.describe())
+        self.assertRegex(row["detail"], r"^NEGATIVE CONTROL NOT HARD: ")
+        self.assertIs(row["benign_grading"]["hard"], False)
+        self.assertEqual(row["benign_grading"]["hard_records"], [])
+        ungraded = self.tree()
+        ungraded.replace(self.RULE, "  condition: selection_iam_user",
+                         "  planted_unused: []\n  condition: selection_iam_user")
+        result, data, row = self.json_row(ungraded)
+        self.assertEqual((result.returncode, data["exit"], row["status"]), (1, 1, "FAIL"),
+                         result.describe())
+        self.assertRegex(row["detail"], r"^NEGATIVE CONTROL NOT GRADED: ")
+        self.assertIsNone(row["benign_grading"])
+        # The control: on the good tree the rule is a PASS, and its baseline is hard.
+        result, data, row = self.json_row(self.good())
+        self.assertEqual((result.returncode, data["exit"], row["status"]), (0, 0, "PASS"),
+                         result.describe())
+        self.assertIs(row["benign_grading"]["hard"], True)
+
+    CORRELATION_RULE = "detections/sigma/T1078.004/planted_correlation.yml"
+    CORRELATION_ROW = r"\[TRR9999 AWS\] planted_correlation\.yml: "
+
+    def correlation_tree(self, benign):
+        """A copy with the planted cloud correlation rule, in MANIFEST as TRR9999, and
+        its two fixtures: the attack (a key, then AdministratorAccess, for one user in
+        five minutes) and the baseline `benign`. Each event carries `timestamp`, the
+        field that the correlation reads."""
+        tree = self.tree()
+        tree.plant("validators/cloud_correlation/planted_correlation.yml", self.CORRELATION_RULE)
+        attack = [self.iam_event("CreateAccessKey", "10:00:00", "trr9999-planted"),
+                  self.iam_event("AttachUserPolicy", "10:05:00", "trr9999-planted",
+                                 "AdministratorAccess")]
+        tree.write("detections/cloud/fixtures/trr9999/attack.json",
+                   json.dumps(attack, indent=2) + "\n")
+        tree.write("detections/cloud/fixtures/trr9999/benign.json",
+                   json.dumps(benign, indent=2) + "\n")
+        tree.replace(self.GATE, "]\n\nFOLDERS = ",
+                     '    ("TRR9999", "T1078.004", "planted_correlation.yml",\n'
+                     '     "trr9999/attack.json", "trr9999/benign.json", "AWS",\n'
+                     '     "planted correlation", marker("trr9999", "userIdentity.arn")),\n'
+                     "]\n\nFOLDERS = ")
+        return tree
+
+    @staticmethod
+    def iam_event(name, clock, user, policy=None):
+        event = {"eventSource": "iam.amazonaws.com", "eventName": name,
+                 "timestamp": f"2026-11-01T{clock}Z",
+                 "userIdentity": {"arn": f"arn:aws:iam::123456789012:user/{user}"}}
+        if policy:
+            event["requestParameters"] = {"policyArn": f"arn:aws:iam::aws:policy/{policy}"}
+        return event
+
+    def test_control_correlation_baseline_that_misses_a_base_is_hard(self):
+        """CONTROL for a correlation rule: the unit is the event set. The baseline is
+        the attack of another user with ReadOnlyAccess in place of AdministratorAccess:
+        a near-miss on base:planted_attach_admin, so it is hard."""
+        tree = self.correlation_tree([
+            self.iam_event("CreateAccessKey", "10:00:00", "ops"),
+            self.iam_event("AttachUserPolicy", "10:05:00", "ops", "ReadOnlyAccess")])
+        result = tree.run(self.GATE)
+        self.assert_accepts(result, rf"^All {len(self.manifest_rules(tree))} external-cloud "
+                                    r"detection\(s\) fired on their recorded attack fixtures, "
+                                    r"and every negative control held\.$")
+        self.assert_saw(result, r"^PASS  " + self.CORRELATION_ROW + r"1/2 attack record\(s\) match"
+                                r".*\n        benign baseline graded: 1 near-miss; ")
+
+    def test_rejects_correlation_baseline_that_is_a_near_miss_only_on_the_timespan(self):
+        """A correlation set counts only as a near-miss on a base atom (base:<ref>). The
+        planted baseline is the attack of another user with the two events two hours
+        apart: a near-miss on the timespan, which moves the same events and shows
+        nothing of an item of a base."""
+        benign = [self.iam_event("CreateAccessKey", "10:00:00", "ops"),
+                  self.iam_event("AttachUserPolicy", "12:05:00", "ops", "AdministratorAccess")]
+        tree = self.correlation_tree(benign)
+        # The artifact is bad: each event matches its base, and the set is outside the
+        # window of one hour.
+        self.assertIn("  timespan: 1h\n", tree.read(self.CORRELATION_RULE))
+        fixture = "detections/cloud/fixtures/trr9999/benign.json"
+        result = self.rejected_as_unproven(
+            tree, self.not_hard(self.CORRELATION_ROW, fixture) + r"1 near-miss\)")
+        self.assert_saw(result, r"^        the benign event set is near-miss on `timespan`, which "
+                                r"does not count: a correlation counts a near-miss set only on a "
+                                r"base atom")
 
     @gatelib.known_gap(
         "cloud-fixture-record-not-an-object",
