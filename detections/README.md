@@ -1158,13 +1158,12 @@ A negative control that read no record cannot fail, so it proves nothing. With
   not given. The static pod and API server validators also need `--cri-log` and
   `--file-log`.
 - **A log does not exist.**
-- **A log holds no record.** A record is what the loader returns, which is what the
-  rules are run on. The `Loaded N ...` line prints the number: the JSON objects of the
-  lines of an audit log or a file log, and one sandbox for each sandbox object of a
-  CRI log (by `id`: an object whose `id` the log held before is not counted again,
-  and the objects without an `id` count as one). A blank line and a line that is not
-  JSON are not records. For an audit log, and for each log of the API server
-  validator, the message gives the number of lines that are not blank. Thus a capture
+- **A log holds no record.** A record is what the reader of the validator returns,
+  which is what the rules are run on (see [A record of each log](#a-record-of-each-log)).
+  The `Loaded N ...` line prints the number. A sandbox of a CRI log counts once: a
+  sandbox whose `id` the log held before is not counted again. For an audit log, and
+  for each log of the API server validator, the message gives the number of lines
+  that are not blank. Thus a capture
   that recorded nothing (0 lines) is told from a capture that did not parse (N
   lines). For its CRI log and its file log, the static pod validator gives the number
   of records, and not the number of lines. For a CRI log, N lines with 0 records is
@@ -1189,13 +1188,11 @@ record holds the key that the file sensor step gives to its canary watch, so a
 capture step that converts another key fails the tests. Only the kind job shows the
 records that the runner's auditd writes.
 
-The checks count records. They do not grade them. A log of `{}` lines passes today:
-each loader counts a JSON object that is not a record of its log. Roadmap item R2d
-closes that (the known gap `k8s-log-object-not-an-audit-event` of the gate tests). How
-near the records of a live capture are to a rule is not a claim of the Kubernetes
-negative control: the near-miss of each rule is proven by its rule cases (item 3 of
-the definition of done). The static pod validator does not require a mirror-pod
-create of the control-plane baseline in the audit log.
+The checks count records. They do not grade them: how near the records of a live
+capture are to a rule is not a claim of the Kubernetes negative control. The
+near-miss of each rule is proven by its rule cases (item 3 of the definition of
+done). The static pod validator does not require a mirror-pod create of the
+control-plane baseline in the audit log.
 
 The verdict and the exit code of a strict run are not changed, and a strict run needs
 no more logs than before. Without `--audit-log` it reads
@@ -1207,6 +1204,60 @@ option. As before, it is a log that does not exist: the run prints
 One text of a strict run is changed: the two `CONTROL FAILED` lines of the static pod
 validator (a CRI log without an API-scheduled sandbox, a file log without a `kubeadm`
 write) name the log and the number of its records in a strict run too.
+
+### A record of each log
+
+The three Kubernetes validators read their logs with one reader (`read_log()`). Its
+text is the same in each validator, and the gate tests compare the three texts. Only
+its table `RECORDS` differs: it holds the logs of the validator. A record of each log
+is the smallest identity that the code that reads the log needs:
+
+| Log | A record | Not a record (examples) |
+|-----|----------|-------------------------|
+| audit log | A JSON object with `"kind": "Event"` and an `apiVersion` of the group `audit.k8s.io` (`audit.k8s.io/v1`). The API server writes both in each event. | `{}`; a core Event of `kubectl get events -o json` (`apiVersion` `v1` or `events.k8s.io/v1`); an audit `EventList` (the batch of the webhook backend). |
+| CRI log | A pod sandbox: a JSON object with a string `id` that is not empty, and a `metadata` object with a string `name` that is not empty. A line is one snapshot of `crictl pods -o json` (`{"items": [...]}`, each item a sandbox), or one sandbox. A sandbox counts once, at the first line that holds its `id`. `{"items": []}` is a snapshot without a sandbox. | `{}`; a snapshot whose `items` is not a list (`{"items": null}`, `{"items": {}}`); an item without an `id` or without `metadata.name`. |
+| file log | A file event: a JSON object with a `TargetFilename` and an `Image`, strings that are not empty. `k8s/auditd_file_events.py` writes both in each event. | `{}`. |
+
+A blank line, and a line that is not JSON (a line that was cut at the end of a
+capture), are no record and no problem. Each other line, or item of a snapshot, that
+is not a record is a problem:
+
+- JSON that is not an object (`[]`, `"text"`, `1`, `true`, `null`);
+- a JSON object that is not a record of the log;
+- a snapshot whose `items` is not a list;
+- bytes that are not UTF-8 (the message names the first such byte and its character
+  in the line);
+- the byte order mark of UTF-8 (`EF BB BF`) at the start of line 1;
+- JSON that the validator cannot read: nesting that is too deep (a `RecursionError`),
+  or a number with more digits than Python reads (a `ValueError`).
+
+A problem fails each run that reads the log: a strict run, `--report` and
+`--expect-miss`. The validator reads its logs, prints one `ERROR` line for each
+problem after the `Loaded` line of the log, and judges no rule:
+
+```text
+Loaded 2 audit event(s) from /tmp/pre-emulation-audit.log
+ERROR: the audit log /tmp/pre-emulation-audit.log, line 3: JSON that is not an object (a list)
+Loaded 3 pod sandbox(es) from /tmp/pre-emulation-cri.jsonl
+ERROR: the CRI log /tmp/pre-emulation-cri.jsonl, line 4, item 1 of the snapshot: a JSON object that is not a pod sandbox (a sandbox has an "id" and a "metadata" object with a "name")
+
+FAILED: 2 line(s) of the logs are not records of their log (see the ERROR lines above). No rule is judged on a log that holds such a line.
+```
+
+Lines, items and characters count from 1. A log gets at most 10 `ERROR` lines of
+problems, and one more line gives the number of its other problems. The `Loaded`
+line counts the records only. With `--expect-miss`, the lines of the negative control
+that fail (a log that is not given, was not found or holds no record) come before the
+`FAILED` line, and the `--json` control of the pre-emulation logs says `FAILED`. The
+`--json` report gets `log_problems` (one entry for each log that has a problem, with
+the same limit) only then, so the report of a healthy run does not change.
+
+A log that is a directory, or that the run cannot open, is an `ERROR` that ends the
+run with exit 1 at once (`ERROR: the audit log <path> is a directory, not a file.`).
+It is not a log that was not found: a strict run does not print `SKIP` for it.
+
+Only the kind jobs show that each line of a real capture is a record by these
+definitions: the log of a healthy job holds no `ERROR` line of the reader.
 
 ### Node runtime sensor (TRR9003 Strategy 1)
 

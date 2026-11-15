@@ -165,11 +165,9 @@ Modes:
                         empty value of it counts as not given), when the audit log
                         does not exist, and when one of the three logs holds
                         no record. The count is the number that the `Loaded N ...` line
-                        prints: the JSON objects of the lines of the audit log or the
-                        file log that are not blank, and one sandbox for each sandbox
-                        object of the CRI log (by id: an object whose id the log held
-                        before is not counted again, and the objects without an id
-                        count as one).
+                        prints: the records of the log (see "A record of each log"
+                        below). A sandbox of the CRI log counts once: a sandbox whose
+                        id the log held before is not counted again.
     --report            Report misses instead of failing on them.
     --json PATH         Also write a machine-readable report (status, detail and the
                         explanation lines of every rule) to PATH.
@@ -183,6 +181,24 @@ Modes:
                         It selects the POLICY_GATES and EXPECTED_MISS entries below;
                         nothing else. A strict run (also with --report) under a policy
                         with such entries needs --ledger (else exit 2).
+
+A record of each log (RECORDS): an audit event is a JSON object with "kind": "Event"
+and an apiVersion of the group audit.k8s.io; a pod sandbox has an "id" and a
+"metadata" object with a "name" (a snapshot of the CRI log holds them in "items", a
+list); a file event has a "TargetFilename" and an "Image". A blank line, and a line
+that is not JSON (a line that was cut at the end of a capture), are not records.
+Each other line, or item of a snapshot, that is not a record fails every run that
+reads the log (a strict run, --report and --expect-miss) after the logs are read,
+and no rule is judged: JSON that is not an object (`[]`), a JSON object that is not
+a record of the log (`{}`), a snapshot whose "items" is not a list, bytes that are
+not UTF-8, the byte order mark of UTF-8 at the start of line 1, and JSON that the
+validator cannot read (too deep, or a number that is too long). One ERROR line names
+the log, the line (and the item) and the problem (at most 10 for each log, then the
+number of the others), and a FAILED line ends the run with exit 1. With
+--expect-miss the NEGATIVE CONTROL FAILED lines of the pre-emulation logs come before
+the FAILED line, and the --json control of those logs says FAILED; --json gets
+`log_problems` (with the same limit) when a log holds such a line. A log that is a
+directory, or that the run cannot open, is an ERROR (exit 1) at once.
 
 POLICY_GATES ({policy: {(rule path, MANIFEST label): {"reason", "case", "gate"}}}) names
 the MANIFEST entries whose gate a policy REPLACES in a strict run, because the policy
@@ -1811,46 +1827,184 @@ def windowed(gate, ledger):
     return bound
 
 
-def load_events(path):
-    events = []
-    with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                events.append(sigma_eval.flatten(json.loads(line)))
-            except json.JSONDecodeError:
-                continue
-    return events
+# ---- what a record of each log is ---------------------------------------------
+# The table of the log reader below. For each source of MANIFEST: the name of its
+# log, the name of one record, the test of one JSON object, and what the test needs.
+# Each test is the smallest identity that the code that reads the log needs (see
+# detections/README.md, "A record of each log").
 
 
-def load_cri(path):
-    """CRI pod sandboxes, flattened: one for each sandbox object, by id (first
-    sighting).
+def _text(value):
+    """True for a string that is not empty."""
+    return isinstance(value, str) and value != ""
 
-    Each line is a `crictl pods -o json` snapshot ({"items": [...]}) or a single
-    sandbox object, as detections/k8s/cri-pod-sensor.sh writes it. The id is the
-    `id` key of the object: the objects without that key have the same id (None),
-    so they count as one sandbox.
+
+RECORDS = {
+    "audit": {
+        "log": "audit log", "record": "audit event", "a": "an audit event",
+        "test": lambda doc: (doc.get("kind") == "Event"
+                             and isinstance(doc.get("apiVersion"), str)
+                             and doc["apiVersion"].startswith("audit.k8s.io/")),
+        "needs": 'an audit event has "kind": "Event" and an apiVersion of the group '
+                 "audit.k8s.io",
+        "snapshot": False, "once_by": None},
+    "cri": {
+        "log": "CRI log", "record": "pod sandbox", "a": "a pod sandbox",
+        "test": lambda doc: (_text(doc.get("id")) and isinstance(doc.get("metadata"), dict)
+                             and _text(doc["metadata"].get("name"))),
+        "needs": 'a sandbox has an "id" and a "metadata" object with a "name"',
+        "snapshot": True, "once_by": "id"},
+    "file": {
+        "log": "file log", "record": "file event", "a": "a file event",
+        "test": lambda doc: _text(doc.get("TargetFilename")) and _text(doc.get("Image")),
+        "needs": 'a file event has a "TargetFilename" and an "Image"',
+        "snapshot": False, "once_by": None},
+}
+
+
+# ---- the log reader ----------------------------------------------------------
+# The same text in validate_k8s_detections.py, validate_staticpod_detections.py and
+# validate_apiserver_detections.py; each validator stays standalone. Only the table
+# RECORDS above differs: it holds the sources of the MANIFEST of the validator. The
+# gate tests compare the three texts (test_validators.py, class LogReaderText).
+
+
+class LogError(Exception):
+    """A log that the validator cannot read: a directory, or a file that the run
+    cannot open. The run names it and exits 1, and it judges no rule."""
+
+
+SHOWN = 10  # the ERROR lines of one log; the problems after them are only counted
+BYTE_ORDER_MARK = chr(0xFEFF)  # the text of the bytes EF BB BF of UTF-8
+
+
+def _kind(value):
+    """The JSON type of a value, for a message: an object, a list, a string, ..."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "null"
+    return {dict: "an object", list: "a list", str: "a string"}.get(type(value), "a number")
+
+
+def _cannot_read(error):
+    """The text of a problem of JSON that json.loads() or flatten() cannot read."""
+    text = str(error).split("\n")[0]
+    return (f"JSON that the validator cannot read ({type(error).__name__}: "
+            + (text if len(text) <= 100 else text[:100] + "...") + ")")
+
+
+def record_problem(source, doc):
+    """None when `doc` (the JSON value of one line, or of one item of a CRI snapshot)
+    is a record of the log of `source`; else the problem, as text."""
+    if not isinstance(doc, dict):
+        return f"JSON that is not an object ({_kind(doc)})"
+    spec = RECORDS[source]
+    if not spec["test"](doc):
+        return f"a JSON object that is not {spec['a']} ({spec['needs']})"
+    return None
+
+
+def read_log(path, source):
+    """(records, problems): the records of the log of `source` at `path`, flattened to
+    the dotted field names of the rules (sigma_eval.flatten), and the problems.
+
+    The records are what each rule of that source is run on. The `Loaded N ...` line
+    prints their number. A line of a CRI log is a `crictl pods -o json` snapshot
+    ({"items": [...]}) or one sandbox; a sandbox counts once, at the first line that
+    holds its id.
+
+    A problem is a line, or an item of a snapshot, that is not a record of the log:
+    bytes that are not UTF-8, the byte order mark of UTF-8 at the start of line 1,
+    JSON that the validator cannot read (too deep, or a number that is too long),
+    JSON that is not an object, a JSON object that is not a record of the log, and a
+    snapshot whose "items" is not a list. Each problem is (line, item, text): lines
+    and items count from 1, and item is None for a line. A blank line, and a line
+    that is not JSON (a line that was cut at the end of a capture), are no record and
+    no problem. Raises LogError for a log that is a directory or cannot be read.
     """
-    seen, sandboxes = set(), []
-    with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                doc = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            for sandbox in (doc.get("items") or []) if "items" in doc else [doc]:
-                sid = sandbox.get("id")
-                if sid in seen:
+    spec = RECORDS[source]
+    if os.path.isdir(path):
+        raise LogError(f"the {spec['log']} {path} is a directory, not a file")
+    records, problems, seen = [], [], set()
+    try:
+        with open(path, encoding="utf-8", errors="surrogateescape") as fh:
+            for n, text in enumerate(fh, 1):
+                line = text.strip()
+                if not line:
                     continue
-                seen.add(sid)
-                sandboxes.append(sigma_eval.flatten(sandbox))
-    return sandboxes
+                bad = next((i for i, ch in enumerate(text) if 0xDC80 <= ord(ch) <= 0xDCFF), None)
+                if bad is not None:
+                    problems.append((n, None, f"bytes that are not UTF-8 (the byte "
+                                              f"0x{ord(text[bad]) - 0xdc00:02x} at character "
+                                              f"{bad + 1} of the line)"))
+                    continue
+                if n == 1 and text.startswith(BYTE_ORDER_MARK):
+                    problems.append((n, None, "the line starts with the byte order mark of "
+                                              "UTF-8 (EF BB BF)"))
+                    continue
+                try:
+                    doc = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                except (ValueError, RecursionError) as e:
+                    problems.append((n, None, _cannot_read(e)))
+                    continue
+                items = [(None, doc)]
+                if spec["snapshot"] and isinstance(doc, dict) and "items" in doc:
+                    if not isinstance(doc["items"], list):
+                        problems.append((n, None, 'a snapshot whose "items" is not a list '
+                                                  f"({_kind(doc['items'])})"))
+                        continue
+                    items = list(enumerate(doc["items"], 1))
+                for item, value in items:
+                    why = record_problem(source, value)
+                    if why is None:
+                        try:
+                            record = sigma_eval.flatten(value)
+                        except RecursionError as e:
+                            why = _cannot_read(e)
+                    if why is not None:
+                        problems.append((n, item, why))
+                        continue
+                    if spec["once_by"]:
+                        if value[spec["once_by"]] in seen:
+                            continue
+                        seen.add(value[spec["once_by"]])
+                    records.append(record)
+    except OSError as e:
+        raise LogError(f"the {spec['log']} {path} cannot be read ({e.strerror or e})") from None
+    return records, problems
+
+
+def show_log_problems(source, path, problems, report):
+    """Print one ERROR line for each problem of one log (at most SHOWN, then the
+    number of the others), and add the log to report["log_problems"] (--json, with
+    the same limit). Returns the number of lines of the log that hold a problem."""
+    if not problems:
+        return 0
+    name = RECORDS[source]["log"]
+    texts = [f"line {n}" + (f", item {item} of the snapshot" if item else "") + f": {why}"
+             for n, item, why in problems]
+    for text in texts[:SHOWN]:
+        print(f"ERROR: the {name} {path}, {text}")
+    if len(texts) > SHOWN:
+        print(f"ERROR: the {name} {path}: {len(texts) - SHOWN} more problem(s), not shown")
+    lines = len({n for n, _, _ in problems})
+    report.setdefault("log_problems", []).append(
+        {"log": name, "path": path, "lines": lines, "problems": len(texts),
+         "shown": texts[:SHOWN]})
+    return lines
+
+
+def log_problems_failed(lines):
+    """The verdict of a run whose logs hold lines that are not records: no rule is
+    judged on such a log."""
+    return (f"FAILED: {lines} line(s) of the logs are not records of their log (see the "
+            "ERROR lines above). No rule is judged on a log that holds such a line.")
+
+
+# ---- end of the log reader ---------------------------------------------------
 
 
 def nonblank_lines(path):
@@ -1870,12 +2024,8 @@ DEFAULT_AUDIT_LOG = "/tmp/kube-apiserver-audit.log"
 
 # --expect-miss: why a pre-emulation log that gave the rules no record fails the run.
 VACUOUS = "A negative control that read no record cannot fail, so it proves nothing."
-# The log of each source of MANIFEST, and what a record of it is. The pre-emulation
-# log of each source must hold a record. For the file log, which is the audit trail
-# of one watched token file, the capture step of the workflow adds the canary read
-# of ca.crt (see the docstring of this module).
-LOG_NAME = {"audit": "audit log", "cri": "CRI log", "file": "file log"}
-RECORD_NAME = {"audit": "audit event", "cri": "pod sandbox", "file": "file event"}
+# --expect-miss: the control of the pre-emulation logs, in --json.
+INPUTS_CONTROL = "each pre-emulation log is given and holds a record"
 
 
 def negative_control_inputs(args, logs):
@@ -1884,22 +2034,24 @@ def negative_control_inputs(args, logs):
 
     A log is named when it was not given, when it does not exist (the audit log: a CRI
     or file log that is given and does not exist ended the run before this point), and
-    when it holds no record. The count is what the loader returned, which is what each
-    rule of that source is run on: the JSON objects of the lines of the audit log or
-    the file log, and one sandbox for each sandbox object of the CRI log (by id).
+    when it holds no record. The count is what read_log() returned, which is what each
+    rule of that source is run on (RECORDS says what a record of each log is). The
+    pre-emulation log of each source must hold a record. For the file log, which is
+    the audit trail of one watched token file, the capture step of the workflow adds
+    the canary read of ca.crt (see the docstring of this module).
     """
     paths = {"audit": args.audit_log, "cri": args.cri_log, "file": args.file_log}
     failures = []
     for source in ("audit", "cri", "file"):
         if not any(entry[2] == source for entry in MANIFEST):
             continue
-        name, path = LOG_NAME[source], paths[source]
+        name, path = RECORDS[source]["log"], paths[source]
         if not path:
             failures.append(f"no pre-emulation {name} was given (--{source}-log)")
         elif source not in logs:
             failures.append(f"the pre-emulation {name} {path} was not found")
         elif not logs[source]:
-            failures.append(f"the pre-emulation {name} {path} holds no {RECORD_NAME[source]} "
+            failures.append(f"the pre-emulation {name} {path} holds no {RECORDS[source]['record']} "
                             f"(0 records read from {nonblank_lines(path)} non-blank line(s))")
     return failures
 
@@ -2294,25 +2446,59 @@ def validate(args, report):
         audit_log = args.audit_log or None
     else:
         audit_log = DEFAULT_AUDIT_LOG if args.audit_log is None else args.audit_log
-    if audit_log is None:
-        print("\nNo audit log given (--audit-log).")
-    elif os.path.exists(audit_log):
-        logs["audit"] = load_events(audit_log)
-        print(f"\nLoaded {len(logs['audit'])} audit event(s) from {audit_log}")
-    else:
-        print(f"\nAudit log not found: {audit_log}")
-    if args.cri_log:
-        if not os.path.exists(args.cri_log):
-            print(f"ERROR: CRI sensor log not found: {args.cri_log}")
-            return 1
-        logs["cri"] = load_cri(args.cri_log)
-        print(f"Loaded {len(logs['cri'])} pod sandbox(es) from {args.cri_log}")
-    if args.file_log:
-        if not os.path.exists(args.file_log):
-            print(f"ERROR: node file-event log not found: {args.file_log}")
-            return 1
-        logs["file"] = load_events(args.file_log)
-        print(f"Loaded {len(logs['file'])} file event(s) from {args.file_log}")
+    # A log that is a directory, or that the run cannot open, ends the run at once.
+    # A line that is not a record of its log ends it after the three logs are read:
+    # no rule is judged on such a log (a strict run, --report and --expect-miss).
+    bad = 0
+    try:
+        if audit_log is None:
+            print("\nNo audit log given (--audit-log).")
+        elif os.path.exists(audit_log):
+            print()
+            logs["audit"], problems = read_log(audit_log, "audit")
+            print(f"Loaded {len(logs['audit'])} audit event(s) from {audit_log}")
+            bad += show_log_problems("audit", audit_log, problems, report)
+        else:
+            print(f"\nAudit log not found: {audit_log}")
+        if args.cri_log:
+            if not os.path.exists(args.cri_log):
+                print(f"ERROR: CRI sensor log not found: {args.cri_log}")
+                return 1
+            logs["cri"], problems = read_log(args.cri_log, "cri")
+            print(f"Loaded {len(logs['cri'])} pod sandbox(es) from {args.cri_log}")
+            bad += show_log_problems("cri", args.cri_log, problems, report)
+        if args.file_log:
+            if not os.path.exists(args.file_log):
+                print(f"ERROR: node file-event log not found: {args.file_log}")
+                return 1
+            logs["file"], problems = read_log(args.file_log, "file")
+            print(f"Loaded {len(logs['file'])} file event(s) from {args.file_log}")
+            bad += show_log_problems("file", args.file_log, problems, report)
+    except LogError as e:
+        print(f"ERROR: {e}.")
+        if args.expect_miss:
+            report.setdefault("controls", []).append({
+                "control": INPUTS_CONTROL, "status": "FAILED",
+                "records": {source: len(events) for source, events in logs.items()},
+                "detail": str(e), "explanation": []})
+        return 1
+    if bad:
+        if args.expect_miss:
+            # The R2c lines first: each pre-emulation log that was not given, was not
+            # found or holds no record. Then the --json entry of that control.
+            vacuous = negative_control_inputs(args, logs)
+            if vacuous:
+                print()
+            for why in vacuous:
+                print(f"NEGATIVE CONTROL FAILED: {why}. {VACUOUS}")
+            report.setdefault("controls", []).append({
+                "control": INPUTS_CONTROL, "status": "FAILED",
+                "records": {source: len(events) for source, events in logs.items()},
+                "detail": "; ".join(vacuous + [f"{bad} line(s) of the pre-emulation logs "
+                                                "are not records of their log"]),
+                "explanation": []})
+        print(f"\n{log_problems_failed(bad)}")
+        return 1
     if not logs and not args.expect_miss:
         print("SKIP: no log to validate against (exit 0).")
         return 0 if not parse_errors else 1
@@ -2535,7 +2721,7 @@ def validate(args, report):
     vacuous = negative_control_inputs(args, logs) if args.expect_miss else []
     if args.expect_miss:
         report.setdefault("controls", []).append({
-            "control": "each pre-emulation log is given and holds a record",
+            "control": INPUTS_CONTROL,
             "status": "FAILED" if vacuous else "held",
             "records": {source: len(events) for source, events in logs.items()},
             "detail": "; ".join(vacuous), "explanation": []})

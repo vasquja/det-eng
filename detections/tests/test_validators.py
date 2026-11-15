@@ -11,9 +11,13 @@ detection-quality.yml job schedule-freshness).
                            host replaced by canned events (no root, no auditd)
     K8sValidator           detections/validate_k8s_detections.py: --dry-run, and
                            the negative-control step (--expect-miss), which must
-                           get each pre-emulation log and read a record
-    StaticPodValidator     detections/validate_staticpod_detections.py: the same two
-    ApiserverValidator     detections/validate_apiserver_detections.py: the same two
+                           get each pre-emulation log and read a record; a log
+                           line that is not a record, and a log that is a
+                           directory, fail each run
+    StaticPodValidator     detections/validate_staticpod_detections.py: the same
+    ApiserverValidator     detections/validate_apiserver_detections.py: the same
+    LogReaderText          the log reader of the three Kubernetes validators is one
+                           text (it reads the files; it runs no gate)
     FileEventConverter     detections/k8s/auditd_file_events.py: the summary line of
                            the converter of the file sensor (stderr), and the file
                            log (stdout)
@@ -170,10 +174,11 @@ def strict_runs_without_a_log(test, skip):
     test asks what the validator asks (os.path.exists): a path that does not
     exist, or a symbolic link to nothing, is a log that the run does not find. A
     machine that ran the lab can hold that log; then the third run must load it,
-    and its verdict is not asserted. When the path exists and is not a file (a
-    directory), nothing of the third run is asserted: no validator has a message
-    for such a log (roadmap item R2d). `skip` is the SKIP line of the validator,
-    as a regular expression."""
+    and its verdict is not asserted. When the path is a directory, the third run
+    must name it in an ERROR line and exit 1: a directory is not a log that the run
+    did not find. (strict_run_on_a_directory() makes the same run on a directory of
+    the sandbox, so each machine runs that check.) `skip` is the SKIP line of the
+    validator, as a regular expression."""
     good = test.good()
     missing = good.tmp_path("no-such-audit.log")
     test.assertFalse(os.path.lexists(missing))
@@ -185,10 +190,85 @@ def strict_runs_without_a_log(test, skip):
             if os.path.isfile(log):
                 test.assert_saw(result,
                                 rf"^Loaded \d+ audit event\(s\) from {re.escape(log)}$")
+            elif os.path.isdir(log):
+                test.assert_rejects(result, rf"^ERROR: the audit log {re.escape(log)} is a "
+                                            r"directory, not a file\.$", exit_code=1)
             continue
         test.assert_accepts(result, skip)
         test.assert_saw(result, rf"^Audit log not found: {re.escape(log)}$")
         test.assertNotRegex(result.stdout, r"(?m)^Loaded |CONTROL FAILED|^ERROR")
+
+
+def case_events(tree, sidecar, name):
+    """The events of the case `name` of a rule sidecar of the copy."""
+    for case in tree.read_jsonl(sidecar):
+        if case["name"] == name:
+            return case["events"]
+    raise AssertionError(f"{sidecar} holds no case {name!r}: choose another case for the "
+                         "log of this test")
+
+
+def strict_run_on_a_directory(test):
+    """A strict run of a Kubernetes validator whose audit log is a directory of the
+    sandbox. The path exists, so it is not a log that the run did not find (that is
+    a SKIP); and it is no file to read. The validator names it, exits 1 and judges
+    no rule."""
+    good = test.good()
+    log = good.tmp_path("audit-log-directory")
+    os.makedirs(log, exist_ok=True)
+    result = good.run(test.GATE, "--audit-log", log)
+    test.assertNotRegex(result.stdout, r"(?m)^(Loaded |PASS  |MISS  |SKIP)|not found")
+    test.assert_rejects(result, rf"^ERROR: the audit log {re.escape(log)} is a directory, not "
+                                r"a file\.$", exit_code=1)
+
+
+# What a line of `[]` and a line of `{}` are in each log of a Kubernetes validator: the
+# problem that the ERROR line of the line names (R2d), as a regular expression.
+NOT_A_RECORD = {
+    "[]": {source: r"JSON that is not an object \(a list\)" for source in ("audit", "cri", "file")},
+    "{}": {"audit": r'a JSON object that is not an audit event \(an audit event has "kind": '
+                    r'"Event" and an apiVersion of the group audit\.k8s\.io\)',
+           "cri": r'a JSON object that is not a pod sandbox \(a sandbox has an "id" and a '
+                  r'"metadata" object with a "name"\)',
+           "file": r'a JSON object that is not a file event \(a file event has a '
+                   r'"TargetFilename" and an "Image"\)'}}
+# The FAILED line of a run whose logs hold lines that are not records ({}: their number).
+LINES_NOT_RECORDS = (r"^FAILED: {} line\(s\) of the logs are not records of their log \(see "
+                     r"the ERROR lines above\)\. No rule is judged on a log that holds such a "
+                     r"line\.$")
+
+
+def rejects_a_line_that_is_not_a_record_in_each_log(test):
+    """Six runs of the negative-control step of the static pod or the API server
+    validator: the healthy logs of test.write_logs(), and one more line after the
+    records of one log (audit, CRI or file): `[]`, or `{}`. Each run has a private
+    copy (the step reads fixed names in /tmp/), and the six start together. In each
+    run the validator names that log and that line in its one ERROR line, counts
+    the records of each log (the bad line is not one), and judges no rule."""
+    logs = (("audit", test.AUDIT, "audit log", "audit event(s)"),
+            ("cri", test.CRI, "CRI log", "pod sandbox(es)"),
+            ("file", test.FILE, "file log", "file event(s)"))
+    runs = []
+    for source, name, log, _ in logs:
+        for line in ("[]", "{}"):
+            tree = test.tree()
+            counts = dict(zip(("audit", "cri", "file"), test.write_logs(tree)))
+            with open(tree.tmp_path(name), "a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+            runs.append((source, name, log, line, counts,
+                         tree.start_step(test.negative_control_step())))
+    for source, name, log, line, counts, pending in runs:
+        with test.subTest(log=log, line=line):
+            result = pending.result()
+            for other, _, _, what in logs:
+                test.assert_saw(result, rf"^Loaded {counts[other]} {re.escape(what)} from ")
+            test.assertEqual(len(re.findall(r"^ERROR: ", result.stdout, re.MULTILINE)), 1,
+                             result.describe())
+            test.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[|CONTROL FAILED")
+            test.assert_saw(result, LINES_NOT_RECORDS.format(1))
+            test.assert_rejects(result, rf"^ERROR: the {log} \S+/{re.escape(name)}, line "
+                                        rf"{counts[source] + 1}: {NOT_A_RECORD[line][source]}$",
+                                exit_code=1)
 
 
 class CloudValidator(gatelib.GateCase):
@@ -1955,142 +2035,215 @@ class K8sValidator(gatelib.GateCase):
         self.assertEqual(len(re.findall(r"^MISS  \[", result.stdout, re.MULTILINE)), len(rules))
         self.assertNotIn("NEGATIVE CONTROL", result.stdout)
 
-    @gatelib.known_gap(
-        "k8s-log-object-not-an-audit-event",
-        gate="detections/validate_k8s_detections.py --expect-miss",
-        reason="A pre-emulation audit log whose lines are all `{}` passes the negative "
-               "control. The loader counts each JSON object as an audit event (`Loaded 3 "
-               "audit event(s)`), no rule matches an object without a field, and the step "
-               "prints `Negative control held`. Such a log holds no record of the API "
-               "server, so the control read nothing that a rule can match. "
-               "validate_apiserver_detections.py counts a `{}` line as a record too: its "
-               "negative control holds on an audit log, a CRI log and a file log of `{}` "
-               "lines.",
-        closes="R2d")
-    def test_gap_log_of_objects_that_are_not_audit_events(self):
-        """WANTED: the validator does not count a JSON object that is not an audit event
-        as a record, and it names the log and the line in an ERROR or FAILED line."""
+    NOT_AUDIT_EVENT = NOT_A_RECORD["{}"]["audit"] + "$"
+
+    def log_with(self, tree, *lines, name=None):
+        """The audit log of the negative control (or the log `name`) in `tree`: the
+        records of the control, then `lines` (text, or bytes for a line that is not
+        UTF-8). Returns the number of the records."""
+        name = name or self.LOG
+        records = write_log(tree, name, self.CASES, *self.BENIGN)
+        with open(tree.tmp_path(name), "ab") as fh:
+            for line in lines:
+                fh.write((line if isinstance(line, bytes) else line.encode("utf-8")) + b"\n")
+        return records
+
+    def test_rejects_log_of_objects_that_are_not_audit_events(self):
+        """A pre-emulation audit log whose lines are all `{}` holds no record of the API
+        server, so the control read nothing that a rule can match. The validator does
+        not count such an object as a record, and it names the log and each line.
+        (This was the known gap k8s-log-object-not-an-audit-event: the step printed
+        `Loaded 3 audit event(s)` and `Negative control held`.)"""
         good = self.good()
         lines = 3
-        for name in (self.LOG, "pre-emulation-cri.jsonl", "pre-emulation-file.jsonl"):
-            write_text_log(good, name, "{}\n" * lines)
+        write_text_log(good, self.LOG, "{}\n" * lines)
         # The artifact is bad in one way: each line of the audit log is a JSON object
-        # without a field, so no line is a record of the API server. (The CRI log and
-        # the file log are for the proof of the `reason`, below.)
+        # without a field, so no line is a record of the API server.
         with open(good.tmp_path(self.LOG), encoding="utf-8") as fh:
             self.assertEqual([json.loads(line) for line in fh], [{}] * lines)
-        apiserver = good.start_step(gatelib.ci_step("validate-apiserver-detections.yml",
-                                                    "validate", "--expect-miss"))
         result = good.run_step(self.negative_control_step())
-        apiserver = apiserver.result()
-        # The gate read the planted log: today it prints the number of lines as the
-        # number of audit events; a designed message names the log and the line.
-        self.assert_saw(result, r"^Loaded \d+ audit event\(s\) from \S+/pre-emulation-audit\.log$|"
-                                r"pre-emulation-audit\.log.*\bline(s|\(s\))? 1\b")
-        if result.returncode == 0:
-            # Today. The `reason` of the marker says what the step does with the log;
-            # prove each sentence, so that the text cannot go out of date.
-            rules = set(in_source(good, self.GATE, r'^    \("(k8s_\w+\.yml)", "'))
-            self.assert_saw(result, rf"^Loaded {lines} audit event\(s\) from ")
-            self.assertEqual(len(re.findall(r"^MISS  \[.*: no emulation event matched$",
-                                            result.stdout, re.MULTILINE)), len(rules))
-            self.assertNotRegex(result.stdout, r"(?m)^PASS  \[")
-            self.assert_saw(result, r"^Negative control held: no procedure gate matches "
-                                    r"without the emulation\.$")
-            # The API server validator: one record for each `{}` line of the audit log
-            # and of the file log, and one sandbox for the `{}` lines of the CRI log
-            # (the objects without an id count as one sandbox).
-            self.assert_accepts(apiserver, r"^Negative control held: the baseline alone does "
-                                           r"not pass any rule\.$")
-            self.assert_saw(apiserver, rf"^Loaded {lines} audit event\(s\) from ")
-            self.assert_saw(apiserver, r"^Loaded 1 pod sandbox\(es\) from ")
-            self.assert_saw(apiserver, rf"^Loaded {lines} file event\(s\) from ")
+        self.assert_saw(result, r"^Loaded 0 audit event\(s\) from \S+/pre-emulation-audit\.log$")
+        self.assertEqual(re.findall(r"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+                                    r"(\d+): " + self.NOT_AUDIT_EVENT, result.stdout, re.M),
+                         [str(n) for n in range(1, lines + 1)])
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
         self.assert_rejects(
             result,
             r"(?i)\A(?![\s\S]*^Loaded [1-9]\d* audit event)[\s\S]*"
             r"^\s*(NEGATIVE CONTROL FAILED|FAILED|ERROR)\b.*pre-emulation-audit\.log.*"
-            r"\bline(s|\(s\))? 1\b")
+            r"\bline(s|\(s\))? 1\b",
+            exit_code=1)
 
-    @gatelib.known_gap(
-        "k8s-log-line-not-an-object",
-        gate="detections/validate_k8s_detections.py --expect-miss",
-        reason="A line of the pre-emulation audit log that is JSON and not an object (`[]`) "
-               "ends the validator with an uncaught AttributeError of sigma_eval.flatten. "
-               "The negative-control step fails, but with a traceback: no line names the "
-               "log or the bad line, and no rule is judged. A strict run stops in the same "
-               "way. So do validate_staticpod_detections.py and "
-               "validate_apiserver_detections.py, with an uncaught AttributeError, on such "
-               "a line in the audit log, in the CRI log and in the file log.",
-        closes="R2d", today="crash")
-    def test_gap_log_line_that_is_not_an_object(self):
-        """WANTED: the validator names the log and the line that is not a JSON object,
-        in an ERROR or FAILED line, and does not stop with a traceback."""
+    def test_rejects_log_line_that_is_not_an_object(self):
+        """A line of the pre-emulation audit log that is JSON and not an object (`[]`),
+        after the records of the control. The validator names the log and the line,
+        does not count the line, and judges no rule. (This was the known gap
+        k8s-log-line-not-an-object: the run ended with an AttributeError of
+        sigma_eval.flatten.)"""
         good = self.good()
-        records = write_log(good, self.LOG, self.CASES, *self.BENIGN)
-        with open(good.tmp_path(self.LOG), "a", encoding="utf-8") as fh:
-            fh.write("[]\n")
+        records = self.log_with(good, "[]")
         # The artifact is bad in one way: the last line of the log is a JSON list. The
         # lines before it are the records of the control, which the step accepts.
         with open(good.tmp_path(self.LOG), encoding="utf-8") as fh:
             lines = fh.read().splitlines()
         self.assertEqual(len(lines), records + 1)
         self.assertEqual(json.loads(lines[-1]), [])
-        # For the proof of the last sentences of the `reason`, below: a strict run on
-        # the same log, and six runs of the other two Kubernetes validators. Each of
-        # the six gets one log, a log whose one line is `[]`: with --expect-miss a
-        # validator has no default log, so the loader of that log is the one that
-        # reads the line.
-        strict = good.start(self.GATE, "--audit-log", good.tmp_path(self.LOG), "--report")
-        write_text_log(good, "list-line.log", "[]\n")
-        others = {
-            (script, option): good.start(script, option, good.tmp_path("list-line.log"),
-                                         "--expect-miss")
-            for script in ("detections/validate_staticpod_detections.py",
-                           "detections/validate_apiserver_detections.py")
-            for option in ("--audit-log", "--cri-log", "--file-log")}
         result = good.run_step(self.negative_control_step())
-        strict = strict.result()
-        others = {run: pending.result() for run, pending in others.items()}
-        # The gate read the planted line: today the last line of the traceback names
-        # its type; a designed message names the log and the number of the line.
-        # (The text of an exception is the text of the Python of the run. The test
-        # reads its type and the start of its message, and the name of a frame, with
-        # no end-of-line anchor: a later Python can add to the end of such a line.)
-        self.assert_saw(result, r"^AttributeError: 'list' object has no attribute 'items'|"
-                                rf"pre-emulation-audit\.log.*\bline {records + 1}\b")
-        if result.crashed:
-            # Today. Prove each sentence of the `reason` of the marker, so that the
-            # text cannot go out of date. The exception comes from sigma_eval.flatten,
-            # no line names the log, and no rule is judged.
-            self.assertRegex(result.output, r'(?m)^  File ".*sigma_eval\.py", line \d+, in '
-                                            r'flatten\b', result.describe())
-            self.assertNotIn("pre-emulation-audit.log", result.output, result.describe())
-            self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
-            # A strict run on the same log.
-            self.assertTrue(strict.crashed and strict.returncode != 0,
-                            "a strict run on the log does not end with a traceback any "
-                            "more: correct the `reason` of the marker\n" + strict.describe())
-            self.assertRegex(strict.output, r"(?m)^AttributeError: 'list' object has no "
-                                            r"attribute 'items'", strict.describe())
-            self.assertNotRegex(strict.stdout, r"(?m)^(PASS|MISS)  \[")
-            # The other two validators. The loader of an audit log and of a file log
-            # is load_events(), and the loader of a CRI log is load_cri().
-            for (script, option), run in others.items():
-                loader = "load_cri" if option == "--cri-log" else "load_events"
-                self.assertTrue(run.crashed and run.returncode != 0,
-                                f"{script} {option}: a `[]` line does not end the run with a "
-                                "traceback any more: correct the `reason` of the marker\n"
-                                + run.describe())
-                self.assertRegex(run.output, r"(?m)^AttributeError: 'list' object has no "
-                                             r"attribute '\w+'", run.describe())
-                self.assertRegex(run.output, rf'(?m)^  File ".*/{re.escape(script)}", line \d+, '
-                                             rf'in {loader}\b', run.describe())
-                self.assertNotRegex(run.stdout, r"(?m)^Loaded |CONTROL FAILED|list-line\.log",
-                                    run.describe())
+        # The gate read the planted line, and it did not count it.
+        self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_saw(result, rf"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+                                rf"{records + 1}: JSON that is not an object \(a list\)$")
         self.assert_rejects(
             result,
             r"(?i)^\s*(NEGATIVE CONTROL FAILED|FAILED|ERROR)\b.*pre-emulation-audit\.log.*"
-            rf"\bline {records + 1}\b")
+            rf"\bline {records + 1}\b",
+            exit_code=1)
+
+    def test_rejects_objects_that_are_not_audit_events_among_records(self):
+        """Two JSON objects that are not audit events, after the records of the
+        control: an audit EventList (the batch that the webhook backend sends: the
+        apiVersion of the group, and not the kind) and a core Event of `kubectl get
+        events` (the kind, and not the apiVersion). The log holds records, and the run
+        still fails: each of the two lines is named, and no rule is judged."""
+        good = self.good()
+        records = self.log_with(
+            good, json.dumps({"kind": "EventList", "apiVersion": "audit.k8s.io/v1", "items": []}),
+            json.dumps({"kind": "Event", "apiVersion": "v1", "reason": "Pulled"}))
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+        self.assertEqual(re.findall(r"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+                                    r"(\d+): " + self.NOT_AUDIT_EVENT, result.stdout, re.M),
+                         [str(records + 1), str(records + 2)])
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_rejects(result, LINES_NOT_RECORDS.format(2), exit_code=1)
+
+    def test_rejects_strict_run_on_a_line_that_is_not_an_object(self):
+        """A line that is not a record fails a strict run too (the run on the log of the
+        emulation), also with --report: --report makes a rule miss non-fatal, not a log
+        that the validator cannot read. No rule is judged."""
+        good = self.good()
+        log = "strict-list-line.log"
+        records = self.log_with(good, "[]", name=log)
+        result = good.run(self.GATE, "--audit-log", good.tmp_path(log), "--report")
+        self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+        self.assertNotIn("not gated (--report)", result.stdout)
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_saw(result, LINES_NOT_RECORDS.format(1))
+        self.assert_rejects(result, rf"^ERROR: the audit log \S+, line {records + 1}: JSON that "
+                                    r"is not an object \(a list\)$", exit_code=1)
+
+    def test_rejects_a_log_line_that_is_not_utf8(self):
+        """Two lines of an audit event, each with one byte that is not UTF-8: one
+        before the JSON text (the line is then not JSON), and one in a string of the
+        event (the line is then JSON). A reader that replaced the byte would skip the
+        first line and count the second as a record. Each line is named, with the
+        byte and its character in the line (from 1)."""
+        good = self.good()
+        event = json.dumps(case_events(good, self.CASES, self.BENIGN[0])[0]).encode("ascii")
+        inside = event.replace(b'"verb": "', b'"verb": "\xe9', 1)
+        self.assertNotEqual(inside, event)
+        at = inside.index(b"\xe9") + 1
+        records = self.log_with(good, b"\xff" + event, inside)
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+        self.assert_saw(result, rf"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+                                rf"{records + 1}: bytes that are not UTF-8 \(the byte 0xff at "
+                                r"character 1 of the line\)$")
+        self.assert_saw(result, rf"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+                                rf"{records + 2}: bytes that are not UTF-8 \(the byte 0xe9 at "
+                                rf"character {at} of the line\)$")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_rejects(result, LINES_NOT_RECORDS.format(2), exit_code=1)
+
+    def test_rejects_a_log_that_starts_with_a_byte_order_mark(self):
+        """The log starts with the byte order mark of UTF-8. A reader that does not
+        name it loses the first record without a word: json.loads() refuses the
+        line, and a line that is not JSON is skipped."""
+        good = self.good()
+        records = write_log(good, self.LOG, self.CASES, *self.BENIGN)
+        with open(good.tmp_path(self.LOG), "rb") as fh:
+            text = fh.read()
+        with open(good.tmp_path(self.LOG), "wb") as fh:
+            fh.write(b"\xef\xbb\xbf" + text)
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {records - 1} audit event\(s\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_rejects(result, r"^ERROR: the audit log \S+/pre-emulation-audit\.log, line 1: "
+                                    r"the line starts with the byte order mark of UTF-8 "
+                                    r"\(EF BB BF\)$", exit_code=1)
+
+    def test_rejects_json_that_the_validator_cannot_read(self):
+        """Two lines of JSON that is too deep: 100000 `[` (lists in lists), which
+        json.loads() cannot read, and an audit event whose requestObject holds objects
+        3000 deep, which json.loads() or sigma_eval.flatten() cannot read (it depends
+        on the version of Python). Each is a named problem, not a traceback."""
+        good = self.good()
+        deep = ('{"kind": "Event", "apiVersion": "audit.k8s.io/v1", "verb": "get", '
+                '"requestObject": ' + '{"a": ' * 3000 + "1" + "}" * 3000 + "}")
+        records = self.log_with(good, "[" * 100000, deep)
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+        self.assertEqual(re.findall(r"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+                                    r"(\d+): JSON that the validator cannot read "
+                                    r"\(RecursionError: ", result.stdout, re.M),
+                         [str(records + 1), str(records + 2)])
+        self.assert_rejects(result, LINES_NOT_RECORDS.format(2), exit_code=1)
+
+    def test_json_report_holds_ten_problems_of_a_log_and_their_number(self):
+        """A log of records and 12 lines that are not records. The console shows 10
+        ERROR lines and the number of the others, and so does --json (`log_problems`):
+        a log of a million such lines gives a short output. The control of the log
+        says FAILED, also when the log holds records. (The step with --json is a
+        variant: no workflow runs it.)"""
+        good = self.good()
+        bad = 12
+        records = self.log_with(good, *["{}"] * bad)
+        result = good.run_step(with_options(self, self.negative_control_step(),
+                                            "--json /tmp/k8sproblems.json"))
+        self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+        shown = re.findall(r"^ERROR: the audit log \S+/pre-emulation-audit\.log, line (\d+): "
+                           + self.NOT_AUDIT_EVENT, result.stdout, re.M)
+        self.assertEqual(shown, [str(records + n) for n in range(1, 11)], result.describe())
+        self.assert_saw(result, r"^ERROR: the audit log \S+/pre-emulation-audit\.log: 2 more "
+                                r"problem\(s\), not shown$")
+        self.assert_rejects(result, LINES_NOT_RECORDS.format(bad), exit_code=1)
+        with open(good.tmp_path("k8sproblems.json"), encoding="utf-8") as fh:
+            report = json.load(fh)
+        log = good.tmp_path(self.LOG)
+        self.assertEqual(report["exit"], 1)
+        self.assertEqual(report["controls"], [{
+            "control": "the pre-emulation audit log holds a record", "status": "FAILED",
+            "detail": f"{bad} line(s) of the pre-emulation audit log {log} are not audit "
+                      "events"}])
+        self.assertEqual([(p["log"], p["path"], p["lines"], p["problems"], len(p["shown"]))
+                          for p in report["log_problems"]], [("audit log", log, bad, bad, 10)])
+        self.assertEqual(report["log_problems"][0]["shown"][0],
+                         f"line {records + 1}: a JSON object that is not an audit event (an "
+                         'audit event has "kind": "Event" and an apiVersion of the group '
+                         "audit.k8s.io)")
+        self.assertEqual(report["results"], [])
+
+    def test_rejects_negative_control_on_a_log_that_is_a_directory(self):
+        """The pre-emulation audit log is a directory (a private copy). It exists, so it
+        is not a log that was not found; and it is no file to read. The validator
+        names it, and the --json control of the log says FAILED. (The step with
+        --json is a variant: no workflow runs it.)"""
+        tree = self.tree()
+        os.makedirs(tree.tmp_path(self.LOG))
+        result = tree.run_step(with_options(self, self.negative_control_step(),
+                                            "--json /tmp/k8sdir.json"))
+        self.assertNotRegex(result.stdout, r"(?m)^(Loaded |PASS  |MISS  )|not found")
+        self.assert_rejects(result, r"^ERROR: the audit log \S+/pre-emulation-audit\.log is a "
+                                    r"directory, not a file\.$", exit_code=1)
+        with open(tree.tmp_path("k8sdir.json"), encoding="utf-8") as fh:
+            report = json.load(fh)
+        self.assertEqual(report["controls"], [{
+            "control": "the pre-emulation audit log holds a record", "status": "FAILED",
+            "detail": f"the audit log {tree.tmp_path(self.LOG)} is a directory, not a file"}])
+
+    def test_rejects_strict_run_on_a_log_that_is_a_directory(self):
+        strict_run_on_a_directory(self)
 
 
 class StaticPodValidator(gatelib.GateCase):
@@ -2470,6 +2623,66 @@ class StaticPodValidator(gatelib.GateCase):
     def test_control_strict_run_without_a_log_is_a_skip(self):
         """CONTROL of a strict run that finds no log at all: SKIP, exit 0."""
         strict_runs_without_a_log(self, r"^SKIP: no log to validate against \(exit 0\)\.$")
+
+    def test_rejects_a_line_that_is_not_a_record_in_each_log(self):
+        """A line of `[]` or of `{}` after the records of the audit log, the CRI log or
+        the file log (six runs of the step, each with one bad line)."""
+        rejects_a_line_that_is_not_a_record_in_each_log(self)
+
+    def test_rejects_a_snapshot_item_that_is_not_a_sandbox(self):
+        """After the healthy sandboxes, the CRI log holds one snapshot whose one item is
+        `{}`: an object without an id and a name. Before, it counted as one sandbox
+        (the objects without an id shared the id None). The validator names the
+        line and the item, and judges no rule."""
+        good = self.good()
+        _, cri, _ = self.write_logs(good)
+        with open(good.tmp_path(self.CRI), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"items": [{}]}) + "\n")
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {cri} pod sandbox\(es\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_saw(result, LINES_NOT_RECORDS.format(1))
+        self.assert_rejects(result, rf"^ERROR: the CRI log \S+/pre-emulation-cri\.jsonl, line "
+                                    rf"{cri + 1}, item 1 of the snapshot: "
+                                    + NOT_A_RECORD["{}"]["cri"] + "$", exit_code=1)
+
+    def test_rejects_a_file_log_line_that_is_not_utf8(self):
+        """After the healthy file events, the file log holds one more kubeadm write with
+        one byte that is not UTF-8 in its Image. A reader that replaced the byte would
+        count the line as a file event. The validator names the line and the byte."""
+        good = self.good()
+        _, _, files = self.write_logs(good)
+        event = json.dumps(case_events(good, self.FOLDER + "linux_static_pod_manifest_write"
+                                             ".cases.jsonl", "kubeadm-bootstrap-manifest")[0])
+        line = event.encode("ascii").replace(b'"Image": "', b'"Image": "\xe9', 1)
+        self.assertNotEqual(line, event.encode("ascii"))
+        at = line.index(b"\xe9") + 1      # the character of the byte, from 1
+        with open(good.tmp_path(self.FILE), "ab") as fh:
+            fh.write(line + b"\n")
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {files} file event\(s\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_rejects(result, rf"^ERROR: the file log \S+/pre-emulation-file\.jsonl, line "
+                                    rf"{files + 1}: bytes that are not UTF-8 \(the byte 0xe9 at "
+                                    rf"character {at} of the line\)$",
+                            exit_code=1)
+
+    def test_rejects_negative_control_on_a_cri_log_that_is_a_directory(self):
+        """The pre-emulation CRI log is a directory (a private copy); the audit log and
+        the file log hold the records of the control. It is not a log that was not
+        found, and no file to read: the validator names it."""
+        tree = self.tree()
+        audit, _, _ = self.write_logs(tree)
+        os.remove(tree.tmp_path(self.CRI))
+        os.makedirs(tree.tmp_path(self.CRI))
+        result = tree.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {audit} audit event\(s\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS  |MISS  |SKIP  |Loaded \d+ pod)|not found")
+        self.assert_rejects(result, r"^ERROR: the CRI log \S+/pre-emulation-cri\.jsonl is a "
+                                    r"directory, not a file\.$", exit_code=1)
+
+    def test_rejects_strict_run_on_a_log_that_is_a_directory(self):
+        strict_run_on_a_directory(self)
 
     def test_control_strict_run_with_only_the_audit_log_skips_the_other_rules(self):
         """CONTROL of a strict run with one log (a local run on an audit log): the
@@ -3013,6 +3226,110 @@ class ApiserverValidator(gatelib.GateCase):
         """CONTROL of a strict run that finds no log at all: SKIP, exit 0."""
         strict_runs_without_a_log(self, r"^SKIP: no log to validate against \(exit 0\)\.$")
 
+    def test_rejects_a_line_that_is_not_a_record_in_each_log(self):
+        """A line of `[]` or of `{}` after the records of the audit log, the CRI log or
+        the file log (six runs of the step, each with one bad line)."""
+        rejects_a_line_that_is_not_a_record_in_each_log(self)
+
+    def test_rejects_a_snapshot_that_is_not_a_snapshot_of_sandboxes(self):
+        """After the healthy sandboxes, the CRI log holds one more snapshot (three runs
+        of the step, each in a private copy, started together): one whose one item is
+        `{}` (an object without an id and a name), and two whose "items" is not a
+        list (`null`, `{}`). Before, the first counted as one sandbox, and the other
+        two as snapshots without a sandbox. The validator names the line (and the
+        item), and judges no rule."""
+        snapshots = {
+            json.dumps({"items": [{}]}): ", item 1 of the snapshot: " + NOT_A_RECORD["{}"]["cri"],
+            json.dumps({"items": None}): r': a snapshot whose "items" is not a list \(null\)',
+            json.dumps({"items": {}}): r': a snapshot whose "items" is not a list \(an object\)'}
+        runs = []
+        for snapshot, problem in snapshots.items():
+            tree = self.tree()
+            _, cri, _ = self.write_logs(tree)
+            with open(tree.tmp_path(self.CRI), "a", encoding="utf-8") as fh:
+                fh.write(snapshot + "\n")
+            runs.append((snapshot, cri, problem, tree.start_step(self.negative_control_step())))
+        for snapshot, cri, problem, pending in runs:
+            with self.subTest(snapshot=snapshot):
+                result = pending.result()
+                self.assert_saw(result, rf"^Loaded {cri} pod sandbox\(es\) from ")
+                self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+                self.assert_rejects(result, r"^ERROR: the CRI log \S+/pre-emulation-cri\.jsonl, "
+                                            rf"line {cri + 1}{problem}$", exit_code=1)
+
+    def test_rejects_a_cri_log_line_that_is_not_utf8(self):
+        """After the healthy sandboxes, the CRI log holds one more sandbox with one byte
+        that is not UTF-8 in its name. A reader that replaced the byte would count the
+        line as a sandbox. The validator names the line and the byte."""
+        good = self.good()
+        _, cri, _ = self.write_logs(good)
+        sandbox = {"id": "0" * 63 + "1", "state": "SANDBOX_READY",
+                   "metadata": {"name": "utf8-test-pod", "namespace": "default", "attempt": 0}}
+        line = json.dumps(sandbox).encode("ascii").replace(b"utf8-test", b"utf8-\xe9test", 1)
+        at = line.index(b"\xe9") + 1      # the character of the byte, from 1
+        with open(good.tmp_path(self.CRI), "ab") as fh:
+            fh.write(line + b"\n")
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {cri} pod sandbox\(es\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_rejects(result, rf"^ERROR: the CRI log \S+/pre-emulation-cri\.jsonl, line "
+                                    rf"{cri + 1}: bytes that are not UTF-8 \(the byte 0xe9 at "
+                                    rf"character {at} of the line\)$",
+                            exit_code=1)
+
+    def test_rejects_a_line_that_is_not_a_record_beside_a_log_without_a_record(self):
+        """Two defects in two logs, and the run names both: the audit log holds no
+        record, and the CRI log holds a `[]` line after its sandboxes. (Each defect
+        alone is rejected by another test of this class.) The NEGATIVE CONTROL FAILED
+        line of the empty log comes before the FAILED line of the bad line, and the
+        --json control of the pre-emulation logs says FAILED and names both. (The
+        step with --json is a variant: no workflow runs it.)"""
+        good = self.good()
+        _, cri, files = self.write_logs(good)
+        self.assertEqual(write_log(good, self.AUDIT), 0)
+        with open(good.tmp_path(self.CRI), "a", encoding="utf-8") as fh:
+            fh.write("[]\n")
+        result = good.run_step(with_options(self, self.negative_control_step(),
+                                            "--json /tmp/apiserverbad.json"))
+        self.assert_saw(result, r"^Loaded 0 audit event\(s\) from ")
+        self.assert_saw(result, rf"^ERROR: the CRI log \S+/pre-emulation-cri\.jsonl, line "
+                                rf"{cri + 1}: JSON that is not an object \(a list\)$")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_rejects(result, self.NO_AUDIT + r"\n\n" + LINES_NOT_RECORDS.format(1)[1:],
+                            exit_code=1)
+        self.assertEqual(self.vacuous_lines(result), 1)
+        with open(good.tmp_path("apiserverbad.json"), encoding="utf-8") as fh:
+            report = json.load(fh)
+        entry, = [c for c in report["controls"]
+                  if c["control"] == "each pre-emulation log is given and holds a record"]
+        self.assertEqual((entry["status"], entry["records"]),
+                         ("FAILED", {"audit": 0, "cri": cri, "file": files}))
+        self.assertRegex(entry["detail"], r"^the pre-emulation audit log \S+/pre-emulation-audit"
+                                          r"\.log holds no audit event \(0 records read from 0 "
+                                          r"non-blank line\(s\)\); 1 line\(s\) of the "
+                                          r"pre-emulation logs are not records of their log$")
+        self.assertEqual([(p["log"], p["lines"], p["shown"]) for p in report["log_problems"]],
+                         [("CRI log", 1, [f"line {cri + 1}: JSON that is not an object (a "
+                                          "list)"])])
+
+    def test_rejects_negative_control_on_a_file_log_that_is_a_directory(self):
+        """The pre-emulation file log is a directory (a private copy); the audit log and
+        the CRI log hold the records of the control. It is not a log that was not
+        found, and no file to read: the validator names it."""
+        tree = self.tree()
+        audit, cri, _ = self.write_logs(tree)
+        os.remove(tree.tmp_path(self.FILE))
+        os.makedirs(tree.tmp_path(self.FILE))
+        result = tree.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {audit} audit event\(s\) from ")
+        self.assert_saw(result, rf"^Loaded {cri} pod sandbox\(es\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS  |MISS  |SKIP  |Loaded \d+ file)|not found")
+        self.assert_rejects(result, r"^ERROR: the file log \S+/pre-emulation-file\.jsonl is a "
+                                    r"directory, not a file\.$", exit_code=1)
+
+    def test_rejects_strict_run_on_a_log_that_is_a_directory(self):
+        strict_run_on_a_directory(self)
+
     def test_control_strict_run_with_only_the_audit_log_gets_no_negative_control(self):
         """CONTROL of a strict run with one log (a local run on an audit log), with
         --report: the rules of the CRI log and of the file log are skipped, the misses
@@ -3030,6 +3347,73 @@ class ApiserverValidator(gatelib.GateCase):
         self.assert_saw(result, r"^SKIP  \[.*\] k8s_cri_job_pod\.yml: no cri log given$")
         self.assertNotIn("NEGATIVE CONTROL", result.stdout)
         self.assertNotRegex(result.stdout, r"(?m)^Loaded \d+ (pod sandbox|file event)")
+
+
+class LogReaderText(unittest.TestCase):
+    """The log reader of the three Kubernetes validators (read_log(), record_problem(),
+    LogError, and the lines that show the problems) is one text. Each validator stays
+    standalone, so the text has three copies, and the tests of each validator pin
+    what it does. Only the table RECORDS above the reader differs: it holds the logs
+    of the validator, and an entry that two validators hold is one text. To change
+    the reader, change the three copies in the same change. This class reads the
+    files of the repository, and it runs no gate."""
+
+    maxDiff = None
+    VALIDATORS = {"detections/validate_k8s_detections.py": ["audit"],
+                  "detections/validate_staticpod_detections.py": ["audit", "cri", "file"],
+                  "detections/validate_apiserver_detections.py": ["audit", "cri", "file"]}
+    # The three marker lines: the table starts at the first, the reader at the second,
+    # and the reader ends with the third.
+    MARKS = ("# ---- what a record of each log is ", "# ---- the log reader ",
+             "# ---- end of the log reader ")
+
+    @classmethod
+    def blocks(cls, rel):
+        """(table, reader): the text of a validator from the first marker line to the
+        second, and from the second to the end of the third."""
+        with open(os.path.join(gatelib.REPO, rel), encoding="utf-8") as fh:
+            text = fh.read()
+        found = [re.findall(rf"(?m)^{re.escape(mark)}", text) for mark in cls.MARKS]
+        if [len(f) for f in found] != [1, 1, 1]:
+            raise AssertionError(f"{rel}: each of the lines {cls.MARKS} must be in the file one "
+                                 "time, at the start of a line")
+        starts = [text.index("\n" + mark) + 1 for mark in cls.MARKS]
+        if starts != sorted(starts):
+            raise AssertionError(f"{rel}: the marker lines are not in the order {cls.MARKS}")
+        end = text.index("\n", starts[2])
+        return text[starts[0]:starts[1]], text[starts[1]:end]
+
+    @staticmethod
+    def entries(table):
+        """{source: text} of the entries of RECORDS in a table block."""
+        return dict(re.findall(r'(?ms)^    "(\w+)": \{\n(.*?)\},$', table))
+
+    def test_the_reader_is_one_text_in_the_three_validators(self):
+        (first, _), *others = self.VALIDATORS.items()
+        reader = self.blocks(first)[1]
+        self.assertIn("def read_log(path, source):", reader)
+        self.assertIn("def record_problem(source, doc):", reader)
+        self.assertIn("class LogError(Exception):", reader)
+        for rel, _ in others:
+            self.assertEqual(self.blocks(rel)[1], reader,
+                             f"the log reader of {rel} is not the text of {first}: change the "
+                             "three copies in the same change")
+
+    def test_an_entry_of_the_table_is_one_text_in_each_validator(self):
+        """Each table holds the sources of its validator (the logs of its MANIFEST),
+        and the entry of a source is the same text in each table that holds it. The
+        tables of the static pod and API server validators are one text."""
+        tables = {rel: self.blocks(rel)[0] for rel in self.VALIDATORS}
+        seen = {}
+        for rel, sources in self.VALIDATORS.items():
+            entries = self.entries(tables[rel])
+            self.assertEqual(list(entries), sources, f"{rel}: the entries of RECORDS")
+            for source, text in entries.items():
+                first = seen.setdefault(source, (rel, text))
+                self.assertEqual(text, first[1], f"the entry {source!r} of RECORDS in {rel} is "
+                                                 f"not the text of {first[0]}")
+        self.assertEqual(tables["detections/validate_apiserver_detections.py"],
+                         tables["detections/validate_staticpod_detections.py"])
 
 
 class FileEventConverter(gatelib.GateCase):
