@@ -1908,7 +1908,10 @@ Two rows fail a baseline that is not shown to be hard:
   (<why>)`, when `sigma_explain.py` or `check_sufficiency.py` does not import, or
   sigma_explain cannot load the rule or grade the baseline. The check fails closed.
 
-Each of the two fails the run (exit 1), also with `--report`. In the `--json` report
+Each of the two fails the run (exit 1), also with `--report`. A benign hit is a miss,
+which `--report` makes non-fatal. But when the rule fires on the only hard record of
+its baseline, no hard record stays: the row is then also `NOT HARD`, and `--report`
+does not waive that. In the `--json` report
 the result is a `FAIL`, `benign_grading.hard` is `false` (and `benign_grading` is
 `null` for a baseline that was not graded), and the report exits 1. A rule without a
 marked attack hit fails for its attack, and its baseline is not judged
@@ -1937,9 +1940,11 @@ What the check does not cover:
 The benign baseline is deliberately hard: it hits the same log source, method, and
 structural fields as the attack and differs only on the discriminating field (the
 off-instance source IP, the identity type, the FIC issuer, the public-vs-specific
-principal, the pinned-vs-wildcard OIDC subject). The check above holds each baseline
-to that. So a pass proves the rule keys on the technique's chokepoint, not on the
-fixture's shape or marker.
+principal, the pinned-vs-wildcard OIDC subject). The check above asks each baseline
+for one such record: one flip from firing, through a discriminating item on which a
+marked attack hit differs (see what it does not cover, above). So a pass shows that
+the rule keys on that item of the technique's chokepoint, not only on the fixture's
+shape or marker.
 
 ```
 pip install -r detections/requirements.txt

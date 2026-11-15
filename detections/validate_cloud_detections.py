@@ -54,18 +54,22 @@ atom (base:<ref>) counts: a repair of the group-by, the timespan, the order or t
 threshold moves the same events. A baseline without such a record gives a FAIL row
 with `NEGATIVE CONTROL NOT HARD`, and a baseline that sigma_explain cannot grade a
 FAIL row with `NEGATIVE CONTROL NOT GRADED` (fail closed). Each fails the run (exit
-1), also with --report. The check compares with the marked attack hits: a rule that
-has none fails for its attack, and its baseline is not judged.
+1), also with --report. A benign hit on the only hard record leaves no hard record,
+so that row is NOT HARD too, also with --report. The check compares with the marked
+attack hits: a rule that has none fails for its attack, and its baseline is not
+judged.
 
 A MANIFEST entry whose rule file does not exist is PENDING: the run prints it, does
 not count it, and does not fail on it. (check_sufficiency.py fails that tree.)
 
-The benign baseline is the control, and it must be HARD (above): it hits the same
-log source / method / structural fields as the attack and differs only on the
-discriminating field (the off-instance source IP, the identity type, the FIC issuer,
-the public vs specific principal, the pinned vs wildcard OIDC subject), so a PASS
-proves the rule keys on the technique's chokepoint and not on the fixture's shape or
-marker.
+The benign baseline is the control. It is built to hit the same log source / method /
+structural fields as the attack and to differ only on the discriminating field (the
+off-instance source IP, the identity type, the FIC issuer, the public vs specific
+principal, the pinned vs wildcard OIDC subject). The HARD check (above) asks it for
+one such record: one flip from firing, through a discriminating item on which a
+marked attack hit differs. It does not check each record, or each branch of the
+rule. So a PASS shows that the rule keys on that item, not only on the fixture's
+shape or marker.
 
 One exception: the TRR9013 managed-identity FIC rule reads the Azure Activity Log,
 which carries no issuer/subject, so that rule is a broad signal with no field to
@@ -79,7 +83,8 @@ Modes:
                     did not fire on a marked record of its attack fixture, or that
                     fired on a benign record. --report does not waive a missing
                     fixture, or a benign baseline that holds no record, holds no
-                    hard record or cannot be graded.
+                    hard record (also when the rule fires on the only hard record)
+                    or cannot be graded.
     --json PATH     Also write a machine-readable report (status, detail and the
                     explanation lines of every rule) to PATH.
 
@@ -598,9 +603,9 @@ def not_hard_lines(grading):
         where = "the benign event set" if s["index"] is None else f"benign record #{s['index']}"
         lines.append(f"{where} is {s['kind']} on `{s['atom']}`, which does not count: "
                      f"{s['why']}")
-    lines.append("a hard baseline holds a record that copies a marked attack hit and breaks "
-                 "one discriminating item (a near-miss), or one that an allowlist filter of "
-                 "the rule holds (filtered)")
+    lines.append("to make the baseline hard, add a copy of a marked attack hit that breaks "
+                 "one discriminating item (a near-miss), or that an allowlist filter of the "
+                 "rule holds (filtered)")
     return lines
 
 
