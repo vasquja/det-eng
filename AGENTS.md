@@ -51,7 +51,8 @@ A detection change is done only when CI shows all of these:
    Its `why`, which a person judges, says what in the rule makes the difference, and
    its `defect` names the entry of `detections/RULE_DEFECTS.md` when a correction is
    open. The gate refuses a reason of another variant and proves a `KEY_ORDER` reason
-   against the compact text.
+   against the compact text. The variants `compact` and `re2` have no reason: correct a
+   difference there in the rule.
 6. **Lints clean.** `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py` (every
    `|re` value stays in the portable regex subset) and `sigma check` pass.
 
