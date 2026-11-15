@@ -97,6 +97,7 @@ after each test or test class.
 | `test_suite.py` | Rules of the suite as a whole: each self-test has a runner, the CI job runs every test on every pull request, the `emulation-scripts` job does the same for `atomics/tests/`, no workflow step pipes a command into `tee` without pipefail, no step that runs a gate or the unit tests has `continue-on-error`, each known gap names a roadmap item, each planted artifact is used, this file agrees with the tests. |
 | `test_apt_install.py` | Tests of `.github/scripts/apt_install.sh`, the step that installs `auditd`, with a stub for `sudo`, `apt-get`, `unshare`, `mount`, `getent` and `timeout`. When the runner cannot resolve the package mirror, or apt printed a message about name resolution, or the mirror does not resolve after a failed run, apt gets one run with public resolvers in a private mount namespace; the script fails only after apt failed in a run with the resolver of the runner (but in the forced way of the CI job); a necessary package that is not installed fails the step; a text that is not a package name (also a name that ends with `-`, which apt reads as a removal) or not an address is refused. The class `DirectInstalls` (with two CONTROLs) fails when a workflow (a `run:` text, a `with:` or `env:` value), a composite action or a shell script (`*.sh`, or a shell on its first line) installs packages in a usual form (`apt-get install`, `apt update`, `dpkg -i`, `snap install`, also with options, a path or quotes) without the script. The one line that is allowed is `apt-get update -qq` in `detections/benign/linux/workload.sh`. It is a rule on text: a command that is built at run time, or that a different program starts, is not seen. The stubs do not show that the namespace works on a runner: the CI job `apt-install-fallback` does. It forces that way, and its CONTROL step gives a resolver that does not answer (`APT_INSTALL_RESOLVERS`) and fails if the install then passes. |
 | `test_labs.py` | Rules for the lab jobs that run on a GitHub runner (auditd on the runner, a kind cluster). No offline gate runs these jobs, and a new runner image can break them with no change in the repository. `AuditdStart`: each workflow step that starts auditd (with `systemctl` or `service`) waits for `audit-rules.service` after the start. Before the wait, and before the start, no line of the step changes the rules or a setting of the audit system (an `auditctl` command that is not a status or a list), and between the start and the wait no line runs a validator. auditd 4 loads its rule files in that oneshot unit, the start of auditd does not wait for it, and its rule file starts with `-D` and sets the backlog limit. The wait is in a guard, because auditd 3 has no such unit. It runs with `sudo`, because systemd refuses the start of a unit for a user that is not root and cannot give an authorization. A unit that ends with an error gives a `::warning` line and does not stop the step. The class also runs each such step from its first line to the end of its wait, the whole sensor step of the static pod lab and the whole start step of the `benign-linux-live` job, with a stub for `sudo`, `systemctl`, `service` and `auditctl`. The stubs model the fault that CI showed on 2026-11-13: a run of the unit that nobody waited for deletes the rule after the step saw it in the list, and sets the backlog limit back to the value of its rule file. They also model root: a start of the unit without `sudo` fails at once and waits for nothing. `FileSensorRule`: the two steps of the static pod lab that read the file events print an `::error` line when `auditctl -l` does not list the rule of the file sensor, and they go on. The line says which check of the validator fails when: the file gate, or the file control too. `DateWidth`: no shell script, file under `atomics/`, workflow or composite action gives `%N` a width (`%6N`, `%3N`): `date` of uutils coreutils 0.10.0 prints such a field without the leading zeros of the fraction. `LedgerClock`: the function that gives the times of the emulation ledger (`now_utc()`, or `now()`) is one accepted text in each shell script under `atomics/` and in each workflow step that defines it, and a script that appends to the ledger defines it one time. The class runs that text in bash with a stub `date` that prints a wrong time, in a zone that is not UTC: the result is the time of the test in UTC, a fraction that starts with zero keeps its zeros, and `date` is not called; without the clock of bash the function calls `date` with `%N` only. The stubs do not show what systemd, auditd and the `date` of a runner image do: the lab jobs show that. |
+| `test_external.py` | The external-records gate, `check_external_records.py`. `--lint` on the real `SOURCES.json`, `expectations.json` and syscall table, and on one planted defect of each kind: a path that leaves the datasets, a short commit, an id or bytes listed two times, a sha256 that is not lower-case hex, a size over the cap, another licence, a changed licence copy, a list without a dataset, a declaration for a rule or a dataset that does not exist, a stale digest or sha256 (a row in shadow mode, exit 1 with `--enforce`), an unknown verdict word, a why that is TODO or has no prefix, a defect that the Summary table does not list, a redundant or doubled declaration, a procedure label without CVE IDs. The report on a constructed set of four datasets, made from sidecar cases and put in the cache of the gate: the CI step accepts it and gives each kind of row, `--enforce` accepts its four FIREs, and each run of one planted defect fails (a cached file of other bytes, a MISS, a declaration that a hit contradicts, an unavailable dataset, a line that is not a record or not an object, a file that is not UTF-8, a record count, keys that differ only in letter case, a yml that does not agree with its entry). With no cache and no network the real pins give a run that read nothing, and it fails. The rules of the job `external-records`. The raw auditd loader against `validate_detections.normalize()` on the same lines, and the syscall table against the rules and `k8s/auditd_file_events.py`. |
 | `known_bad/<group>/` | The planted artifacts of that group. `known_bad/gatelib/` holds samples for `test_gatelib.py`. |
 
 The planted artifacts are outside `detections/sigma/`, the fixtures and the
@@ -462,6 +463,13 @@ it does not see one test in the place of a different one.
   runs, the negative-control steps on logs that the test writes, and the verdict
   code of the Linux validator on canned events. The live runs stay in the
   `validate-*` workflows.
+- No test downloads a dataset of splunk/attack_data, and no record of it is in the
+  repository. `test_external.py` builds its datasets from sidecar cases (the agent
+  wrote them) and puts them in the cache of the gate in the sandbox, each with a
+  constructed yml. Only the job `external-records` reads the real datasets, checks
+  their sha256 and their ymls at the pinned commit, and compares the LICENSE and the
+  kernel's syscall table with their origins. No test shows that the origins serve
+  the pinned files.
 - The suite runs two lines of the capture step of
   `validate-apiserver-detections.yml`: the lines that convert the runner's audit
   log into the pre-emulation file log. It runs them on a raw audit log that the
@@ -635,6 +643,22 @@ it does not see one test in the place of a different one.
   steps can need a stub in `test_labs.py`. `LedgerClock` reads each `*.sh` file
   under `atomics/`: a script that appends to the ledger must define the clock
   function one time, as the accepted text.
+
+  `test_external.py` builds its constructed datasets from cases of these sidecars,
+  by name (and from the positive and the near-miss of the snapshot rule, whose
+  sidecar a list above names):
+
+  - `detections/sigma/T1552.007/k8s_secret_access.cases.jsonl`
+  - `detections/sigma/T1528/entra_illicit_oauth_consent_grant.cases.jsonl`
+  - `detections/sigma/T1068/copyfail_af_alg_authencesn.cases.jsonl`
+
+  Its known gap `ext-self-added-declaration` removes the line `      - 'get'` from this
+  rule in its copy:
+
+  - `detections/sigma/T1552.007/k8s_secret_access.yml`
+
+  It also reads `detections/external/SOURCES.json`, `expectations.json` and
+  `syscalls_x86_64.json`, which are not content: a pin bump runs the suite.
 
   `test_suite.py` fails when a file of these lists is not in the repository.
 
