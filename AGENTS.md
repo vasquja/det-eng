@@ -45,8 +45,12 @@ A detection change is done only when CI shows all of these:
 5. **Holds in each representation.** `check_variants.py` passes: the rule gives the
    same hits on its cases and fixtures when a list is JSON text without blanks, with
    sorted keys, or one value for each element, when `LIKE` is case-sensitive, and when
-   `|re` runs with RE2. A difference that the rule cannot remove is an entry of
-   `detections/variants/expected.json`, with a reason that the gate proves.
+   `|re` runs with RE2. A difference that the rule cannot remove now is an entry of
+   `detections/variants/expected.json`. Its reason names the cause of the variant.
+   Its `why`, which a person judges, says what in the rule makes the difference, and
+   its `defect` names the entry of `detections/RULE_DEFECTS.md` when a correction is
+   open. The gate refuses a reason of another variant and proves a `KEY_ORDER` reason
+   against the compact text.
 6. **Lints clean.** `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py` (every
    `|re` value stays in the portable regex subset) and `sigma check` pass.
 

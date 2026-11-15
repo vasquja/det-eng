@@ -323,11 +323,20 @@ print(bool(sigma_eval.evaluate(q, [ev])))
   (bools/ints preserved). An empty `{}` yields no key at all — so a rule keying on a field
   inside it simply does not match (this is how IRSA's non-empty `federatedProvider`
   excludes Pod Identity's empty `webIdFederationData`).
-  That text is one of the texts that a store can give. Do not match a blank after `,`
-  or `:`, and do not rely on the key order of an object: write `\"action\":\s*\"ADD\"`,
-  and one value for each order of the parts. `check_variants.py` runs each case with
-  the text without blanks, with sorted keys, and with one value for each element.
-  `detections/SEMANTICS.md` says what the oracle decides and what other stores do.
+  That text is one of the texts that a store can give. Do not match a fixed white
+  space at a `,` or a `:`, and do not rely on the key order of an object: write
+  `\"action\"\s*:\s*\"ADD\"` (white space optional on each side of the colon), and one
+  value for each order of the parts. For one element of a list, write two `|re`
+  values: one with the JSON quotes of the element, for the list as text
+  (`\"system:masters\"`), and one anchored with `^` and `$`, for a field with one
+  value for each element (`^system:masters$`). Or write one value without JSON
+  punctuation, when no other valid element can hold it as a part. Do not rely on the
+  letter-case fold of `|contains` for a value whose letter case the sender chooses:
+  write character classes in a `|re` value (`[hH][tT][tT][pP]`, `[aA][lL][lL]`).
+  `check_variants.py` runs each case with the text without blanks, with sorted keys,
+  with one value for each element, with a `LIKE` that does not fold letter case, and
+  with RE2. `detections/SEMANTICS.md` says what the oracle decides and what other
+  stores do (section 4 for lists).
 - **`|cidr`** compiles to a textual `LIKE '<prefix>%'`. IPv4 CIDRs on octet boundaries are
   exact; IPv6 only matches the canonical compressed lowercase form on a nibble boundary —
   document that in any IPv6 allowlist.
