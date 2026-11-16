@@ -86,7 +86,8 @@ backend (sigma_eval) and the same item-by-item grading (sigma_explain):
                  sidecar exists without its rule.
   R4 not name-keyed
                  the rule keys on the technique, not on the names the repo's
-                 emulations give their objects:
+                 emulations give their objects or on the environment that the
+                 cases and fixtures were recorded in:
                  - its detection names no emulation literally (trr9NNN, deteng_);
                  - the RENAME TEST, every platform: each positive unit (every
                    passing sidecar positive case; for a rule the auditd
@@ -120,25 +121,64 @@ backend (sigma_eval) and the same item-by-item grading (sigma_explain):
                    to keep. A rule with no positive unit fails: the test cannot
                    run. So does a rule none of whose units carries an identity
                    (the test renamed nothing), unless it is COMPILE_ONLY (no
-                   emulation run names anything). RESIDUAL: only names are
-                   renamed. A rule keyed on a token's prefix before the
-                   emulation name, or on another constant of an emulation run
-                   (an attack fixture's source IP, an instance, account or key
-                   id, a timestamp), still passes here. Outside the auditd
-                   validator the units come from the sidecar and the attack
-                   fixtures as written, so a positive that carries an identity
-                   only in a field the rule does not read, with the field the
-                   rule keys on renamed by hand (`web-target` for
-                   `trr9026-target`), passes too; the human review of the rule
-                   and its sidecar must catch both;
+                   emulation run names anything);
+                 - the CONSTANT RENAME, every platform: each positive unit that
+                   holds a FIXTURE CONSTANT must still fire after every fixture
+                   constant in it is renamed. A fixture constant (the table
+                   FIXTURE_CONSTANTS, each entry with its reason) identifies
+                   the environment that the cases and fixtures were recorded
+                   in, and the data of more than one rule share it: the AWS
+                   account 123456789012 and organization o-exampleorgid, the
+                   Azure subscription and the Entra tenants, the GCP project number and project id, and the
+                   name and uid of the node of the API server lab's kind
+                   cluster. A rule that requires one fires in no other
+                   account, subscription, tenant, project or cluster. Each
+                   constant gets one replacement for the run (SystemRandom),
+                   which the failure message never prints: each character of a
+                   class of its form (CONSTANT_FORMS: digits; the hex digits
+                   of a GUID; the letters and digits of a name or, after its
+                   `o-`, of an AWS organization id) becomes a different
+                   character of that class, other characters (`-`) stay, and the replacement is in no rule, case or fixture of
+                   the tree. A constant matches as a whole value (no character
+                   of its classes next to it) in any case, and an upper-case
+                   one (or one without a letter in an upper-case value) gets an
+                   upper-case replacement. The rename is separate
+                   from the two emulation renames, and its failure names the
+                   constants whose rename alone stops the rule (or, when no
+                   one constant does, every constant that the unit holds). A
+                   unit that holds an emulation identity and a constant, and
+                   that each rename alone leaves firing, is renamed both ways
+                   together too (once by each emulation rename), and it must
+                   still fire: an attack in another environment carries
+                   neither, so a rule that needs one or the other (`tenant or
+                   a part of the emulation's domain`) fails. RESIDUAL: only
+                   names and the fixture constants are renamed. A rule keyed
+                   on a token's prefix before the emulation name, or on another
+                   value of an emulation run (an attack fixture's source IP, an
+                   instance or key id, a timestamp, the id of one object or
+                   record, the uid of a principal of the lab cluster (a
+                   controller's service account), a constant that the data of
+                   one rule only holds, or a constant that a new case shares
+                   and the table does not list yet), still passes here. Only
+                   positive units are renamed, so a filter keyed on a fixture
+                   constant (an allowlist of the recording account or node)
+                   passes too; the benign corpus (score_benign.py) is the check
+                   for that. Outside the auditd validator
+                   the units come from the sidecar and the attack fixtures as
+                   written, so a positive that carries an identity only in a
+                   field the rule does not read, with the field the rule keys
+                   on renamed by hand (`web-target` for `trr9026-target`),
+                   passes too; the human review of the rule and its sidecar
+                   must catch both;
                  - (cloud) every MANIFEST gate of the rule is a marker(substr,
                    *fields): it carries `.substr` and `.fields` and answers as
                    marker() does on every attack, benign and renamed record.
                    Any other gate (a lambda, a wrapper) hides its marker, so
                    the rename test cannot know what to rename;
                  - its verified negatives must not ALL break only name-keyed
-                   items: items whose truth on a positive unit flips under the
-                   rename. Such negatives differ from the attack only in the
+                   items: items whose truth on a positive unit flips under an
+                   emulation rename (the constant rename does not count here).
+                   Such negatives differ from the attack only in the
                    emulation's naming, so they do not show that the rule keys
                    on the technique. Renaming, rather than "the item reads a
                    gate field", is what decides: a gate field such as Glue's
@@ -592,6 +632,87 @@ SURFACE_FIELDS = {
 # Names the repo's emulations give their objects. A rule that matches one keys
 # on the emulation, not the technique (R4, every platform).
 EMULATION_NAME = re.compile(r"trr9\d{3}|deteng_", re.IGNORECASE)
+
+# R4: the constants of the environments that the cases and fixtures were recorded
+# in. A fixture constant is a value that identifies the recording environment (an
+# account, a subscription, a tenant, a project, the node of a lab cluster), and that
+# the cases or fixtures of more than one rule share. A rule that requires one fires
+# in no other environment, but it passes every case, so the rename test also renames
+# each constant (constant_renames()). `form` says what the replacement keeps
+# (CONSTANT_FORMS), `kind` names the constant in a failure, and `why` says why it is
+# a constant of the environment. Not in the table: a value that a rule can read as
+# its discriminating field (a principal or its credential, an address or a range, a
+# region, a client version), the id of one object or one record, and a value that
+# the data of one rule only holds (a test of the gate tests fails when a value of
+# the table is in no sidecar).
+FixtureConstant = namedtuple("FixtureConstant", "value form kind why")
+FIXTURE_CONSTANTS = (
+    FixtureConstant(
+        "123456789012", "digits", "AWS account, GCP project or organization",
+        "the account of each CloudTrail case and fixture (the safe marker of AGENTS.md): "
+        "recipientAccountId, userIdentity.accountId and the ARNs of the account. The GCP "
+        "cases and fixtures of TRR9018 and TRR9020 give the same digits to a project and an "
+        "organization"),
+    FixtureConstant(
+        "o-exampleorgid", "aws-organization", "AWS organization id",
+        "the AWS Organizations organization of the account of the CloudTrail cases: the "
+        "aws:PrincipalOrgID value of each org-scoped statement of the resource policies in "
+        "the cases of TRR9019 and TRR9021. The rules read whether a statement has the key, "
+        "not its value"),
+    FixtureConstant(
+        "11111111-2222-3333-4444-555555555555", "guid", "Azure subscription",
+        "the subscription of the Activity Log cases and fixtures of TRR9036 and of the "
+        "fixtures of the managed-identity rule of TRR9013: each resourceId, scope and "
+        "hierarchy of the subscription. One Kubernetes case of TRR9031 gives it to an owner "
+        "uid"),
+    FixtureConstant(
+        "8f3b2c1a-9d4e-4f6a-b1c2-3d4e5f6a7b8c", "guid", "Entra tenant",
+        "the tenant (tenantId) of the Entra cases and fixtures of TRR9013 and of the "
+        "fixtures of TRR9017"),
+    FixtureConstant(
+        "6f1d2c3b-4a5e-4f60-9b8a-7c6d5e4f3a2b", "guid", "Entra tenant",
+        "the tenant of the cases and fixtures of TRR9036 and of the cases of the consent "
+        "rule of TRR9017: tenantId, the tenantid claim and the issuer of the caller's token"),
+    FixtureConstant(
+        "745678901234", "digits", "GCP project number",
+        "the project number of the cases of the workload and workforce identity pool rules "
+        "of TRR9018 and TRR9020 (projects/745678901234/locations/global/...)"),
+    FixtureConstant(
+        "ci-shared-svc", "name", "GCP project id",
+        "the project of the cases of TRR9018 and TRR9020: logName, and the domain of the "
+        "caller's service account"),
+    FixtureConstant(
+        "apiserver-control-plane", "name", "Kubernetes node name",
+        "the node of the kind cluster `apiserver` of the API server lab: kind names the "
+        "node <cluster>-control-plane, and the lab gives the cluster that name in each run "
+        "(CLUSTER_NAME of validate-apiserver-detections.yml). The kubelet user, "
+        "spec.nodeName, the node-name claim of a pod's token and the names of mirror pods "
+        "of the cases hold it"),
+    FixtureConstant(
+        "kind-control-plane", "name", "Kubernetes node name",
+        "the node of a kind cluster with the default name `kind`, in the cases of TRR9030 "
+        "and TRR9031"),
+    FixtureConstant(
+        "82d849a0-7150-4a5f-a964-13b06142c650", "guid", "Kubernetes node uid",
+        "the uid of the node apiserver-control-plane: the node-uid claim of each pod's "
+        "token in the cases"),
+)
+
+# What a renamed constant keeps: each character of one of its form's classes becomes a
+# different character of that class, and every other character (`-`) stays. So an
+# account stays 12 digits, a GUID stays a GUID, a name keeps its length and the
+# place of each letter, digit and hyphen, and an AWS organization id keeps its `o-`
+# (CONSTANT_PREFIXES) and its length. A character of those classes next to a
+# constant makes it part of a longer value, so a match has none on either side.
+CONSTANT_FORMS = {
+    "digits": (string.digits,),
+    "guid": (string.digits + "abcdef",),
+    "name": (string.ascii_lowercase, string.digits),
+    "aws-organization": (string.ascii_lowercase, string.digits),
+}
+# The start of a form that the rename keeps: an AWS Organizations id is `o-` and 10
+# to 32 lowercase letters or digits (Organizations API Reference, Organization.Id).
+CONSTANT_PREFIXES = {"aws-organization": "o-"}
 
 CHECKS = ("R0", "R1", "R2", "R3", "R4")
 
@@ -1170,6 +1291,84 @@ def rename_names(event, pattern, keep=(), how="same-shape"):
             if isinstance(v, str) else v for k, v in event.items()}
 
 
+def constant_pattern(constants=FIXTURE_CONSTANTS):
+    """Every fixture constant (FIXTURE_CONSTANTS), case-insensitive, as a whole value:
+    no character of its form's classes (CONSTANT_FORMS) on either side. So
+    `etcd-apiserver-control-plane` and `projects/745678901234/locations` hold one,
+    and `1123456789012` holds none."""
+    parts = []
+    for form, classes in CONSTANT_FORMS.items():
+        values = sorted({c.value for c in constants if c.form == form}, key=len, reverse=True)
+        if values:
+            edge = re.escape("".join(classes))
+            parts.append(rf"(?<![{edge}])(?:{'|'.join(map(re.escape, values))})(?![{edge}])")
+    return re.compile("|".join(parts) or r"(?!)", re.IGNORECASE)
+
+
+def _tree_text():
+    """The text of every rule, case and fixture (detections/sigma/, detections/cloud/),
+    in lowercase: what a replacement of a constant must not occur in. Only regular
+    files are read: a link (to /dev/zero, say) or a device is not text of the tree,
+    and R0 or the review refuses it."""
+    texts = []
+    for top in (SIGMA, os.path.join(REPO, "detections", "cloud")):
+        for root, _, files in os.walk(top):
+            for name in sorted(files):
+                path = os.path.join(root, name)
+                if os.path.islink(path) or not os.path.isfile(path):
+                    continue
+                with open(path, encoding="utf-8", errors="replace") as fh:
+                    texts.append(fh.read().lower())
+    return "\n".join(texts)
+
+
+_CONSTANT_RENAMES = {}
+
+
+def constant_renames(constants=FIXTURE_CONSTANTS):
+    """{constant in lowercase: its replacement} for the run, drawn once (SystemRandom),
+    so a rule cannot list the replacement. Each character of a class of the
+    constant's form (CONSTANT_FORMS), after the start that the form keeps
+    (CONSTANT_PREFIXES), becomes a different random character of that class; the
+    replacement occurs in no rule, case or fixture of the tree and is not
+    the replacement of another constant. The failure message never prints it."""
+    key = tuple(constants)
+    if key not in _CONSTANT_RENAMES:
+        seen, out = _tree_text(), {}
+        for c in constants:
+            classes, kept = CONSTANT_FORMS[c.form], CONSTANT_PREFIXES.get(c.form, "")
+            if not c.value.lower().startswith(kept):
+                raise RuntimeError(f"the fixture constant {c.value!r} does not start with "
+                                   f"{kept!r}, the start of its form {c.form!r}")
+            for _ in range(1000):
+                token = kept + "".join(
+                    _RANDOM.choice(pool.replace(ch, "")) if pool else ch
+                    for ch in c.value.lower()[len(kept):]
+                    for pool in [next((p for p in classes if ch in p), "")])
+                if token not in seen and token not in out.values():
+                    break
+            else:
+                raise RuntimeError(f"no replacement found for the fixture constant {c.value!r}")
+            out[c.value.lower()] = token
+        _CONSTANT_RENAMES[key] = out
+    return _CONSTANT_RENAMES[key]
+
+
+def rename_constants(event, pattern, renames):
+    """The flat event with each fixture constant in a value (a match of `pattern`)
+    replaced by its replacement (`renames`). An upper-case constant gets an
+    upper-case replacement, and a constant without a letter takes the case of the
+    value that holds it (`/SUBSCRIPTIONS/11111111-...`); otherwise each letter keeps
+    the case of its original."""
+    def replace(m):
+        old, new = m.group(0), renames[m.group(0).lower()]
+        sample = old if any(ch.isalpha() for ch in old) else m.string
+        if any(ch.isalpha() for ch in sample) and sample.upper() == sample:
+            return new.upper()
+        return "".join(n.upper() if o.isupper() else n for o, n in zip(old, new))
+    return {k: pattern.sub(replace, v) if isinstance(v, str) else v for k, v in event.items()}
+
+
 def _fires(rule, events):
     return bool(events) and bool(sigma_eval.EventTable(events).hit_indices(rule.sql))
 
@@ -1191,23 +1390,53 @@ def _flipped_atoms(rule, own, renamed):
     return [a for a in rule.atoms if any(rows[i][a] != rows[n + i][a] for i in range(n))]
 
 
-def rename_test(rule, units, pattern, keep=()):
+def rename_test(rule, units, pattern, keep=(), constants=FIXTURE_CONSTANTS):
     """Rename the emulation's identities in every positive unit, once by each of
-    RENAMES; does each still fire?
+    RENAMES; does each still fire? Rename the fixture constants (`constants`) in
+    every positive unit that holds one, once (constant_renames()); does it still
+    fire?
 
     `units` is [(label, [flat events])], each a unit that fires the rule (a
     passing positive case, its copy carrying the Linux emulation's identity, or
     one marker-carrying attack record / alert). Returns {"units", "renamed",
-    "stopped": [{"unit", "names", "flipped", "renames"}], "name_keyed"}; "renames"
-    lists the renames that stopped the unit firing.
+    "stopped": [{"unit", "names", "flipped", "renames"}], "name_keyed",
+    "constants": {"units", "stopped": [{"unit", "constants", "flipped"}]},
+    "together": {"units", "stopped": [{"unit", "names", "constants", "flipped",
+    "renames"}]}}; "renames" lists the renames that stopped the unit firing, and
+    "constants" the constants whose rename stopped it. The emulation renames and the
+    constant rename are separate, so a failure says which of them stopped the rule.
+    A unit that holds an emulation identity and a fixture constant, and that each
+    rename alone leaves firing, is also renamed both ways together, once by each of
+    RENAMES ("together"): an attack in another environment carries neither, so a
+    rule that needs one or the other (`tenant or name`) stops there.
     """
-    out = {"units": len(units), "renamed": 0, "stopped": [], "name_keyed": set()}
+    out = {"units": len(units), "renamed": 0, "stopped": [], "name_keyed": set(),
+           "constants": {"units": 0, "stopped": []}, "together": {"units": 0, "stopped": []}}
+    held = constant_pattern(constants)
+    renames = constant_renames(constants)
     for label, own in units:
-        names = {}
+        names, found = {}, set()
         for e in own:
             for v in e.values():
                 for m in pattern.finditer(v) if isinstance(v, str) else ():
                     names.setdefault(m.group(0).lower(), m.group(0))
+                found |= {m.group(0).lower() for m in held.finditer(v)} \
+                    if isinstance(v, str) else set()
+        constant_stopped = False
+        if found:
+            ours = out["constants"]
+            ours["units"] += 1
+            renamed = [rename_constants(e, held, renames) for e in own]
+            if not _fires(rule, renamed):
+                constant_stopped = True
+                # Name the constants whose rename alone stops the unit; when none
+                # does alone (the rule reads two of them in turn), name all it holds.
+                ones = [c for c in constants if c.value.lower() in found]
+                alone = [c for c in ones if not _fires(rule, [rename_constants(
+                    e, constant_pattern([c]), renames) for e in own])]
+                ours["stopped"].append({"unit": label,
+                                        "flipped": _flipped_atoms(rule, own, renamed),
+                                        "constants": [c.value for c in alone or ones]})
         if not names:
             continue  # nothing to rename: the unit cannot show anything either way
         out["renamed"] += 1
@@ -1221,6 +1450,21 @@ def rename_test(rule, units, pattern, keep=()):
         if stopped_by:
             out["stopped"].append({"unit": label, "flipped": flipped, "renames": stopped_by,
                                    "names": [names[k] for k in sorted(names)]})
+        if found and not stopped_by and not constant_stopped:
+            ours = out["together"]
+            ours["units"] += 1
+            both, stopped_by = [], []
+            for how in RENAMES:
+                renamed = [rename_constants(rename_names(e, pattern, keep, how), held, renames)
+                           for e in own]
+                both += [a for a in _flipped_atoms(rule, own, renamed) if a not in both]
+                if not _fires(rule, renamed):
+                    stopped_by.append(how)
+            if stopped_by:
+                ours["stopped"].append({
+                    "unit": label, "flipped": both, "renames": stopped_by,
+                    "names": [names[k] for k in sorted(names)],
+                    "constants": [c.value for c in constants if c.value.lower() in found]})
     out["name_keyed"] = [a for a in rule.atoms if a in out["name_keyed"]]
     return out
 
@@ -1723,6 +1967,49 @@ def check_names(r, rule, path, entries, atomics=()):
                      f"{', '.join(flipped) or 'no single item'}. The rule keys on the names the "
                      "emulation gives its objects (or on the validator gate's marker), however "
                      "it spells them, or on their shape; key it on the technique instead")
+    def flipped_items(stopped):
+        if rule.is_correlation:
+            return sorted({a for s in stopped for a in s["flipped"]})
+        return [a for a in rule.atoms if any(a in s["flipped"] for s in stopped)]
+
+    def shown_units(stopped):
+        return "; ".join(s["unit"] for s in stopped[:3]) \
+            + (f" (+{len(stopped) - 3} more)" if len(stopped) > 3 else "")
+
+    lost = r.rename["constants"]["stopped"]
+    if lost:
+        held = [c for c in FIXTURE_CONSTANTS if any(c.value in s["constants"] for s in lost)]
+        flipped = flipped_items(lost)
+        shown = shown_units(lost)
+        r.fail("R4", "renaming the fixture constants ("
+                     + ", ".join(f"{c.value} ({c.kind})" for c in held)
+                     + ") to random values of the same form stops the rule firing on "
+                     f"{len(lost)}/{len(units)} positive unit(s): {shown}. Items that flip: "
+                     f"{', '.join(flipped) or 'no single item'}. A fixture constant identifies "
+                     "the environment that the cases and fixtures were recorded in "
+                     "(FIXTURE_CONSTANTS in check_sufficiency.py), so the rule fires in no "
+                     "other account, subscription, tenant, project or cluster; key it on the "
+                     "technique instead")
+    both = r.rename["together"]["stopped"]
+    if both:
+        names = {}
+        for s in both:
+            for n in s["names"]:
+                names.setdefault(n.lower(), n)
+        held = [c for c in FIXTURE_CONSTANTS if any(c.value in s["constants"] for s in both)]
+        how = [h for h in RENAMES if any(h in s["renames"] for s in both)]
+        r.fail("R4", "renaming the emulation's identities ("
+                     + ", ".join(list(names.values())[:4])
+                     + (f" +{len(names) - 4} more" if len(names) > 4 else "")
+                     + ") and the fixture constants ("
+                     + ", ".join(f"{c.value} ({c.kind})" for c in held)
+                     + f") together ({' and '.join(how)} rename) stops the rule firing on "
+                     f"{len(both)}/{len(units)} positive unit(s): {shown_units(both)}. Items "
+                     f"that flip: {', '.join(flipped_items(both)) or 'no single item'}. Each "
+                     "rename alone leaves the units firing, so the rule needs the emulation's "
+                     "names or the environment that the cases and fixtures were recorded in, and "
+                     "an attack in another environment carries neither; key it on the technique "
+                     "instead")
 
     # Negatives that differ from a positive only in the emulation's naming.
     keyed = set(r.rename["name_keyed"])
@@ -1863,6 +2150,11 @@ def print_report(reports, medians, errors, verbose=False, subset=False):
                       f"{len(n['stopped'])}; name-keyed items: "
                       f"{', '.join(n['name_keyed']) or '-'}"
                       + (f"; kept (PLATFORM_NAMING): {', '.join(n['kept'])}" if n['kept'] else ""))
+                c, b = n["constants"], n["together"]
+                print(f"      constant rename: {c['units']}/{n['units']} positive unit(s) hold a "
+                      f"fixture constant; stopped firing: {len(c['stopped'])}; renamed with the "
+                      f"emulation's identities: {b['units']}, stopped firing: "
+                      f"{len(b['stopped'])}")
     failing = [r for r in reports if r.failures]
     if errors or failing:
         print("\nFailures (each fails the gate; the message says what to add):")

@@ -229,6 +229,49 @@ class ScoreBenign(gatelib.GateCase):
         self.plant_unclassed_budget(tree)
         self.assert_rejects(tree.run_step(step), self.WHY_NO_CLASS, exit_code=1)
 
+    def test_rejects_extra_slice_line_that_is_not_an_object(self):
+        """score_benign.py --extra-slice, with the options of the shadow step that scores
+        the pre-emulation audit log of the API server lab, on a capture of audit events
+        and one more line that is JSON and not an object (`[]`). Before, the run ended
+        with an AttributeError of sigma_eval.flatten, and no line named the capture or
+        the line. Now an ERROR line names both, the run exits 1, and no rule is scored
+        on the capture. Control: the same capture without that line is scored (the two
+        runs start together)."""
+        good = self.good()
+        name, control = "pre-emulation-audit.log", "pre-emulation-audit-control.log"
+        events = [event for case in
+                  good.read_jsonl("detections/sigma/T1609/k8s_pod_exec_attach.cases.jsonl")
+                  if case["name"] in ("pod-logs-read", "pod-get-describe")
+                  for event in case["events"]]
+        records = len(events)
+        with open(good.tmp_path(name), "w", encoding="utf-8") as fh:
+            fh.write("".join(json.dumps(event) + "\n" for event in events) + "[]\n")
+        with open(good.tmp_path(control), "w", encoding="utf-8") as fh:
+            fh.write("".join(json.dumps(event) + "\n" for event in events))
+        # The artifact is bad in one way: the last line of the log is a JSON list. The
+        # lines before it are audit events (the log is not one JSON array).
+        with open(good.tmp_path(name), encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+        self.assertEqual(len(lines), records + 1)
+        self.assertEqual(json.loads(lines[-1]), [])
+        self.assertTrue(all(json.loads(line)["kind"] == "Event" for line in lines[:-1]))
+        # The command of the shadow step, on that log.
+        self.assert_ci_runs(self.GATE, "--extra-slice /tmp/pre-emulation-audit.log",
+                            "--extra-logsource kubernetes/audit", "--extra-label kind-live",
+                            "--examples 0")
+        runs = [good.start(self.GATE, "--extra-slice", good.tmp_path(log), "--extra-logsource",
+                           "kubernetes/audit", "--extra-label", "kind-live", "--examples", "0")
+                for log in (name, control)]
+        result, accepted = (run.result() for run in runs)
+        self.assert_accepts(accepted, rf"^Live capture kind-live \(kubernetes/audit, {records} "
+                                      r"event\(s\)\) - shadow only")
+        self.assertNotRegex(result.stdout, r"(?m)^Live capture ")
+        self.assertEqual(len(re.findall(r"^ERROR", result.stdout, re.MULTILINE)), 1,
+                         result.describe())
+        self.assert_rejects(result, rf"^ERROR: the live capture \S+/{re.escape(name)}, line "
+                                    rf"{records + 1}: JSON that is not an object \(a list\)\. "
+                                    r"No rule is scored on the live capture\.$", exit_code=1)
+
     @gatelib.known_gap(
         "sb-budget-raised-as-documented-noise",
         gate="detections/score_benign.py --check --enforce",
