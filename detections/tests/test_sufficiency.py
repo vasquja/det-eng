@@ -506,6 +506,40 @@ class RuleCases(gatelib.GateCase):
                 self.assertIn("\nFAILED: 1 case problem(s).\n", result.stdout)
                 self.assertIn(self.POSITIVE_FIRES, result.stdout)
 
+    def test_rejects_sidecar_line_with_an_object_that_holds_a_key_two_times(self):
+        """json keeps only the last value of a key that an object holds two times, so
+        the gate judged a case that the line does not show. The second line of the
+        sound sidecar, in three forms: an event whose key `comm` comes two times (the
+        line names the case: the error is in its events), the case object with its
+        `kind` two times, and with its `name` two times (the line names no case: its
+        name can be one of two values). Each is an ERROR line that names the rule, the
+        line and the key, and the gate judges the other cases. (Before, the gate read
+        each line without a word.)"""
+        tree = self.plant_bad_cases("sound")
+        lines = tree.read(self.PLANTED_CASES).splitlines(keepends=True)
+        case = json.loads(lines[1])
+        self.assertEqual(case["name"], "packet-dgram-socket")
+        self.assertIn("comm", case["events"][0])
+        event = json.dumps(case["events"][0])[:-1] + ', "comm": "x"}'
+        bad = {
+            "a key of an event": (json.dumps(dict(case, events=["@"])).replace('"@"', event),
+                                  "case 'packet-dgram-socket': ", "comm"),
+            "the kind of the case": ('{"kind": "positive", ' + json.dumps(case)[1:], "", "kind"),
+            "the name of the case": ('{"name": "x", ' + json.dumps(case)[1:], "", "name")}
+        names = [json.loads(line)["name"] for line in lines]
+        for label, (text, of, key) in bad.items():
+            with self.subTest(label):
+                tree.write(self.PLANTED_CASES, "".join(lines[:1] + [text + "\n"] + lines[2:]))
+                result = tree.run(self.GATE, self.PLANTED_RULE)
+                self.assertNotIn("Traceback", result.output)
+                self.assert_rejects(result, r"^ERROR T9999/planted_rule\.yml: line 2: "
+                                            + re.escape(of) + rf"an object holds the key '{key}' "
+                                            r"two times \(json keeps only the last value\)$",
+                                    exit_code=1)
+                self.assertIn("\nFAILED: 1 case problem(s).\n", result.stdout)
+                self.assertEqual(re.findall(r"(?m)^ok    T9999/planted_rule\.yml :: \S+ +(\S+): ",
+                                            result.stdout), names[:1] + names[2:])
+
     def test_rejects_sidecar_line_that_is_not_utf8(self):
         """Two lines of the sound sidecar, each with one byte that is not UTF-8: the
         byte 0xe9 in a string of the near-miss (the line is JSON with the byte), and

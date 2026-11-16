@@ -264,15 +264,32 @@ def validate_spec(spec, path):
 
 
 def load_slice(path):
+    """The Slice of the spec file `path`. Raises ValueError, with a text that names
+    the file (and the line of the data of a recorded slice), for a spec that
+    validate_spec() refuses and for an object that holds one key two times (json
+    keeps only the last value, so the slice would not hold the events that its
+    files show)."""
     with open(path, encoding="utf-8") as fh:
-        spec = json.load(fh)
+        spec = json.load(fh, object_pairs_hook=sigma_eval.pairs)
+    key = sigma_eval.key_twice(spec)
+    if key is not None:
+        raise ValueError(f"{os.path.relpath(path, REPO)}: {sigma_eval.twice_text(key)}")
     problems = validate_spec(spec, path)
     if problems:
         raise ValueError(f"{os.path.relpath(path, REPO)}: {'; '.join(problems)}")
     if spec["fidelity"] == "recorded":
         data = os.path.join(os.path.dirname(path), spec["data"])
+        raw = []
         with open(data, encoding="utf-8") as fh:
-            raw = [json.loads(line) for line in fh if line.strip()]
+            for n, line in enumerate(fh, 1):
+                if not line.strip():
+                    continue
+                event = json.loads(line, object_pairs_hook=sigma_eval.pairs)
+                key = sigma_eval.key_twice(event)
+                if key is not None:
+                    raise ValueError(f"{os.path.relpath(data, REPO)}, line {n}: "
+                                     f"{sigma_eval.twice_text(key)}")
+                raw.append(event)
     else:
         raw = expand(spec)
     return Slice(spec, path, raw)

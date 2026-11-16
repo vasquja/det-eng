@@ -425,6 +425,56 @@ class ScoreBenign(gatelib.GateCase):
                                     r"which SQLite reads as one column name \(a reseed\)\. No rule "
                                     r"is scored on the reseeds\.$", exit_code=1)
 
+    def test_rejects_slice_with_an_object_that_holds_a_key_two_times(self):
+        """A slice of the benign corpus whose file holds an object with one key two
+        times: json keeps only the last value, so the gate would score events that the
+        files do not show. Two plants, each in a copy: a synthetic slice whose template
+        event holds `eventName` two times, and a recorded slice whose data line 2
+        holds `verb` two times. Each is an ERROR line that names the file (and the
+        line), the run scores no rule and exits 1. (Before, the gate read each object
+        without a word.)"""
+        spec = {"id": "planted-twice", "version": 1,
+                "logsource": {"product": "aws", "service": "cloudtrail"},
+                "fidelity": "synthetic",
+                "represents": "PLANTED DEFECT of detections/tests: a key two times",
+                "provenance": "synthetic: planted artifact of detections/tests (test_quality.py)",
+                "count": 1, "templates": [{"weight": 1, "event": {
+                    "eventSource": "sts.amazonaws.com", "eventName": "GetCallerIdentity"}}]}
+        synthetic = json.dumps(spec).replace('"eventName": "GetCallerIdentity"',
+                                             '"eventName": "AssumeRole", "eventName": '
+                                             '"GetCallerIdentity"')
+        recorded = dict(spec, fidelity="recorded", data="planted-twice.jsonl",
+                        provenance="recorded: planted artifact of detections/tests "
+                                   "(test_quality.py)",
+                        logsource={"product": "kubernetes", "service": "audit"})
+        for key in ("count", "templates"):
+            recorded.pop(key)
+        event = {"kind": "Event", "apiVersion": "audit.k8s.io/v1", "verb": "get"}
+        data = (json.dumps(event) + "\n" + json.dumps(event)[:-1] + ', "verb": "list"}\n')
+        plants = {
+            "synthetic": ({"detections/benign/slices/aws/planted-twice.json": synthetic},
+                          r"detections/benign/slices/aws/planted-twice\.json: an object holds "
+                          r"the key 'eventName' two times"),
+            "recorded": ({"detections/benign/slices/kubernetes/planted-twice.json":
+                          json.dumps(recorded),
+                          "detections/benign/slices/kubernetes/planted-twice.jsonl": data},
+                         r"detections/benign/slices/kubernetes/planted-twice\.jsonl, line 2: an "
+                         r"object holds the key 'verb' two times")}
+        runs = []
+        for label, (files, problem) in plants.items():
+            tree = self.tree()
+            for rel, text in files.items():
+                tree.write(rel, text)
+            runs.append((label, problem, tree.start(self.GATE, "--check", "--enforce")))
+        for label, problem, pending in runs:
+            with self.subTest(label):
+                result = pending.result()
+                self.assertNotIn("Traceback", result.output)
+                self.assertNotRegex(result.stdout, r"(?m)^Benign corpus: ")
+                self.assert_rejects(result, r"^ERROR: the benign corpus: " + problem
+                                    + r" \(json keeps only the last value\)\. No rule is "
+                                      r"scored on the benign corpus\.$", exit_code=1)
+
     def extra_slice_runs(self, captures):
         """Runs of --extra-slice with the options of the shadow step, started together:
         {label: (capture path, result)}. `captures`: {label: the bytes of the capture,
@@ -484,6 +534,7 @@ class ScoreBenign(gatelib.GateCase):
             deep = {"a": deep}
         separators = dict(events[1], userAgent="kubectl/v1.31 \u2028 \u2029 \u0085 x")
         cut = b'{"kind": "Event", "apiVersion": "audit.k8s.io/v1", "verb": "ge'
+        twice = json.dumps(events[1])[:-1].encode() + b', "verb": "create"}'
         try:
             json.loads(cut)
         except json.JSONDecodeError as e:
@@ -524,7 +575,12 @@ class ScoreBenign(gatelib.GateCase):
             + lines[1] + b"\x00" * 8 + lines[1].rstrip(b"\n"),
             "a cut line before other lines": lines[0] + cut + b"\n" + lines[1],
             "a cut last line with a line feed": lines[0] + lines[1] + cut + b"\n",
-            "a cut last line": lines[0] + lines[1] + cut})
+            "a cut last line": lines[0] + lines[1] + cut,
+            # json keeps only the last value of a key that an object holds two times, so
+            # the event that the gate scored was not the event of the line.
+            "an event that holds a key two times": lines[0] + twice + b"\n",
+            "an array with an event that holds a key two times": b"[" + lines[0].rstrip()
+            + b", " + twice + b"]\n"})
         cannot_read = {
             "an object too deep to flatten": r", line 2: JSON that the gate cannot read "
                                              r"\(RecursionError: [^)]*\)",
@@ -561,7 +617,12 @@ class ScoreBenign(gatelib.GateCase):
                                              "line feed",
             "a cut last line with a line feed": f", line 3: {cut_error}; a capture can cut "
                                                 "only the last line of a log, and a cut line "
-                                                "has no line feed"}
+                                                "has no line feed",
+            "an event that holds a key two times": ", line 2: an object holds the key 'verb' two "
+                                                   "times (json keeps only the last value)",
+            "an array with an event that holds a key two times":
+                ", element 2 of the array: an object holds the key 'verb' two times (json keeps "
+                "only the last value)"}
         for label, (path, result) in runs.items():
             with self.subTest(label):
                 self.assertNotIn("Traceback", result.output)
@@ -1747,6 +1808,26 @@ class ProviderMappings(gatelib.GateCase):
                       "a sidecar error were not checked\n", result.stdout)
         results = "detections/pipelines/mapping_results.json"
         self.assertEqual(self.clash_write.read(results), self.good().read(results))
+
+    def test_rejects_anchor_with_an_object_that_holds_a_key_two_times(self):
+        """An anchor of GKE whose object holds the key `provenance` two times, first
+        with no source. json keeps only the last value, so the check would read
+        another anchor than the file shows. The anchor is FAILED with the key, and the
+        run fails (the rule-path form checks the anchors too). (Before, the gate read
+        the anchor without a word.)"""
+        tree = self.tree()
+        rel = "detections/pipelines/anchors/gke/method-and-resource-names.json"
+        text = tree.read(rel)
+        self.assertTrue(text.startswith("{"))
+        self.assertIn('"provenance"', text)
+        tree.write(rel, '{"provenance": {}, ' + text[1:])
+        result = tree.run(self.GATE, "detections/sigma/" + self.REAL)
+        self.assertNotIn("Traceback", result.output)
+        self.assert_saw(result, r"^\[gke\] ANCHOR FAILED anchors/gke/method-and-resource-names"
+                                r"\.json$")
+        self.assert_rejects(result, r"^ +an object holds the key 'provenance' two times \(json "
+                                    r"keeps only the last value\)$", exit_code=1)
+        self.assertIn("\nFAILED: 1 problem(s).\n", result.stdout)
 
     def test_rejects_match_on_one_json_serialisation_by_rule_path(self):
         """The same pair with the rule-path form, which skips the results file: the

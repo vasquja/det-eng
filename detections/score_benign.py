@@ -418,7 +418,8 @@ def load_extra(path, logsource, label):
     document names its place), for JSON that the gate cannot read (too deep for json or for
     flatten(), a number with too many digits: the first such line, or the document),
     and for the first line, or element of the array, that is JSON and not an object
-    (`[]` in a line of a log) or is an event that one event table cannot hold
+    (`[]` in a line of a log), that holds an object with one key two times (json keeps
+    only the last value), or that is an event that one event table cannot hold
     (sigma_eval.event_problem(): two keys that differ only in the letter case of their
     ASCII letters, ...).
     """
@@ -447,7 +448,7 @@ def load_extra(path, logsource, label):
             raise CaptureError(f"the live capture {path}, line {n}: the line starts with the "
                                "byte order mark of UTF-8 (EF BB BF)")
     try:
-        doc = json.loads(text)
+        doc = json.loads(text, object_pairs_hook=sigma_eval.pairs)
         raw = doc if isinstance(doc, list) else [doc]
         where = ([f"element {n} of the array" for n in range(1, len(raw) + 1)]
                  if isinstance(doc, list) else ["line 1"])
@@ -457,7 +458,7 @@ def load_extra(path, logsource, label):
             line = line.strip()
             if line:
                 try:
-                    raw.append(json.loads(line))
+                    raw.append(json.loads(line, object_pairs_hook=sigma_eval.pairs))
                     where.append(f"line {n}")
                 except json.JSONDecodeError as e:
                     if n == len(lines) and line.startswith("{"):
@@ -488,6 +489,9 @@ def load_extra(path, logsource, label):
                            + (f", and {len(bad) - 1} more event(s) that are not objects"
                               if len(bad) > 1 else ""))
     for at, event in zip(where, raw):
+        key = sigma_eval.key_twice(event)
+        if key is not None:
+            raise CaptureError(f"the live capture {path}, {at}: {sigma_eval.twice_text(key)}")
         try:
             problem = sigma_eval.event_problem(sigma_eval.flatten(event))
         except RecursionError as e:
@@ -649,7 +653,11 @@ def main():
 
     rules = load_rules(args.rules or None)
     every = load_rules() if args.rules else rules
-    slices = benign_corpus.load_corpus()
+    try:
+        slices = benign_corpus.load_corpus()
+    except ValueError as exc:   # a slice that load_slice() refuses
+        print(f"ERROR: the benign corpus: {exc}. No rule is scored on the benign corpus.")
+        return 1
     default, budgets, exempt = load_budgets()
     unknown = sorted((set(budgets) | set(exempt)) - {r["key"] for r in every})
     if unknown:

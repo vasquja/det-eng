@@ -72,8 +72,9 @@ Logs:
     a line that is not JSON (also NUL bytes or U+200B before a record), JSON that is
     not an object (`[]`), a JSON object that is not a record of the log (`{}`), a
     snapshot whose "items" is not a list, bytes that are not UTF-8, the byte order
-    mark of UTF-8 at the start of a line, and JSON that the validator cannot read
-    (too deep, or a number that is too long). One ERROR line names the log, the
+    mark of UTF-8 at the start of a line, JSON that the validator cannot read (too
+    deep, or a number that is too long), and an object that holds one key two times
+    (json keeps only the last value). One ERROR line names the log, the
     line (and the item) and the problem (at most 10 for each log, then the number
     of the others), and a FAILED line ends the run with exit 1. With --expect-miss
     the failed control lines of the pre-emulation logs (a log that is not given, an
@@ -454,13 +455,14 @@ def read_log(path, source):
     A problem is a line, or an item of a snapshot, that is not a record of the log:
     bytes that are not UTF-8, the byte order mark of UTF-8 at the start of a line,
     a line that is not JSON (cut_line() tells the one exception), JSON that the
-    validator cannot read (too deep, or a number that is too long), JSON that is not
-    an object, a JSON object that is not a record of the log, a record that one
-    event table cannot hold (table_problem()), and a snapshot whose "items" is not a
-    list. Each problem is (line, item, text): lines and items count from 1, and item
-    is None for a line. A blank line, and a line that a capture cut (cut_line()), are
-    no record and no problem. Raises LogError for a log that is a directory or cannot
-    be read.
+    validator cannot read (too deep, or a number that is too long), an object that
+    holds one key two times (json keeps only the last value, so a record of the rule
+    could hide under a second value of its key), JSON that is not an object, a JSON
+    object that is not a record of the log, a record that one event table cannot hold
+    (table_problem()), and a snapshot whose "items" is not a list. Each problem is
+    (line, item, text): lines and items count from 1, and item is None for a line.
+    A blank line, and a line that a capture cut (cut_line()), are no record and no
+    problem. Raises LogError for a log that is a directory or cannot be read.
     """
     spec = RECORDS[source]
     if os.path.isdir(path):
@@ -491,13 +493,17 @@ def read_log(path, source):
                                       "UTF-8 (EF BB BF)"))
             continue
         try:
-            doc = json.loads(line)
+            doc = json.loads(line, object_pairs_hook=sigma_eval.pairs)
         except json.JSONDecodeError as e:
             if not cut_line(text, n, len(lines)):
                 problems.append((n, None, _not_json(text, e)))
             continue
         except (ValueError, RecursionError) as e:
             problems.append((n, None, _cannot_read(e)))
+            continue
+        key = sigma_eval.key_twice(doc)
+        if key is not None:
+            problems.append((n, None, sigma_eval.twice_text(key)))
             continue
         items = [(None, doc)]
         if spec["snapshot"] and isinstance(doc, dict) and "items" in doc:

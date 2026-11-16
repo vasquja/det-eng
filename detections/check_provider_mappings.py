@@ -1296,11 +1296,17 @@ def check_anchor(path, provider_name, provider=None):
     "field_map" (native field -> the provider field the pipeline must write; with
     "field_map_complete", every mapping the pipeline writes must have an entry);
     "columns" (the only top-level keys a transformed record may have; "query_columns" are
-    the query-time columns a field may also map to).
+    the query-time columns a field may also map to). An anchor with an object that
+    holds one key two times is one problem, and nothing else of it is checked.
     """
     provider = provider or PROVIDERS[provider_name]
     with open(path, encoding="utf-8") as fh:
-        anchor = json.load(fh)
+        anchor = json.load(fh, object_pairs_hook=sigma_eval.pairs)
+    # json keeps only the last value of a key that an object holds two times: the
+    # anchor would not hold the records that its file shows.
+    key = sigma_eval.key_twice(anchor)
+    if key is not None:
+        return [sigma_eval.twice_text(key)]
     problems = []
     if not (anchor.get("provenance") or {}).get("source"):
         problems.append("no provenance.source")

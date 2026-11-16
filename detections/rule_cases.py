@@ -89,8 +89,12 @@ def load_cases(path):
     A line with bytes that are not UTF-8 is such an error too: it names the first such
     byte and its character in the line; and so is a line with JSON that the gate
     cannot read (too deep for json or for flatten(), a number with too many digits),
-    and a line whose field outside the events holds a lone surrogate (no line of a
-    gate can print the name, the `why` or the atom that holds it)."""
+    a line whose field outside the events holds a lone surrogate (no line of a
+    gate can print the name, the `why` or the atom that holds it), and a line with
+    an object that holds one key two times (json keeps only the last value, so an
+    event of the case would not be the event that the line shows). Such an object in
+    the events names the case; the case object itself names only the line (its name
+    can be one of the two values)."""
     cases, errors, names = [], [], set()
     with open(path, encoding="utf-8", errors="surrogateescape") as fh:
         for n, text in enumerate(fh, 1):
@@ -104,7 +108,7 @@ def load_cases(path):
                               "line)")
                 continue
             try:
-                case = json.loads(line)
+                case = json.loads(line, object_pairs_hook=sigma_eval.pairs)
             except json.JSONDecodeError as e:
                 errors.append(f"line {n}: not JSON ({e})")
                 continue
@@ -124,6 +128,11 @@ def load_cases(path):
                 continue
             # From here, an error of a line that has a name names the case.
             of = f"case {case['name']!r}: " if "name" in case else ""
+            key = sigma_eval.key_twice(case)
+            if key is not None:
+                twice = sigma_eval.twice_text(key)
+                errors.append(f"line {n}: {'' if type(case) is sigma_eval.Twice else of}{twice}")
+                continue
             missing = [k for k in REQUIRED if k not in case]
             if missing:
                 errors.append(f"line {n}: {of}missing {', '.join(missing)}")

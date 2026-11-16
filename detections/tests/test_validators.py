@@ -2854,6 +2854,30 @@ class K8sValidator(gatelib.GateCase):
                                     rf"{records + 1}: the line starts with the byte order mark "
                                     r"of UTF-8 \(EF BB BF\)$", exit_code=1)
 
+    def test_rejects_an_audit_event_that_holds_a_key_two_times(self):
+        """After the records of the control, a line of the log holds an emulation
+        record of the rule whose key `objectRef` comes two times: first the object of
+        the record, then the object of a benign record. json keeps only the last value,
+        so a reader that read the line got a benign record: the rule did not fire, and
+        the negative control held on a log that holds a record on which the rule fires.
+        Now the line is named with the key, and no rule is judged. (Before, the reader
+        read such a line without a word.)"""
+        good = self.good()
+        (positive,) = case_events(good, self.CASES, "exec-websocket-get-procA")
+        benign = case_events(good, self.CASES, self.BENIGN[0])[0]
+        self.assertNotEqual(positive["objectRef"], benign["objectRef"])
+        line = (json.dumps(positive)[:-1] + ', "objectRef": ' + json.dumps(benign["objectRef"])
+                + "}")
+        records = self.log_with(good, line)
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+        self.assertNotIn("Negative control held", result.stdout)
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_saw(result, LINES_NOT_RECORDS.format(1))
+        self.assert_rejects(result, rf"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+                                    rf"{records + 1}: an object holds the key 'objectRef' two "
+                                    r"times \(json keeps only the last value\)$", exit_code=1)
+
     # A line that a capture can cut: an audit event without its end (and so without
     # its line feed), as `cat` reads it while the writer adds the line.
     CUT = '{"kind": "Event", "apiVersion": "audit.k8s.io/v1", "verb": "ge'

@@ -312,7 +312,10 @@ not a JSON object; holds JSON that the gate cannot read (nesting too deep for `j
 or for `flatten()`, a number with too many digits); lacks a field, or its name, kind,
 events or breaks has the wrong type; holds a lone surrogate (the JSON escape `\ud800`)
 in a field outside the events, such as its name, `why` or an atom of `breaks`, which no
-line of a gate can print; or one event table cannot hold the events of its case. All the events of a case go in one SQLite table, so each event must be a JSON
+line of a gate can print; holds an object with one key two times (`json` keeps only
+the last value, so the gate would judge another case than the line shows; the line
+names the case only when the object is in its events); or one event table cannot hold
+the events of its case. All the events of a case go in one SQLite table, so each event must be a JSON
 object, no two values of an event may get one flat key (`{"a": {"b": 1}, "a.b": 2}`),
 and the table must hold each event: no event may hold two keys that differ only in
 the letter case of their ASCII letters (`comm`, `Comm`), a key that SQLite reads as
@@ -1543,6 +1546,8 @@ a snapshot, that is not a record is a problem:
   of a later line);
 - JSON that the validator cannot read: nesting that is too deep (a `RecursionError`),
   or a number with more digits than Python reads (a `ValueError`);
+- an object that holds one key two times (`json` keeps only the last value, so an
+  event of the emulation could hide under a second value of its key);
 - a record that one event table cannot hold: two keys of the record that differ only
   in the letter case of their ASCII letters (a ConfigMap whose `data` holds `key` and
   `KEY`), a key that SQLite reads as `rowid` or `_rowid`, a key with a NUL or a lone

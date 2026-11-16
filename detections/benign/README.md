@@ -20,7 +20,11 @@ layer that measures that.
 Each slice is one JSON spec under [`slices/<family>/`](slices/). Its `logsource`
 must match a rule's `logsource`, and the rule is then scored against every event in
 the slice. The full spec format is documented in
-[`../benign_corpus.py`](../benign_corpus.py).
+[`../benign_corpus.py`](../benign_corpus.py). A spec, or a line of the JSONL of a
+`recorded` slice, with an object that holds one key two times is an `ERROR` line
+that names the file (and the line), and `score_benign.py` scores no rule: `json`
+keeps only the last value, so the slice would not hold the events that its files
+show.
 
 Slices come in two fidelities:
 
@@ -117,6 +121,9 @@ the capture:
   character in the line);
 - the byte order mark of UTF-8 (`EF BB BF`) at the start of a line;
 - a line, or an element of the array, that is JSON and not an object (`[]`);
+- a line, or an element of the array, with an object that holds one key two times
+  (`json` keeps only the last value, so the gate would score another event than the
+  capture shows);
 - JSON that the gate cannot read: nesting too deep for `json` or for `flatten()`, or a
   number with more digits than Python reads, in a line or in a file that is one JSON
   document;
