@@ -92,11 +92,13 @@ after each test or test class.
 | `gatelib.py` | The harness: `Tree`, `GateCase`, `StartedTogether`, `assert_rejects`, `assert_accepts`, `assert_saw`, `known_gap`, `ci_step`, `ci_commands`, and the parallel runner. |
 | `test_gatelib.py` | Tests of the harness, on constructed gates. |
 | `test_sufficiency.py` | `rule_cases.py` (and through it the event table of `sigma_eval.py`: a sidecar line that is not a case, is not UTF-8 (also a lone byte 0x80) or holds JSON that the gate cannot read (too deep for `json` or for `flatten()`, a number with too many digits), a case whose events one event table cannot hold (also `NaN`, `Infinity`, a lone surrogate in a value or a key, a NUL in a key), a case whose two events hold keys that differ only in letter case, a correlation case whose second event spells the key of the time or of the group-by in another letter case (a near-miss on the timespan, a near-miss on group-by, a positive), a rule in a dotfile), the event table of `sigma_eval.py` itself (class `EventTableKeys`: keys of two events that differ only in letter case share one column, one event with such keys is refused with the event and the keys, letters that are not ASCII are not folded, the names `_rowid` and `rowid` in any letter case, integers outside 64 bits, `NaN`, `-Infinity`, a lone surrogate in a value or a key and a NUL in a key are refused, `oid`, `_rowid_` and `event_ids` are ordinary keys), the import guard of `sigma_eval.py` (each kind of name that it and R0 refuse, compared; each gate that reads the rules stops at it on a rule in a dotfile; the rule lists of the walkers that do not use the globs), `check_sufficiency.py` (R0 to R4 and the waiver digests; also a sidecar line that is not UTF-8), the sufficiency ratchet, the self-test of `sigma_explain.py`. |
+| `test_mutants.py` | `check_mutants.py`, the change proof of the `sufficiency-ratchet` job. One planted change in the head that no case, fixture or corpus record of the head tells apart from its undo, each rejected with its key: a dead item, a list value that no positive needs, an allowlist name in a base rule of a correlation, an allowlist name widened in place, a list of verbs made a wildcard, the names of an identity filter made a wildcard, one more alternative inside a `\|re` value, an allowlist rewritten as one `\|re` value, a new OR branch that `1 of sel_pod_*` reaches, a dead item beside a value that makes the head fire on its own near-miss and on corpus records (evidence that the head fails does not kill, and a corpus slice that loses a hit does not kill), a dead block under an `and` beside a proven filter, a removed value with no negative, a wider timespan of a correlation, and a value in a correlation base rule with a new name and id. The changes that the gate passes: an allowlist name with its filtered case, a list that is only reordered, reworded texts, a blank fix that only the variant `compact` proves, an anchored value that only `multi` proves and a letter-case fix that only `cs_like` proves (all three planted in the base), a removed value and an added `and` block, each with its negative, a condition with its terms in another order (equivalent), a new id, and a new rule (report only). The changes that go to a human (a renamed block, a switch between a plain rule and a correlation, an undo that does not compile), the structural faults (exit 2: also a variant that is not in force and a sidecar error), and the step of the job. |
 | `test_quality.py` | `score_benign.py` (also a slice whose event holds two keys that differ only in letter case: an ERROR line names the slice, the event and the keys, and no rule is scored, also for a slice that no rule reads and with `--update`; so does a reseed (`--reseeds`) whose event holds such keys; two events of a slice with such keys are scored; and a live capture, `--extra-slice`, that is a directory or does not exist, holds a byte that is not UTF-8, starts with a byte order mark, or holds a line that is JSON and not an object, an event with two keys that differ only in letter case (also in a nested object), or JSON that the gate cannot read (in a line or in one document): an ERROR line names the capture and the line, and no rule is scored on it; two events with such keys are scored, and so is a line that holds U+2028, U+2029 and U+0085 in a string) and the benign ratchet, `check_null_safety.py` (also a case whose one record carries a field of the rule in another letter case beside a record that holds the field, and a correlation case whose group-by key is in another letter case), `check_variants.py` (also a sidecar line that is not JSON, and a list of a fixture with an integer outside 64 bits, named with its record), `check_provider_mappings.py` (also a sidecar case that one event table cannot hold, with `--check` and `--write`), `k8s_policy_coverage.py`, `k8s_platforms_md.py`, `coverage_report.py` (also an entry of the defect tracker without its Summary row or its section, or with two of either, and a heading that starts with an ID and is not the heading of an entry, with `--check` and the generator; one error line for each such entry). |
 | `test_validators.py` | The cloud validator (a rule must fire on a marked record of its attack fixture and on no benign record; an attack or benign fixture that is missing or is a directory, and a benign baseline without a record, fail the run, also with `--report`; a fixture that the loader cannot read is an ERROR row that names the fixture and the line or the element, also with `--report` and in `--json`: JSON that is not an array or an object, a record that is not an object in an array, an envelope or JSON lines, a line that is not JSON, a document with an error, bytes that are not UTF-8, a byte order mark, JSON too deep to read or to flatten, a number with too many digits (also in a JSON line), an integer outside 64 bits, `NaN` (also in each record of the attack fixture, which gave a false PASS before), `-Infinity`, a lone surrogate in a value or a key, a NUL in a key, a record with two keys that differ only in letter case (also the one object of a file), a key `rowid`, an envelope whose list is null or a number, a character of two bytes before a byte that is not UTF-8, a blank line before the bad line of JSON lines; two such fixtures are one row; `check_null_safety.py`, `check_variants.py` and `check_sufficiency.py` name the fixture too (also a directory, and for the first two a fixture that does not exist; R4 of `check_sufficiency.py` with an attack fixture that it cannot read says that the rename test ran on the sidecar positives only; a rule without a sidecar whose two fixtures cannot be read gets the two lines only); records whose keys differ only in letter case share one column; JSON lines whose string holds U+2028, U+2029 and U+0085 are read), the Linux validator (dry run, with the check of its `CONTROLS` table; and its verdict code on canned results: the detections; the no-op baseline, which must own a record; each mutant and each re-run, which must be held by what it declares (an item of its rule, or the success gate); the limits of the exemption for a rule whose emulation is a SKIP; a live negative control for each rule), the three Kubernetes validators (dry run; the negative-control step, which fails when a rule passes on a pre-emulation log, when a pre-emulation log is not given or is missing, and when the audit log holds no record; an empty value of `--audit-log` counts as a log that is not given; with `--report` too, each validator fails a rule that passes on a pre-emulation log, and logs without a record; the `--json` report of each validator says that the control of a log without a record failed; for `validate_k8s_detections.py`, its `--json` report says the same for a log that is missing; for the static pod validator, also when the CRI log holds no API-scheduled sandbox or the file log holds no `kubeadm` write, with a line that names the log and the number of its records, and a strict run fails a CRI log without an API-scheduled sandbox with the same line; for the API server validator, also when the CRI log or the file log holds no record, and a CRI snapshot without a sandbox is no record; the lines of the capture step of that validator's workflow that make the pre-emulation file log, on a constructed raw audit log that holds the audit key of the canary watch of the file sensor step, and the line of that step that writes the raw log; and the strict run, which prints SKIP and exits 0 when it finds no log, also when the value of `--audit-log` is empty (a log that does not exist: the run does not read the default log), and gets no check of the negative control when it has a log; a line of a log that is not a record of the log fails each run, and no rule is judged: `[]` and `{}` in each log of each validator, an audit `EventList` and a core Event among records, a CRI snapshot whose item is not a sandbox (also an item with an id and a metadata object without a name, and an item with a name and no id) or whose `items` is not a list, a line of the file log with a `TargetFilename` and no `Image` or the other way round, bytes that are not UTF-8 in a JSON string and outside it, a byte order mark, JSON that is too deep or a number that is too long, a string, a number, `true`, `false` and `null` (each named with its type), and a `[]` line in a strict run with `--report` of each validator; a snapshot of two items that are not sandboxes is one line in the count of the FAILED line (and of the `--json` report), with an ERROR line for each item; a sandbox that a log holds on two lines counts once; the ERROR line names the log and the line, a log gets at most 10 of them and the number of the others, and so does the `--json` report, whose control of the log says `FAILED`; beside a log without a record, the API server and the static pod validator print the failed control line of that log before the FAILED line (for a CRI log or a file log of the static pod validator, the line of its CRI control or file control), and the `--json` control names both; a log that is a directory is an ERROR, in the negative-control step and in a strict run; the step of CI that validates with `--ledger` fails on a ledger row whose start is after its end, with an error that names the procedure and the two times, and judges no rule (the same ledger in order is read, and a row whose start is its end is a window); a `--ledger` that is a directory or holds a byte that is not UTF-8, and a `--json` path that is a directory, are ERROR lines; the verdict line of a strict run of the API server validator, and the description of its `--help`, name the TRRs that its `MANIFEST` grades, also in a copy whose `MANIFEST` holds the entries of two TRRs), the class `LogReaderText` (the log reader of the three Kubernetes validators is one text, and so is each entry of its table of records), a log whose two audit events hold keys that differ only in letter case (each of the three validators judges its rules on it, and its negative control fails on the emulation record of the log), and a record that one event table cannot hold (an audit event, a sandbox, a file event with two keys that differ only in letter case, and an audit event with `NaN`, `Infinity`, a lone surrogate or a key with a NUL: a line that is not a record), the converter of the node file sensor, `k8s/auditd_file_events.py` (one summary line on stderr for each run that read its log, only the JSON lines on stdout, and no workflow command that sends stderr to the file log), `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py` (also a name that starts with a dot), `check_schedule_freshness.py`. |
-| `test_suite.py` | Rules of the suite as a whole: each self-test has a runner, the CI job runs every test on every pull request, the `emulation-scripts` job does the same for `atomics/tests/`, no workflow step pipes a command into `tee` without pipefail, no step that runs a gate or the unit tests has `continue-on-error`, each known gap names a roadmap item, each planted artifact is used, this file agrees with the tests. |
+| `test_suite.py` | Rules of the suite as a whole: each self-test has a runner, the CI job runs every test on every pull request, the `emulation-scripts` job does the same for `atomics/tests/`, no workflow step pipes a command into `tee` without pipefail, no step that runs a gate or the unit tests has `continue-on-error`, no test sets the mode of a file (a chmod) but `gatelib.write_program()`, each known gap names a roadmap item, each planted artifact is used, this file agrees with the tests. |
 | `test_apt_install.py` | Tests of `.github/scripts/apt_install.sh`, the step that installs `auditd`, with a stub for `sudo`, `apt-get`, `unshare`, `mount`, `getent` and `timeout`. When the runner cannot resolve the package mirror, or apt printed a message about name resolution, or the mirror does not resolve after a failed run, apt gets one run with public resolvers in a private mount namespace; the script fails only after apt failed in a run with the resolver of the runner (but in the forced way of the CI job); a necessary package that is not installed fails the step; a text that is not a package name (also a name that ends with `-`, which apt reads as a removal) or not an address is refused. The class `DirectInstalls` (with two CONTROLs) fails when a workflow (a `run:` text, a `with:` or `env:` value), a composite action or a shell script (`*.sh`, or a shell on its first line) installs packages in a usual form (`apt-get install`, `apt update`, `dpkg -i`, `snap install`, also with options, a path or quotes) without the script. The one line that is allowed is `apt-get update -qq` in `detections/benign/linux/workload.sh`. It is a rule on text: a command that is built at run time, or that a different program starts, is not seen. The stubs do not show that the namespace works on a runner: the CI job `apt-install-fallback` does. It forces that way, and its CONTROL step gives a resolver that does not answer (`APT_INSTALL_RESOLVERS`) and fails if the install then passes. |
 | `test_labs.py` | Rules for the lab jobs that run on a GitHub runner (auditd on the runner, a kind cluster). No offline gate runs these jobs, and a new runner image can break them with no change in the repository. `AuditdStart`: each workflow step that starts auditd (with `systemctl` or `service`) waits for `audit-rules.service` after the start. Before the wait, and before the start, no line of the step changes the rules or a setting of the audit system (an `auditctl` command that is not a status or a list), and between the start and the wait no line runs a validator. auditd 4 loads its rule files in that oneshot unit, the start of auditd does not wait for it, and its rule file starts with `-D` and sets the backlog limit. The wait is in a guard, because auditd 3 has no such unit. It runs with `sudo`, because systemd refuses the start of a unit for a user that is not root and cannot give an authorization. A unit that ends with an error gives a `::warning` line and does not stop the step. The class also runs each such step from its first line to the end of its wait, the whole sensor step of the static pod lab and the whole start step of the `benign-linux-live` job, with a stub for `sudo`, `systemctl`, `service` and `auditctl`. The stubs model the fault that CI showed on 2026-11-13: a run of the unit that nobody waited for deletes the rule after the step saw it in the list, and sets the backlog limit back to the value of its rule file. They also model root: a start of the unit without `sudo` fails at once and waits for nothing. `FileSensorRule`: the two steps of the static pod lab that read the file events print an `::error` line when `auditctl -l` does not list the rule of the file sensor, and they go on. The line says which check of the validator fails when: the file gate, or the file control too. `DateWidth`: no shell script, file under `atomics/`, workflow or composite action gives `%N` a width (`%6N`, `%3N`): `date` of uutils coreutils 0.10.0 prints such a field without the leading zeros of the fraction. `LedgerClock`: the function that gives the times of the emulation ledger (`now_utc()`, or `now()`) is one accepted text in each shell script under `atomics/` and in each workflow step that defines it, and a script that appends to the ledger defines it one time. The class runs that text in bash with a stub `date` that prints a wrong time, in a zone that is not UTC: the result is the time of the test in UTC, a fraction that starts with zero keeps its zeros, and `date` is not called; without the clock of bash the function calls `date` with `%N` only. The stubs do not show what systemd, auditd and the `date` of a runner image do: the lab jobs show that. |
+| `test_external.py` | The external-records gate, `check_external_records.py`. `--lint` on the real `SOURCES.json`, `expectations.json` and syscall table, and on one planted defect of each kind: a path that leaves the datasets, a short commit, an id or bytes listed two times, a sha256 that is not lower-case hex, a size over the cap, another licence, a changed licence copy, a list without a dataset, a declaration for a rule or a dataset that does not exist, a stale digest or sha256 (a row in shadow mode, exit 1 with `--enforce`), an unknown verdict word, a why that is TODO or has no prefix, a defect that the Summary table does not list, a redundant or doubled declaration, a procedure label without CVE IDs, in CVE form and not one of its CVEs, or on a dataset that is not raw auditd. The report on a constructed set of four datasets and one `excluded` entry, made from sidecar cases and put in the cache of the gate: the CI step accepts it and gives a DATASET, FIRE, MISS, NOT READ, RELATED, OTHER-PROCEDURE, EXCLUDED and UNAVAILABLE row (the LICENSE and the syscall table, with no network), and the same rows in the step summary; `--enforce --offline` accepts its four FIREs; the declared verdicts come from one run each, and each run of one planted defect fails (a cached file of other bytes, a MISS, a declaration that a hit contradicts, an unavailable dataset, a line that is not a record or not an object, a file that is not UTF-8, a record count, an integer that one SQLite table cannot hold, an integer of more than 4300 digits, an envelope that holds `Records` two times, keys that differ only in letter case, a yml that does not agree with its entry or does not name the procedure label); a run with an error gives `; 1 error(s)` in its Summary line, its step summary (the ERROR line above the rows) and its JSON report. With no cache and no network the real pins give a run that read nothing, and it fails. The rules of the job `external-records`, and the sums of the network time of the gate against its timeout. The raw auditd loader against `validate_detections.normalize()` on the same lines, and the syscall table against the rules and `k8s/auditd_file_events.py`. The probes of the functions of the report: the loader of each format (also an integer of any length, a doubled key of the envelope, records wider than one table, and every rule of a log source on a table at that bound), `check_yml()` (the procedure label as a whole token, and each of its CVEs from the description or from a constructed rule; the labels of `SOURCES.json` against the real rules), the cache (a directory or a FIFO entry, read with a time limit) and the network deadline (a local server that never answers or sends a header a byte at a time, also as the proxy of a whole run). |
 | `known_bad/<group>/` | The planted artifacts of that group. `known_bad/gatelib/` holds samples for `test_gatelib.py`. |
 
 The planted artifacts are outside `detections/sigma/`, the fixtures and the
@@ -122,6 +124,16 @@ The gap closed in another gate, `check_variants.py`. The test keeps its planted
 artifact and its wanted row, and it is now a rejection test of that gate
 (`Variants.test_rejects_one_json_serialisation_cloud`). It also asserts that
 `check_null_safety.py` still accepts the artifact: that gate has no check for it.
+
+One test of `test_sufficiency.py` was a known gap until roadmap item R6:
+`ra-allowlist-widened-no-case` (an allowlist name added to a rule, with no case).
+Its marker named `check_sufficiency.py --baseline`, which compares cases and not
+what a rule matches. The gap closed in another gate of the same job,
+`check_mutants.py`. The test keeps its planted rule and its probe pair, and it is
+now a rejection test of that gate
+(`SufficiencyRatchet.test_rejects_allowlist_widened_without_a_case`). It also
+asserts that `check_sufficiency.py --baseline` still accepts the planted rule: that
+gate has no check for it.
 
 ## How a test works
 
@@ -186,6 +198,11 @@ class RuleCases(gatelib.GateCase):
 - **One control for each gate.** The control runs the command of the rejection
   tests on the unmodified copy and asserts a line that shows what the gate checked.
   Take a count from the tree. Several gates exit 0 when they found nothing to check.
+  The report of `check_external_records.py` (class `ExternalRecords`) is the one
+  exception: the suite has no network, so the CI step on the unmodified copy reads no
+  dataset and must fail. Its accepted tree is the constructed set in the cache of the
+  gate (the runs `constructed` and `constructed_enforce`), and each planted defect is
+  one change from that set.
 - **One defect for each test.** Where the gate prints a count of problems,
   assert that it is 1. If the artifact must have a second difference from the good
   tree, prove that the second difference alone is accepted.
@@ -221,6 +238,18 @@ A gate is a child process, so runs that start together use the CPUs together.
   `begin_<name>(tree)` plants one artifact and starts the gate, and
   `self.started(name)` gives the test its copy and its result. `test_sufficiency.py`
   uses it.
+- Linux refuses to run a file that a process holds open for writing ("Text file
+  busy"), and a child process holds each open file of its parent until it runs its
+  own program. So a child that a run in the background starts could hold a program
+  that a test has just written, and the program would not run. Each start of a child
+  process of the suite (`subprocess.Popen`, which gatelib wraps) takes one lock and
+  keeps it until the child runs its program, so a new child that runs a program
+  never finds it held by another child. A test that writes a program writes it with
+  `gatelib.write_program(path, text)`, under the same lock, so that a child that
+  already runs can also run it. `Tree.run_step()` writes the programs of a step in
+  this way. `test_suite.py` (class `ProgramWrites`) refuses a chmod in the suite
+  outside `write_program()`. The lock is not reentrant: a test does not start a
+  child or call `write_program()` while it holds the lock.
 
 ## Known gaps
 
@@ -353,7 +382,7 @@ the two timeouts.
 
 - A script with a `--self-test` mode must have a runner. When no workflow step
   runs the self-test, the suite runs it (the table `SelfTests.RUN_HERE`; today
-  `sigma_explain.py`).
+  `sigma_explain.py` and `check_mutants.py`).
 - No step pipes a command into `tee` without pipefail. GitHub Actions runs a
   step that has no `shell:` with `bash -e`, so `gate | tee file` takes the exit
   code of `tee`, and a gate that fails leaves the job green. Such a step needs
@@ -500,10 +529,24 @@ it does not see one test in the place of a different one.
 
 - The suite proves that a gate rejects the artifacts that are planted here. It
   does not prove that a gate rejects every bad artifact.
+- `ProgramWrites` sees a chmod only. It does not see a copy that keeps the mode of
+  a program (`Tree` copies the programs of the repository, such as
+  `atomics/*/src/emulate.sh`, with their mode), `os.open()` with a mode, or a chmod
+  through a program. The lock on each start of a child still covers such a file
+  when a new child runs it. It does not cover a child that already runs and then
+  runs such a file; no test does that today. A program that a gate under test writes
+  and runs is a child of the gate, not of the suite, and the lock does not cover it.
 - A gate that needs a host or a cluster runs only in its offline modes: the dry
   runs, the negative-control steps on logs that the test writes, and the verdict
   code of the Linux validator on canned events. The live runs stay in the
   `validate-*` workflows.
+- No test downloads a dataset of splunk/attack_data, and no record of it is in the
+  repository. `test_external.py` builds its datasets from sidecar cases (the agent
+  wrote them) and puts them in the cache of the gate in the sandbox, each with a
+  constructed yml. Only the job `external-records` reads the real datasets, checks
+  their sha256 and their ymls at the pinned commit, and compares the LICENSE and the
+  kernel's syscall table with their origins. No test shows that the origins serve
+  the pinned files.
 - The suite runs two lines of the capture step of
   `validate-apiserver-detections.yml`: the lines that convert the runner's audit
   log into the pre-emulation file log. It runs them on a raw audit log that the
@@ -550,12 +593,13 @@ it does not see one test in the place of a different one.
 - The tests of the event table (`EventTableKeys`) and of the loaders plant keys
   that differ only in the letter case of ASCII letters, the keys `rowid` and
   `_rowid`, integers just outside 64 bits, `NaN` and `Infinity`, lone surrogates in a
-  value and in a key, and a NUL in a key. A NUL in a text value has no check and no
-  test: SQLite stores the whole text and `=` reads it whole, but `LIKE` (and so
-  `|contains`, `|startswith`, `|endswith`) stops at the NUL. A log, a fixture or a
-  slice with more than 1999 distinct flat keys has no check and no test: SQLite
-  holds at most 2000 columns in a table, and the table ends with an
-  `OperationalError` of sqlite3 (`too many columns on logs`) that no line names.
+  value and in a key, and a NUL in a key. Outside the external-records gate (which
+  refuses both), a NUL in a text value has no check and no test (SQLite stores the
+  whole text and `=` reads it whole, but `LIKE`, and so `|contains`, `|startswith` and
+  `|endswith`, stops at the NUL), and so has a log, a fixture or a slice with more
+  than 1999 distinct flat keys (SQLite holds at most 2000 columns in a table, and the
+  table ends with an `OperationalError` of sqlite3, `too many columns on logs`, that
+  no line names).
 - The import guard of `sigma_eval.py` and R0 of `check_sufficiency.py` are two
   implementations of one rule. `SigmaEvalImportGuard` compares them on the kinds of
   names in its table `NOT_RULE_MATERIAL` (and `RULE_MATERIAL`). A kind of name that
@@ -606,9 +650,15 @@ it does not see one test in the place of a different one.
   - `detections/sigma/T1040/afxdp_socket.cases.jsonl`
   - `detections/sigma/T1078.004/aws_cognito_unauthenticated_identity_use.yml`
   - `detections/sigma/T1078.004/aws_leaked_access_key_recon.yml`
+  - `detections/sigma/T1068/copyfail_af_alg_authencesn.yml`
+  - `detections/sigma/T1068/dirtypipe_splice_readonly.yml`
+  - `detections/sigma/T1068/dirtypipe_splice_readonly.cases.jsonl`
   - `detections/sigma/T1098.001/entra_app_federated_credential_backdoor.yml`
+  - `detections/sigma/T1098.001/gcp_workload_identity_federation_sa_binding.yml`
   - `detections/sigma/T1098.001/gcp_workload_identity_pool_provider_created.yml`
   - `detections/sigma/T1098.003/azure_privileged_role_assignment.yml`
+  - `detections/sigma/T1098.003/gcp_public_iam_member_grant.yml`
+  - `detections/sigma/T1098.006/k8s_rbac_privileged_grant.yml`
   - `detections/sigma/T1098.006/k8s_rbac_write.yml`
   - `detections/sigma/T1134/k8s_impersonation_privileged.yml`
   - `detections/sigma/T1485/k8s_volume_reclaim_set_to_delete.cases.jsonl`
@@ -617,6 +667,7 @@ it does not see one test in the place of a different one.
   - `detections/sigma/T1543.005/k8s_cri_static_pod_start.yml`
   - `detections/sigma/T1543.005/k8s_static_pod_mirror_create.yml`
   - `detections/sigma/T1609/k8s_pod_exec_attach.yml`
+  - `detections/sigma/T1611/k8s_podspec_confinement_disabled.yml`
   - `detections/cloud/fixtures/trr9011/attack.json`
   - `detections/cloud/fixtures/trr9012/attack.json`
   - `detections/cloud/fixtures/trr9012/benign.json`
@@ -678,6 +729,37 @@ it does not see one test in the place of a different one.
   the repair is the new text in the test:
 
   - `detections/sigma_eval.py`
+
+  One test of `ChangeProofFaults` (`test_mutants.py`) changes one line of the
+  in-force check in its copy: the line `named = ...` of `in_force()`, which it
+  replaces with a return of a variant that is not in force. This file is code, not content,
+  and a change to that line gets the same repair:
+
+  - `detections/check_variants.py`
+
+  The tests of `check_mutants.py` (`test_mutants.py`, and one test of
+  `SufficiencyRatchet`) judge each planted change on the evidence of the copy: the
+  sidecar of the rule, its cloud fixtures and the benign corpus slices of its log
+  source. A rejection test needs that no event set tells its planted change apart
+  from its undo (for example, no filtered case of `nc` in the sidecar of
+  `afinet_raw_socket.yml`, and no positive that needs `proxy` in the sidecar of
+  `k8s_pod_exec_attach.yml`). A test that accepts a change needs the event set that
+  proves it: a positive of `k8s_impersonation_privileged.yml` with the group
+  `system:masters` as an element of a list (variant `multi`), a record of
+  `gcp_public_iam_member_grant.yml` whose method ends in `SetIamPolicy` or
+  `setIamPermissions` in the letter case of the rule (variant `cs_like`), a positive
+  of `gcp_workload_identity_federation_sa_binding.yml` whose delta list has a blank
+  after the colon of `"action"` in its default JSON text (variant `compact`), and,
+  for the new rule, the value `0` of `a3` in each case of `afinet_raw_socket.yml`.
+  The tests of `dirtypipe_splice_readonly.yml` need its two base rules by these
+  names and ids, the near-miss `pipe-then-splice-too-late` 30 s apart (so the head
+  with a timespan of 20 s still holds its cases), and no case, fixture or corpus
+  record that a timespan of 20 s adds to a hit. A new
+  case that tells a planted change apart makes a rejection test fail: the test is
+  then out of date, and the repair is another planted change in the test. The step
+  test of `check_mutants.py` gives the step a stand-in for the worktree of the base
+  commit (the rule files of the copy and a `.git` file); the test of the job that
+  makes a real worktree (`SufficiencyRatchet`) stops at the step with `--baseline`.
 
   `CheckSufficiency` (`test_sufficiency.py`) takes the positive cases of these
   sidecars, for its proof that a rule that needs one fixture constant (an account
@@ -768,6 +850,57 @@ it does not see one test in the place of a different one.
   steps can need a stub in `test_labs.py`. `LedgerClock` reads each `*.sh` file
   under `atomics/`: a script that appends to the ledger must define the clock
   function one time, as the accepted text.
+
+  `test_external.py` builds its constructed datasets from cases of these sidecars,
+  by name (and from the positive and the near-miss of the snapshot rule, whose
+  sidecar a list above names):
+
+  - `detections/sigma/T1552.007/k8s_secret_access.cases.jsonl`
+  - `detections/sigma/T1528/entra_illicit_oauth_consent_grant.cases.jsonl`
+  - `detections/sigma/T1068/copyfail_af_alg_authencesn.cases.jsonl`
+
+  It asserts the FIRE of the rule of each set on its case: the log source of the
+  rule, and for the correlation its alerts and evidence records. The procedure label
+  of the CopyFail set (`COPYFAIL_CVE`) is the CVE tag of its rule. So it depends on the
+  text of these rules too (the snapshot rule, `k8s_secret_access.yml` and
+  `copyfail_af_alg_authencesn.yml` are in the other lists):
+
+  - `detections/sigma/T1528/entra_illicit_oauth_consent_grant.yml`
+
+  For the other kinds of row it names no rule: `ExternalRecords.kind()` takes them
+  from the folder, the log source and the tags of each rule of the copy. A content
+  change can still leave a kind with no rule. The test then fails with a message that
+  names this list. It needs a rule of T1528 that reads another Azure log than
+  AuditLogs (`NOT READ`, and a declaration on a pair without records), a rule of T1068
+  whose `cve.*` tags do not hold the label of the CopyFail set (`OTHER-PROCEDURE`), a
+  rule outside T1552.007 with the tag `attack.t1552.007` on the Kubernetes audit log
+  that does not fire on the get of a secret (`RELATED`, and a declared fire that
+  misses), and a rule in the folder of a constructed set that reads another product
+  (no `NOT READ` row for it).
+
+  Its known gap `ext-self-added-declaration` removes the line `      - 'get'` from this
+  rule in its copy:
+
+  - `detections/sigma/T1552.007/k8s_secret_access.yml`
+
+  `ExternalLoaders` checks each procedure label of `SOURCES.json` against the titles
+  and the `cve.*` tags of the rules of its technique, as the report does: the label
+  Copy Fail takes its CVE from `copyfail_af_alg_authencesn.yml` above, and the label
+  Dirty Frag its two CVEs from these rules. A title or a tag that drops the exploit
+  name fails the test (and the report):
+
+  - `detections/sigma/T1068/dirtyfrag_rxrpc_socket.yml`
+  - `detections/sigma/T1068/dirtyfrag_xfrm_unshare_netlink.yml`
+
+  `ExternalLoaders` also runs every rule of `aws/cloudtrail` and of
+  `kubernetes/audit` on one table of a record at the bound of keys (1900): it needs
+  more than 10 rules of each, and their fields must fit in the 99 columns above the
+  bound.
+
+  It also reads `detections/external/SOURCES.json`, `expectations.json` and
+  `syscalls_x86_64.json`, which are not content: a pin bump runs the suite.
+  `ExternalRecordsJob` needs at most 38 datasets in `SOURCES.json` ((2 + 38) x 15 s
+  is the deadline of 600 s): a larger pin needs a new `TIMEOUT` or `DEADLINE`.
 
   `test_suite.py` fails when a file of these lists is not in the repository.
 

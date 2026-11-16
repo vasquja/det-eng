@@ -488,17 +488,19 @@ New cases and new rules pass, and so does rewording a case's `why`. A base repor
 from an older copy of the script carries no digests: the ratchet then compares
 those rules' cases and negatives by count and name only, and prints a note saying
 so. Not compared: the rule's own detection (a broadened rule that keeps every case
-passes here; its near-miss cases and the benign comparison below guard it), and
+passes here; the change proof and the benign comparison below guard it), and
 fixture records that are not verified negatives.
 
 CI's `sufficiency-ratchet` job runs it on every pull request, with the base
 branch's own copy of the script. The same job then runs the head's
+[change proof](#the-change-proof-each-change-to-a-rule-is-proven)
+(`check_mutants.py --base-tree`, on the base tree as data), and the head's
 `score_benign.py --baseline-scores` against the base branch's committed
-`benign/scores.json`, and fails when a rule raises more benign hits than there,
+`benign/scores.json`, which fails when a rule raises more benign hits than there,
 even inside its budget. Sidecars, rules and `scores.json` are content, for which
 `automerge` turns on auto-merge without a human, so the ratchet is what sends a pull
-request that deletes or edits a case, deletes or renames a rule, or makes a rule
-noisier to a human instead. It is not a required check of the `main` ruleset, so it
+request that deletes or edits a case, deletes or renames a rule, changes a rule in a
+way that no case proves, or makes a rule noisier to a human instead. It is not a required check of the `main` ruleset, so it
 stops the bot's merge only if it has failed when an `automerge` evaluation runs,
 before the required checks finish; if they finish first, GitHub merges (see
 [Branch protection](benign/README.md#branch-protection-what-binds-a-manual-merge)).
@@ -513,7 +515,101 @@ python3 detections/rule_cases.py                     # every rule's cases
 python3 detections/check_sufficiency.py              # the gate (CI: detection-quality / check-sufficiency)
 python3 detections/check_null_safety.py              # same hits in two- and three-valued logic (CI: null-safety)
 python3 detections/check_variants.py                 # same hits under each representation variant (CI: representation-variants)
+python3 detections/check_mutants.py --base-tree ../base   # each change to a rule's logic is proven (CI: sufficiency-ratchet)
 ```
+
+## The change proof (each change to a rule is proven)
+
+The cases of a rule prove what they test, and nothing more. A pull request that adds
+a dead item, an allowlist name with no case, a list value that no positive needs or
+a wider value in place passes every gate above: its cases still hold, its benign
+hits do not rise, and the ratchet compares cases, not what the rule matches.
+`check_mutants.py` compares the rule with the rule of the base branch:
+
+> Each change to the logic of a rule, undone alone, must change a verdict on the
+> head's own evidence.
+
+`--base-tree DIR` is a checkout of the base branch. The gate reads its rule files
+as data: no script and no requirement of the base runs. It pairs each head rule
+with a base rule by its Sigma `id`, then by its path. A pair whose `detection`,
+`correlation` and `logsource` blocks are equal is unchanged and not judged (a
+reworded title, description, tag or falsepositive, or a new id, is no change). The
+base rules of a correlation are paired by `name`, then by `id`; one base rule left on
+each side is a pair (a new name and a new id), and more fail closed. For each change
+of a changed pair, the gate builds an **undo mutant**: the head rule with that one
+change undone.
+
+| Change in the head | Undo mutant | Key (example) |
+|---|---|---|
+| an added block | the value that its operator in the head condition ignores: under an `or` (also `1 of x_*`) the block never holds, under an `and` (also `all of x_*`) it always holds; each `not` between them turns this round | `sel-block:sel_pod_procmount` |
+| an added map of a list of maps | the map is dropped | `sel-map:sel[1]` |
+| an added item | the item is dropped | `sel-item:afinet_raw_socket.success` |
+| an added list value | the value is dropped | `flt-value:allowed_processes.comm="nc"` |
+| a changed item (value or modifiers; a list that gains and loses values) | the base item in its place | `flt-changed:allowed_processes.comm` |
+| a removed item, value, map or block | added back where its container still exists | `sel-removed:sel.a0` |
+| a changed condition | the base condition, with the removed blocks back | `condition` |
+| a changed correlation key (`type`, `rules`, `group-by`, `timespan`, `condition`) | the base value | `corr-timespan` |
+
+The item is named as `rule_cases.py --atoms` names it, after `<base rule>/` in a
+correlation file. The side is `sel` (under no `not`), `flt` (under a `not`), `mix`
+or `unused`. A list that is only reordered is no change (but the `rules` of a
+`temporal_ordered` correlation keep their order). A change that cannot be undone
+alone fails closed, and a human decides: a renamed block (a removed block and an
+added block with the same definition), an added block that must hold in one place
+of the condition and must not hold in another, maps that moved, maps that changed
+where maps were also added or removed, a switch between a plain rule and a
+correlation, an undo that does not compile. An added block that is the whole
+condition has no undo of its own: the undo of the condition holds it. A changed
+`logsource` is never proven: the compiled query does not read it (the ratchet above
+fails it too).
+
+An undo mutant is **killed** when one event set of the head tells it apart from the
+head rule: a positive case stops firing; any other case starts firing; the attack
+fixture of a cloud rule loses a hit; the benign fixture, or a slice of the benign
+corpus that the rule reads, gains a hit. A fixture or a corpus slice compares the
+events that the hits hold, not the hits: a correlation with a wider timespan groups
+the same events in other alerts, and that is no hit gained. A corpus slice that
+loses a hit does not kill: that undo is the quieter rule. An event set on which the
+head itself fails is skipped. Each event set is judged by default and under each
+variant of [`check_variants.py`](#representation-variants-one-oracle-other-stores)
+(`compact`, `sorted`, `multi`, `cs_like`, and `re2` when the module is installed),
+and one representation is enough: an anchored value for the elements of a list
+(K72) is proven under `multi`, a letter-case fix (C18) under `cs_like`, and a blank
+after a colon of a JSON text (C17) under `compact`. An undo is equivalent, with
+nothing to prove, when its compiled query is the head's query, or when its items
+compile to the head's items and the two conditions give the same value for each
+assignment of true, false and NULL to the items (up to 10 items; for example the
+terms of a condition in another order). The head and its undo mutants share the
+tables of each event set and the truth of each item, so an undo pays only for its
+own query and the items that it changes.
+
+For each undo mutant that is not killed the gate prints
+`  [RATCHET] <rule>: change not proven: <key>`, and for each change that cannot be
+undone alone `  [RATCHET] <rule>: change cannot be undone alone: <what>; a human
+decides`. Exit 0 when it prints no such line, 1 when it does, 2 on a structural
+fault (no base tree, a base tree without a rule file, a rule file that cannot be
+read, a changed or new head rule that does not compile or whose sidecar has an
+error, a variant that is not in force). To make a change pass, add the case that
+tells it apart: for an allowlist name, a filtered case of that name; for a new value,
+a positive that needs it; for a narrowing, a negative that the base rule fires on.
+No case can tell apart an equivalent rewrite that the gate does not see as
+equivalent (a regular expression written in another form, for example): it fails as
+a change not proven, and a human decides (merge the pull request by hand). A rule
+with no base pair is new: the gate prints the discriminating items whose drop no
+evidence tells apart
+(`check_sufficiency.discriminating_atoms`), and does not fail on them. `--json`
+writes the report, and `--self-test` checks the undo builder and the kill test on
+constructed rules.
+
+The gate runs no witness search and samples no regular expression, so two runs give
+the same report. It does not judge what the head rule matches as a whole, only the
+change: a rule that the base already held as it is passes. A rule split into two
+files moves logic into a new rule, which is report only. The evidence is the
+head's own: a pull request can add an item together with the synthetic case that
+kills its undo ([`docs/ROADMAP.md`](../docs/ROADMAP.md), R6). The
+`sufficiency-ratchet` job runs the gate after the sufficiency ratchet, also when the
+base has no `check_sufficiency.py`; it is not a required check, so a human merges a
+pull request that it fails, as for the other ratchets.
 
 ## Portable regular expressions
 
@@ -1007,6 +1103,12 @@ The `platform-coverage` job of the same workflow runs
 [Managed platforms: the audit-policy simulator](#managed-platforms-the-audit-policy-simulator)).
 On a pull request it runs only when the pull request changes one of its inputs; it is
 not a required check.
+
+The `external-records` job of the same workflow runs
+`python3 detections/check_external_records.py --lint` and then the shadow report on
+every pull request, on push to `main` and weekly. A verdict never fails it; a
+structural fault does. It is not a required check (see
+[External records](#external-records-splunkattack_data)).
 
 **Weekly scheduled runs.** Each workflow file with a `schedule:` trigger (the
 cron line is in the file) runs once a week, so CI proves a rule again when only
@@ -2061,6 +2163,133 @@ trust policy) flatten to searchable text, the rules match those with `|contains`
 the flattened field, which is how a SIEM indexes nested JSON. The rule descriptions note
 where a production pipeline should decode/parse a field (e.g. the URL-encoded IAM trust
 policy) for a more precise match.
+
+## External records (splunk/attack_data)
+
+The validators prove a rule on records that the agent wrote or emulated. The
+external-records gate (`check_external_records.py`, roadmap item R3) runs each rule on
+records that the agent did not write: the datasets of
+[splunk/attack_data](https://github.com/splunk/attack_data) (Apache-2.0) of the rule's
+technique. [`external/README.md`](external/README.md) says what each file of
+`detections/external/` holds, the licence, and how to change the pin.
+
+**What it proves.** A rule fires on a capture that a third party made of its
+technique: an emulation of the agent that reads the wrong field, or a field name in
+the wrong letter case, does not show in the validators, and it shows here as a
+`MISS`.
+
+**What it does not prove.**
+
+- A dataset is not labelled record by record. A `FIRE` can come from a record that
+  the dataset holds next to the attack (the FIC dataset of T1098.001 holds a benign
+  twin; known gap `ext-fire-on-another-record`, roadmap item R3b).
+- The authors edited some records (the FIC yml says that tenant details were
+  replaced). A dataset is a third-party sample, not a live capture.
+- The same technique is not the same procedure. Most same-technique pairs do not
+  fire, and most of these misses are correct (another procedure, or a capture that
+  does not record what the rule reads). A declaration says so, or a defect entry.
+
+**Pairs.** A rule and a dataset are same technique when the ATT&CK ID of the folder
+of the rule (`detections/sigma/<ID>/`) is in the `mitre_technique` of the dataset's
+yml, and a record of the dataset goes to the log source of the rule by its own shape:
+a CloudTrail record (`eventSource` and `eventName`), an Azure Monitor record by its
+`category` (`AuditLogs`; the sign-in categories; `Administrative`), a Kubernetes audit
+event (kind `Event`, apiVersion `audit.k8s.io/*`) or a raw auditd SYSCALL record. The
+auditd records are built by `auditd_records.syscall_event()`, the function of the
+Linux validator, with the syscall names of `external/syscalls_x86_64.json` (Linux
+v6.18). Another attack tag of the rule gives `RELATED`. A parent or a sub-technique of
+the technique gives no pair. A raw auditd dataset of a CVE exploit has a `procedure`
+label in `SOURCES.json`, and a rule whose `cve.*` tags do not include one of its CVEs
+gives `OTHER-PROCEDURE`. `RELATED` and `OTHER-PROCEDURE` are reported, not expected.
+The label is the CVE or the exploit name that the description of the yml gives as a
+whole token (no letter, digit or hyphen next to it). Each CVE of the label is a whole
+token of that description too, or it is the `cve.*` tag of a rule of the technique
+whose title holds the label as whole words, compared without white space, punctuation
+and letter case ("Copy Fail" is the word "CopyFail" of "(CopyFail CVE-2026-31431)";
+"in" is no word of "Keyring Stuffing"). A label in CVE form must be one of its CVEs
+(`--lint`). The check does not prove that the label is the procedure: a generic phrase
+that is a whole token of the description, and whole words of the title of a rule with
+the listed CVE, still passes. The owner's review of `SOURCES.json`
+(`.github/CODEOWNERS`) is the control for that.
+
+**Rows.** `DATASET` (a file that was read), `FIRE`, `MISS` (with the nearest record
+and the items of the rule that it fails), `RELATED`, `OTHER-PROCEDURE`, `NOT READ`
+(the dataset holds no record of the rule's log source), `QUIET`, `N/A`,
+`KNOWN-MISS <ID>`, `DECLARED QUIET, FIRED`, `STALE N/A`, `KNOWN-MISS FIRES`, `STALE`
+(a declaration that no longer applies), `EXCLUDED` (a dataset that `SOURCES.json`
+leaves out, with the reason) and `UNAVAILABLE` (a dataset, or in an online run the
+LICENSE or the syscall table, that could not be read). A correlation rule gives its alerts
+and the distinct records that are their evidence. The last line is the `Summary`. No
+row holds a value of a record: rows name datasets, rules, lines and the items of a
+rule. `--explain` also prints, on the console only, the explanation of
+`sigma_explain.py` under each `MISS` (with values, in `repr()`).
+
+**Declarations** (`external/expectations.json`, a human decision) change the
+expected verdict of one pair: `quiet` (the rule must not fire on a dataset of its own
+procedure), `n/a` (another procedure, or not in the capture), `known-miss` (a defect of
+the Summary table of [`RULE_DEFECTS.md`](RULE_DEFECTS.md)) and `fire` (a pair that is
+not expected must fire). Each one holds the digest of the rule
+(`check_sufficiency.detection_digest`) and the sha256 of the dataset. When the rule or
+the dataset changes, the declaration is `STALE` and excuses nothing. `--suggest`
+prints a draft for each `MISS`; its why starts with `TODO`, which the gate refuses.
+
+**Shadow mode.** No verdict fails the run (exit 0). A structural fault exits 2 in
+every mode: a malformed `SOURCES.json`, `expectations.json` or syscall table, a
+declaration for a rule or a dataset that does not exist, a `HASH MISMATCH` (a cached
+file of other bytes is deleted), a record count that is not the pin, a line that is
+not a record of its format, a key or a value that one SQLite table cannot hold (an
+integer outside 64 bits, a NUL character, a lone surrogate, the key `_rowid`, a number
+that is not finite), keys that differ only in letter case, records of one log source
+with more than 1900 distinct keys (a table holds 2000 columns, less the row id and the
+fields that the rules add), a yml at the commit that does not agree with its entry
+(also its procedure label and CVEs), a cache entry that is not a regular file or
+cannot be read, and a run that read no dataset. A run with an error ends its
+`Summary` line with `; N error(s)`, and its step summary gives the `ERROR` lines above
+the rows. `--enforce` (roadmap item R3b) also exits 1 on a `MISS` without a
+declaration and on a declaration that does not hold, and 2 on an `UNAVAILABLE`
+dataset, LICENSE or syscall table.
+
+**Origins and cache.** The gate makes each URL from the pinned full commit and the
+path: the data from `media.githubusercontent.com`, the ymls and the LICENSE from
+`raw.githubusercontent.com`. It follows no redirect to another scheme or host, reads at
+most 50 MB of a file, and checks the sha256 before it parses a byte. A JSON record must
+be one record: an object that holds a key two times (the envelope `{"Records": [...]}`
+too), two keys that give one field when the record is flattened, and NaN or Infinity
+are faults. An integer outside 64 bits is refused when it is parsed, by its length
+before its value (Python's `int()` stops at 4300 digits). A file is kept in a cache by
+its sha256 (`~/.cache/det-eng/external`, or `--cache DIR`); `--offline` reads only the
+cache. A cache entry that is not a regular file (a FIFO, a directory) is a fault: the
+gate does not wait on it. CI downloads on each run (about 1.3 MB). Only the job reads
+the real datasets: the gate tests build their datasets from sidecar cases, and no
+record of `splunk/attack_data` is in this repository.
+
+**Network time.** Each step of a request (the connection, each read) waits at most
+15 s, and the network work of a run ends 600 s after it starts: a request after that
+is `UNAVAILABLE` and makes no connection, and a request that still runs then is given
+up. An origin that does not answer costs one step for each request. A report makes at
+most 2 + 27 such requests (the LICENSE, the syscall table and the yml of each of the 27
+datasets; a dataset whose yml is `UNAVAILABLE` is not downloaded), so 29 x 15 s =
+435 s. The deadline caps a slow origin at 600 s, which leaves 300 s of the 15 minutes
+of the job for its other steps (`test_external.py` checks both sums). The name lookup
+of a host has no step limit of its own; the deadline covers it too.
+
+```bash
+python3 detections/check_external_records.py --lint      # offline: the two files and the syscall table
+python3 detections/check_external_records.py             # the report (shadow)
+python3 detections/check_external_records.py --enforce   # fail on a MISS or a declaration that fails
+python3 detections/check_external_records.py --rule detections/sigma/T1537/aws_snapshot_or_ami_made_public.yml --explain
+python3 detections/check_external_records.py --suggest   # draft declarations
+```
+
+**A real-record miss.** A `MISS` of a rule on a dataset of its own procedure is the
+one thing that the owner reads. Find its cause with `--explain` and
+`sigma_explain.py`. When the rule is wrong, add an entry to `RULE_DEFECTS.md` (its
+evidence names the dataset id and its sha256) and propose a `known-miss` declaration.
+When the dataset shows another procedure or does not record what the rule reads,
+propose an `n/a` declaration. Never edit `detections/external/` to make a rule pass.
+
+The view of every dataset of a log source as a benign sample (a rule that fires on a
+dataset of another technique) is not part of this gate; roadmap item R3c adds it.
 
 ## Status
 

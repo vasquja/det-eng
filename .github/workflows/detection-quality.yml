@@ -32,7 +32,7 @@ name: detection-quality
 #                      one-item presence rule (PRESENCE in check_sufficiency.py, which
 #                      then only warns); and no rule may key on an emulation marker
 #                      (detections/check_sufficiency.py). Hard gate.
-#   sufficiency-ratchet  PULL REQUESTS ONLY. Three comparisons with the base branch,
+#   sufficiency-ratchet  PULL REQUESTS ONLY. Four comparisons with the base branch,
 #                      each failing this job so that a human decides (what that
 #                      failure holds: see the note below the list):
 #                      1. The base branch's own check_sufficiency.py reports the base
@@ -59,6 +59,16 @@ name: detection-quality
 #                      only): an entry that the base does not hold as it is on the head
 #                      fails, so the list of expected differences cannot grow without a
 #                      human. Skipped (success, with a notice) when the base has no file.
+#                      4. The head's check_mutants.py --base-tree reads the rule files
+#                      of the base tree as data and pairs each head rule with its base
+#                      rule (by id, then by path). It undoes each change to the logic
+#                      of a rule alone, and it fails when no sidecar case, cloud fixture
+#                      or benign corpus record of the head tells the undo apart from
+#                      the head rule (under the default run or a representation
+#                      variant), and when a change cannot be undone alone (a renamed
+#                      block, maps that moved). A new rule is report only. Its step
+#                      runs after comparison 1, also when the base has no
+#                      check_sufficiency.py.
 #                      Any other error, or an unreadable base scores.json, fails it.
 #   coverage-report    research/COVERAGE.md and the README coverage chart must match
 #                      what research/tools/coverage_report.py generates now. Hard gate.
@@ -132,6 +142,13 @@ name: detection-quality
 #                      reject it; the job summary lists the known gaps. The gates
 #                      under test are those above and the validators and lints of the
 #                      other workflows, in their offline modes. Not a required check.
+#   external-records   SHADOW. Each rule on the datasets of splunk/attack_data of its
+#                      technique, pinned by a full commit and a sha256 in
+#                      detections/external/SOURCES.json (detections/
+#                      check_external_records.py; detections/README.md, "External
+#                      records"). A verdict (a MISS, a declaration that does not hold)
+#                      never fails this job; a structural fault does (exit 2). Not a
+#                      required check: roadmap item R3b makes it --enforce.
 #
 # No paths: filter on pull_request, so these checks ALWAYS report on a PR. None of
 # them is a required check in the main ruleset yet, and GitHub's native auto-merge
@@ -537,6 +554,33 @@ jobs:
             cat /tmp/ratchet.out
             echo '```'
             echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+      - name: Fail on any change to the logic of a rule that the evidence of the head does not prove
+        # Runs even when a step above failed, so the summary shows each comparison,
+        # and also when the base has no check_sufficiency.py: the rule files of the
+        # base tree are data, and only the head's code runs.
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          if [ ! -e "$RUNNER_TEMP/base-tree/.git" ]; then
+            echo "::error title=sufficiency-ratchet::the base tree was not checked out"
+            exit 1
+          fi
+          pip install --quiet -r detections/requirements.txt
+          rc=0
+          python3 detections/check_mutants.py --base-tree "$RUNNER_TEMP/base-tree" \
+            > /tmp/mutants.out 2>&1 || rc=$?
+          cat /tmp/mutants.out
+          {
+            echo '## Change proof (vs the base branch)'
+            echo ''
+            echo 'Each change to the logic of a rule, undone alone, must change a verdict on a case, a fixture or a corpus record of the head.'
+            echo ''
+            echo '```'
+            cat /tmp/mutants.out
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
 
@@ -995,3 +1039,53 @@ jobs:
         run: |
           python3 -B detections/tests/gatelib.py --run --no-skips \
             --summary "$GITHUB_STEP_SUMMARY"
+
+  external-records:
+    # SHADOW (roadmap item R3). Each rule on the datasets of splunk/attack_data of its
+    # technique (detections/README.md, "External records"). The datasets are pinned by
+    # a full commit and a sha256 in detections/external/SOURCES.json. No verdict fails
+    # this job: a MISS is a row of the report. A structural fault fails it (exit 2): a
+    # malformed SOURCES.json or expectations.json, a HASH MISMATCH, a record count or a
+    # yml at the commit that does not agree with the pin, a line that is not a record of
+    # its format, or a run that read no dataset. The job downloads the files on each run
+    # (about 1.3 MB: the datasets from media.githubusercontent.com; the ymls, the LICENSE
+    # and the kernel's syscall table from raw.githubusercontent.com) and uses no cache
+    # action.
+    # The job summary and the uploaded report hold dataset ids, sha256 values, counts
+    # and the names of rule items, never a value of a record. No `if:`, no `needs:` and
+    # no paths filter: it runs on every pull request, on push to main, weekly and on
+    # workflow_dispatch.
+    name: external-records
+    runs-on: ubuntu-latest
+    # The network work of the gate ends at 600 s (DEADLINE of
+    # detections/external_records.py); test_external.py checks that 300 s are left.
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install requirements
+        run: pip install --quiet -r detections/requirements.txt
+
+      - name: Lint the pins and the declarations (offline)
+        run: python3 detections/check_external_records.py --lint
+
+      - name: Run each rule on the pinned datasets of its technique (shadow)
+        # No pipe: the step's exit code is the script's.
+        run: |
+          python3 detections/check_external_records.py \
+            --markdown "$GITHUB_STEP_SUMMARY" --json "$RUNNER_TEMP/external-records.json"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: external-records-report
+          path: ${{ runner.temp }}/external-records.json
+          if-no-files-found: warn
+          retention-days: 30

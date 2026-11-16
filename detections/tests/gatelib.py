@@ -121,6 +121,8 @@ ROADMAP = {
     "R2d": "hygiene and report truth",
     "R2e": "cloud baselines are hard",
     "R3": "external records that the agent did not write",
+    "R3b": "external records enforced (a required check, attack-record pins)",
+    "R3c": "a benign view of the external records of each log source",
     "R4": "the captures of CI, harvested into committed evidence",
     "R5": "provenance tiers",
     "R6": "mutation ratchet",
@@ -546,6 +548,48 @@ def _changes(before, after):
     return sorted(p for p in set(before) | set(after) if before.get(p) != after.get(p))
 
 
+# Linux refuses to run a file that a process holds open for writing: the run fails
+# with "Text file busy" (ETXTBSY; bash prints "bad interpreter: Text file busy").
+# A child that a thread of this process starts holds a copy of each file that this
+# process has open, until the child runs its own program. So while one thread writes
+# a program that a test then runs (the programs of Tree.run_step(), a stub), the
+# child of another thread (a run in the background) can hold that program open, and
+# the program cannot run. One lock prevents this. Each start of a child process of
+# this process (subprocess.Popen, also subprocess.run) takes _EXEC_LOCK and keeps it
+# until the child runs its program or failed to (Popen returns only then), so a new
+# child that runs a program never finds it held by another child. write_program()
+# writes and closes a program under the same lock, so that a child that already runs
+# can also run it later. The lock is not reentrant: do not start a child or call
+# write_program() while you hold it. A child that waits before its program (a
+# preexec_fn) makes every other start wait.
+def _start_child_under_the_lock(start, lock):
+    @functools.wraps(start)
+    def start_child(*args, **kwargs):
+        with lock:
+            return start(*args, **kwargs)
+    start_child.gatelib_exec_lock = lock
+    return start_child
+
+
+# One lock for the process, also when this module runs as __main__ (gatelib.py --run)
+# and is imported again as gatelib: the second import keeps the lock of the first.
+_EXEC_LOCK = getattr(subprocess.Popen._execute_child, "gatelib_exec_lock", None)
+if _EXEC_LOCK is None:
+    _EXEC_LOCK = threading.Lock()
+    subprocess.Popen._execute_child = _start_child_under_the_lock(
+        subprocess.Popen._execute_child, _EXEC_LOCK)
+
+
+def write_program(path, text, mode=0o755):
+    """Write a file that a test runs as a program (the programs of a step, a stub):
+    under _EXEC_LOCK, so that no child of this process holds it open when it runs,
+    also when a child that already runs is the one that runs it."""
+    with _EXEC_LOCK:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.chmod(path, mode)
+
+
 # What Tree.run_step() puts first on the PATH of a workflow step, as shell lines.
 # pip does nothing: a test installs nothing, and the tests' Python already holds
 # detections/requirements.txt (every control fails when it does not).
@@ -920,9 +964,7 @@ class Tree:
         for name, line in {**_STEP_PROGRAMS, **(programs or {})}.items():
             if not re.fullmatch(r"[\w.+-]+", name):
                 raise ValueError(f"programs: {name!r} is not a program name")
-            with open(os.path.join(bin_dir, name), "w", encoding="utf-8") as fh:
-                fh.write(f"#!/bin/sh\n{line}\n")
-            os.chmod(os.path.join(bin_dir, name), 0o755)
+            write_program(os.path.join(bin_dir, name), f"#!/bin/sh\n{line}\n")
         step_env.update(env or {})
         step_env["PATH"] = bin_dir + os.pathsep + step_env.get("PATH", os.environ.get("PATH", ""))
         return self.run_command(shell + [path], env=step_env, timeout=timeout)

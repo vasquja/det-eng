@@ -55,10 +55,12 @@ The order matters. Tests for the gates come before each change to the gates.
 | R2d | **Hygiene and report truth** (design 4.2). No rule file is hidden from the gates: a rule in a dotfile under `detections/sigma/` fails. The coverage report refuses an entry of `detections/RULE_DEFECTS.md` that has a section and no Summary row, and names the entry (also an entry with a row and no section, and an ID with two rows or two sections). `rule_cases.py` names the rule and the case when two keys of an event differ only in letter case, and does not stop with a traceback. The loaders of the three Kubernetes validators and of the cloud validator do the same for a record that is JSON and not an object: they name the log and the line (a `[]` line of an audit, CRI or file log), or the rule and the fixture (a fixture of `null`, or a `null` record of a fixture), and do not stop with a traceback. A line that is a JSON object and not a record of its log (`{}` in an audit, CRI or file log) is named and not counted. The loaders also name the log or the fixture, and do not stop with a traceback, for a Kubernetes log that is a directory, for a log or a cloud fixture that is not UTF-8, and for a cloud fixture that starts with a byte order mark. (A cloud fixture that is a directory is an ERROR row since R2c.) A ledger window whose start is after its end is an error that names the procedure and the two times, not a `MISS` of the rule: on 2026-11-13 a wrong clock of the runner image gave such windows, and the validators reported misses of rules that matched. The verdict line of the API server validator names every TRR that `MANIFEST` grades (today it leaves out 9039). The event table of `sigma_eval.py` does not refuse a valid log: keys that differ only in the letter case of their ASCII letters, in two records, share one column, as SQLite reads a field. One record with two such keys, a key `rowid` or `_rowid`, a key with a NUL or a lone surrogate, or a value that SQLite does not hold as it is (an integer outside 64 bits, `NaN` or `Infinity`, a text with a lone surrogate) is an error of the table, and each loader names it first, with the test of the table: the log and the line, the fixture and the record, the slice and the event (of each slice, also one that no rule reads), or the rule and the case. The analysis of a correlation in the gates reads its group-by fields and its time as the table does. The cloud loader also names a fixture of JSON that is not an array or an object, an envelope whose list is not a list, a line that is not JSON (a line ends at LF), and JSON that is too deep or a number that is too long, and the gates that read the fixtures with it (`check_null_safety.py`, `check_sufficiency.py`, `check_variants.py`) name the fixture too. | in progress | R2 | Its known-gap tests are rejection tests. Each gate exits with an error that names the hidden file, the defect entry, the case, the log, the log line or the fixture. For a log line that is not a record, the rejection tests must cover each of the three Kubernetes validators and each log of that validator (audit, CRI, file). The two known gaps of such a line (`k8s-log-line-not-an-object`, `k8s-log-object-not-an-audit-event`) have `validate_k8s_detections.py` as their gate: each closes when that validator alone is corrected, and its assertions about the other two validators run only while the gap is open. The four kind jobs are green on the pull request and on `main` and print no ERROR line from the log readers (see the note for R2d below). Pull request 3/3 is the last pull request of the item: the item is `done` when the four kind jobs are green on `main` with it. |
 | R2e | **Cloud baselines are hard** (design 4.2). The cloud validator fails a benign baseline in which no record is a near-miss or a filtered negative of its rule (`AGENTS.md`: a hard benign baseline differs from the attack only in the discriminating field). | not started | R2c | Its known-gap test is a rejection test. The baseline of `trr9036` (`azure_privileged_role_assignment.yml`: the validator grades both of its records `distant`, so none is a near-miss or a filtered negative of the rule) is corrected or has an entry in `detections/RULE_DEFECTS.md`. |
 | R7 | **Representation variants in the oracle** (design 4.7). Run each case as compact JSON, sorted JSON, a multi-valued list model, case-sensitive `LIKE` and RE2. Correct the two GCP rules that lose their hit under compact JSON. Write `detections/SEMANTICS.md`. | in progress | R2 | A check fails on a new divergence between variants. The known losses are listed as expected, each with a reason. Two rules lose their hit under compact JSON today: `T1199/gcp_workforce_principalset_privileged_binding.yml` and `T1098.001/gcp_workload_identity_federation_sa_binding.yml`. This item records both in `detections/RULE_DEFECTS.md` and corrects them. |
-| R3 | **External records** (design 4.3). Records that the agent did not write, from `splunk/attack_data` (Apache-2.0), pinned by hash. A same-technique record must fire the rule unless a protected file says why not. | not started | R2 | The check runs in CI in shadow mode and reports each rule's result on each same-technique dataset. The first real-record miss has a defect entry. |
+| R3 | **External records** (design 4.3). Records that the agent did not write, from `splunk/attack_data` (Apache-2.0), pinned by hash. A same-technique record must fire the rule unless a protected file says why not. | in progress | R2 | The check runs in CI in shadow mode and reports each rule's result on each same-technique dataset. The first real-record miss has a defect entry. The item is `done` when the job `external-records` is green on `main`, that defect entry is merged, and `gatelib.py --gaps` lists no gap that names R3 (see the note for R3 below). |
+| R3b | **External records are enforced** (design 4.3). After a green shadow period, the job `external-records` runs `--enforce` and is a required check. `SOURCES.json` pins the attack record of each dataset, and a FIRE must come from that record and not from a benign twin of the dataset (the FIC dataset of T1098.001 holds one). Item 1 of the definition of done (`AGENTS.md`, "Fires") names the same-technique external records. A pair that was read on the base branch and is `NOT READ` on the head fails (a change of the log source of a rule hides a `MISS`), and the online run checks the sha256 and the yml of each `excluded` entry too. | not started | R3 | The job runs `--enforce` and is in the ruleset. A hit on a record that is not a pinned attack record is not a FIRE: the known-gap test `ext-fire-on-another-record` is a rejection test. |
+| R3c | **A benign view of the external records** (design 4.3). Each rule is scored, as a shadow benign slice, on every dataset of its log source and not only on the datasets of its technique: also on the files that no yml names, deduplicated by sha256 and by event (a file can hold each event two times). A hit is a triage item for a human, never a budget. | not started | R3 | The report gives a row for each hit of a rule on a dataset of another technique. It never changes `detections/benign/scores.json` or `budgets.json`. |
 | R4 | **Harvest the captures of CI** (design 4.4). The lab validators write the records that the kernel or the API server produced. A scheduled job commits them as evidence. | not started | R2, T8 | A Linux or Kubernetes rule has a committed captured positive that the agent did not write by hand. |
 | R5 | **Provenance tiers** (design 4.5). Each case and fixture says where it came from. The coverage report shows `proven-live`, `proven-recorded`, `proven-synthetic` and `claimed`. Stop calling a hand-written fixture "recorded". | not started | R3 | The coverage report does not call a cloud procedure Proven when its only evidence is a fixture that the agent wrote. |
-| R6 | **Mutation ratchet** (design 4.6). Build mutants of each rule. The count of surviving mutants for a rule must not rise. | not started | R2 | A pull request that adds a dead or over-broad item to a rule fails. |
+| R6 | **Mutation ratchet** (design 4.6). Each change to a rule is proven by its evidence: each change to the logic of a rule, undone alone, must change a verdict on a case, a fixture or a corpus record of the head (`detections/check_mutants.py`, a step of the job `sufficiency-ratchet`). | in progress | R2 | A pull request that adds a dead or over-broad item to a rule fails. The item is `done` when that step has run green on a pull request after this item is merged. |
 | R1 | **Gate code from `main`** (design 4.1). Each checking job runs the gate code of `main`, not of the pull request. | not started | T2, T5 | A pull request that changes a gate and a rule together cannot make its own rule pass. Until T2 and T5 are done, each technique pull request must edit the validators, so this item waits for them. |
 | R8 | **Approvals as checked properties** (design 4.8). A waiver or a budget is accepted only when a machine can check its conditions. | not started | R5 | A waiver that does not meet its conditions fails a check. |
 | R9 | **Live cloud capture** (design 4.9). | in progress | owner | The setup guides and the smoke test are merged (`docs/setup/`). Open: the owner creates the accounts; `atomics/lib/live.sh` with an undo stack; the capture workflow; one supervised run. The job `emulation-scripts` (L7) tests six live scripts with stub CLIs; the other live scripts have no test. Thus a live script without an undo block has no test until `atomics/lib/live.sh` and its lint exist. |
@@ -120,6 +122,87 @@ Notes from R7, for the items after it (2026-11-14).
   and the items), not the values of the item or the records of the case: a change of
   a rule value or of a case, which is content, can keep an approval whose `why` is no
   longer true.
+
+Notes from R6, for the items after it (2026-11-15).
+
+- The gate is a change proof, not a count of surviving mutants. The first design
+  built mutants of the whole rule and failed a rule whose count of survivors rose.
+  A check of that design found four planted heads that pass `rule_cases.py`, the
+  sufficiency ratchet and the benign-score ratchet, and that such a count does not
+  see: a list of verbs made `'*'` (27 survivors to 26),
+  the names of an identity filter made `'*'` (27 to 27), one more alternative inside
+  a `|re` value (27 to 27), and an allowlist rewritten as one `|re` value with one
+  more name (9 to 6). Each widens an item in place, so no new mutant key appears.
+  An added value that lets the corpus kill old survivors also lowers the count (2
+  to 1). An undo of each change against the base rule catches all of them
+  (`detections/tests/test_mutants.py`).
+- Design 4.6 says that a mutant is killed when the benign hit count changes. The
+  gate kills only on a rise: a corpus slice that loses a hit under the undo does
+  not kill, because that undo is the quieter rule. With a loss as a kill, a value
+  that makes a rule fire on more corpus records proves itself: its undo loses those
+  hits (a gate test adds SOCK_STREAM to the `a1` list of
+  `T1040/afinet_raw_socket.yml`, and the stream sockets of the Linux slice would
+  kill its undo).
+- A kill by a synthetic case is self-graded: a pull request can add an item
+  together with the sidecar case that kills its undo, and pass. The gate proves
+  that the case exists, not that the case is real. When R3 (external records), R4
+  (captures of CI) and R5 (provenance tiers) are done, their kills should outrank a
+  kill by a sidecar case that the same pull request added.
+- A list item that gains values and loses others is undone as a whole (its base
+  value in place): one kill proves each value of that change.
+- A check of the first build found three ways to pass with no proof, now closed
+  (each has a gate test): an added block under an `and` was undone as a block that
+  never holds, so every positive "proved" a dead block; its undo now takes the value
+  that its operator ignores (an `and`: always holds). The hits of a correlation were
+  compared as alerts, so a wider timespan was "proven" by a corpus slice that the
+  undo grouped in other alerts; the gate now compares the events that the hits
+  hold. A base rule of a correlation with a new name and a new id was undone only
+  with `rules`, as one bundle; one such base rule left on each side is now a pair,
+  undone item by item.
+- An equivalent rewrite fails when the gate cannot see it as equivalent: a regular
+  expression written in another form, for example. No case can prove it, so a human
+  decides. The gate sees as equivalent an undo with the same query, and an undo with
+  the same items whose condition gives the same value for each assignment of true,
+  false and NULL (up to 10 items: the terms of a condition in another order).
+- A rule split into two files moves logic into a new rule, and a new rule is report
+  only: what the new file holds is not gated (an allowlist name that it adds, for
+  example). A near-miss of the moved value in the old file's sidecar even proves its
+  removal there. A later item can pair a new rule with the base rule whose detection
+  it largely copies.
+- A kill under a variant can come from an event set that
+  `detections/variants/expected.json` lists for that rule and variant (an expected
+  difference that the change removes). `check_variants.py` then fails the head in
+  the same pull request (an expected entry that does not hold), so this gate does
+  not count such kills apart.
+- Cost: the head and its undo mutants share the tables of each event set and the
+  records on which each item holds, and the gate keeps the pySigma query of each
+  document. A rule whose 96 regular expressions are rewritten in place (96 undos, 56
+  event sets) took 676 s before and takes 43 s.
+- The job `sufficiency-ratchet` runs Python `3.x` and does not install google-re2,
+  so the variant `re2` does not judge there (the gate prints `NOT RUN`). A
+  correction that only RE2 can prove is not proven there. The portable `|re`
+  subset (`check_sigma_regex.py`) keeps out the constructs whose meaning differs
+  between RE2 and Python's `re`.
+- On the base `947055a` (before #76 and #78) the gate proves each rule change of
+  #76 but two: `C17` (two GCP rules, under `compact`), `C18` (under `cs_like`),
+  `K71` (two webhook rules, under `cs_like`), `K72` (under `multi`), and of `C20`
+  `selection_rds` and the SSM rule (under `multi`). The two legacy selections of
+  `T1537/aws_snapshot_or_ami_made_public.yml`
+  (`selection_ec2_image_legacy.requestParameters.userGroups`,
+  `selection_ec2_snapshot_legacy.requestParameters.groupNames`) are not proven: no
+  case holds a legacy record (C20 in `detections/RULE_DEFECTS.md` says so). With
+  this gate, #76 would have gone to a human for those two items.
+- `T1098.001/aws_github_oidc_role_trust_ref_wildcard.yml`: the filter
+  `owner_repo_wildcard_create` is real logic (a CreateRole whose trust policy holds
+  one `sub` of `repo:<owner>/*` fires without it), and no filtered case holds it
+  (the two filtered cases of that filter are UpdateAssumeRolePolicy). A content
+  follow-up adds the filtered case for CreateRole.
+- Follow-up: the mutants of the whole rule (drop, any value, a value, a map, a
+  block, narrow, for each item) as a report-only weekly job on `main`, for the
+  digest of survivors. Build an any-value mutant as `field: '*'` (an item with
+  `|exists: true` compiles to other SQL, so an equivalent mutant does not show), and
+  build no drop of a one-item any-value filter that has a null guard (the drop
+  equals the guard).
 
 Note for R7, from R2b. No rule that `detections/validate_detections.py` proves
 reads `success`: the logic of each rule matches a syscall that the kernel
@@ -210,6 +293,49 @@ print no `ERROR` line of the reader. If a job prints one, read it: it names the 
 the line and the problem. Correct the capture when the line is not a record of its log.
 Correct the definition in `RECORDS` (the same text in the three validators) when
 the line is a record that the definition refuses.
+
+Note for R3. The gate is `detections/check_external_records.py` (`detections/README.md`,
+"External records"). The survey of `splunk/attack_data` at the pinned commit `4b19e4b6`
+(2026-11-12) found these files of the log sources of the rules, by yml rows and by
+distinct paths: 90 rows and 88 paths labelled CloudTrail (OCSF records and Splunk risk
+events among them), 47 Azure, 10 Kubernetes candidates (9 of them audit events), 104
+auditd (and 8 auditd files that no yml names) and 3 GCP (all Splunk search exports).
+Design 4.3 gives 39, 18, 12, 112 and 6; these numbers match none of these bases.
+
+- **Pairs.** A rule and a dataset are same technique when the ATT&CK ID of the folder
+  of the rule is in the `mitre_technique` of the yml, and a record of the dataset goes to
+  the log source of the rule by its own shape (not by the sourcetype of the yml). Another
+  attack tag of the rule gives `RELATED`; a parent or a sub-technique gives no pair. A
+  raw auditd dataset of a CVE exploit has a `procedure` label in `SOURCES.json`, which
+  the description of its yml must name; a rule whose `cve.*` tags do not include it
+  gives `OTHER-PROCEDURE`. Both are reported, not expected.
+- **Formats.** Only native records: CloudTrail, Azure Monitor (Entra) by `category`,
+  Kubernetes audit events and raw auditd lines. No adapter: OCSF, Splunk search exports,
+  Activity Log records in the shape of the REST API, Splunk risk events and Office 365
+  Management Activity go to the `excluded` list with their reason.
+- **The first run** (shadow; 27 datasets of 1.2 MB, 1.3 MB with their ymls, the LICENSE
+  and the syscall table; 19 excluded): 21 of 91 rules have a same-technique dataset of
+  their log source; 37 expected pairs give 7 FIRE and 30 MISS; 18 pairs are related, 30
+  other procedure, 14 not read and 35 excluded. The CopyFail
+  correlation fires 10 times on the real capture (120 distinct evidence records). The two
+  dirtyfrag rules miss both Dirty Frag captures: their audit rules record no `socket()`.
+- **The first real-record miss** is `T1098.001/entra_app_federated_credential_backdoor.yml`
+  on `T1098.001/azure_ad_federated_identity_credential/azure-audit`: the nearest record
+  (line 1) is a near-miss, and one flip of
+  `selection_unapproved_issuer.properties.targetResources` would fire the rule. The
+  survey probe found two causes, and the record fires only with both changed: the issuer
+  is the approved GitHub host and the subject names a repository of another owner, and
+  the keys of `newValue` are lower case. The casing is not verified: the yml says that
+  the author replaced the tenant details. Design 4.3 gives the casing as the only cause.
+- **The pull requests.** PR-0: R4 of `check_sufficiency.py` renames the fixture
+  constants, so the known gap `cs-rule-keyed-on-fixture-constant` (it names R3) closes.
+  PR-1: this gate in shadow mode, with no declaration. PR-2: the defect entry of the
+  first real-record miss in `detections/RULE_DEFECTS.md`, and the coverage report again.
+  PR-3: the declarations of the owner, from the drafts that `--suggest` prints.
+- **Done.** R3 is `done` when the job `external-records` is green in shadow mode on
+  `main`, the defect entry of PR-2 is merged, and `gatelib.py --gaps` lists no gap that
+  names R3. R3b (enforce, attack-record pins) and R3c (a benign view over all the
+  datasets of a log source) come after it.
 
 ## 2. Throughput: many builders, no hand integration
 
