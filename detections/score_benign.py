@@ -215,27 +215,38 @@ def budget_for(key, default, budgets):
 
 
 class SliceError(Exception):
-    """A slice whose events one event table cannot hold (sigma_eval.EventError: two
-    keys of one event that differ only in the letter case of their ASCII letters, a
-    key that hides a row id that the queries read, an integer outside 64 bits). The
-    text names the slice, the event and the keys."""
+    """A slice whose events one event table cannot hold (sigma_eval.event_problem():
+    two keys of one event that differ only in the letter case of their ASCII letters,
+    a key that hides a row id that the queries read, a value that SQLite does not hold
+    as it is). The text names the slice, the event and the keys."""
+
+
+def check_slices(slices):
+    """Raises SliceError for the first event of the slices that one event table cannot
+    hold (sigma_eval.event_problem(), the test of the table itself), also in a slice
+    that no rule reads. Keys of two events that differ only in letter case share one
+    column."""
+    for s in slices:
+        for i, event in enumerate(s.events):
+            problem = sigma_eval.event_problem(event)
+            if problem:
+                raise SliceError(f"the slice {s.id} v{s.version} "
+                                 f"({os.path.relpath(s.path, REPO)}), event {i + 1} of "
+                                 f"{len(s.events)}: {problem[1]}")
 
 
 def score(rules, slices):
     """{rule key: score dict} over the given slices, plus a few example hits.
 
-    Raises SliceError for a slice that a rule reads and one event table cannot hold.
-    Keys of two events that differ only in letter case share one column."""
+    Raises SliceError for a slice that one event table cannot hold (check_slices()),
+    also when no rule reads it."""
+    check_slices(slices)
     scores, examples = {}, {}
     for s in slices:
         readers = [r for r in rules if reads(s.logsource, r["logsource"])]
         if not readers:
             continue
-        try:
-            table = sigma_eval.EventTable(s.events)
-        except sigma_eval.EventError as e:
-            raise SliceError(f"the slice {s.id} v{s.version} ({os.path.relpath(s.path, REPO)}), "
-                             f"{e}") from None
+        table = sigma_eval.EventTable(s.events)
         for r in readers:
             sc = scores.setdefault(r["key"], {"events": 0, "hits": 0, "actors": {},
                                               "slices": {}})
@@ -396,13 +407,16 @@ class CaptureError(Exception):
 def load_extra(path, logsource, label):
     """A live capture as a slice with this logsource: JSONL raw events (or one JSON array).
 
-    A line that is not JSON (a line that was cut at the end of a capture) is skipped.
-    Raises CaptureError for a capture that is a directory or cannot be read, for the
-    first line with bytes that are not UTF-8, for a byte order mark of UTF-8 at the
-    start of line 1, and for the first line, or element of the array, that is JSON and
-    not an object (`[]` in a line of a log) or is an event that one event table cannot
-    hold (sigma_eval.event_problem(): two keys that differ only in the letter case of
-    their ASCII letters, ...).
+    A line ends at a line break of the file (U+2028 in a JSON string is a character of
+    the line). A line that is not JSON (a line that was cut at the end of a capture) is
+    skipped. Raises CaptureError for a capture that is a directory or cannot be read,
+    for the first line with bytes that are not UTF-8, for a byte order mark of UTF-8 at
+    the start of line 1, for JSON that the gate cannot read (too deep for json or for
+    flatten(), a number with too many digits: the first such line, or the document),
+    and for the first line, or element of the array, that is JSON and not an object
+    (`[]` in a line of a log) or is an event that one event table cannot hold
+    (sigma_eval.event_problem(): two keys that differ only in the letter case of their
+    ASCII letters, ...).
     """
     if os.path.isdir(path):
         raise CaptureError(f"the live capture {path} is a directory, not a file")
@@ -412,7 +426,11 @@ def load_extra(path, logsource, label):
     except OSError as e:
         raise CaptureError(f"the live capture {path} cannot be read "
                            f"({e.strerror or e})") from None
-    for n, line in enumerate(text.splitlines(), 1):
+    # A line ends at a line break of the file (the reader of the Kubernetes validators
+    # reads the same capture so): str.splitlines() also ends one at U+0085, U+2028 and
+    # U+2029, which a JSON string may hold as they are.
+    lines = text.split("\n")
+    for n, line in enumerate(lines, 1):
         bad = next((i for i, ch in enumerate(line) if 0xDC80 <= ord(ch) <= 0xDCFF), None)
         if bad is not None:
             raise CaptureError(f"the live capture {path}, line {n}: bytes that are not UTF-8 "
@@ -426,9 +444,9 @@ def load_extra(path, logsource, label):
         raw = doc if isinstance(doc, list) else [doc]
         where = ([f"element {n} of the array" for n in range(1, len(raw) + 1)]
                  if isinstance(doc, list) else ["line 1"])
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError) as whole:  # a JSONDecodeError is a ValueError
         raw, where = [], []
-        for n, line in enumerate(text.splitlines(), 1):
+        for n, line in enumerate(lines, 1):
             line = line.strip()
             if line:
                 try:
@@ -436,6 +454,12 @@ def load_extra(path, logsource, label):
                     where.append(f"line {n}")
                 except json.JSONDecodeError:
                     continue
+                except (ValueError, RecursionError) as e:
+                    raise CaptureError(f"the live capture {path}, line {n}: "
+                                       f"{_cannot_read(e)}") from None
+        if not raw and not isinstance(whole, json.JSONDecodeError):
+            # One JSON document (no line of it is JSON) that json cannot read.
+            raise CaptureError(f"the live capture {path}: {_cannot_read(whole)}") from None
     bad = [(at, event) for at, event in zip(where, raw) if not isinstance(event, dict)]
     if bad:
         at, event = bad[0]
@@ -446,14 +470,24 @@ def load_extra(path, logsource, label):
                            f"({kind})"
                            + (f", and {len(bad) - 1} more event(s) that are not objects"
                               if len(bad) > 1 else ""))
-    spec = {"id": label, "version": 0, "logsource": dict(logsource), "fidelity": "recorded"}
-    extra = benign_corpus.Slice(spec, path, raw)
-    for at, event in zip(where, extra.events):
-        problem = sigma_eval.event_problem(event)
+    for at, event in zip(where, raw):
+        try:
+            problem = sigma_eval.event_problem(sigma_eval.flatten(event))
+        except RecursionError as e:
+            raise CaptureError(f"the live capture {path}, {at}: {_cannot_read(e)}") from None
         if problem:
             raise CaptureError(f"the live capture {path}, {at}: an event that one event table "
                                f"cannot hold: {problem[1]}")
-    return extra
+    spec = {"id": label, "version": 0, "logsource": dict(logsource), "fidelity": "recorded"}
+    return benign_corpus.Slice(spec, path, raw)
+
+
+def _cannot_read(error):
+    """The text of a problem of JSON that json.loads() or flatten() cannot read (the
+    words of the reader of the Kubernetes validators)."""
+    text = str(error).split("\n")[0]
+    return (f"JSON that the gate cannot read ({type(error).__name__}: "
+            + (text if len(text) <= 100 else text[:100] + "...") + ")")
 
 
 # RFC 3339 date-time (section 5.6) with seconds and a zone; "T", "t" or a space between.

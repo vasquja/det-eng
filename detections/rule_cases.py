@@ -47,7 +47,8 @@ Case fields:
            (sigma_eval.EventTable), so no event may hold two keys that differ only
            in the letter case of their ASCII letters (`comm`, `Comm`; in two events
            they share one column), a key `_rowid` or `rowid` in any letter case, or
-           an integer outside 64 bits; and no two values of one event may get one
+           a value that SQLite does not hold as it is (an integer outside 64 bits,
+           NaN, a lone surrogate); and no two values of one event may get one
            flat key (`{"a": {"b": 1}, "a.b": 2}`). Such a case is an ERROR line that
            names the rule, the line and the case.
   source   optional provenance note ("synthetic: ..." or "recorded: ...").
@@ -86,7 +87,8 @@ def load_cases(path):
     JSON, or not a JSON object, it lacks a field, its name, kind, events or breaks has
     the wrong type, or its events cannot be put in one event table (event_problem()).
     A line with bytes that are not UTF-8 is such an error too: it names the first such
-    byte and its character in the line."""
+    byte and its character in the line; and so is a line with JSON that the gate
+    cannot read (too deep for json or for flatten(), a number with too many digits)."""
     cases, errors, names = [], [], set()
     with open(path, encoding="utf-8", errors="surrogateescape") as fh:
         for n, text in enumerate(fh, 1):
@@ -103,6 +105,9 @@ def load_cases(path):
                 case = json.loads(line)
             except json.JSONDecodeError as e:
                 errors.append(f"line {n}: not JSON ({e})")
+                continue
+            except (ValueError, RecursionError) as e:  # too deep, a number too long
+                errors.append(f"line {n}: {_cannot_read(e)}")
                 continue
             if not isinstance(case, dict):
                 errors.append(f"line {n}: not a JSON object ({_json_type(case)}): each line "
@@ -135,7 +140,10 @@ def load_cases(path):
                 errors.append(f"line {n}: {of}`breaks` must be an atom name or a list of atom "
                               "names (strings)")
                 continue
-            problem = event_problem(case["events"])
+            try:
+                problem = event_problem(case["events"])
+            except RecursionError as e:  # an object that json reads and flatten() cannot
+                problem = _cannot_read(e)
             if problem:
                 errors.append(f"line {n}: {of}{problem}")
                 continue
@@ -143,6 +151,14 @@ def load_cases(path):
             case["_line"] = n
             cases.append(case)
     return cases, errors
+
+
+def _cannot_read(error):
+    """The text of a problem of JSON that json.loads() or flatten() cannot read (the
+    words of the reader of the Kubernetes validators)."""
+    text = str(error).split("\n")[0]
+    return (f"JSON that the gate cannot read ({type(error).__name__}: "
+            + (text if len(text) <= 100 else text[:100] + "...") + ")")
 
 
 def _json_type(value):
@@ -180,10 +196,11 @@ def event_problem(events):
     the case in one SQLite table (sigma_eval.EventTable). So each event must be a
     JSON object; two values of an event must not get one flat key (flatten keeps the
     last); and the table must hold each flat event: sigma_eval.event_problem() is the
-    test of the table itself (no key that hides a row id that the queries read, no
-    two keys of one event that differ only in the letter case of their ASCII
-    letters, no integer outside 64 bits). Keys of that kind in two events of a case
-    share one column, as a rule field reads them."""
+    test of the table itself (no key that hides a row id that the queries read or
+    that no column name can hold, no two keys of one event that differ only in the
+    letter case of their ASCII letters, no value that SQLite does not hold as it is).
+    Keys of that kind in two events of a case share one column, as a rule field reads
+    them. Raises RecursionError for an event too deep to flatten."""
     for i, event in enumerate(events, 1):
         where = f"event {i} of {len(events)}"
         if not isinstance(event, dict):

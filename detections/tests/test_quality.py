@@ -337,6 +337,31 @@ class ScoreBenign(gatelib.GateCase):
                                     r"which SQLite reads as one column name\. No rule is scored on "
                                     r"the benign corpus\.$", exit_code=1)
 
+    def test_rejects_slice_that_no_rule_reads_whose_event_keys_differ_only_in_letter_case(self):
+        """The planted slice of the test above with a log source that no rule reads
+        (okta/system). The gate tests each event of each slice before it scores, also
+        of a slice that no rule reads: the ERROR line names the slice, the event and
+        the two keys, with --update and with --check --enforce."""
+        tree = self.tree()
+        tree.plant("quality/slice_keys_differ_by_case/planted-key-case-clash.json",
+                   self.PLANTED_SLICE)
+        tree.edit_json(self.PLANTED_SLICE, lambda doc: doc.update(
+            logsource={"product": "okta", "service": "system"}))
+        self.assertNotRegex("\n".join(tree.read(rel) for rel in
+                                       tree.glob("detections/sigma/*/*.yml")),
+                            r"(?m)^\s*product: *okta\b")
+        update = tree.start(self.GATE, "--update")
+        line = (r"^ERROR: the slice planted-key-case-clash v1 \(detections/benign/slices/aws/"
+                r"planted-key-case-clash\.json\), event 1 of 1: keys that differ only by case: "
+                r"EventName / eventName, which SQLite reads as one column name\. No rule is "
+                r"scored on the benign corpus\.$")
+        for result in (self.run_ci(tree), update.result()):
+            with self.subTest(result.argv[-1]):
+                self.assertNotIn("Traceback", result.output)
+                self.assert_rejects(result, line, exit_code=1)
+        self.assertEqual(tree.read("detections/benign/scores.json"),
+                         self.good().read("detections/benign/scores.json"))
+
     def test_control_slice_events_whose_keys_differ_only_in_letter_case(self):
         """CONTROL of the test above: two events of the planted slice, one with the key
         `eventName` and one with `EventName` (a sequence of two steps). No event holds
@@ -411,12 +436,18 @@ class ScoreBenign(gatelib.GateCase):
     def test_rejects_extra_slice_that_the_loader_cannot_read(self):
         """--extra-slice on a capture that is a directory or does not exist, that holds a
         byte that is not UTF-8, that starts with the byte order mark of UTF-8, or whose
-        audit event holds two keys that differ only in letter case. Each is an ERROR
-        line that names the capture (and the line), the run exits 1, and no rule is
-        scored on the capture. Before roadmap item R2d the first three ended with a
-        traceback, the fourth lost line 1 without a word, and the fifth ended with a
-        ValueError of sigma_eval.EventTable. Control: a capture whose two events hold
-        the keys `verb` and `Verb` (no event holds both) is scored."""
+        audit event holds two keys that differ only in letter case (also in a nested
+        object), or that holds JSON that the gate cannot read (too deep for json or for
+        flatten(), a number with too many digits, in a line or in one document). Each
+        is an ERROR line that names the capture (and the line), the run exits 1, and no
+        rule is scored on the capture. Before roadmap item R2d the first three ended
+        with a traceback, the fourth lost line 1 without a word, the key clashes ended
+        with a ValueError of sigma_eval.EventTable, the JSON too deep or too long with
+        a traceback, and the document was a capture of no event. Controls: a capture
+        whose two events hold the keys `verb` and `Verb` (no event holds both) is
+        scored, and so is a capture whose line holds U+2028, U+2029 and U+0085 in a
+        string (before R2d str.splitlines() cut the line, and the event was lost
+        without a word)."""
         good = self.good()
         events = [event for case in
                   good.read_jsonl("detections/sigma/T1609/k8s_pod_exec_attach.cases.jsonl")
@@ -427,6 +458,12 @@ class ScoreBenign(gatelib.GateCase):
         self.assertNotEqual(inside, lines[1])
         at = inside.index(b"\xe9") + 1      # the character of the byte, from 1
         respelled = {("Verb" if key == "verb" else key): value for key, value in events[1].items()}
+        nested = json.loads(lines[1])
+        nested["objectRef"]["Name"] = nested["objectRef"]["name"]
+        deep = {}
+        for _ in range(1500):
+            deep = {"a": deep}
+        separators = dict(events[1], userAgent="kubectl/v1.31 \u2028 \u2029 \u0085 x")
         runs = self.extra_slice_runs({
             "a directory": None,
             "a path that does not exist": False,
@@ -434,7 +471,33 @@ class ScoreBenign(gatelib.GateCase):
             "a byte order mark": b"\xef\xbb\xbf" + b"".join(lines),
             "two keys of one event": lines[0] + json.dumps(dict(events[1], Verb="get")).encode()
             + b"\n",
-            "two events": lines[0] + json.dumps(respelled).encode() + b"\n"})
+            "two events": lines[0] + json.dumps(respelled).encode() + b"\n",
+            "two keys of a nested object": lines[0] + json.dumps(nested).encode() + b"\n",
+            "an object too deep to flatten": lines[0]
+            + json.dumps(dict(events[1], deep=deep)).encode() + b"\n",
+            # Python 3.13 and older stop json.loads() at the limit of the recursion; from
+            # Python 3.14 (with a large stack) json reads it, and flatten() stops.
+            "JSON too deep": lines[0] + b'{"a": ' * 100000 + b"1" + b"}" * 100000 + b"\n",
+            "a number with too many digits": lines[0] + b'{"n": 1' + b"0" * 5000 + b"}\n",
+            # No line of the document is JSON alone: the line `2, 1000...0]` is the
+            # number 2 and more, so json does not read the long number there.
+            "one document with a number with too many digits": b"[1,\n2, 1" + b"0" * 5000
+            + b"]\n",
+            # A line of the capture ends at a line break of the file: U+2028, U+2029 and
+            # U+0085 in a JSON string are characters of the line.
+            "line separators in a string": lines[0]
+            + json.dumps(separators, ensure_ascii=False).encode() + b"\n"})
+        cannot_read = {
+            "an object too deep to flatten": r", line 2: JSON that the gate cannot read "
+                                             r"\(RecursionError: [^)]*\)",
+            "JSON too deep": r", line 2: JSON that the gate cannot read \(RecursionError: "
+                             r"[^)]*\)",
+            "a number with too many digits": r", line 2: JSON that the gate cannot read "
+                                             r"\(ValueError: Exceeds the limit \(4300 digits\)"
+                                             r"[^)]*\)",
+            "one document with a number with too many digits":
+                r": JSON that the gate cannot read \(ValueError: Exceeds the limit \(4300 "
+                r"digits\)[^)]*\)"}
         wanted = {
             "a directory": " is a directory, not a file",
             "a path that does not exist": " cannot be read (No such file or directory)",
@@ -444,20 +507,25 @@ class ScoreBenign(gatelib.GateCase):
                                  "(EF BB BF)",
             "two keys of one event": ", line 2: an event that one event table cannot hold: keys "
                                      "that differ only by case: Verb / verb, which SQLite reads "
-                                     "as one column name"}
+                                     "as one column name",
+            "two keys of a nested object": ", line 2: an event that one event table cannot "
+                                           "hold: keys that differ only by case: objectRef.Name "
+                                           "/ objectRef.name, which SQLite reads as one column "
+                                           "name"}
         for label, (path, result) in runs.items():
             with self.subTest(label):
                 self.assertNotIn("Traceback", result.output)
-                if label == "two events":
+                if label in ("two events", "line separators in a string"):
                     self.assert_accepts(result, r"^Live capture kind-live \(kubernetes/audit, 2 "
                                                 r"event\(s\)\) - shadow only")
                     continue
                 self.assertNotRegex(result.stdout, r"(?m)^Live capture ")
                 self.assertEqual(len(re.findall(r"^ERROR", result.stdout, re.M)), 1,
                                  result.describe())
+                problem = cannot_read.get(label) or re.escape(wanted[label])
                 self.assert_rejects(result, "^ERROR: the live capture " + re.escape(path)
-                                    + re.escape(wanted[label]) + r"\. No rule is scored on the "
-                                    r"live capture\.$", exit_code=1)
+                                    + problem + r"\. No rule is scored on the live capture\.$",
+                                    exit_code=1)
 
 
 class BenignRatchet(gatelib.GateCase):

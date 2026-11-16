@@ -518,9 +518,13 @@ class RuleCases(gatelib.GateCase):
         inside = lines[1].replace(b'"comm": "', b'"comm": "\xe9', 1)
         self.assertNotEqual(inside, lines[1])
         at = inside.index(b"\xe9") + 1
+        # A fifth line holds the lone byte 0x80 (a continuation byte without its lead).
         with open(tree.path(self.PLANTED_CASES), "wb") as fh:
-            fh.write(b"".join([lines[0], inside, b"  \xff" + lines[2], lines[3]]))
+            fh.write(b"".join([lines[0], inside, b"  \xff" + lines[2], lines[3],
+                               b'{"name": "x\x80"}\n']))
         result = tree.run(self.GATE, self.PLANTED_RULE)
+        self.assert_saw(result, r"^ERROR T9999/planted_rule\.yml: line 5: bytes that are not "
+                                r"UTF-8 \(the byte 0x80 at character 12 of the line\)$")
         self.assert_saw(result, r"^ERROR T9999/planted_rule\.yml: line 3: bytes that are not "
                                 r"UTF-8 \(the byte 0xff at character 3 of the line\)$")
         self.assertIn(self.POSITIVE_FIRES, result.stdout)
@@ -529,7 +533,49 @@ class RuleCases(gatelib.GateCase):
         self.assert_rejects(result, r"^ERROR T9999/planted_rule\.yml: line 2: bytes that are not "
                                     rf"UTF-8 \(the byte 0xe9 at character {at} of the line\)$",
                             exit_code=1)
-        self.assertIn("\nFAILED: 2 case problem(s).\n", result.stdout)
+        self.assertIn("\nFAILED: 3 case problem(s).\n", result.stdout)
+
+    def test_rejects_sidecar_line_with_json_that_the_gate_cannot_read(self):
+        """The second line of the sound sidecar holds JSON that json or flatten() cannot
+        read: an object 100000 levels deep (Python 3.13 and older stop json.loads(); from
+        Python 3.14, with a large stack, json reads it and flatten() stops), an event
+        with an object 1500 levels deep (json reads it, and flatten() stops), and a
+        number with 5000 digits. Each is an ERROR line that names the rule and the line
+        (and the case, when json read the line), and the gate judges the other cases.
+        Before roadmap item R2d each ended rule_cases.py (and check_provider_mappings.py
+        and k8s_policy_coverage.py, which read the sidecars with its loader) with a
+        traceback."""
+        tree = self.plant_bad_cases("sound")
+        lines = tree.read(self.PLANTED_CASES).splitlines(keepends=True)
+        case = json.loads(lines[1])
+        self.assertEqual(case["name"], "packet-dgram-socket")
+        nested = {}
+        for _ in range(1500):
+            nested = {"a": nested}
+        bad = {
+            "JSON too deep": ('{"name": "deep", "x": ' + '{"a": ' * 100000 + "1" + "}" * 100000
+                              + "}\n",
+                              r"(?:case 'deep': )?JSON that the gate cannot read \(RecursionError: "
+                              r"[^)]*\)"),
+            "an object too deep to flatten": (
+                json.dumps(dict(case, events=[dict(case["events"][0], x=nested)])) + "\n",
+                r"case 'packet-dgram-socket': JSON that the gate cannot read \(RecursionError: "
+                r"[^)]*\)"),
+            "a number with too many digits": (
+                '{"name": "digits", "n": 1' + "0" * 5000 + "}\n",
+                r"JSON that the gate cannot read \(ValueError: Exceeds the limit \(4300 digits\) "
+                r"for integer string conversion[^)]*\)")}
+        names = [json.loads(line)["name"] for line in lines]
+        for label, (text, message) in bad.items():
+            with self.subTest(label):
+                tree.write(self.PLANTED_CASES, "".join(lines[:1] + [text] + lines[2:]))
+                result = tree.run(self.GATE, self.PLANTED_RULE)
+                self.assertNotIn("Traceback", result.output)
+                self.assert_rejects(result, r"^ERROR T9999/planted_rule\.yml: line 2: " + message
+                                    + "$", exit_code=1)
+                self.assertIn("\nFAILED: 1 case problem(s).\n", result.stdout)
+                self.assertEqual(re.findall(r"(?m)^ok    T9999/planted_rule\.yml :: \S+ +(\S+): ",
+                                            result.stdout), names[:1] + names[2:])
 
 
 # What sigma_eval.EventTable does with keys that differ only in letter case, with
