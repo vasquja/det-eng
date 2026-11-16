@@ -84,12 +84,20 @@ def load_cases(path):
     A line that is not a well-formed case is an error that names the line (and the
     case, when the line has a name that is a string), and it is not judged: it is not
     JSON, or not a JSON object, it lacks a field, its name, kind, events or breaks has
-    the wrong type, or its events cannot be put in one event table (event_problem())."""
+    the wrong type, or its events cannot be put in one event table (event_problem()).
+    A line with bytes that are not UTF-8 is such an error too: it names the first such
+    byte and its character in the line."""
     cases, errors, names = [], [], set()
-    with open(path, encoding="utf-8") as fh:
-        for n, line in enumerate(fh, 1):
-            line = line.strip()
+    with open(path, encoding="utf-8", errors="surrogateescape") as fh:
+        for n, text in enumerate(fh, 1):
+            line = text.strip()
             if not line:
+                continue
+            bad = next((i for i, ch in enumerate(text) if 0xDC80 <= ord(ch) <= 0xDCFF), None)
+            if bad is not None:
+                errors.append(f"line {n}: bytes that are not UTF-8 (the byte "
+                              f"0x{ord(text[bad]) - 0xDC00:02x} at character {bad + 1} of the "
+                              "line)")
                 continue
             try:
                 case = json.loads(line)

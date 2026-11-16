@@ -447,6 +447,34 @@ class RuleCases(gatelib.GateCase):
                 self.assertIn("\nFAILED: 1 case problem(s).\n", result.stdout)
                 self.assertIn(self.POSITIVE_FIRES, result.stdout)
 
+    def test_rejects_sidecar_line_that_is_not_utf8(self):
+        """Two lines of the sound sidecar, each with one byte that is not UTF-8: the
+        byte 0xe9 in a string of the near-miss (the line is JSON with the byte), and
+        the byte 0xff after two blanks before the filtered case (the line is then not
+        JSON). Each is an ERROR line that names the rule, the line, the byte and its
+        character in the line (from 1, the blanks too), and the gate judges the other
+        cases. Before roadmap item R2d the gate ended
+        with a UnicodeDecodeError (and so did each gate that reads the sidecars with
+        its loader)."""
+        tree = self.plant_bad_cases("sound")
+        lines = tree.read(self.PLANTED_CASES).encode("utf-8").splitlines(keepends=True)
+        inside = lines[1].replace(b'"comm": "', b'"comm": "\xe9', 1)
+        self.assertNotEqual(inside, lines[1])
+        at = inside.index(b"\xe9") + 1
+        with open(tree.path(self.PLANTED_CASES), "wb") as fh:
+            fh.write(b"".join([lines[0], inside, b"  \xff" + lines[2], lines[3]]))
+        result = tree.run(self.GATE, self.PLANTED_RULE)
+        self.assert_saw(result, r"^ERROR T9999/planted_rule\.yml: line 3: bytes that are not "
+                                r"UTF-8 \(the byte 0xff at character 3 of the line\)$")
+        self.assertIn(self.POSITIVE_FIRES, result.stdout)
+        self.assertIn("ok    T9999/planted_rule.yml :: benign     file-open: ", result.stdout)
+        self.assertNotIn("Traceback", result.output)
+        self.assert_rejects(result, r"^ERROR T9999/planted_rule\.yml: line 2: bytes that are not "
+                                    rf"UTF-8 \(the byte 0xe9 at character {at} of the line\)$",
+                            exit_code=1)
+        self.assertIn("\nFAILED: 2 case problem(s).\n", result.stdout)
+
+
 # What sigma_eval.EventTable does with keys that differ only in letter case, with
 # names that SQLite reads as the row id, and with integers outside 64 bits. The
 # snippet compiles one item (`field: value`) with the backend of the oracle, and
@@ -823,7 +851,8 @@ class CheckSufficiency(gatelib.StartedTogether):
             "emulation_name", "name_keyed", "fixture_constant", "self_added_waiver",
             "keyed_good", "keyed_aws_organization", "keyed_azure_subscription", "keyed_entra_tenant",
             "keyed_gcp_project_number", "keyed_gcp_project_id", "keyed_k8s_node_name",
-            "keyed_k8s_node_uid", "keyed_together", "constant_table", "constant_probe")
+            "keyed_k8s_node_uid", "keyed_together", "constant_table", "constant_probe",
+            "sidecar_not_utf8")
 
     @classmethod
     def start_gate(cls, tree):
@@ -1030,6 +1059,32 @@ class CheckSufficiency(gatelib.StartedTogether):
             rf"line {line}\) fails: expected a match, got near-miss ",
             exit_code=1)
         self.assert_one_rule_fails(tree, result, "R3")
+
+    @classmethod
+    def begin_sidecar_not_utf8(cls, tree):
+        # The first line of the real sidecar gets one byte that is not UTF-8, in the
+        # `why` of its case (the line stays JSON with the byte).
+        with open(tree.path(AFINET_CASES), "rb") as fh:
+            data = fh.read()
+        with open(tree.path(AFINET_CASES), "wb") as fh:
+            fh.write(data.replace(b'"why": "', b'"why": "\xe9', 1))
+        return cls.start_gate(tree)
+
+    def test_rejects_sidecar_line_that_is_not_utf8(self):
+        """R3: the gate reads the sidecars with the loader of rule_cases.py, so it names
+        a line with bytes that are not UTF-8 as rule_cases.py does: the sidecar, the
+        line, the byte and its character. Before roadmap item R2d the loader ended
+        with a UnicodeDecodeError, and this gate gave the error with no line."""
+        tree, result = self.started("sidecar_not_utf8")
+        with open(tree.path(AFINET_CASES), "rb") as fh:
+            first = fh.readline()
+        at = first.index(b"\xe9") + 1
+        self.assert_rejects(
+            result,
+            r"^  \[R3\] T1040/afinet_raw_socket\.yml: `detections/sigma/T1040/afinet_raw_socket"
+            rf"\.cases\.jsonl` line 1: bytes that are not UTF-8 \(the byte 0xe9 at character "
+            rf"{at} of the line\)$", exit_code=1)
+        self.assertNotIn("Traceback", result.output)
 
     # ---- R4: not keyed on the emulation's names -------------------------------------
 

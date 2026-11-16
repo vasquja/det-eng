@@ -388,6 +388,78 @@ class ScoreBenign(gatelib.GateCase):
                                     r"which SQLite reads as one column name \(a reseed\)\. No rule "
                                     r"is scored on the reseeds\.$", exit_code=1)
 
+    def extra_slice_runs(self, captures):
+        """Runs of --extra-slice with the options of the shadow step, started together:
+        {label: (capture path, result)}. `captures`: {label: the bytes of the capture,
+        None for a directory, or False for a path that does not exist}."""
+        good = self.good()
+        runs = {}
+        for n, (label, data) in enumerate(captures.items()):
+            path = good.tmp_path(f"capture-{n}.log")
+            if data is None:
+                os.makedirs(path, exist_ok=True)
+            elif data is False:
+                self.assertFalse(os.path.lexists(path))
+            else:
+                with open(path, "wb") as fh:
+                    fh.write(data)
+            runs[label] = (path, good.start(self.GATE, "--extra-slice", path,
+                                            "--extra-logsource", "kubernetes/audit",
+                                            "--extra-label", "kind-live", "--examples", "0"))
+        return {label: (path, pending.result()) for label, (path, pending) in runs.items()}
+
+    def test_rejects_extra_slice_that_the_loader_cannot_read(self):
+        """--extra-slice on a capture that is a directory or does not exist, that holds a
+        byte that is not UTF-8, that starts with the byte order mark of UTF-8, or whose
+        audit event holds two keys that differ only in letter case. Each is an ERROR
+        line that names the capture (and the line), the run exits 1, and no rule is
+        scored on the capture. Before roadmap item R2d the first three ended with a
+        traceback, the fourth lost line 1 without a word, and the fifth ended with a
+        ValueError of sigma_eval.EventTable. Control: a capture whose two events hold
+        the keys `verb` and `Verb` (no event holds both) is scored."""
+        good = self.good()
+        events = [event for case in
+                  good.read_jsonl("detections/sigma/T1609/k8s_pod_exec_attach.cases.jsonl")
+                  if case["name"] in ("pod-logs-read", "pod-get-describe")
+                  for event in case["events"]]
+        lines = [json.dumps(event).encode() + b"\n" for event in events]
+        inside = lines[1].replace(b'"verb": "', b'"verb": "\xe9', 1)
+        self.assertNotEqual(inside, lines[1])
+        at = inside.index(b"\xe9") + 1      # the character of the byte, from 1
+        respelled = {("Verb" if key == "verb" else key): value for key, value in events[1].items()}
+        runs = self.extra_slice_runs({
+            "a directory": None,
+            "a path that does not exist": False,
+            "not UTF-8": lines[0] + inside,
+            "a byte order mark": b"\xef\xbb\xbf" + b"".join(lines),
+            "two keys of one event": lines[0] + json.dumps(dict(events[1], Verb="get")).encode()
+            + b"\n",
+            "two events": lines[0] + json.dumps(respelled).encode() + b"\n"})
+        wanted = {
+            "a directory": " is a directory, not a file",
+            "a path that does not exist": " cannot be read (No such file or directory)",
+            "not UTF-8": f", line 2: bytes that are not UTF-8 (the byte 0xe9 at character "
+                         f"{at} of the line)",
+            "a byte order mark": ", line 1: the line starts with the byte order mark of UTF-8 "
+                                 "(EF BB BF)",
+            "two keys of one event": ", line 2: an event that one event table cannot hold: keys "
+                                     "that differ only by case: Verb / verb, which SQLite reads "
+                                     "as one column name"}
+        for label, (path, result) in runs.items():
+            with self.subTest(label):
+                self.assertNotIn("Traceback", result.output)
+                if label == "two events":
+                    self.assert_accepts(result, r"^Live capture kind-live \(kubernetes/audit, 2 "
+                                                r"event\(s\)\) - shadow only")
+                    continue
+                self.assertNotRegex(result.stdout, r"(?m)^Live capture ")
+                self.assertEqual(len(re.findall(r"^ERROR", result.stdout, re.M)), 1,
+                                 result.describe())
+                self.assert_rejects(result, "^ERROR: the live capture " + re.escape(path)
+                                    + re.escape(wanted[label]) + r"\. No rule is scored on the "
+                                    r"live capture\.$", exit_code=1)
+
+
 class BenignRatchet(gatelib.GateCase):
     """The benign half of the sufficiency-ratchet job (pull requests only):
     detections/score_benign.py --examples 0 --baseline-scores <the base branch's

@@ -388,22 +388,39 @@ def extra_logsource(text, rules):
 
 
 class CaptureError(Exception):
-    """A live capture (--extra-slice) whose events are not all JSON objects that one
-    event table can hold. The text names the capture, and the line or the element of
-    the array."""
+    """A live capture (--extra-slice) that the loader cannot read, or whose events
+    are not all events that one event table can hold. The text names the capture,
+    and the line or the element of the array when there is one."""
 
 
 def load_extra(path, logsource, label):
     """A live capture as a slice with this logsource: JSONL raw events (or one JSON array).
 
     A line that is not JSON (a line that was cut at the end of a capture) is skipped.
-    Raises CaptureError for the first line, or element of the array, that is JSON and
+    Raises CaptureError for a capture that is a directory or cannot be read, for the
+    first line with bytes that are not UTF-8, for a byte order mark of UTF-8 at the
+    start of line 1, and for the first line, or element of the array, that is JSON and
     not an object (`[]` in a line of a log) or is an event that one event table cannot
     hold (sigma_eval.event_problem(): two keys that differ only in the letter case of
     their ASCII letters, ...).
     """
-    with open(path, encoding="utf-8") as fh:
-        text = fh.read()
+    if os.path.isdir(path):
+        raise CaptureError(f"the live capture {path} is a directory, not a file")
+    try:
+        with open(path, encoding="utf-8", errors="surrogateescape") as fh:
+            text = fh.read()
+    except OSError as e:
+        raise CaptureError(f"the live capture {path} cannot be read "
+                           f"({e.strerror or e})") from None
+    for n, line in enumerate(text.splitlines(), 1):
+        bad = next((i for i, ch in enumerate(line) if 0xDC80 <= ord(ch) <= 0xDCFF), None)
+        if bad is not None:
+            raise CaptureError(f"the live capture {path}, line {n}: bytes that are not UTF-8 "
+                               f"(the byte 0x{ord(line[bad]) - 0xDC00:02x} at character "
+                               f"{bad + 1} of the line)")
+    if text.startswith("\ufeff"):
+        raise CaptureError(f"the live capture {path}, line 1: the line starts with the byte "
+                           "order mark of UTF-8 (EF BB BF)")
     try:
         doc = json.loads(text)
         raw = doc if isinstance(doc, list) else [doc]
