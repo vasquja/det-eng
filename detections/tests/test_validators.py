@@ -823,6 +823,8 @@ class CloudValidator(gatelib.GateCase):
                     r"that holds such a key in a JSON array \(\[\{\.\.\.\}\]\)")
         extra = self.EXTRA
         long = b"9" + b"9" * 4999     # a number of 5000 digits
+        attack = self.good().read_json(self.ATTACK)
+        twice = r"an object holds the key '{}' two times \(json keeps only the last value\)"
         return [
             ("null", "benign", b"null\n",
              r": JSON that is not an array or an object \(null\)"),
@@ -967,6 +969,27 @@ class CloudValidator(gatelib.GateCase):
              + json.dumps({"Records": good[:1], "meta": 0})[:-2].encode() + long + b"}\n",
              rf", line {n + 1}: an envelope \(the list 'Records'\) that also holds the key "
              r"'meta'" + extra),
+            # An object that holds one key two times: json keeps only the last value, so
+            # the attack records (or an attack value) before it are lost without a word.
+            # The object of the file and of a line is named by the fixture and the line,
+            # an object in a record by its record.
+            ("an envelope that holds its list two times", "benign",
+             ('{"Records": ' + json.dumps(attack) + ', "Records": ' + json.dumps(good) + "}")
+             .encode(), r": " + twice.format("Records")),
+            ("a JSON line of an envelope that holds its list two times", "benign",
+             "".join(json.dumps(row) + "\n" for row in good).encode()
+             + ('{"Records": ' + json.dumps(attack) + ', "Records": []}\n').encode(),
+             rf", line {n + 1}: " + twice.format("Records")),
+            ("a record that holds a key two times", "benign",
+             (json.dumps(good)[:-1] + ", " + json.dumps(attack[0])[:-1] + ', "eventName": '
+              + json.dumps(good[0]["eventName"]) + "}]").encode(),
+             rf", element {n + 1} of the array: " + twice.format("eventName")),
+            # The page key two times, first with a number with too many digits: json
+            # drops the number with its key, so no record holds it.
+            ("a page key two times, first with a number with too many digits", "benign",
+             json.dumps({"Records": good})[:-1].encode() + b', "nextLink": ' + long
+             + b', "nextLink": null}',
+             r": " + twice.format("nextLink")),
             # Values and keys that SQLite does not hold as they are. Python's json reads
             # NaN and Infinity, which JSON does not have; SQLite stores NaN as NULL, so a
             # `field: null` item would match a record that holds a value. The JSON escape

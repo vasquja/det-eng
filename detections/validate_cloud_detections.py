@@ -366,16 +366,19 @@ class _LongInt:
         self.error = error
 
 
-def _long_int(value):
-    """The error of the first _LongInt in a JSON value, or None. The walk uses no
-    recursion: the value can be deep."""
+def _unread(value):
+    """The text of the first part of a JSON value that the loader does not read, or
+    None: a number with too many digits (_LongInt), or an object that holds a key two
+    times (sigma_eval.Twice). The walk uses no recursion: the value can be deep."""
     stack = [value]
     while stack:
         node = stack.pop()
         if isinstance(node, _LongInt):
-            return node.error
+            return _cannot_read(node.error)
         if isinstance(node, dict):
-            stack.extend(reversed(node.values()))
+            if type(node) is sigma_eval.Twice:
+                return sigma_eval.twice_text(node.key)
+            stack.extend(reversed(list(node.values())))
         elif isinstance(node, list):
             stack.extend(reversed(node))
     return None
@@ -430,6 +433,11 @@ def _document(path, doc, at):
             raise FixtureError(f"{_name(path)}: JSON that is not an array or an object "
                                f"({_kind(doc)})")
         return [doc], [at]
+    if type(doc) is sigma_eval.Twice:
+        # json kept only the last value of the key: an envelope {"Records": <attack>,
+        # "Records": <benign>} would give the benign records only.
+        raise FixtureError(f"{_name(path)}{', ' + at if at else ''}: "
+                           f"{sigma_eval.twice_text(doc.key)}")
     env = next((env for env in ENVELOPES if isinstance(doc.get(env), list)), None)
     if env is None:
         # An object that holds an envelope key is an envelope; when the key holds no
@@ -453,17 +461,15 @@ def _records(path):
     place of each in the file, as a message names it (`line 3`, `element 2 of the
     array`). Raises FixtureError (load_records())."""
     text = _text(path)
-    longs = []
 
     def parse_int(digits):
         try:
             return int(digits)
         except ValueError as e:
-            longs.append(e)
             return _LongInt(e)
 
     def loads(text):
-        return json.loads(text, parse_int=parse_int)
+        return json.loads(text, parse_int=parse_int, object_pairs_hook=sigma_eval.pairs)
 
     try:
         records, where = _document(path, loads(text), None)
@@ -509,16 +515,18 @@ def _records(path):
         raise FixtureError(f"{_name(path)}: {_cannot_read(e)}") from None
     except ValueError as e:
         raise FixtureError(f"{_name(path)}: {_cannot_read(e)}") from None
-    # Each number of the fixture is in a record: beside its list, an envelope holds
-    # only page keys, and each of them holds a string or null (_envelope_keys()).
+    # Each value of the fixture is in a record: beside its list, an envelope holds
+    # only page keys, each of them holds a string or null (_envelope_keys()), and
+    # _document() refuses an object of the file or of a line that holds a key two
+    # times (json keeps only one of the two values). So a number with too many
+    # digits, and an object that holds a key two times, are in a record here.
     for at, record in zip(where, records):
         if not isinstance(record, dict):
             raise FixtureError(f"{_name(path)}, {at}: a record that is not a JSON object "
                                f"({_kind(record)})")
-        if longs:
-            error = _long_int(record)
-            if error is not None:
-                raise FixtureError(f"{_name(path)}, {at}: {_cannot_read(error)}")
+        problem = _unread(record)
+        if problem is not None:
+            raise FixtureError(f"{_name(path)}, {at}: {problem}")
     return records, where
 
 
@@ -540,15 +548,21 @@ def load_records(path):
     object (the file, or a line of JSON lines) whose envelope key is not a list
     (`{"Records": null}`, `{"value": "x"}`); an envelope that holds another key beside
     its list (an attack record with `"items": [...]`, a second envelope key, `"meta":
-    1`), or a page key whose value is not a string or null; a line of JSON lines that
-    is not JSON; JSON that the loader cannot read (too deep, a number with too many
-    digits); and a record that is not a JSON object (`null`, `[]`, `1`, `"x"`). The
-    text names the line or the element where there is one: a number with too many
-    digits is named by its record (each number is in a record: beside its list, an
-    envelope holds only strings or null, so such a number there is an envelope with
-    another key, or a page key that is a number), and JSON that is too deep for json
-    by its line in JSON lines or in a document of one line; JSON of one document of
-    more lines that is too deep for json is named by the fixture only.
+    1`), or a page key whose value is not a string or null; an object that holds one
+    key two times (json keeps only the last value, so `{"Records": <attack records>,
+    "Records": <benign records>}` would give the benign records only); a line of JSON
+    lines that is not JSON; JSON that the loader cannot read (too deep, a number with
+    too many digits); and a record that is not a JSON object (`null`, `[]`, `1`,
+    `"x"`). The text names the line or the element where there is one. An object of
+    the file or of a line that holds a key two times is named by the fixture or the
+    line, and such an object in a record by its record. A number with too many
+    digits is named by its record: each number is in a record, because beside its
+    list an envelope holds only page keys with a string or null, and an object that
+    holds a key two times is refused (so such a number beside the list is an
+    envelope with another key, or a page key that is a number). JSON that is too
+    deep for json is named by its line in JSON lines or in a document of one line;
+    JSON of one document of more lines that is too deep for json is named by the
+    fixture only.
     """
     return _records(path)[0]
 

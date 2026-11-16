@@ -2132,10 +2132,14 @@ must hold a record, because a negative control that read no record cannot fail:
   (`{"Records": null}`, `{"value": "x"}`); is an envelope that holds another key beside
   its list (an attack record with `"items": [...]`, a second envelope key, `"meta": 1`)
   or a page key that is not a string or null, which the row names with the list and
-  the other keys; holds a line that is not JSON (JSON lines), or JSON that the loader
-  cannot read (a number with too many digits, which the row names by its record: such
-  a number beside the list of an envelope is an envelope with another key, or a page
-  key that is a number; nesting too deep for `json`, which the row names by its line
+  the other keys; holds an object with one key two times (`json` keeps only the last
+  value, so `{"Records": <attack records>, "Records": <benign records>}` would give
+  the benign records only), which the row names by the fixture or the line for the
+  object of the file or of a line, and else by its record; holds a line that is not
+  JSON (JSON lines), or JSON that the loader cannot read (a number with too many
+  digits, which the row names by its record: each number is in a record, because an
+  envelope with another key, a page key that is a number and an object with a key two
+  times are refused first; nesting too deep for `json`, which the row names by its line
   in JSON lines or in a document of one line, and else by the fixture only; nesting
   too deep to flatten, which the row names by its record); or holds a record that is
   not a JSON object (`null`, `[]`, `1`, `"x"`) or that one event table cannot hold (two

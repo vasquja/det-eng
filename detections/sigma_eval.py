@@ -305,6 +305,56 @@ def compile_rule(path, three_valued=False):
     return queries[0]
 
 
+# ---- JSON that a loader reads: a key two times ---------------------------------
+
+
+class Twice(dict):
+    """A JSON object that holds one key two times: pairs() gives it in the place of
+    the dict. `key` is the first key that the object holds two times. json keeps only
+    the last value of such a key, so a loader that reads the object loses the first
+    value without a word (an attack record under {"Records": <attack>, "Records":
+    <benign>}). Each loader of records or cases refuses it (key_twice())."""
+
+    __slots__ = ("key",)
+
+
+def pairs(items):
+    """The object_pairs_hook of the loaders of records and cases: the dict of
+    `items`, or a Twice when two of the items have one key."""
+    out = dict(items)
+    if len(out) == len(items):
+        return out
+    seen = set()
+    for key, _ in items:
+        if key in seen:
+            break
+        seen.add(key)
+    twice = Twice(out)
+    twice.key = key
+    return twice
+
+
+def key_twice(value):
+    """The key of the first object in the JSON value `value` (read with pairs()) that
+    holds a key two times, or None. The walk uses no recursion: the value can be
+    deep."""
+    stack = [value]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if type(node) is Twice:
+                return node.key
+            stack.extend(reversed(list(node.values())))
+        elif isinstance(node, list):
+            stack.extend(reversed(node))
+    return None
+
+
+def twice_text(key):
+    """The text of the problem of an object that holds `key` two times."""
+    return f"an object holds the key {key!r} two times (json keeps only the last value)"
+
+
 def flatten(obj, prefix="", *, separators=None, sort_keys=False):
     """Nested dict -> {"a.b.c": value}, the dotted field names Sigma rules use.
 
