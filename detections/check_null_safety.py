@@ -80,9 +80,11 @@ a real selection as a broken guard, write `sel_no_x or not filter` as
 `not (filter and not sel_no_x)`: it means the same and is not read as a guard. If
 it reads selections as a broken copy, write each `sel_x and not sel_no_x` as
 `not (sel_no_x or not sel_x)`.
-And the gate fails a rule field that a case's records carry only in another letter
-case: SQLite matches column names without regard to case, so every offline gate
-reads the record's field, but Lucene, Splunk and ES|QL do not.
+And the gate fails a rule field (of a correlation also a group-by field, the counted
+field and the time) that a record of a case carries in another letter case, also
+when another record of the case holds the field as the rule writes it: SQLite
+matches column names without regard to case, so every offline gate reads the
+record's field, but Lucene, Splunk and ES|QL do not.
 
 Three-valued logic can only lose hits, never add them: Kleene's AND, OR and NOT
 are monotone, and the COALESCE at each NOT only replaces a NULL with a definite
@@ -285,12 +287,17 @@ def check_rule(rule_path, fixtures, absent=False):
     return rel, len(sets), problems, found
 
 
+def _item_fields(rule):
+    """The fields of the items of the rule (of each base of a correlation)."""
+    parts = rule.bases.values() if rule.is_correlation else [rule]
+    return {f for part in parts for f in part.item_field.values() if f}
+
+
 def _rule_fields(rule):
     """The fields that the compiled rule reads: the fields of its items (of each base
     of a correlation), and of a correlation also the group-by fields, the counted
     field and the time."""
-    parts = rule.bases.values() if rule.is_correlation else [rule]
-    fields = {f for part in parts for f in part.item_field.values() if f}
+    fields = _item_fields(rule)
     if rule.is_correlation:
         fields.update(rule.group_by, [sigma_explain.TS_FIELD])
         if rule.type == "value_count" and rule.threshold.get("field"):
@@ -305,9 +312,16 @@ def _field_case(rule, rel, sets):
     Lucene, Splunk and ES|QL do not: there the item never matches that record (a guard
     on it always holds). The test is for each record: an event set may hold the
     field in one record and the other spelling in another (detections/SEMANTICS.md,
-    "Field names"), and a record holds one spelling at most. One problem per field."""
+    "Field names"), and a record holds one spelling at most. One problem per field. The
+    time of a correlation is no field of the rule, so its text says to write the time
+    of the case as the offline correlation reads it."""
     problems, seen = [], set()
     fields = _rule_fields(rule)
+    # The time of a correlation is no field of the rule: the offline correlation reads
+    # it from the key TS_FIELD (the timestamp field of the SQLite backend of pySigma),
+    # and each other backend reads its own time field.
+    time = (sigma_explain.TS_FIELD if rule.is_correlation
+            and sigma_explain.TS_FIELD not in _item_fields(rule) else None)
     for source, name, kind, events in sets:
         keys = {k for e in events for k in e}
         for field in fields:
@@ -315,13 +329,22 @@ def _field_case(rule, rel, sets):
                 continue
             want = sigma_eval.fold(field)
             other = sorted(k for k in keys if k != field and sigma_eval.fold(k) == want)
-            if other:
-                seen.add(field)
-                problems.append(Problem(
-                    rel, source, name, kind, f"the rule reads `{field}`, and the records carry "
-                    f"{', '.join(f'`{k}`' for k in other)}: SQLite matches column names without "
-                    "regard to case, so the offline gates read that field, but Lucene, Splunk "
-                    "and ES|QL do not. Write the field name as the log source writes it"))
+            if not other:
+                continue
+            seen.add(field)
+            spelled = ", ".join(f"`{k}`" for k in other)
+            if field == time:
+                text = (f"the records carry the time as {spelled}, and the offline correlation "
+                        f"reads the time from the key `{field}` (the timestamp field of the "
+                        "SQLite backend of pySigma): SQLite matches column names without regard "
+                        "to case, so it reads that key. The rule writes no time field, and each "
+                        f"other backend reads its own. Write the time of the case as `{field}`")
+            else:
+                text = (f"the rule reads `{field}`, and the records carry {spelled}: SQLite "
+                        "matches column names without regard to case, so the offline gates "
+                        "read that field, but Lucene, Splunk and ES|QL do not. Write the field "
+                        "name as the log source writes it")
+            problems.append(Problem(rel, source, name, kind, text))
     return problems
 
 

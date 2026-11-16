@@ -756,9 +756,11 @@ pySigma 1.5.1 (`pySigma-backend-elasticsearch` 2.1.1) and Lucene 10.1 found thes
   applies); a guard on a field that only some maps of its filter read (it holds where a
   map on another field holds, so it changes the rule); a guard on several fields whose
   filter it does not keep from NULL; a copy that does not repeat its filter's maps
-  exactly, or that tests a field that no guard of its term covers; and a rule field that
-  a case's records carry only in another letter case (SQLite matches column names
-  without regard to case, so there every offline gate reads the record's field). A
+  exactly, or that tests a field that no guard of its term covers; and a rule field (of
+  a correlation also a group-by field, the counted field and the time) that a record of
+  a case carries in another letter case, also beside a record that holds the field
+  (SQLite matches column names without regard to case, so there every offline gate
+  reads the record's field). A
   `field: null` block ORed with a `not` on other fields is an ordinary selection
   (`sel_no_mfa or not filter_sso`), and so are `<block> and not <null block>` terms
   when no block ANDed with them has maps with the same keys. If the check reads a real

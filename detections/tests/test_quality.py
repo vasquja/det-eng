@@ -729,17 +729,20 @@ class NullSafety(gatelib.GateCase):
         self.assertIn(f"\nFAILED: 1 of 1 rule(s) are not null-safe: {self.IMDS}.\n", result.stdout)
 
     def test_rejects_case_whose_one_record_spells_a_field_in_another_letter_case(self):
-        """Two planted positives. In T1609, a case of two records: a quiet record that
-        holds `objectRef.resource` (its subresource is `log`) and the exec record with
+        """Planted cases. In T1609, a case of two records: a quiet record that holds
+        `objectRef.resource` (its subresource is `log`) and the exec record with
         `ObjectRef` in the place of `objectRef`. The rule fires only on the second
         record, through SQLite, which reads `ObjectRef.resource` as the field. The test
         is for each record: the first record has the field, and the second does not.
-        In T1620 (a correlation), the execveat event spells its group-by key `PID`:
-        the compiled correlation groups it with the memfd_create event, Lucene, Splunk
-        and ES|QL do not. Each is a FAIL that names the case, the field and the key.
-        (Before roadmap item R2d the table refused each case; the first R2d text read
-        the keys of the whole case and skipped the first case, and read no group-by
-        field.)"""
+        In T1620 (a correlation), the execveat event spells its group-by key `PID` in
+        one case and its time `Timestamp` in another: the compiled correlation reads
+        each as the key that it reads, Lucene, Splunk and ES|QL do not. A planted
+        value_count rule (known_bad/quality/counted_field_case) whose cases spell its
+        counted field `User`. Each is a FAIL that names the case, the field and the key;
+        the time has its own text, because the rule writes no time field. (Before
+        roadmap item R2d the table refused each case; the first R2d text read the keys
+        of the whole case and skipped the first case, and read no field of a
+        correlation that is not a field of an item.)"""
         tree = self.tree()
         exec_rel = "detections/sigma/T1609/k8s_pod_exec_attach.cases.jsonl"
         exec_case = next(c for c in tree.read_jsonl(exec_rel)
@@ -762,27 +765,53 @@ class NullSafety(gatelib.GateCase):
         tree.append(memfd_rel, json.dumps({
             "name": "planted-group-by-PID", "kind": "positive", "why": "planted",
             "events": [first, second]}) + "\n")
-        # The oracle judges the two cases: each fires.
+        _, second = memfd_case["events"]
+        self.assertIn("timestamp", second)
+        second = {("Timestamp" if key == "timestamp" else key): value
+                  for key, value in second.items()}
+        tree.append(memfd_rel, json.dumps({
+            "name": "planted-time-Timestamp", "kind": "positive", "why": "planted",
+            "events": [first, second]}) + "\n")
+        tree.plant("quality/counted_field_case", "detections/sigma/T9999")
+        counted = "detections/sigma/T9999/planted_counted_field.yml"
+        self.assertTrue(all("User" in event and "user" not in event
+                            for case in tree.read_jsonl(counted[:-4] + ".cases.jsonl")
+                            for event in case["events"]))
+        # The oracle judges the cases: each positive fires, and the near-miss of the
+        # planted rule is a near-miss on threshold.
         cases = tree.run("detections/rule_cases.py", "detections/sigma/T1609/k8s_pod_exec_attach.yml",
-                         "detections/sigma/T1620/memfd_create_execveat.yml")
-        self.assert_accepts(cases, r"^All cases hold \(2 rule file\(s\)\)\.$")
+                         "detections/sigma/T1620/memfd_create_execveat.yml", counted)
+        self.assert_accepts(cases, r"^All cases hold \(3 rule file\(s\)\)\.$")
         self.assert_saw(cases, r"^ok    T1609/k8s_pod_exec_attach\.yml :: positive   "
                                r"planted-ObjectRef-with-decoy: fires$")
-        self.assert_saw(cases, r"^ok    T1620/memfd_create_execveat\.yml :: positive   "
-                               r"planted-group-by-PID: fires$")
+        for name in ("planted-group-by-PID", "planted-time-Timestamp"):
+            self.assert_saw(cases, r"^ok    T1620/memfd_create_execveat\.yml :: positive   "
+                                   rf"{name}: fires$")
+        self.assert_saw(cases, r"^ok    T9999/planted_counted_field\.yml :: near-miss  "
+                               r"one-user-twice-spelled-User: near-miss on threshold$")
         result = tree.run(self.GATE, "detections/sigma/T1609/k8s_pod_exec_attach.yml",
-                          "detections/sigma/T1620/memfd_create_execveat.yml")
+                          "detections/sigma/T1620/memfd_create_execveat.yml", counted)
         for rule, field, key, case in (
                 ("T1609/k8s_pod_exec_attach.yml", "objectRef.resource", "ObjectRef.resource",
                  "positive planted-ObjectRef-with-decoy"),
                 ("T1609/k8s_pod_exec_attach.yml", "objectRef.subresource",
                  "ObjectRef.subresource", "positive planted-ObjectRef-with-decoy"),
-                ("T1620/memfd_create_execveat.yml", "pid", "PID", "positive planted-group-by-PID")):
+                ("T1620/memfd_create_execveat.yml", "pid", "PID", "positive planted-group-by-PID"),
+                ("T9999/planted_counted_field.yml", "user", "User",
+                 "positive two-users-spelled-User")):
             self.assert_rejects(result, rf"^FAIL  {re.escape(rule)} :: case {case}: the rule reads "
                                         rf"`{re.escape(field)}`, and the records carry "
                                         rf"`{re.escape(key)}`: SQLite matches column names",
                                 exit_code=1)
-        self.assertEqual(len(found(result, r"^FAIL .*$")), 3, result.describe())
+        self.assert_rejects(result, r"^FAIL  T1620/memfd_create_execveat\.yml :: case positive "
+                                    r"planted-time-Timestamp: the records carry the time as "
+                                    r"`Timestamp`, and the offline correlation reads the time from "
+                                    r"the key `timestamp` \(the timestamp field of the SQLite "
+                                    r"backend of pySigma\): SQLite matches column names without "
+                                    r"regard to case, so it reads that key\. The rule writes no "
+                                    r"time field, and each other backend reads its own\. Write the "
+                                    r"time of the case as `timestamp`$", exit_code=1)
+        self.assertEqual(len(found(result, r"^FAIL .*$")), 5, result.describe())
 
 
 # ----------------------------------------------------------------- check_variants.py
