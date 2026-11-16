@@ -826,6 +826,11 @@ class CloudValidator(gatelib.GateCase):
         long = b"9" + b"9" * 4999     # a number of 5000 digits
         attack = self.good().read_json(self.ATTACK)
         twice = r"an object holds the key '{}' two times \(json keeps only the last value\)"
+        # An attack record whose type of identity is under a dotted key with the attack
+        # value, and in the nested object with a benign value: flatten() keeps the last.
+        identity = dict(attack[0]["userIdentity"], type="AssumedRole")
+        hidden = {"userIdentity.type": attack[0]["userIdentity"]["type"],
+                  **dict(attack[0], userIdentity=identity)}
         keys = sorted(attack[0])
         names = ", ".join(repr(key) for key in keys[:3]) + f" and {len(keys) - 3} more"
         return [
@@ -1066,7 +1071,15 @@ class CloudValidator(gatelib.GateCase):
             ("a NUL in a key", "benign", json.dumps(good + [dict(good[0], **{"a\u0000b": 1})])
              .encode(),
              rf", element {n + 1} of the array: {table}the key 'a\\x00b' holds U\+0000 \(NUL\), "
-             r"which no column name of SQLite can hold")]
+             r"which no column name of SQLite can hold"),
+            # Two keys of a record that give one field: the file shows the attack value
+            # under the dotted key, and the flat record holds only the benign value of
+            # the nested object. A store that merges a dotted key with an object (Elastic)
+            # sees both values, and the rule fires there.
+            ("a record that hides an attack value under a dotted key", "benign",
+             json.dumps(good + [hidden]).encode(),
+             rf", element {n + 1} of the array: {table}two keys of the record give the one "
+             r"field 'userIdentity\.type' \(sigma_eval\.flatten keeps only one value\)")]
 
     def test_rejects_fixtures_that_the_loader_cannot_read(self):
         """A fixture that the loader cannot read as records is an ERROR row of the rule
@@ -2958,6 +2971,35 @@ class K8sValidator(gatelib.GateCase):
         self.assert_rejects(result, rf"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
                                     rf"{records + 1}: an object holds the key 'objectRef' two "
                                     r"times \(json keeps only the last value\)$", exit_code=1)
+
+    def test_rejects_an_audit_event_whose_two_keys_give_one_field(self):
+        """After the records of the control, a line of the log holds an emulation
+        record of the rule with the key `objectRef.subresource` (the value `exec` of
+        the emulation) before its object `objectRef`, whose `subresource` is the value
+        `log` of a benign record. Both keys give the field objectRef.subresource, and
+        sigma_eval.flatten() keeps only the last value: a reader that read the line got
+        a benign record, the rule did not fire, and the negative control held on a log
+        that holds a record on which the rule fires (a store that merges a dotted key
+        with an object sees `exec`). Now the line is named with the field, and no rule
+        is judged. (Before, the reader read such a line without a word.)"""
+        good = self.good()
+        (positive,) = case_events(good, self.CASES, "exec-websocket-get-procA")
+        benign = case_events(good, self.CASES, self.BENIGN[0])[0]
+        self.assertEqual((positive["objectRef"]["subresource"],
+                          benign["objectRef"]["subresource"]), ("exec", "log"))
+        hidden = {"objectRef.subresource": "exec",
+                  **dict(positive, objectRef=dict(positive["objectRef"], subresource="log"))}
+        records = self.log_with(good, json.dumps(hidden))
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+        self.assertNotIn("Negative control held", result.stdout)
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_saw(result, LINES_NOT_RECORDS.format(1))
+        self.assert_rejects(result, rf"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+                                    rf"{records + 1}: an audit event that one event table cannot "
+                                    r"hold: two keys of the record give the one field "
+                                    r"'objectRef\.subresource' \(sigma_eval\.flatten keeps only "
+                                    r"one value\)$", exit_code=1)
 
     # A line that a capture can cut: an audit event without its end (and so without
     # its line feed), as `cat` reads it while the writer adds the line.

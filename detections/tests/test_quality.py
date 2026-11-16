@@ -475,6 +475,44 @@ class ScoreBenign(gatelib.GateCase):
                                     + r" \(json keeps only the last value\)\. No rule is "
                                       r"scored on the benign corpus\.$", exit_code=1)
 
+    def test_rejects_slice_whose_event_has_two_keys_that_give_one_field(self):
+        """A synthetic slice of the benign corpus whose template event holds the key
+        `userIdentity.type` with the value IAMUser and the object `userIdentity` with
+        the type AssumedRole. Both give the field userIdentity.type, and
+        sigma_eval.flatten() keeps only the last value: the gate would score an event
+        that the file does not show (a store that merges a dotted key with an object
+        sees IAMUser). The ERROR line names the slice, the event and the field, the run
+        scores no rule and exits 1. Control: without the dotted key, the gate scores
+        the slice. (Before, the gate scored the slice without a word.)"""
+        rel = "detections/benign/slices/aws/planted-one-field.json"
+        event = {"eventSource": "sts.amazonaws.com", "eventName": "GetCallerIdentity",
+                 "userIdentity.type": "IAMUser", "userIdentity": {"type": "AssumedRole"}}
+        spec = {"id": "planted-one-field", "version": 1,
+                "logsource": {"product": "aws", "service": "cloudtrail"},
+                "fidelity": "synthetic",
+                "represents": "PLANTED DEFECT of detections/tests: two keys that give one "
+                              "field",
+                "provenance": "synthetic: planted artifact of detections/tests (test_quality.py)",
+                "count": 1, "templates": [{"weight": 1, "event": event}]}
+        tree, sound = self.tree(), self.tree()
+        tree.write(rel, json.dumps(spec))
+        event = dict(event)
+        del event["userIdentity.type"]
+        sound.write(rel, json.dumps(dict(spec, templates=[{"weight": 1, "event": event}])))
+        pending = tree.start(self.GATE, "--check", "--enforce")
+        scored = sound.run(self.GATE, "--examples", "0")
+        self.assert_accepts(scored, r"^  planted-one-field +v1 +synthetic +aws/cloudtrail "
+                                    r"+1 event\(s\)$")
+        result = pending.result()
+        self.assertNotIn("Traceback", result.output)
+        self.assertNotRegex(result.stdout, r"(?m)^Benign corpus: ")
+        self.assert_rejects(result, r"^ERROR: the slice planted-one-field v1 \(detections/"
+                                    r"benign/slices/aws/planted-one-field\.json\), event 1 of 1: "
+                                    r"two keys of the record give the one field "
+                                    r"'userIdentity\.type' \(sigma_eval\.flatten keeps only one "
+                                    r"value\)\. No rule is scored on the benign corpus\.$",
+                            exit_code=1)
+
     def extra_slice_runs(self, captures):
         """Runs of --extra-slice with the options of the shadow step, started together:
         {label: (capture path, result)}. `captures`: {label: the bytes of the capture,
@@ -544,6 +582,10 @@ class ScoreBenign(gatelib.GateCase):
         separators = dict(events[1], userAgent="kubectl/v1.31 \u2028 \u2029 \u0085 x")
         cut = b'{"kind": "Event", "apiVersion": "audit.k8s.io/v1", "verb": "ge'
         twice = json.dumps(events[1])[:-1].encode() + b', "verb": "create"}'
+        # The key objectRef.name before the object objectRef: two keys that give one
+        # field, and flatten() keeps only the last value.
+        one_field = json.dumps({"objectRef.name": "trr9002-other", **events[1]}).encode()
+        self.assertIn("name", events[1]["objectRef"])
         event = lines[1].rstrip(b"\n")
         escaped = json.dumps(dict(events[1], userAgent="a&b")).replace("&", "\\u0026").encode()
         not_cut = "; the line is not the start of one JSON object, so a capture did not cut it"
@@ -602,6 +644,7 @@ class ScoreBenign(gatelib.GateCase):
             "an event that holds a key two times": lines[0] + twice + b"\n",
             "an array with an event that holds a key two times": b"[" + lines[0].rstrip()
             + b", " + twice + b"]\n",
+            "an event whose two keys give one field": lines[0] + one_field + b"\n",
             # The last line without a line end is skipped only when it is cut JSON (the
             # rows of K8sValidator, with the same verdicts): an event and the start of an
             # event, U+200B after the brace, a carriage return alone at the end (a line
@@ -670,6 +713,9 @@ class ScoreBenign(gatelib.GateCase):
             "an array with an event that holds a key two times":
                 ", element 2 of the array: an object holds the key 'verb' two times (json keeps "
                 "only the last value)",
+            "an event whose two keys give one field":
+                ", line 2: an event that one event table cannot hold: two keys of the record "
+                "give the one field 'objectRef.name' (sigma_eval.flatten keeps only one value)",
             "an event and the start of an event on the last line":
                 f", line 3: not JSON (Extra data, at character {len(event) + 1}){not_cut}",
             "U+200B after the brace on the last line":

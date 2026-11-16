@@ -445,9 +445,16 @@ class RuleCases(gatelib.GateCase):
         ("an integer outside 64 bits", lambda event: [dict(event, pid=2 ** 63)],
          r"event 1 of 1: the value of pid is an integer outside the 64 bits of an INTEGER "
          r"of SQLite" + TABLE),
+        # Two keys that give one field: flatten() keeps only the last value, so a case
+        # could hide the value that its line shows (the test of the table itself).
         ("two keys that flatten to one", lambda event: [dict(event, a={"b": 1}, **{"a.b": 2})],
-         r"event 1 of 1: the keys \['a', 'b'\] and \['a\.b'\] both flatten to 'a\.b', and "
-         r"the flat event keeps only the last value$"),
+         r"event 1 of 1: two keys of the record give the one field 'a\.b' "
+         r"\(sigma_eval\.flatten keeps only one value\)" + TABLE),
+        ("a dotted key before a nested object, in the second event",
+         lambda event: [event, {"proc.exe.path": "/tmp/x", **dict(event, proc={"exe": {
+             "path": "/usr/bin/true"}})}],
+         r"event 2 of 2: two keys of the record give the one field 'proc\.exe\.path' "
+         r"\(sigma_eval\.flatten keeps only one value\)" + TABLE),
         # Values and keys that SQLite does not hold as they are (json.dumps writes NaN,
         # Infinity and the escapes \ud800 and \u0000, and json.loads reads them).
         ("NaN", lambda event: [dict(event, pid=float("nan"))],
@@ -726,6 +733,19 @@ print(json.dumps({
                         {"action": "sudo", "event_ids": '["x:0"]'}], "action", "sudo"),
     "event_ids, one event": probe([{"action": "sudo", "event_ids": '["x:5"]'},
                                    {"action": "sudo"}], "action", "sudo"),
+    # Two keys of a record that give one field (sigma_eval.flatten()): a dotted key and
+    # the path of a nested key, in each order and deeper; and a dotted key beside an
+    # object that gives another field.
+    "one field from two keys": probe([{"a": 1}, sigma_eval.flatten(
+        {"a.b": "x", "a": {"b": "y"}})], "a.b", "x"),
+    "one field from two keys, nested first": probe([sigma_eval.flatten(
+        {"a": {"b": {"c": "y"}}, "a.b.c": "x"})], "a.b.c", "x"),
+    "one field from two keys, inside an object": probe([sigma_eval.flatten(
+        {"a": {"b.c": "x", "b": {"c": "y"}}})], "a.b.c", "x"),
+    "a dotted key and another field": probe([sigma_eval.flatten(
+        {"a.b": "x", "a": {"c": "y"}})], "a.b", "x"),
+    "the flat fields of a dotted key and another field": sigma_eval.flatten(
+        {"a.b": "x", "a": {"c": "y"}}),
 }))
 '''
 
@@ -749,6 +769,25 @@ class EventTableKeys(gatelib.GateCase):
     def refused(self, name, index, keys, text):
         self.assertEqual(self.probes[name], {"error": text, "index": index, "keys": keys,
                                              "value_error": True}, name)
+
+    def test_rejects_an_event_whose_two_keys_give_one_field(self):
+        """sigma_eval.flatten() writes the key `a.b` and the key `b` of the object `a` to
+        one field a.b, and keeps only the last value: a record could hide a value under
+        the other key. The flat event names the field (a FieldTwice), and the table
+        refuses it with an EventError that names the event and the field: in each order
+        of the two keys, and in a nested object. A dotted key beside an object that
+        gives another field is no problem: the table reads both fields."""
+        text = "two keys of the record give the one field {!r} (sigma_eval.flatten keeps " \
+               "only one value)"
+        self.refused("one field from two keys", 1, ["a.b"],
+                     "event 2 of 2: " + text.format("a.b"))
+        self.refused("one field from two keys, nested first", 0, ["a.b.c"],
+                     "event 1 of 1: " + text.format("a.b.c"))
+        self.refused("one field from two keys, inside an object", 0, ["a.b.c"],
+                     "event 1 of 1: " + text.format("a.b.c"))
+        self.assertEqual(self.probes["a dotted key and another field"], [[0]])
+        self.assertEqual(self.probes["the flat fields of a dotted key and another field"],
+                         {"a.b": "x", "a.c": "y"})
 
     def test_keys_of_two_events_that_differ_only_in_letter_case_share_one_column(self):
         """SQLite reads a rule field as it reads a column name: with the ASCII letters

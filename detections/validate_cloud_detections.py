@@ -605,6 +605,7 @@ def load_fixture(path):
 
     Also raises FixtureError for a record that is too deep to flatten, and for a
     record that one event table cannot hold (sigma_eval.event_problem(): two keys
+    of the record that give one field, as {"a.b": 1, "a": {"b": 2}} does, two keys
     that differ only in the letter case of their ASCII letters, a key that hides a
     row id that the queries read, a value that SQLite does not hold as it is). Keys of
     two records that differ only in letter case are no problem: they share one

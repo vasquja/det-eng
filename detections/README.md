@@ -316,8 +316,9 @@ line of a gate can print; holds an object with one key two times (`json` keeps o
 the last value, so the gate would judge another case than the line shows; the line
 names the case only when the object is in its events); or one event table cannot hold
 the events of its case. All the events of a case go in one SQLite table, so each event must be a JSON
-object, no two values of an event may get one flat key (`{"a": {"b": 1}, "a.b": 2}`),
-and the table must hold each event: no event may hold two keys that differ only in
+object, and the table must hold each event: no two keys of an event may give one
+field (`{"a": {"b": 1}, "a.b": 2}`: `flatten()` keeps only one value), and no event
+may hold two keys that differ only in
 the letter case of their ASCII letters (`comm`, `Comm`), a key that SQLite reads as
 `_rowid` or `rowid`, a key with a NUL or a lone surrogate, or a value that SQLite
 does not hold as it is (an integer outside 64 bits, `NaN` or `Infinity`, a text with
@@ -1558,7 +1559,10 @@ the test. Each other line, or item of a snapshot, that is not a record is a prob
   or a number with more digits than Python reads (a `ValueError`);
 - an object that holds one key two times (`json` keeps only the last value, so an
   event of the emulation could hide under a second value of its key);
-- a record that one event table cannot hold: two keys of the record that differ only
+- a record that one event table cannot hold: two keys of the record that give one
+  field (`{"objectRef.subresource": "exec", "objectRef": {"subresource": "log"}}`:
+  `flatten()` keeps only one value, so a record on which a rule fires could hide
+  under the other key), two keys of the record that differ only
   in the letter case of their ASCII letters (a ConfigMap whose `data` holds `key` and
   `KEY`), a key that SQLite reads as `rowid` or `_rowid`, a key with a NUL or a lone
   surrogate, or a value that SQLite does not hold as it is (an integer outside 64
@@ -1607,9 +1611,7 @@ that keeps the letter case of a field name holds such an event. Also not covered
 procedure gates of the validators are Python, and read a key only as the API server
 writes it (`verb`). A record that spells it `Verb` matches a rule (SQLite reads the
 key as the field) and no gate, so the run calls the match unrelated, also with
-`--expect-miss`. And a record whose two values get one flat key
-(`{"a": {"b": 1}, "a.b": 2}`) keeps the last value without a word; `rule_cases.py`
-refuses such a case. The API server writes neither.
+`--expect-miss`. The API server writes no such key.
 
 ### Node runtime sensor (TRR9003 Strategy 1)
 
@@ -2167,14 +2169,15 @@ must hold a record, because a negative control that read no record cannot fail:
   in JSON lines or in a document of one line, and else by the fixture only; nesting
   too deep to flatten, which the row names by its record); or holds a record that is
   not a JSON object (`null`, `[]`, `1`, `"x"`) or that one event table cannot hold (two
+  keys of the record that give one field, as `{"a": {"b": 1}, "a.b": 2}` does:
+  `flatten()` keeps only one value, so a benign baseline could hide an attack value
+  under the other key; two
   keys of the record that differ only in letter case, a key `rowid` or `_rowid`, a
   key with a NUL or a lone surrogate, a value that SQLite does not hold as it is:
   an integer outside 64 bits, `NaN` or `Infinity`, a text with a lone surrogate; see
   "Field names" in [`SEMANTICS.md`](SEMANTICS.md#2-the-record)). Keys of two records
   that differ only in letter case are no problem: they share one column. A fixture
-  that is a directory gets the row of a missing fixture above. Not covered: a record
-  whose two values get one flat key (`{"a": {"b": 1}, "a.b": 2}`) keeps the last
-  value without a word. For example:
+  that is a directory gets the row of a missing fixture above. For example:
 
   ```text
   ERROR [TRR9012 AWS] aws_leaked_access_key_recon.yml: the benign fixture detections/cloud/fixtures/trr9012/benign.json, element 4 of the array: a record that is not a JSON object (null). The loader cannot read it, so nothing proves the rule -- leaked long-term access-key orientation + enumeration

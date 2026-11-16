@@ -216,7 +216,7 @@ def budget_for(key, default, budgets):
 
 class SliceError(Exception):
     """A slice whose events one event table cannot hold (sigma_eval.event_problem():
-    two keys of one event that differ only in the letter case of their ASCII letters,
+    two keys of one event that give one field, two keys that differ only in the letter case of their ASCII letters,
     a key that hides a row id that the queries read, a value that SQLite does not hold
     as it is). The text names the slice, the event and the keys."""
 
@@ -422,7 +422,8 @@ def load_extra(path, logsource, label):
     and for the first line, or element of the array, that is JSON and not an object
     (`[]` in a line of a log), that holds an object with one key two times (json keeps
     only the last value), or that is an event that one event table cannot hold
-    (sigma_eval.event_problem(): two keys that differ only in the letter case of their
+    (sigma_eval.event_problem(): two keys that give one field, as {"a.b": 1, "a":
+    {"b": 2}} does, two keys that differ only in the letter case of their
     ASCII letters, ...).
     """
     if os.path.isdir(path):

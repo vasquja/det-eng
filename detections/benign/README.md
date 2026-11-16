@@ -128,8 +128,9 @@ the capture:
 - JSON that the gate cannot read: nesting too deep for `json` or for `flatten()`, or a
   number with more digits than Python reads, in a line or in a file that is one JSON
   document;
-- an event that one event table cannot hold: two keys of the event that differ only
-  in the letter case of their ASCII letters (`verb`, `Verb`), a key that SQLite reads
+- an event that one event table cannot hold: two keys of the event that give one
+  field (`{"a": {"b": 1}, "a.b": 2}`: `flatten()` keeps only one value), two keys of
+  the event that differ only in the letter case of their ASCII letters (`verb`, `Verb`), a key that SQLite reads
   as `rowid` or `_rowid`, a key with a NUL or a lone surrogate, or a value that SQLite
   does not hold as it is (an integer outside 64 bits, `NaN` or `Infinity`, a text with
   a lone surrogate; see "Field names" in

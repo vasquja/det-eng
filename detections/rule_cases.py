@@ -48,8 +48,8 @@ Case fields:
            in the letter case of their ASCII letters (`comm`, `Comm`; in two events
            they share one column), a key `_rowid` or `rowid` in any letter case, or
            a value that SQLite does not hold as it is (an integer outside 64 bits,
-           NaN, a lone surrogate); and no two values of one event may get one
-           flat key (`{"a": {"b": 1}, "a.b": 2}`). Such a case is an ERROR line that
+           NaN, a lone surrogate); and no two keys of one event may give one
+           field (`{"a": {"b": 1}, "a.b": 2}`). Such a case is an ERROR line that
            names the rule, the line and the case.
   source   optional provenance note ("synthetic: ..." or "recorded: ...").
 
@@ -209,35 +209,17 @@ def _json_type(value):
     return {dict: "an object", list: "an array", str: "a string"}.get(type(value), "a number")
 
 
-def _flat_keys(event):
-    """[(flat key, path)] for each value of an event: the key that sigma_eval.flatten()
-    gives the value, and its path of keys in the event."""
-    out = []
-
-    def walk(obj, path):
-        for key, val in obj.items():
-            if isinstance(val, dict):       # flatten() goes into a nested object
-                walk(val, path + [key])
-                continue
-            one = 0
-            for k in reversed(path + [key]):
-                one = {k: one}
-            out.append((next(iter(sigma_eval.flatten(one))), path + [key]))
-
-    walk(event, [])
-    return out
-
-
 def event_problem(events):
     """Why the events of one case cannot be judged, or None.
 
     run_case() flattens each event (sigma_eval.flatten) and puts all the events of
     the case in one SQLite table (sigma_eval.EventTable). So each event must be a
-    JSON object; two values of an event must not get one flat key (flatten keeps the
-    last); and the table must hold each flat event: sigma_eval.event_problem() is the
-    test of the table itself (no key that hides a row id that the queries read or
-    that no column name can hold, no two keys of one event that differ only in the
-    letter case of their ASCII letters, no value that SQLite does not hold as it is).
+    JSON object, and the table must hold each flat event: sigma_eval.event_problem()
+    is the test of the table itself (no two keys of the event that give one field,
+    as {"a.b": 1, "a": {"b": 2}} does: flatten keeps only one value; no key that
+    hides a row id that the queries read or that no column name can hold, no two keys
+    of one event that differ only in the letter case of their ASCII letters, no value
+    that SQLite does not hold as it is).
     Keys of that kind in two events of a case share one column, as a rule field reads
     them. Raises RecursionError for an event too deep to flatten."""
     for i, event in enumerate(events, 1):
@@ -245,12 +227,6 @@ def event_problem(events):
         if not isinstance(event, dict):
             return (f"{where} is not a JSON object ({_json_type(event)}): an event is one "
                     "record of the log")
-        paths = {}
-        for flat, path in _flat_keys(event):
-            if flat in paths:
-                return (f"{where}: the keys {paths[flat]} and {path} both flatten to "
-                        f"{flat!r}, and the flat event keeps only the last value")
-            paths[flat] = path
         problem = sigma_eval.event_problem(sigma_eval.flatten(event))
         if problem:
             return f"{where}: {problem[1]} (one event table cannot hold the event)"

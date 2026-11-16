@@ -222,6 +222,8 @@ def event_problem(event):
         can hold it);
       - keys that differ only in the letter case of their ASCII letters
         (key_clashes());
+      - two keys of the record that give one field (a FieldTwice of flatten():
+        {"a.b": X, "a": {"b": Y}}): the flat event holds only one of the two values;
       - a value that SQLite does not hold as it is: an integer outside 64 bits (an
         INTEGER of SQLite), a number that is not finite (NaN, Infinity: JSON has no
         such number, and SQLite stores NaN as NULL), a text with a lone surrogate.
@@ -229,6 +231,8 @@ def event_problem(event):
     Each loader of records asks this of each event before an EventTable gets it, and
     EventTable refuses an event with a problem (EventError): the loaders and the
     table refuse the same events."""
+    if type(event) is FieldTwice:
+        return (event.field,), field_twice_text(event.field)
     names = {fold(key) for key in event}
     if not names.isdisjoint(RESERVED):
         key = min(key for key in event if fold(key) in RESERVED)
@@ -515,6 +519,23 @@ def utf8_cut(text):
     return None
 
 
+class FieldTwice(dict):
+    """A flat event (flatten()) in which two keys of the record give one field: a key
+    with a dot and the path of a nested key ({"a.b": X, "a": {"b": Y}} gives the field
+    a.b two times). The flat event holds only the last value, so a record could hide a
+    value under the other key: a store that merges a dotted key with an object (Elastic)
+    sees both values. `field` is the first such field. event_problem() names it, so
+    each loader and EventTable refuse the event."""
+
+    __slots__ = ("field",)
+
+
+def field_twice_text(field):
+    """The text of the problem of a record whose two keys give the one field `field`."""
+    return (f"two keys of the record give the one field {field!r} (sigma_eval.flatten "
+            "keeps only one value)")
+
+
 def flatten(obj, prefix="", *, separators=None, sort_keys=False):
     """Nested dict -> {"a.b.c": value}, the dotted field names Sigma rules use.
 
@@ -523,17 +544,38 @@ def flatten(obj, prefix="", *, separators=None, sort_keys=False):
     of the record. separators and sort_keys are those of json.dumps, for a store
     that writes the text in another way (check_variants.py): separators=(",", ":")
     is the text without blanks, sort_keys=True sorts the keys of each object.
+
+    When two keys of the record give one field (a key with a dot and the path of a
+    nested key), the flat event keeps the last value, and it is a FieldTwice that names
+    the field: event_problem() refuses it.
     """
     out = {}
+    field = _flatten(obj, prefix, out, separators, sort_keys)
+    if field is None:
+        return out
+    twice = FieldTwice(out)
+    twice.field = field
+    return twice
+
+
+def _flatten(obj, prefix, out, separators, sort_keys):
+    """Write the fields of `obj` to `out`. Returns the first field that two keys give,
+    or None."""
+    twice = None
     for key, val in obj.items():
         name = f"{prefix}{key}"
         if isinstance(val, dict):
-            out.update(flatten(val, f"{name}.", separators=separators, sort_keys=sort_keys))
-        elif isinstance(val, list):
+            inner = _flatten(val, f"{name}.", out, separators, sort_keys)
+            if twice is None:
+                twice = inner
+            continue
+        if twice is None and name in out:
+            twice = name
+        if isinstance(val, list):
             out[name] = json.dumps(val, separators=separators, sort_keys=sort_keys)
         else:
             out[name] = val
-    return out
+    return twice
 
 
 def _quote(col):
@@ -590,17 +632,19 @@ class EventTable:
         # So keys of that kind in different events share one column, named as the
         # first key of the group in sorted order. The table refuses an event that it
         # cannot hold (event_problem(), EventError): one event that holds two such keys
-        # (two values for one column), a key that hides a row id that the queries read
-        # or that no column name can hold, and a value that SQLite does not hold as it
-        # is. The keys are tested once for each distinct key, and each event only when a
-        # key gives cause; the values at the insert.
+        # (two values for one column), an event whose two keys give one field (a
+        # FieldTwice of flatten()), a key that hides a row id that the queries read or
+        # that no column name can hold, and a value that SQLite does not hold as it is.
+        # The keys are tested once for each distinct key, and each event only when a
+        # key or a FieldTwice gives cause; the values at the insert.
         keys = set().union(*events)
         group = {}  # fold(key) -> the keys of the events
         for key in keys:
             group.setdefault(fold(key), []).append(key)
         joined = "".join(keys)
         if (len(group) != len(keys) or not RESERVED.keys().isdisjoint(group)
-                or "\x00" in joined or not joined.isascii() and any(map(_surrogate, keys))):
+                or "\x00" in joined or not joined.isascii() and any(map(_surrogate, keys))
+                or any(type(event) is FieldTwice for event in events)):
             for index, event in enumerate(events):
                 problem = event_problem(event)
                 if problem:

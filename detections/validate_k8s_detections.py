@@ -324,7 +324,9 @@ def record_problem(source, doc):
 def table_problem(source, record):
     """None when one event table of the rules (sigma_eval.EventTable) can hold the
     flat record; else the problem, as text. The test is the test of the table
-    itself (sigma_eval.event_problem()): two keys of the record that differ only in
+    itself (sigma_eval.event_problem()): two keys of the record that give one field
+    ({"objectRef.subresource": "exec", "objectRef": {"subresource": "log"}}: the
+    flat record keeps only one value), two keys that differ only in
     the letter case of their ASCII letters, a key that hides a row id that the
     queries read or that no column name can hold, a value that SQLite does not hold
     as it is (an integer outside 64 bits, NaN, a lone surrogate). Two records of a

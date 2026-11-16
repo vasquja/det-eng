@@ -83,6 +83,10 @@ reads the keys of the records in the same way:
 - One record cannot hold two such keys: they would be two values in one column. The
   oracle refuses such a record with `sigma_eval.EventError` (a `ValueError`) that
   names the record and the keys.
+- One record cannot hold two keys that give one field: a key with a dot and the path
+  of a nested key (`{"a.b": 1, "a": {"b": 2}}` gives `a.b` two times). `flatten()`
+  keeps only one value, and a store that merges a dotted key with an object
+  (Elasticsearch) sees both, so the oracle refuses such a record (`event_problem()`).
 - The oracle also refuses a key that SQLite reads as `_rowid` (the row id column of
   its table) or `rowid` (the name by which the correlation queries read the row id),
   a key that holds a NUL or a lone surrogate (no column name can hold it), and a
