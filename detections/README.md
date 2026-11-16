@@ -306,16 +306,21 @@ it declares. An unrelated event cannot pass as a near-miss.
 
 A sidecar line that `rule_cases.py` cannot judge is an `ERROR` line that names the
 rule and the line, and the case when the line has a name (a string). The gate judges
-the other cases of the file, and fails. Such a line is not JSON, or not a JSON object;
-it lacks a field, or its name, kind, events or breaks has the wrong type; or one event
-table cannot hold the events of its case. All the events of a case go in one SQLite table, so each event must be a
-JSON object, no key may be `_rowid` in any letter case, no two values of an event may
-get one flat key (`{"a": {"b": 1}, "a.b": 2}`), and no two keys of the events may
-differ only in letter case (`comm`, `Comm`): the column names of SQLite have no letter
-case. Two cases of one file can have such keys. `check_sufficiency.py` (R3),
+the other cases of the file, and fails. Such a line holds bytes that are not UTF-8
+(the line names the first such byte and its character in the line); is not JSON, or
+not a JSON object; lacks a field, or its name, kind, events or breaks has the wrong
+type; or one event table cannot hold the events of its case. All the events of a case
+go in one SQLite table, so each event must be a JSON object, no two values of an
+event may get one flat key (`{"a": {"b": 1}, "a.b": 2}`), and the table must hold
+each event: no event may hold two keys that differ only in the letter case of their
+ASCII letters (`comm`, `Comm`), a key that SQLite reads as `_rowid` or `rowid`, or an
+integer outside 64 bits. The test is the test of the table itself
+(`sigma_eval.event_problem()`; see "Field names" in
+[`SEMANTICS.md`](SEMANTICS.md#2-the-record)). `comm` in one event of a case and `Comm`
+in another share one column, and the rule reads both. `check_sufficiency.py` (R3),
 `check_null_safety.py`, `k8s_policy_coverage.py` and `check_provider_mappings.py` read
-the sidecars with the same loader, so they name such a case too. The same keys in a
-slice of the benign corpus still end `score_benign.py` with a traceback (see
+the sidecars with the same loader, so they name such a line too. A slice of the
+benign corpus is named in the same way (see
 [The benign corpus](#the-benign-corpus-false-positive-scores)).
 
 `check_sufficiency.py` is the gate on top. It fails a rule that:
@@ -906,10 +911,15 @@ pass). The kind cluster's
 pre-emulation audit log and a live Ubuntu-runner workload are scored in CI too, in
 shadow mode. A hit that a rule defect explains is tracked in
 [`RULE_DEFECTS.md`](RULE_DEFECTS.md). The gate puts the events of each slice in one
-SQLite table, so a slice whose events hold two keys that differ only in letter case
-(`eventName`, `EventName`) ends it with a traceback, and no line names the slice (the
-last line of the traceback names the two keys): the known gap
-`sb-slice-keys-differ-by-case` of the gate tests, which roadmap item R2d closes.
+SQLite table. Keys of two events that differ only in letter case (`eventName` in one
+event, `EventName` in another) share one column. An event that one table cannot hold
+(it holds both keys, a key `rowid` or `_rowid`, or an integer outside 64 bits) ends
+the run with exit 1 and one `ERROR` line that names the slice, the event and the keys,
+and no rule is scored:
+
+```text
+ERROR: the slice planted-key-case-clash v1 (detections/benign/slices/aws/planted-key-case-clash.json), event 1 of 1: keys that differ only by case: EventName / eventName, which SQLite reads as one column name. No rule is scored on the benign corpus.
+```
 
 ```
 python3 detections/score_benign.py                  # report
@@ -1407,7 +1417,14 @@ is not a record is a problem:
   in the line);
 - the byte order mark of UTF-8 (`EF BB BF`) at the start of line 1;
 - JSON that the validator cannot read: nesting that is too deep (a `RecursionError`),
-  or a number with more digits than Python reads (a `ValueError`).
+  or a number with more digits than Python reads (a `ValueError`);
+- a record that one event table cannot hold: two keys of the record that differ only
+  in the letter case of their ASCII letters (a ConfigMap whose `data` holds `key` and
+  `KEY`), a key that SQLite reads as `rowid` or `_rowid`, or an integer outside 64
+  bits. The test is the test of the table of `sigma_eval.py` (see "Field names" in
+  [`SEMANTICS.md`](SEMANTICS.md#2-the-record)). Two records of a log whose keys differ
+  only in letter case are no problem: their keys share one column, and the validator
+  judges each rule.
 
 A problem fails each run that reads the log: a strict run, `--report` and
 `--expect-miss`. The validator reads its logs, prints one `ERROR` line for each
@@ -1440,13 +1457,11 @@ It is not a log that was not found: a strict run does not print `SKIP` for it.
 Only the kind jobs show that each line of a real capture is a record by these
 definitions: the log of a healthy job holds no `ERROR` line of the reader.
 
-Not covered: two audit events of one log whose keys differ only in letter case
-(`requestObject.data.key` of one ConfigMap and `requestObject.data.KEY` of another,
-in a log at level `RequestResponse`) are records, and each Kubernetes validator ends
-with a `ValueError` of the event table of `sigma_eval.py` before it judges a rule.
-The reader must not refuse a valid log, so the correction belongs in `sigma_eval.py`.
-The known gap `k8s-log-keys-differ-only-in-case` of the gate tests holds the case
-(see the note for R2d in [`docs/ROADMAP.md`](../docs/ROADMAP.md)).
+Not covered: one audit event of a log at level `RequestResponse` can hold keys that
+differ only in letter case (a ConfigMap whose `data` holds `key` and `KEY`), and the
+API server accepts it. The reader names such a line as a problem, because the event
+table of the offline oracle cannot hold it, and the run judges no rule. Only a store
+that keeps the letter case of a field name holds such an event.
 
 ### Node runtime sensor (TRR9003 Strategy 1)
 
@@ -1966,11 +1981,32 @@ must hold a record, because a negative control that read no record cannot fail:
 - A rule whose attack or benign fixture is missing gets an `ERROR` row that names the
   file. There is no state for a fixture that comes later: list a rule in `MANIFEST`
   in the change that adds its two fixtures.
+- A rule whose fixture the loader (`load_fixture()`) cannot read as records gets an
+  `ERROR` row that names the fixture, and the line or the element (from 1) where
+  there is one. Such a fixture is a directory; holds bytes that are not UTF-8 (the
+  row names the first such byte and its character in the line) or starts with the
+  byte order mark of UTF-8; is JSON that is not an array or an object (`null`, `7`);
+  holds a line that is not JSON (JSON lines), or JSON that the loader cannot read
+  (nesting that is too deep, a number with too many digits); or holds a record that
+  is not a JSON object (`null`, `[]`, `1`, `"x"`) or that one event table cannot
+  hold (two keys of the record that differ only in letter case, a key `rowid` or
+  `_rowid`, an integer outside 64 bits; see "Field names" in
+  [`SEMANTICS.md`](SEMANTICS.md#2-the-record)). Keys of two records that differ only
+  in letter case are no problem: they share one column. For example:
+
+  ```text
+  ERROR [TRR9012 AWS] aws_leaked_access_key_recon.yml: the benign fixture detections/cloud/fixtures/trr9012/benign.json, element 4 of the array: a record that is not a JSON object (null). The loader cannot read it, so nothing proves the rule -- leaked long-term access-key orientation + enumeration
+  ```
+
+  `check_null_safety.py`, `check_sufficiency.py` (R2 for the benign fixture, R4 for
+  the attack fixture) and `check_variants.py` read the fixtures with the same loader.
+  Each fails the rule with a line that names the fixture, and exits 1.
 - A rule whose benign baseline holds no record gets a `FAIL` row with `NEGATIVE
   CONTROL VACUOUS`. The count is the number of records that the loader returns, which
   is the set that the rule is run on: `[]`, a file of zero bytes or of blank lines,
   and an envelope with an empty list (`{"Records": []}`) hold no record.
-- Each of the two fails the run (exit 1), and `--report` does not waive them.
+- Each of these fails the run (exit 1), and `--report` does not waive them. The
+  `--json` report gives the `ERROR` row of the rule too.
   `--report` makes only a miss non-fatal: a rule that did not fire on a marked
   record of its attack fixture, or that fired on a benign record.
 - The validator counts the records of a baseline and does not grade them. A baseline

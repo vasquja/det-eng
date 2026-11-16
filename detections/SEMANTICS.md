@@ -70,11 +70,28 @@ The default text of a list has these properties:
 - An empty list is the text `[]`, so the field exists. Probe `list-empty-exists`.
 - A name below a list is not a field. Probe `list-leaf-no-field`.
 
-Field names: SQLite compares column names without regard to letter case, so the item
-`Verb: create` reads the field `verb` (probe `field-name-case`). The oracle refuses an
-event set in which two keys differ in letter case and in nothing else (by hand:
-`ValueError`). [`check_null_safety.py`](check_null_safety.py) fails a rule that reads
-a field in a letter case that the records do not use.
+Field names: SQLite compares two column names with the 26 ASCII letters folded to one
+letter case, and with each other character as it is. So the item `Verb: create` reads
+the field `verb` (probe `field-name-case`), and `Ä` and `ä` are two fields. The oracle
+reads the keys of the records in the same way:
+
+- Two keys that differ only in the letter case of their ASCII letters, in two records
+  of one event set (`verb` in one record, `Verb` in another), are one column, and an
+  item reads both.
+- One record cannot hold two such keys: they would be two values in one column. The
+  oracle refuses such a record with `sigma_eval.EventError` (a `ValueError`) that
+  names the record and the keys. Each loader of records refuses it first, with the
+  same test (`sigma_eval.event_problem()`), and names the log and the line, the
+  fixture and the record, the slice and the event, or the rule and the case.
+- The oracle also refuses a key that SQLite reads as `_rowid` (the row id column of
+  its table) or `rowid` (the name by which the correlation queries read the row id),
+  and an integer outside 64 bits (an `INTEGER` of SQLite). `oid` and `_rowid_`, the
+  other names of the row id, are ordinary keys: no query reads them.
+
+The gate tests `EventTableKeys` of
+[`tests/test_sufficiency.py`](tests/test_sufficiency.py) prove each statement of this
+list on each run. [`check_null_safety.py`](check_null_safety.py) fails a rule that
+reads a field in a letter case that the records do not use.
 
 ## 3. Letter case
 
@@ -92,7 +109,7 @@ oracle does not obey the sentence about values.
 | `f\|cased: Val` | `f GLOB 'Val'` | case-sensitive | `cased-case` |
 | `f\|re: ...` | `f REGEXP '...'` | case-sensitive | `re-case` |
 | `f\|re\|i: ...` | `f REGEXP '(?i)...'` | folded, with the Unicode rules of Python | `re-i`, `re-i-non-ascii` |
-| a field name | a column name | not case-sensitive | `field-name-case` |
+| a field name | a column name | ASCII letters are folded (section 2, "Field names") | `field-name-case` |
 | the group-by fields of a correlation | `lower(...)` on a text value | folded | by hand: two records with `user` `Alice` and `alice` are one group |
 
 - "ASCII letters are folded": `name|contains: ÉTÉ` on `{"name": "été"}` is quiet

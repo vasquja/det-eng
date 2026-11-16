@@ -101,19 +101,27 @@ the reader of the Kubernetes validators (see
 [`../README.md`](../README.md#a-record-of-each-log)). It reads JSON lines or a file
 that is one JSON array, and logsources whose records have no definition there
 (`linux/auditd`), so it does not judge if an object is a record of its log. A line
-that is not JSON (a line that was cut at the end of a capture) is skipped. A line, or
-an element of the array, that is JSON and not an object (`[]`) ends the run with exit
-1 and one `ERROR` line that names the capture and the first such line (or element),
-and no rule is scored on the capture:
+that is not JSON (a line that was cut at the end of a capture) is skipped. Each of
+these ends the run with exit 1 and one `ERROR` line that names the capture (and the
+first such line, or element), and no rule is scored on the capture:
+
+- a capture that is a directory, or that the run cannot read;
+- a line with bytes that are not UTF-8 (the line names the first such byte and its
+  character in the line);
+- the byte order mark of UTF-8 (`EF BB BF`) at the start of line 1;
+- a line, or an element of the array, that is JSON and not an object (`[]`);
+- an event that one event table cannot hold: two keys of the event that differ only
+  in the letter case of their ASCII letters (`verb`, `Verb`), a key that SQLite reads
+  as `rowid` or `_rowid`, or an integer outside 64 bits (see "Field names" in
+  [`../SEMANTICS.md`](../SEMANTICS.md#2-the-record)). Two events whose keys differ
+  only in letter case are no problem: their keys share one column.
 
 ```text
 ERROR: the live capture /tmp/pre-emulation-audit.log, line 429: JSON that is not an object (a list). No rule is scored on the live capture.
 ```
 
 The shadow step of the API server lab fails no job; the negative control of that job
-reads the same log and names such a line too. Not covered: a capture that is a
-directory or holds bytes that are not UTF-8 ends the run with a traceback, and the
-loader skips line 1 when it starts with the byte order mark of UTF-8.
+reads the same log and names such a line too.
 
 ## What is measured
 
@@ -202,9 +210,11 @@ reads. Both rules fire on routine reads there; the rule defects are tracked as
 A slice can hold real multi-event behaviour as a **sequence** template, sharing one
 draw of the variables with per-step delays: runc's memfd re-exec, or a namespace
 deletion and its controller's cleanup. Events drawn independently almost never line
-up inside a correlation window. Keys that differ only by case (`requestId` and
-`RequestID`) cannot share one slice, because SQLite folds column case; split such
-records across slices.
+up inside a correlation window. SQLite folds the ASCII letters of a column name, so
+keys that differ only in letter case (`requestId` and `RequestID`) are one column of
+the table of a slice: two events of a slice can hold them, and a rule reads both. One
+event cannot hold both: `score_benign.py` names the slice, the event and the two keys,
+and scores no rule.
 
 The three synthetic `kubernetes/audit` slices (`k8s-audit-control-plane`,
 `k8s-audit-gitops-ci`, `k8s-audit-human-operators`) say that their levels follow
