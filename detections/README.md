@@ -992,6 +992,12 @@ The `platform-coverage` job of the same workflow runs
 On a pull request it runs only when the pull request changes one of its inputs; it is
 not a required check.
 
+The `external-records` job of the same workflow runs
+`python3 detections/check_external_records.py --lint` and then the shadow report on
+every pull request, on push to `main` and weekly. A verdict never fails it; a
+structural fault does. It is not a required check (see
+[External records](#external-records-splunkattack_data)).
+
 **Weekly scheduled runs.** Each workflow file with a `schedule:` trigger (the
 cron line is in the file) runs once a week, so CI proves a rule again when only
 pySigma, the runner image or the kernel changed. GitHub can start a scheduled run
@@ -2071,6 +2077,133 @@ trust policy) flatten to searchable text, the rules match those with `|contains`
 the flattened field, which is how a SIEM indexes nested JSON. The rule descriptions note
 where a production pipeline should decode/parse a field (e.g. the URL-encoded IAM trust
 policy) for a more precise match.
+
+## External records (splunk/attack_data)
+
+The validators prove a rule on records that the agent wrote or emulated. The
+external-records gate (`check_external_records.py`, roadmap item R3) runs each rule on
+records that the agent did not write: the datasets of
+[splunk/attack_data](https://github.com/splunk/attack_data) (Apache-2.0) of the rule's
+technique. [`external/README.md`](external/README.md) says what each file of
+`detections/external/` holds, the licence, and how to change the pin.
+
+**What it proves.** A rule fires on a capture that a third party made of its
+technique: an emulation of the agent that reads the wrong field, or a field name in
+the wrong letter case, does not show in the validators, and it shows here as a
+`MISS`.
+
+**What it does not prove.**
+
+- A dataset is not labelled record by record. A `FIRE` can come from a record that
+  the dataset holds next to the attack (the FIC dataset of T1098.001 holds a benign
+  twin; known gap `ext-fire-on-another-record`, roadmap item R3b).
+- The authors edited some records (the FIC yml says that tenant details were
+  replaced). A dataset is a third-party sample, not a live capture.
+- The same technique is not the same procedure. Most same-technique pairs do not
+  fire, and most of these misses are correct (another procedure, or a capture that
+  does not record what the rule reads). A declaration says so, or a defect entry.
+
+**Pairs.** A rule and a dataset are same technique when the ATT&CK ID of the folder
+of the rule (`detections/sigma/<ID>/`) is in the `mitre_technique` of the dataset's
+yml, and a record of the dataset goes to the log source of the rule by its own shape:
+a CloudTrail record (`eventSource` and `eventName`), an Azure Monitor record by its
+`category` (`AuditLogs`; the sign-in categories; `Administrative`), a Kubernetes audit
+event (kind `Event`, apiVersion `audit.k8s.io/*`) or a raw auditd SYSCALL record. The
+auditd records are built by `auditd_records.syscall_event()`, the function of the
+Linux validator, with the syscall names of `external/syscalls_x86_64.json` (Linux
+v6.18). Another attack tag of the rule gives `RELATED`. A parent or a sub-technique of
+the technique gives no pair. A raw auditd dataset of a CVE exploit has a `procedure`
+label in `SOURCES.json`, and a rule whose `cve.*` tags do not include one of its CVEs
+gives `OTHER-PROCEDURE`. `RELATED` and `OTHER-PROCEDURE` are reported, not expected.
+The label is the CVE or the exploit name that the description of the yml gives as a
+whole token (no letter, digit or hyphen next to it). Each CVE of the label is a whole
+token of that description too, or it is the `cve.*` tag of a rule of the technique
+whose title holds the label as whole words, compared without white space, punctuation
+and letter case ("Copy Fail" is the word "CopyFail" of "(CopyFail CVE-2026-31431)";
+"in" is no word of "Keyring Stuffing"). A label in CVE form must be one of its CVEs
+(`--lint`). The check does not prove that the label is the procedure: a generic phrase
+that is a whole token of the description, and whole words of the title of a rule with
+the listed CVE, still passes. The owner's review of `SOURCES.json`
+(`.github/CODEOWNERS`) is the control for that.
+
+**Rows.** `DATASET` (a file that was read), `FIRE`, `MISS` (with the nearest record
+and the items of the rule that it fails), `RELATED`, `OTHER-PROCEDURE`, `NOT READ`
+(the dataset holds no record of the rule's log source), `QUIET`, `N/A`,
+`KNOWN-MISS <ID>`, `DECLARED QUIET, FIRED`, `STALE N/A`, `KNOWN-MISS FIRES`, `STALE`
+(a declaration that no longer applies), `EXCLUDED` (a dataset that `SOURCES.json`
+leaves out, with the reason) and `UNAVAILABLE` (a dataset, or in an online run the
+LICENSE or the syscall table, that could not be read). A correlation rule gives its alerts
+and the distinct records that are their evidence. The last line is the `Summary`. No
+row holds a value of a record: rows name datasets, rules, lines and the items of a
+rule. `--explain` also prints, on the console only, the explanation of
+`sigma_explain.py` under each `MISS` (with values, in `repr()`).
+
+**Declarations** (`external/expectations.json`, a human decision) change the
+expected verdict of one pair: `quiet` (the rule must not fire on a dataset of its own
+procedure), `n/a` (another procedure, or not in the capture), `known-miss` (a defect of
+the Summary table of [`RULE_DEFECTS.md`](RULE_DEFECTS.md)) and `fire` (a pair that is
+not expected must fire). Each one holds the digest of the rule
+(`check_sufficiency.detection_digest`) and the sha256 of the dataset. When the rule or
+the dataset changes, the declaration is `STALE` and excuses nothing. `--suggest`
+prints a draft for each `MISS`; its why starts with `TODO`, which the gate refuses.
+
+**Shadow mode.** No verdict fails the run (exit 0). A structural fault exits 2 in
+every mode: a malformed `SOURCES.json`, `expectations.json` or syscall table, a
+declaration for a rule or a dataset that does not exist, a `HASH MISMATCH` (a cached
+file of other bytes is deleted), a record count that is not the pin, a line that is
+not a record of its format, a key or a value that one SQLite table cannot hold (an
+integer outside 64 bits, a NUL character, a lone surrogate, the key `_rowid`, a number
+that is not finite), keys that differ only in letter case, records of one log source
+with more than 1900 distinct keys (a table holds 2000 columns, less the row id and the
+fields that the rules add), a yml at the commit that does not agree with its entry
+(also its procedure label and CVEs), a cache entry that is not a regular file or
+cannot be read, and a run that read no dataset. A run with an error ends its
+`Summary` line with `; N error(s)`, and its step summary gives the `ERROR` lines above
+the rows. `--enforce` (roadmap item R3b) also exits 1 on a `MISS` without a
+declaration and on a declaration that does not hold, and 2 on an `UNAVAILABLE`
+dataset, LICENSE or syscall table.
+
+**Origins and cache.** The gate makes each URL from the pinned full commit and the
+path: the data from `media.githubusercontent.com`, the ymls and the LICENSE from
+`raw.githubusercontent.com`. It follows no redirect to another scheme or host, reads at
+most 50 MB of a file, and checks the sha256 before it parses a byte. A JSON record must
+be one record: an object that holds a key two times (the envelope `{"Records": [...]}`
+too), two keys that give one field when the record is flattened, and NaN or Infinity
+are faults. An integer outside 64 bits is refused when it is parsed, by its length
+before its value (Python's `int()` stops at 4300 digits). A file is kept in a cache by
+its sha256 (`~/.cache/det-eng/external`, or `--cache DIR`); `--offline` reads only the
+cache. A cache entry that is not a regular file (a FIFO, a directory) is a fault: the
+gate does not wait on it. CI downloads on each run (about 1.3 MB). Only the job reads
+the real datasets: the gate tests build their datasets from sidecar cases, and no
+record of `splunk/attack_data` is in this repository.
+
+**Network time.** Each step of a request (the connection, each read) waits at most
+15 s, and the network work of a run ends 600 s after it starts: a request after that
+is `UNAVAILABLE` and makes no connection, and a request that still runs then is given
+up. An origin that does not answer costs one step for each request. A report makes at
+most 2 + 27 such requests (the LICENSE, the syscall table and the yml of each of the 27
+datasets; a dataset whose yml is `UNAVAILABLE` is not downloaded), so 29 x 15 s =
+435 s. The deadline caps a slow origin at 600 s, which leaves 300 s of the 15 minutes
+of the job for its other steps (`test_external.py` checks both sums). The name lookup
+of a host has no step limit of its own; the deadline covers it too.
+
+```bash
+python3 detections/check_external_records.py --lint      # offline: the two files and the syscall table
+python3 detections/check_external_records.py             # the report (shadow)
+python3 detections/check_external_records.py --enforce   # fail on a MISS or a declaration that fails
+python3 detections/check_external_records.py --rule detections/sigma/T1537/aws_snapshot_or_ami_made_public.yml --explain
+python3 detections/check_external_records.py --suggest   # draft declarations
+```
+
+**A real-record miss.** A `MISS` of a rule on a dataset of its own procedure is the
+one thing that the owner reads. Find its cause with `--explain` and
+`sigma_explain.py`. When the rule is wrong, add an entry to `RULE_DEFECTS.md` (its
+evidence names the dataset id and its sha256) and propose a `known-miss` declaration.
+When the dataset shows another procedure or does not record what the rule reads,
+propose an `n/a` declaration. Never edit `detections/external/` to make a rule pass.
+
+The view of every dataset of a log source as a benign sample (a rule that fires on a
+dataset of another technique) is not part of this gate; roadmap item R3c adds it.
 
 ## Status
 

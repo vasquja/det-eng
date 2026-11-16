@@ -121,6 +121,8 @@ ROADMAP = {
     "R2d": "hygiene and report truth",
     "R2e": "cloud baselines are hard",
     "R3": "external records that the agent did not write",
+    "R3b": "external records enforced (a required check, attack-record pins)",
+    "R3c": "a benign view of the external records of each log source",
     "R4": "the captures of CI, harvested into committed evidence",
     "R5": "provenance tiers",
     "R6": "mutation ratchet",

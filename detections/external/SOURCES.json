@@ -1,0 +1,640 @@
+{
+  "schema": 1,
+  "repository": "splunk/attack_data",
+  "commit": "4b19e4b6824a8ba91b0f5345a3a8de488619e823",
+  "licence": "Apache-2.0",
+  "licence_file": "LICENSE",
+  "licence_sha256": "8505946b2464fa90223996d99eecbc7639a86648ca071f0cac21695be2623a0a",
+  "licence_copy": "detections/external/LICENSES/Apache-2.0-splunk-attack_data.txt",
+  "notice": "none: the commit holds no NOTICE file",
+  "datasets": [
+    {
+      "id": "T1053.007/kubernetes_audit_cron_job_creation/kubernetes_audit_cron_job_creation",
+      "path": "datasets/attack_techniques/T1053.007/kubernetes_audit_cron_job_creation/kubernetes_audit_cron_job_creation.json",
+      "sha256": "9826b39d9c2d2998f7313414980429af6600ee8db118cec80dabb81461ee5974",
+      "size": 4498,
+      "format": "k8s-audit-json",
+      "records": 1,
+      "techniques": [
+        "T1053.007"
+      ],
+      "sourcetype": "__json",
+      "yml": "datasets/attack_techniques/T1053.007/kubernetes_audit_cron_job_creation/kubernetes_audit_cron_job_creation.yml",
+      "yml_sha256": "4df327e45048d47b0df362e585cfd915a208b65a51fa212f2ce65597cc4fd176"
+    },
+    {
+      "id": "T1068/linux_auditd_copy_fail/linux_auditd",
+      "path": "datasets/attack_techniques/T1068/linux_auditd_copy_fail/linux_auditd.log",
+      "sha256": "9311e1e79cbbfdd2ff8c626c581832663263fe1c5cd2db2fb86a66be95749a03",
+      "size": 78230,
+      "format": "auditd-raw",
+      "records": 241,
+      "techniques": [
+        "T1068"
+      ],
+      "sourcetype": "auditd",
+      "yml": "datasets/attack_techniques/T1068/linux_auditd_copy_fail/linux_auditd.yml",
+      "yml_sha256": "e697c840ae30a7b4b8a79d454f6c73a699b70a9c6aa727bfd1cde30a6b8042ad",
+      "procedure": {
+        "label": "Copy Fail",
+        "cves": [
+          "CVE-2026-31431"
+        ],
+        "why": "the yml describes the dataset as Copy Fail privilege escalation; CVE-2026-31431 is the CVE of Copy Fail that the title of T1068/copyfail_af_alg_authencesn.yml names"
+      }
+    },
+    {
+      "id": "T1068/linux_dirtyfrag/audit",
+      "path": "datasets/attack_techniques/T1068/linux_dirtyfrag/audit.log",
+      "sha256": "4728d30b433949067f42dccb5b1863bffdb8acd9bcc0254be76f35b79966a341",
+      "size": 6448,
+      "format": "auditd-raw",
+      "records": 13,
+      "techniques": [
+        "T1068"
+      ],
+      "sourcetype": "auditd",
+      "yml": "datasets/attack_techniques/T1068/linux_dirtyfrag/linux_dirtyfrag.yml",
+      "yml_sha256": "a45e62e99161fc3603fe652608cff1699b1094c72cdfb523130d1c744f5f1417",
+      "procedure": {
+        "label": "Dirty Frag",
+        "cves": [
+          "CVE-2026-43284",
+          "CVE-2026-43500"
+        ],
+        "why": "the yml describes the datasets as Dirty Frag privilege escalation; Dirty Frag is CVE-2026-43284 (xfrm-ESP) and CVE-2026-43500 (RxRPC), the CVEs that the titles of the two dirtyfrag rules of T1068 name"
+      }
+    },
+    {
+      "id": "T1068/linux_dirtyfrag/dirty_frag_events_trimmed",
+      "path": "datasets/attack_techniques/T1068/linux_dirtyfrag/dirty_frag_events_trimmed.log",
+      "sha256": "c129c3c53d765e485cb2779ca607ccdbd924555a1ebae1711d55ec6205de25b0",
+      "size": 126849,
+      "format": "auditd-raw",
+      "records": 297,
+      "techniques": [
+        "T1068"
+      ],
+      "sourcetype": "auditd",
+      "yml": "datasets/attack_techniques/T1068/linux_dirtyfrag/linux_dirtyfrag.yml",
+      "yml_sha256": "a45e62e99161fc3603fe652608cff1699b1094c72cdfb523130d1c744f5f1417",
+      "procedure": {
+        "label": "Dirty Frag",
+        "cves": [
+          "CVE-2026-43284",
+          "CVE-2026-43500"
+        ],
+        "why": "the yml describes the datasets as Dirty Frag privilege escalation; Dirty Frag is CVE-2026-43284 (xfrm-ESP) and CVE-2026-43500 (RxRPC), the CVEs that the titles of the two dirtyfrag rules of T1068 name"
+      }
+    },
+    {
+      "id": "T1068/linux_pedit/linux_auditd",
+      "path": "datasets/attack_techniques/T1068/linux_pedit/linux_auditd.log",
+      "sha256": "157ce9fb84cff672a094a5d976535a4ab369e3f05a7dbcf98a7b69c17f08c2c9",
+      "size": 307,
+      "format": "auditd-raw",
+      "records": 1,
+      "techniques": [
+        "T1068"
+      ],
+      "sourcetype": "auditd",
+      "yml": "datasets/attack_techniques/T1068/linux_pedit/linux_pedit.yml",
+      "yml_sha256": "478c98fba3c1bf5c9765a12be51cd92eb5117527f8dc5a35ab47df879dfe2370",
+      "procedure": {
+        "label": "CVE-2026-46331",
+        "cves": [
+          "CVE-2026-46331"
+        ],
+        "why": "the yml describes the dataset as CVE-2026-46331 privilege escalation"
+      }
+    },
+    {
+      "id": "T1068/vghost/audit",
+      "path": "datasets/attack_techniques/T1068/vghost/audit.log",
+      "sha256": "be13d4937c73e045cd5732c575eb5da5ad86e41eb9846e4ff42b67370075a844",
+      "size": 4586,
+      "format": "auditd-raw",
+      "records": 13,
+      "techniques": [
+        "T1068",
+        "T1027.004"
+      ],
+      "sourcetype": "auditd",
+      "yml": "datasets/attack_techniques/T1068/vghost/vghost.yml",
+      "yml_sha256": "046320c1b203c57edab3e1d09d16bc3b63a8a8f62ca4f29ee4444e2841ed0bf2",
+      "procedure": {
+        "label": "CVE-2026-74580",
+        "cves": [
+          "CVE-2026-74580"
+        ],
+        "why": "the yml describes the dataset as CVE-2026-74580 privilege escalation"
+      }
+    },
+    {
+      "id": "T1078.004/aws_login_sfa/cloudtrail",
+      "path": "datasets/attack_techniques/T1078.004/aws_login_sfa/cloudtrail.json",
+      "sha256": "395d8a667d12577fe83116c5fd0d850ea1b27dd21b1e303d08529869a5872b9a",
+      "size": 2272,
+      "format": "cloudtrail-json",
+      "records": 2,
+      "techniques": [
+        "T1078.004"
+      ],
+      "sourcetype": "aws:cloudtrail",
+      "yml": "datasets/attack_techniques/T1078.004/aws_login_sfa/aws_login_sfa_old.yml",
+      "yml_sha256": "069c9dd483fe2965a8b93193525e127c83b5fa28fc0e1bda229085149e5a5672"
+    },
+    {
+      "id": "T1078.004/azuread/azure-audit",
+      "path": "datasets/attack_techniques/T1078.004/azuread/azure-audit.log",
+      "sha256": "ff4d058c040d14bf97f22959a5b8d1f1ca330fc797a6afd6c3c2776166f302bd",
+      "size": 7386,
+      "format": "azure-monitor-json",
+      "records": 2,
+      "techniques": [
+        "T1078.004"
+      ],
+      "sourcetype": "azure:monitor:aad",
+      "yml": "datasets/attack_techniques/T1078.004/azuread/azuread.yml",
+      "yml_sha256": "530ff0559f90fab0169bf4d0e129cc0f939e9336eddd7dc5edf798444d908cb9"
+    },
+    {
+      "id": "T1078.004/azuread_pws/azure-audit",
+      "path": "datasets/attack_techniques/T1078.004/azuread_pws/azure-audit.log",
+      "sha256": "43598377a83fb710074244d14b1d8af9d11eee55484b23822a86046025ef7efd",
+      "size": 20509,
+      "format": "azure-monitor-json",
+      "records": 5,
+      "techniques": [
+        "T1078.004"
+      ],
+      "sourcetype": "azure:monitor:aad",
+      "yml": "datasets/attack_techniques/T1078.004/azuread_pws/azuread_pws.yml",
+      "yml_sha256": "49f3be1d5132165b7aee3f004258daa5726479d3a0b6bf0bb35695524e976c55"
+    },
+    {
+      "id": "T1098.001/azure_ad_federated_identity_credential/azure-audit",
+      "path": "datasets/attack_techniques/T1098.001/azure_ad_federated_identity_credential/azure-audit.log",
+      "sha256": "68a71da7b6ee2370fd29439c2590620061973f11f2938261b98e489017653425",
+      "size": 2998,
+      "format": "azure-monitor-json",
+      "records": 2,
+      "techniques": [
+        "T1098.001"
+      ],
+      "sourcetype": "azure:monitor:aad",
+      "yml": "datasets/attack_techniques/T1098.001/azure_ad_federated_identity_credential/azure_ad_federated_identity_credential.yml",
+      "yml_sha256": "8e7019fd99b044ca683f26edca1be4b4ae33f54a477a7074fb6b2fbad97e0330"
+    },
+    {
+      "id": "T1098.001/azure_ad_service_principal_credentials/azure-audit",
+      "path": "datasets/attack_techniques/T1098.001/azure_ad_service_principal_credentials/azure-audit.log",
+      "sha256": "0a6de8d20356feb056af2d90a17d82012348236f70b67b60a57f680016b7326e",
+      "size": 1850,
+      "format": "azure-monitor-json",
+      "records": 1,
+      "techniques": [
+        "T1098.001"
+      ],
+      "sourcetype": "azure:monitor:aad",
+      "yml": "datasets/attack_techniques/T1098.001/azure_ad_service_principal_credentials/azure_ad_service_principal_credentials.yml",
+      "yml_sha256": "02166d353403c69dbcb1c191887a00c6ed70b964f06f9db12ef9b5adae7090e1"
+    },
+    {
+      "id": "T1098.003/azure_ad_admin_consent/azure_ad_admin_consent",
+      "path": "datasets/attack_techniques/T1098.003/azure_ad_admin_consent/azure_ad_admin_consent.log",
+      "sha256": "c111f6a37f01782328cb71bc944394c161733978b9eff68a99b72cdf63cad324",
+      "size": 16668,
+      "format": "azure-monitor-json",
+      "records": 7,
+      "techniques": [
+        "T1098.003"
+      ],
+      "sourcetype": "azure:monitor:aad",
+      "yml": "datasets/attack_techniques/T1098.003/azure_ad_admin_consent/azure_ad_admin_consent.yml",
+      "yml_sha256": "4fe9f057b2d6cca5df61f11ac8b4913f37a1252da97380167d8fab5b05ddc0c9"
+    },
+    {
+      "id": "T1098.003/azure_ad_assign_global_administrator/azure-audit",
+      "path": "datasets/attack_techniques/T1098.003/azure_ad_assign_global_administrator/azure-audit.log",
+      "sha256": "ac21b7bdf60d28cbbd9237a399985b7cf7e2b351bacff026b4f9a8a28e135912",
+      "size": 32893,
+      "format": "azure-monitor-json",
+      "records": 16,
+      "techniques": [
+        "T1098.003"
+      ],
+      "sourcetype": "azure:monitor:aad",
+      "yml": "datasets/attack_techniques/T1098.003/azure_ad_assign_global_administrator/azure_ad_assign_global_administrator.yml",
+      "yml_sha256": "16e11465f13e5f32eced50c662a3ba4883f6c83173396b1d0d6c75d11d848a6d"
+    },
+    {
+      "id": "T1098.003/azure_ad_assign_privileged_role/azure-audit",
+      "path": "datasets/attack_techniques/T1098.003/azure_ad_assign_privileged_role/azure-audit.log",
+      "sha256": "ab75d612bf81678393f1f26d53ae8fe884098ebace05306af8ee2a8d575bfcda",
+      "size": 5555,
+      "format": "azure-monitor-json",
+      "records": 3,
+      "techniques": [
+        "T1098.003"
+      ],
+      "sourcetype": "azure:monitor:aad",
+      "yml": "datasets/attack_techniques/T1098.003/azure_ad_assign_privileged_role/azure_ad_assign_privileged_role.yml",
+      "yml_sha256": "2450f9d4e8304ec4c0dee7bf4e46f56607250180a62227d3c2aee115901ed904"
+    },
+    {
+      "id": "T1098.003/azure_ad_bypass_admin_consent/azure_ad_bypass_admin_consent",
+      "path": "datasets/attack_techniques/T1098.003/azure_ad_bypass_admin_consent/azure_ad_bypass_admin_consent.log",
+      "sha256": "54aef4bfbfc7cd837952edd2cae4addb6e5f790522f397e033a5801dbe2d58b1",
+      "size": 7147,
+      "format": "azure-monitor-json",
+      "records": 2,
+      "techniques": [
+        "T1098.003"
+      ],
+      "sourcetype": "azure:monitor:aad",
+      "yml": "datasets/attack_techniques/T1098.003/azure_ad_bypass_admin_consent/azure_ad_bypass_admin_consent.yml",
+      "yml_sha256": "1e0667c246460db152f6818883d1b4a672968865371f71b3fb1a0bb4780bd315"
+    },
+    {
+      "id": "T1098.003/azure_ad_pim_role_activated/azure-audit",
+      "path": "datasets/attack_techniques/T1098.003/azure_ad_pim_role_activated/azure-audit.log",
+      "sha256": "3f3d6e74d3fe107946e40000dd67acced5c34dc049d1b473865ccdd837fd9a3f",
+      "size": 434317,
+      "format": "azure-monitor-json",
+      "records": 140,
+      "techniques": [
+        "T1098.003"
+      ],
+      "sourcetype": "azure:monitor:aad",
+      "yml": "datasets/attack_techniques/T1098.003/azure_ad_pim_role_activated/azure_ad_pim_role_activated.yml",
+      "yml_sha256": "b9fcb17261a5f2abf10f55faa40068e537e578238d2c678ba0a07cb66d321c88"
+    },
+    {
+      "id": "T1098.003/azure_ad_privileged_graph_perm_assigned/azure_ad_privileged_graph_perm_assigned",
+      "path": "datasets/attack_techniques/T1098.003/azure_ad_privileged_graph_perm_assigned/azure_ad_privileged_graph_perm_assigned.log",
+      "sha256": "5cf32a545e51a98ab5cf48be03ad3ad7b465c9ad65c6d48fb8349355134af696",
+      "size": 121193,
+      "format": "azure-monitor-json",
+      "records": 52,
+      "techniques": [
+        "T1098.003"
+      ],
+      "sourcetype": "azure:monitor:aad",
+      "yml": "datasets/attack_techniques/T1098.003/azure_ad_privileged_graph_perm_assigned/azure_ad_privileged_graph_perm_assigned.yml",
+      "yml_sha256": "1f181650f0ecd009374c300b20f560cf5b81ef2ea7f53232e2953a77bacaa63f"
+    },
+    {
+      "id": "T1098.003/azure_ad_privileged_role_serviceprincipal/azure-audit",
+      "path": "datasets/attack_techniques/T1098.003/azure_ad_privileged_role_serviceprincipal/azure-audit.log",
+      "sha256": "6adc41923c5206e35a9640ba0df8922def2914e2d952dc95774f1fe45362849b",
+      "size": 180130,
+      "format": "azure-monitor-json",
+      "records": 67,
+      "techniques": [
+        "T1098.003"
+      ],
+      "sourcetype": "azure:monitor:aad",
+      "yml": "datasets/attack_techniques/T1098.003/azure_ad_privileged_role_serviceprincipal/azure_ad_privileged_role_serviceprincipal.yml",
+      "yml_sha256": "a2828c42a3de17e476e746c2ec51914333b6699857d9a366b7b27ec1134a665b"
+    },
+    {
+      "id": "T1098.003/azure_ad_spn_privesc/azure_ad_spn_privesc",
+      "path": "datasets/attack_techniques/T1098.003/azure_ad_spn_privesc/azure_ad_spn_privesc.log",
+      "sha256": "1f7f30795dfc68a8bf307a438d12f58f01f2e640847916d9f7cbcf22e7bf0cfe",
+      "size": 3304,
+      "format": "azure-monitor-json",
+      "records": 1,
+      "techniques": [
+        "T1098.003"
+      ],
+      "sourcetype": "azure:monitor:aad",
+      "yml": "datasets/attack_techniques/T1098.003/azure_ad_spn_privesc/azure_ad_spn_privesc.yml",
+      "yml_sha256": "900765a1b3c76a4b6764454c2da5ce7da71f32886b64422e72177f1ffbff62eb"
+    },
+    {
+      "id": "T1528/azure_ad_user_consent_blocked/azure_ad_user_consent_blocked",
+      "path": "datasets/attack_techniques/T1528/azure_ad_user_consent_blocked/azure_ad_user_consent_blocked.log",
+      "sha256": "2ccc4ae07dd2f0f62da235dbc3edf6097ec2bdebd685049544c5cf4d7ea2ace6",
+      "size": 24198,
+      "format": "azure-monitor-json",
+      "records": 7,
+      "techniques": [
+        "T1528"
+      ],
+      "sourcetype": "azure:monitor:aad",
+      "yml": "datasets/attack_techniques/T1528/azure_ad_user_consent_blocked/azure_ad_user_consent_blocked.yml",
+      "yml_sha256": "ae7862502b02120dd2b6e82b8a19e8be630feed8fe5f7a8b7f6ffc6edf17f1ed"
+    },
+    {
+      "id": "T1528/azure_ad_user_consent_declined/azure_ad_user_consent_declined",
+      "path": "datasets/attack_techniques/T1528/azure_ad_user_consent_declined/azure_ad_user_consent_declined.log",
+      "sha256": "f6f733aae61194210162e663c7c833b2e9dbc6efff48ab1680c1a9cb5e1c31ca",
+      "size": 43949,
+      "format": "azure-monitor-json",
+      "records": 11,
+      "techniques": [
+        "T1528"
+      ],
+      "sourcetype": "azure:monitor:aad",
+      "yml": "datasets/attack_techniques/T1528/azure_ad_user_consent_declined/azure_ad_user_consent_declined.yml",
+      "yml_sha256": "76bcd1a16f59d3d5cafee598c8ec324da32de91b5fc4d191d0aa56c99ac250db"
+    },
+    {
+      "id": "T1528/azure_ad_user_consent_granted/azure_ad_user_consent_granted",
+      "path": "datasets/attack_techniques/T1528/azure_ad_user_consent_granted/azure_ad_user_consent_granted.log",
+      "sha256": "c246dccc71905891c49b06b0679c55fdcb25247eed513d6de5f45537e363aebb",
+      "size": 32822,
+      "format": "azure-monitor-json",
+      "records": 10,
+      "techniques": [
+        "T1528"
+      ],
+      "sourcetype": "azure:monitor:aad",
+      "yml": "datasets/attack_techniques/T1528/azure_ad_user_consent_granted/azure_ad_user_consent_granted.yml",
+      "yml_sha256": "f10fd3db10a2f3d5bb06301ea7da1464252bcd82dc0a75c98772e6e39564f23b"
+    },
+    {
+      "id": "T1528/device_code_authentication/azure-audit",
+      "path": "datasets/attack_techniques/T1528/device_code_authentication/azure-audit.log",
+      "sha256": "4348ea10f629c00182540f6885719ff098b182f1ec1139cb9f4f65c42b986f85",
+      "size": 48915,
+      "format": "azure-monitor-json",
+      "records": 16,
+      "techniques": [
+        "T1528"
+      ],
+      "sourcetype": "azure:monitor:aad",
+      "yml": "datasets/attack_techniques/T1528/device_code_authentication/device_code_authentication.yml",
+      "yml_sha256": "25c9649039e44b298bac8cbde1b9d00102c6b607c2f313a28cbe3388ef079b60"
+    },
+    {
+      "id": "T1537/aws_ami_shared_public/aws_cloudtrail_events",
+      "path": "datasets/attack_techniques/T1537/aws_ami_shared_public/aws_cloudtrail_events.json",
+      "sha256": "f2402c34740a6c324cf61a7523bc8f19abb5a60e3a3426f8b17df620593866cf",
+      "size": 2979,
+      "format": "cloudtrail-json",
+      "records": 2,
+      "techniques": [
+        "T1537"
+      ],
+      "sourcetype": "aws:cloudtrail",
+      "yml": "datasets/attack_techniques/T1537/aws_ami_shared_public/aws_ami_shared_public.yml",
+      "yml_sha256": "2546d01240580d8028c5391c9a2fb89da9ec39630b307d8d2bbf83c87a00a939"
+    },
+    {
+      "id": "T1537/aws_snapshot_exfil/aws_cloudtrail_events",
+      "path": "datasets/attack_techniques/T1537/aws_snapshot_exfil/aws_cloudtrail_events.json",
+      "sha256": "ac343623bd299b4cbd29b1d718e91b51f00da71fee4fe3de26dca83205676cca",
+      "size": 11268,
+      "format": "cloudtrail-json",
+      "records": 9,
+      "techniques": [
+        "T1537"
+      ],
+      "sourcetype": "aws:cloudtrail",
+      "yml": "datasets/attack_techniques/T1537/aws_snapshot_exfil/aws_snapshot_exfil.yml",
+      "yml_sha256": "31b0a2c4e1c0b52a4e844b47e932f121f2ad3da9230b6b7b666164ac134d09c1"
+    },
+    {
+      "id": "T1552.007/kube_audit_get_secret/kube_audit_get_secret",
+      "path": "datasets/attack_techniques/T1552.007/kube_audit_get_secret/kube_audit_get_secret.json",
+      "sha256": "a4ce2301ef2e3baf72b7f70c439b3f8de4770721f09b9d1e81370146b6cb030b",
+      "size": 797,
+      "format": "k8s-audit-json",
+      "records": 1,
+      "techniques": [
+        "T1552.007"
+      ],
+      "sourcetype": "aws:cloudwatchlogs",
+      "yml": "datasets/attack_techniques/T1552.007/kube_audit_get_secret/kube_audit_get_secret_old.yml",
+      "yml_sha256": "3da06faefd8abea9733208f9660ca09aee4ffaa0997bb6579e89587e12ce535a"
+    },
+    {
+      "id": "T1556.006/azure_ad_temporary_access_pass/azure-audit",
+      "path": "datasets/attack_techniques/T1556.006/azure_ad_temporary_access_pass/azure-audit.log",
+      "sha256": "95c51d3d30174a423c2e9522af278d565cbf882f1dc0b0cbf7e5e7a5aec4593d",
+      "size": 1394,
+      "format": "azure-monitor-json",
+      "records": 1,
+      "techniques": [
+        "T1556.006",
+        "T1078.004"
+      ],
+      "sourcetype": "azure:monitor:aad",
+      "yml": "datasets/attack_techniques/T1556.006/azure_ad_temporary_access_pass/azure_ad_temporary_access_pass.yml",
+      "yml_sha256": "d82850cff6634392d734e7e63b8d47dc67b9df36f9e5c3e66068aa2a3f9f7ad7"
+    }
+  ],
+  "excluded": [
+    {
+      "id": "T1078.004/azure_automation_runbook/azure-activity",
+      "path": "datasets/attack_techniques/T1078.004/azure_automation_runbook/azure-activity.log",
+      "sha256": "e9f580e9d787107b96211d2129d3ed9b9b9dd5a4478bc456acb27a561c945b66",
+      "size": 23896,
+      "techniques": [
+        "T1078.004"
+      ],
+      "product": "azure",
+      "why": "Azure Activity Log events (6) in the shape of the REST API: eventName, eventSource, operationName and status are {value, localizedValue} objects and the category is properties.eventCategory. The azure/activitylogs rules read the shape of a diagnostic setting (category and operationName as text). The yml labels the file azure:monitor:aad. No adapter: a record that an agent converts is not a record that the agent did not write."
+    },
+    {
+      "id": "T1078.004/azure_runbook_webhook/azure-activity",
+      "path": "datasets/attack_techniques/T1078.004/azure_runbook_webhook/azure-activity.log",
+      "sha256": "027404bb7cae5475a6bac0963c268ff8233e5e47cb64689cc4994d6c94e2f87e",
+      "size": 15959,
+      "techniques": [
+        "T1078.004"
+      ],
+      "product": "azure",
+      "why": "Azure Activity Log events (4) in the shape of the REST API: eventName, eventSource, operationName and status are {value, localizedValue} objects and the category is properties.eventCategory. The azure/activitylogs rules read the shape of a diagnostic setting (category and operationName as text). The yml labels the file azure:monitor:aad. No adapter: a record that an agent converts is not a record that the agent did not write."
+    },
+    {
+      "id": "T1078.004/o365_security_and_compliance_alert_triggered/o365_security_and_compliance_alert_triggered",
+      "path": "datasets/attack_techniques/T1078.004/o365_security_and_compliance_alert_triggered/o365_security_and_compliance_alert_triggered.log",
+      "sha256": "0c8ffc8ceab5460e5c33382d727ef988564937c11d8069fb3f9745275d46413e",
+      "size": 9453,
+      "techniques": [
+        "T1078.004"
+      ],
+      "product": "azure",
+      "why": "Office 365 Management Activity records (7 of the SecurityComplianceCenter workload: alerts with AlertId, AlertType and Operation), not the Azure Monitor records (category, operationName, properties.*) that the Entra rules read. No adapter: a record that an agent converts is not a record that the agent did not write."
+    },
+    {
+      "id": "T1078/gcploit_exploitation_framework/gcploit_exploitation_framework",
+      "path": "datasets/attack_techniques/T1078/gcploit_exploitation_framework/gcploit_exploitation_framework.json",
+      "sha256": "aec984dcc65f7a91d58ac355c5d017375f029c6c349f8eb37696ff55d55f5935",
+      "size": 709,
+      "techniques": [
+        "T1078"
+      ],
+      "product": "gcp",
+      "why": "A Splunk search export (one {preview, lastrow, result} object, with the fields of the search such as result.data.protoPayload.authorizationInfo{}.permission), not a Cloud Audit LogEntry that the gcp/gcp.audit rules read. No adapter: a record that an agent converts is not a record that the agent did not write."
+    },
+    {
+      "id": "T1078/high_risk_permission_by_resource/high_risk_permission_by_resource",
+      "path": "datasets/attack_techniques/T1078/high_risk_permission_by_resource/high_risk_permission_by_resource.json",
+      "sha256": "07adc1673f2e26b8263fcf6ba5981f387697918351325b880551b2b2844a7729",
+      "size": 437,
+      "techniques": [
+        "T1078"
+      ],
+      "product": "gcp",
+      "why": "A Splunk search export (one {preview, lastrow, result} object, with the fields of the search such as result.data.protoPayload.authorizationInfo{}.permission), not a Cloud Audit LogEntry that the gcp/gcp.audit rules read. No adapter: a record that an agent converts is not a record that the agent did not write."
+    },
+    {
+      "id": "T1078/high_risk_role_by_project/high_risk_role_by_project",
+      "path": "datasets/attack_techniques/T1078/high_risk_role_by_project/high_risk_role_by_project.json",
+      "sha256": "cc3493b1eeddf4d6276345aaee0319d3d64a41c5f9452107fadc197ab5619c13",
+      "size": 1293,
+      "techniques": [
+        "T1078"
+      ],
+      "product": "gcp",
+      "why": "A Splunk search export (one {preview, lastrow, result} object, with the fields of the search such as result.data.protoPayload.authorizationInfo{}.permission), not a Cloud Audit LogEntry that the gcp/gcp.audit rules read. No adapter: a record that an agent converts is not a record that the agent did not write."
+    },
+    {
+      "id": "T1098.001/o365_service_principal_credentials/o365_service_principal_credentials",
+      "path": "datasets/attack_techniques/T1098.001/o365_service_principal_credentials/o365_service_principal_credentials.log",
+      "sha256": "2350c20284ee8b53609b0176dca1764018a1357be00498b890fa36198d57b2d3",
+      "size": 5818,
+      "techniques": [
+        "T1098.001"
+      ],
+      "product": "azure",
+      "why": "Office 365 Management Activity records (3 of the AzureActiveDirectory workload: Operation, RecordType, ModifiedProperties), the schema of the Office 365 Management API, not the Azure Monitor records (category, operationName, properties.*) that the Entra rules read. No adapter: a record that an agent converts is not a record that the agent did not write."
+    },
+    {
+      "id": "T1098.003/o365_admin_consent/o365_admin_consent",
+      "path": "datasets/attack_techniques/T1098.003/o365_admin_consent/o365_admin_consent.log",
+      "sha256": "865fb664283b162535ef27b3cf817c19cf989c15c55d7a6a4c8d0efa296da606",
+      "size": 12379,
+      "techniques": [
+        "T1098.003"
+      ],
+      "product": "azure",
+      "why": "Office 365 Management Activity records (4 of the AzureActiveDirectory workload: Operation, RecordType, ModifiedProperties), the schema of the Office 365 Management API, not the Azure Monitor records (category, operationName, properties.*) that the Entra rules read. No adapter: a record that an agent converts is not a record that the agent did not write."
+    },
+    {
+      "id": "T1098.003/o365_bypass_admin_consent/o365_bypass_admin_consent",
+      "path": "datasets/attack_techniques/T1098.003/o365_bypass_admin_consent/o365_bypass_admin_consent.log",
+      "sha256": "ce1c9c60c5abd6de4859940ceb07cac0dc66a10c1e619ff3cf7abd81944a1449",
+      "size": 14184,
+      "techniques": [
+        "T1098.003"
+      ],
+      "product": "azure",
+      "why": "Three Office 365 Management Activity records of the AzureActiveDirectory workload (Operation, RecordType, ModifiedProperties) and two Microsoft Graph signIn resources (createdDateTime, appDisplayName, appliedConditionalAccessPolicies), not the Azure Monitor records (category, operationName, properties.*) that the Entra rules read. No adapter: a record that an agent converts is not a record that the agent did not write."
+    },
+    {
+      "id": "T1098.003/o365_grant_mail_read/o365_grant_mail_read",
+      "path": "datasets/attack_techniques/T1098.003/o365_grant_mail_read/o365_grant_mail_read.log",
+      "sha256": "349758242945634dc12750d61f4ac6b8977aa2a21d1d26899e244926c1f029b9",
+      "size": 13658,
+      "techniques": [
+        "T1098.003"
+      ],
+      "product": "azure",
+      "why": "Office 365 Management Activity records (6 of the AzureActiveDirectory workload: Operation, RecordType, ModifiedProperties), the schema of the Office 365 Management API, not the Azure Monitor records (category, operationName, properties.*) that the Entra rules read. No adapter: a record that an agent converts is not a record that the agent did not write."
+    },
+    {
+      "id": "T1098.003/o365_high_priv_role_assigned/o365_high_priv_role_assigned",
+      "path": "datasets/attack_techniques/T1098.003/o365_high_priv_role_assigned/o365_high_priv_role_assigned.log",
+      "sha256": "bf1dd93cef69ae323407fc710174a4b8ef77d42dc3bb9fc081847c96d518621c",
+      "size": 7616,
+      "techniques": [
+        "T1098.003"
+      ],
+      "product": "azure",
+      "why": "Office 365 Management Activity records (4 of the AzureActiveDirectory workload: Operation, RecordType, ModifiedProperties), the schema of the Office 365 Management API, not the Azure Monitor records (category, operationName, properties.*) that the Entra rules read. No adapter: a record that an agent converts is not a record that the agent did not write."
+    },
+    {
+      "id": "T1098.003/o365_privileged_graph_perm_assigned/o365_privileged_graph_perm_assigned",
+      "path": "datasets/attack_techniques/T1098.003/o365_privileged_graph_perm_assigned/o365_privileged_graph_perm_assigned.log",
+      "sha256": "54cfe81e08be3c9d04af3f9bfd41aa340b15d7c7a83fd0083797facc7c9287e0",
+      "size": 12768,
+      "techniques": [
+        "T1098.003"
+      ],
+      "product": "azure",
+      "why": "Office 365 Management Activity records (5 of the AzureActiveDirectory workload and 1 of the CompliancePostureManagement workload: Operation, RecordType, ModifiedProperties), not the Azure Monitor records (category, operationName, properties.*) that the Entra rules read. No adapter: a record that an agent converts is not a record that the agent did not write."
+    },
+    {
+      "id": "T1098.003/o365_spn_privesc/o365_spn_privesc",
+      "path": "datasets/attack_techniques/T1098.003/o365_spn_privesc/o365_spn_privesc.log",
+      "sha256": "5fd853a800b09b75856ea305dbeb1db5516cce45a3dde9352a85548375322255",
+      "size": 3675,
+      "techniques": [
+        "T1098.003"
+      ],
+      "product": "azure",
+      "why": "Office 365 Management Activity records (1 of the AzureActiveDirectory workload: Operation, RecordType, ModifiedProperties), the schema of the Office 365 Management API, not the Azure Monitor records (category, operationName, properties.*) that the Entra rules read. No adapter: a record that an agent converts is not a record that the agent did not write."
+    },
+    {
+      "id": "T1528/o365_user_consent_blocked/o365_user_consent_blocked",
+      "path": "datasets/attack_techniques/T1528/o365_user_consent_blocked/o365_user_consent_blocked.log",
+      "sha256": "514b26b4d42f751aad42275bc8508dd53566c7db2820dfaa126743b24bf43554",
+      "size": 4988,
+      "techniques": [
+        "T1528"
+      ],
+      "product": "azure",
+      "why": "Office 365 Management Activity records (2 of the AzureActiveDirectory workload: Operation, RecordType, ModifiedProperties), the schema of the Office 365 Management API, not the Azure Monitor records (category, operationName, properties.*) that the Entra rules read. No adapter: a record that an agent converts is not a record that the agent did not write."
+    },
+    {
+      "id": "T1528/o365_user_consent_declined/o365_user_consent_declined",
+      "path": "datasets/attack_techniques/T1528/o365_user_consent_declined/o365_user_consent_declined.log",
+      "sha256": "337ce22fc7c6f4d6af3d95fa5654e8573952eaf7b40ca7b521df609ba44fd161",
+      "size": 1293,
+      "techniques": [
+        "T1528"
+      ],
+      "product": "azure",
+      "why": "One Microsoft Graph signIn resource (createdDateTime, appDisplayName, appliedConditionalAccessPolicies), not an Azure Monitor SignInLogs record (time, category, operationName, properties.*) and not an Office 365 Management Activity record; the yml labels the file o365:management:activity. No adapter: a record that an agent converts is not a record that the agent did not write."
+    },
+    {
+      "id": "T1528/o365_user_consent_file_permissions/o365_user_consent_file_permissions",
+      "path": "datasets/attack_techniques/T1528/o365_user_consent_file_permissions/o365_user_consent_file_permissions.log",
+      "sha256": "e5bb3d9eddf498a8330fb18fd977d6cb99c233ef1098f94fa8e6918ac0429ab8",
+      "size": 2528,
+      "techniques": [
+        "T1528"
+      ],
+      "product": "azure",
+      "why": "Office 365 Management Activity records (1 of the AzureActiveDirectory workload: Operation, RecordType, ModifiedProperties), the schema of the Office 365 Management API, not the Azure Monitor records (category, operationName, properties.*) that the Entra rules read. No adapter: a record that an agent converts is not a record that the agent did not write."
+    },
+    {
+      "id": "T1528/o365_user_consent_mail_permissions/o365_user_consent_mail_permissions",
+      "path": "datasets/attack_techniques/T1528/o365_user_consent_mail_permissions/o365_user_consent_mail_permissions.log",
+      "sha256": "10a1faf829525b46b4ae20dac9dabe966b0bdad873f110d2988eac5a0e7d3120",
+      "size": 2442,
+      "techniques": [
+        "T1528"
+      ],
+      "product": "azure",
+      "why": "Office 365 Management Activity records (1 of the AzureActiveDirectory workload: Operation, RecordType, ModifiedProperties), the schema of the Office 365 Management API, not the Azure Monitor records (category, operationName, properties.*) that the Entra rules read. No adapter: a record that an agent converts is not a record that the agent did not write."
+    },
+    {
+      "id": "T1537/aws_exfil_risk_events/aws_risk",
+      "path": "datasets/attack_techniques/T1537/aws_exfil_risk_events/aws_risk.log",
+      "sha256": "44d5e85a9b293178fa05301414cbd4ae84b5d7228ee08e3ad87ecaa346ea31d2",
+      "size": 69094,
+      "techniques": [
+        "T1537"
+      ],
+      "product": "aws",
+      "why": "Splunk Enterprise Security risk events (38 lines of key=value text of a saved search: search_name, risk_object, risk_score), not CloudTrail records; the yml labels the file aws:cloudtrail."
+    },
+    {
+      "id": "T1537/aws_snapshot_exfil/asl_ocsf_cloudtrail",
+      "path": "datasets/attack_techniques/T1537/aws_snapshot_exfil/asl_ocsf_cloudtrail.json",
+      "sha256": "dec5e0ff02540423cc1e46df46277d4cc50102a174e7c01d8c148528e3aee7d6",
+      "size": 5126,
+      "techniques": [
+        "T1537"
+      ],
+      "product": "aws",
+      "why": "OCSF 1.1.0 API Activity records of Amazon Security Lake (2, class_uid 6003: api.operation, actor, src_endpoint), not CloudTrail records. No adapter: a record that an agent converts is not a record that the agent did not write."
+    }
+  ]
+}
