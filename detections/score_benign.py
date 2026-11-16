@@ -53,7 +53,10 @@ the snapshot is stale; --update rewrites it.
 
 A live capture (the kind cluster's pre-emulation audit log, a recorded Linux
 benign workload) can be scored with --extra-slice. Extra slices are reported in
-shadow mode only and never enter the snapshot. --extra-logsource names the
+shadow mode only and never enter the snapshot. A line of the capture, or an element
+of its JSON array, that is JSON and not an object fails the run (exit 1) with an
+ERROR line that names the capture and the line, and no rule is scored on the
+capture. --extra-logsource names the
 capture's logsource as the slice listing prints it: product/service
 (kubernetes/audit, the default; linux/auditd), or product/category for a
 logsource with no service (linux/file_event, read by category);
@@ -370,22 +373,45 @@ def extra_logsource(text, rules):
     return as_service
 
 
+class CaptureError(Exception):
+    """A live capture (--extra-slice) whose events are not all JSON objects. The text
+    names the capture, and the line or the element of the array."""
+
+
 def load_extra(path, logsource, label):
-    """A live capture as a slice with this logsource: JSONL raw events (or one JSON array)."""
+    """A live capture as a slice with this logsource: JSONL raw events (or one JSON array).
+
+    A line that is not JSON (a line that was cut at the end of a capture) is skipped.
+    Each other line, or element of the array, must be a JSON object: raises
+    CaptureError for one that is JSON and not an object (`[]` in a line of a log).
+    """
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
     try:
         doc = json.loads(text)
         raw = doc if isinstance(doc, list) else [doc]
+        where = ([f"element {n} of the array" for n in range(1, len(raw) + 1)]
+                 if isinstance(doc, list) else ["line 1"])
     except json.JSONDecodeError:
-        raw = []
-        for line in text.splitlines():
+        raw, where = [], []
+        for n, line in enumerate(text.splitlines(), 1):
             line = line.strip()
             if line:
                 try:
                     raw.append(json.loads(line))
+                    where.append(f"line {n}")
                 except json.JSONDecodeError:
                     continue
+    bad = [(at, event) for at, event in zip(where, raw) if not isinstance(event, dict)]
+    if bad:
+        at, event = bad[0]
+        kind = ("null" if event is None else "true" if event is True else "false"
+                if event is False else {list: "a list", str: "a string"}.get(type(event),
+                                                                             "a number"))
+        raise CaptureError(f"the live capture {path}, {at}: JSON that is not an object "
+                           f"({kind})"
+                           + (f", and {len(bad) - 1} more event(s) that are not objects"
+                              if len(bad) > 1 else ""))
     spec = {"id": label, "version": 0, "logsource": dict(logsource), "fidelity": "recorded"}
     return benign_corpus.Slice(spec, path, raw)
 
@@ -606,8 +632,12 @@ def main():
     cut = "" if split is None else stamp(split)
     unread = None  # why no scored rule reads the live capture
     if args.extra_slice:
-        extra = load_extra(args.extra_slice, extra_logsource(args.extra_logsource, every),
-                           args.extra_label)
+        try:
+            extra = load_extra(args.extra_slice, extra_logsource(args.extra_logsource, every),
+                               args.extra_label)
+        except CaptureError as exc:
+            print(f"\nERROR: {exc}. No rule is scored on the live capture.")
+            return 1
         # A logsource that no rule reads scores nothing and lists no row, which looks
         # like a clean capture. Say so, with the logsources that the rules do read.
         if not any(reads(extra.logsource, r["logsource"]) for r in rules):
