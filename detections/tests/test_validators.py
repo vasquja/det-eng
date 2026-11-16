@@ -2526,13 +2526,22 @@ class K8sValidator(gatelib.GateCase):
             exit_code=1)
 
     def test_rejects_negative_control_on_a_log_of_blank_and_unparsable_lines(self):
-        """A log with bytes and without a record: the loader skips a blank line and a
-        line that is not JSON, so the rules get nothing to read. The message gives
-        the number of lines, which tells this log from an empty capture."""
+        """A log with bytes and without a record: the loader skips the blank lines, so
+        the rules get nothing to read. The message gives the number of lines, which
+        tells this log from an empty capture. The two lines that are not JSON are
+        named too: a capture can cut only the last line of a log, and the last line
+        here ends with a line feed. (Before, the loader skipped each line that json
+        refused, and named neither.)"""
         good = self.good()
         write_text_log(good, self.LOG, "\n   \nnot an audit event\n{\"kind\": \"Event\", \n")
         result = good.run_step(self.negative_control_step())
         self.assert_saw(result, r"^Loaded 0 audit event\(s\) from ")
+        log = r"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+        self.assert_saw(result, log + r"3: not JSON \(Expecting value, at character 1\)$")
+        self.assert_saw(result, log + r"4: not JSON \(Expecting property name enclosed in double "
+                                      r"quotes, at character 18\); a capture can cut only the "
+                                      r"last line of a log, and a cut line has no line feed$")
+        self.assert_saw(result, LINES_NOT_RECORDS.format(2))
         self.assert_rejects(
             result,
             r"^NEGATIVE CONTROL FAILED: the pre-emulation audit log \S+/pre-emulation-audit\.log "
@@ -2590,9 +2599,11 @@ class K8sValidator(gatelib.GateCase):
     def test_json_report_says_that_the_control_of_an_empty_log_failed(self):
         """The --json report holds the control of the pre-emulation log. For a log
         with records it says `held` and gives the count of the records (the log of
-        that run also holds one line that is not JSON, which is no record); for the
-        empty log and for a log that does not exist it says `FAILED` and names the
-        log. (The step with --json is a variant: no workflow runs it.)"""
+        that run also holds a last line that a capture cut, which is no record); for
+        a log whose last line is not JSON and ends with a line feed (a line that a
+        capture does not cut), for the empty log and for a log that does not exist it
+        says `FAILED` and names the log. (The step with --json is a variant: no
+        workflow runs it.)"""
         good = self.good()
         step = with_options(self, self.negative_control_step(), "--json /tmp/k8sneg.json")
 
@@ -2613,10 +2624,20 @@ class K8sValidator(gatelib.GateCase):
             return result, report["controls"][0]
 
         records = write_log(good, self.LOG, self.CASES, *self.BENIGN)
-        # One more line, which is not JSON: the log holds more lines than records,
-        # and the report gives the number of the records.
+        # One more line, which is not JSON and ends with a line feed: it is not a line
+        # that a capture cut, so the control fails and names the log. (Before, the
+        # reader skipped it, and the control held.)
         with open(good.tmp_path(self.LOG), "a", encoding="utf-8") as fh:
             fh.write("not an audit event\n")
+        result, entry = control(records)
+        self.assertEqual((result.returncode, entry["status"]), (1, "FAILED"), result.describe())
+        self.assertRegex(entry["detail"], r"^1 line\(s\) of the pre-emulation audit log "
+                                          r"\S+/pre-emulation-audit\.log are not audit events$")
+        # The last line cut by the capture (no line feed): the log holds more lines
+        # than records, and the report gives the number of the records.
+        records = write_log(good, self.LOG, self.CASES, *self.BENIGN)
+        with open(good.tmp_path(self.LOG), "a", encoding="utf-8") as fh:
+            fh.write('{"kind": "Event", "apiVersion": "audit.k8s.io/v1", "verb": "ge')
         result, entry = control(records)
         self.assertEqual((result.returncode, entry["status"], entry["detail"]),
                          (0, "held", f"{records} audit event(s)"))
@@ -2795,10 +2816,9 @@ class K8sValidator(gatelib.GateCase):
     def test_rejects_a_byte_order_mark_at_the_start_of_a_later_line(self):
         """After the records of the control, the log holds the byte order mark of UTF-8
         and then an emulation record of the rule (two logs joined). json refuses the
-        line, and the reader skips a line that is not JSON (a cut line): before, the
-        record was lost without a word, and the negative control held on a log that
-        holds a record on which the rule fires. Now the line is named, and the run
-        fails."""
+        line: before, the reader skipped it as a cut line, the record was lost without
+        a word, and the negative control held on a log that holds a record on which
+        the rule fires. Now the line is named with the mark, and the run fails."""
         good = self.good()
         (positive,) = case_events(good, self.CASES, "exec-websocket-get-procA")
         records = self.log_with(good, b"\xef\xbb\xbf" + json.dumps(positive).encode())
@@ -2810,6 +2830,104 @@ class K8sValidator(gatelib.GateCase):
                                     rf"{records + 1}: the line starts with the byte order mark "
                                     r"of UTF-8 \(EF BB BF\)$", exit_code=1)
 
+    # A line that a capture can cut: an audit event without its end (and so without
+    # its line feed), as `cat` reads it while the writer adds the line.
+    CUT = '{"kind": "Event", "apiVersion": "audit.k8s.io/v1", "verb": "ge'
+
+    def not_json(self, line):
+        """The end of the ERROR line of `line`, a line that json refuses and that
+        starts with "{": its error, and the rule of a cut line."""
+        try:
+            json.loads(line)
+        except json.JSONDecodeError as e:
+            return (rf"not JSON \({re.escape(e.msg)}, at character {e.colno}\); a capture can "
+                    r"cut only the last line of a log, and a cut line has no line feed$")
+        raise AssertionError(f"json reads {line!r}")
+
+    def test_rejects_a_record_behind_bytes_that_json_refuses(self):
+        """After the records of the control, a line of the log holds an emulation
+        record of the rule behind 8 NUL bytes (a copytruncate rotation of a log leaves
+        them), or behind U+200B. json refuses the line at character 1. A capture can
+        cut only the last line of a log, and it cuts the end of that line, not its
+        start: so the line is named, the negative control does not hold, and no rule
+        is judged. Four runs, started together: each prefix on a line that ends with a
+        line feed, and the NUL bytes on the last line without a line feed (that line
+        does not start with "{"). (Before, the reader skipped each line that json
+        refused as a cut line: the record was lost without a word, and the step gave
+        `Negative control held`.)"""
+        (positive,) = case_events(self.good(), self.CASES, "exec-websocket-get-procA")
+        runs = []
+        for label, prefix, end in (("NUL bytes", "\x00" * 8, "\n"), ("U+200B", "\u200b", "\n"),
+                                   ("NUL bytes on the last line without a line feed",
+                                    "\x00" * 8, "")):
+            tree = self.tree()
+            records = write_log(tree, self.LOG, self.CASES, *self.BENIGN)
+            with open(tree.tmp_path(self.LOG), "a", encoding="utf-8") as fh:
+                fh.write(prefix + json.dumps(positive) + end)
+            runs.append((label, records, tree.start_step(self.negative_control_step())))
+        for label, records, pending in runs:
+            with self.subTest(label):
+                result = pending.result()
+                self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+                self.assertNotIn("Negative control held", result.stdout)
+                self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+                self.assert_saw(result, LINES_NOT_RECORDS.format(1))
+                self.assert_rejects(result, r"^ERROR: the audit log \S+/pre-emulation-audit\.log, "
+                                            rf"line {records + 1}: not JSON \(Expecting value, at "
+                                            r"character 1\)$", exit_code=1)
+
+    def test_rejects_a_cut_line_that_is_not_the_last_line_of_a_capture(self):
+        """A line that json refuses and that starts with "{" (an audit event without
+        its end) is named when a capture cannot have cut it. Three runs, started
+        together, after the records of the control: the line ends with a line feed
+        and a complete audit event follows it (the middle of the log); the line ends
+        with a line feed and is the last line; the line ends with a carriage return
+        alone and a complete audit event follows it (the reader keeps the end of each
+        line as the log holds it, so that line has no line feed and is not the last
+        line). In each run the ERROR line names the line and says that a capture can
+        cut only the last line, and no rule is judged. (Before, the reader skipped
+        each line that json refused.)"""
+        good = self.good()
+        after = json.dumps(case_events(good, self.CASES, self.BENIGN[0])[0])
+        runs = []
+        for label, text, loaded in (
+                ("the middle of the log", self.CUT + "\n" + after + "\n", 1),
+                ("the last line with a line feed", self.CUT + "\n", 0),
+                ("a carriage return alone, before a record", self.CUT + "\r" + after + "\n", 1)):
+            tree = self.tree()
+            records = write_log(tree, self.LOG, self.CASES, *self.BENIGN)
+            with open(tree.tmp_path(self.LOG), "a", encoding="utf-8", newline="") as fh:
+                fh.write(text)
+            runs.append((label, records, loaded,
+                         tree.start_step(self.negative_control_step())))
+        for label, records, loaded, pending in runs:
+            with self.subTest(label):
+                result = pending.result()
+                self.assert_saw(result, rf"^Loaded {records + loaded} audit event\(s\) from ")
+                self.assertNotIn("Negative control held", result.stdout)
+                self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+                self.assert_saw(result, LINES_NOT_RECORDS.format(1))
+                self.assert_rejects(result, r"^ERROR: the audit log \S+/pre-emulation-audit\.log, "
+                                            rf"line {records + 1}: " + self.not_json(self.CUT),
+                                    exit_code=1)
+
+    def test_control_the_last_line_cut_by_a_capture_is_skipped(self):
+        """CONTROL of the reader: CI copies the log with `cat` while the writer adds
+        one line for each record, so the last line can be an audit event without its
+        end and without its line feed. After the records of the control the log holds
+        such a line: the reader skips it, the Loaded line counts the records, and the
+        negative control holds."""
+        good = self.good()
+        records = write_log(good, self.LOG, self.CASES, *self.BENIGN)
+        with open(good.tmp_path(self.LOG), "a", encoding="utf-8") as fh:
+            fh.write(self.CUT)
+        with open(good.tmp_path(self.LOG), encoding="utf-8") as fh:
+            self.assertFalse(fh.read().endswith("\n"))
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^ERROR")
+        self.assert_accepts(result, r"^Negative control held")
+
     def test_rejects_json_that_the_validator_cannot_read(self):
         """Two lines of JSON that is too deep, and one with a number that is too long.
         Each is a named problem, not a traceback.
@@ -2818,10 +2936,9 @@ class K8sValidator(gatelib.GateCase):
           (a RecursionError of json.loads()). From Python 3.14 the limit is the C stack
           of the thread: with a large stack json.loads() reads the line, and it is a
           list, which is not an object. Either way the line is named. The lists are
-          closed: a line that is not JSON (a line that was cut at the end of a capture)
-          is no record and no problem, so an open `[` * 100000 is skipped where the
-          stack is large, and that proves nothing. Where the stack is large, this line
-          does not show that the reader catches a RecursionError of json.loads().
+          closed: where the stack is large, an open `[` * 100000 is a line that is not
+          JSON, and that does not show that the reader catches a RecursionError of
+          json.loads(). Where the stack is large, this line does not show it either.
         - An audit event whose requestObject holds objects 3000 deep: json.loads()
           reads it, and sigma_eval.flatten() stops at the limit of the recursion of
           Python (a RecursionError on each version).
@@ -3301,19 +3418,28 @@ class StaticPodValidator(gatelib.GateCase):
 
     def test_rejects_negative_control_on_an_audit_log_of_unparsable_lines(self):
         """An audit log with bytes and without a record (two lines that are not JSON):
-        the loader skips them, so the audit rule gets nothing to read."""
+        the audit rule gets nothing to read, and the control of the audit log fails.
+        Each of the two lines is named too: a capture can cut only the last line of a
+        log, and the last line here ends with a line feed. (Before, the loader
+        skipped each line that json refused, named neither, and the run ended with
+        `FAILED: 1 control(s) failed.`)"""
         good = self.good()
         self.write_logs(good)
         write_text_log(good, self.AUDIT, "audit: no JSON here\n\n{\"kind\": \"Event\", \n")
         result = good.run_step(self.negative_control_step())
         self.assert_saw(result, r"^Loaded 0 audit event\(s\) from ")
-        self.assert_rejects(
+        log = r"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+        self.assert_saw(result, log + r"1: not JSON \(Expecting value, at character 1\)$")
+        self.assert_saw(result, log + r"3: not JSON \(Expecting property name enclosed in double "
+                                      r"quotes, at character 18\); a capture can cut only the "
+                                      r"last line of a log, and a cut line has no line feed$")
+        self.assert_saw(
             result,
             r"^  CONTROL FAILED: no audit event in the pre-emulation audit log \S+/"
             r"pre-emulation-audit\.log \(0 records read from 2 non-blank line\(s\)\), so the "
-            r"negative control proves nothing for the audit rule$",
-            exit_code=1)
-        self.assert_saw(result, r"^FAILED: 1 control\(s\) failed\.$")
+            r"negative control proves nothing for the audit rule$")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_rejects(result, LINES_NOT_RECORDS.format(2), exit_code=1)
 
     def test_rejects_negative_control_on_a_missing_audit_log(self):
         """The capture left no audit log (a private copy: the shared copy keeps the

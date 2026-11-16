@@ -1517,18 +1517,28 @@ is the smallest identity that the code that reads the log needs:
 | CRI log | A pod sandbox: a JSON object with a string `id` that is not empty, and a `metadata` object with a string `name` that is not empty. A line is one snapshot of `crictl pods -o json` (`{"items": [...]}`, each item a sandbox), or one sandbox. A sandbox counts once, at the first line that holds its `id`. `{"items": []}` is a snapshot without a sandbox. | `{}`; a snapshot whose `items` is not a list (`{"items": null}`, `{"items": {}}`); an item without an `id` or without `metadata.name`. |
 | file log | A file event: a JSON object with a `TargetFilename` and an `Image`, strings that are not empty. `k8s/auditd_file_events.py` writes both in each event. | `{}`. |
 
-A blank line, and a line that is not JSON (a line that was cut at the end of a
-capture), are no record and no problem. Each other line, or item of a snapshot, that
+A blank line, and a line that a capture cut, are no record and no problem. CI copies
+each log with `cat` while its writer adds one line for each record (the CRI sensor
+`k8s/cri-pod-sensor.sh` writes one snapshot on each line), and the writer writes the
+line feed of a line last. So a capture can cut only the last line of a log, the cut
+removes the end of that line, and its line feed is not there. The reader skips a line
+that json refuses only when it is the last line of the log, has no line feed at its
+end, and starts with `{` (`cut_line()`). Each other line, or item of a snapshot, that
 is not a record is a problem:
 
+- a line that is not JSON (the message gives the error of `json` and its character
+  in the line): NUL bytes (a `copytruncate` rotation of a log leaves them) or U+200B
+  before a record, or a cut line before other lines. For a line that starts with `{`
+  the message adds that a capture can cut only the last line of a log, and that a
+  cut line has no line feed;
 - JSON that is not an object (`[]`, `"text"`, `1`, `true`, `null`);
 - a JSON object that is not a record of the log;
 - a snapshot whose `items` is not a list;
 - bytes that are not UTF-8 (the message names the first such byte and its character
   in the line);
 - the byte order mark of UTF-8 (`EF BB BF`) at the start of a line (json refuses such
-  a line, and the reader would skip it as a cut line: two logs joined hold the mark
-  at the start of a later line);
+  a line, and the message names the mark: two logs joined hold the mark at the start
+  of a later line);
 - JSON that the validator cannot read: nesting that is too deep (a `RecursionError`),
   or a number with more digits than Python reads (a `ValueError`);
 - a record that one event table cannot hold: two keys of the record that differ only

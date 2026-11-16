@@ -408,10 +408,14 @@ def load_extra(path, logsource, label):
     """A live capture as a slice with this logsource: JSONL raw events (or one JSON array).
 
     A line ends at a line break of the file (U+2028 in a JSON string is a character of
-    the line). A line that is not JSON (a line that was cut at the end of a capture) is
-    skipped. Raises CaptureError for a capture that is a directory or cannot be read,
-    for the first line with bytes that are not UTF-8 or that starts with the byte order
-    mark of UTF-8, for JSON that the gate cannot read (too deep for json or for
+    the line). A capture can cut only its last line: the text after the last line feed
+    is skipped when json refuses it and it starts with "{" (the same rule as cut_line()
+    of the reader of the Kubernetes validators). Raises CaptureError for a capture that
+    is a directory or cannot be read, for the first line with bytes that are not UTF-8
+    or that starts with the byte order mark of UTF-8, for the first other line that
+    json refuses (NUL bytes or U+200B before an event, a cut line before other lines;
+    when no line before it is JSON, the capture is one document, and the error of the
+    document names its place), for JSON that the gate cannot read (too deep for json or for
     flatten(), a number with too many digits: the first such line, or the document),
     and for the first line, or element of the array, that is JSON and not an object
     (`[]` in a line of a log) or is an event that one event table cannot hold
@@ -436,9 +440,9 @@ def load_extra(path, logsource, label):
             raise CaptureError(f"the live capture {path}, line {n}: bytes that are not UTF-8 "
                                f"(the byte 0x{ord(line[bad]) - 0xDC00:02x} at character "
                                f"{bad + 1} of the line)")
-        # json refuses a line that starts with the byte order mark, and a line that is
-        # not JSON is skipped: so the mark is an error at the start of each line (two
-        # captures joined hold it at a later line too).
+        # json refuses a line that starts with the byte order mark: the mark is an
+        # error at the start of each line (two captures joined hold it at a later line
+        # too), with a text that names it.
         if line.strip().startswith("\ufeff"):
             raise CaptureError(f"the live capture {path}, line {n}: the line starts with the "
                                "byte order mark of UTF-8 (EF BB BF)")
@@ -455,14 +459,24 @@ def load_extra(path, logsource, label):
                 try:
                     raw.append(json.loads(line))
                     where.append(f"line {n}")
-                except json.JSONDecodeError:
-                    continue
+                except json.JSONDecodeError as e:
+                    if n == len(lines) and line.startswith("{"):
+                        continue        # the last line, cut by the capture
+                    if raw:
+                        text = lines[n - 1]
+                        at = e.colno + len(text) - len(text.lstrip())
+                        raise CaptureError(f"the live capture {path}, line {n}: "
+                                           f"{_not_json(e, at, text)}") from None
+                    # No line before it is JSON: the capture is one document with an
+                    # error, and the error of the document names its place.
+                    if isinstance(whole, json.JSONDecodeError):
+                        raise CaptureError(f"the live capture {path}, line {whole.lineno}: "
+                                           f"{_not_json(whole, whole.colno)}") from None
+                    raise CaptureError(f"the live capture {path}: "
+                                       f"{_cannot_read(whole)}") from None
                 except (ValueError, RecursionError) as e:
                     raise CaptureError(f"the live capture {path}, line {n}: "
                                        f"{_cannot_read(e)}") from None
-        if not raw and not isinstance(whole, json.JSONDecodeError):
-            # One JSON document (no line of it is JSON) that json cannot read.
-            raise CaptureError(f"the live capture {path}: {_cannot_read(whole)}") from None
     bad = [(at, event) for at, event in zip(where, raw) if not isinstance(event, dict)]
     if bad:
         at, event = bad[0]
@@ -491,6 +505,18 @@ def _cannot_read(error):
     text = str(error).split("\n")[0]
     return (f"JSON that the gate cannot read ({type(error).__name__}: "
             + (text if len(text) <= 100 else text[:100] + "...") + ")")
+
+
+def _not_json(error, at, line=""):
+    """The text of a line that json refuses (the words of the reader of the Kubernetes
+    validators): `error` is the json.JSONDecodeError, `at` the character of the error
+    in its line (from 1), and `line` the line of a capture of JSON lines as the
+    capture holds it (empty for the error of one document)."""
+    why = f"not JSON ({error.msg}, at character {at})"
+    if line.lstrip().startswith("{"):
+        why += ("; a capture can cut only the last line of a log, and a cut line has no "
+                "line feed")
+    return why
 
 
 # RFC 3339 date-time (section 5.6) with seconds and a zone; "T", "t" or a space between.

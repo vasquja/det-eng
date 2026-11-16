@@ -94,14 +94,16 @@ Modes:
         write (a directory) is an ERROR, and the run exits 1.
 
 A record of the log is an audit event: a JSON object with "kind": "Event" and an
-apiVersion of the group audit.k8s.io (RECORDS). A blank line, and a line that is
-not JSON (a line that was cut at the end of a capture), are not records. Each
-other line that is not a record fails every run that reads the log (a strict run,
---report and --expect-miss), and no rule is judged: JSON that is not an object
-(`[]`), a JSON object that is not an audit event (`{}`, a core Event of
-`kubectl get events`, an audit EventList), bytes that are not UTF-8, the byte
-order mark of UTF-8 at the start of a line, and JSON that the validator cannot
-read (too deep, or a number that is too long). One ERROR line names the log, the
+apiVersion of the group audit.k8s.io (RECORDS). A blank line, and a line that a
+capture cut, are not records. A capture can cut only the last line of the log:
+that line is skipped when json refuses it, it has no line feed at its end, and it
+starts with "{" (cut_line()). Each other line that is not a record fails every run
+that reads the log (a strict run, --report and --expect-miss), and no rule is
+judged: a line that is not JSON (also NUL bytes or U+200B before a record),
+JSON that is not an object (`[]`), a JSON object that is not an audit event
+(`{}`, a core Event of `kubectl get events`, an audit EventList), bytes that are
+not UTF-8, the byte order mark of UTF-8 at the start of a line, and JSON that the
+validator cannot read (too deep, or a number that is too long). One ERROR line names the log, the
 line and the problem (at most 10 lines for each log, then the number of the
 others), and a FAILED line ends the run with exit 1. With --expect-miss the --json
 control of the pre-emulation log says FAILED, and --json gets `log_problems` (with
@@ -331,6 +333,30 @@ def table_problem(source, record):
     return f"{RECORDS[source]['a']} that one event table cannot hold: {problem[1]}"
 
 
+def cut_line(text, n, last):
+    """True for line `n` (from 1) of a log of `last` lines when a capture can have
+    cut it, so that json refuses it and it is no problem: the last line of the log,
+    without a line feed at its end, that starts with "{". CI copies each log with
+    `cat` while its writer adds one line for each record (the CRI sensor writes one
+    snapshot on each line), and the writer writes the line feed of a line last. So
+    only the last line can be cut, the cut removes its end, and its line feed is
+    not there. Each other line that json refuses (NUL bytes or U+200B before a
+    record, a cut line before other lines) is a problem."""
+    return n == last and not text.endswith("\n") and text.strip().startswith("{")
+
+
+def _not_json(text, error):
+    """The text of the problem of a line that json refuses: `error` is the
+    json.JSONDecodeError of the line without its blanks. The character counts from
+    1, in the line as the log holds it."""
+    at = error.colno + len(text) - len(text.lstrip())
+    why = f"not JSON ({error.msg}, at character {at})"
+    if text.strip().startswith("{"):
+        why += ("; a capture can cut only the last line of a log, and a cut line has no "
+                "line feed")
+    return why
+
+
 def read_log(path, source):
     """(records, problems): the records of the log of `source` at `path`, flattened to
     the dotted field names of the rules (sigma_eval.flatten), and the problems.
@@ -342,70 +368,76 @@ def read_log(path, source):
 
     A problem is a line, or an item of a snapshot, that is not a record of the log:
     bytes that are not UTF-8, the byte order mark of UTF-8 at the start of a line,
-    JSON that the validator cannot read (too deep, or a number that is too long),
-    JSON that is not an object, a JSON object that is not a record of the log, a
-    record that one event table cannot hold (table_problem()), and a snapshot whose
-    "items" is not a list. Each problem is (line, item, text): lines
-    and items count from 1, and item is None for a line. A blank line, and a line
-    that is not JSON (a line that was cut at the end of a capture), are no record and
-    no problem. Raises LogError for a log that is a directory or cannot be read.
+    a line that is not JSON (cut_line() tells the one exception), JSON that the
+    validator cannot read (too deep, or a number that is too long), JSON that is not
+    an object, a JSON object that is not a record of the log, a record that one
+    event table cannot hold (table_problem()), and a snapshot whose "items" is not a
+    list. Each problem is (line, item, text): lines and items count from 1, and item
+    is None for a line. A blank line, and a line that a capture cut (cut_line()), are
+    no record and no problem. Raises LogError for a log that is a directory or cannot
+    be read.
     """
     spec = RECORDS[source]
     if os.path.isdir(path):
         raise LogError(f"the {spec['log']} {path} is a directory, not a file")
     records, problems, seen = [], [], set()
     try:
-        with open(path, encoding="utf-8", errors="surrogateescape") as fh:
-            for n, text in enumerate(fh, 1):
-                line = text.strip()
-                if not line:
-                    continue
-                bad = next((i for i, ch in enumerate(text) if 0xDC80 <= ord(ch) <= 0xDCFF), None)
-                if bad is not None:
-                    problems.append((n, None, f"bytes that are not UTF-8 (the byte "
-                                              f"0x{ord(text[bad]) - 0xdc00:02x} at character "
-                                              f"{bad + 1} of the line)"))
-                    continue
-                # json refuses a line that starts with the byte order mark, and the
-                # reader skips a line that is not JSON: so the mark is a problem at the
-                # start of each line (two logs joined hold it at a later line too).
-                if line.startswith(BYTE_ORDER_MARK):
-                    problems.append((n, None, "the line starts with the byte order mark of "
-                                              "UTF-8 (EF BB BF)"))
-                    continue
-                try:
-                    doc = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                except (ValueError, RecursionError) as e:
-                    problems.append((n, None, _cannot_read(e)))
-                    continue
-                items = [(None, doc)]
-                if spec["snapshot"] and isinstance(doc, dict) and "items" in doc:
-                    if not isinstance(doc["items"], list):
-                        problems.append((n, None, 'a snapshot whose "items" is not a list '
-                                                  f"({_kind(doc['items'])})"))
-                        continue
-                    items = list(enumerate(doc["items"], 1))
-                for item, value in items:
-                    why = record_problem(source, value)
-                    if why is None:
-                        try:
-                            record = sigma_eval.flatten(value)
-                        except RecursionError as e:
-                            why = _cannot_read(e)
-                        else:
-                            why = table_problem(source, record)
-                    if why is not None:
-                        problems.append((n, item, why))
-                        continue
-                    if spec["once_by"]:
-                        if value[spec["once_by"]] in seen:
-                            continue
-                        seen.add(value[spec["once_by"]])
-                    records.append(record)
+        # newline="": each line keeps its end as the log holds it, so cut_line() can
+        # tell a line that ends with a line feed.
+        with open(path, encoding="utf-8", errors="surrogateescape", newline="") as fh:
+            lines = fh.readlines()
     except OSError as e:
         raise LogError(f"the {spec['log']} {path} cannot be read ({e.strerror or e})") from None
+    for n, text in enumerate(lines, 1):
+        line = text.strip()
+        if not line:
+            continue
+        bad = next((i for i, ch in enumerate(text) if 0xDC80 <= ord(ch) <= 0xDCFF), None)
+        if bad is not None:
+            problems.append((n, None, f"bytes that are not UTF-8 (the byte "
+                                      f"0x{ord(text[bad]) - 0xdc00:02x} at character "
+                                      f"{bad + 1} of the line)"))
+            continue
+        # json refuses a line that starts with the byte order mark: the mark is a
+        # problem at the start of each line (two logs joined hold it at a later line
+        # too), with a text that names it.
+        if line.startswith(BYTE_ORDER_MARK):
+            problems.append((n, None, "the line starts with the byte order mark of "
+                                      "UTF-8 (EF BB BF)"))
+            continue
+        try:
+            doc = json.loads(line)
+        except json.JSONDecodeError as e:
+            if not cut_line(text, n, len(lines)):
+                problems.append((n, None, _not_json(text, e)))
+            continue
+        except (ValueError, RecursionError) as e:
+            problems.append((n, None, _cannot_read(e)))
+            continue
+        items = [(None, doc)]
+        if spec["snapshot"] and isinstance(doc, dict) and "items" in doc:
+            if not isinstance(doc["items"], list):
+                problems.append((n, None, 'a snapshot whose "items" is not a list '
+                                          f"({_kind(doc['items'])})"))
+                continue
+            items = list(enumerate(doc["items"], 1))
+        for item, value in items:
+            why = record_problem(source, value)
+            if why is None:
+                try:
+                    record = sigma_eval.flatten(value)
+                except RecursionError as e:
+                    why = _cannot_read(e)
+                else:
+                    why = table_problem(source, record)
+            if why is not None:
+                problems.append((n, item, why))
+                continue
+            if spec["once_by"]:
+                if value[spec["once_by"]] in seen:
+                    continue
+                seen.add(value[spec["once_by"]])
+            records.append(record)
     return records, problems
 
 

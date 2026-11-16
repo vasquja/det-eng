@@ -102,15 +102,20 @@ the reader of the Kubernetes validators (see
 that is one JSON array, and logsources whose records have no definition there
 (`linux/auditd`), so it does not judge if an object is a record of its log. A line
 ends at a line break of the file, as the reader of the Kubernetes validators reads
-it: U+2028, U+2029 and U+0085 in a JSON string are characters of the line. A line
-that is not JSON (a line that was cut at the end of a capture) is skipped. Each of
-these ends the run with exit 1 and one `ERROR` line that names the capture (and the
-first such line, or element), and no rule is scored on the capture:
+it: U+2028, U+2029 and U+0085 in a JSON string are characters of the line. A capture
+can cut only its last line, at its end: the text after the last line feed is skipped
+when json refuses it and it starts with `{`, as the reader of the Kubernetes
+validators skips it. Each of these ends the run with exit 1 and one `ERROR` line that
+names the capture (and the first such line, or element), and no rule is scored on
+the capture:
 
 - a capture that is a directory, or that the run cannot read;
+- another line that json refuses (NUL bytes or U+200B before an event, a cut line
+  before other lines). When no line before it is JSON, the capture is one document,
+  and the line names the place of the error of the document;
 - a line with bytes that are not UTF-8 (the line names the first such byte and its
   character in the line);
-- the byte order mark of UTF-8 (`EF BB BF`) at the start of line 1;
+- the byte order mark of UTF-8 (`EF BB BF`) at the start of a line;
 - a line, or an element of the array, that is JSON and not an object (`[]`);
 - JSON that the gate cannot read: nesting too deep for `json` or for `flatten()`, or a
   number with more digits than Python reads, in a line or in a file that is one JSON

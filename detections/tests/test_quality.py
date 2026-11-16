@@ -451,16 +451,21 @@ class ScoreBenign(gatelib.GateCase):
         UTF-8, or whose audit event holds two keys that differ only in letter case (also
         in a nested object), or that holds JSON that the gate cannot read (too deep for
         json or for flatten(), a number with too many digits, in a line or in one
-        document). Each is an ERROR line that names the capture (and the line), the run
-        exits 1, and no rule is scored on the capture. Before roadmap item R2d the first
-        three ended with a traceback, the fourth lost line 1 without a word (and before
-        the check of the corrections, the mark at line 2 lost line 2), the key clashes ended
-        with a ValueError of sigma_eval.EventTable, the JSON too deep or too long with
-        a traceback, and the document was a capture of no event. Controls: a capture
-        whose two events hold the keys `verb` and `Verb` (no event holds both) is
-        scored, and so is a capture whose line holds U+2028, U+2029 and U+0085 in a
-        string (before R2d str.splitlines() cut the line, and the event was lost
-        without a word)."""
+        document), or whose line 2 is not JSON and is not the last line (NUL bytes
+        before an event, a cut line before other lines). Each is an ERROR line that
+        names the capture (and the line), the run exits 1, and no rule is scored on
+        the capture. Before roadmap item R2d the first three ended with a traceback,
+        the fourth lost line 1 without a word (and before the check of the
+        corrections, the mark at line 2 lost line 2), the key clashes ended with a
+        ValueError of sigma_eval.EventTable, the JSON too deep or too long with a
+        traceback, and the document was a capture of no event; before the second check
+        of the corrections, a line that json refused was skipped as a cut line, and its
+        event was lost without a word. Controls: a capture whose two events hold the
+        keys `verb` and `Verb` (no event holds both) is scored, and so is a capture
+        whose line holds U+2028, U+2029 and U+0085 in a string (before R2d
+        str.splitlines() cut the line, and the event was lost without a word), and a
+        capture whose last line is cut and has no line feed (the two events before it
+        are scored)."""
         good = self.good()
         events = [event for case in
                   good.read_jsonl("detections/sigma/T1609/k8s_pod_exec_attach.cases.jsonl")
@@ -477,6 +482,11 @@ class ScoreBenign(gatelib.GateCase):
         for _ in range(1500):
             deep = {"a": deep}
         separators = dict(events[1], userAgent="kubectl/v1.31 \u2028 \u2029 \u0085 x")
+        cut = b'{"kind": "Event", "apiVersion": "audit.k8s.io/v1", "verb": "ge'
+        try:
+            json.loads(cut)
+        except json.JSONDecodeError as e:
+            cut_error = f"not JSON ({e.msg}, at character {e.colno})"
         runs = self.extra_slice_runs({
             "a directory": None,
             "a path that does not exist": False,
@@ -502,7 +512,14 @@ class ScoreBenign(gatelib.GateCase):
             # A line of the capture ends at a line break of the file: U+2028, U+2029 and
             # U+0085 in a JSON string are characters of the line.
             "line separators in a string": lines[0]
-            + json.dumps(separators, ensure_ascii=False).encode() + b"\n"})
+            + json.dumps(separators, ensure_ascii=False).encode() + b"\n",
+            # A capture can cut only its last line, at its end: NUL bytes before an
+            # event (a copytruncate rotation leaves them) and a cut line before other
+            # lines are errors. The last line, cut and without its line feed, is
+            # skipped (a control).
+            "NUL bytes before an event at line 2": lines[0] + b"\x00" * 8 + lines[1],
+            "a cut line before other lines": lines[0] + cut + b"\n" + lines[1],
+            "a cut last line": lines[0] + lines[1] + cut})
         cannot_read = {
             "an object too deep to flatten": r", line 2: JSON that the gate cannot read "
                                              r"\(RecursionError: [^)]*\)",
@@ -529,11 +546,16 @@ class ScoreBenign(gatelib.GateCase):
             "two keys of a nested object": ", line 2: an event that one event table cannot "
                                            "hold: keys that differ only by case: objectRef.Name "
                                            "/ objectRef.name, which SQLite reads as one column "
-                                           "name"}
+                                           "name",
+            "NUL bytes before an event at line 2": ", line 2: not JSON (Expecting value, at "
+                                                   "character 1)",
+            "a cut line before other lines": f", line 2: {cut_error}; a capture can cut only "
+                                             "the last line of a log, and a cut line has no "
+                                             "line feed"}
         for label, (path, result) in runs.items():
             with self.subTest(label):
                 self.assertNotIn("Traceback", result.output)
-                if label in ("two events", "line separators in a string"):
+                if label in ("two events", "line separators in a string", "a cut last line"):
                     self.assert_accepts(result, r"^Live capture kind-live \(kubernetes/audit, 2 "
                                                 r"event\(s\)\) - shadow only")
                     continue
