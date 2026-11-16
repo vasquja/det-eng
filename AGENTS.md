@@ -139,6 +139,14 @@ python3 detections/check_variants.py
 python3 detections/check_variants.py --check-doc   # the probe table of detections/SEMANTICS.md is current
 python3 detections/check_variants.py --write-doc   # after a change to the golden probes of the gate
 
+# External records (splunk/attack_data, pinned by sha256): each rule on the datasets of
+# its technique. CI runs the shadow report: no verdict fails it, a structural fault does.
+# --enforce exits 1 until the owner's declarations cover each MISS (ROADMAP, note for R3).
+python3 detections/check_external_records.py --lint             # offline: SOURCES.json, expectations.json, the syscall table
+python3 detections/check_external_records.py --lint --enforce   # also exit 1 on a stale declaration
+python3 detections/check_external_records.py                    # the report (cache: ~/.cache/det-eng/external)
+python3 detections/check_external_records.py --enforce          # exit 1 on a MISS or a declaration that fails
+
 python3 -B detections/tests/gatelib.py --run   # gate tests: each gate rejects its planted bad artifacts
 
 # Kubernetes platforms (offline): audit-policy simulator and provider field mappings.
@@ -169,6 +177,9 @@ Each validator's details are in [`detections/README.md`](detections/README.md).
 - **Upstream filing is a human step.** Prepare artifacts per
   [`UPSTREAM.md`](UPSTREAM.md); do not open PRs against tired-labs, Atomic Red
   Team, or SigmaHQ.
+- **Pin bumps** of `detections/external/SOURCES.json` and the declarations of
+  `detections/external/expectations.json` are human decisions: propose them in the
+  pull request.
 - **Merging is a human decision.** A human merges, or adds the `automerge` label.
   With the label, the `automerge` workflow turns on GitHub's native auto-merge only
   while its rails hold: a pull request that changes anything but content (rules,

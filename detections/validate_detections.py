@@ -121,7 +121,6 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
 
 try:
     import yaml
@@ -129,6 +128,7 @@ except ImportError:
     sys.exit("PyYAML is required: pip install -r detections/requirements.txt")
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import auditd_records  # noqa: E402
 import sigma_eval  # noqa: E402
 try:
     # sigma_explain explains a verdict, and it grades the built controls. Without it
@@ -407,65 +407,19 @@ def audit_log_lines():
         return []
 
 
-_FIELD = re.compile(r'(\w+)=("[^"]*"|\S+)')
-# The SYSCALL record's credential fields that a rule may read. uid is the real
-# user, euid the effective user that the kernel checks for privilege, auid the
-# login uid that pam_loginuid sets at login and every child inherits (sudo and su
-# keep it). suid, fsuid and the group ids are in the record too, but no rule
-# reads them.
-CRED_FIELDS = ("uid", "euid", "auid")
-_STAMP = re.compile(r"audit\((\d+)\.(\d+):")
-_HEX = re.compile(r"(?:[0-9A-F]{2})+")
-
-
-def untrusted_string(value, quoted):
-    """An auditd 'untrusted string' field (comm, exe) as text.
-
-    The kernel logs such a value in double quotes when it is plain printable
-    text, and as unquoted uppercase HEX when it holds a space, a quote or a
-    non-printable byte (audit_log_untrustedstring): comm 'Attach Listener' is
-    logged as comm=417474616368204C697374656E6572. Decode that form, so a rule or
-    an allowlist that names the process sees its real name.
-    """
-    if value is None or quoted or not _HEX.fullmatch(value):
-        return value
-    return bytes.fromhex(value).decode("utf-8", "replace")
-
-
 def normalize(lines):
-    """auditd SYSCALL records keyed det-eng -> events in the rules' schema."""
+    """auditd SYSCALL records keyed det-eng -> events in the rules' schema.
+
+    auditd_records.syscall_event() builds each event. The external-records gate
+    builds the events of a raw auditd dataset with the same function."""
     names = {nr: name for name, nr in _dump_syscalls().items()}
     events = []
     for line in lines:
         if 'key="det-eng"' not in line:
             continue
-        raw, _, enriched = line.partition("\x1d")
-        pairs = _FIELD.findall(raw)
-        f = {k: v.strip('"') for k, v in pairs}
-        quoted = {k for k, v in pairs if v.startswith('"')}
-        if f.get("type") != "SYSCALL" or "syscall" not in f:
-            continue
-        name = dict(_FIELD.findall(enriched)).get("SYSCALL")
-        stamp = _STAMP.search(f.get("msg", ""))
-        when = datetime.fromtimestamp(int(stamp.group(1)) + int(stamp.group(2)) / 1000,
-                                      timezone.utc)
-        events.append({
-            "type": "SYSCALL",
-            "syscall": name or names.get(int(f["syscall"]), f["syscall"]),
-            "success": f.get("success"),
-            "exit": f.get("exit"),
-            **{f"a{i}": f.get(f"a{i}") for i in range(4)},
-            "pid": int(f["pid"]),
-            "ppid": int(f["ppid"]),
-            # Credentials as text, exactly as the kernel logs them: decimal ids in
-            # the initial user namespace (from_kuid(&init_user_ns, ...)), so root in
-            # a rootless container reads as the host user. An unset login uid is
-            # auid=4294967295 ((u32)-1, AUDIT_UID_UNSET): daemons and their children.
-            **{k: f.get(k) for k in CRED_FIELDS},
-            "comm": untrusted_string(f.get("comm"), "comm" in quoted),
-            "exe": untrusted_string(f.get("exe"), "exe" in quoted),
-            "timestamp": when.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
-        })
+        event = auditd_records.syscall_event(line, names)
+        if event is not None:
+            events.append(event)
     return events
 
 

@@ -43,7 +43,8 @@
 /upstream/
 
 # 3. Checking code, agent policy, setup guides and licence texts inside the content
-#    paths. These lines must stay below block 2.
+#    paths, and the pins and declarations of the external-records gate (block 1 owns
+#    them already; the line says so). These lines must stay below block 2.
 *.py                                 @vasquja
 /research/tools/                     @vasquja
 /.github/                            @vasquja
@@ -55,6 +56,7 @@ CLAUDE.local.md                      @vasquja
 /docs/CODEOWNERS                     @vasquja
 /docs/setup/                         @vasquja
 /detections/sigma/LICENSE.md         @vasquja
+/detections/external/*.json          @vasquja
 
 # 4. Usual other spellings of the agent policy names. On a file system that is not
 #    case sensitive (macOS, Windows) an agent reads them as the names in block 3.

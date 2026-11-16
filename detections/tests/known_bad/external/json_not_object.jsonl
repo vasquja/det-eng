@@ -1,0 +1,2 @@
+{"eventVersion": "1.08", "eventSource": "ec2.amazonaws.com", "eventName": "ModifySnapshotAttribute", "recipientAccountId": "123456789012"}
+[]

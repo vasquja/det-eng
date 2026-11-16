@@ -55,7 +55,9 @@ The order matters. Tests for the gates come before each change to the gates.
 | R2d | **Hygiene and report truth** (design 4.2). No rule file is hidden from the gates: a rule in a dotfile under `detections/sigma/` fails. The coverage report refuses an entry of `detections/RULE_DEFECTS.md` that has a section and no Summary row, and names the entry (also an entry with a row and no section, and an ID with two rows or two sections). `rule_cases.py` names the rule and the case when two keys of an event differ only in letter case, and does not stop with a traceback. The loaders of the three Kubernetes validators and of the cloud validator do the same for a record that is JSON and not an object: they name the log and the line (a `[]` line of an audit, CRI or file log), or the rule and the fixture (a fixture of `null`, or a `null` record of a fixture), and do not stop with a traceback. A line that is a JSON object and not a record of its log (`{}` in an audit, CRI or file log) is named and not counted. The loaders also name the log or the fixture, and do not stop with a traceback, for a Kubernetes log that is a directory, for a log or a cloud fixture that is not UTF-8, and for a cloud fixture that starts with a byte order mark. (A cloud fixture that is a directory is an ERROR row since R2c.) A ledger window whose start is after its end is an error that names the procedure and the two times, not a `MISS` of the rule: on 2026-11-13 a wrong clock of the runner image gave such windows, and the validators reported misses of rules that matched. The verdict line of the API server validator names every TRR that `MANIFEST` grades (today it leaves out 9039). | in progress | R2 | Its known-gap tests are rejection tests. Each gate exits with an error that names the hidden file, the defect entry, the case, the log, the log line or the fixture. For a log line that is not a record, the rejection tests must cover each of the three Kubernetes validators and each log of that validator (audit, CRI, file). The two known gaps of such a line (`k8s-log-line-not-an-object`, `k8s-log-object-not-an-audit-event`) have `validate_k8s_detections.py` as their gate: each closes when that validator alone is corrected, and its assertions about the other two validators run only while the gap is open. The four kind jobs are green on the pull request and on `main` and print no ERROR line from the log readers (see the note for R2d below). |
 | R2e | **Cloud baselines are hard** (design 4.2). The cloud validator fails a benign baseline in which no record is a near-miss or a filtered negative of its rule (`AGENTS.md`: a hard benign baseline differs from the attack only in the discriminating field). | not started | R2c | Its known-gap test is a rejection test. The baseline of `trr9036` (`azure_privileged_role_assignment.yml`: the validator grades both of its records `distant`, so none is a near-miss or a filtered negative of the rule) is corrected or has an entry in `detections/RULE_DEFECTS.md`. |
 | R7 | **Representation variants in the oracle** (design 4.7). Run each case as compact JSON, sorted JSON, a multi-valued list model, case-sensitive `LIKE` and RE2. Correct the two GCP rules that lose their hit under compact JSON. Write `detections/SEMANTICS.md`. | in progress | R2 | A check fails on a new divergence between variants. The known losses are listed as expected, each with a reason. Two rules lose their hit under compact JSON today: `T1199/gcp_workforce_principalset_privileged_binding.yml` and `T1098.001/gcp_workload_identity_federation_sa_binding.yml`. This item records both in `detections/RULE_DEFECTS.md` and corrects them. |
-| R3 | **External records** (design 4.3). Records that the agent did not write, from `splunk/attack_data` (Apache-2.0), pinned by hash. A same-technique record must fire the rule unless a protected file says why not. | not started | R2 | The check runs in CI in shadow mode and reports each rule's result on each same-technique dataset. The first real-record miss has a defect entry. |
+| R3 | **External records** (design 4.3). Records that the agent did not write, from `splunk/attack_data` (Apache-2.0), pinned by hash. A same-technique record must fire the rule unless a protected file says why not. | in progress | R2 | The check runs in CI in shadow mode and reports each rule's result on each same-technique dataset. The first real-record miss has a defect entry. The item is `done` when the job `external-records` is green on `main`, that defect entry is merged, and `gatelib.py --gaps` lists no gap that names R3 (see the note for R3 below). |
+| R3b | **External records are enforced** (design 4.3). After a green shadow period, the job `external-records` runs `--enforce` and is a required check. `SOURCES.json` pins the attack record of each dataset, and a FIRE must come from that record and not from a benign twin of the dataset (the FIC dataset of T1098.001 holds one). Item 1 of the definition of done (`AGENTS.md`, "Fires") names the same-technique external records. A pair that was read on the base branch and is `NOT READ` on the head fails (a change of the log source of a rule hides a `MISS`), and the online run checks the sha256 and the yml of each `excluded` entry too. | not started | R3 | The job runs `--enforce` and is in the ruleset. A hit on a record that is not a pinned attack record is not a FIRE: the known-gap test `ext-fire-on-another-record` is a rejection test. |
+| R3c | **A benign view of the external records** (design 4.3). Each rule is scored, as a shadow benign slice, on every dataset of its log source and not only on the datasets of its technique: also on the files that no yml names, deduplicated by sha256 and by event (a file can hold each event two times). A hit is a triage item for a human, never a budget. | not started | R3 | The report gives a row for each hit of a rule on a dataset of another technique. It never changes `detections/benign/scores.json` or `budgets.json`. |
 | R4 | **Harvest the captures of CI** (design 4.4). The lab validators write the records that the kernel or the API server produced. A scheduled job commits them as evidence. | not started | R2, T8 | A Linux or Kubernetes rule has a committed captured positive that the agent did not write by hand. |
 | R5 | **Provenance tiers** (design 4.5). Each case and fixture says where it came from. The coverage report shows `proven-live`, `proven-recorded`, `proven-synthetic` and `claimed`. Stop calling a hand-written fixture "recorded". | not started | R3 | The coverage report does not call a cloud procedure Proven when its only evidence is a fixture that the agent wrote. |
 | R6 | **Mutation ratchet** (design 4.6). Build mutants of each rule. The count of surviving mutants for a rule must not rise. | not started | R2 | A pull request that adds a dead or over-broad item to a rule fails. |
@@ -198,6 +200,49 @@ print no `ERROR` line of the reader. If a job prints one, read it: it names the 
 the line and the problem. Correct the capture when the line is not a record of its log.
 Correct the definition in `RECORDS` (the same text in the three validators) when
 the line is a record that the definition refuses.
+
+Note for R3. The gate is `detections/check_external_records.py` (`detections/README.md`,
+"External records"). The survey of `splunk/attack_data` at the pinned commit `4b19e4b6`
+(2026-11-12) found these files of the log sources of the rules, by yml rows and by
+distinct paths: 90 rows and 88 paths labelled CloudTrail (OCSF records and Splunk risk
+events among them), 47 Azure, 10 Kubernetes candidates (9 of them audit events), 104
+auditd (and 8 auditd files that no yml names) and 3 GCP (all Splunk search exports).
+Design 4.3 gives 39, 18, 12, 112 and 6; these numbers match none of these bases.
+
+- **Pairs.** A rule and a dataset are same technique when the ATT&CK ID of the folder
+  of the rule is in the `mitre_technique` of the yml, and a record of the dataset goes to
+  the log source of the rule by its own shape (not by the sourcetype of the yml). Another
+  attack tag of the rule gives `RELATED`; a parent or a sub-technique gives no pair. A
+  raw auditd dataset of a CVE exploit has a `procedure` label in `SOURCES.json`, which
+  the description of its yml must name; a rule whose `cve.*` tags do not include it
+  gives `OTHER-PROCEDURE`. Both are reported, not expected.
+- **Formats.** Only native records: CloudTrail, Azure Monitor (Entra) by `category`,
+  Kubernetes audit events and raw auditd lines. No adapter: OCSF, Splunk search exports,
+  Activity Log records in the shape of the REST API, Splunk risk events and Office 365
+  Management Activity go to the `excluded` list with their reason.
+- **The first run** (shadow; 27 datasets of 1.2 MB, 1.3 MB with their ymls, the LICENSE
+  and the syscall table; 19 excluded): 21 of 91 rules have a same-technique dataset of
+  their log source; 37 expected pairs give 7 FIRE and 30 MISS; 18 pairs are related, 30
+  other procedure, 14 not read and 35 excluded. The CopyFail
+  correlation fires 10 times on the real capture (120 distinct evidence records). The two
+  dirtyfrag rules miss both Dirty Frag captures: their audit rules record no `socket()`.
+- **The first real-record miss** is `T1098.001/entra_app_federated_credential_backdoor.yml`
+  on `T1098.001/azure_ad_federated_identity_credential/azure-audit`: the nearest record
+  (line 1) is a near-miss, and one flip of
+  `selection_unapproved_issuer.properties.targetResources` would fire the rule. The
+  survey probe found two causes, and the record fires only with both changed: the issuer
+  is the approved GitHub host and the subject names a repository of another owner, and
+  the keys of `newValue` are lower case. The casing is not verified: the yml says that
+  the author replaced the tenant details. Design 4.3 gives the casing as the only cause.
+- **The pull requests.** PR-0: R4 of `check_sufficiency.py` renames the fixture
+  constants, so the known gap `cs-rule-keyed-on-fixture-constant` (it names R3) closes.
+  PR-1: this gate in shadow mode, with no declaration. PR-2: the defect entry of the
+  first real-record miss in `detections/RULE_DEFECTS.md`, and the coverage report again.
+  PR-3: the declarations of the owner, from the drafts that `--suggest` prints.
+- **Done.** R3 is `done` when the job `external-records` is green in shadow mode on
+  `main`, the defect entry of PR-2 is merged, and `gatelib.py --gaps` lists no gap that
+  names R3. R3b (enforce, attack-record pins) and R3c (a benign view over all the
+  datasets of a log source) come after it.
 
 ## 2. Throughput: many builders, no hand integration
 
