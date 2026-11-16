@@ -3442,6 +3442,63 @@ class StaticPodValidator(gatelib.GateCase):
         self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
         self.assert_rejects(result, LINES_NOT_RECORDS.format(2), exit_code=1)
 
+    def cri_join_step(self):
+        """The lines of the collect step of the job validate that join the CRI sensor
+        logs of the two nodes in /tmp/cri-pods.jsonl, as a step of their own: from the
+        line that empties the joined log to the end of the loop after it. The other
+        lines of that step need a cluster and root."""
+        joined = ": > /tmp/cri-pods.jsonl"
+        step = gatelib.ci_step("validate-staticpod-detections.yml", "validate", joined)
+        lines = step.run.splitlines()
+        start = [n for n, line in enumerate(lines) if line.strip() == joined]
+        self.assertEqual(len(start), 1, f"the collect step holds `{joined}` {len(start)} time(s)")
+        end = next(n for n in range(start[0], len(lines)) if lines[n].strip() == "done")
+        self.assertIn("docker exec", "\n".join(lines[start[0]:end]))
+        return step._replace(run="\n".join(lines[start[0]:end + 1]) + "\n")
+
+    def test_control_the_joined_cri_log_holds_only_complete_lines(self):
+        """CONTROL of the collect step: it joins the copies of the CRI sensor logs of
+        the two nodes in /tmp/cri-pods.jsonl. The sensor of a node writes while `cat`
+        copies its log, so a copy can end with a snapshot without its end and its
+        line feed. The reader skips such a line only as the last line of its log: in
+        the joined log the cut line of the first node is before the lines of the
+        second node, and the run fails on it. (Before, the step joined the copies as
+        they were, and the reader skipped each line that json refused: the cut line,
+        which held the first snapshot of the second node, was lost without a word.)
+
+        The lines of the step run with a stub of `docker`: the copy of the control
+        plane ends with a cut snapshot, and the copy of the worker ends with a line
+        feed. The joined log holds the complete snapshot of each node, one notice
+        names the control plane, and the negative control reads the joined log with
+        no ERROR line, counts the two sandboxes and holds."""
+        good = self.good()
+        sidecar = self.FOLDER + "k8s_cri_static_pod_start.cases.jsonl"
+        cases = {case["name"]: case for case in good.read_jsonl(sidecar)}
+        snapshots = [json.dumps({"items": [cases[name]["events"][0]]}) + "\n"
+                     for name in ("api-scheduled-target-pod", "coredns-deployment-pod")]
+        write_text_log(good, "node-copies/kind-control-plane", snapshots[0] + '{"items": [{"id": "')
+        write_text_log(good, "node-copies/kind-worker", snapshots[1])
+        stub = ('test "$1 $3 $4" = "exec cat /var/log/cri-pods.jsonl" && '
+                'exec cat "$NODE_COPIES/$2"')
+        joined = good.run_step(self.cri_join_step(), programs={"docker": stub},
+                               env={"CLUSTER_NAME": "kind",
+                                    "NODE_COPIES": good.tmp_path("node-copies")})
+        self.assertEqual(joined.returncode, 0, joined.describe())
+        with open(good.tmp_path("cri-pods.jsonl"), encoding="utf-8", newline="") as fh:
+            self.assertEqual(fh.read(), "".join(snapshots))
+        notice = ("::notice title=collect::the copy of the CRI sensor log of {} ends with a "
+                  "line without a line feed")
+        self.assertIn(notice.format("kind-control-plane"), joined.stdout)
+        self.assertNotIn(notice.format("kind-worker"), joined.stdout)
+        self.write_logs(good)
+        with open(good.tmp_path("cri-pods.jsonl"), "rb") as src, \
+                open(good.tmp_path(self.CRI), "wb") as dst:
+            dst.write(src.read())
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, r"^Loaded 2 pod sandbox\(es\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^ERROR")
+        self.assert_accepts(result, r"^Negative control held")
+
     def test_rejects_negative_control_on_a_missing_audit_log(self):
         """The capture left no audit log (a private copy: the shared copy keeps the
         logs of the other tests). The CRI log and the file log are there, so this is
