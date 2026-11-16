@@ -308,16 +308,20 @@ A sidecar line that `rule_cases.py` cannot judge is an `ERROR` line that names t
 rule and the line, and the case when the line has a name (a string). The gate judges
 the other cases of the file, and fails. Such a line holds bytes that are not UTF-8
 (the line names the first such byte and its character in the line); is not JSON, or
-not a JSON object; lacks a field, or its name, kind, events or breaks has the wrong
-type; or one event table cannot hold the events of its case. All the events of a case
-go in one SQLite table, so each event must be a JSON object, no two values of an
-event may get one flat key (`{"a": {"b": 1}, "a.b": 2}`), and the table must hold
-each event: no event may hold two keys that differ only in the letter case of their
-ASCII letters (`comm`, `Comm`), a key that SQLite reads as `_rowid` or `rowid`, or an
-integer outside 64 bits. The test is the test of the table itself
+not a JSON object; holds JSON that the gate cannot read (nesting too deep for `json`
+or for `flatten()`, a number with too many digits); lacks a field, or its name, kind,
+events or breaks has the wrong type; or one event table cannot hold the events of its
+case. All the events of a case go in one SQLite table, so each event must be a JSON
+object, no two values of an event may get one flat key (`{"a": {"b": 1}, "a.b": 2}`),
+and the table must hold each event: no event may hold two keys that differ only in
+the letter case of their ASCII letters (`comm`, `Comm`), a key that SQLite reads as
+`_rowid` or `rowid`, a key with a NUL or a lone surrogate, or a value that SQLite
+does not hold as it is (an integer outside 64 bits, `NaN` or `Infinity`, a text with
+a lone surrogate). The test is the test of the table itself
 (`sigma_eval.event_problem()`; see "Field names" in
 [`SEMANTICS.md`](SEMANTICS.md#2-the-record)). `comm` in one event of a case and `Comm`
-in another share one column, and the rule reads both. `check_sufficiency.py` (R3),
+in another share one column, and the rule reads both; the analysis of a correlation
+(its group-by fields, its time) reads them in the same way. `check_sufficiency.py` (R3),
 `check_null_safety.py`, `k8s_policy_coverage.py` and `check_provider_mappings.py` read
 the sidecars with the same loader, so they name such a line too. A slice of the
 benign corpus is named in the same way (see
@@ -912,10 +916,12 @@ pre-emulation audit log and a live Ubuntu-runner workload are scored in CI too, 
 shadow mode. A hit that a rule defect explains is tracked in
 [`RULE_DEFECTS.md`](RULE_DEFECTS.md). The gate puts the events of each slice in one
 SQLite table. Keys of two events that differ only in letter case (`eventName` in one
-event, `EventName` in another) share one column. An event that one table cannot hold
-(it holds both keys, a key `rowid` or `_rowid`, or an integer outside 64 bits) ends
-the run with exit 1 and one `ERROR` line that names the slice, the event and the keys,
-and no rule is scored:
+event, `EventName` in another) share one column. The gate tests each event of each
+slice before it scores, also of a slice that no rule reads. An event that one table
+cannot hold (it holds both keys, a key `rowid` or `_rowid`, or a value that SQLite
+does not hold as it is; see "Field names" in [`SEMANTICS.md`](SEMANTICS.md#2-the-record))
+ends the run with exit 1 and one `ERROR` line that names the slice, the event and the
+keys, and no rule is scored:
 
 ```text
 ERROR: the slice planted-key-case-clash v1 (detections/benign/slices/aws/planted-key-case-clash.json), event 1 of 1: keys that differ only by case: EventName / eventName, which SQLite reads as one column name. No rule is scored on the benign corpus.
@@ -1420,8 +1426,10 @@ is not a record is a problem:
   or a number with more digits than Python reads (a `ValueError`);
 - a record that one event table cannot hold: two keys of the record that differ only
   in the letter case of their ASCII letters (a ConfigMap whose `data` holds `key` and
-  `KEY`), a key that SQLite reads as `rowid` or `_rowid`, or an integer outside 64
-  bits. The test is the test of the table of `sigma_eval.py` (see "Field names" in
+  `KEY`), a key that SQLite reads as `rowid` or `_rowid`, a key with a NUL or a lone
+  surrogate, or a value that SQLite does not hold as it is (an integer outside 64
+  bits, `NaN` or `Infinity`, a text with a lone surrogate, which the JSON escape
+  `\ud800` gives). The test is the test of the table of `sigma_eval.py` (see "Field names" in
   [`SEMANTICS.md`](SEMANTICS.md#2-the-record)). Two records of a log whose keys differ
   only in letter case are no problem: their keys share one column, and the validator
   judges each rule.
@@ -1461,7 +1469,13 @@ Not covered: one audit event of a log at level `RequestResponse` can hold keys t
 differ only in letter case (a ConfigMap whose `data` holds `key` and `KEY`), and the
 API server accepts it. The reader names such a line as a problem, because the event
 table of the offline oracle cannot hold it, and the run judges no rule. Only a store
-that keeps the letter case of a field name holds such an event.
+that keeps the letter case of a field name holds such an event. Also not covered: the
+procedure gates of the validators are Python, and read a key only as the API server
+writes it (`verb`). A record that spells it `Verb` matches a rule (SQLite reads the
+key as the field) and no gate, so the run calls the match unrelated, also with
+`--expect-miss`. And a record whose two values get one flat key
+(`{"a": {"b": 1}, "a.b": 2}`) keeps the last value without a word; `rule_cases.py`
+refuses such a case. The API server writes neither.
 
 ### Node runtime sensor (TRR9003 Strategy 1)
 
@@ -1983,16 +1997,21 @@ must hold a record, because a negative control that read no record cannot fail:
   in the change that adds its two fixtures.
 - A rule whose fixture the loader (`load_fixture()`) cannot read as records gets an
   `ERROR` row that names the fixture, and the line or the element (from 1) where
-  there is one. Such a fixture is a directory; holds bytes that are not UTF-8 (the
-  row names the first such byte and its character in the line) or starts with the
-  byte order mark of UTF-8; is JSON that is not an array or an object (`null`, `7`);
-  holds a line that is not JSON (JSON lines), or JSON that the loader cannot read
-  (nesting that is too deep, a number with too many digits); or holds a record that
-  is not a JSON object (`null`, `[]`, `1`, `"x"`) or that one event table cannot
-  hold (two keys of the record that differ only in letter case, a key `rowid` or
-  `_rowid`, an integer outside 64 bits; see "Field names" in
-  [`SEMANTICS.md`](SEMANTICS.md#2-the-record)). Keys of two records that differ only
-  in letter case are no problem: they share one column. For example:
+  there is one. Such a fixture holds bytes that are not UTF-8 (the row names the
+  first such byte and its character in the line) or starts with the byte order mark
+  of UTF-8; is JSON that is not an array or an object (`null`, `7`), or an object whose
+  envelope key holds no list (`{"Records": null}`); holds a line that is not JSON
+  (JSON lines, where a line ends at LF), or JSON that the loader cannot read (nesting
+  that is too deep, a number with too many digits); or holds a record that is not a
+  JSON object (`null`, `[]`, `1`, `"x"`) or that one event table cannot hold (two
+  keys of the record that differ only in letter case, a key `rowid` or `_rowid`, a
+  key with a NUL or a lone surrogate, a value that SQLite does not hold as it is:
+  an integer outside 64 bits, `NaN` or `Infinity`, a text with a lone surrogate; see
+  "Field names" in [`SEMANTICS.md`](SEMANTICS.md#2-the-record)). Keys of two records
+  that differ only in letter case are no problem: they share one column. A fixture
+  that is a directory gets the row of a missing fixture above. Not covered: a record
+  whose two values get one flat key (`{"a": {"b": 1}, "a.b": 2}`) keeps the last
+  value without a word. For example:
 
   ```text
   ERROR [TRR9012 AWS] aws_leaked_access_key_recon.yml: the benign fixture detections/cloud/fixtures/trr9012/benign.json, element 4 of the array: a record that is not a JSON object (null). The loader cannot read it, so nothing proves the rule -- leaked long-term access-key orientation + enumeration
@@ -2000,7 +2019,8 @@ must hold a record, because a negative control that read no record cannot fail:
 
   `check_null_safety.py`, `check_sufficiency.py` (R2 for the benign fixture, R4 for
   the attack fixture) and `check_variants.py` read the fixtures with the same loader.
-  Each fails the rule with a line that names the fixture, and exits 1.
+  Each fails the rule with a line that names the fixture (the loader names a
+  directory as such), and exits 1.
 - A rule whose benign baseline holds no record gets a `FAIL` row with `NEGATIVE
   CONTROL VACUOUS`. The count is the number of records that the loader returns, which
   is the set that the rule is run on: `[]`, a file of zero bytes or of blank lines,

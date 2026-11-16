@@ -101,6 +101,8 @@ the reader of the Kubernetes validators (see
 [`../README.md`](../README.md#a-record-of-each-log)). It reads JSON lines or a file
 that is one JSON array, and logsources whose records have no definition there
 (`linux/auditd`), so it does not judge if an object is a record of its log. A line
+ends at a line break of the file, as the reader of the Kubernetes validators reads
+it: U+2028, U+2029 and U+0085 in a JSON string are characters of the line. A line
 that is not JSON (a line that was cut at the end of a capture) is skipped. Each of
 these ends the run with exit 1 and one `ERROR` line that names the capture (and the
 first such line, or element), and no rule is scored on the capture:
@@ -110,9 +112,14 @@ first such line, or element), and no rule is scored on the capture:
   character in the line);
 - the byte order mark of UTF-8 (`EF BB BF`) at the start of line 1;
 - a line, or an element of the array, that is JSON and not an object (`[]`);
+- JSON that the gate cannot read: nesting too deep for `json` or for `flatten()`, or a
+  number with more digits than Python reads, in a line or in a file that is one JSON
+  document;
 - an event that one event table cannot hold: two keys of the event that differ only
   in the letter case of their ASCII letters (`verb`, `Verb`), a key that SQLite reads
-  as `rowid` or `_rowid`, or an integer outside 64 bits (see "Field names" in
+  as `rowid` or `_rowid`, a key with a NUL or a lone surrogate, or a value that SQLite
+  does not hold as it is (an integer outside 64 bits, `NaN` or `Infinity`, a text with
+  a lone surrogate; see "Field names" in
   [`../SEMANTICS.md`](../SEMANTICS.md#2-the-record)). Two events whose keys differ
   only in letter case are no problem: their keys share one column.
 
@@ -213,8 +220,9 @@ deletion and its controller's cleanup. Events drawn independently almost never l
 up inside a correlation window. SQLite folds the ASCII letters of a column name, so
 keys that differ only in letter case (`requestId` and `RequestID`) are one column of
 the table of a slice: two events of a slice can hold them, and a rule reads both. One
-event cannot hold both: `score_benign.py` names the slice, the event and the two keys,
-and scores no rule.
+event cannot hold both: `score_benign.py` tests each event of each slice before it
+scores (also of a slice that no rule reads), names the slice, the event and the two
+keys, and scores no rule.
 
 The three synthetic `kubernetes/audit` slices (`k8s-audit-control-plane`,
 `k8s-audit-gitops-ci`, `k8s-audit-human-operators`) say that their levels follow

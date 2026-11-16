@@ -77,21 +77,33 @@ reads the keys of the records in the same way:
 
 - Two keys that differ only in the letter case of their ASCII letters, in two records
   of one event set (`verb` in one record, `Verb` in another), are one column, and an
-  item reads both.
+  item reads both. The analysis of a correlation in the gates
+  ([`sigma_explain.py`](sigma_explain.py): its group-by fields, its time, its counted
+  field) reads such keys in the same way.
 - One record cannot hold two such keys: they would be two values in one column. The
   oracle refuses such a record with `sigma_eval.EventError` (a `ValueError`) that
-  names the record and the keys. Each loader of records refuses it first, with the
-  same test (`sigma_eval.event_problem()`), and names the log and the line, the
-  fixture and the record, the slice and the event, or the rule and the case.
+  names the record and the keys.
 - The oracle also refuses a key that SQLite reads as `_rowid` (the row id column of
   its table) or `rowid` (the name by which the correlation queries read the row id),
-  and an integer outside 64 bits (an `INTEGER` of SQLite). `oid` and `_rowid_`, the
-  other names of the row id, are ordinary keys: no query reads them.
+  a key that holds a NUL or a lone surrogate (no column name can hold it), and a
+  value that SQLite does not hold as it is: an integer outside 64 bits (an `INTEGER`
+  of SQLite), `NaN`, `Infinity` and `-Infinity` (Python's `json` reads them, JSON has
+  no such number, and SQLite stores `NaN` as NULL), and a text with a lone surrogate
+  (the JSON escape `\ud800` gives one, and UTF-8 cannot encode it). `oid` and
+  `_rowid_`, the other names of the row id, are ordinary keys: no query reads them.
+  So is `event_ids`, the name of the column of the evidence of a correlation: the hits
+  of a plain rule are the rows of the table.
 
 The gate tests `EventTableKeys` of
 [`tests/test_sufficiency.py`](tests/test_sufficiency.py) prove each statement of this
-list on each run. [`check_null_safety.py`](check_null_safety.py) fails a rule that
-reads a field in a letter case that the records do not use.
+list about the table on each run. Each loader of records asks the same test
+(`sigma_eval.event_problem()`) of each record before a table gets it, and names the
+log and the line, the fixture and the record, the slice and the event (of each slice
+of the benign corpus, also one that no rule reads), or the rule and the case; the
+tests of each gate prove it. [`check_null_safety.py`](check_null_safety.py) fails a
+rule that reads a field that a record carries in another letter case (Lucene, Splunk
+and ES|QL do not read it), also when another record of the event set holds the field
+as the rule writes it.
 
 ## 3. Letter case
 
