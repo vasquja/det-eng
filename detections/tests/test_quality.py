@@ -339,20 +339,32 @@ class ScoreBenign(gatelib.GateCase):
 
     def test_rejects_slice_that_no_rule_reads_whose_event_keys_differ_only_in_letter_case(self):
         """The planted slice of the test above with a log source that no rule reads
-        (okta/system). The gate tests each event of each slice before it scores, also
-        of a slice that no rule reads: the ERROR line names the slice, the event and
-        the two keys, with --update and with --check --enforce."""
+        (okta/system), as a sequence of two steps: the first event holds `eventName`
+        only, the second `eventName` and `EventName`. The gate tests each event of each
+        slice before it scores, also of a slice that no rule reads: the ERROR line names
+        the slice, the second event and the two keys, with --update and with --check
+        --enforce."""
         tree = self.tree()
         tree.plant("quality/slice_keys_differ_by_case/planted-key-case-clash.json",
                    self.PLANTED_SLICE)
-        tree.edit_json(self.PLANTED_SLICE, lambda doc: doc.update(
-            logsource={"product": "okta", "service": "system"}))
+
+        def unread_two_steps(doc):
+            event = doc["templates"][0].pop("event")
+            first = {key: value for key, value in event.items() if key != "EventName"}
+            doc["templates"][0]["events"] = [{"event": first}, {"event": event}]
+            doc["logsource"] = {"product": "okta", "service": "system"}
+            return doc
+        tree.edit_json(self.PLANTED_SLICE, unread_two_steps)
+        steps = tree.read_json(self.PLANTED_SLICE)["templates"][0]["events"]
+        self.assertEqual([sorted(step["event"]) for step in steps],
+                         [["eventName", "eventSource"],
+                          ["EventName", "eventName", "eventSource"]])
         self.assertNotRegex("\n".join(tree.read(rel) for rel in
                                        tree.glob("detections/sigma/*/*.yml")),
                             r"(?m)^\s*product: *okta\b")
         update = tree.start(self.GATE, "--update")
         line = (r"^ERROR: the slice planted-key-case-clash v1 \(detections/benign/slices/aws/"
-                r"planted-key-case-clash\.json\), event 1 of 1: keys that differ only by case: "
+                r"planted-key-case-clash\.json\), event 2 of 2: keys that differ only by case: "
                 r"EventName / eventName, which SQLite reads as one column name\. No rule is "
                 r"scored on the benign corpus\.$")
         for result in (self.run_ci(tree), update.result()):
