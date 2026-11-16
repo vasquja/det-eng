@@ -149,6 +149,7 @@ class AptInstall(unittest.TestCase):
 
     def run_script(self, *args, runner=MIRRORS, runner_then=None, public=MIRRORS, apt_ok=("runner", "public"),
                    fault=RESOLVER_FAULTS[0], missing=(), fail=(), env=None):
+        import gatelib
         with tempfile.TemporaryDirectory(prefix="deteng-apt-") as state:
             bin_dir, tmp_dir = os.path.join(state, "bin"), os.path.join(state, "tmp")
             os.mkdir(bin_dir)
@@ -156,10 +157,7 @@ class AptInstall(unittest.TestCase):
             for name in REAL:
                 os.symlink(shutil.which(name, path="/usr/bin:/bin"), os.path.join(bin_dir, name))
             for name, body in STUBS.items():
-                path = os.path.join(bin_dir, name)
-                with open(path, "w", encoding="utf-8") as fh:
-                    fh.write("#!/bin/sh\n" + body.lstrip("\n"))
-                os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+                gatelib.write_program(os.path.join(bin_dir, name), "#!/bin/sh\n" + body.lstrip("\n"))
             files = [("resolves_runner", runner), ("resolves_public", public), ("apt_ok", apt_ok), ("fault", (fault,)),
                      ("missing", missing), ("fail", fail), ("calls", ()), ("timeouts", ())]
             if runner_then is not None:

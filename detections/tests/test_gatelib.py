@@ -16,6 +16,8 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -464,6 +466,79 @@ class Trees(unittest.TestCase):
         with self.assertRaisesRegex(ZeroDivisionError, "division"):
             gatelib.background(lambda: 1 / 0).result()
         self.assertEqual(gatelib.background(lambda a, b=0: a + b, 1, b=2).result(), 3)
+
+    # Linux refuses to run a file that a process holds open for writing ("Text file
+    # busy"), and a child holds each open file of its parent until it runs its own
+    # program. A run in the background starts children while another thread writes the
+    # programs of a step, so the two share the lock of write_program(). Each test holds
+    # that lock and shows that the other side waits. (A slow machine can only make a
+    # test pass that should fail, never the other way round.)
+
+    def test_no_child_process_starts_while_a_program_is_written(self):
+        """Each start of a child process (subprocess.run here) waits for the lock."""
+        codes = []
+        child = threading.Thread(target=lambda: codes.append(
+            subprocess.run([sys.executable, "-c", "pass"]).returncode))
+        with gatelib._EXEC_LOCK:
+            child.start()
+            child.join(0.5)
+            self.assertTrue(child.is_alive())
+            self.assertEqual(codes, [])
+        child.join(60)
+        self.assertEqual(codes, [0])
+
+    def test_the_start_keeps_the_lock_until_the_child_runs_its_program(self):
+        """Until the child runs its own program, it holds the open files of its parent,
+        so the start must keep the lock until then, not only take it. The child here
+        tells the test that it has started, and waits 1 s before it runs python."""
+        ready_read, ready_write = os.pipe()
+        self.addCleanup(os.close, ready_read)
+        self.addCleanup(os.close, ready_write)
+
+        def before_the_program():                   # runs in the child
+            os.write(ready_write, b"started")
+            time.sleep(1)
+
+        codes = []
+        child = threading.Thread(target=lambda: codes.append(subprocess.run(
+            [sys.executable, "-c", "pass"], preexec_fn=before_the_program).returncode))
+        child.start()
+        self.assertEqual(os.read(ready_read, 7), b"started")
+        free = gatelib._EXEC_LOCK.acquire(timeout=0.3)
+        if free:
+            gatelib._EXEC_LOCK.release()
+        self.assertFalse(free, "the lock was free before the child ran its program")
+        child.join(60)
+        self.assertEqual(codes, [0])
+
+    def test_write_program_waits_while_a_child_process_starts(self):
+        tree = gatelib.Tree(())
+        self.addCleanup(tree.cleanup)
+        path = tree.path("stub")
+        writer = threading.Thread(target=gatelib.write_program,
+                                  args=(path, "#!/bin/sh\necho stub output\n"))
+        with gatelib._EXEC_LOCK:
+            writer.start()
+            writer.join(0.5)
+            self.assertTrue(writer.is_alive())
+            self.assertFalse(os.path.exists(path))
+        writer.join(60)
+        self.assertFalse(writer.is_alive())
+        ran = tree.run_command([path])
+        self.assertEqual((ran.returncode, ran.stdout), (0, "stub output\n"), ran.describe())
+
+    def test_run_step_writes_the_programs_of_the_step_under_the_lock(self):
+        tree = gatelib.Tree(())
+        self.addCleanup(tree.cleanup)
+        step = gatelib.Step("w.yml", "job", "step", "bash", "python3 -c 'print(1)'\nstub\n")
+        with gatelib._EXEC_LOCK:
+            pending = tree.start_step(step, programs={"stub": "echo stub output"})
+            time.sleep(0.5)
+            self.assertFalse(pending.done())
+            self.assertEqual(glob.glob(os.path.join(tree.sandbox, "**", "bin", "*"),
+                                       recursive=True), [])
+        ran = pending.result()
+        self.assertEqual((ran.returncode, ran.stdout), (0, "1\nstub output\n"), ran.describe())
 
     def test_cleanup_waits_for_a_background_run(self):
         """No copy is deleted under a running gate: cleanup() waits for the runs that

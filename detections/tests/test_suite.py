@@ -11,6 +11,9 @@ Gate tests, group `suite`: rules that hold for the gates and the suite as a whol
                       or a test module does not load, and the suite loses no test
     PipedSteps        no step of any workflow pipes a command into `tee` with a
                       shell that loses the exit code of the command
+    ProgramWrites     no module of the suite sets the mode of a file (chmod) but
+                      gatelib.write_program(), which writes a program under the
+                      lock that each start of a child process takes
     SoftSteps         no step that runs a script or the unit tests of the repository
                       has `continue-on-error` (on the step or on its job), but the
                       shadow steps that the class lists
@@ -398,6 +401,81 @@ class EmulationScriptsJob(gatelib.GateCase):
             self.skipTest(why)
         tree = self.suite(helper="VALUE = 1\n")
         gatelib.assert_rejects(tree.run_step(self.step()), r"^NO TESTS RAN$", exit_code=5)
+
+
+def chmod_calls(source, filename):
+    """(line, innermost function) of each call of a chmod in a module: os.chmod(),
+    os.fchmod(), os.lchmod(), a bare chmod() and a method chmod() (pathlib)."""
+    found = []
+
+    class Visit(ast.NodeVisitor):
+        def __init__(self):
+            self.functions = []
+
+        def visit_FunctionDef(self, node):
+            self.functions.append(node.name)
+            self.generic_visit(node)
+            self.functions.pop()
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_Call(self, node):
+            func = node.func
+            name = (func.attr if isinstance(func, ast.Attribute)
+                    else func.id if isinstance(func, ast.Name) else None)
+            if name in ("chmod", "fchmod", "lchmod"):
+                found.append((node.lineno, self.functions[-1] if self.functions else None))
+            self.generic_visit(node)
+
+    Visit().visit(ast.parse(source, filename))
+    return found
+
+
+class ProgramWrites(unittest.TestCase):
+    """Linux refuses to run a file that a process holds open for writing ("Text file
+    busy"), and a child process holds each open file of its parent until it runs its
+    own program. A test that writes a program and runs it (a stub, the programs of
+    Tree.run_step()) while a run is in the background therefore writes it with
+    gatelib.write_program(): it writes under the lock that each start of a child
+    process of the suite takes (test_gatelib.py proves the lock). A file becomes a
+    program only through a chmod, so no module of the suite calls a chmod outside
+    write_program()."""
+
+    ALLOWED = {("gatelib.py", "write_program")}
+
+    def offenders(self, filename, source):
+        return [f"{filename}:{line}" for line, function in chmod_calls(source, filename)
+                if (filename, function) not in self.ALLOWED]
+
+    def test_the_rule_reads_each_way_to_call_a_chmod(self):
+        source = ("import os, pathlib\nfrom os import chmod\n"
+                  "def stub(path):\n"
+                  "    os.chmod(path, 0o755)\n"             # line 4
+                  "    chmod(path, 0o755)\n"                # line 5
+                  "    pathlib.Path(path).chmod(0o755)\n"   # line 6
+                  "    os.fchmod(3, 0o755)\n"               # line 7
+                  "    text = 'os.chmod(path, 0o755)'\n"    # a text, not a call
+                  "def write_program(path):\n"
+                  "    os.chmod(path, 0o755)\n")            # line 10
+        self.assertEqual(self.offenders("test_x.py", source),
+                         ["test_x.py:4", "test_x.py:5", "test_x.py:6", "test_x.py:7",
+                          "test_x.py:10"])
+        # Only write_program() of gatelib.py may call it.
+        self.assertEqual(self.offenders("gatelib.py", source),
+                         ["gatelib.py:4", "gatelib.py:5", "gatelib.py:6", "gatelib.py:7"])
+
+    def test_no_module_of_the_suite_sets_a_mode_but_write_program(self):
+        offenders, allowed = [], 0
+        for name in sorted(os.listdir(gatelib.TESTS)):
+            if not name.endswith(".py"):
+                continue
+            with open(os.path.join(gatelib.TESTS, name), encoding="utf-8") as fh:
+                source = fh.read()
+            offenders += self.offenders(name, source)
+            allowed += sum((name, function) in self.ALLOWED
+                           for _, function in chmod_calls(source, name))
+        self.assertEqual(offenders, [], "write the program with gatelib.write_program()")
+        self.assertEqual(allowed, 1)        # the rule reads the one real call
 
 
 class PipedSteps(unittest.TestCase):
