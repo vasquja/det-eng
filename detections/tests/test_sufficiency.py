@@ -581,6 +581,51 @@ class RuleCases(gatelib.GateCase):
                 self.assertEqual(re.findall(r"(?m)^ok    T9999/planted_rule\.yml :: \S+ +(\S+): ",
                                             result.stdout), names[:1] + names[2:])
 
+    def test_rejects_sidecar_line_with_a_lone_surrogate_outside_the_events(self):
+        """The second case of the sound sidecar with a lone surrogate (the JSON escape
+        \\ud800) in its name, in an atom of its `breaks`, or in its `why`. UTF-8 cannot
+        encode it, so no line of a gate can print it: each is an ERROR line that names
+        the rule, the line and the field, and the gate judges the other cases.
+        check_provider_mappings.py reads the sidecars with the same loader: a case of
+        the Kubernetes rule T1609 with such a name is its ERROR line too. (Before, both
+        gates ended with a UnicodeEncodeError at the print of the name.)"""
+        tree = self.plant_bad_cases("sound")
+        lines = tree.read(self.PLANTED_CASES).splitlines(keepends=True)
+        case = json.loads(lines[1])
+        self.assertEqual((case["name"], case["kind"]), ("packet-dgram-socket", "near-miss"))
+        names = [json.loads(line)["name"] for line in lines]
+        breaks = case["breaks"] if isinstance(case["breaks"], list) else [case["breaks"]]
+        bad = {"name": dict(case, name="packet-dgram-socket-\ud800"),
+               "breaks": dict(case, breaks=breaks + ["sel.\udc80"]),
+               "why": dict(case, why="planted \ud800")}
+        surrogate = {"name": "D800", "breaks": "DC80", "why": "D800"}
+        for field, planted in bad.items():
+            with self.subTest(field):
+                text = json.dumps(planted) + "\n"
+                self.assertIn("\\ud", text.lower())
+                tree.write(self.PLANTED_CASES, "".join(lines[:1] + [text] + lines[2:]))
+                result = tree.run(self.GATE, self.PLANTED_RULE)
+                self.assertNotIn("Traceback", result.output)
+                self.assert_rejects(
+                    result, rf"^ERROR T9999/planted_rule\.yml: line 2: the field '{field}' holds "
+                            rf"the lone surrogate U\+{surrogate[field]}, which is not text of "
+                            r"UTF-8, so no line of a gate can print it$", exit_code=1)
+                self.assertIn("\nFAILED: 1 case problem(s).\n", result.stdout)
+                self.assertEqual(re.findall(r"(?m)^ok    T9999/planted_rule\.yml :: \S+ +(\S+): ",
+                                            result.stdout), names[:1] + names[2:])
+        k8s = self.tree("detections", ".github/scripts")   # the gate loads check_sigma_regex.py
+        sidecar = "detections/sigma/T1609/k8s_pod_exec_attach.cases.jsonl"
+        good = k8s.read_jsonl(sidecar)
+        k8s.write(sidecar, k8s.read(sidecar) + json.dumps(
+            dict(good[0], name="planted-\ud800")) + "\n")
+        result = k8s.run("detections/check_provider_mappings.py",
+                         "detections/sigma/T1609/k8s_pod_exec_attach.yml")
+        self.assertNotIn("Traceback", result.output)
+        self.assert_rejects(
+            result, rf"^ERROR T1609/k8s_pod_exec_attach\.yml: sidecar error: line {len(good) + 1}: "
+                    r"the field 'name' holds the lone surrogate U\+D800, which is not text of "
+                    r"UTF-8, so no line of a gate can print it$", exit_code=1)
+
 
 # What sigma_eval.EventTable does with keys that differ only in letter case, with
 # names that SQLite reads as the row id, and with integers outside 64 bits. The

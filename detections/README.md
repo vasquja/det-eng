@@ -310,8 +310,9 @@ the other cases of the file, and fails. Such a line holds bytes that are not UTF
 (the line names the first such byte and its character in the line); is not JSON, or
 not a JSON object; holds JSON that the gate cannot read (nesting too deep for `json`
 or for `flatten()`, a number with too many digits); lacks a field, or its name, kind,
-events or breaks has the wrong type; or one event table cannot hold the events of its
-case. All the events of a case go in one SQLite table, so each event must be a JSON
+events or breaks has the wrong type; holds a lone surrogate (the JSON escape `\ud800`)
+in a field outside the events, such as its name, `why` or an atom of `breaks`, which no
+line of a gate can print; or one event table cannot hold the events of its case. All the events of a case go in one SQLite table, so each event must be a JSON
 object, no two values of an event may get one flat key (`{"a": {"b": 1}, "a.b": 2}`),
 and the table must hold each event: no event may hold two keys that differ only in
 the letter case of their ASCII letters (`comm`, `Comm`), a key that SQLite reads as

@@ -88,7 +88,9 @@ def load_cases(path):
     the wrong type, or its events cannot be put in one event table (event_problem()).
     A line with bytes that are not UTF-8 is such an error too: it names the first such
     byte and its character in the line; and so is a line with JSON that the gate
-    cannot read (too deep for json or for flatten(), a number with too many digits)."""
+    cannot read (too deep for json or for flatten(), a number with too many digits),
+    and a line whose field outside the events holds a lone surrogate (no line of a
+    gate can print the name, the `why` or the atom that holds it)."""
     cases, errors, names = [], [], set()
     with open(path, encoding="utf-8", errors="surrogateescape") as fh:
         for n, text in enumerate(fh, 1):
@@ -112,6 +114,10 @@ def load_cases(path):
             if not isinstance(case, dict):
                 errors.append(f"line {n}: not a JSON object ({_json_type(case)}): each line "
                               "of a sidecar is one case, an object")
+                continue
+            problem = _surrogate_problem(case)
+            if problem:
+                errors.append(f"line {n}: {problem}")
                 continue
             if "name" in case and not isinstance(case["name"], str):
                 errors.append(f"line {n}: the name is {_json_type(case['name'])}, not a string")
@@ -151,6 +157,30 @@ def load_cases(path):
             case["_line"] = n
             cases.append(case)
     return cases, errors
+
+
+def _surrogate_problem(case):
+    """The text of the first lone surrogate (U+D800 to U+DFFF) in a field of a case
+    outside its events (in a key or a string, at any depth), or None. A JSON escape such
+    as \\ud800 gives one. It is not text of UTF-8, so no line of a gate can print the
+    name, the `why` or the atom of `breaks` that holds it. event_problem() tests the
+    events."""
+    for field, value in case.items():
+        if field == "events":
+            continue
+        stack = [field, value]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, dict):
+                stack += [*node.keys(), *node.values()]
+            elif isinstance(node, list):
+                stack += node
+            elif isinstance(node, str):
+                ch = sigma_eval._surrogate(node)
+                if ch is not None:
+                    return (f"the field {field!r} holds the lone surrogate U+{ord(ch):04X}, "
+                            "which is not text of UTF-8, so no line of a gate can print it")
+    return None
 
 
 def _cannot_read(error):
