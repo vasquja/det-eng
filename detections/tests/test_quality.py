@@ -1353,28 +1353,32 @@ class Variants(gatelib.GateCase):
         is not JSON: the FAIL line says `sidecar error:` and names the line. A record of
         the benign fixture of TRR9012 whose list holds an integer outside 64 bits: the
         default text of the list holds it (the validator passes the tree), and the
-        multi-valued model, which holds each element as a value, cannot. The FAIL line
-        names the record of the fixture, and not a row of the table of that model (the
-        first text of roadmap item R2d named the row)."""
+        multi-valued model, which holds each element as a value, cannot. The record is
+        the third of the fixture: before it, the first record and a copy of it whose
+        list of two values gives two more rows of the table of that model. The FAIL line
+        names the record of the fixture, and not a row of that table (the first text of
+        roadmap item R2d named the row) or another record."""
         tree = self.tree()
         sidecar = "detections/sigma/T1609/k8s_pod_exec_attach.cases.jsonl"
         line = len(tree.read_jsonl(sidecar)) + 1
         tree.append(sidecar, "{not json\n")
         benign = "detections/cloud/fixtures/trr9012/benign.json"
         rows = tree.read_json(benign)
-        tree.edit_json(benign, lambda doc: doc + [dict(rows[0], x=[1, 2 ** 64])])
+        tree.edit_json(benign, lambda doc: doc[:1] + [dict(rows[0], y=["a", "b"]),
+                                                      dict(rows[0], x=[1, 2 ** 64])] + doc[1:])
+        self.assertGreater(len(rows), 1)
         cloud = tree.start("detections/validate_cloud_detections.py")
         result = tree.run(self.GATE, "detections/sigma/T1609/k8s_pod_exec_attach.yml",
                           "detections/sigma/T1078.004/aws_leaked_access_key_recon.yml",
                           *self.ci_arguments)
         self.assert_saw(cloud.result(), r"^PASS  \[TRR9012 AWS\] aws_leaked_access_key_recon\.yml: "
-                                        rf".* benign baseline clean \({len(rows) + 1} record\(s\)\)")
+                                        rf".* benign baseline clean \({len(rows) + 2} record\(s\)\)")
         self.assertNotIn("Traceback", result.output)
         self.assert_rejects(result, rf"^FAIL  T1609/k8s_pod_exec_attach\.yml: sidecar error: line "
                                     rf"{line}: not JSON \(", exit_code=1)
         self.assert_rejects(result, r"^FAIL  T1078\.004/aws_leaked_access_key_recon\.yml: fixture "
                                     r"benign trr9012/benign\.json: \[multi\] cannot check: "
-                                    rf"EventError: event {len(rows) + 1} of {len(rows) + 1}: the "
+                                    rf"EventError: event 3 of {len(rows) + 2}: the "
                                     r"value of x is an integer outside the 64 bits of an INTEGER "
                                     r"of SQLite \(a value of an element of a list, as the "
                                     r"multi-valued model holds it\)$", exit_code=1)
