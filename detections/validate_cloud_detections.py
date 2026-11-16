@@ -348,6 +348,9 @@ def _text(path):
     return text
 
 
+ENVELOPES = ("Records", "value", "items", "entries")  # the keys of a list of records
+
+
 def _records(path):
     """(records, where): the records of a fixture, as the file holds them, and the
     place of each in the file, as a message names it (`line 3`, `element 2 of the
@@ -360,7 +363,9 @@ def _records(path):
         # the file is one document with an error, and the error of the document names
         # its place.
         records, where = [], []
-        for n, line in enumerate(text.splitlines(), 1):
+        # A line ends at LF only: str.splitlines() also ends one at U+0085, U+2028 and
+        # U+2029, which a JSON string may hold as they are.
+        for n, line in enumerate(text.split("\n"), 1):
             line = line.strip()
             if not line:
                 continue
@@ -383,8 +388,15 @@ def _records(path):
             raise FixtureError(f"{_name(path)}: JSON that is not an array or an object "
                                f"({_kind(doc)})")
         else:
-            env = next((env for env in ("Records", "value", "items", "entries")
-                        if isinstance(doc.get(env), list)), None)
+            env = next((env for env in ENVELOPES if isinstance(doc.get(env), list)), None)
+            if env is None:
+                # An envelope whose list is null (or not a list) holds no record: the
+                # object is not one record either.
+                odd = next((env for env in ENVELOPES if env in doc), None)
+                if odd is not None:
+                    raise FixtureError(f"{_name(path)}: an object whose key {odd!r} is "
+                                       f"{_kind(doc[odd])}, not a list of records; a fixture "
+                                       "is a JSON array, a JSON object or JSON lines")
             records = doc[env] if env else [doc]
             where = ([f"element {n} of the list {env!r}" for n in range(1, len(records) + 1)]
                      if env else ["the object of the file"])
@@ -399,14 +411,16 @@ def load_records(path):
     """Load a fixture file to the list of its records, as the file holds them.
 
     Accepts a JSON array, a single JSON object, a common log envelope
-    ({"Records"/"value"/"items"/"entries": [...]}), or JSON-lines.
+    ({"Records"/"value"/"items"/"entries": [...]}, ENVELOPES), or JSON-lines (a line
+    ends at LF).
 
     Raises FixtureError, with a text that names the fixture, for a file that is a
     directory or cannot be read; bytes that are not UTF-8; the byte order mark of
-    UTF-8 at its start; JSON that is not an array or an object (`null`, `1`); a line
-    of JSON lines that is not JSON; JSON that the loader cannot read (too deep, a
-    number with too many digits); and a record that is not a JSON object (`null`,
-    `[]`, `1`, `"x"`). The text names the line or the element where there is one.
+    UTF-8 at its start; JSON that is not an array or an object (`null`, `1`); an
+    object whose envelope key is not a list (`{"Records": null}`); a line of JSON lines
+    that is not JSON; JSON that the loader cannot read (too deep, a number with too
+    many digits); and a record that is not a JSON object (`null`, `[]`, `1`, `"x"`).
+    The text names the line or the element where there is one.
     """
     return _records(path)[0]
 
@@ -417,8 +431,9 @@ def load_fixture(path):
     Also raises FixtureError for a record that is too deep to flatten, and for a
     record that one event table cannot hold (sigma_eval.event_problem(): two keys
     that differ only in the letter case of their ASCII letters, a key that hides a
-    row id that the queries read, an integer outside 64 bits). Keys of two records
-    that differ only in letter case are no problem: they share one column."""
+    row id that the queries read, a value that SQLite does not hold as it is). Keys of
+    two records that differ only in letter case are no problem: they share one
+    column."""
     events = []
     for record, at in zip(*_records(path)):
         try:

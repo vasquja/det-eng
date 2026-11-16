@@ -239,7 +239,15 @@ def multi_truth(rule, raw_events):
             ids[name.lower()] = list(range(len(rows), len(rows) + len(values)))
             rows += [dict(scalars, **{name: v}) for v in values]
         element.append(ids)
-    table = sigma_eval.EventTable(rows)
+    try:
+        table = sigma_eval.EventTable(rows)
+    except sigma_eval.EventError as e:
+        # A row of this table is a record or one element of a list of a record: name
+        # the record.
+        record = max(i for i, first in enumerate(base) if first <= e.index)
+        raise sigma_eval.EventError(record, len(raw_events), e.keys, (
+            e.problem + (" (a value of an element of a list, as the multi-valued model "
+                         "holds it)" if e.index != base[record] else ""))) from None
     out = [dict() for _ in raw_events]
     list_fields = {name for ids in element for name in ids}
     for atom in rule.items:
@@ -630,7 +638,7 @@ def check_rule(rule_path, fixtures, ctx, rule=None, sets=None):
     if sets is None:
         sets, errors = event_sets(rule_path, fixtures)
     problems = [Problem(rel, e) for e in errors]
-    if not sets:
+    if not sets and not errors:
         problems.append(Problem(rel, "no sidecar case and no cloud fixture: nothing shows "
                                      "what the rule does under a variant"))
     differences, weakened = [], []

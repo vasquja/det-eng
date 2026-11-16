@@ -1233,6 +1233,37 @@ class Variants(gatelib.GateCase):
     def add_entry(doc):
         doc["expected"].append(dict(doc["expected"][0], name="one-more-case"))
 
+    def test_rejects_sidecar_line_and_fixture_list_that_it_cannot_check(self):
+        """Two planted problems, each named with its source. A sidecar line of T1609 that
+        is not JSON: the FAIL line says `sidecar error:` and names the line. A record of
+        the benign fixture of TRR9012 whose list holds an integer outside 64 bits: the
+        default text of the list holds it (the validator passes the tree), and the
+        multi-valued model, which holds each element as a value, cannot. The FAIL line
+        names the record of the fixture, and not a row of the table of that model (the
+        first text of roadmap item R2d named the row)."""
+        tree = self.tree()
+        sidecar = "detections/sigma/T1609/k8s_pod_exec_attach.cases.jsonl"
+        line = len(tree.read_jsonl(sidecar)) + 1
+        tree.append(sidecar, "{not json\n")
+        benign = "detections/cloud/fixtures/trr9012/benign.json"
+        rows = tree.read_json(benign)
+        tree.edit_json(benign, lambda doc: doc + [dict(rows[0], x=[1, 2 ** 64])])
+        cloud = tree.start("detections/validate_cloud_detections.py")
+        result = tree.run(self.GATE, "detections/sigma/T1609/k8s_pod_exec_attach.yml",
+                          "detections/sigma/T1078.004/aws_leaked_access_key_recon.yml",
+                          *self.ci_arguments)
+        self.assert_saw(cloud.result(), r"^PASS  \[TRR9012 AWS\] aws_leaked_access_key_recon\.yml: "
+                                        rf".* benign baseline clean \({len(rows) + 1} record\(s\)\)")
+        self.assertNotIn("Traceback", result.output)
+        self.assert_rejects(result, rf"^FAIL  T1609/k8s_pod_exec_attach\.yml: sidecar error: line "
+                                    rf"{line}: not JSON \(", exit_code=1)
+        self.assert_rejects(result, r"^FAIL  T1078\.004/aws_leaked_access_key_recon\.yml: fixture "
+                                    r"benign trr9012/benign\.json: \[multi\] cannot check: "
+                                    rf"EventError: event {len(rows) + 1} of {len(rows) + 1}: the "
+                                    r"value of x is an integer outside the 64 bits of an INTEGER "
+                                    r"of SQLite \(a value of an element of a list, as the "
+                                    r"multi-valued model holds it\)$", exit_code=1)
+
     def test_control_ratchet_accepts_the_list_of_the_base(self):
         """CONTROL of the ratchet: the list of the copy against a copy of itself, and
         against a list that holds one entry more (the list of the head lost one)."""

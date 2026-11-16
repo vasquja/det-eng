@@ -1903,6 +1903,7 @@ def check_names(r, rule, path, entries, atomics=()):
 
     # Cloud: every gate must be a marker(), so the rename test knows the marker.
     markers, attacks, attack_units, no_attack = [], [], [], []
+    unread = False  # an attack fixture that the loader cannot read (R4 failed above)
     for entry in entries:
         if entry["marker"] is None:
             no_attack.append(f"the gate for `{entry['attack'] and rel(entry['attack'])}` is not "
@@ -1920,6 +1921,7 @@ def check_names(r, rule, path, entries, atomics=()):
             continue
         if _fixture(r, "R4", entry, "attack") is None:
             no_attack.append(f"attack fixture {rel(entry['attack'])} cannot be read")
+            unread = True
             continue
         records, units = _attack_units(rule, entry)
         attacks.append((entry, records))
@@ -1961,7 +1963,9 @@ def check_names(r, rule, path, entries, atomics=()):
                      + f"there is no passing positive case in `{_cases_rel(path)}`. Add the "
                      "emulation's own event as a positive case, so renaming its names can show "
                      "the rule keys on the technique")
-    elif not r.rename["renamed"] and not r.compile_only:
+    elif not r.rename["renamed"] and not r.compile_only and not unread:
+        # (With an attack fixture that cannot be read, the failure above names the
+        # cause: its records are the units that carry the marker.)
         r.fail("R4", f"no positive unit carries an emulation identity (0/{len(units)} carry "
                      "trr9NNN, deteng_ or a validator gate's marker), so the rename test renamed "
                      "nothing and cannot show the rule keys on the technique rather than on the "

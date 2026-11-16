@@ -788,8 +788,7 @@ class CloudValidator(gatelib.GateCase):
         # The gate reached the rule (it compiled it), and it read the planted record.
         self.assert_saw(result, r"^OK \(compile\)  T1078\.004/aws_leaked_access_key_recon\.yml  "
                                 r"\[TRR9012\]$")
-        self.assert_saw(result, r"^AttributeError: 'NoneType' object has no attribute 'items'|"
-                                r"^(PASS|FAIL|ERROR)\s+\[TRR9012[^\]]*\] "
+        self.assert_saw(result, r"^(PASS|FAIL|ERROR)\s+\[TRR9012[^\]]*\] "
                                 r"aws_leaked_access_key_recon\.yml: ")
         # It judged every other rule of MANIFEST.
         self.assertEqual(len(re.findall(r"^PASS  \[", result.stdout, re.MULTILINE)),
@@ -872,17 +871,59 @@ class CloudValidator(gatelib.GateCase):
             ("a key rowid", "attack", json.dumps([{"rowid": 1}]).encode(),
              rf", element 1 of the array: {table}the key rowid is the name by which the "
              r"correlation queries read the row id \(rowid, in any letter case of the ASCII "
-             r"letters\)")]
+             r"letters\)"),
+            # The column of a byte that is not UTF-8 counts characters, not bytes: `é`
+            # before it is one character of two bytes.
+            ("a character of two bytes before a byte that is not UTF-8", "benign",
+             text[:first].encode() + "\u00e9".encode() + b"\xe9" + text[first:].encode(),
+             rf", line {line}: bytes that are not UTF-8 \(the byte 0xe9 at character {at + 1} "
+             r"of the line\)"),
+            ("one object of the file with keys that differ only in letter case", "benign",
+             json.dumps(dict(good[0], EventName=good[0]["eventName"])).encode(),
+             rf", the object of the file: {table}keys that differ only by case: EventName / "
+             r"eventName, which SQLite reads as one column name"),
+            # A line of JSON lines is a line of the file: a blank line counts.
+            ("JSON lines with a blank line before a record that is not an object", "benign",
+             "".join(json.dumps(row) + "\n" for row in good).encode() + b'\n"x"\n',
+             rf", line {n + 2}: " + record.format("a string")),
+            ("an envelope whose list is null", "benign", b'{"Records": null}\n',
+             r": an object whose key 'Records' is null, not a list of records; a fixture is a "
+             r"JSON array, a JSON object or JSON lines"),
+            ("an envelope whose list is a number", "benign", b'{"value": 5}\n',
+             r": an object whose key 'value' is a number, not a list of records; a fixture is "
+             r"a JSON array, a JSON object or JSON lines"),
+            # Values and keys that SQLite does not hold as they are. Python's json reads
+            # NaN and Infinity, which JSON does not have; SQLite stores NaN as NULL, so a
+            # `field: null` item would match a record that holds a value. The JSON escape
+            # of a lone surrogate gives a str that UTF-8 cannot encode, and no column name
+            # can hold a NUL.
+            ("NaN", "benign", json.dumps(good + [dict(good[0], n=float("nan"))]).encode(),
+             rf", element {n + 1} of the array: {table}the value of n is NaN, a number that "
+             r"JSON does not have \(SQLite stores it as NULL\)"),
+            ("-Infinity", "benign", json.dumps(good + [dict(good[0], n=float("-inf"))]).encode(),
+             rf", element {n + 1} of the array: {table}the value of n is -Infinity, a number "
+             r"that JSON does not have"),
+            ("a lone surrogate in a value", "benign",
+             json.dumps(good + [dict(good[0], s="x\ud800")]).encode(),
+             rf", element {n + 1} of the array: {table}the value of s holds the lone surrogate "
+             r"U\+D800, which is not text of UTF-8, so SQLite cannot hold it"),
+            ("a lone surrogate in a key", "benign",
+             json.dumps(good + [dict(good[0], **{"k\udc80": 1})]).encode(),
+             rf", element {n + 1} of the array: {table}the key 'k\\udc80' holds the lone "
+             r"surrogate U\+DC80, which is not text of UTF-8, so SQLite cannot hold it"),
+            ("a NUL in a key", "benign", json.dumps(good + [dict(good[0], **{"a\u0000b": 1})])
+             .encode(),
+             rf", element {n + 1} of the array: {table}the key 'a\\x00b' holds U\+0000 \(NUL\), "
+             r"which no column name of SQLite can hold")]
 
     def test_rejects_fixtures_that_the_loader_cannot_read(self):
         """A fixture that the loader cannot read as records is an ERROR row of the rule
         that names the fixture, the line or the element, and the problem, also with
         --report. No row comes from a traceback, and the run judges each other rule.
-        Before roadmap item R2d each of these fixtures ended the validator with a
-        traceback (the integer, the keys and the key rowid at the table of
-        sigma_eval.py; a key rowid without a traceback in a correlation), and so did
-        check_null_safety.py, check_sufficiency.py and check_variants.py, which read
-        the fixtures with the same loader."""
+        Before roadmap item R2d most of these fixtures ended the validator with a
+        traceback, and the others gave the rule a verdict row (PASS or FAIL) in the
+        place of an ERROR row: SQLite stored NaN as NULL, an envelope whose list is
+        null was one record, and a key rowid was a column."""
         good = self.good().read_json(self.BENIGN)
         self.assertTrue(all("eventName" in row for row in good))
         runs = []
@@ -915,8 +956,16 @@ class CloudValidator(gatelib.GateCase):
         not stop with a traceback, and exits 1. A benign fixture that does not exist is
         named in the same way by check_null_safety.py and check_variants.py
         (check_sufficiency.py, and the validator, look for the file first). Before
-        roadmap item R2d each ended with a traceback, or (check_variants.py, on the
-        second) named the rule and the EventTable error and not the fixture."""
+        roadmap item R2d some of these runs ended with a traceback, and the others
+        named the rule and an error of Python (`cannot check: AttributeError`,
+        `cannot check: ValueError`), not the fixture.
+
+        With an attack fixture that it cannot read, R4 of check_sufficiency.py also
+        says that the rename test ran on the sidecar positives only, and it does not
+        tell the author to add a positive case: the records of the fixture are the
+        units that carry the marker. TRR9023 has no sidecar: with its two fixtures
+        unreadable, check_null_safety.py and check_variants.py name the two
+        fixtures, and not "no sidecar case and no cloud fixture"."""
         rule = "T1078.004/aws_leaked_access_key_recon.yml"
         null_safety, variants, sufficiency = ("detections/check_null_safety.py",
                                               "detections/check_variants.py",
@@ -963,11 +1012,87 @@ class CloudValidator(gatelib.GateCase):
                 if label == "missing" and script == sufficiency:
                     continue
                 runs.append((label, script, lines[script], tree.start(script, *arguments)))
+        # TRR9023: a rule without a sidecar, and its two fixtures cannot be read.
+        entra = "T1078.004/entra_service_principal_federated_credential_signin.yml"
+        tree = self.tree()
+        self.assertTrue(tree.exists(f"detections/sigma/{entra}"))
+        self.assertFalse(tree.exists(f"detections/sigma/{entra[:-4]}.cases.jsonl"))
+        tree.write("detections/cloud/fixtures/trr9023/attack.json", "null\n")
+        tree.write("detections/cloud/fixtures/trr9023/benign.json", "[null]\n")
+        attack = ("detections/cloud/fixtures/trr9023/attack.json: JSON that is not an array or "
+                  "an object (null)")
+        benign = ("detections/cloud/fixtures/trr9023/benign.json, element 1 of the array: a "
+                  "record that is not a JSON object (null)")
+        alone = {
+            null_safety: [f"FAIL  {entra} :: fixture {kind} trr9023/{kind}.json: the loader of "
+                          f"the cloud validator cannot read the fixture: {problem}"
+                          for kind, problem in (("attack", attack), ("benign", benign))],
+            variants: [f"FAIL  {entra}: the loader of the cloud validator cannot read the "
+                       f"{kind} fixture: {problem}"
+                       for kind, problem in (("attack", attack), ("benign", benign))]}
+        started = [(script, tree.start(script, f"detections/sigma/{entra}")) for script in alone]
         for label, script, line, pending in runs:
             with self.subTest(label, gate=script):
                 result = pending.result()
                 self.assertNotIn("Traceback", result.output)
                 self.assert_rejects(result, "^" + re.escape(line) + "$", exit_code=1)
+                if label == "keys" and script == sufficiency:
+                    self.assert_saw(result, "^" + re.escape(
+                        f"  [R4] {rule}: attack fixture detections/cloud/fixtures/trr9012/"
+                        "attack.json cannot be read; the rename test ran on the sidecar "
+                        "positives only") + "$")
+                    self.assertNotIn("no positive unit carries an emulation identity",
+                                     result.stdout)
+        for script, pending in started:
+            with self.subTest("no sidecar, two fixtures", gate=script):
+                result = pending.result()
+                self.assertNotIn("Traceback", result.output)
+                for line in alone[script]:
+                    self.assert_rejects(result, "^" + re.escape(line) + "$", exit_code=1)
+                self.assertEqual(len(re.findall(r"^FAIL ", result.stdout, re.M)), 2,
+                                 result.describe())
+                self.assertNotIn("no sidecar case and no cloud fixture", result.stdout)
+
+    def test_rejects_nan_in_the_attack_fixture(self):
+        """Each record of the attack fixture holds `userIdentity.accessKeyId: NaN`
+        (Python's json reads it; JSON has no NaN). SQLite stores NaN as NULL, so the
+        item `userIdentity.accessKeyId: [null, '']` of the rule would match each record
+        that holds a value: before roadmap item R2d the validator gave the rule a PASS
+        on that fixture. The loader names the fixture and the record."""
+        tree = self.tree()
+        rows = tree.read_json(self.ATTACK)
+        self.assertTrue(all(row["userIdentity"].get("accessKeyId") for row in rows))
+        self.assertIn("accessKeyId", tree.read(self.RULE))
+
+        def nan(doc):
+            for row in doc:
+                row["userIdentity"]["accessKeyId"] = float("nan")
+            return doc
+        tree.edit_json(self.ATTACK, nan)
+        self.assertIn('"accessKeyId": NaN', tree.read(self.ATTACK))
+        result = self.rejected_as_unproven(tree, self.UNREAD.format(
+            "attack", "attack", r", element 1 of the array: a record that one event table "
+                                r"cannot hold: the value of userIdentity\.accessKeyId is NaN, "
+                                r"a number that JSON does not have \(SQLite stores it as NULL\)"))
+        self.assertNotRegex(result.stdout, r"(?m)^PASS +\[TRR9012\b")
+
+    def test_control_json_lines_with_line_separators_in_a_string(self):
+        """CONTROL of the loader: the benign fixture as JSON lines, one record on each
+        line, and a value of the second record holds U+2028, U+2029 and U+0085 as they
+        are (JSON allows them in a string). A line ends at LF only, so the run reads
+        each record (str.splitlines() would cut the line in three and refuse it)."""
+        tree = self.tree()
+        good = tree.read_json(self.BENIGN)
+        self.assertGreater(len(good), 1)
+        good[1]["userAgent"] = "aws-cli/2 \u2028 \u2029 \u0085 x"
+        text = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in good)
+        tree.write(self.BENIGN, text)
+        self.assertEqual(tree.read(self.BENIGN).count("\n"), len(good))
+        self.assertEqual(len(tree.read(self.BENIGN).splitlines()), len(good) + 3)
+        result = tree.run(self.GATE)
+        self.assert_accepts(result, r"^All \d+ external-cloud detection\(s\) fired ")
+        self.assert_saw(result, rf"^PASS  {self.ROW}.* benign baseline clean "
+                                rf"\({len(good)} record\(s\)\) ")
 
     def test_rejects_two_fixtures_that_the_loader_cannot_read_in_one_row(self):
         """The two fixtures of the rule cannot be read: one ERROR row names both, and
