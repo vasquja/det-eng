@@ -763,8 +763,8 @@ def _constant(name):
     raise _NotJSON(f"{name}, which is not a JSON value (RFC 8259)")
 
 
-# The range of an SQLite INTEGER. sigma_eval.EventTable stops with OverflowError on an
-# integer outside it.
+# The range of an SQLite INTEGER. sigma_eval.EventTable refuses an integer outside it
+# (EventError).
 INT64 = (-2 ** 63, 2 ** 63 - 1)
 INT64_DIGITS = len(str(INT64[1]))           # 19: a longer integer is outside the range
 
@@ -997,8 +997,9 @@ def read_dataset(entry, data, syscalls):
     records of the log that are not events of the rules' schema (an auditd record of
     another type than SYSCALL). A Fault names a line or a record that is not a record
     of the format, a key or a value that one SQLite table cannot hold, keys of one log
-    source that differ only in letter case, and a log source whose records hold more
-    than MAX_KEYS distinct keys."""
+    source that differ only in letter case, a log source whose records hold more than
+    MAX_KEYS distinct keys, and a routed record that the table refuses
+    (sigma_eval.event_problem(): a key `rowid` too)."""
     entry_id, fmt = entry["id"], entry["format"]
     text = _text(entry_id, data)
     if fmt == "auditd-raw":
@@ -1025,6 +1026,15 @@ def read_dataset(entry, data, syscalls):
     unstorable(entry_id, records)
     case_clashes(entry_id, records)
     too_wide(entry_id, records)
+    # The test of the table itself (sigma_eval.event_problem()), for each record that a
+    # table gets (a routed record): the checks above refuse the problems that they know
+    # first, in their words, and this names the record of each other problem (a key
+    # `rowid`, which the correlation queries read as the row id).
+    for r in records:
+        problem = r.logsource is not None and sigma_eval.event_problem(r.event)
+        if problem:
+            raise Fault(f"{entry_id}: {r.where}: a record that one event table cannot hold: "
+                        f"{problem[1]}")
     return records, other
 
 
@@ -1054,16 +1064,18 @@ def too_wide(entry_id, records):
 
 
 def case_clashes(entry_id, records):
-    """A Fault when two keys of the records of one log source differ only in letter
-    case: one SQLite table (sigma_eval.EventTable) cannot hold them, and a rule would
-    match a key that a case-sensitive SIEM keeps apart."""
+    """A Fault when two keys of the records of one log source differ only in the letter
+    case of their ASCII letters (sigma_eval.fold(), as SQLite compares column names):
+    SQLite reads them as one column name, so a rule would match a key that a
+    case-sensitive SIEM keeps apart; and one table cannot hold a record that holds two
+    of them. Keys that differ in another letter (`Ét`, `ét`) are two columns."""
     by_source = collections.defaultdict(dict)      # logsource -> folded -> {key: where}
     for r in records:
         if r.logsource is None:
             continue
         folded = by_source[r.logsource]
         for key in r.event:
-            folded.setdefault(key.lower(), {}).setdefault(key, r.where)
+            folded.setdefault(sigma_eval.fold(key), {}).setdefault(key, r.where)
     problems = []
     for logsource, folded in sorted(by_source.items()):
         for spellings in folded.values():
@@ -1071,9 +1083,10 @@ def case_clashes(entry_id, records):
                 problems.append(" / ".join(f"{k!r} ({w})" for k, w in sorted(spellings.items())))
     if problems:
         raise Fault(f"{entry_id}: keys that differ only in letter case: {'; '.join(problems)}. "
-                    "One table cannot hold them, and a rule would match a key that a "
-                    "case-sensitive SIEM keeps apart: exclude the dataset in SOURCES.json, or "
-                    "split it in a change to the gate")
+                    "SQLite reads them as one column name, so a rule would match a key that a "
+                    "case-sensitive SIEM keeps apart (and one table cannot hold a record that "
+                    "holds two of them): exclude the dataset in SOURCES.json, or split it in a "
+                    "change to the gate")
 
 
 def sniff(entry_id, data, syscalls):

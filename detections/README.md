@@ -2251,7 +2251,10 @@ declaration for a rule or a dataset that does not exist, a `HASH MISMATCH` (a ca
 file of other bytes is deleted), a record count that is not the pin, a line that is
 not a record of its format, a key or a value that one SQLite table cannot hold (an
 integer outside 64 bits, a NUL character, a lone surrogate, the key `_rowid`, a number
-that is not finite), keys that differ only in letter case, records of one log source
+that is not finite, and in a record that a rule reads each other problem of the test of
+the table, `sigma_eval.event_problem()`, such as the key `rowid`), keys that differ only
+in the letter case of their ASCII letters (as SQLite reads a column name: `Ét` and `ét`
+are two keys), records of one log source
 with more than 1900 distinct keys (a table holds 2000 columns, less the row id and the
 fields that the rules add), a yml at the commit that does not agree with its entry
 (also its procedure label and CVEs), a cache entry that is not a regular file or

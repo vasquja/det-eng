@@ -99,7 +99,8 @@ The gate tests `EventTableKeys` of
 list about the table on each run. Each loader of records asks the same test
 (`sigma_eval.event_problem()`) of each record before a table gets it, and names the
 log and the line, the fixture and the record, the slice and the event (of each slice
-of the benign corpus, also one that no rule reads), or the rule and the case; the
+of the benign corpus, also one that no rule reads), the rule and the case, or the
+dataset and the record (of the external-records gate, each record that a rule reads); the
 tests of each gate prove it. [`check_null_safety.py`](check_null_safety.py) fails a
 rule that reads a field that a record carries in another letter case (Lucene, Splunk
 and ES|QL do not read it), also when another record of the event set holds the field
