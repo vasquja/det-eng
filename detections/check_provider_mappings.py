@@ -1046,11 +1046,10 @@ def _hits_per_case(sql_by_key, case_events):
     out = {k: [set() for _ in case_events] for k in sql_by_key}
     if not flat:
         return out
-    try:
-        tables = [(sigma_eval.EventTable([ev for _, _, ev in flat]), flat)]
-    except ValueError:  # keys that differ only by case across cases: one table per case
-        tables = [(sigma_eval.EventTable(events), [(ci, ei, ev) for ei, ev in enumerate(events)])
-                  for ci, events in enumerate(case_events) if events]
+    # Keys of two cases that differ only in letter case share one column, as SQLite
+    # reads a field, and rule_cases.load_cases() refuses an event that one table
+    # cannot hold: so one table holds the events of all the cases.
+    tables = [(sigma_eval.EventTable([ev for _, _, ev in flat]), flat)]
     for table, rows in tables:
         for key, sql in sql_by_key.items():
             for hit in table.hit_indices(sql):

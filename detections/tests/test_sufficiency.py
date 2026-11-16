@@ -411,13 +411,14 @@ class RuleCases(gatelib.GateCase):
 
     # One changed near-miss (the second line of the sound sidecar), whose events
     # cannot be put in one event table, and the words of the gate for it. Without
-    # the check, a clash ends the gate with a traceback of EventTable, an event that
-    # is not an object (null, a number, an array, a string) with one of flatten(), and
-    # `_ROWID` with one of sqlite3; `_rowid`, `rowid` and the two keys that flatten to
-    # one pass (the table drops a key `_rowid`, and a key `rowid` hides the row id that
-    # a correlation reads), and the gate judges an event that lost a value. An integer
-    # outside 64 bits ends the gate with an OverflowError of sqlite3. Each problem of
-    # the table is the text of sigma_eval.event_problem(), the test of the table itself.
+    # the check, an event that is not an object (null, a number, an array, a string)
+    # ends the gate with a traceback of flatten(), and each event that the table
+    # refuses (a clash, `_rowid` or `rowid` in any letter case, an integer outside 64
+    # bits) with a traceback of the EventError of sigma_eval.EventTable; the two keys
+    # that flatten to one pass, and the gate judges an event that lost a value. (Before
+    # R2d, `_rowid` and `rowid` passed too, and an integer outside 64 bits ended the
+    # gate with an OverflowError of sqlite3.) Each problem of the table is the text of
+    # sigma_eval.event_problem(), the test of the table itself.
     TABLE = r" \(one event table cannot hold the event\)$"
     BAD_EVENTS = (
         # One event holds `proc.Comm` and `proc.comm`.
@@ -659,6 +660,8 @@ print(json.dumps({
                                             "get"),
     "three spellings in three events": probe([{"key": "a"}, {"KEY": "b"}, {"Key": "c"}],
                                              "kEy", "c"),
+    # The same keys in two orders: each value goes in the column of its key.
+    "two key orders": probe([{"a": "x", "b": "y"}, {"b": "x", "a": "y"}], "a", "y"),
     "one event": probe([{"a": 1}, {"key": "x", "KEY": "y", "Key": "z"}], "key", "x"),
     "not ASCII, one event": probe([{"\u00c4": "x", "\u00e4": "y"}], "\u00c4", "y"),
     "not ASCII, two events": probe([{"\u00c4": "x"}, {"\u00e4": "y"}], "\u00c4", "y"),
@@ -721,6 +724,12 @@ class EventTableKeys(gatelib.GateCase):
         self.assertEqual(self.probes["two events"], [[1]])
         self.assertEqual(self.probes["two events, the other spelling"], [[0]])
         self.assertEqual(self.probes["three spellings in three events"], [[2]])
+
+    def test_events_with_the_same_keys_in_another_order(self):
+        """The table writes each event with the INSERT of the order of its keys: two
+        events with the same keys in two orders put each value in the column of its
+        key, so `a: y` matches only the second event."""
+        self.assertEqual(self.probes["two key orders"], [[1]])
 
     def test_rejects_one_event_with_keys_that_differ_only_in_letter_case(self):
         """One event that holds `key`, `KEY` and `Key` has three values for one
