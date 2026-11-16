@@ -385,14 +385,25 @@ def cut_json(text):
     ('{...}{', '{...}x', '{...} {'), NUL bytes or U+200B in a record, a comma before
     a "}", an escape that JSON does not have, a control character in a string. A cut
     inside an escape (Go writes `\\u0026` in an audit event), a number, a literal or a
-    key is a cut. The time is linear in the length of `text`."""
+    key is a cut. NaN, Infinity and -Infinity are not JSON (Python's json reads them):
+    a text that holds one is no cut, also when the cut is inside the word. A blank at
+    the start or at the end of `text` is a blank of JSON (a space, a tab, a line feed,
+    a carriage return); the caller removes other white space at the start, as json
+    reads a record, and none at the end. JSON too deep for json is no cut. The time is
+    linear in the length of `text`."""
     rest = _closing(text)
     if not rest:                            # None: no cut; "": complete, or not JSON
         return False
     try:
-        return isinstance(json.loads(text + rest), dict)
+        return isinstance(json.loads(text + rest, parse_constant=_constant), dict)
     except (ValueError, RecursionError):
         return False
+
+
+def _constant(name):
+    """The parse_constant of json in cut_json(): NaN, Infinity and -Infinity are not
+    JSON."""
+    raise ValueError(f"{name} is not JSON")
 
 
 def _closing(text):
@@ -459,11 +470,11 @@ def _closing(text):
 
 
 def _scalar(word):
-    """True when `word` is a JSON number or literal."""
+    """True when `word` is a JSON number or literal (not NaN or Infinity)."""
     if word in ("true", "false", "null"):
         return True
     try:
-        value = json.loads(word)
+        value = json.loads(word, parse_constant=_constant)
     except ValueError:
         return False
     return isinstance(value, (int, float)) and not isinstance(value, bool)
