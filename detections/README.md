@@ -2135,9 +2135,15 @@ must hold a record, because a negative control that read no record cannot fail:
   JSON lines as it reads the one object of a file: CloudTrail writes each log file
   as one envelope on one line. An object that holds an envelope key is an envelope,
   so one record that holds such a key goes in a JSON array (`[{...}]`). The loader
-  reads only the list of an envelope. Beside its list, an envelope holds only the page
-  keys of the list APIs (`nextLink`, `@odata.nextLink`, `@odata.context`,
-  `nextPageToken`), each with a string or null.
+  reads only the list of an envelope. Beside its list, an envelope holds only these
+  page keys, each with a value of its type: `nextLink` (Azure REST), `@odata.context`,
+  `@odata.nextLink` and `@odata.deltaLink` (Microsoft Graph) and `nextPageToken`
+  (Cloud Logging `entries.list`), each a string or null, and `@odata.count` (Graph
+  with `$count=true`), an integer of 64 bits. A key in another letter case is another
+  key. No value of these types can hold a record. Write any other list page as a JSON
+  array of its records: a page of Google Workspace Reports (`kind`, `etag`), of a GCP
+  compute list (`kind`, `id`, `selfLink`), a kubectl `List`, a list of Azure DevOps
+  (`count`) or of the legacy Azure AD Graph (`odata.metadata`, `odata.nextLink`).
 - A rule whose fixture the loader (`load_fixture()`) cannot read as records gets an
   `ERROR` row that names the fixture, and the line or the element (from 1) where
   there is one. Such a fixture holds bytes that are not UTF-8 (the row names the
@@ -2145,16 +2151,19 @@ must hold a record, because a negative control that read no record cannot fail:
   of UTF-8; is JSON that is not an array or an object (`null`, `7`), or an object (the
   file, or a line of JSON lines) whose envelope key holds no list
   (`{"Records": null}`, `{"value": "x"}`); is an envelope that holds another key beside
-  its list (an attack record with `"items": [...]`, a second envelope key, `"meta": 1`)
-  or a page key that is not a string or null, which the row names with the list and
-  the other keys; holds an object with one key two times (`json` keeps only the last
+  its list (an attack record with `"items": [...]`, also `"items": []`, a second
+  envelope key, `"meta": 1`, a page key in another letter case) or a page key whose
+  value is not of its type (a list, a number or `true` in `nextLink`, an object in
+  `@odata.context`, `true` in `@odata.count`), which the row names with the list and
+  the other keys (sorted, at most 3 and the number of the others, each cut at 40
+  characters), or else with the page key; holds an object with one key two times (`json` keeps only the last
   value, so `{"Records": <attack records>, "Records": <benign records>}` would give
   the benign records only), which the row names by the fixture or the line for the
   object of the file or of a line, and else by its record; holds a line that is not
   JSON (JSON lines), or JSON that the loader cannot read (a number with too many
-  digits, which the row names by its record: each number is in a record, because an
-  envelope with another key, a page key that is a number and an object with a key two
-  times are refused first; nesting too deep for `json`, which the row names by its line
+  digits, which the row names by its record: such a number beside the list of an
+  envelope, as the value of another key or of a page key, and an object with a key
+  two times are refused first; nesting too deep for `json`, which the row names by its line
   in JSON lines or in a document of one line, and else by the fixture only; nesting
   too deep to flatten, which the row names by its record); or holds a record that is
   not a JSON object (`null`, `[]`, `1`, `"x"`) or that one event table cannot hold (two

@@ -349,10 +349,42 @@ def _text(path):
 
 
 ENVELOPES = ("Records", "value", "items", "entries")  # the keys of a list of records
-# The keys that a page of a list API puts beside its list (Azure: nextLink,
-# @odata.nextLink, @odata.context; GCP: nextPageToken). Each holds a string or null.
-# An envelope holds no other key: the loader reads only its list.
-PAGE_KEYS = ("nextLink", "@odata.nextLink", "@odata.context", "nextPageToken")
+
+
+def _string_or_null(value):
+    return value is None or isinstance(value, str)
+
+
+def _integer(value):
+    """True for an integer of 64 bits (with sign), not a bool: a count."""
+    return (isinstance(value, int) and not isinstance(value, bool)
+            and -2 ** 63 <= value < 2 ** 63)
+
+
+# The keys that a page of a list API puts beside its list, each with the type of its
+# value: Azure REST (nextLink), Microsoft Graph (@odata.context, @odata.nextLink,
+# @odata.deltaLink, and @odata.count with $count=true), Cloud Logging entries.list
+# (nextPageToken). No value of such a type can hold a record. An envelope holds no
+# other key: the loader reads only its list, and would drop each other key without a
+# word. Another list page (Google Workspace Reports, a GCP compute list, a kubectl
+# List, Azure DevOps, the legacy Azure AD Graph) is written as a JSON array.
+PAGE_KEYS = {"nextLink": ("a string or null", _string_or_null),
+             "@odata.context": ("a string or null", _string_or_null),
+             "@odata.nextLink": ("a string or null", _string_or_null),
+             "@odata.deltaLink": ("a string or null", _string_or_null),
+             "@odata.count": ("an integer of 64 bits", _integer),
+             "nextPageToken": ("a string or null", _string_or_null)}
+
+
+def _page_keys():
+    """The page keys and their types, as a message names them: `nextLink, ... and
+    nextPageToken (each a string or null) and @odata.count (an integer of 64 bits)`."""
+    types = {}
+    for key, (kind, _) in PAGE_KEYS.items():
+        types.setdefault(kind, []).append(key)
+    return " and ".join(
+        (f"{', '.join(keys[:-1])} and {keys[-1]} (each {kind})" if len(keys) > 1
+         else f"{keys[0]} ({kind})") for kind, keys in types.items())
 
 
 class _LongInt:
@@ -396,13 +428,15 @@ def _key_names(keys, most=3):
 
 def _envelope_keys(path, doc, env, at):
     """Raise FixtureError when the envelope `doc` (its list is doc[env]) holds a key
-    other than its list and the page keys (PAGE_KEYS), or a page key that does not
-    hold a string or null. The loader reads only the list of an envelope, so it would
-    drop each other key without a word: the attack records of a benign baseline, each
-    with a list of benign records under an envelope key, would give a clean baseline."""
+    other than its list and the page keys (PAGE_KEYS), or a page key whose value is
+    not of its type. A key is another key also when it differs from a page key only
+    in letter case. The loader reads only the list of an envelope, so it would drop
+    each other key without a word: the attack records of a benign baseline, each with
+    a list of benign records under an envelope key, would give a clean baseline. The
+    text names the other keys (sorted, at most 3 and the count of the others, each
+    cut at 40 characters), and else the first page key of a wrong type (sorted)."""
     other = [key for key in doc if key != env and key not in PAGE_KEYS]
-    wrong = [key for key in doc if key in PAGE_KEYS
-             and not (doc[key] is None or isinstance(doc[key], str))]
+    wrong = [key for key in doc if key in PAGE_KEYS and not PAGE_KEYS[key][1](doc[key])]
     if not other and not wrong:
         return
     place = f"{_name(path)}{', ' + at if at else ''}"
@@ -411,12 +445,11 @@ def _envelope_keys(path, doc, env, at):
                 f"{_key_names(other)}")
     else:
         key = sorted(wrong)[0]
-        what = f"whose page key {key!r} is {_kind(doc[key])}, not a string or null"
+        what = f"whose page key {key!r} is {_kind(doc[key])}, not {PAGE_KEYS[key][0]}"
     raise FixtureError(
         f"{place}: an envelope (the list {env!r}) {what}: the loader reads only the list of "
         f"an envelope, and beside the list an envelope holds only the page keys "
-        f"{', '.join(PAGE_KEYS[:-1])} and {PAGE_KEYS[-1]} (each a string or null). Write "
-        "the records in a JSON array")
+        f"{_page_keys()}. Write the records in a JSON array")
 
 
 def _document(path, doc, at):
@@ -424,8 +457,8 @@ def _document(path, doc, at):
     a line of JSON lines; `at` names the line, or is None): the list of an envelope,
     the elements of an array, or the object as one record. A line of JSON lines is one
     record or an envelope: a list on a line is a record that is not an object. An
-    envelope holds beside its list only page keys (PAGE_KEYS) with a string or null
-    (_envelope_keys())."""
+    envelope holds beside its list only page keys (PAGE_KEYS), each with a value of its
+    type (_envelope_keys())."""
     if isinstance(doc, list) and at is None:
         return doc, [f"element {n} of the array" for n in range(1, len(doc) + 1)]
     if not isinstance(doc, dict):
@@ -515,11 +548,11 @@ def _records(path):
         raise FixtureError(f"{_name(path)}: {_cannot_read(e)}") from None
     except ValueError as e:
         raise FixtureError(f"{_name(path)}: {_cannot_read(e)}") from None
-    # Each value of the fixture is in a record: beside its list, an envelope holds
-    # only page keys, each of them holds a string or null (_envelope_keys()), and
-    # _document() refuses an object of the file or of a line that holds a key two
-    # times (json keeps only one of the two values). So a number with too many
-    # digits, and an object that holds a key two times, are in a record here.
+    # Each number with too many digits, and each object that holds a key two times,
+    # is in a record here: beside its list an envelope holds only page keys, each with
+    # a string, null or an integer of 64 bits (_envelope_keys(): a number with too
+    # many digits is none of them), and _document() refuses an object of the file or
+    # of a line that holds a key two times (json keeps only one of the two values).
     for at, record in zip(where, records):
         if not isinstance(record, dict):
             raise FixtureError(f"{_name(path)}, {at}: a record that is not a JSON object "
@@ -538,31 +571,31 @@ def load_records(path):
     ends at LF). Each line of JSON lines is read as the single object of a file is: one
     record, or an envelope, whose list gives the records. An object that holds an
     envelope key is an envelope: a single record that holds such a key goes in a JSON
-    array. Beside its list, an envelope holds only the page keys of the list APIs
-    (PAGE_KEYS: nextLink, @odata.nextLink, @odata.context, nextPageToken), each with
-    a string or null; the loader reads only the list.
+    array. Beside its list, an envelope holds only the page keys (PAGE_KEYS): nextLink,
+    @odata.context, @odata.nextLink, @odata.deltaLink and nextPageToken, each a string
+    or null, and @odata.count, an integer of 64 bits; the loader reads only the list.
+    Another list page is written as a JSON array.
 
     Raises FixtureError, with a text that names the fixture, for a file that is a
-    directory or cannot be read; bytes that are not UTF-8; the byte order mark of
-    UTF-8 at its start; JSON that is not an array or an object (`null`, `1`); an
-    object (the file, or a line of JSON lines) whose envelope key is not a list
-    (`{"Records": null}`, `{"value": "x"}`); an envelope that holds another key beside
-    its list (an attack record with `"items": [...]`, a second envelope key, `"meta":
-    1`), or a page key whose value is not a string or null; an object that holds one
-    key two times (json keeps only the last value, so `{"Records": <attack records>,
-    "Records": <benign records>}` would give the benign records only); a line of JSON
-    lines that is not JSON; JSON that the loader cannot read (too deep, a number with
-    too many digits); and a record that is not a JSON object (`null`, `[]`, `1`,
-    `"x"`). The text names the line or the element where there is one. An object of
-    the file or of a line that holds a key two times is named by the fixture or the
-    line, and such an object in a record by its record. A number with too many
-    digits is named by its record: each number is in a record, because beside its
-    list an envelope holds only page keys with a string or null, and an object that
-    holds a key two times is refused (so such a number beside the list is an
-    envelope with another key, or a page key that is a number). JSON that is too
-    deep for json is named by its line in JSON lines or in a document of one line;
-    JSON of one document of more lines that is too deep for json is named by the
-    fixture only.
+    directory or cannot be read; bytes that are not UTF-8; the byte order mark of UTF-8
+    at its start; JSON that is not an array or an object (`null`, `1`); an object (the
+    file, or a line of JSON lines) whose envelope key is not a list (`{"Records":
+    null}`, `{"value": "x"}`); an envelope that holds another key beside its list (an
+    attack record with `"items": [...]`, a second envelope key, `"meta": 1`, also a page
+    key in another letter case), or a page key whose value is not of its type (a string
+    or null; an integer of 64 bits for @odata.count); an object that holds one key two
+    times (json keeps only the last value, so `{"Records": <attack records>, "Records":
+    <benign records>}` would give the benign records only); a line of JSON lines that is
+    not JSON; JSON that the loader cannot read (too deep, a number with too many
+    digits); and a record that is not a JSON object (`null`, `[]`, `1`, `"x"`). The text
+    names the line or the element where there is one. An object of the file or of a line
+    that holds a key two times is named by the fixture or the line, and such an object
+    in a record by its record. A number with too many digits is named by its record:
+    beside the list of an envelope, such a number is refused before, as the value of
+    another key or of a page key of another type, and so is an object that holds a key
+    two times. JSON that is too deep for json is named by its line in JSON lines or in a
+    document of one line; JSON of one document of more lines that is too deep for json
+    is named by the fixture only.
     """
     return _records(path)[0]
 

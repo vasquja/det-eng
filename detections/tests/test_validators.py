@@ -764,8 +764,9 @@ class CloudValidator(gatelib.GateCase):
     # The end of the text of an envelope that holds a key other than its list and the
     # page keys, or a page key that is not a string or null.
     EXTRA = (r": the loader reads only the list of an envelope, and beside the list an "
-             r"envelope holds only the page keys nextLink, @odata\.nextLink, @odata\.context "
-             r"and nextPageToken \(each a string or null\)\. Write the records in a JSON array")
+             r"envelope holds only the page keys nextLink, @odata\.context, @odata\.nextLink, "
+             r"@odata\.deltaLink and nextPageToken \(each a string or null\) and @odata\.count "
+             r"\(an integer of 64 bits\)\. Write the records in a JSON array")
 
     # The ERROR row of RULE for a fixture that the loader cannot read ({}: the end of
     # the row, after the name of the fixture: where, and what).
@@ -825,6 +826,8 @@ class CloudValidator(gatelib.GateCase):
         long = b"9" + b"9" * 4999     # a number of 5000 digits
         attack = self.good().read_json(self.ATTACK)
         twice = r"an object holds the key '{}' two times \(json keeps only the last value\)"
+        keys = sorted(attack[0])
+        names = ", ".join(repr(key) for key in keys[:3]) + f" and {len(keys) - 3} more"
         return [
             ("null", "benign", b"null\n",
              r": JSON that is not an array or an object \(null\)"),
@@ -958,6 +961,57 @@ class CloudValidator(gatelib.GateCase):
              json.dumps({"value": good, "nextPageToken": 0})[:-2].encode() + long + b"}",
              r": an envelope \(the list 'value'\) whose page key 'nextPageToken' is a number, "
              r"not a string or null" + extra),
+            # A page key holds a value of its type, so it holds no record: a list of
+            # attack records, a small number, true; an @odata key with an object; a
+            # count that is true, a string, or a number outside 64 bits.
+            ("a page key that holds a list of attack records", "benign",
+             json.dumps({"Records": good, "nextPageToken": attack[:1]}).encode(),
+             r": an envelope \(the list 'Records'\) whose page key 'nextPageToken' is a list, "
+             r"not a string or null" + extra),
+            ("a page key that holds a small number", "benign",
+             json.dumps({"value": good, "nextLink": 7}).encode(),
+             r": an envelope \(the list 'value'\) whose page key 'nextLink' is a number, not a "
+             r"string or null" + extra),
+            ("a page key that holds true", "benign",
+             json.dumps({"value": good, "nextLink": True}).encode(),
+             r": an envelope \(the list 'value'\) whose page key 'nextLink' is true, not a "
+             r"string or null" + extra),
+            ("an @odata page key that holds an object", "benign",
+             json.dumps({"value": good, "@odata.context": {"x": 1}}).encode(),
+             r": an envelope \(the list 'value'\) whose page key '@odata\.context' is an object, "
+             r"not a string or null" + extra),
+            ("a count that is true", "benign",
+             json.dumps({"value": good, "@odata.count": True}).encode(),
+             r": an envelope \(the list 'value'\) whose page key '@odata\.count' is true, not an "
+             r"integer of 64 bits" + extra),
+            ("a count that is a string", "benign",
+             json.dumps({"value": good, "@odata.count": "3"}).encode(),
+             r": an envelope \(the list 'value'\) whose page key '@odata\.count' is a string, "
+             r"not an integer of 64 bits" + extra),
+            ("a count outside 64 bits", "benign",
+             json.dumps({"value": good, "@odata.count": 2 ** 63}).encode(),
+             r": an envelope \(the list 'value'\) whose page key '@odata\.count' is a number, "
+             r"not an integer of 64 bits" + extra),
+            # A page key in another letter case is another key.
+            ("a page key in another letter case", "benign",
+             json.dumps({"value": good, "NextLink": "x"}).encode(),
+             r": an envelope \(the list 'value'\) that also holds the key 'NextLink'" + extra),
+            # An envelope whose list is empty holds no other key either: the JSON line
+            # of an attack record with `"items": []` lost the attack record.
+            ("a JSON line of an attack record with an empty list", "benign",
+             "".join(json.dumps(row) + "\n" for row in good).encode()
+             + json.dumps(dict(attack[0], items=[])).encode() + b"\n",
+             rf", line {n + 1}: an envelope \(the list 'items'\) that also holds the keys "
+             + re.escape(names) + extra),
+            # The text names the other keys, each cut at 40 characters, and names the
+            # other keys before a page key of a wrong type.
+            ("an envelope with a key of 60 characters", "benign",
+             json.dumps({"Records": good, "k" * 60: 1}).encode(),
+             r": an envelope \(the list 'Records'\) that also holds the key 'k{40}'\.\.\."
+             + extra),
+            ("an envelope with another key and a page key of a wrong type", "benign",
+             json.dumps({"Records": good, "nextLink": {}, "meta": 1}).encode(),
+             r": an envelope \(the list 'Records'\) that also holds the key 'meta'" + extra),
             # A number with too many digits beside the list of an envelope is in no
             # record: the envelope is refused for its other key, in each form.
             ("an envelope that holds a number with too many digits beside its list", "benign",
@@ -1272,27 +1326,54 @@ class CloudValidator(gatelib.GateCase):
 
     def test_control_pages_of_list_apis(self):
         """CONTROL of the loader: a page of a list API holds page keys beside its list.
-        The benign baseline of the managed-identity rule of TRR9013 as an Azure page
-        (`value`, a `nextLink` and an `@odata.context`), and that of TRR9014 as a GCP
-        page (`entries` and a `nextPageToken` of null): the run reads the records of
-        each list, the baselines pass, and each row counts its records."""
+        Five benign baselines as pages: that of the managed-identity rule of TRR9013 as
+        an Azure page (`value`, a `nextLink` and an `@odata.context`), that of TRR9014
+        as a GCP page (`entries` and a `nextPageToken` of null), that of the Entra rule
+        of TRR9013 as a Microsoft Graph page (`@odata.context`, `@odata.nextLink`,
+        `value`), that of the consent rule of TRR9017 as a Graph page with $count=true
+        (`@odata.count`) and that of the device-code rule of TRR9017 as the last page of
+        a Graph delta query (`@odata.deltaLink`). The run reads the records of each
+        list, the baselines pass, and each row counts its records."""
         tree = self.tree()
-        azure = "detections/cloud/fixtures/trr9013/benign_mi.json"
-        gcp = "detections/cloud/fixtures/trr9014/benign.json"
-        mi, grant = tree.read_json(azure), tree.read_json(gcp)
-        self.assertGreater(len(mi), 1)
-        self.assertGreater(len(grant), 1)
-        tree.write(azure, json.dumps({"value": mi,
-                                      "nextLink": "https://management.example.com/next",
-                                      "@odata.context": "x"}))
-        tree.write(gcp, json.dumps({"entries": grant, "nextPageToken": None}))
+        graph = "https://graph.microsoft.com/v1.0/"
+        pages = {
+            "trr9013/benign_mi.json": lambda rows: {
+                "value": rows, "nextLink": "https://management.example.com/next",
+                "@odata.context": "x"},
+            "trr9014/benign.json": lambda rows: {"entries": rows, "nextPageToken": None},
+            "trr9013/benign.json": lambda rows: {
+                "@odata.context": graph + "$metadata#auditLogs/directoryAudits",
+                "@odata.nextLink": graph + "auditLogs/directoryAudits?$skiptoken=x",
+                "value": rows},
+            "trr9017/benign.json": lambda rows: {
+                "@odata.context": graph + "$metadata#auditLogs/directoryAudits",
+                "@odata.count": len(rows), "value": rows},
+            "trr9017/benign_signin.json": lambda rows: {
+                "@odata.context": graph + "$metadata#auditLogs/signIns",
+                "value": rows, "@odata.deltaLink": graph + "auditLogs/signIns/delta?x=1"}}
+        counts = {}
+        for name, page in pages.items():
+            rel = "detections/cloud/fixtures/" + name
+            rows = tree.read_json(rel)
+            self.assertGreater(len(rows), 0)
+            counts[name] = len(rows)
+            tree.write(rel, json.dumps(page(rows)))
         result = tree.run(self.GATE)
         self.assert_accepts(result, r"^All \d+ external-cloud detection\(s\) fired ")
-        self.assert_saw(result, r"^PASS  \[TRR9013 Azure\] azure_managed_identity_federated_"
-                                r"credential_backdoor\.yml: .*benign baseline clean "
-                                rf"\({len(mi)} record\(s\)\) ")
-        self.assert_saw(result, r"^PASS  \[TRR9014 GCP\] gcp_public_iam_member_grant\.yml: "
-                                rf".*benign baseline clean \({len(grant)} record\(s\)\) ")
+        self.assertGreater(counts["trr9013/benign_mi.json"], 1)
+        self.assertGreater(counts["trr9014/benign.json"], 1)
+        for row, name in (
+                (r"\[TRR9013 Azure\] azure_managed_identity_federated_credential_backdoor\.yml",
+                 "trr9013/benign_mi.json"),
+                (r"\[TRR9014 GCP\] gcp_public_iam_member_grant\.yml", "trr9014/benign.json"),
+                (r"\[TRR9013 Azure\] entra_app_federated_credential_backdoor\.yml",
+                 "trr9013/benign.json"),
+                (r"\[TRR9017 Azure\] entra_illicit_oauth_consent_grant\.yml",
+                 "trr9017/benign.json"),
+                (r"\[TRR9017 Azure\] entra_device_code_authentication\.yml",
+                 "trr9017/benign_signin.json")):
+            self.assert_saw(result, rf"^PASS  {row}: .*benign baseline clean "
+                                    rf"\({counts[name]} record\(s\)\) ")
 
     def test_rejects_two_fixtures_that_the_loader_cannot_read_in_one_row(self):
         """The two fixtures of the rule cannot be read: one ERROR row names both, and
