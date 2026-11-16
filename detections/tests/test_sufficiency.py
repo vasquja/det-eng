@@ -367,6 +367,47 @@ class RuleCases(gatelib.GateCase):
         self.assertIn("ok    T9999/planted_rule.yml :: positive   packet-raw-socket-non-ascii-"
                       "keys: fires\n", result.stdout)
 
+    def test_correlation_reads_keys_of_two_events_that_differ_only_in_letter_case(self):
+        """The correlation of T1620 (memfd_create, then execveat of the same pid within
+        10 s) groups by `pid` and reads the time in `timestamp`. Three planted cases
+        whose execveat event spells one of the two keys in another letter case. The
+        compiled correlation reads the key as the field (SQLite), and so must the
+        analysis of the gate, which grades a case in Python: the execveat 30 s later
+        with `Timestamp` is a near-miss on the timespan, the execveat of another pid
+        with `PID` is a near-miss on group-by, and with `PID` of the same pid the case
+        fires. (Before, the analysis read only the exact key: the gate ended with a
+        traceback of EventTable on the first, and graded the second distant, `no
+        group-by value for pid`.)"""
+        tree = self.tree()
+        rule = "detections/sigma/T1620/memfd_create_execveat.yml"
+        sidecar = rule[:-len(".yml")] + ".cases.jsonl"
+        self.assertIn("group-by:", tree.read(rule))
+        first, second = tree.read_jsonl(sidecar)[0]["events"]
+        self.assertEqual((first["syscall"], second["syscall"]), ("memfd_create", "execveat"))
+        self.assertEqual(first["pid"], second["pid"])
+
+        def respelled(event, key, new, value=None):
+            return {(new if k == key else k): (v if k != key or value is None else value)
+                    for k, v in event.items()}
+        planted = [
+            {"name": "planted-too-late-Timestamp", "kind": "near-miss", "breaks": ["timespan"],
+             "why": "planted", "events": [first, respelled(second, "timestamp", "Timestamp",
+                                                           "2026-10-12 13:00:30.000")]},
+            {"name": "planted-two-pids-PID", "kind": "near-miss", "breaks": ["group-by"],
+             "why": "planted", "events": [first, respelled(second, "pid", "PID",
+                                                           first["pid"] + 1)]},
+            {"name": "planted-same-pid-PID", "kind": "positive", "why": "planted",
+             "events": [first, respelled(second, "pid", "PID")]}]
+        self.assertEqual(first["timestamp"][:17], "2026-10-12 13:00:")
+        tree.append(sidecar, "".join(json.dumps(case) + "\n" for case in planted))
+        result = tree.run(self.GATE, rule)
+        self.assertNotIn("Traceback", result.output)
+        self.assert_accepts(result, r"^All cases hold \(1 rule file\(s\)\)\.$")
+        for line in ("near-miss  planted-too-late-Timestamp: near-miss on timespan",
+                     "near-miss  planted-two-pids-PID: near-miss on group-by",
+                     "positive   planted-same-pid-PID: fires"):
+            self.assertIn(f"\nok    T1620/memfd_create_execveat.yml :: {line}\n", result.stdout)
+
     # One changed near-miss (the second line of the sound sidecar), whose events
     # cannot be put in one event table, and the words of the gate for it. Without
     # the check, a clash ends the gate with a traceback of EventTable, an event that
@@ -405,6 +446,22 @@ class RuleCases(gatelib.GateCase):
         ("two keys that flatten to one", lambda event: [dict(event, a={"b": 1}, **{"a.b": 2})],
          r"event 1 of 1: the keys \['a', 'b'\] and \['a\.b'\] both flatten to 'a\.b', and "
          r"the flat event keeps only the last value$"),
+        # Values and keys that SQLite does not hold as they are (json.dumps writes NaN,
+        # Infinity and the escapes \ud800 and \u0000, and json.loads reads them).
+        ("NaN", lambda event: [dict(event, pid=float("nan"))],
+         r"event 1 of 1: the value of pid is NaN, a number that JSON does not have \(SQLite "
+         r"stores it as NULL\)" + TABLE),
+        ("Infinity", lambda event: [event, dict(event, pid=float("inf"))],
+         r"event 2 of 2: the value of pid is Infinity, a number that JSON does not have" + TABLE),
+        ("a lone surrogate in a value", lambda event: [dict(event, comm="x\ud800")],
+         r"event 1 of 1: the value of comm holds the lone surrogate U\+D800, which is not text "
+         r"of UTF-8, so SQLite cannot hold it" + TABLE),
+        ("a lone surrogate in a key", lambda event: [dict(event, **{"k\udc80": 1})],
+         r"event 1 of 1: the key 'k\\udc80' holds the lone surrogate U\+DC80, which is not "
+         r"text of UTF-8, so SQLite cannot hold it" + TABLE),
+        ("a NUL in a key", lambda event: [dict(event, **{"a\u0000b": 1})],
+         r"event 1 of 1: the key 'a\\x00b' holds U\+0000 \(NUL\), which no column name of "
+         r"SQLite can hold" + TABLE),
     )
 
     def test_rejects_events_that_one_table_cannot_hold_and_judges_the_other_cases(self):
@@ -525,6 +582,18 @@ print(json.dumps({
                        f"SELECT * FROM logs WHERE n = {big - 1}"),
     "-2**63": probe([{"n": -big}], "n", -big),
     "true": probe([{"n": True}], "n", 1),
+    "NaN": probe([{"n": 1.5}, {"n": float("nan")}], "n", 1.5),
+    "-Infinity": probe([{"n": float("-inf")}], "n", 1.5),
+    "finite floats": probe([{"n": 1.5}, {"n": -2.0}], "n", 1.5),
+    "a lone surrogate in a value": probe([{"a": "x"}, {"a": "\ud800"}], "a", "x"),
+    "a lone surrogate in a key": probe([{"\udc80": 1}], "a", 1),
+    "a NUL in a key": probe([{"a": 1}, {"a\x00b": 1}], "a", 1),
+    # A key event_ids, the name of the column of the evidence of a correlation.
+    "event_ids": probe([{"action": "login", "event_ids": '["x:1"]'},
+                        {"action": "x", "event_ids": '["x:0"]'},
+                        {"action": "sudo", "event_ids": '["x:0"]'}], "action", "sudo"),
+    "event_ids, one event": probe([{"action": "sudo", "event_ids": '["x:5"]'},
+                                   {"action": "sudo"}], "action", "sudo"),
 }))
 '''
 
@@ -602,6 +671,38 @@ class EventTableKeys(gatelib.GateCase):
                                          "the 64 bits of an INTEGER of SQLite")
         for name in ("2**63 - 1", "-2**63", "true"):
             self.assertEqual(self.probes[name], [[0]], name)
+
+
+    def test_rejects_values_and_keys_that_sqlite_does_not_hold_as_they_are(self):
+        """SQLite stores NaN as NULL (a `field: null` item would match a record that
+        holds a value), JSON has no NaN or Infinity, UTF-8 cannot encode a lone
+        surrogate (a JSON escape such as \\ud800 gives one), and no column name can
+        hold a NUL. The table refuses each with an EventError that names the event and
+        the key (before, NaN was NULL without a word, and the others ended the table
+        with an error of Python or of sqlite3). A finite float is held as it is."""
+        self.refused("NaN", 1, ["n"], "event 2 of 2: the value of n is NaN, a number that "
+                                      "JSON does not have (SQLite stores it as NULL)")
+        self.refused("-Infinity", 0, ["n"], "event 1 of 1: the value of n is -Infinity, a "
+                                            "number that JSON does not have")
+        self.assertEqual(self.probes["finite floats"], [[0]])
+        surrogate = "which is not text of UTF-8, so SQLite cannot hold it"
+        self.refused("a lone surrogate in a value", 1, ["a"],
+                     f"event 2 of 2: the value of a holds the lone surrogate U+D800, {surrogate}")
+        self.refused("a lone surrogate in a key", 0, ["\udc80"],
+                     f"event 1 of 1: the key '\\udc80' holds the lone surrogate U+DC80, "
+                     f"{surrogate}")
+        self.refused("a NUL in a key", 1, ["a\x00b"],
+                     "event 2 of 2: the key 'a\\x00b' holds U+0000 (NUL), which no column name "
+                     "of SQLite can hold")
+
+    def test_a_key_event_ids_is_an_ordinary_column(self):
+        """`event_ids` is the column of the evidence of a correlation. A plain rule
+        selects every column of the table, so an event key `event_ids` is a column of
+        its rows too: the hits are the rows of the table (the column `_rowid`), not the
+        text of that column (before, the hit named the event of that text, or the run
+        ended with a TypeError when the matching event did not hold the key)."""
+        self.assertEqual(self.probes["event_ids"], [[2]])
+        self.assertEqual(self.probes["event_ids, one event"], [[0], [1]])
 
 
 class SigmaEvalImportGuard(gatelib.GateCase):

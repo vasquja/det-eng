@@ -163,6 +163,28 @@ RESERVED = {
     "rowid": "is the name by which the correlation queries read the row id",
 }
 _INT64 = (-(1 << 63), (1 << 63) - 1)  # the range of an INTEGER of SQLite
+_FINITE = (-float("inf"), float("inf"))
+
+
+def _surrogate(text):
+    """The first lone surrogate of a str (U+D800 to U+DFFF), or None. UTF-8 cannot
+    encode it, so SQLite cannot hold such a text: a JSON escape such as \\ud800 gives
+    one."""
+    if text.isascii():
+        return None
+    return next((ch for ch in text if "\ud800" <= ch <= "\udfff"), None)
+
+
+def _key_problem(key):
+    """The text of a problem of one key that no column name of SQLite can be, or None:
+    a key that holds U+0000 (NUL) or a lone surrogate."""
+    if "\x00" in key:
+        return f"the key {key!r} holds U+0000 (NUL), which no column name of SQLite can hold"
+    ch = _surrogate(key)
+    if ch is not None:
+        return (f"the key {key!r} holds the lone surrogate U+{ord(ch):04X}, which is not "
+                "text of UTF-8, so SQLite cannot hold it")
+    return None
 
 
 class EventError(ValueError):
@@ -196,9 +218,13 @@ def event_problem(event):
 
       - a key that SQLite reads as a name of the row id that the queries read
         (RESERVED: _rowid, rowid, in any letter case of the ASCII letters);
+      - a key that holds U+0000 (NUL) or a lone surrogate (no column name of SQLite
+        can hold it);
       - keys that differ only in the letter case of their ASCII letters
         (key_clashes());
-      - an integer that an INTEGER of SQLite cannot hold (outside 64 bits).
+      - a value that SQLite does not hold as it is: an integer outside 64 bits (an
+        INTEGER of SQLite), a number that is not finite (NaN, Infinity: JSON has no
+        such number, and SQLite stores NaN as NULL), a text with a lone surrogate.
 
     Each loader of records asks this of each event before an EventTable gets it, and
     EventTable refuses an event with a problem (EventError): the loaders and the
@@ -208,16 +234,38 @@ def event_problem(event):
         key = min(key for key in event if fold(key) in RESERVED)
         return (key,), (f"the key {key} {RESERVED[fold(key)]} ({fold(key)}, in any letter "
                         "case of the ASCII letters)")
+    for key in event:
+        problem = _key_problem(key)
+        if problem:
+            return (key,), problem
     if len(names) != len(event):
         keys = key_clashes(event)[0]
         return keys, ("keys that differ only by case: " + " / ".join(keys)
                       + ", which SQLite reads as one column name")
     low, high = _INT64
     for key, value in event.items():
-        if type(value) is int and not low <= value <= high:  # a bool is not of the type int
-            return (key,), (f"the value of {key} is an integer outside the 64 bits of an "
-                            "INTEGER of SQLite")
+        kind = type(value)  # a bool is not of the type int
+        if kind is int:
+            if not low <= value <= high:
+                return (key,), (f"the value of {key} is an integer outside the 64 bits of an "
+                                "INTEGER of SQLite")
+        elif kind is float:
+            if not _FINITE[0] < value < _FINITE[1]:  # NaN compares false
+                return (key,), (f"the value of {key} is {_json_number(value)}, a number that "
+                                "JSON does not have"
+                                + (" (SQLite stores it as NULL)" if value != value else ""))
+        elif kind is str:
+            ch = _surrogate(value)
+            if ch is not None:
+                return (key,), (f"the value of {key} holds the lone surrogate "
+                                f"U+{ord(ch):04X}, which is not text of UTF-8, so SQLite "
+                                "cannot hold it")
     return None
+
+
+def _json_number(value):
+    """NaN, Infinity or -Infinity: a float that is not finite, as json.dumps writes it."""
+    return "NaN" if value != value else ("Infinity" if value > 0 else "-Infinity")
 
 
 class ThreeValuedSqliteBackend(sqliteBackend):
@@ -330,27 +378,51 @@ class EventTable:
         # ASCII letters as one name (fold()), and so it reads a rule field: the item
         # `Verb: create` reads the key `verb` (detections/SEMANTICS.md, "Field names").
         # So keys of that kind in different events share one column, named as the
-        # first key of the group in sorted order. One event that holds two such keys
-        # has two values for one column: the table refuses it (EventError), as it
-        # refuses a key that hides a row id that the queries read, and an integer
-        # outside 64 bits (event_problem()).
+        # first key of the group in sorted order. The table refuses an event that it
+        # cannot hold (event_problem(), EventError): one event that holds two such keys
+        # (two values for one column), a key that hides a row id that the queries read
+        # or that no column name can hold, and a value that SQLite does not hold as it
+        # is. The keys are tested once for each distinct key, and each event only when a
+        # key gives cause; the values at the insert.
+        keys = set().union(*events)
         group = {}  # fold(key) -> the keys of the events
-        for index, event in enumerate(events):
-            problem = event_problem(event)
-            if problem:
-                raise EventError(index, len(events), *problem)
-            for key in event:
-                group.setdefault(fold(key), set()).add(key)
-        column = {key: min(keys) for keys in group.values() for key in keys}
-        columns = sorted(set(column.values()))
+        for key in keys:
+            group.setdefault(fold(key), []).append(key)
+        joined = "".join(keys)
+        if (len(group) != len(keys) or not RESERVED.keys().isdisjoint(group)
+                or "\x00" in joined or not joined.isascii() and any(map(_surrogate, keys))):
+            for index, event in enumerate(events):
+                problem = event_problem(event)
+                if problem:
+                    raise EventError(index, len(events), *problem)
+        column = {key: min(names) for names in group.values() for key in names}
         self.db.execute(f"CREATE TABLE logs ({_ROWID} INTEGER PRIMARY KEY"
-                        + "".join(f", {_quote(c)}" for c in columns) + ")")
+                        + "".join(f", {_quote(c)}" for c in sorted(set(column.values())))
+                        + ")")
+        inserts = {}  # the keys of an event, in its order -> the INSERT of such an event
         for rowid, event in enumerate(events):
-            keys = sorted(event, key=column.__getitem__)
-            self.db.execute(
-                f"INSERT INTO logs ({_ROWID}{''.join(', ' + _quote(column[k]) for k in keys)}) "
-                f"VALUES (?{', ?' * len(keys)})",
-                [rowid] + [event[k] for k in keys])
+            shape = tuple(event)
+            sql = inserts.get(shape)
+            if sql is None:
+                names = "".join(", " + _quote(column[k]) for k in shape)
+                sql = inserts[shape] = (f"INSERT INTO logs ({_ROWID}{names}) "
+                                        f"VALUES (?{', ?' * len(shape)})")
+            values = [rowid, *event.values()]
+            # SQLite stores NaN as NULL without an error, so the floats are tested here;
+            # an integer outside 64 bits and a lone surrogate fail the insert.
+            problem = None
+            if float in map(type, values) and not all(
+                    _FINITE[0] < v < _FINITE[1] for v in values if type(v) is float):
+                problem = event_problem(event)
+            if problem is None:
+                try:
+                    self.db.execute(sql, values)
+                except (OverflowError, UnicodeEncodeError):
+                    problem = event_problem(event)
+                    if problem is None:
+                        raise
+            if problem:
+                raise EventError(rowid, len(events), *problem)
 
     def _execute(self, sql):
         while True:
@@ -367,12 +439,14 @@ class EventTable:
         cur = self._execute(sql)
         names = [d[0] for d in cur.description]
         rows = cur.fetchall()
-        if "event_ids" in names:  # correlation alert rows
-            idx = names.index("event_ids")
-            return [[int(eid.rsplit(":", 1)[1]) for eid in json.loads(row[idx])]
-                    for row in rows]
-        idx = names.index(_ROWID)
-        return [[row[idx]] for row in rows]
+        if _ROWID in names:  # a plain rule: SELECT * FROM logs, the rows of the table
+            idx = names.index(_ROWID)
+            return [[row[idx]] for row in rows]
+        # A correlation rule: its alert rows name the events in event_ids (and have no
+        # column _rowid). An event may hold a key event_ids: it is only a column of a row.
+        idx = names.index("event_ids")
+        return [[int(eid.rsplit(":", 1)[1]) for eid in json.loads(row[idx])]
+                for row in rows]
 
     def hits(self, sql):
         return [[self.events[i] for i in hit] for hit in self.hit_indices(sql)]

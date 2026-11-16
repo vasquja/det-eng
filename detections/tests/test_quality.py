@@ -642,6 +642,62 @@ class NullSafety(gatelib.GateCase):
         self.assertEqual(len(found(result, r"^FAIL .*$")), 1, result.describe())
         self.assertIn(f"\nFAILED: 1 of 1 rule(s) are not null-safe: {self.IMDS}.\n", result.stdout)
 
+    def test_rejects_case_whose_one_record_spells_a_field_in_another_letter_case(self):
+        """Two planted positives. In T1609, a case of two records: a quiet record that
+        holds `objectRef.resource` (its subresource is `log`) and the exec record with
+        `ObjectRef` in the place of `objectRef`. The rule fires only on the second
+        record, through SQLite, which reads `ObjectRef.resource` as the field. The test
+        is for each record: the first record has the field, and the second does not.
+        In T1620 (a correlation), the execveat event spells its group-by key `PID`:
+        the compiled correlation groups it with the memfd_create event, Lucene, Splunk
+        and ES|QL do not. Each is a FAIL that names the case, the field and the key.
+        (Before roadmap item R2d the table refused each case; the first R2d text read
+        the keys of the whole case and skipped the first case, and read no group-by
+        field.)"""
+        tree = self.tree()
+        exec_rel = "detections/sigma/T1609/k8s_pod_exec_attach.cases.jsonl"
+        exec_case = next(c for c in tree.read_jsonl(exec_rel)
+                         if c["name"] == "exec-websocket-get-procA")
+        (record,) = exec_case["events"]
+        self.assertEqual(record["objectRef"]["subresource"], "exec")
+        quiet = json.loads(json.dumps(record))
+        quiet["objectRef"]["subresource"] = "log"
+        respelled = {("ObjectRef" if key == "objectRef" else key): value
+                     for key, value in record.items()}
+        tree.append(exec_rel, json.dumps({
+            "name": "planted-ObjectRef-with-decoy", "kind": "positive", "why": "planted",
+            "events": [quiet, respelled]}) + "\n")
+        memfd_rel = "detections/sigma/T1620/memfd_create_execveat.cases.jsonl"
+        memfd_case = tree.read_jsonl(memfd_rel)[0]
+        first, second = memfd_case["events"]
+        self.assertEqual(memfd_case["kind"], "positive")
+        self.assertEqual(first["pid"], second["pid"])
+        second = {("PID" if key == "pid" else key): value for key, value in second.items()}
+        tree.append(memfd_rel, json.dumps({
+            "name": "planted-group-by-PID", "kind": "positive", "why": "planted",
+            "events": [first, second]}) + "\n")
+        # The oracle judges the two cases: each fires.
+        cases = tree.run("detections/rule_cases.py", "detections/sigma/T1609/k8s_pod_exec_attach.yml",
+                         "detections/sigma/T1620/memfd_create_execveat.yml")
+        self.assert_accepts(cases, r"^All cases hold \(2 rule file\(s\)\)\.$")
+        self.assert_saw(cases, r"^ok    T1609/k8s_pod_exec_attach\.yml :: positive   "
+                               r"planted-ObjectRef-with-decoy: fires$")
+        self.assert_saw(cases, r"^ok    T1620/memfd_create_execveat\.yml :: positive   "
+                               r"planted-group-by-PID: fires$")
+        result = tree.run(self.GATE, "detections/sigma/T1609/k8s_pod_exec_attach.yml",
+                          "detections/sigma/T1620/memfd_create_execveat.yml")
+        for rule, field, key, case in (
+                ("T1609/k8s_pod_exec_attach.yml", "objectRef.resource", "ObjectRef.resource",
+                 "positive planted-ObjectRef-with-decoy"),
+                ("T1609/k8s_pod_exec_attach.yml", "objectRef.subresource",
+                 "ObjectRef.subresource", "positive planted-ObjectRef-with-decoy"),
+                ("T1620/memfd_create_execveat.yml", "pid", "PID", "positive planted-group-by-PID")):
+            self.assert_rejects(result, rf"^FAIL  {re.escape(rule)} :: case {case}: the rule reads "
+                                        rf"`{re.escape(field)}`, and the records carry "
+                                        rf"`{re.escape(key)}`: SQLite matches column names",
+                                exit_code=1)
+        self.assertEqual(len(found(result, r"^FAIL .*$")), 3, result.describe())
+
 
 # ----------------------------------------------------------------- check_variants.py
 

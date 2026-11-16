@@ -286,23 +286,35 @@ def check_rule(rule_path, fixtures, absent=False):
 
 
 def _rule_fields(rule):
+    """The fields that the compiled rule reads: the fields of its items (of each base
+    of a correlation), and of a correlation also the group-by fields, the counted
+    field and the time."""
     parts = rule.bases.values() if rule.is_correlation else [rule]
-    return sorted({f for part in parts for f in part.item_field.values() if f})
+    fields = {f for part in parts for f in part.item_field.values() if f}
+    if rule.is_correlation:
+        fields.update(rule.group_by, [sigma_explain.TS_FIELD])
+        if rule.type == "value_count" and rule.threshold.get("field"):
+            fields.add(rule.threshold["field"])
+    return sorted(fields)
 
 
 def _field_case(rule, rel, sets):
-    """A rule field that a case's records carry only in another letter case. SQLite
-    matches column names without regard to case, so every offline gate reads the
-    record's field, but Lucene, Splunk and ES|QL do not: there the item never matches
-    (a guard on it always holds). One problem per field."""
+    """A rule field that a record of a case carries in another letter case. SQLite
+    reads a key as a field when the two differ only in the letter case of their ASCII
+    letters (sigma_eval.fold()), so every offline gate reads the record's key, but
+    Lucene, Splunk and ES|QL do not: there the item never matches that record (a guard
+    on it always holds). The test is for each record: an event set may hold the
+    field in one record and the other spelling in another (detections/SEMANTICS.md,
+    "Field names"), and a record holds one spelling at most. One problem per field."""
     problems, seen = [], set()
     fields = _rule_fields(rule)
     for source, name, kind, events in sets:
         keys = {k for e in events for k in e}
         for field in fields:
-            if field in keys or field in seen:
+            if field in seen:
                 continue
-            other = sorted(k for k in keys if k.lower() == field.lower())
+            want = sigma_eval.fold(field)
+            other = sorted(k for k in keys if k != field and sigma_eval.fold(k) == want)
             if other:
                 seen.add(field)
                 problems.append(Problem(
@@ -603,6 +615,16 @@ _SELF_TEST = [
      {"sel": {"Verb": "delete"}, "condition": "sel"},
      [("positive", [{"verb": "delete"}])],
      "the rule reads `Verb`, and the records carry `verb`"),
+    ("a record that carries the field in another letter case beside one that holds it fails",
+     {"sel": {"verb": "delete"}, "condition": "sel"},
+     [("positive", [{"verb": "get"}, {"Verb": "delete"}])],
+     "the rule reads `verb`, and the records carry `Verb`"),
+    # SQLite folds only the ASCII letters: the Kelvin sign (U+212A) is not `k`
+    # (str.lower() folds it to `k`), so the key is another field, for SQLite too.
+    ("a key that differs from a field in a letter that is not ASCII is another field",
+     {"sel": {"kind": "Event"}, "condition": "sel"},
+     [("positive", [{"kind": "Event"}, {"\u212aind": "Event"}])],
+     None),
     ("a null-safe copy of a filter whose maps read different fields holds",
      {"sel": {"verb": "delete"},
       "filter": [{"uri|re": "dryRun=All"}, {"body|contains": "All"}],

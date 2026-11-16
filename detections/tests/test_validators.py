@@ -2686,6 +2686,44 @@ class K8sValidator(gatelib.GateCase):
                                     r"requestObject\.data\.key, which SQLite reads as one column "
                                     r"name$", exit_code=1)
 
+    def test_rejects_an_audit_event_that_sqlite_does_not_hold_as_it_is(self):
+        """Four audit events of a ConfigMap create, each with one value or key that
+        SQLite does not hold as it is: NaN and Infinity (json reads them; JSON has no
+        such number, and SQLite stores NaN as NULL), a lone surrogate (the escape
+        \\ud800: UTF-8 cannot encode it) and a key with a NUL (no column name holds
+        it). The reader names the log and each line, and the validator judges no rule.
+        Before roadmap item R2d the NaN was a missing value, and the other three ended
+        the run with a traceback (also with --report and --expect-miss)."""
+        good = self.good()
+        records = write_log(good, self.LOG, self.CASES, *self.BENIGN)
+        events = []
+        for number, (key, value) in enumerate((("x", float("nan")), ("x", float("inf")),
+                                               ("x", "on\ud800"), ("a\u0000b", "on")), 1):
+            event = self.configmap_create(number, "key")
+            event["requestObject"]["data"][key] = value
+            events.append(json.dumps(event))
+        self.assertIn('"x": NaN', events[0])
+        self.assertIn('"x": "on\\ud800"', events[2])
+        with open(good.tmp_path(self.LOG), "a", encoding="utf-8") as fh:
+            fh.write("".join(event + "\n" for event in events))
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assertNotIn("Traceback", result.output)
+        surrogate = r"which is not text of UTF-8, so SQLite cannot hold it"
+        for line, problem in enumerate((
+                r"the value of requestObject\.data\.x is NaN, a number that JSON does not have "
+                r"\(SQLite stores it as NULL\)",
+                r"the value of requestObject\.data\.x is Infinity, a number that JSON does not "
+                r"have",
+                rf"the value of requestObject\.data\.x holds the lone surrogate U\+D800, {surrogate}",
+                r"the key 'requestObject\.data\.a\\x00b' holds U\+0000 \(NUL\), which no "
+                r"column name of SQLite can hold"), records + 1):
+            self.assert_rejects(result, rf"^ERROR: the audit log \S+/pre-emulation-audit\.log, "
+                                        rf"line {line}: {ONE_EVENT_TABLE['audit']}{problem}$",
+                                exit_code=1)
+        self.assert_rejects(result, LINES_NOT_RECORDS.format(4), exit_code=1)
+
     def test_rejects_a_ledger_window_that_starts_after_it_ends(self):
         """The validate step of CI (a strict run with --ledger) on the records of the
         control. The row of Procedure A has the times of a row of 2026-11-13: its start

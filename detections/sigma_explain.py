@@ -997,9 +997,31 @@ class CorrelationRule:
             return list(range(1, max(int(cond["eq"]), 2)))
         return None
 
+    def _respelled(self, events):
+        """The events, with each key that the compiled correlation reads as a field
+        that this analysis reads and writes in Python (a group-by field, the time, the
+        counted field) written as the rule writes that field. SQLite reads a key that
+        differs from the field only in the letter case of its ASCII letters
+        (sigma_eval.fold()) as the field, and two events of a set may spell it in two
+        ways (detections/SEMANTICS.md, "Field names"); an event holds one spelling at
+        most (sigma_eval.event_problem())."""
+        names = list(self.group_by) + [TS_FIELD]
+        if self.type == "value_count" and self.threshold.get("field"):
+            names.append(self.threshold["field"])
+        want = {}
+        for name in names:
+            want.setdefault(sigma_eval.fold(name), name)
+        out = []
+        for event in events:
+            spelled = {key: want.get(sigma_eval.fold(key), key) for key in event}
+            out.append(event if all(k == v for k, v in spelled.items())
+                       else {spelled[key]: value for key, value in event.items()})
+        return out
+
     def verdict_set(self, events, table=None):
         """Judge an event set as one unit (the correlation's own unit)."""
         table = table or sigma_eval.EventTable(events)
+        events = self._respelled(events)
         fired = bool(table.hit_indices(self.sql)) if self.sql else False
         matched = {}
         lines = []

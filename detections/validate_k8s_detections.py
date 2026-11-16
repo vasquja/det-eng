@@ -321,8 +321,10 @@ def table_problem(source, record):
     flat record; else the problem, as text. The test is the test of the table
     itself (sigma_eval.event_problem()): two keys of the record that differ only in
     the letter case of their ASCII letters, a key that hides a row id that the
-    queries read, an integer outside 64 bits. Two records of a log whose keys differ
-    only in letter case are no problem: their keys share one column."""
+    queries read or that no column name can hold, a value that SQLite does not hold
+    as it is (an integer outside 64 bits, NaN, a lone surrogate). Two records of a
+    log whose keys differ only in letter case are no problem: their keys share one
+    column."""
     problem = sigma_eval.event_problem(record)
     if problem is None:
         return None
