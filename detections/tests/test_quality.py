@@ -522,7 +522,10 @@ class ScoreBenign(gatelib.GateCase):
         alone at the end, and a byte that is not UTF-8 before the end or at the end are
         ERROR lines (before, the first two lost an event without a word); a cut inside
         an escape, a blank before the brace and a cut inside a character of UTF-8 are
-        skipped (before, the last was an ERROR line)."""
+        skipped (before, the last was an ERROR line). The character of an error counts
+        the blanks before the line (three blanks before a cut line before other lines),
+        and the error of a document of many lines names the line of the error (a NUL
+        at line 3)."""
         good = self.good()
         events = [event for case in
                   good.read_jsonl("detections/sigma/T1609/k8s_pod_exec_attach.cases.jsonl")
@@ -548,6 +551,7 @@ class ScoreBenign(gatelib.GateCase):
             json.loads(cut)
         except json.JSONDecodeError as e:
             cut_error = f"not JSON ({e.msg}, at character {e.colno})"
+            blanks_error = f"not JSON ({e.msg}, at character {e.colno + 3})"
         runs = self.extra_slice_runs({
             "a directory": None,
             "a path that does not exist": False,
@@ -583,6 +587,14 @@ class ScoreBenign(gatelib.GateCase):
             "NUL bytes before an event on the last line without a line feed": lines[0]
             + lines[1] + b"\x00" * 8 + lines[1].rstrip(b"\n"),
             "a cut line before other lines": lines[0] + cut + b"\n" + lines[1],
+            # The character of the error counts from 1 in the line as the capture holds
+            # it: with the three blanks before the "{".
+            "three blanks before a cut line before other lines": lines[0] + b"   " + cut
+            + b"\n" + lines[1],
+            # A document of many lines whose error is at line 3: no line before it is
+            # JSON, so the error of the document names its line and its character.
+            "a document with an error at line 3": b"[\n" + lines[0].rstrip() + b",\n\x00"
+            + lines[1].rstrip() + b"\n]\n",
             "a cut last line with a line feed": lines[0] + lines[1] + cut + b"\n",
             "a cut last line": lines[0] + lines[1] + cut,
             # json keeps only the last value of a key that an object holds two times, so
@@ -645,6 +657,11 @@ class ScoreBenign(gatelib.GateCase):
             "a cut line before other lines": f", line 2: {cut_error}; a capture can cut only "
                                              "the last line of a log, and a cut line has no "
                                              "line feed",
+            "three blanks before a cut line before other lines":
+                f", line 2: {blanks_error}; a capture can cut only the last line of a log, and a "
+                "cut line has no line feed",
+            "a document with an error at line 3": ", line 3: not JSON (Expecting value, at "
+                                                  "character 1)",
             "a cut last line with a line feed": f", line 3: {cut_error}; a capture can cut "
                                                 "only the last line of a log, and a cut line "
                                                 "has no line feed",
@@ -953,36 +970,69 @@ class NullSafety(gatelib.GateCase):
         self.assertEqual(len(found(result, r"^FAIL .*$")), 5, result.describe())
 
     def test_rejects_case_that_spells_a_time_item_of_a_base_in_another_letter_case(self):
-        """Planted in a copy: the execveat base of the correlation of T1620 also reads
-        `timestamp` as an item field (`timestamp|startswith: '20'`), and a case spells
-        it `Timestamp` in its second record. The rule reads the field, so the FAIL has
-        the text of a field of the rule (`the rule reads `timestamp``), not the text
-        of the time that a rule does not write. (A gate that gave the time text to
-        each correlation said that the rule writes no time field, which is false
+        """Planted in a copy, in two runs (each in its own copy, started together): one
+        base of the correlation of T1620 also reads `timestamp` as an item field
+        (`timestamp|startswith: '20'`), and a case spells it `Timestamp` in the record
+        of that base. The base is the memfd_create base (the first base, and the first
+        record) or the execveat base (the last base, and the second record). The rule
+        reads the field, so the FAIL has the text of a field of the rule (`the rule
+        reads `timestamp``), not the text of the time that a rule does not write. (A
+        gate that gave the time text to each correlation, or that read the item fields
+        of one base only, said that the rule writes no time field, which is false
         here.)"""
-        tree = self.tree()
         rule = "detections/sigma/T1620/memfd_create_execveat.yml"
-        base = ("  execveat_syscall:\n"
-                "    type: SYSCALL\n"
-                "    syscall: execveat\n")
-        text = tree.read(rule)
-        self.assertEqual(text.count(base), 1)
-        tree.write(rule, text.replace(base, base + "    timestamp|startswith: '20'\n"))
         sidecar = rule[:-4] + ".cases.jsonl"
-        first, second = tree.read_jsonl(sidecar)[0]["events"]
-        self.assertIn("timestamp", second)
-        second = {("Timestamp" if key == "timestamp" else key): value
-                  for key, value in second.items()}
-        tree.append(sidecar, json.dumps({
-            "name": "planted-Timestamp", "kind": "positive", "why": "planted",
-            "events": [first, second]}) + "\n")
-        result = tree.run(self.GATE, rule)
-        self.assert_rejects(result, r"^FAIL  T1620/memfd_create_execveat\.yml :: case positive "
-                                    r"planted-Timestamp: the rule reads `timestamp`, and the "
-                                    r"records carry `Timestamp`: SQLite matches column names",
-                            exit_code=1)
-        self.assertNotIn("The rule writes no time field", result.stdout)
-        self.assertEqual(len(found(result, r"^FAIL .*$")), 1, result.describe())
+        bases = {"the first base": ("  memfd_create_syscall:\n"
+                                    "    type: SYSCALL\n"
+                                    "    syscall: memfd_create\n", 0),
+                 "the last base": ("  execveat_syscall:\n"
+                                   "    type: SYSCALL\n"
+                                   "    syscall: execveat\n", 1)}
+        runs = []
+        for label, (base, index) in bases.items():
+            tree = self.tree()
+            text = tree.read(rule)
+            self.assertEqual(text.count(base), 1)
+            tree.write(rule, text.replace(base, base + "    timestamp|startswith: '20'\n"))
+            events = tree.read_jsonl(sidecar)[0]["events"]
+            self.assertEqual(len(events), 2)
+            self.assertIn("timestamp", events[index])
+            events[index] = {("Timestamp" if key == "timestamp" else key): value
+                             for key, value in events[index].items()}
+            tree.append(sidecar, json.dumps({
+                "name": "planted-Timestamp", "kind": "positive", "why": "planted",
+                "events": events}) + "\n")
+            runs.append((label, tree.start(self.GATE, rule)))
+        for label, pending in runs:
+            with self.subTest(label):
+                result = pending.result()
+                self.assert_rejects(result, r"^FAIL  T1620/memfd_create_execveat\.yml :: case "
+                                            r"positive planted-Timestamp: the rule reads "
+                                            r"`timestamp`, and the records carry `Timestamp`: "
+                                            r"SQLite matches column names", exit_code=1)
+                self.assertNotIn("The rule writes no time field", result.stdout)
+                self.assertEqual(len(found(result, r"^FAIL .*$")), 1, result.describe())
+
+    def test_rejects_case_whose_records_spell_a_field_in_two_other_ways(self):
+        """A case of T1609 (in a copy) whose two records spell `objectRef` as
+        `ObjectRef` and as `OBJECTREF`. The FAIL of each field of the rule under it
+        names both spellings that the records carry, sorted. (A gate that named one
+        spelling only hid the other.)"""
+        tree = self.tree()
+        sidecar = "detections/sigma/T1609/k8s_pod_exec_attach.cases.jsonl"
+        (record,) = next(case for case in tree.read_jsonl(sidecar)
+                         if case["name"] == "exec-websocket-get-procA")["events"]
+        self.assertIn("objectRef", record)
+        spelled = [{(name if key == "objectRef" else key): value
+                    for key, value in record.items()} for name in ("ObjectRef", "OBJECTREF")]
+        tree.append(sidecar, json.dumps({"name": "planted-two-spellings", "kind": "positive",
+                                         "why": "planted", "events": spelled}) + "\n")
+        result = tree.run(self.GATE, "detections/sigma/T1609/k8s_pod_exec_attach.yml")
+        self.assert_rejects(result, r"^FAIL  T1609/k8s_pod_exec_attach\.yml :: case positive "
+                                    r"planted-two-spellings: the rule reads "
+                                    r"`objectRef\.resource`, and the records carry "
+                                    r"`OBJECTREF\.resource`, `ObjectRef\.resource`: SQLite "
+                                    r"matches column names", exit_code=1)
 
 
 # ----------------------------------------------------------------- check_variants.py

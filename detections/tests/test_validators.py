@@ -2963,14 +2963,16 @@ class K8sValidator(gatelib.GateCase):
     # its line feed), as `cat` reads it while the writer adds the line.
     CUT = '{"kind": "Event", "apiVersion": "audit.k8s.io/v1", "verb": "ge'
 
-    def not_json(self, line):
+    def not_json(self, line, blanks=0):
         """The end of the ERROR line of `line`, a line that json refuses and that
-        starts with "{": its error, and the rule of a cut line."""
+        starts with "{": its error, and the rule of a cut line. `blanks` blanks before
+        the line in the log count in the character of the error."""
         try:
             json.loads(line)
         except json.JSONDecodeError as e:
-            return (rf"not JSON \({re.escape(e.msg)}, at character {e.colno}\); a capture can "
-                    r"cut only the last line of a log, and a cut line has no line feed$")
+            return (rf"not JSON \({re.escape(e.msg)}, at character {e.colno + blanks}\); a "
+                    r"capture can cut only the last line of a log, and a cut line has no line "
+                    r"feed$")
         raise AssertionError(f"json reads {line!r}")
 
     def test_rejects_a_record_behind_bytes_that_json_refuses(self):
@@ -3013,23 +3015,27 @@ class K8sValidator(gatelib.GateCase):
         with a line feed and is the last line; the line ends with a carriage return
         alone and a complete audit event follows it (the reader keeps the end of each
         line as the log holds it, so that line has no line feed and is not the last
-        line). In each run the ERROR line names the line and says that a capture can
-        cut only the last line, and no rule is judged. (Before, the reader skipped
-        each line that json refused.)"""
+        line); and three blanks before the line in the middle of the log (the
+        character of the error counts the blanks: it is the place in the line as the
+        log holds it). In each run the ERROR line names the line and says that a
+        capture can cut only the last line, and no rule is judged. (Before, the reader
+        skipped each line that json refused.)"""
         good = self.good()
         after = json.dumps(case_events(good, self.CASES, self.BENIGN[0])[0])
         runs = []
-        for label, text, loaded in (
-                ("the middle of the log", self.CUT + "\n" + after + "\n", 1),
-                ("the last line with a line feed", self.CUT + "\n", 0),
-                ("a carriage return alone, before a record", self.CUT + "\r" + after + "\n", 1)):
+        for label, text, loaded, blanks in (
+                ("the middle of the log", self.CUT + "\n" + after + "\n", 1, 0),
+                ("the last line with a line feed", self.CUT + "\n", 0, 0),
+                ("a carriage return alone, before a record", self.CUT + "\r" + after + "\n", 1,
+                 0),
+                ("three blanks before the line", "   " + self.CUT + "\n" + after + "\n", 1, 3)):
             tree = self.tree()
             records = write_log(tree, self.LOG, self.CASES, *self.BENIGN)
             with open(tree.tmp_path(self.LOG), "a", encoding="utf-8", newline="") as fh:
                 fh.write(text)
-            runs.append((label, records, loaded,
+            runs.append((label, records, loaded, blanks,
                          tree.start_step(self.negative_control_step())))
-        for label, records, loaded, pending in runs:
+        for label, records, loaded, blanks, pending in runs:
             with self.subTest(label):
                 result = pending.result()
                 self.assert_saw(result, rf"^Loaded {records + loaded} audit event\(s\) from ")
@@ -3037,8 +3043,8 @@ class K8sValidator(gatelib.GateCase):
                 self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
                 self.assert_saw(result, LINES_NOT_RECORDS.format(1))
                 self.assert_rejects(result, r"^ERROR: the audit log \S+/pre-emulation-audit\.log, "
-                                            rf"line {records + 1}: " + self.not_json(self.CUT),
-                                    exit_code=1)
+                                            rf"line {records + 1}: "
+                                            + self.not_json(self.CUT, blanks), exit_code=1)
 
     def test_control_the_last_line_cut_by_a_capture_is_skipped(self):
         """CONTROL of the reader: CI copies the log with `cat` while the writer adds
