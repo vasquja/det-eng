@@ -1524,7 +1524,9 @@ is not a record is a problem:
 - a snapshot whose `items` is not a list;
 - bytes that are not UTF-8 (the message names the first such byte and its character
   in the line);
-- the byte order mark of UTF-8 (`EF BB BF`) at the start of line 1;
+- the byte order mark of UTF-8 (`EF BB BF`) at the start of a line (json refuses such
+  a line, and the reader would skip it as a cut line: two logs joined hold the mark
+  at the start of a later line);
 - JSON that the validator cannot read: nesting that is too deep (a `RecursionError`),
   or a number with more digits than Python reads (a `ValueError`);
 - a record that one event table cannot hold: two keys of the record that differ only

@@ -70,7 +70,7 @@ Logs:
     --expect-miss) after the logs are read, and no rule is judged: JSON that is not
     an object (`[]`), a JSON object that is not a record of the log (`{}`), a
     snapshot whose "items" is not a list, bytes that are not UTF-8, the byte order
-    mark of UTF-8 at the start of line 1, and JSON that the validator cannot read
+    mark of UTF-8 at the start of a line, and JSON that the validator cannot read
     (too deep, or a number that is too long). One ERROR line names the log, the
     line (and the item) and the problem (at most 10 for each log, then the number
     of the others), and a FAILED line ends the run with exit 1. With --expect-miss
@@ -426,7 +426,7 @@ def read_log(path, source):
     holds its id.
 
     A problem is a line, or an item of a snapshot, that is not a record of the log:
-    bytes that are not UTF-8, the byte order mark of UTF-8 at the start of line 1,
+    bytes that are not UTF-8, the byte order mark of UTF-8 at the start of a line,
     JSON that the validator cannot read (too deep, or a number that is too long),
     JSON that is not an object, a JSON object that is not a record of the log, a
     record that one event table cannot hold (table_problem()), and a snapshot whose
@@ -451,7 +451,10 @@ def read_log(path, source):
                                               f"0x{ord(text[bad]) - 0xdc00:02x} at character "
                                               f"{bad + 1} of the line)"))
                     continue
-                if n == 1 and text.startswith(BYTE_ORDER_MARK):
+                # json refuses a line that starts with the byte order mark, and the
+                # reader skips a line that is not JSON: so the mark is a problem at the
+                # start of each line (two logs joined hold it at a later line too).
+                if line.startswith(BYTE_ORDER_MARK):
                     problems.append((n, None, "the line starts with the byte order mark of "
                                               "UTF-8 (EF BB BF)"))
                     continue

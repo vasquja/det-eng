@@ -410,8 +410,8 @@ def load_extra(path, logsource, label):
     A line ends at a line break of the file (U+2028 in a JSON string is a character of
     the line). A line that is not JSON (a line that was cut at the end of a capture) is
     skipped. Raises CaptureError for a capture that is a directory or cannot be read,
-    for the first line with bytes that are not UTF-8, for a byte order mark of UTF-8 at
-    the start of line 1, for JSON that the gate cannot read (too deep for json or for
+    for the first line with bytes that are not UTF-8 or that starts with the byte order
+    mark of UTF-8, for JSON that the gate cannot read (too deep for json or for
     flatten(), a number with too many digits: the first such line, or the document),
     and for the first line, or element of the array, that is JSON and not an object
     (`[]` in a line of a log) or is an event that one event table cannot hold
@@ -436,9 +436,12 @@ def load_extra(path, logsource, label):
             raise CaptureError(f"the live capture {path}, line {n}: bytes that are not UTF-8 "
                                f"(the byte 0x{ord(line[bad]) - 0xDC00:02x} at character "
                                f"{bad + 1} of the line)")
-    if text.startswith("\ufeff"):
-        raise CaptureError(f"the live capture {path}, line 1: the line starts with the byte "
-                           "order mark of UTF-8 (EF BB BF)")
+        # json refuses a line that starts with the byte order mark, and a line that is
+        # not JSON is skipped: so the mark is an error at the start of each line (two
+        # captures joined hold it at a later line too).
+        if line.strip().startswith("\ufeff"):
+            raise CaptureError(f"the live capture {path}, line {n}: the line starts with the "
+                               "byte order mark of UTF-8 (EF BB BF)")
     try:
         doc = json.loads(text)
         raw = doc if isinstance(doc, list) else [doc]

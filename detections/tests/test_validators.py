@@ -2693,6 +2693,24 @@ class K8sValidator(gatelib.GateCase):
                                     r"the line starts with the byte order mark of UTF-8 "
                                     r"\(EF BB BF\)$", exit_code=1)
 
+    def test_rejects_a_byte_order_mark_at_the_start_of_a_later_line(self):
+        """After the records of the control, the log holds the byte order mark of UTF-8
+        and then an emulation record of the rule (two logs joined). json refuses the
+        line, and the reader skips a line that is not JSON (a cut line): before, the
+        record was lost without a word, and the negative control held on a log that
+        holds a record on which the rule fires. Now the line is named, and the run
+        fails."""
+        good = self.good()
+        (positive,) = case_events(good, self.CASES, "exec-websocket-get-procA")
+        records = self.log_with(good, b"\xef\xbb\xbf" + json.dumps(positive).encode())
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assertNotIn("Negative control held", result.stdout)
+        self.assert_rejects(result, rf"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+                                    rf"{records + 1}: the line starts with the byte order mark "
+                                    r"of UTF-8 \(EF BB BF\)$", exit_code=1)
+
     def test_rejects_json_that_the_validator_cannot_read(self):
         """Two lines of JSON that is too deep, and one with a number that is too long.
         Each is a named problem, not a traceback.

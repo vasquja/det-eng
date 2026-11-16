@@ -447,13 +447,14 @@ class ScoreBenign(gatelib.GateCase):
 
     def test_rejects_extra_slice_that_the_loader_cannot_read(self):
         """--extra-slice on a capture that is a directory or does not exist, that holds a
-        byte that is not UTF-8, that starts with the byte order mark of UTF-8, or whose
-        audit event holds two keys that differ only in letter case (also in a nested
-        object), or that holds JSON that the gate cannot read (too deep for json or for
-        flatten(), a number with too many digits, in a line or in one document). Each
-        is an ERROR line that names the capture (and the line), the run exits 1, and no
-        rule is scored on the capture. Before roadmap item R2d the first three ended
-        with a traceback, the fourth lost line 1 without a word, the key clashes ended
+        byte that is not UTF-8, whose line 1 or line 2 starts with the byte order mark of
+        UTF-8, or whose audit event holds two keys that differ only in letter case (also
+        in a nested object), or that holds JSON that the gate cannot read (too deep for
+        json or for flatten(), a number with too many digits, in a line or in one
+        document). Each is an ERROR line that names the capture (and the line), the run
+        exits 1, and no rule is scored on the capture. Before roadmap item R2d the first
+        three ended with a traceback, the fourth lost line 1 without a word (and before
+        the check of the corrections, the mark at line 2 lost line 2), the key clashes ended
         with a ValueError of sigma_eval.EventTable, the JSON too deep or too long with
         a traceback, and the document was a capture of no event. Controls: a capture
         whose two events hold the keys `verb` and `Verb` (no event holds both) is
@@ -481,6 +482,9 @@ class ScoreBenign(gatelib.GateCase):
             "a path that does not exist": False,
             "not UTF-8": lines[0] + inside,
             "a byte order mark": b"\xef\xbb\xbf" + b"".join(lines),
+            # Two captures joined: the mark at the start of line 2. json refuses that
+            # line, and a line that is not JSON is skipped, so the event was lost.
+            "a byte order mark at line 2": lines[0] + b"\xef\xbb\xbf" + lines[1],
             "two keys of one event": lines[0] + json.dumps(dict(events[1], Verb="get")).encode()
             + b"\n",
             "two events": lines[0] + json.dumps(respelled).encode() + b"\n",
@@ -517,6 +521,8 @@ class ScoreBenign(gatelib.GateCase):
                          f"{at} of the line)",
             "a byte order mark": ", line 1: the line starts with the byte order mark of UTF-8 "
                                  "(EF BB BF)",
+            "a byte order mark at line 2": ", line 2: the line starts with the byte order mark "
+                                           "of UTF-8 (EF BB BF)",
             "two keys of one event": ", line 2: an event that one event table cannot hold: keys "
                                      "that differ only by case: Verb / verb, which SQLite reads "
                                      "as one column name",
