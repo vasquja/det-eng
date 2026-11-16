@@ -221,16 +221,18 @@ A gate is a child process, so runs that start together use the CPUs together.
   `begin_<name>(tree)` plants one artifact and starts the gate, and
   `self.started(name)` gives the test its copy and its result. `test_sufficiency.py`
   uses it.
-- A test that writes a file and runs it as a program (a stub) writes it with
-  `gatelib.write_program(path, text)`. Linux refuses to run a file that a process
-  holds open for writing ("Text file busy"), and a child process holds each open file
-  of its parent until it runs its own program. So a child that a run in the
-  background starts could hold a program that another thread writes, and the
-  program would not run. `write_program()` writes under a lock, and each start of a
-  child process of the suite (`subprocess.Popen`, which gatelib wraps) takes the same
-  lock until the child runs its program. `Tree.run_step()` writes the programs of a
-  step in this way. `test_suite.py` (class `ProgramWrites`) refuses a chmod in the
-  suite outside `write_program()`.
+- Linux refuses to run a file that a process holds open for writing ("Text file
+  busy"), and a child process holds each open file of its parent until it runs its
+  own program. So a child that a run in the background starts could hold a program
+  that a test has just written, and the program would not run. Each start of a child
+  process of the suite (`subprocess.Popen`, which gatelib wraps) takes one lock and
+  keeps it until the child runs its program, so a new child that runs a program
+  never finds it held by another child. A test that writes a program writes it with
+  `gatelib.write_program(path, text)`, under the same lock, so that a child that
+  already runs can also run it. `Tree.run_step()` writes the programs of a step in
+  this way. `test_suite.py` (class `ProgramWrites`) refuses a chmod in the suite
+  outside `write_program()`. The lock is not reentrant: a test does not start a
+  child or call `write_program()` while it holds the lock.
 
 ## Known gaps
 
@@ -510,11 +512,13 @@ it does not see one test in the place of a different one.
 
 - The suite proves that a gate rejects the artifacts that are planted here. It
   does not prove that a gate rejects every bad artifact.
-- The lock of `gatelib.write_program()` covers the programs that a test writes and
-  then runs at once. A copy that `Tree` makes of a program of the repository (for
-  example `atomics/*/src/emulate.sh`) is not written under the lock: a test runs
-  such a copy long after the copy is made, when no child holds it. A program that a
-  gate under test writes and runs is a child of the gate, not of the suite.
+- `ProgramWrites` sees a chmod only. It does not see a copy that keeps the mode of
+  a program (`Tree` copies the programs of the repository, such as
+  `atomics/*/src/emulate.sh`, with their mode), `os.open()` with a mode, or a chmod
+  through a program. The lock on each start of a child still covers such a file
+  when a new child runs it. It does not cover a child that already runs and then
+  runs such a file; no test does that today. A program that a gate under test writes
+  and runs is a child of the gate, not of the suite, and the lock does not cover it.
 - A gate that needs a host or a cluster runs only in its offline modes: the dry
   runs, the negative-control steps on logs that the test writes, and the verdict
   code of the Linux validator on canned events. The live runs stay in the

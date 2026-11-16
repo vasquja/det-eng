@@ -552,30 +552,36 @@ def _changes(before, after):
 # process has open, until the child runs its own program. So while one thread writes
 # a program that a test then runs (the programs of Tree.run_step(), a stub), the
 # child of another thread (a run in the background) can hold that program open, and
-# the program cannot run. One lock prevents this: write_program() writes and closes
-# the program under _EXEC_LOCK, and each start of a child process of this process
-# (subprocess.Popen, also subprocess.run) takes the same lock. Popen returns when the
-# child runs its program or failed to, so after that the child holds no copy.
-_EXEC_LOCK = threading.Lock()
-
-
-def _start_child_under_the_lock(start):
+# the program cannot run. One lock prevents this. Each start of a child process of
+# this process (subprocess.Popen, also subprocess.run) takes _EXEC_LOCK and keeps it
+# until the child runs its program or failed to (Popen returns only then), so a new
+# child that runs a program never finds it held by another child. write_program()
+# writes and closes a program under the same lock, so that a child that already runs
+# can also run it later. The lock is not reentrant: do not start a child or call
+# write_program() while you hold it. A child that waits before its program (a
+# preexec_fn) makes every other start wait.
+def _start_child_under_the_lock(start, lock):
     @functools.wraps(start)
     def start_child(*args, **kwargs):
-        with _EXEC_LOCK:
+        with lock:
             return start(*args, **kwargs)
-    start_child.gatelib_exec_lock = True
+    start_child.gatelib_exec_lock = lock
     return start_child
 
 
-if not getattr(subprocess.Popen._execute_child, "gatelib_exec_lock", False):
+# One lock for the process, also when this module runs as __main__ (gatelib.py --run)
+# and is imported again as gatelib: the second import keeps the lock of the first.
+_EXEC_LOCK = getattr(subprocess.Popen._execute_child, "gatelib_exec_lock", None)
+if _EXEC_LOCK is None:
+    _EXEC_LOCK = threading.Lock()
     subprocess.Popen._execute_child = _start_child_under_the_lock(
-        subprocess.Popen._execute_child)
+        subprocess.Popen._execute_child, _EXEC_LOCK)
 
 
 def write_program(path, text, mode=0o755):
     """Write a file that a test runs as a program (the programs of a step, a stub):
-    under _EXEC_LOCK, so that no child of this process holds it open when it runs."""
+    under _EXEC_LOCK, so that no child of this process holds it open when it runs,
+    also when a child that already runs is the one that runs it."""
     with _EXEC_LOCK:
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(text)

@@ -11,9 +11,9 @@ Gate tests, group `suite`: rules that hold for the gates and the suite as a whol
                       or a test module does not load, and the suite loses no test
     PipedSteps        no step of any workflow pipes a command into `tee` with a
                       shell that loses the exit code of the command
-    ProgramWrites     no module of the suite sets the mode of a file (chmod) but
-                      gatelib.write_program(), which writes a program under the
-                      lock that each start of a child process takes
+    ProgramWrites     no module of the suite calls a chmod but gatelib.write_program(),
+                      which writes a program under the lock that each start of a
+                      child process takes
     SoftSteps         no step that runs a script or the unit tests of the repository
                       has `continue-on-error` (on the step or on its job), but the
                       shadow steps that the class lists
@@ -434,12 +434,15 @@ def chmod_calls(source, filename):
 class ProgramWrites(unittest.TestCase):
     """Linux refuses to run a file that a process holds open for writing ("Text file
     busy"), and a child process holds each open file of its parent until it runs its
-    own program. A test that writes a program and runs it (a stub, the programs of
-    Tree.run_step()) while a run is in the background therefore writes it with
-    gatelib.write_program(): it writes under the lock that each start of a child
-    process of the suite takes (test_gatelib.py proves the lock). A file becomes a
-    program only through a chmod, so no module of the suite calls a chmod outside
-    write_program()."""
+    own program. Each start of a child process of the suite keeps a lock until the
+    child runs its program, so a new child never finds a program held by another
+    child (test_gatelib.py proves the lock). gatelib.write_program() writes a program
+    under the same lock, so that a child that already runs can also run it. A test
+    that writes a program writes it with write_program(): the usual way to make a
+    program is a write and a chmod, so no module of the suite calls a chmod outside
+    write_program(). The rule sees only a chmod: not a copy that keeps the mode of a
+    program (shutil.copy2, which Tree uses), os.open() with a mode, or a chmod
+    through a program."""
 
     ALLOWED = {("gatelib.py", "write_program")}
 
@@ -447,7 +450,7 @@ class ProgramWrites(unittest.TestCase):
         return [f"{filename}:{line}" for line, function in chmod_calls(source, filename)
                 if (filename, function) not in self.ALLOWED]
 
-    def test_the_rule_reads_each_way_to_call_a_chmod(self):
+    def test_the_rule_reads_each_call_of_a_chmod(self):
         source = ("import os, pathlib\nfrom os import chmod\n"
                   "def stub(path):\n"
                   "    os.chmod(path, 0o755)\n"             # line 4
