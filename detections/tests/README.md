@@ -92,6 +92,7 @@ after each test or test class.
 | `gatelib.py` | The harness: `Tree`, `GateCase`, `StartedTogether`, `assert_rejects`, `assert_accepts`, `assert_saw`, `known_gap`, `ci_step`, `ci_commands`, and the parallel runner. |
 | `test_gatelib.py` | Tests of the harness, on constructed gates. |
 | `test_sufficiency.py` | `rule_cases.py` (and through it the event table of `sigma_eval.py`: a sidecar line that is not a case, a case whose events one event table cannot hold, a rule in a dotfile), the import guard of `sigma_eval.py` (each kind of name that it and R0 refuse, compared; each gate that reads the rules stops at it on a rule in a dotfile; the rule lists of the walkers that do not use the globs), `check_sufficiency.py` (R0 to R4 and the waiver digests), the sufficiency ratchet, the self-test of `sigma_explain.py`. |
+| `test_mutants.py` | `check_mutants.py`, the change proof of the `sufficiency-ratchet` job. One planted change in the head that no case, fixture or corpus record of the head tells apart from its undo, each rejected with its key: a dead item, a list value that no positive needs, an allowlist name in a base rule of a correlation, an allowlist name widened in place, a list of verbs made a wildcard, the names of an identity filter made a wildcard, one more alternative inside a `\|re` value, an allowlist rewritten as one `\|re` value, a new OR branch that `1 of sel_pod_*` reaches, a dead item beside a value that makes the head fire on its own near-miss and on corpus records (evidence that the head fails does not kill, and a corpus slice that loses a hit does not kill), a dead block under an `and` beside a proven filter, a removed value with no negative, a wider timespan of a correlation, and a value in a correlation base rule with a new name and id. The changes that the gate passes: an allowlist name with its filtered case, a list that is only reordered, reworded texts, a blank fix that only the variant `compact` proves, an anchored value that only `multi` proves and a letter-case fix that only `cs_like` proves (all three planted in the base), a removed value and an added `and` block, each with its negative, a condition with its terms in another order (equivalent), a new id, and a new rule (report only). The changes that go to a human (a renamed block, a switch between a plain rule and a correlation, an undo that does not compile), the structural faults (exit 2: also a variant that is not in force and a sidecar error), and the step of the job. |
 | `test_quality.py` | `score_benign.py` (also a line of a live capture, `--extra-slice`, that is JSON and not an object: an ERROR line names the capture and the line, and no rule is scored on it) and the benign ratchet, `check_null_safety.py`, `check_provider_mappings.py` (also a sidecar case that one event table cannot hold, with `--check` and `--write`), `k8s_policy_coverage.py`, `k8s_platforms_md.py`, `coverage_report.py` (also an entry of the defect tracker without its Summary row or its section, or with two of either, and a heading that starts with an ID and is not the heading of an entry, with `--check` and the generator; one error line for each such entry). |
 | `test_validators.py` | The cloud validator (a rule must fire on a marked record of its attack fixture and on no benign record; an attack or benign fixture that is missing or is a directory, and a benign baseline without a record, fail the run, also with `--report`), the Linux validator (dry run, with the check of its `CONTROLS` table; and its verdict code on canned results: the detections; the no-op baseline, which must own a record; each mutant and each re-run, which must be held by what it declares (an item of its rule, or the success gate); the limits of the exemption for a rule whose emulation is a SKIP; a live negative control for each rule), the three Kubernetes validators (dry run; the negative-control step, which fails when a rule passes on a pre-emulation log, when a pre-emulation log is not given or is missing, and when the audit log holds no record; an empty value of `--audit-log` counts as a log that is not given; with `--report` too, each validator fails a rule that passes on a pre-emulation log, and logs without a record; the `--json` report of each validator says that the control of a log without a record failed; for `validate_k8s_detections.py`, its `--json` report says the same for a log that is missing; for the static pod validator, also when the CRI log holds no API-scheduled sandbox or the file log holds no `kubeadm` write, with a line that names the log and the number of its records, and a strict run fails a CRI log without an API-scheduled sandbox with the same line; for the API server validator, also when the CRI log or the file log holds no record, and a CRI snapshot without a sandbox is no record; the lines of the capture step of that validator's workflow that make the pre-emulation file log, on a constructed raw audit log that holds the audit key of the canary watch of the file sensor step, and the line of that step that writes the raw log; and the strict run, which prints SKIP and exits 0 when it finds no log, also when the value of `--audit-log` is empty (a log that does not exist: the run does not read the default log), and gets no check of the negative control when it has a log; a line of a log that is not a record of the log fails each run, and no rule is judged: `[]` and `{}` in each log of each validator, an audit `EventList` and a core Event among records, a CRI snapshot whose item is not a sandbox (also an item with an id and a metadata object without a name, and an item with a name and no id) or whose `items` is not a list, a line of the file log with a `TargetFilename` and no `Image` or the other way round, bytes that are not UTF-8 in a JSON string and outside it, a byte order mark, JSON that is too deep or a number that is too long, a string, a number, `true`, `false` and `null` (each named with its type), and a `[]` line in a strict run with `--report` of each validator; a snapshot of two items that are not sandboxes is one line in the count of the FAILED line (and of the `--json` report), with an ERROR line for each item; a sandbox that a log holds on two lines counts once; the ERROR line names the log and the line, a log gets at most 10 of them and the number of the others, and so does the `--json` report, whose control of the log says `FAILED`; beside a log without a record, the API server and the static pod validator print the failed control line of that log before the FAILED line (for a CRI log or a file log of the static pod validator, the line of its CRI control or file control), and the `--json` control names both; a log that is a directory is an ERROR, in the negative-control step and in a strict run; the step of CI that validates with `--ledger` fails on a ledger row whose start is after its end, with an error that names the procedure and the two times, and judges no rule (the same ledger in order is read, and a row whose start is its end is a window); a `--ledger` that is a directory or holds a byte that is not UTF-8, and a `--json` path that is a directory, are ERROR lines; the verdict line of a strict run of the API server validator, and the description of its `--help`, name the TRRs that its `MANIFEST` grades, also in a copy whose `MANIFEST` holds the entries of two TRRs), the class `LogReaderText` (the log reader of the three Kubernetes validators is one text, and so is each entry of its table of records), the known gap `k8s-log-keys-differ-only-in-case` (a valid audit log whose keys differ only in letter case ends each Kubernetes validator with a traceback of the event table of `sigma_eval.py`), the converter of the node file sensor, `k8s/auditd_file_events.py` (one summary line on stderr for each run that read its log, only the JSON lines on stdout, and no workflow command that sends stderr to the file log), `trr_lint.py`, `check_md_links.py`, `check_sigma_regex.py` (also a name that starts with a dot), `check_schedule_freshness.py`. |
 | `test_suite.py` | Rules of the suite as a whole: each self-test has a runner, the CI job runs every test on every pull request, the `emulation-scripts` job does the same for `atomics/tests/`, no workflow step pipes a command into `tee` without pipefail, no step that runs a gate or the unit tests has `continue-on-error`, each known gap names a roadmap item, each planted artifact is used, this file agrees with the tests. |
@@ -123,6 +124,16 @@ The gap closed in another gate, `check_variants.py`. The test keeps its planted
 artifact and its wanted row, and it is now a rejection test of that gate
 (`Variants.test_rejects_one_json_serialisation_cloud`). It also asserts that
 `check_null_safety.py` still accepts the artifact: that gate has no check for it.
+
+One test of `test_sufficiency.py` was a known gap until roadmap item R6:
+`ra-allowlist-widened-no-case` (an allowlist name added to a rule, with no case).
+Its marker named `check_sufficiency.py --baseline`, which compares cases and not
+what a rule matches. The gap closed in another gate of the same job,
+`check_mutants.py`. The test keeps its planted rule and its probe pair, and it is
+now a rejection test of that gate
+(`SufficiencyRatchet.test_rejects_allowlist_widened_without_a_case`). It also
+asserts that `check_sufficiency.py --baseline` still accepts the planted rule: that
+gate has no check for it.
 
 ## How a test works
 
@@ -359,7 +370,7 @@ the two timeouts.
 
 - A script with a `--self-test` mode must have a runner. When no workflow step
   runs the self-test, the suite runs it (the table `SelfTests.RUN_HERE`; today
-  `sigma_explain.py`).
+  `sigma_explain.py` and `check_mutants.py`).
 - No step pipes a command into `tee` without pipefail. GitHub Actions runs a
   step that has no `shell:` with `bash -e`, so `gate | tee file` takes the exit
   code of `tee`, and a gate that fails leaves the job green. Such a step needs
@@ -610,9 +621,15 @@ it does not see one test in the place of a different one.
   - `detections/sigma/T1040/afxdp_socket.cases.jsonl`
   - `detections/sigma/T1078.004/aws_cognito_unauthenticated_identity_use.yml`
   - `detections/sigma/T1078.004/aws_leaked_access_key_recon.yml`
+  - `detections/sigma/T1068/copyfail_af_alg_authencesn.yml`
+  - `detections/sigma/T1068/dirtypipe_splice_readonly.yml`
+  - `detections/sigma/T1068/dirtypipe_splice_readonly.cases.jsonl`
   - `detections/sigma/T1098.001/entra_app_federated_credential_backdoor.yml`
+  - `detections/sigma/T1098.001/gcp_workload_identity_federation_sa_binding.yml`
   - `detections/sigma/T1098.001/gcp_workload_identity_pool_provider_created.yml`
   - `detections/sigma/T1098.003/azure_privileged_role_assignment.yml`
+  - `detections/sigma/T1098.003/gcp_public_iam_member_grant.yml`
+  - `detections/sigma/T1098.006/k8s_rbac_privileged_grant.yml`
   - `detections/sigma/T1098.006/k8s_rbac_write.yml`
   - `detections/sigma/T1134/k8s_impersonation_privileged.yml`
   - `detections/sigma/T1485/k8s_volume_reclaim_set_to_delete.cases.jsonl`
@@ -621,6 +638,7 @@ it does not see one test in the place of a different one.
   - `detections/sigma/T1543.005/k8s_cri_static_pod_start.yml`
   - `detections/sigma/T1543.005/k8s_static_pod_mirror_create.yml`
   - `detections/sigma/T1609/k8s_pod_exec_attach.yml`
+  - `detections/sigma/T1611/k8s_podspec_confinement_disabled.yml`
   - `detections/cloud/fixtures/trr9011/attack.json`
   - `detections/cloud/fixtures/trr9012/attack.json`
   - `detections/cloud/fixtures/trr9012/benign.json`
@@ -682,6 +700,37 @@ it does not see one test in the place of a different one.
   the repair is the new text in the test:
 
   - `detections/sigma_eval.py`
+
+  One test of `ChangeProofFaults` (`test_mutants.py`) changes one line of the
+  in-force check in its copy: the line `named = ...` of `in_force()`, which it
+  replaces with a return of a variant that is not in force. This file is code, not content,
+  and a change to that line gets the same repair:
+
+  - `detections/check_variants.py`
+
+  The tests of `check_mutants.py` (`test_mutants.py`, and one test of
+  `SufficiencyRatchet`) judge each planted change on the evidence of the copy: the
+  sidecar of the rule, its cloud fixtures and the benign corpus slices of its log
+  source. A rejection test needs that no event set tells its planted change apart
+  from its undo (for example, no filtered case of `nc` in the sidecar of
+  `afinet_raw_socket.yml`, and no positive that needs `proxy` in the sidecar of
+  `k8s_pod_exec_attach.yml`). A test that accepts a change needs the event set that
+  proves it: a positive of `k8s_impersonation_privileged.yml` with the group
+  `system:masters` as an element of a list (variant `multi`), a record of
+  `gcp_public_iam_member_grant.yml` whose method ends in `SetIamPolicy` or
+  `setIamPermissions` in the letter case of the rule (variant `cs_like`), a positive
+  of `gcp_workload_identity_federation_sa_binding.yml` whose delta list has a blank
+  after the colon of `"action"` in its default JSON text (variant `compact`), and,
+  for the new rule, the value `0` of `a3` in each case of `afinet_raw_socket.yml`.
+  The tests of `dirtypipe_splice_readonly.yml` need its two base rules by these
+  names and ids, the near-miss `pipe-then-splice-too-late` 30 s apart (so the head
+  with a timespan of 20 s still holds its cases), and no case, fixture or corpus
+  record that a timespan of 20 s adds to a hit. A new
+  case that tells a planted change apart makes a rejection test fail: the test is
+  then out of date, and the repair is another planted change in the test. The step
+  test of `check_mutants.py` gives the step a stand-in for the worktree of the base
+  commit (the rule files of the copy and a `.git` file); the test of the job that
+  makes a real worktree (`SufficiencyRatchet`) stops at the step with `--baseline`.
 
   `CheckSufficiency` (`test_sufficiency.py`) takes the positive cases of these
   sidecars, for its proof that a rule that needs one fixture constant (an account
