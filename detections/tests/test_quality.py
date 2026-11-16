@@ -33,6 +33,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import unittest
 
@@ -563,7 +564,15 @@ class ScoreBenign(gatelib.GateCase):
         skipped (before, the last was an ERROR line). The character of an error counts
         the blanks before the line (three blanks before a cut line before other lines),
         and the error of a document of many lines names the line of the error (a NUL
-        at line 3)."""
+        at line 3). Also: the start of a character of UTF-8 at the end of a middle line
+        is a byte that is not UTF-8; U+00A0 before the brace of a cut last line is
+        skipped (also with a cut inside a character), and a word or a number before a
+        blank at the end of the last line is no cut (the gate removes only the white
+        space at the start of the line); one JSON document (an array on one line, an
+        object of many lines) before a cut last line is refused, with the same text for
+        a cut on an ASCII byte and inside a character of UTF-8 (before, the second was
+        read as the document); a last line too deep for json and cut inside a
+        character is a byte that is not UTF-8, not a traceback."""
         good = self.good()
         events = [event for case in
                   good.read_jsonl("detections/sigma/T1609/k8s_pod_exec_attach.cases.jsonl")
@@ -589,6 +598,34 @@ class ScoreBenign(gatelib.GateCase):
         event = lines[1].rstrip(b"\n")
         escaped = json.dumps(dict(events[1], userAgent="a&b")).replace("&", "\\u0026").encode()
         not_cut = "; the line is not the start of one JSON object, so a capture did not cut it"
+        # Last lines that are a cut only without the white space at their end (the rows
+        # of K8sValidator): the gate keeps the end of the line.
+        word = b'{"kind": "Event", "apiVersion": "audit.k8s.io/v1", "stage": tru '
+        number = b'{"kind": "Event", "apiVersion": "audit.k8s.io/v1", "n": 1. '
+        at_the_end = {}
+        for name, data in (("word", word), ("number", number)):
+            try:
+                json.loads(data.strip())
+            except json.JSONDecodeError as e:
+                at_the_end[name] = f"not JSON ({e.msg}, at character {e.colno}){not_cut}"
+        # One JSON document before a cut last line: a JSON array on one line, and an
+        # object of many lines. The capture is refused, with the same text for a cut on
+        # an ASCII byte and for a cut inside a character of UTF-8.
+        array = b"[" + lines[0].rstrip() + b", " + lines[1].rstrip() + b"]\n"
+        pretty = json.dumps(events[0], indent=2).encode() + b"\n"
+        try:
+            json.loads(pretty + cut)
+        except json.JSONDecodeError as e:
+            pretty_error = f", line {e.lineno}: not JSON ({e.msg}, at character {e.colno})"
+        after = pretty.count(b"\n") + 1      # the line of the cut, after the document
+        self.assertEqual(pretty_error, f", line {after}: not JSON (Extra data, at character 1)")
+        # A last line too deep for json, cut inside a character of UTF-8: the test of a
+        # cut ends with a RecursionError of json (unless the stack of the process is
+        # large enough for json to read it: then the line is a cut).
+        deep_line = b'{"kind": "Event", "requestObject": ' + b"[" * 2000000 + b'"x'
+        readable = subprocess.run(
+            [sys.executable, "-c", "import json; json.loads('[' * 2000000 + ']' * 2000000)"],
+            capture_output=True).returncode == 0
         try:
             json.loads(cut)
         except json.JSONDecodeError as e:
@@ -665,7 +702,29 @@ class ScoreBenign(gatelib.GateCase):
             + escaped[:escaped.index(b"\\u0026") + 4],
             "a blank before the brace of a cut last line": lines[0] + lines[1] + b" " + cut,
             "a cut inside a character of UTF-8 on the last line": lines[0] + lines[1] + cut
-            + b"\xc3"})
+            + b"\xc3",
+            # The start of a character of UTF-8 at the end of a line before the last line
+            # is a byte that is not UTF-8: only the last line can be cut.
+            "a cut inside a character of UTF-8 at the end of a middle line": lines[0] + cut
+            + b"\xc3\n" + lines[1],
+            # The gate removes the white space at the start of the last line, as json
+            # reads a record: also U+00A0, which JSON does not have (with a cut on an
+            # ASCII byte, and inside a character of UTF-8).
+            "U+00A0 before the brace of a cut last line": lines[0] + lines[1] + b"\xc2\xa0"
+            + cut,
+            "U+00A0 before the brace of a last line cut inside a character": lines[0] + lines[1]
+            + b"\xc2\xa0" + cut + b"\xc3",
+            # It keeps the end of the line: a word or a number before a blank is no cut.
+            "a word before a blank at the end of the last line": lines[0] + lines[1] + word,
+            "a number before a blank at the end of the last line": lines[0] + lines[1] + number,
+            "a JSON array on one line, then a cut last line": array + cut,
+            "a JSON array on one line, then a last line cut inside a character": array + cut
+            + b"\xc3",
+            "an object of many lines, then a cut last line": pretty + cut,
+            "an object of many lines, then a last line cut inside a character": pretty + cut
+            + b"\xc3",
+            "a last line too deep for json, cut inside a character": lines[0] + lines[1]
+            + deep_line + b"\xc3"})
         cannot_read = {
             "an object too deep to flatten": r", line 2: JSON that the gate cannot read "
                                              r"\(RecursionError: [^)]*\)",
@@ -728,14 +787,34 @@ class ScoreBenign(gatelib.GateCase):
                 ", line 3: bytes that are not UTF-8 (the byte 0xe9 at character 13 of the line)",
             "a byte that is not UTF-8 at the end of the last line":
                 f", line 3: bytes that are not UTF-8 (the byte 0xff at character {len(cut) + 1} "
+                "of the line)",
+            "a cut inside a character of UTF-8 at the end of a middle line":
+                f", line 2: bytes that are not UTF-8 (the byte 0xc3 at character {len(cut) + 1} "
+                "of the line)",
+            "a word before a blank at the end of the last line": ", line 3: " + at_the_end["word"],
+            "a number before a blank at the end of the last line":
+                ", line 3: " + at_the_end["number"],
+            "a JSON array on one line, then a cut last line":
+                ", line 1: JSON that is not an object (a list)",
+            "a JSON array on one line, then a last line cut inside a character":
+                ", line 1: JSON that is not an object (a list)",
+            "an object of many lines, then a cut last line": pretty_error,
+            "an object of many lines, then a last line cut inside a character": pretty_error,
+            "a last line too deep for json, cut inside a character":
+                f", line 3: bytes that are not UTF-8 (the byte 0xc3 at character {len(deep_line) + 1} "
                 "of the line)"}
+        accepted = ["two events", "line separators in a string", "a cut last line",
+                    "a cut inside an escape on the last line",
+                    "a blank before the brace of a cut last line",
+                    "a cut inside a character of UTF-8 on the last line",
+                    "U+00A0 before the brace of a cut last line",
+                    "U+00A0 before the brace of a last line cut inside a character"]
+        if readable:
+            accepted.append("a last line too deep for json, cut inside a character")
         for label, (path, result) in runs.items():
             with self.subTest(label):
                 self.assertNotIn("Traceback", result.output)
-                if label in ("two events", "line separators in a string", "a cut last line",
-                             "a cut inside an escape on the last line",
-                             "a blank before the brace of a cut last line",
-                             "a cut inside a character of UTF-8 on the last line"):
+                if label in accepted:
                     self.assert_accepts(result, r"^Live capture kind-live \(kubernetes/audit, 2 "
                                                 r"event\(s\)\) - shadow only")
                     continue

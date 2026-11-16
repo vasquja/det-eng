@@ -444,12 +444,15 @@ def load_extra(path, logsource, label):
         bad = next((i for i, ch in enumerate(line) if 0xDC80 <= ord(ch) <= 0xDCFF), None)
         if bad is not None:
             if n == len(lines) and _cut(line):
-                # A cut inside a character of UTF-8: the gate skips the line.
-                text, lines[-1] = text[:len(text) - len(line)], ""
-                break
-            raise CaptureError(f"the live capture {path}, line {n}: bytes that are not UTF-8 "
-                               f"(the byte 0x{ord(line[bad]) - 0xDC00:02x} at character "
-                               f"{bad + 1} of the line)")
+                # A cut inside a character of UTF-8 at the very end of the capture: the
+                # gate drops only the bytes of that character, and then reads the
+                # capture as it reads a cut on another byte.
+                line = lines[-1] = sigma_eval.utf8_cut(line)
+                text = "\n".join(lines)
+            else:
+                raise CaptureError(f"the live capture {path}, line {n}: bytes that are not "
+                                   f"UTF-8 (the byte 0x{ord(line[bad]) - 0xDC00:02x} at "
+                                   f"character {bad + 1} of the line)")
         # json refuses a line that starts with the byte order mark: the mark is an
         # error at the start of each line (two captures joined hold it at a later line
         # too), with a text that names it.
@@ -470,7 +473,7 @@ def load_extra(path, logsource, label):
                     raw.append(json.loads(line, object_pairs_hook=sigma_eval.pairs))
                     where.append(f"line {n}")
                 except json.JSONDecodeError as e:
-                    if n == len(lines) and _cut(line):
+                    if n == len(lines) and _cut(lines[n - 1]):
                         continue        # the last line, cut by the capture
                     if raw:
                         text = lines[n - 1]
@@ -522,11 +525,12 @@ def _cannot_read(error):
 
 def _cut(line):
     """True when `line`, the last line of a capture without its line end, is a line
-    that the capture cut: its text without blanks is cut JSON (sigma_eval.cut_json()),
-    after the start of a character of UTF-8 at its very end (sigma_eval.utf8_cut()).
-    This is the rule of cut_line() of the reader of the Kubernetes validators."""
+    that the capture cut: its text without the white space at its start is cut JSON
+    (sigma_eval.cut_json()), after the start of a character of UTF-8 at its very end
+    (sigma_eval.utf8_cut()). White space at its end stays. This is the rule of
+    cut_line() of the reader of the Kubernetes validators."""
     line = sigma_eval.utf8_cut(line)
-    return line is not None and sigma_eval.cut_json(line.strip())
+    return line is not None and sigma_eval.cut_json(line.lstrip())
 
 
 def _not_json(error, at, line="", last=False):

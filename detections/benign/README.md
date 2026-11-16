@@ -109,8 +109,10 @@ ends at a line break of the file (a line feed, or a carriage return alone), as t
 reader of the Kubernetes validators reads it: U+2028, U+2029 and U+0085 in a JSON
 string are characters of the line. A capture can cut only its last line, at its end:
 the text after the last line break is skipped when it is cut JSON (the start of one
-JSON object without its end; also when the cut splits a character of UTF-8 at its
-end), as the reader of the Kubernetes validators skips it. Each of these ends the run with exit 1 and one `ERROR` line that
+JSON object without its end, after the white space at the start of the line; also
+when the cut splits a character of UTF-8 at its end: the gate drops only the bytes of
+that character, and then reads the capture as it reads a cut on another byte), as the
+reader of the Kubernetes validators skips it. Each of these ends the run with exit 1 and one `ERROR` line that
 names the capture (and the first such line, or element), and no rule is scored on
 the capture:
 
