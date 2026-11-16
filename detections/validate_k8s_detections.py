@@ -62,6 +62,14 @@ Modes:
         have a row with exit 0 (the kubelet answered), and no TRR9002 rule may
         match an audit event inside E's window. Without --ledger the gates use
         the record fields only (local runs, old logs).
+        A ledger line that is not a row (not JSON, no trr or procedure, bytes
+        that are not UTF-8), a row whose start is after its end, and a ledger
+        that is a directory fail the run with an ERROR line, and no rule is
+        judged. No record can be in a window whose start is after its end: the
+        clock that wrote the ledger is wrong, and each gate of the procedure
+        would miss a rule that matched (2026-11-13). Its ERROR line names the
+        procedure and the two times as the ledger holds them. A start equal to
+        the end is a window.
 
     ... --expect-miss
         Negative control, for a log captured BEFORE the emulation ran: exit 1
@@ -72,8 +80,8 @@ Modes:
         --audit-log is not given (this mode has no default log, and an empty
         value counts as not given), when the log does not exist, and when the
         log holds no audit event. The count is the number that the `Loaded N
-        audit event(s)` line prints: the JSON objects of the lines that are not
-        blank. A blank line and a line that is not JSON are not records.
+        audit event(s)` line prints: the records of the log (see "A record of
+        the log" below).
 
     ... --report
         Report rule misses in the summary instead of failing on them. A rule
@@ -82,7 +90,23 @@ Modes:
 
     ... --json PATH
         Also write a machine-readable report (status, detail and the
-        explanation lines of every rule) to PATH.
+        explanation lines of every rule) to PATH. A PATH that the run cannot
+        write (a directory) is an ERROR, and the run exits 1.
+
+A record of the log is an audit event: a JSON object with "kind": "Event" and an
+apiVersion of the group audit.k8s.io (RECORDS). A blank line, and a line that is
+not JSON (a line that was cut at the end of a capture), are not records. Each
+other line that is not a record fails every run that reads the log (a strict run,
+--report and --expect-miss), and no rule is judged: JSON that is not an object
+(`[]`), a JSON object that is not an audit event (`{}`, a core Event of
+`kubectl get events`, an audit EventList), bytes that are not UTF-8, the byte
+order mark of UTF-8 at the start of line 1, and JSON that the validator cannot
+read (too deep, or a number that is too long). One ERROR line names the log, the
+line and the problem (at most 10 lines for each log, then the number of the
+others), and a FAILED line ends the run with exit 1. With --expect-miss the --json
+control of the pre-emulation log says FAILED, and --json gets `log_problems` (with
+the same limit) when a log holds such a line. A log that is a directory, or that
+the run cannot open, is an ERROR too (exit 1): it is not a log that was not found.
 
 The key finding (exec recorded as verb=get over WebSocket and verb=create over
 SPDY) is gated by 'A websocket' and 'A spdy'. CI pins kubectl and the server at
@@ -230,19 +254,168 @@ PROCEDURES = _procedures(MANIFEST, os.path.basename(RULES_DIR))
 TAG = "trr9002"
 
 
-def load_events(audit_log):
-    """Read the audit log (one JSON object per line), flattened. Skip garbage."""
-    events = []
-    with open(audit_log, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                events.append(sigma_eval.flatten(json.loads(line)))
-            except json.JSONDecodeError:
-                continue
-    return events
+# ---- what a record of each log is ---------------------------------------------
+# The table of the log reader below. For each source of MANIFEST: the name of its
+# log, the name of one record, the test of one JSON object, and what the test needs.
+# Each test is the smallest identity that the code that reads the log needs (see
+# detections/README.md, "A record of each log").
+
+
+RECORDS = {
+    "audit": {
+        "log": "audit log", "record": "audit event", "a": "an audit event",
+        "test": lambda doc: (doc.get("kind") == "Event"
+                             and isinstance(doc.get("apiVersion"), str)
+                             and doc["apiVersion"].startswith("audit.k8s.io/")),
+        "needs": 'an audit event has "kind": "Event" and an apiVersion of the group '
+                 "audit.k8s.io",
+        "snapshot": False, "once_by": None},
+}
+
+
+# ---- the log reader ----------------------------------------------------------
+# The same text in validate_k8s_detections.py, validate_staticpod_detections.py and
+# validate_apiserver_detections.py; each validator stays standalone. Only the table
+# RECORDS above differs: it holds the sources of the MANIFEST of the validator. The
+# gate tests compare the three texts (test_validators.py, class LogReaderText).
+
+
+class LogError(Exception):
+    """A log that the validator cannot read: a directory, or a file that the run
+    cannot open. The run names it and exits 1, and it judges no rule."""
+
+
+SHOWN = 10  # the ERROR lines of one log; the problems after them are only counted
+BYTE_ORDER_MARK = chr(0xFEFF)  # the text of the bytes EF BB BF of UTF-8
+
+
+def _kind(value):
+    """The JSON type of a value, for a message: an object, a list, a string, ..."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "null"
+    return {dict: "an object", list: "a list", str: "a string"}.get(type(value), "a number")
+
+
+def _cannot_read(error):
+    """The text of a problem of JSON that json.loads() or flatten() cannot read."""
+    text = str(error).split("\n")[0]
+    return (f"JSON that the validator cannot read ({type(error).__name__}: "
+            + (text if len(text) <= 100 else text[:100] + "...") + ")")
+
+
+def record_problem(source, doc):
+    """None when `doc` (the JSON value of one line, or of one item of a CRI snapshot)
+    is a record of the log of `source`; else the problem, as text."""
+    if not isinstance(doc, dict):
+        return f"JSON that is not an object ({_kind(doc)})"
+    spec = RECORDS[source]
+    if not spec["test"](doc):
+        return f"a JSON object that is not {spec['a']} ({spec['needs']})"
+    return None
+
+
+def read_log(path, source):
+    """(records, problems): the records of the log of `source` at `path`, flattened to
+    the dotted field names of the rules (sigma_eval.flatten), and the problems.
+
+    The records are what each rule of that source is run on. The `Loaded N ...` line
+    prints their number. A line of a CRI log is a `crictl pods -o json` snapshot
+    ({"items": [...]}) or one sandbox; a sandbox counts once, at the first line that
+    holds its id.
+
+    A problem is a line, or an item of a snapshot, that is not a record of the log:
+    bytes that are not UTF-8, the byte order mark of UTF-8 at the start of line 1,
+    JSON that the validator cannot read (too deep, or a number that is too long),
+    JSON that is not an object, a JSON object that is not a record of the log, and a
+    snapshot whose "items" is not a list. Each problem is (line, item, text): lines
+    and items count from 1, and item is None for a line. A blank line, and a line
+    that is not JSON (a line that was cut at the end of a capture), are no record and
+    no problem. Raises LogError for a log that is a directory or cannot be read.
+    """
+    spec = RECORDS[source]
+    if os.path.isdir(path):
+        raise LogError(f"the {spec['log']} {path} is a directory, not a file")
+    records, problems, seen = [], [], set()
+    try:
+        with open(path, encoding="utf-8", errors="surrogateescape") as fh:
+            for n, text in enumerate(fh, 1):
+                line = text.strip()
+                if not line:
+                    continue
+                bad = next((i for i, ch in enumerate(text) if 0xDC80 <= ord(ch) <= 0xDCFF), None)
+                if bad is not None:
+                    problems.append((n, None, f"bytes that are not UTF-8 (the byte "
+                                              f"0x{ord(text[bad]) - 0xdc00:02x} at character "
+                                              f"{bad + 1} of the line)"))
+                    continue
+                if n == 1 and text.startswith(BYTE_ORDER_MARK):
+                    problems.append((n, None, "the line starts with the byte order mark of "
+                                              "UTF-8 (EF BB BF)"))
+                    continue
+                try:
+                    doc = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                except (ValueError, RecursionError) as e:
+                    problems.append((n, None, _cannot_read(e)))
+                    continue
+                items = [(None, doc)]
+                if spec["snapshot"] and isinstance(doc, dict) and "items" in doc:
+                    if not isinstance(doc["items"], list):
+                        problems.append((n, None, 'a snapshot whose "items" is not a list '
+                                                  f"({_kind(doc['items'])})"))
+                        continue
+                    items = list(enumerate(doc["items"], 1))
+                for item, value in items:
+                    why = record_problem(source, value)
+                    if why is None:
+                        try:
+                            record = sigma_eval.flatten(value)
+                        except RecursionError as e:
+                            why = _cannot_read(e)
+                    if why is not None:
+                        problems.append((n, item, why))
+                        continue
+                    if spec["once_by"]:
+                        if value[spec["once_by"]] in seen:
+                            continue
+                        seen.add(value[spec["once_by"]])
+                    records.append(record)
+    except OSError as e:
+        raise LogError(f"the {spec['log']} {path} cannot be read ({e.strerror or e})") from None
+    return records, problems
+
+
+def show_log_problems(source, path, problems, report):
+    """Print one ERROR line for each problem of one log (at most SHOWN, then the
+    number of the others), and add the log to report["log_problems"] (--json, with
+    the same limit). Returns the number of lines of the log that hold a problem."""
+    if not problems:
+        return 0
+    name = RECORDS[source]["log"]
+    texts = [f"line {n}" + (f", item {item} of the snapshot" if item else "") + f": {why}"
+             for n, item, why in problems]
+    for text in texts[:SHOWN]:
+        print(f"ERROR: the {name} {path}, {text}")
+    if len(texts) > SHOWN:
+        print(f"ERROR: the {name} {path}: {len(texts) - SHOWN} more problem(s), not shown")
+    lines = len({n for n, _, _ in problems})
+    report.setdefault("log_problems", []).append(
+        {"log": name, "path": path, "lines": lines, "problems": len(texts),
+         "shown": texts[:SHOWN]})
+    return lines
+
+
+def log_problems_failed(lines):
+    """The verdict of a run whose logs hold lines that are not records: no rule is
+    judged on such a log."""
+    return (f"FAILED: {lines} line(s) of the logs are not records of their log (see the "
+            "ERROR lines above). No rule is judged on a log that holds such a line.")
+
+
+# ---- end of the log reader ---------------------------------------------------
 
 
 def nonblank_lines(path):
@@ -450,12 +623,20 @@ def load_ledger(path):
     """({(TRR, PROCEDURE): row}, [problem, ...]); a later row for the same procedure wins
     (a re-run). A line that is not a JSON object with trr and procedure is a problem, and
     the caller fails the run on any problem, as validate_apiserver_detections.py does: a
-    truncated or corrupt ledger must not pass quietly."""
+    truncated or corrupt ledger must not pass quietly. A line with bytes that are not
+    UTF-8 is a problem, and so is a row whose start is after its end (the clock that
+    wrote the ledger is wrong). An OSError of open() goes to the caller."""
     rows, problems = {}, []
-    with open(path, encoding="utf-8") as fh:
-        for n, line in enumerate(fh, 1):
-            line = line.strip()
+    with open(path, encoding="utf-8", errors="surrogateescape") as fh:
+        for n, text in enumerate(fh, 1):
+            line = text.strip()
             if not line:
+                continue
+            bad = next((i for i, ch in enumerate(text) if 0xDC80 <= ord(ch) <= 0xDCFF), None)
+            if bad is not None:
+                problems.append(f"line {n}: bytes that are not UTF-8 (the byte "
+                                f"0x{ord(text[bad]) - 0xdc00:02x} at character {bad + 1} of the "
+                                "line)")
                 continue
             try:
                 row = json.loads(line)
@@ -466,8 +647,19 @@ def load_ledger(path):
                 problems.append(f"line {n}: not a ledger row (needs trr and procedure): "
                                 f"{line[:80]!r}")
                 continue
-            rows[_ledger_key(row.get("trr"), row.get("procedure"))] = {
-                "start": _ts(row.get("start")), "end": _ts(row.get("end")),
+            key = _ledger_key(row.get("trr"), row.get("procedure"))
+            start, end = _ts(row.get("start")), _ts(row.get("end"))
+            if start is not None and end is not None and start > end:
+                # A window of no time at all is a window (start equal to end); a window
+                # whose start is after its end holds no record, so each gate of the
+                # procedure would miss a rule that matched (2026-11-13).
+                problems.append(f"line {n} ({key[0]}.{key[1]}): the window of the procedure "
+                                f"starts after it ends (start {row.get('start')!r}, end "
+                                f"{row.get('end')!r}), so no record can be in it: the clock "
+                                "that wrote the ledger is wrong")
+                continue
+            rows[key] = {
+                "start": start, "end": end,
                 "exit": row.get("exit"), "expect": row.get("expect", 0)}
     return rows, problems
 
@@ -565,7 +757,14 @@ def main():
     code = validate(args, report)
     if args.json:
         report["exit"] = code
-        write_json(args.json, report)
+        try:
+            write_json(args.json, report)
+        except OSError as e:
+            # A --json path that is a directory, or that the run cannot write: the
+            # report that the caller asked for does not exist, so the run fails.
+            print(f"ERROR: the --json report cannot be written to {args.json} "
+                  f"({e.strerror or e}).")
+            return code or 1
     return code
 
 
@@ -626,21 +825,40 @@ def validate(args, report):
         print("SKIP: no audit log to validate against (exit 0).")
         return 0 if not parse_errors else 1
 
-    events = load_events(audit_log)
+    try:
+        events, problems = read_log(audit_log, "audit")
+    except LogError as e:
+        # A directory, or a file that the run cannot open: not a log that was not
+        # found (that is a SKIP of a strict run), and not a log to judge a rule on.
+        print(f"\nERROR: {e}.")
+        if args.expect_miss:
+            report["controls"].append({"control": "the pre-emulation audit log holds a "
+                                                  "record", "status": "FAILED", "detail": str(e)})
+        return 1
     print(f"\nLoaded {len(events)} audit event(s) from {audit_log}")
+    bad = show_log_problems("audit", audit_log, problems, report)
     if args.expect_miss:
-        # The count is what load_events() returned: the records that each rule is
-        # run on (this mode has no time filter). No rule can match a log without a
-        # record, so no rule is judged.
-        why = (None if events else
-               f"the pre-emulation audit log {audit_log} holds no audit event (0 records "
-               f"read from {nonblank_lines(audit_log)} non-blank line(s))")
-        report["controls"].append({"control": "the pre-emulation audit log holds a record",
-                                   "status": "FAILED" if why else "held",
-                                   "detail": why or f"{len(events)} audit event(s)"})
-        if why:
-            print(f"\nNEGATIVE CONTROL FAILED: {why}. {VACUOUS}")
+        # The count is what read_log() returned: the records that each rule is run on
+        # (this mode has no time filter). No rule can match a log without a record,
+        # so no rule is judged.
+        why = [] if events else [
+            f"the pre-emulation audit log {audit_log} holds no audit event (0 records "
+            f"read from {nonblank_lines(audit_log)} non-blank line(s))"]
+        report["controls"].append({
+            "control": "the pre-emulation audit log holds a record",
+            "status": "FAILED" if why or bad else "held",
+            "detail": "; ".join(why + ([f"{bad} line(s) of the pre-emulation audit log "
+                                        f"{audit_log} are not audit events"] if bad else []))
+            or f"{len(events)} audit event(s)"})
+        for line in why:
+            print(f"\nNEGATIVE CONTROL FAILED: {line}. {VACUOUS}")
+        if why and not bad:
             return 1
+    if bad:
+        # A line that is not a record: the log is not what the validator reads, so
+        # no rule is judged on it (a strict run, --report and --expect-miss alike).
+        print(f"\n{log_problems_failed(bad)}")
+        return 1
 
     ledger = None
     if args.ledger and args.expect_miss:
@@ -651,7 +869,14 @@ def validate(args, report):
             print(f"ERROR: ledger not found: {args.ledger} (the emulation wrote no ledger "
                   "row; did it run, with DETENG_LEDGER set?)")
             return 1
-        ledger, problems = load_ledger(args.ledger)
+        if os.path.isdir(args.ledger):
+            print(f"ERROR: ledger {args.ledger} is a directory, not a file.")
+            return 1
+        try:
+            ledger, problems = load_ledger(args.ledger)
+        except OSError as e:
+            print(f"ERROR: ledger {args.ledger} cannot be read ({e.strerror or e}).")
+            return 1
         if problems:
             for p in problems:
                 print(f"ERROR: ledger {args.ledger} {p}")
