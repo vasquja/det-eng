@@ -368,12 +368,13 @@ slice of the benign corpus still end `score_benign.py` with a traceback (see
   base by one such item and, marked as the base's match, makes the compiled
   correlation fire (so it is in the right group and window).
 - **R3** has a failing or unparsable case, or a sidecar exists without its rule.
-- **R4** keys on the emulation's naming: its detection names an emulation
-  literally (`trr9NNN`, `deteng_`); or the rename test stops it firing; or it has
-  no positive to rename; or none of its positives carries an emulation identity,
-  so the test renamed nothing (a `COMPILE_ONLY` rule is excused); or every
-  verified negative breaks only items that the rename flips. The test renames
-  every emulation identity in each positive unit:
+- **R4** keys on the emulation's naming or on the environment of its data: its
+  detection names an emulation literally (`trr9NNN`, `deteng_`); or the rename
+  test, the constant rename or the two together stop it firing; or it has no
+  positive to rename; or none of its positives carries an emulation identity, so
+  the test renamed nothing (a `COMPILE_ONLY` rule is excused); or every verified
+  negative breaks only items that the rename flips. The test renames every
+  emulation identity in each positive unit:
   - every passing sidecar positive;
   - for a rule the auditd validator runs, a copy of each such positive in which
     every event carries the `exe` and `comm` that the validator's run of each of
@@ -388,10 +389,45 @@ slice of the benign corpus still end `score_benign.py` with a traceback (see
   class, one random substitution for the run. *Neutral* turns each identity into
   random lowercase letters 3 to 8 characters longer. The failure names the original
   identities and which rename stopped the rule, never the replacement. A cloud
-  rule's validator gate must also be a `marker(...)`. Not renamed: what precedes
-  the name in its token (the AWS key type in `AKIATRR9012...`), source IPs,
-  account or instance ids and timestamps. Outside the auditd rules the units are
-  the sidecar and the attack fixtures as written, so a positive that carries an
+  rule's validator gate must also be a `marker(...)`.
+
+  The *constant rename* renames each fixture constant in each positive unit that
+  holds one, and the unit must still fire. A fixture constant identifies the
+  environment that the cases and fixtures were recorded in, and the data of more
+  than one rule share it: the AWS account `123456789012` (the GCP data give the
+  same digits to a project and an organization) and its AWS organization
+  `o-exampleorgid`, the Azure subscription, the Entra tenants, the GCP project number and project id, and the name and the uid of the
+  node of the API server lab's kind cluster (`apiserver-control-plane`; also
+  `kind-control-plane`, the node of a kind cluster with the default name). The
+  table `FIXTURE_CONSTANTS` in `check_sufficiency.py` holds each constant with its
+  reason. A rule that requires one fires in no other account, subscription,
+  tenant, project or cluster, and it passes every case. Each constant gets one
+  random replacement for each run, of the same form: an id of 12 digits stays 12
+  digits, a GUID stays a GUID, a name keeps its length and the place of each
+  letter, digit and hyphen, and an AWS organization id keeps its `o-` and its
+  length. The replacement is in no rule, case or fixture of the
+  tree. A constant matches as a whole token, in any case: no character of its
+  form is next to it (a digit for an id of digits, a hex digit for a GUID, a
+  letter or a digit for a name), so `projects/745678901234/locations` holds one
+  and `1123456789012` holds none. The failure names the constants whose rename alone
+  stops the rule (or, when no one constant does, every constant that the unit
+  holds), never the replacement. A unit that holds an emulation identity and a
+  constant, and that each rename alone leaves firing, is also renamed both ways
+  together, and it must still fire: a rule that needs the tenant of the recordings
+  or a part of the emulation's names passes each rename alone, but an attack in
+  another tenant, with other names, carries neither. The table
+  does not hold a value that a rule can read as its discriminating field (a
+  principal or its credential, a source address or a range, a region, a client
+  version), the id of one object or one record, or a value that the data of one
+  rule only hold. A gate test fails when a constant of the table is in no sidecar.
+
+  Not renamed: what precedes the name in its token (the AWS key type in
+  `AKIATRR9012...`), source IPs, instance and key ids, timestamps, the uid of a
+  principal of the lab cluster, and a constant that the table does not list. Only
+  positives are renamed, so a filter keyed on a fixture constant (an allowlist of
+  the recording account or node) is not caught here; the benign corpus is the
+  check for that. Outside the auditd rules the units are the
+  sidecar and the attack fixtures as written, so a positive that carries an
   identity only in a field the rule does not read passes too. A human reviewer
   must catch a rule keyed on any of those.
 

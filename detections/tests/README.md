@@ -597,8 +597,13 @@ it does not see one test in the place of a different one.
   - `detections/sigma/T1040/afxdp_socket.cases.jsonl`
   - `detections/sigma/T1078.004/aws_cognito_unauthenticated_identity_use.yml`
   - `detections/sigma/T1078.004/aws_leaked_access_key_recon.yml`
+  - `detections/sigma/T1098.001/entra_app_federated_credential_backdoor.yml`
+  - `detections/sigma/T1098.001/gcp_workload_identity_pool_provider_created.yml`
+  - `detections/sigma/T1098.003/azure_privileged_role_assignment.yml`
   - `detections/sigma/T1098.006/k8s_rbac_write.yml`
+  - `detections/sigma/T1134/k8s_impersonation_privileged.yml`
   - `detections/sigma/T1485/k8s_volume_reclaim_set_to_delete.cases.jsonl`
+  - `detections/sigma/T1537/aws_efs_file_system_policy_made_public.yml`
   - `detections/sigma/T1537/aws_snapshot_or_ami_made_public.yml`
   - `detections/sigma/T1543.005/k8s_cri_static_pod_start.yml`
   - `detections/sigma/T1543.005/k8s_static_pod_mirror_create.yml`
@@ -665,10 +670,29 @@ it does not see one test in the place of a different one.
 
   - `detections/sigma_eval.py`
 
-  `CheckSufficiency` (`test_sufficiency.py`) takes the positive cases of this
-  sidecar, for its proof that a rule that needs one account id is bad:
+  `CheckSufficiency` (`test_sufficiency.py`) takes the positive cases of these
+  sidecars, for its proof that a rule that needs one fixture constant (an account
+  id, an organization id, a subscription, a tenant, a project, a node of the lab
+  cluster) is bad:
 
   - `detections/sigma/T1078.004/aws_leaked_access_key_recon.cases.jsonl`
+  - `detections/sigma/T1098.001/entra_app_federated_credential_backdoor.cases.jsonl`
+  - `detections/sigma/T1098.001/gcp_workload_identity_pool_provider_created.cases.jsonl`
+  - `detections/sigma/T1098.003/azure_privileged_role_assignment.cases.jsonl`
+  - `detections/sigma/T1134/k8s_impersonation_privileged.cases.jsonl`
+  - `detections/sigma/T1537/aws_efs_file_system_policy_made_public.cases.jsonl`
+
+  `CheckSufficiency` also reads every sidecar for the table `FIXTURE_CONSTANTS` of
+  `check_sufficiency.py`: each constant of the table must occur in a sidecar. A
+  change to the cases that removes the last occurrence of a constant makes
+  `gate-tests` red. The repair is to delete the entry from the table
+  (`check_sufficiency.py`, which the maintainer merges by hand). If a rejection
+  test of `CheckSufficiency` (`KEYED_ON`, or the test of the account) plants that
+  constant, that test fails too: point it at another constant of its kind, or
+  delete the kind with its test when no constant of the kind is left. No test finds a
+  constant that the table does not list: when new cases of two rules share a new
+  value of the recording environment, R4 does not rename it until a human adds it
+  to the table.
 
   The test of the verdict line of the API server validator
   (`test_verdict_names_each_trr_that_manifest_grades`) takes every positive case of
