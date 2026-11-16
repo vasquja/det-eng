@@ -1538,9 +1538,8 @@ class LedgerClock(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="deteng-clock-") as work:
             stubs = os.path.join(work, "bin")
             os.mkdir(stubs)
-            with open(os.path.join(stubs, "date"), "w", encoding="utf-8") as fh:
-                fh.write('#!/bin/sh\necho "$*" >> "$CALLS"\necho "$DATE_SAYS"\n')
-            os.chmod(os.path.join(stubs, "date"), 0o755)
+            gatelib.write_program(os.path.join(stubs, "date"),
+                                  '#!/bin/sh\necho "$*" >> "$CALLS"\necho "$DATE_SAYS"\n')
             script = os.path.join(work, "clock.sh")
             with open(script, "w", encoding="utf-8") as fh:
                 fh.write("set -euo pipefail\n" + self.ACCEPTED + lines)
