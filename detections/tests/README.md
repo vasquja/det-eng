@@ -852,11 +852,10 @@ it does not see one test in the place of a different one.
   It asserts the FIRE of the rule of each set on its case: the log source of the
   rule, and for the correlation its alerts and evidence records. The procedure label
   of the CopyFail set (`COPYFAIL_CVE`) is the CVE tag of its rule. So it depends on the
-  text of these rules too (the snapshot rule and `k8s_secret_access.yml` are in the
-  other lists):
+  text of these rules too (the snapshot rule, `k8s_secret_access.yml` and
+  `copyfail_af_alg_authencesn.yml` are in the other lists):
 
   - `detections/sigma/T1528/entra_illicit_oauth_consent_grant.yml`
-  - `detections/sigma/T1068/copyfail_af_alg_authencesn.yml`
 
   For the other kinds of row it names no rule: `ExternalRecords.kind()` takes them
   from the folder, the log source and the tags of each rule of the copy. A content
