@@ -2107,16 +2107,23 @@ must hold a record, because a negative control that read no record cannot fail:
   list holds the records), or JSON lines (a line ends at LF). It reads each line of
   JSON lines as it reads the one object of a file: CloudTrail writes each log file
   as one envelope on one line. An object that holds an envelope key is an envelope,
-  so one record that holds such a key goes in a JSON array (`[{...}]`).
+  so one record that holds such a key goes in a JSON array (`[{...}]`). The loader
+  reads only the list of an envelope. Beside its list, an envelope holds only the page
+  keys of the list APIs (`nextLink`, `@odata.nextLink`, `@odata.context`,
+  `nextPageToken`), each with a string or null.
 - A rule whose fixture the loader (`load_fixture()`) cannot read as records gets an
   `ERROR` row that names the fixture, and the line or the element (from 1) where
   there is one. Such a fixture holds bytes that are not UTF-8 (the row names the
   first such byte and its character in the line) or starts with the byte order mark
   of UTF-8; is JSON that is not an array or an object (`null`, `7`), or an object (the
   file, or a line of JSON lines) whose envelope key holds no list
-  (`{"Records": null}`, `{"value": "x"}`); holds a line that is not JSON (JSON lines),
-  or JSON that the loader cannot read (a number with too many digits, which the row
-  names by its record; nesting too deep for `json`, which the row names by its line
+  (`{"Records": null}`, `{"value": "x"}`); is an envelope that holds another key beside
+  its list (an attack record with `"items": [...]`, a second envelope key, `"meta": 1`)
+  or a page key that is not a string or null, which the row names with the list and
+  the other keys; holds a line that is not JSON (JSON lines), or JSON that the loader
+  cannot read (a number with too many digits, which the row names by its record: such
+  a number beside the list of an envelope is an envelope with another key, or a page
+  key that is a number; nesting too deep for `json`, which the row names by its line
   in JSON lines or in a document of one line, and else by the fixture only; nesting
   too deep to flatten, which the row names by its record); or holds a record that is
   not a JSON object (`null`, `[]`, `1`, `"x"`) or that one event table cannot hold (two

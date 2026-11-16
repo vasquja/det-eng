@@ -761,6 +761,12 @@ class CloudValidator(gatelib.GateCase):
             r"^(FAIL|ERROR)\s+\[TRR9012 AWS\] aws_leaked_access_key_recon\.yml: .*benign.*"
             r"(near-miss|filtered)")
 
+    # The end of the text of an envelope that holds a key other than its list and the
+    # page keys, or a page key that is not a string or null.
+    EXTRA = (r": the loader reads only the list of an envelope, and beside the list an "
+             r"envelope holds only the page keys nextLink, @odata\.nextLink, @odata\.context "
+             r"and nextPageToken \(each a string or null\)\. Write the records in a JSON array")
+
     # The ERROR row of RULE for a fixture that the loader cannot read ({}: the end of
     # the row, after the name of the fixture: where, and what).
     UNREAD = (r"^ERROR " + ROW + r"the {} fixture detections/cloud/fixtures/trr9012/{}\.json{}"
@@ -815,6 +821,8 @@ class CloudValidator(gatelib.GateCase):
         envelope = (r"not a list of records: the loader reads an object with the key Records, "
                     r"value, items or entries as an envelope of records\. Write one record "
                     r"that holds such a key in a JSON array \(\[\{\.\.\.\}\]\)")
+        extra = self.EXTRA
+        long = b"9" + b"9" * 4999     # a number of 5000 digits
         return [
             ("null", "benign", b"null\n",
              r": JSON that is not an array or an object \(null\)"),
@@ -932,6 +940,33 @@ class CloudValidator(gatelib.GateCase):
              "".join(json.dumps(row) + "\n" for row in good).encode()
              + b'{"Records": [{"eventName": "x"}, null]}\n',
              rf", line {n + 1}, element 2 of the list 'Records': " + record.format("null")),
+            # Beside its list an envelope holds only page keys (a string or null): the
+            # loader reads only the list, and would drop each other key without a word.
+            ("an envelope with an extra key", "benign",
+             json.dumps({"Records": good, "source": "x"}).encode(),
+             r": an envelope \(the list 'Records'\) that also holds the key 'source'" + extra),
+            ("two envelope keys that both hold lists", "benign",
+             json.dumps({"Records": good, "items": good[:1]}).encode(),
+             r": an envelope \(the list 'Records'\) that also holds the key 'items'" + extra),
+            ("a page key that holds an object", "benign",
+             json.dumps({"value": good, "nextLink": {"href": "x"}}).encode(),
+             r": an envelope \(the list 'value'\) whose page key 'nextLink' is an object, not "
+             r"a string or null" + extra),
+            ("a page key that holds a number with too many digits", "benign",
+             json.dumps({"value": good, "nextPageToken": 0})[:-2].encode() + long + b"}",
+             r": an envelope \(the list 'value'\) whose page key 'nextPageToken' is a number, "
+             r"not a string or null" + extra),
+            # A number with too many digits beside the list of an envelope is in no
+            # record: the envelope is refused for its other key, in each form.
+            ("an envelope that holds a number with too many digits beside its list", "benign",
+             json.dumps({"Records": good, "meta": 0})[:-2].encode() + long + b"}",
+             r": an envelope \(the list 'Records'\) that also holds the key 'meta'" + extra),
+            ("a JSON line of an envelope that holds a number with too many digits beside its "
+             "list", "benign",
+             "".join(json.dumps(row) + "\n" for row in good).encode()
+             + json.dumps({"Records": good[:1], "meta": 0})[:-2].encode() + long + b"}\n",
+             rf", line {n + 1}: an envelope \(the list 'Records'\) that also holds the key "
+             r"'meta'" + extra),
             # Values and keys that SQLite does not hold as they are. Python's json reads
             # NaN and Infinity, which JSON does not have; SQLite stores NaN as NULL, so a
             # `field: null` item would match a record that holds a value. The JSON escape
@@ -1171,6 +1206,70 @@ class CloudValidator(gatelib.GateCase):
         self.assert_rejects(
             result, rf"^FAIL  {self.ROW}NEGATIVE CONTROL FAILED: rule fired on {len(attack)} "
                     r"benign record\(s\) ", exit_code=1)
+
+    def test_rejects_attack_records_with_a_list_of_benign_records_as_json_lines(self):
+        """Definition of done 2 (stays quiet): the benign baseline as JSON lines, each
+        line an attack record with an added `"items": [<a benign record>]`. The loader
+        reads only the list of an envelope, so it cannot read such a line as one
+        record or as an envelope: the row names the line, the list and the other keys.
+        (At f9891b2 the loader read the line as an envelope and dropped the attack
+        record without a word: the run gave `benign baseline clean`.)"""
+        tree = self.tree()
+        attack, good = tree.read_json(self.ATTACK), tree.read_json(self.BENIGN)
+        self.assertGreater(len(attack), 1)
+        self.assertTrue(all("items" not in row for row in attack))
+        tree.write(self.BENIGN, "".join(json.dumps(dict(row, items=[good[0]])) + "\n"
+                                        for row in attack))
+        keys = sorted(attack[0])
+        self.assertGreater(len(keys), 3)
+        names = ", ".join(repr(key) for key in keys[:3]) + f" and {len(keys) - 3} more"
+        result = self.rejected_as_unproven(tree, self.UNREAD.format(
+            "benign", "benign", r", line 1: an envelope \(the list 'items'\) that also holds "
+                                r"the keys " + re.escape(names) + self.EXTRA))
+        self.assertNotIn("Traceback", result.output)
+        self.assertNotRegex(result.stdout, rf"(?m)^PASS  {self.ROW}")
+
+    def test_rejects_attack_fields_with_a_list_of_benign_records_in_one_object(self):
+        """Definition of done 2 (stays quiet): the benign baseline as one object, the
+        fields of an attack record and `"value": [<the benign records>]`. The row names
+        the fixture, the list and the other keys. (On main 224119f and at f9891b2 the
+        loader read the object as an envelope and dropped the attack fields without a
+        word: the run gave `benign baseline clean`.)"""
+        tree = self.tree()
+        attack, good = tree.read_json(self.ATTACK), tree.read_json(self.BENIGN)
+        self.assertNotIn("value", attack[0])
+        tree.write(self.BENIGN, json.dumps(dict(attack[0], value=good)))
+        keys = sorted(attack[0])
+        names = ", ".join(repr(key) for key in keys[:3]) + f" and {len(keys) - 3} more"
+        result = self.rejected_as_unproven(tree, self.UNREAD.format(
+            "benign", "benign", r": an envelope \(the list 'value'\) that also holds the keys "
+                                + re.escape(names) + self.EXTRA))
+        self.assertNotIn("Traceback", result.output)
+        self.assertNotRegex(result.stdout, rf"(?m)^PASS  {self.ROW}")
+
+    def test_control_pages_of_list_apis(self):
+        """CONTROL of the loader: a page of a list API holds page keys beside its list.
+        The benign baseline of the managed-identity rule of TRR9013 as an Azure page
+        (`value`, a `nextLink` and an `@odata.context`), and that of TRR9014 as a GCP
+        page (`entries` and a `nextPageToken` of null): the run reads the records of
+        each list, the baselines pass, and each row counts its records."""
+        tree = self.tree()
+        azure = "detections/cloud/fixtures/trr9013/benign_mi.json"
+        gcp = "detections/cloud/fixtures/trr9014/benign.json"
+        mi, grant = tree.read_json(azure), tree.read_json(gcp)
+        self.assertGreater(len(mi), 1)
+        self.assertGreater(len(grant), 1)
+        tree.write(azure, json.dumps({"value": mi,
+                                      "nextLink": "https://management.example.com/next",
+                                      "@odata.context": "x"}))
+        tree.write(gcp, json.dumps({"entries": grant, "nextPageToken": None}))
+        result = tree.run(self.GATE)
+        self.assert_accepts(result, r"^All \d+ external-cloud detection\(s\) fired ")
+        self.assert_saw(result, r"^PASS  \[TRR9013 Azure\] azure_managed_identity_federated_"
+                                r"credential_backdoor\.yml: .*benign baseline clean "
+                                rf"\({len(mi)} record\(s\)\) ")
+        self.assert_saw(result, r"^PASS  \[TRR9014 GCP\] gcp_public_iam_member_grant\.yml: "
+                                rf".*benign baseline clean \({len(grant)} record\(s\)\) ")
 
     def test_rejects_two_fixtures_that_the_loader_cannot_read_in_one_row(self):
         """The two fixtures of the rule cannot be read: one ERROR row names both, and
