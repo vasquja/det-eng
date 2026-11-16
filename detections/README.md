@@ -2097,15 +2097,24 @@ must hold a record, because a negative control that read no record cannot fail:
 - A rule whose attack or benign fixture is missing gets an `ERROR` row that names the
   file. There is no state for a fixture that comes later: list a rule in `MANIFEST`
   in the change that adds its two fixtures.
+- The loader reads a JSON array of records, one JSON object (one record), an
+  envelope (an object with the key `Records`, `value`, `items` or `entries`, whose
+  list holds the records), or JSON lines (a line ends at LF). It reads each line of
+  JSON lines as it reads the one object of a file: CloudTrail writes each log file
+  as one envelope on one line. An object that holds an envelope key is an envelope,
+  so one record that holds such a key goes in a JSON array (`[{...}]`).
 - A rule whose fixture the loader (`load_fixture()`) cannot read as records gets an
   `ERROR` row that names the fixture, and the line or the element (from 1) where
   there is one. Such a fixture holds bytes that are not UTF-8 (the row names the
   first such byte and its character in the line) or starts with the byte order mark
-  of UTF-8; is JSON that is not an array or an object (`null`, `7`), or an object whose
-  envelope key holds no list (`{"Records": null}`); holds a line that is not JSON
-  (JSON lines, where a line ends at LF), or JSON that the loader cannot read (nesting
-  that is too deep, a number with too many digits); or holds a record that is not a
-  JSON object (`null`, `[]`, `1`, `"x"`) or that one event table cannot hold (two
+  of UTF-8; is JSON that is not an array or an object (`null`, `7`), or an object (the
+  file, or a line of JSON lines) whose envelope key holds no list
+  (`{"Records": null}`, `{"value": "x"}`); holds a line that is not JSON (JSON lines),
+  or JSON that the loader cannot read (a number with too many digits, which the row
+  names by its record; nesting too deep for `json`, which the row names by its line
+  in JSON lines or in a document of one line, and else by the fixture only; nesting
+  too deep to flatten, which the row names by its record); or holds a record that is
+  not a JSON object (`null`, `[]`, `1`, `"x"`) or that one event table cannot hold (two
   keys of the record that differ only in letter case, a key `rowid` or `_rowid`, a
   key with a NUL or a lone surrogate, a value that SQLite does not hold as it is:
   an integer outside 64 bits, `NaN` or `Infinity`, a text with a lone surrogate; see

@@ -351,18 +351,85 @@ def _text(path):
 ENVELOPES = ("Records", "value", "items", "entries")  # the keys of a list of records
 
 
+class _LongInt:
+    """An integer of JSON that int() does not read: it has more digits than
+    sys.get_int_max_str_digits() allows (4300 by default). The loader keeps the error
+    in the place of the number and names the record that holds it."""
+
+    __slots__ = ("error",)
+
+    def __init__(self, error):
+        self.error = error
+
+
+def _long_int(value):
+    """The error of the first _LongInt in a JSON value, or None. The walk uses no
+    recursion: the value can be deep."""
+    stack = [value]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, _LongInt):
+            return node.error
+        if isinstance(node, dict):
+            stack.extend(reversed(node.values()))
+        elif isinstance(node, list):
+            stack.extend(reversed(node))
+    return None
+
+
+def _document(path, doc, at):
+    """(records, where) of one document of a fixture (the one document of the file, or
+    a line of JSON lines; `at` names the line, or is None): the list of an envelope,
+    the elements of an array, or the object as one record. A line of JSON lines is one
+    record or an envelope: a list on a line is a record that is not an object."""
+    if isinstance(doc, list) and at is None:
+        return doc, [f"element {n} of the array" for n in range(1, len(doc) + 1)]
+    if not isinstance(doc, dict):
+        if at is None:
+            raise FixtureError(f"{_name(path)}: JSON that is not an array or an object "
+                               f"({_kind(doc)})")
+        return [doc], [at]
+    env = next((env for env in ENVELOPES if isinstance(doc.get(env), list)), None)
+    if env is None:
+        # An object that holds an envelope key is an envelope; when the key holds no
+        # list, the envelope holds no record, and the object is not one record either.
+        odd = next((env for env in ENVELOPES if env in doc), None)
+        if odd is not None:
+            raise FixtureError(
+                f"{_name(path)}{', ' + at if at else ''}: an object whose key {odd!r} is "
+                f"{_kind(doc[odd])}, not a list of records: the loader reads an object with "
+                f"the key {', '.join(ENVELOPES[:-1])} or {ENVELOPES[-1]} as an envelope of "
+                "records. Write one record that holds such a key in a JSON array ([{...}])")
+        return [doc], [at or "the object of the file"]
+    prefix = f"{at}, " if at else ""
+    return doc[env], [f"{prefix}element {n} of the list {env!r}"
+                      for n in range(1, len(doc[env]) + 1)]
+
+
 def _records(path):
     """(records, where): the records of a fixture, as the file holds them, and the
     place of each in the file, as a message names it (`line 3`, `element 2 of the
     array`). Raises FixtureError (load_records())."""
     text = _text(path)
+    longs = []
+
+    def parse_int(digits):
+        try:
+            return int(digits)
+        except ValueError as e:
+            longs.append(e)
+            return _LongInt(e)
+
+    def loads(text):
+        return json.loads(text, parse_int=parse_int)
+
     try:
-        doc = json.loads(text)
+        records, where = _document(path, loads(text), None)
     except json.JSONDecodeError as whole:
         # Not one JSON document: JSON lines. When the first line is not JSON either,
         # the file is one document with an error, and the error of the document names
         # its place.
-        records, where = [], []
+        records, where, read = [], [], False
         # A line ends at LF only: str.splitlines() also ends one at U+0085, U+2028 and
         # U+2029, which a JSON string may hold as they are.
         for n, line in enumerate(text.split("\n"), 1):
@@ -370,57 +437,68 @@ def _records(path):
             if not line:
                 continue
             try:
-                records.append(json.loads(line))
+                doc = loads(line)
             except json.JSONDecodeError as e:
-                e, n = (whole, whole.lineno) if not where else (e, n)
+                e, n = (whole, whole.lineno) if not read else (e, n)
                 raise FixtureError(f"{_name(path)}, line {n}: not JSON ({e.msg}, at character "
                                    f"{e.colno}); a fixture is a JSON array, a JSON object or "
                                    "JSON lines") from None
             except (ValueError, RecursionError) as e:
                 raise FixtureError(f"{_name(path)}, line {n}: {_cannot_read(e)}") from None
-            where.append(f"line {n}")
-    except (ValueError, RecursionError) as e:
+            read = True
+            # Each line is read as the one object of a file is: an envelope on a line
+            # (CloudTrail writes each log file as one envelope on one line) gives the
+            # records of its list.
+            line_records, line_where = _document(path, doc, f"line {n}")
+            records += line_records
+            where += line_where
+    except RecursionError as e:
+        # json stops in the first JSON value of the text. When that value is the first
+        # line that is not blank (JSON lines, or one document on one line), the line
+        # is named; else only the fixture.
+        n, line = next((n, line) for n, line in enumerate(text.split("\n"), 1)
+                       if line.strip())
+        try:
+            loads(line)
+        except RecursionError:
+            raise FixtureError(f"{_name(path)}, line {n}: {_cannot_read(e)}") from None
+        except ValueError:
+            pass
         raise FixtureError(f"{_name(path)}: {_cannot_read(e)}") from None
-    else:
-        if isinstance(doc, list):
-            records, where = doc, [f"element {n} of the array" for n in range(1, len(doc) + 1)]
-        elif not isinstance(doc, dict):
-            raise FixtureError(f"{_name(path)}: JSON that is not an array or an object "
-                               f"({_kind(doc)})")
-        else:
-            env = next((env for env in ENVELOPES if isinstance(doc.get(env), list)), None)
-            if env is None:
-                # An envelope whose list is null (or not a list) holds no record: the
-                # object is not one record either.
-                odd = next((env for env in ENVELOPES if env in doc), None)
-                if odd is not None:
-                    raise FixtureError(f"{_name(path)}: an object whose key {odd!r} is "
-                                       f"{_kind(doc[odd])}, not a list of records; a fixture "
-                                       "is a JSON array, a JSON object or JSON lines")
-            records = doc[env] if env else [doc]
-            where = ([f"element {n} of the list {env!r}" for n in range(1, len(records) + 1)]
-                     if env else ["the object of the file"])
+    except ValueError as e:
+        raise FixtureError(f"{_name(path)}: {_cannot_read(e)}") from None
     for at, record in zip(where, records):
         if not isinstance(record, dict):
             raise FixtureError(f"{_name(path)}, {at}: a record that is not a JSON object "
                                f"({_kind(record)})")
+        if longs:
+            error = _long_int(record)
+            if error is not None:
+                raise FixtureError(f"{_name(path)}, {at}: {_cannot_read(error)}")
     return records, where
 
 
 def load_records(path):
     """Load a fixture file to the list of its records, as the file holds them.
 
-    Accepts a JSON array, a single JSON object, a common log envelope
+    Accepts a JSON array, a single JSON object (one record), a common log envelope
     ({"Records"/"value"/"items"/"entries": [...]}, ENVELOPES), or JSON-lines (a line
-    ends at LF).
+    ends at LF). Each line of JSON lines is read as the single object of a file is: one
+    record, or an envelope, whose list gives the records. An object that holds an
+    envelope key is an envelope: a single record that holds such a key goes in a JSON
+    array.
 
     Raises FixtureError, with a text that names the fixture, for a file that is a
     directory or cannot be read; bytes that are not UTF-8; the byte order mark of
     UTF-8 at its start; JSON that is not an array or an object (`null`, `1`); an
-    object whose envelope key is not a list (`{"Records": null}`); a line of JSON lines
-    that is not JSON; JSON that the loader cannot read (too deep, a number with too
-    many digits); and a record that is not a JSON object (`null`, `[]`, `1`, `"x"`).
-    The text names the line or the element where there is one.
+    object (the file, or a line of JSON lines) whose envelope key is not a list
+    (`{"Records": null}`, `{"value": "x"}`); a line of JSON lines that is not JSON;
+    JSON that the loader cannot read (too deep, a number with too many digits); and a
+    record that is not a JSON object (`null`, `[]`, `1`, `"x"`). The text names the
+    line or the element where there is one: a number with too many digits is named
+    by its record, and JSON that is too deep for json by its line in JSON lines or in
+    a document of one line; JSON of one document of more lines that is too deep for
+    json is named by the fixture only.
     """
     return _records(path)[0]
 

@@ -812,6 +812,9 @@ class CloudValidator(gatelib.GateCase):
             nested = {"a": nested}
         record = r"a record that is not a JSON object \({}\)"
         table = r"a record that one event table cannot hold: "
+        envelope = (r"not a list of records: the loader reads an object with the key Records, "
+                    r"value, items or entries as an envelope of records\. Write one record "
+                    r"that holds such a key in a JSON array \(\[\{\.\.\.\}\]\)")
         return [
             ("null", "benign", b"null\n",
              r": JSON that is not an array or an object \(null\)"),
@@ -845,9 +848,18 @@ class CloudValidator(gatelib.GateCase):
             # the recursion. From Python 3.14 the limit is the C stack of the thread, so
             # with a large stack (the gate-tests job) json.loads() reads all the levels,
             # and the one record is a list. The loader names the fixture either way.
+            # json stops in line 1, so the loader names the line.
             ("JSON too deep to read", "benign", b"[" * 100000 + b"]" * 100000,
-             r"(?:: JSON that the validator cannot read \(RecursionError: [^)]*\)|, element 1 of "
-             r"the array: " + record.format("a list") + ")"),
+             r"(?:, line 1: JSON that the validator cannot read \(RecursionError: [^)]*\)|, "
+             r"element 1 of the array: " + record.format("a list") + ")"),
+            # JSON lines whose first line is too deep: json stops in the first line of
+            # the document, and the loader names it (with a large stack, Python 3.14
+            # reads the line, a list).
+            ("JSON lines whose first line is too deep", "benign",
+             b"[" * 100000 + b"]" * 100000 + b"\n"
+             + "".join(json.dumps(row) + "\n" for row in good).encode(),
+             r", line 1: (?:JSON that the validator cannot read \(RecursionError: [^)]*\)|"
+             + record.format("a list") + ")"),
             ("a record too deep to flatten", "benign", json.dumps(good + [nested]).encode(),
              rf", element {n + 1} of the array: JSON that the validator cannot read "
              r"\(RecursionError: [^)]*\)"),
@@ -856,10 +868,25 @@ class CloudValidator(gatelib.GateCase):
              + b"0" * 5000 + b"}\n",
              rf", line {n + 1}: JSON that the validator cannot read \(ValueError: Exceeds the "
              r"limit \(4300 digits\) for integer string conversion[^)]*\)"),
+            # A number with too many digits is named by its record, in each form of a
+            # fixture: an element of a document of many lines, line 1 of JSON lines, an
+            # element of an envelope.
             ("a number with too many digits", "benign",
              text[:-2].encode() + b',\n  {"n": 1' + b"0" * 5000 + b"}\n]",
-             r": JSON that the validator cannot read \(ValueError: Exceeds the limit \(4300 "
-             r"digits\) for integer string conversion[^)]*\)"),
+             rf", element {n + 1} of the array: JSON that the validator cannot read "
+             r"\(ValueError: Exceeds the limit \(4300 digits\) for integer string "
+             r"conversion[^)]*\)"),
+            ("JSON lines whose first line holds a number with too many digits", "benign",
+             b'{"n": 1' + b"0" * 5000 + b"}\n"
+             + "".join(json.dumps(row) + "\n" for row in good).encode(),
+             r", line 1: JSON that the validator cannot read \(ValueError: Exceeds the limit "
+             r"\(4300 digits\) for integer string conversion[^)]*\)"),
+            ("an envelope whose record holds a number with too many digits", "benign",
+             json.dumps({"Records": good})[:-2].encode() + b', {"n": {"m": [1' + b"0" * 5000
+             + b"]}}]}",
+             rf", element {n + 1} of the list 'Records': JSON that the validator cannot read "
+             r"\(ValueError: Exceeds the limit \(4300 digits\) for integer string "
+             r"conversion[^)]*\)"),
             ("an integer outside 64 bits", "benign",
              json.dumps(good + [dict(good[0], n=2 ** 64)]).encode(),
              rf", element {n + 1} of the array: {table}the value of n is an integer outside "
@@ -887,11 +914,24 @@ class CloudValidator(gatelib.GateCase):
              "".join(json.dumps(row) + "\n" for row in good).encode() + b'\n"x"\n',
              rf", line {n + 2}: " + record.format("a string")),
             ("an envelope whose list is null", "benign", b'{"Records": null}\n',
-             r": an object whose key 'Records' is null, not a list of records; a fixture is a "
-             r"JSON array, a JSON object or JSON lines"),
+             r": an object whose key 'Records' is null, " + envelope),
             ("an envelope whose list is a number", "benign", b'{"value": 5}\n',
-             r": an object whose key 'value' is a number, not a list of records; a fixture is "
-             r"a JSON array, a JSON object or JSON lines"),
+             r": an object whose key 'value' is a number, " + envelope),
+            # One record that holds an envelope key: the loader reads the object as an
+            # envelope, and the text says how to give the record.
+            ("the one object of the file with a key value that is a string", "benign",
+             json.dumps(dict(good[0], value="abc")).encode(),
+             r": an object whose key 'value' is a string, " + envelope),
+            # A line of JSON lines is read as the one object of a file is: an envelope
+            # whose list is null holds no record on a line too, and the records of the
+            # list of an envelope on a line are named by the line and the element.
+            ("JSON lines of envelopes whose list is null", "benign",
+             b'{"Records": null}\n{"Records": null}\n',
+             r", line 1: an object whose key 'Records' is null, " + envelope),
+            ("an envelope on a line of JSON lines with a record that is not an object", "benign",
+             "".join(json.dumps(row) + "\n" for row in good).encode()
+             + b'{"Records": [{"eventName": "x"}, null]}\n',
+             rf", line {n + 1}, element 2 of the list 'Records': " + record.format("null")),
             # Values and keys that SQLite does not hold as they are. Python's json reads
             # NaN and Infinity, which JSON does not have; SQLite stores NaN as NULL, so a
             # `field: null` item would match a record that holds a value. The JSON escape
@@ -1093,6 +1133,44 @@ class CloudValidator(gatelib.GateCase):
         self.assert_accepts(result, r"^All \d+ external-cloud detection\(s\) fired ")
         self.assert_saw(result, rf"^PASS  {self.ROW}.* benign baseline clean "
                                 rf"\({len(good)} record\(s\)\) ")
+
+    def test_control_json_lines_of_envelopes(self):
+        """CONTROL of the loader: each line of JSON lines is read as the one object of a
+        file is, and CloudTrail writes each log file as one envelope on one line. The
+        attack fixture as JSON lines of envelopes (two records in the first, one in
+        each other) and the benign fixture as an envelope on a line before a record on
+        a line: the run reads each record. A record that holds an envelope key as a
+        string goes in a JSON array, as the text of the loader says, and is read."""
+        tree, array = self.tree(), self.tree()
+        attack, good = tree.read_json(self.ATTACK), tree.read_json(self.BENIGN)
+        self.assertGreater(len(attack), 2)
+        self.assertGreater(len(good), 1)
+        tree.write(self.ATTACK, "".join(json.dumps({"Records": part}) + "\n"
+                                        for part in [attack[:2]] + [[r] for r in attack[2:]]))
+        tree.write(self.BENIGN, json.dumps({"Records": good[:-1]}) + "\n"
+                   + json.dumps(good[-1]) + "\n")
+        array.write(self.BENIGN, json.dumps(good[:-1] + [dict(good[-1], value="abc")]))
+        for result in (tree.run(self.GATE), array.run(self.GATE)):
+            self.assert_accepts(result, r"^All \d+ external-cloud detection\(s\) fired ")
+            self.assert_saw(result, rf"^PASS  {self.ROW}{len(attack)}/{len(attack)} attack "
+                                    rf"record\(s\) match; benign baseline clean "
+                                    rf"\({len(good)} record\(s\)\) ")
+
+    def test_rejects_attack_records_in_the_benign_baseline_as_json_lines_of_envelopes(self):
+        """Definition of done 2 (stays quiet): the benign baseline holds the attack
+        records, one CloudTrail envelope on each line. The loader reads the records of
+        each envelope, so the rule fires on the baseline and fails. (Before, the loader
+        read each line as one record, the envelope itself; the rule did not fire on it,
+        and the run gave `benign baseline clean`.)"""
+        tree = self.tree()
+        attack = tree.read_json(self.ATTACK)
+        tree.write(self.BENIGN, "".join(json.dumps({"Records": [r]}) + "\n" for r in attack))
+        self.assertEqual(len(tree.read(self.BENIGN).splitlines()), len(attack))
+        result = tree.run(self.GATE)
+        self.assertNotIn("Traceback", result.output)
+        self.assert_rejects(
+            result, rf"^FAIL  {self.ROW}NEGATIVE CONTROL FAILED: rule fired on {len(attack)} "
+                    r"benign record\(s\) ", exit_code=1)
 
     def test_rejects_two_fixtures_that_the_loader_cannot_read_in_one_row(self):
         """The two fixtures of the rule cannot be read: one ERROR row names both, and
