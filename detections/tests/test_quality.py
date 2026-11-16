@@ -303,20 +303,12 @@ class ScoreBenign(gatelib.GateCase):
 
     PLANTED_SLICE = "detections/benign/slices/aws/planted-key-case-clash.json"
 
-    @gatelib.known_gap(
-        "sb-slice-keys-differ-by-case",
-        gate="detections/score_benign.py --check --enforce",
-        reason="A benign slice whose event has two keys that differ only in letter case "
-               "(`eventName` and `EventName`) ends score_benign.py --check --enforce with an "
-               "uncaught ValueError of sigma_eval.EventTable: no line names the slice (the "
-               "last line of the traceback names the two keys), and no rule is scored. The "
-               "benign-corpus job fails, but with a traceback. The loader of the corpus "
-               "(benign_corpus.py) does not check the keys of an event; rule_cases.py names "
-               "the same clash in a sidecar case with the rule, the line and the case.",
-        closes="R2d", today="crash")
-    def test_gap_slice_event_keys_that_differ_only_in_letter_case(self):
-        """WANTED: the gate names the slice and the two keys, and does not stop with a
-        traceback."""
+    def test_rejects_slice_event_keys_that_differ_only_in_letter_case(self):
+        """A benign slice whose event holds `eventName` and `EventName`: one event table
+        cannot hold it (two values for one column of SQLite). The gate names the slice,
+        the event and the two keys in one ERROR line, scores no rule and exits 1.
+        (This was the known gap sb-slice-keys-differ-by-case: the gate ended with a
+        ValueError of sigma_eval.EventTable, and no line named the slice.)"""
         tree = self.tree()
         tree.plant("quality/slice_keys_differ_by_case/planted-key-case-clash.json",
                    self.PLANTED_SLICE)
@@ -335,22 +327,66 @@ class ScoreBenign(gatelib.GateCase):
         self.assert_accepts(scored, r"^  planted-key-case-clash +v1 +synthetic +aws/cloudtrail "
                                     r"+1 event\(s\)$")
         result = self.run_ci(tree)
-        # The gate read the planted event: its output names the two keys (today in
-        # the last line of the traceback).
+        # The gate read the planted event: its output names the two keys.
         self.assert_saw(result, r"differ only by case.*\bEventName / eventName\b")
-        if result.crashed:
-            # Today. Prove the sentences of the `reason`: the error of EventTable,
-            # raised where the gate scores the slices, is the last line, and it names
-            # the two keys; no line names the slice.
-            self.assertRegex(result.stderr, r'(?m)^  File ".*score_benign\.py", line \d+, in '
-                                            r'score\b', result.describe())
-            self.assertRegex(result.stderr.rstrip("\n").splitlines()[-1],
-                             r'^ValueError: event keys that differ only by case cannot share '
-                             r'one table: EventName / eventName \(', result.describe())
-            self.assertNotIn("planted-key-case-clash", result.output, result.describe())
-        self.assert_rejects(result, r"planted-key-case-clash.*\bEventName\b.*\beventName\b"
-                                    r"|\beventName\b.*\bEventName\b.*planted-key-case-clash")
+        self.assertNotIn("Traceback", result.output)
+        self.assertNotRegex(result.stdout, r"(?m)^Benign corpus: ")
+        self.assert_rejects(result, r"^ERROR: the slice planted-key-case-clash v1 \(detections/"
+                                    r"benign/slices/aws/planted-key-case-clash\.json\), event 1 "
+                                    r"of 1: keys that differ only by case: EventName / eventName, "
+                                    r"which SQLite reads as one column name\. No rule is scored on "
+                                    r"the benign corpus\.$", exit_code=1)
 
+    def test_control_slice_events_whose_keys_differ_only_in_letter_case(self):
+        """CONTROL of the test above: two events of the planted slice, one with the key
+        `eventName` and one with `EventName` (a sequence of two steps). No event holds
+        both, so the two keys share one column, and the gate scores the slice."""
+        tree = self.tree()
+        tree.plant("quality/slice_keys_differ_by_case/planted-key-case-clash.json",
+                   self.PLANTED_SLICE)
+
+        def two_events(doc):
+            event = doc["templates"][0].pop("event")
+            first = {key: value for key, value in event.items() if key != "EventName"}
+            second = {key: value for key, value in event.items() if key != "eventName"}
+            doc["templates"][0]["events"] = [{"event": first}, {"event": second}]
+            return doc
+        tree.edit_json(self.PLANTED_SLICE, two_events)
+        steps = tree.read_json(self.PLANTED_SLICE)["templates"][0]["events"]
+        self.assertEqual([sorted(step["event"]) for step in steps],
+                         [["eventName", "eventSource"], ["EventName", "eventSource"]])
+        result = tree.run(self.GATE, "--examples", "0")
+        self.assertNotIn("Traceback", result.output)
+        self.assert_accepts(result, r"^  planted-key-case-clash +v1 +synthetic +aws/cloudtrail "
+                                    r"+2 event\(s\)$")
+
+    def test_rejects_reseed_whose_event_keys_differ_only_in_letter_case(self):
+        """--reseeds expands each synthetic slice again at later versions. The planted
+        slice draws one of two objects for a field: at its version 7 the object
+        `{"x": "1"}`, at version 8 `{"x": "1", "X": "2"}`, whose two keys differ only in
+        letter case. The committed corpus scores, and the reseed at version 8 is an
+        ERROR line that names the slice, its version, the event and the keys."""
+        tree = self.tree()
+        tree.write("detections/benign/slices/aws/planted-reseed-key-case.json", json.dumps({
+            "id": "planted-reseed-key-case", "version": 7,
+            "logsource": {"product": "aws", "service": "cloudtrail"}, "fidelity": "synthetic",
+            "represents": "PLANTED DEFECT of detections/tests: a reseed draws an object whose "
+                          "two keys differ only in letter case",
+            "provenance": "synthetic: planted artifact of detections/tests (test_quality.py)",
+            "count": 1, "vars": {"obj": [{"x": "1"}, {"x": "1", "X": "2"}]},
+            "templates": [{"weight": 1, "event": {
+                "eventSource": "sts.amazonaws.com", "eventName": "GetCallerIdentity",
+                "detail": "{{obj}}"}}]}, indent=2) + "\n")
+        result = tree.run(self.GATE, "--reseeds", "1", "--examples", "0")
+        self.assert_saw(result, r"^  planted-reseed-key-case +v7 +synthetic +aws/cloudtrail +1 "
+                                r"event\(s\)$")
+        self.assertNotIn("Traceback", result.output)
+        self.assertNotRegex(result.stdout, r"(?m)^Most hits over ")
+        self.assert_rejects(result, r"^ERROR: the slice planted-reseed-key-case v8 \(detections/"
+                                    r"benign/slices/aws/planted-reseed-key-case\.json\), event 1 "
+                                    r"of 1: keys that differ only by case: detail\.X / detail\.x, "
+                                    r"which SQLite reads as one column name \(a reseed\)\. No rule "
+                                    r"is scored on the reseeds\.$", exit_code=1)
 
 class BenignRatchet(gatelib.GateCase):
     """The benign half of the sufficiency-ratchet job (pull requests only):
@@ -1341,8 +1377,9 @@ class ProviderMappings(gatelib.GateCase):
         """The ERROR line for the planted case: the rule, the line and the case."""
         line = len(self.good().read_jsonl(self.CLASH_CASES)) + 1
         return (rf"^ERROR {re.escape(self.CLASH_RULE)}: sidecar error: line {line}: case "
-                r"'planted-two-verb-keys': event keys that differ only by case: Verb / verb "
-                r"\(the events of a case share one SQLite table")
+                r"'planted-two-verb-keys': event 1 of 1: keys that differ only by case: Verb / "
+                r"verb, which SQLite reads as one column name \(one event table cannot hold the "
+                r"event\)$")
 
     def test_rejects_sidecar_case_that_one_table_cannot_hold(self):
         """pm-sidecar-case-clash (planted in setUpClass), with the command line of the

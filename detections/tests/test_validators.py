@@ -233,6 +233,10 @@ NOT_A_RECORD = {
                   r'"metadata" object with a "name"\)',
            "file": r'a JSON object that is not a file event \(a file event has a '
                    r'"TargetFilename" and an "Image"\)'}}
+# The start of the problem of a record that one event table cannot hold (two keys of
+# the record that differ only in the letter case of their ASCII letters, ...).
+ONE_EVENT_TABLE = {source: f"{a} that one event table cannot hold: " for source, a in (
+    ("audit", "an audit event"), ("cri", "a pod sandbox"), ("file", "a file event"))}
 # The FAILED line of a run whose logs hold lines that are not records ({}: their number).
 LINES_NOT_RECORDS = (r"^FAILED: {} line\(s\) of the logs are not records of their log \(see "
                      r"the ERROR lines above\)\. No rule is judged on a log that holds such a "
@@ -2444,25 +2448,16 @@ class K8sValidator(gatelib.GateCase):
                 "requestReceivedTimestamp": f"2026-11-13T20:10:0{number}.000000Z",
                 "stageTimestamp": f"2026-11-13T20:10:0{number}.002000Z"}
 
-    @gatelib.known_gap(
-        "k8s-log-keys-differ-only-in-case",
-        gate="detections/validate_k8s_detections.py --expect-miss",
-        reason="A pre-emulation audit log of three audit events: an exec into the target "
-               "pod, which is an emulation record (so the negative control must fail on "
-               "its rule), and two ConfigMap creates at level RequestResponse whose data "
-               "keys differ only in letter case (`key` and `KEY`). Each line is a record, "
-               "and a live log at that level can hold such keys. The validator ends with an "
-               "uncaught ValueError of sigma_eval.EventTable (`event keys that differ only "
-               "by case cannot share one table`) before it judges a rule, so no line names "
-               "the rule that passed. validate_staticpod_detections.py and "
-               "validate_apiserver_detections.py end in the same way on the same log. The "
-               "correction belongs in sigma_eval.EventTable (a table that holds keys that "
-               "differ only in letter case), after roadmap item R7 (pull request 76, which "
-               "changes sigma_eval.py) merges; the log readers must not refuse a valid log.",
-        closes="R2d", today="crash")
-    def test_gap_log_whose_keys_differ_only_in_letter_case(self):
-        """WANTED: the validator judges each rule on a valid log whose keys differ only
-        in letter case, and the negative control fails on the rule that passed."""
+    def test_rejects_log_whose_keys_differ_only_in_letter_case(self):
+        """A pre-emulation audit log of three audit events: an exec into the target
+        pod, which is an emulation record (so the negative control must fail on its
+        rule), and two ConfigMap creates at level RequestResponse whose data keys
+        differ only in letter case (`key` and `KEY`). Each line is a record, and a
+        live log at that level can hold such keys: the two keys share one column of
+        the event table, and the validator judges each rule. (This was the known gap
+        k8s-log-keys-differ-only-in-case: the validator ended with a ValueError of
+        sigma_eval.EventTable before it judged a rule. The static pod and the API
+        server validator have tests of their own on the same kind of log.)"""
         good = self.good()
         exec_record = case_events(good, self.CASES, "exec-websocket-get-procA")
         self.assertEqual(len(exec_record), 1)
@@ -2475,11 +2470,6 @@ class K8sValidator(gatelib.GateCase):
         alone = self.tree()
         write_text_log(alone, self.LOG, json.dumps(exec_record[0]) + "\n")
         alone = alone.start_step(self.negative_control_step())
-        # For the proof of the last sentences of the `reason`, below: a strict run of
-        # the two other validators on the same log.
-        others = {script: good.start(script, "--audit-log", good.tmp_path(self.LOG))
-                  for script in ("detections/validate_staticpod_detections.py",
-                                 "detections/validate_apiserver_detections.py")}
         result = good.run_step(self.negative_control_step())
         passed = (r"^PASS  \[A/B/C\] k8s_pod_exec_attach\.yml: 1 emulation event\(s\) match$"
                   r"[\s\S]*^NEGATIVE CONTROL FAILED: 1 rule\(s\) passed on a log captured "
@@ -2493,19 +2483,30 @@ class K8sValidator(gatelib.GateCase):
         # The gate read the log: the reader counts the three records.
         self.assert_saw(result, r"^Loaded 3 audit event\(s\) from \S+/pre-emulation-audit\.log$")
         self.assertNotRegex(result.stdout, r"(?m)^ERROR: the audit log ")
-        if result.crashed:
-            # Today. Prove each sentence of the `reason`, so that the text cannot go
-            # out of date: the ValueError of sigma_eval.EventTable, no rule judged,
-            # and the same end of the other two validators.
-            clash = (r"(?m)^ValueError: event keys that differ only by case cannot share one "
-                     r"table: requestObject\.data\.KEY / requestObject\.data\.key")
-            for run in [result] + [pending.result() for pending in others.values()]:
-                self.assertTrue(run.crashed and run.returncode != 0, run.describe())
-                self.assertRegex(run.output, clash, run.describe())
-                self.assertRegex(run.output, r'(?m)^  File ".*sigma_eval\.py", line \d+, in '
-                                             r'__init__\b', run.describe())
-                self.assertNotRegex(run.stdout, r"(?m)^(PASS|MISS)  \[", run.describe())
+        self.assertNotIn("Traceback", result.output)
         self.assert_rejects(result, passed, exit_code=1)
+
+    def test_rejects_an_audit_event_whose_keys_differ_only_in_letter_case(self):
+        """One audit event whose data holds `key` and `KEY`: the API server accepts such
+        a ConfigMap, but one event table cannot hold the event (two values for one
+        column of SQLite). The reader names the log and the line, as it names a line
+        that is not a record, and the validator judges no rule. CONTROL: the same
+        event with one of the keys is a record."""
+        good = self.good()
+        records = write_log(good, self.LOG, self.CASES, *self.BENIGN)
+        event = self.configmap_create(1, "key")
+        event["requestObject"]["data"]["KEY"] = "off"
+        with open(good.tmp_path(self.LOG), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(self.configmap_create(2, "key")) + "\n" + json.dumps(event) + "\n")
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {records + 1} audit event\(s\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_saw(result, LINES_NOT_RECORDS.format(1))
+        self.assert_rejects(result, rf"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+                                    rf"{records + 2}: {ONE_EVENT_TABLE['audit']}"
+                                    r"keys that differ only by case: requestObject\.data\.KEY / "
+                                    r"requestObject\.data\.key, which SQLite reads as one column "
+                                    r"name$", exit_code=1)
 
     def test_rejects_a_ledger_window_that_starts_after_it_ends(self):
         """The validate step of CI (a strict run with --ledger) on the records of the
@@ -3055,6 +3056,53 @@ class StaticPodValidator(gatelib.GateCase):
                                     rf"{files + 1}: bytes that are not UTF-8 \(the byte 0xe9 at "
                                     rf"character {at} of the line\)$",
                             exit_code=1)
+
+    def test_rejects_log_whose_keys_differ_only_in_letter_case(self):
+        """The log of K8sValidator.test_rejects_log_whose_keys_differ_only_in_letter_case
+        in the audit log of this validator: after the benign records, the mirror-pod
+        create of Procedure A (an emulation record) and two ConfigMap creates whose
+        data keys differ only in letter case (`key`, `KEY`). The keys share one column
+        of the event table: the validator judges its rules, and the negative control
+        fails on the rule that passed. (Before roadmap item R2d the validator ended
+        with a ValueError of sigma_eval.EventTable.)"""
+        good = self.good()
+        audit, _, _ = self.write_logs(good)
+        emulation = case_events(good, self.FOLDER + "k8s_static_pod_mirror_create.cases.jsonl",
+                                "mirror-create-procA")
+        self.assertEqual(len(emulation), 1)
+        keys = [K8sValidator.configmap_create(1, "key"), K8sValidator.configmap_create(2, "KEY")]
+        with open(good.tmp_path(self.AUDIT), "a", encoding="utf-8") as fh:
+            fh.write("".join(json.dumps(event) + "\n" for event in emulation + keys))
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {audit + 3} audit event\(s\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^ERROR: |^  CONTROL FAILED: ")
+        self.assertNotIn("Traceback", result.output)
+        self.assertEqual(len(re.findall(r"^PASS  \[", result.stdout, re.MULTILINE)), 1)
+        self.assert_rejects(
+            result,
+            r"^PASS  \[A/B\] k8s_static_pod_mirror_create\.yml: matched an emulation pod "
+            r"[\s\S]*^NEGATIVE CONTROL FAILED: 1 rule\(s\) passed on logs captured before "
+            r"the emulation ran \(a gate matched\)\.$",
+            exit_code=1)
+
+    def test_rejects_a_file_event_whose_keys_differ_only_in_letter_case(self):
+        """One line of the file log is a file event with the keys `Image` and `image`:
+        one event table cannot hold it. The reader names the log and the line, and the
+        validator judges no rule."""
+        good = self.good()
+        _, _, files = self.write_logs(good)
+        event = case_events(good, self.FOLDER + "linux_static_pod_manifest_write.cases.jsonl",
+                            "kubeadm-bootstrap-manifest")[0]
+        with open(good.tmp_path(self.FILE), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(dict(event, image=event["Image"])) + "\n")
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {files} file event\(s\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_saw(result, LINES_NOT_RECORDS.format(1))
+        self.assert_rejects(result, rf"^ERROR: the file log \S+/pre-emulation-file\.jsonl, line "
+                                    rf"{files + 1}: {ONE_EVENT_TABLE['file']}keys that differ only "
+                                    r"by case: Image / image, which SQLite reads as one column "
+                                    r"name$", exit_code=1)
 
     def test_rejects_negative_control_on_a_cri_log_that_is_a_directory(self):
         """The pre-emulation CRI log is a directory (a private copy); the audit log and
@@ -3688,6 +3736,52 @@ class ApiserverValidator(gatelib.GateCase):
         self.assert_rejects(result, rf"^ERROR: the CRI log \S+/pre-emulation-cri\.jsonl, line "
                                     rf"{cri + 1}: bytes that are not UTF-8 \(the byte 0xe9 at "
                                     rf"character {at} of the line\)$",
+                            exit_code=1)
+
+    def test_rejects_log_whose_keys_differ_only_in_letter_case(self):
+        """The log of K8sValidator.test_rejects_log_whose_keys_differ_only_in_letter_case
+        in the audit log of this validator: after the benign records, the
+        ClusterRoleBinding create of Procedure A of TRR9004 (an emulation record) and
+        two ConfigMap creates whose data keys differ only in letter case (`key`,
+        `KEY`). The keys share one column of the event table: the validator judges
+        its rules, and the negative control fails on the rule that passed. (Before
+        roadmap item R2d the validator ended with a ValueError of
+        sigma_eval.EventTable.)"""
+        good = self.good()
+        audit, _, _ = self.write_logs(good, "crb-create-view-procA")
+        keys = [K8sValidator.configmap_create(1, "key"), K8sValidator.configmap_create(2, "KEY")]
+        with open(good.tmp_path(self.AUDIT), "a", encoding="utf-8") as fh:
+            fh.write("".join(json.dumps(event) + "\n" for event in keys))
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {audit + 2} audit event\(s\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^ERROR: ")
+        self.assertNotIn("Traceback", result.output)
+        self.assert_rejects(
+            result,
+            r"^PASS  \[9004 A-E,G\] k8s_rbac_write\.yml: 1 emulation record\(s\) match$"
+            r"[\s\S]*^NEGATIVE CONTROL FAILED: 1 rule\(s\) passed on logs captured before "
+            r"the emulation ran\.$",
+            exit_code=1)
+
+    def test_rejects_a_sandbox_whose_keys_differ_only_in_letter_case(self):
+        """One snapshot of the CRI log holds a sandbox whose metadata has the keys
+        `name` and `Name`: one event table cannot hold it. The reader names the log,
+        the line and the item, and the validator judges no rule."""
+        good = self.good()
+        _, cri, _ = self.write_logs(good)
+        sandbox = {"id": "0" * 63 + "2", "state": "SANDBOX_READY",
+                   "metadata": {"name": "case-test-pod", "Name": "case-test-pod",
+                                "namespace": "default", "attempt": 0}}
+        with open(good.tmp_path(self.CRI), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"items": [sandbox]}) + "\n")
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {cri} pod sandbox\(es\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_saw(result, LINES_NOT_RECORDS.format(1))
+        self.assert_rejects(result, rf"^ERROR: the CRI log \S+/pre-emulation-cri\.jsonl, line "
+                                    rf"{cri + 1}, item 1 of the snapshot: {ONE_EVENT_TABLE['cri']}"
+                                    r"keys that differ only by case: metadata\.Name / "
+                                    r"metadata\.name, which SQLite reads as one column name$",
                             exit_code=1)
 
     def test_rejects_a_line_that_is_not_a_record_beside_a_log_without_a_record(self):

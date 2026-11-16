@@ -134,6 +134,91 @@ except ImportError:
 
 _ROWID = "_rowid"  # INTEGER PRIMARY KEY, so it aliases SQLite's rowid
 
+# SQLite compares two identifiers (two column names) with the 26 ASCII letters folded
+# to one letter case, and every other character as it is: `"A"` and `"a"` are one
+# column name, `"Ä"` and `"ä"` are two (str.lower() folds both pairs, and also maps
+# the Kelvin sign U+212A to `k`). fold() is that comparison.
+_ASCII_FOLD = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+_FOLDED = {}  # key -> fold(key): the keys of a log repeat in each event
+
+
+def fold(name):
+    """A column name as SQLite compares it: the ASCII letters in lower case, each
+    other character as it is."""
+    folded = _FOLDED.get(name)
+    if folded is None:
+        folded = _FOLDED[name] = name.translate(_ASCII_FOLD)
+    return folded
+
+
+# The names that SQLite reads as the row id of the table and that the queries on the
+# table read. A key with such a name (in any letter case of its ASCII letters) would
+# be a column that hides the row id: `_rowid` is the row id column of the table, which
+# hit_indices() reads; `rowid` is the name by which the correlation queries of pySigma
+# read the row id (its backend option event_id_field). SQLite has two more names of
+# the row id, `oid` and `_rowid_`; no query reads them, so a key with such a name is
+# an ordinary column.
+RESERVED = {
+    _ROWID: "is the name of the row id column of the table",
+    "rowid": "is the name by which the correlation queries read the row id",
+}
+_INT64 = (-(1 << 63), (1 << 63) - 1)  # the range of an INTEGER of SQLite
+
+
+class EventError(ValueError):
+    """An event that one EventTable cannot hold (event_problem()). `index` is the
+    position of the event in the list (from 0), `keys` the keys of the problem, and
+    `problem` its text. The message names the event (from 1) and the keys."""
+
+    def __init__(self, index, count, keys, problem):
+        self.index, self.keys, self.problem = index, tuple(keys), problem
+        super().__init__(f"event {index + 1} of {count}: {problem}")
+
+
+def key_clashes(event):
+    """The groups of keys of one flat event that differ only in the letter case of
+    their ASCII letters (fold()): SQLite reads the keys of each group as one column
+    name, so one row cannot hold a value for each. Each group is a sorted tuple of two
+    keys or more; the groups are sorted. Keys of this kind in DIFFERENT events share
+    one column of the table, as a rule field reads them (detections/SEMANTICS.md,
+    "Field names")."""
+    if len({fold(key) for key in event}) == len(event):
+        return []
+    groups = {}
+    for key in event:
+        groups.setdefault(fold(key), []).append(key)
+    return sorted(tuple(sorted(keys)) for keys in groups.values() if len(keys) > 1)
+
+
+def event_problem(event):
+    """None when one EventTable can hold the flat event (a dict, as flatten() gives
+    it); else (keys, text) of its first problem:
+
+      - a key that SQLite reads as a name of the row id that the queries read
+        (RESERVED: _rowid, rowid, in any letter case of the ASCII letters);
+      - keys that differ only in the letter case of their ASCII letters
+        (key_clashes());
+      - an integer that an INTEGER of SQLite cannot hold (outside 64 bits).
+
+    Each loader of records asks this of each event before an EventTable gets it, and
+    EventTable refuses an event with a problem (EventError): the loaders and the
+    table refuse the same events."""
+    names = {fold(key) for key in event}
+    if not names.isdisjoint(RESERVED):
+        key = min(key for key in event if fold(key) in RESERVED)
+        return (key,), (f"the key {key} {RESERVED[fold(key)]} ({fold(key)}, in any letter "
+                        "case of the ASCII letters)")
+    if len(names) != len(event):
+        keys = key_clashes(event)[0]
+        return keys, ("keys that differ only by case: " + " / ".join(keys)
+                      + ", which SQLite reads as one column name")
+    low, high = _INT64
+    for key, value in event.items():
+        if type(value) is int and not low <= value <= high:  # a bool is not of the type int
+            return (key,), (f"the value of {key} is an integer outside the 64 bits of an "
+                            "INTEGER of SQLite")
+    return None
+
 
 class ThreeValuedSqliteBackend(sqliteBackend):
     """pySigma's SQLite backend with SQL's own three-valued NOT (check_null_safety.py).
@@ -241,27 +326,31 @@ class EventTable:
             self.db.create_function(
                 "regexp", 2,
                 lambda pattern, value: 1 if value is not None and search(pattern, str(value)) else 0)
-        columns = sorted({k for e in events for k in e} - {_ROWID})
-        # SQLite column names are case-insensitive: 'level' and 'Level' would be one
-        # column (a cryptic "duplicate column name" error), and a rule field would
-        # match an event key that differs only by case, which a case-sensitive SIEM
-        # would not. Refuse the collision plainly instead.
-        folded = {}
-        for col in columns:
-            folded.setdefault(col.lower(), []).append(col)
-        clashes = [names for names in folded.values() if len(names) > 1]
-        if clashes:
-            raise ValueError("event keys that differ only by case cannot share one table: "
-                             + "; ".join(" / ".join(n) for n in clashes)
-                             + " (score or evaluate these log shapes separately)")
+        # SQLite reads two column names that differ only in the letter case of their
+        # ASCII letters as one name (fold()), and so it reads a rule field: the item
+        # `Verb: create` reads the key `verb` (detections/SEMANTICS.md, "Field names").
+        # So keys of that kind in different events share one column, named as the
+        # first key of the group in sorted order. One event that holds two such keys
+        # has two values for one column: the table refuses it (EventError), as it
+        # refuses a key that hides a row id that the queries read, and an integer
+        # outside 64 bits (event_problem()).
+        group = {}  # fold(key) -> the keys of the events
+        for index, event in enumerate(events):
+            problem = event_problem(event)
+            if problem:
+                raise EventError(index, len(events), *problem)
+            for key in event:
+                group.setdefault(fold(key), set()).add(key)
+        column = {key: min(keys) for keys in group.values() for key in keys}
+        columns = sorted(set(column.values()))
         self.db.execute(f"CREATE TABLE logs ({_ROWID} INTEGER PRIMARY KEY"
                         + "".join(f", {_quote(c)}" for c in columns) + ")")
         for rowid, event in enumerate(events):
-            cols = [c for c in columns if c in event]
+            keys = sorted(event, key=column.__getitem__)
             self.db.execute(
-                f"INSERT INTO logs ({_ROWID}{''.join(', ' + _quote(c) for c in cols)}) "
-                f"VALUES (?{', ?' * len(cols)})",
-                [rowid] + [event[c] for c in cols])
+                f"INSERT INTO logs ({_ROWID}{''.join(', ' + _quote(column[k]) for k in keys)}) "
+                f"VALUES (?{', ?' * len(keys)})",
+                [rowid] + [event[k] for k in keys])
 
     def _execute(self, sql):
         while True:

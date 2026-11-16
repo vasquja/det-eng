@@ -214,14 +214,28 @@ def budget_for(key, default, budgets):
     return b
 
 
+class SliceError(Exception):
+    """A slice whose events one event table cannot hold (sigma_eval.EventError: two
+    keys of one event that differ only in the letter case of their ASCII letters, a
+    key that hides a row id that the queries read, an integer outside 64 bits). The
+    text names the slice, the event and the keys."""
+
+
 def score(rules, slices):
-    """{rule key: score dict} over the given slices, plus a few example hits."""
+    """{rule key: score dict} over the given slices, plus a few example hits.
+
+    Raises SliceError for a slice that a rule reads and one event table cannot hold.
+    Keys of two events that differ only in letter case share one column."""
     scores, examples = {}, {}
     for s in slices:
         readers = [r for r in rules if reads(s.logsource, r["logsource"])]
         if not readers:
             continue
-        table = sigma_eval.EventTable(s.events)
+        try:
+            table = sigma_eval.EventTable(s.events)
+        except sigma_eval.EventError as e:
+            raise SliceError(f"the slice {s.id} v{s.version} ({os.path.relpath(s.path, REPO)}), "
+                             f"{e}") from None
         for r in readers:
             sc = scores.setdefault(r["key"], {"events": 0, "hits": 0, "actors": {},
                                               "slices": {}})
@@ -374,16 +388,19 @@ def extra_logsource(text, rules):
 
 
 class CaptureError(Exception):
-    """A live capture (--extra-slice) whose events are not all JSON objects. The text
-    names the capture, and the line or the element of the array."""
+    """A live capture (--extra-slice) whose events are not all JSON objects that one
+    event table can hold. The text names the capture, and the line or the element of
+    the array."""
 
 
 def load_extra(path, logsource, label):
     """A live capture as a slice with this logsource: JSONL raw events (or one JSON array).
 
     A line that is not JSON (a line that was cut at the end of a capture) is skipped.
-    Each other line, or element of the array, must be a JSON object: raises
-    CaptureError for one that is JSON and not an object (`[]` in a line of a log).
+    Raises CaptureError for the first line, or element of the array, that is JSON and
+    not an object (`[]` in a line of a log) or is an event that one event table cannot
+    hold (sigma_eval.event_problem(): two keys that differ only in the letter case of
+    their ASCII letters, ...).
     """
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
@@ -413,7 +430,13 @@ def load_extra(path, logsource, label):
                            + (f", and {len(bad) - 1} more event(s) that are not objects"
                               if len(bad) > 1 else ""))
     spec = {"id": label, "version": 0, "logsource": dict(logsource), "fidelity": "recorded"}
-    return benign_corpus.Slice(spec, path, raw)
+    extra = benign_corpus.Slice(spec, path, raw)
+    for at, event in zip(where, extra.events):
+        problem = sigma_eval.event_problem(event)
+        if problem:
+            raise CaptureError(f"the live capture {path}, {at}: an event that one event table "
+                               f"cannot hold: {problem[1]}")
+    return extra
 
 
 # RFC 3339 date-time (section 5.6) with seconds and a zone; "T", "t" or a space between.
@@ -561,7 +584,11 @@ def main():
     if bad_budgets:
         print("ERROR: budgets.json `rules` entries are malformed:\n  " + "\n  ".join(bad_budgets))
         return 1
-    scores, examples = score(rules, slices)
+    try:
+        scores, examples = score(rules, slices)
+    except SliceError as exc:
+        print(f"ERROR: {exc}. No rule is scored on the benign corpus.")
+        return 1
 
     print(f"Benign corpus: {len(slices)} slice(s), "
           f"{sum(len(s.events) for s in slices)} event(s), digest "
@@ -604,7 +631,11 @@ def main():
                                   else "NOT EXEMPT (no `unscored` entry in budgets.json)"))
 
     if args.reseeds:
-        most = reseed_max(rules, slices, args.reseeds)
+        try:
+            most = reseed_max(rules, slices, args.reseeds)
+        except SliceError as exc:
+            print(f"\nERROR: {exc} (a reseed). No rule is scored on the reseeds.")
+            return 1
         print(f"\nMost hits over the committed corpus and {args.reseeds} reseed(s) of every "
               "synthetic slice (set max_hits from this, not from one seed's count):")
         for r, sc, b, status in rows:

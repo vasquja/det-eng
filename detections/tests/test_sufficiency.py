@@ -336,25 +336,53 @@ class RuleCases(gatelib.GateCase):
         self.assert_rejects(
             result,
             r"^ERROR T9999/planted_rule\.yml: line 1: case 'packet-raw-socket-two-comm-keys': "
-            r"event keys that differ only by case: Comm / comm \(the events of a case share "
-            r"one SQLite table, whose column names have no letter case, so the case cannot be "
-            r"judged\)$", exit_code=1)
+            r"event 1 of 1: keys that differ only by case: Comm / comm, which SQLite reads as "
+            r"one column name \(one event table cannot hold the event\)$", exit_code=1)
         self.assertIn("\nFAILED: 1 case problem(s).\n", result.stdout)
+
+    def test_control_keys_that_differ_only_in_letter_case_in_two_events(self):
+        """CONTROL of the test above: `comm` in one event of a case and `Comm` in the
+        other. No event holds both, so the keys share one column of the table, and the
+        rule reads `Comm` as it reads a field in SQLite (detections/SEMANTICS.md, "Field
+        names"). The planted filtered case holds an openat() by `cat` (key `comm`) and
+        the socket of tcpdump with the key `Comm`: the filter `allow.comm` reads
+        `tcpdump`, so the case is filtered on that item. Before roadmap item R2d the
+        gate refused the case (`event keys that differ only by case: Comm / comm`).
+        Keys that differ in the letter case of a letter that is not ASCII (`Ä`, `ä`)
+        are two columns, also in one event, as SQLite reads them."""
+        tree = self.plant_bad_cases("sound")
+        cases = tree.read_jsonl(self.PLANTED_CASES)
+        file_open, tcpdump = cases[3]["events"][0], cases[2]["events"][0]
+        self.assertEqual((file_open["comm"], tcpdump["comm"]), ("cat", "tcpdump"))
+        spelled = {("Comm" if key == "comm" else key): value for key, value in tcpdump.items()}
+        cases.append(dict(cases[2], name="tcpdump-allowlisted-two-spellings",
+                          events=[file_open, spelled]))
+        cases.append(dict(cases[0], name="packet-raw-socket-non-ascii-keys",
+                          events=[dict(cases[0]["events"][0], **{"\u00c4": "1", "\u00e4": "2"})]))
+        tree.write_jsonl(self.PLANTED_CASES, cases)
+        result = tree.run(self.GATE, self.PLANTED_RULE)
+        self.assert_accepts(result, r"^All cases hold \(1 rule file\(s\)\)\.$")
+        self.assertIn("ok    T9999/planted_rule.yml :: filtered   tcpdump-allowlisted-two-"
+                      "spellings: filtered on allow.comm\n", result.stdout)
+        self.assertIn("ok    T9999/planted_rule.yml :: positive   packet-raw-socket-non-ascii-"
+                      "keys: fires\n", result.stdout)
 
     # One changed near-miss (the second line of the sound sidecar), whose events
     # cannot be put in one event table, and the words of the gate for it. Without
     # the check, a clash ends the gate with a traceback of EventTable, an event that
-    # is not an object (null, a number, an array, a string) with one of flatten() and
-    # `_ROWID` with one of sqlite3; `_rowid` and the two keys that flatten to one
-    # pass, and the gate judges an event that lost a value.
+    # is not an object (null, a number, an array, a string) with one of flatten(), and
+    # `_ROWID` with one of sqlite3; `_rowid`, `rowid` and the two keys that flatten to
+    # one pass (the table drops a key `_rowid`, and a key `rowid` hides the row id that
+    # a correlation reads), and the gate judges an event that lost a value. An integer
+    # outside 64 bits ends the gate with an OverflowError of sqlite3. Each problem of
+    # the table is the text of sigma_eval.event_problem(), the test of the table itself.
+    TABLE = r" \(one event table cannot hold the event\)$"
     BAD_EVENTS = (
-        # `comm` in the first event and `Comm` in the second: no event holds both.
-        ("keys of two events", lambda event: [event, dict(
-            {key: value for key, value in event.items() if key != "comm"}, Comm="sniffer")],
-         r"event keys that differ only by case: Comm / comm \(the events of a case share "),
+        # One event holds `proc.Comm` and `proc.comm`.
         ("flat keys of one event", lambda event: [dict(event, proc={"Comm": "x"},
                                                        **{"proc.comm": "x"})],
-         r"event keys that differ only by case: proc\.Comm / proc\.comm \("),
+         r"event 1 of 1: keys that differ only by case: proc\.Comm / proc\.comm, which "
+         r"SQLite reads as one column name" + TABLE),
         ("an event that is null", lambda event: [event, None],
          r"event 2 of 2 is not a JSON object \(null\): an event is one record of the log$"),
         ("an event that is a number", lambda event: [event, 7],
@@ -364,10 +392,16 @@ class RuleCases(gatelib.GateCase):
         ("an event that is a string", lambda event: [event, "comm=sniffer"],
          r"event 2 of 2 is not a JSON object \(a string\): an event is one record of the log$"),
         ("the key _ROWID", lambda event: [dict(event, _ROWID=1)],
-         r"event 1 of 1: the key '_ROWID' is the row id column of the event table of "
-         r"sigma_eval\.py \(in any letter case\), so an event cannot hold it$"),
-        ("the key _rowid", lambda event: [dict(event, _rowid=1)],
-         r"event 1 of 1: the key '_rowid' is the row id column of the event table "),
+         r"event 1 of 1: the key _ROWID is the name of the row id column of the table "
+         r"\(_rowid, in any letter case of the ASCII letters\)" + TABLE),
+        ("the key _rowid", lambda event: [event, dict(event, _rowid=1)],
+         r"event 2 of 2: the key _rowid is the name of the row id column of the table "),
+        ("the key RowId", lambda event: [dict(event, RowId=7)],
+         r"event 1 of 1: the key RowId is the name by which the correlation queries read "
+         r"the row id \(rowid, in any letter case of the ASCII letters\)" + TABLE),
+        ("an integer outside 64 bits", lambda event: [dict(event, pid=2 ** 63)],
+         r"event 1 of 1: the value of pid is an integer outside the 64 bits of an INTEGER "
+         r"of SQLite" + TABLE),
         ("two keys that flatten to one", lambda event: [dict(event, a={"b": 1}, **{"a.b": 2})],
          r"event 1 of 1: the keys \['a', 'b'\] and \['a\.b'\] both flatten to 'a\.b', and "
          r"the flat event keeps only the last value$"),
@@ -412,6 +446,135 @@ class RuleCases(gatelib.GateCase):
                                             r"case, an object$", exit_code=1)
                 self.assertIn("\nFAILED: 1 case problem(s).\n", result.stdout)
                 self.assertIn(self.POSITIVE_FIRES, result.stdout)
+
+# What sigma_eval.EventTable does with keys that differ only in letter case, with
+# names that SQLite reads as the row id, and with integers outside 64 bits. The
+# snippet compiles one item (`field: value`) with the backend of the oracle, and
+# prints the hits of each probe, or the EventError of the table.
+EVENT_TABLE_PROBES = r'''
+import json, sys
+sys.path.insert(0, "detections")
+import sigma_eval
+from sigma.collection import SigmaCollection
+
+def item(field, value):
+    rule = {"title": "t", "logsource": {"product": "p"}, "detection": {
+        "sel": {field: value}, "condition": "sel"}}
+    return sigma_eval.backend().convert(SigmaCollection.from_dicts([rule]))[0]
+
+def probe(events, field, value, sql=None):
+    try:
+        table = sigma_eval.EventTable(events)
+        return table.hit_indices(sql or item(field, value))
+    except sigma_eval.EventError as e:
+        return {"error": str(e), "index": e.index, "keys": list(e.keys),
+                "value_error": isinstance(e, ValueError)}
+    except Exception as e:  # noqa: BLE001 - another error is an answer of the probe too
+        return {"other error": f"{type(e).__name__}: {e}"}
+
+big = 2 ** 63
+print(json.dumps({
+    "two events": probe([{"verb": "get"}, {"Verb": "create"}], "verb", "create"),
+    "two events, the other spelling": probe([{"verb": "get"}, {"Verb": "create"}], "VERB",
+                                            "get"),
+    "three spellings in three events": probe([{"key": "a"}, {"KEY": "b"}, {"Key": "c"}],
+                                             "kEy", "c"),
+    "one event": probe([{"a": 1}, {"key": "x", "KEY": "y", "Key": "z"}], "key", "x"),
+    "not ASCII, one event": probe([{"\u00c4": "x", "\u00e4": "y"}], "\u00c4", "y"),
+    "not ASCII, two events": probe([{"\u00c4": "x"}, {"\u00e4": "y"}], "\u00c4", "y"),
+    "the Kelvin sign": probe([{"k": "x", "\u212a": "y"}], "k", "y"),
+    "the Kelvin sign, two events": probe([{"k": "x"}, {"\u212a": "y"}], "k", "y"),
+    "_rowid": probe([{"a": 1}, {"_rowid": 5}], "a", 1),
+    "_ROWID": probe([{"_ROWID": 5}], "a", 1),
+    "rowid": probe([{"rowid": 7}], "a", 1),
+    "RowId": probe([{"RowId": 7}], "a", 1),
+    "oid": probe([{"oid": 3}, {"oid": 4}], "oid", 4),
+    "_rowid_": probe([{"_rowid_": 3}], "_rowid_", 3),
+    "2**63": probe([{"n": big}], "n", 1),
+    "-2**63 - 1": probe([{"n": -big - 1}], "n", 1),
+    # (pySigma writes the value 2**63 - 1 of an item as a float: a raw query here.)
+    "2**63 - 1": probe([{"n": big - 1}], "n", None,
+                       f"SELECT * FROM logs WHERE n = {big - 1}"),
+    "-2**63": probe([{"n": -big}], "n", -big),
+    "true": probe([{"n": True}], "n", 1),
+}))
+'''
+
+
+class EventTableKeys(gatelib.GateCase):
+    """sigma_eval.EventTable (the table of every gate and validator) with keys that
+    differ only in letter case, names of the row id, and large integers (roadmap item
+    R2d). The tests run a snippet in the copy (EVENT_TABLE_PROBES); the gates that
+    read records name an event that the table refuses (the tests of each gate)."""
+
+    PARTS = gatelib.DETECTIONS
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        result = cls.good().run_python(EVENT_TABLE_PROBES)
+        if result.returncode:
+            raise AssertionError(result.describe())
+        cls.probes = json.loads(result.stdout)
+
+    def refused(self, name, index, keys, text):
+        self.assertEqual(self.probes[name], {"error": text, "index": index, "keys": keys,
+                                             "value_error": True}, name)
+
+    def test_keys_of_two_events_that_differ_only_in_letter_case_share_one_column(self):
+        """SQLite reads a rule field as it reads a column name: with the ASCII letters
+        folded (detections/SEMANTICS.md, "Field names"). So `verb` in one event and
+        `Verb` in another are one column, and the item reads both. Before R2d the
+        table refused the event set."""
+        self.assertEqual(self.probes["two events"], [[1]])
+        self.assertEqual(self.probes["two events, the other spelling"], [[0]])
+        self.assertEqual(self.probes["three spellings in three events"], [[2]])
+
+    def test_rejects_one_event_with_keys_that_differ_only_in_letter_case(self):
+        """One event that holds `key`, `KEY` and `Key` has three values for one
+        column: the table refuses it with an EventError (a ValueError) that names the
+        event (from 1) and the keys, and carries the index (from 0) and the keys."""
+        self.refused("one event", 1, ["KEY", "Key", "key"],
+                     "event 2 of 2: keys that differ only by case: KEY / Key / key, which "
+                     "SQLite reads as one column name")
+
+    def test_keys_that_differ_in_a_letter_that_is_not_ascii_are_two_columns(self):
+        """SQLite folds only the 26 ASCII letters. `Ä` and `ä` are two columns, in one
+        event and in two, and an item on `Ä` reads only its own key; so are `k` and the
+        Kelvin sign (U+212A), which str.lower() would fold to one."""
+        for name in ("not ASCII, one event", "not ASCII, two events", "the Kelvin sign",
+                     "the Kelvin sign, two events"):
+            self.assertEqual(self.probes[name], [], name)
+
+    def test_rejects_a_key_that_hides_a_row_id_that_the_queries_read(self):
+        """`_rowid` is the row id column of the table (before R2d the table dropped a
+        key of that name without a word), and `rowid` is the name by which the
+        correlation queries of pySigma read the row id (a column of that name gives
+        a correlation the indices of another event). Each, in any letter case of the
+        ASCII letters, is refused with the event and the key. `oid` and `_rowid_`, the
+        other names of the row id in SQLite, are ordinary columns: no query reads
+        them."""
+        rowid = "is the name of the row id column of the table (_rowid, in any letter case " \
+                "of the ASCII letters)"
+        self.refused("_rowid", 1, ["_rowid"], f"event 2 of 2: the key _rowid {rowid}")
+        self.refused("_ROWID", 0, ["_ROWID"], f"event 1 of 1: the key _ROWID {rowid}")
+        for key in ("rowid", "RowId"):
+            self.refused(key, 0, [key], f"event 1 of 1: the key {key} is the name by which the "
+                                        "correlation queries read the row id (rowid, in any "
+                                        "letter case of the ASCII letters)")
+        self.assertEqual(self.probes["oid"], [[1]])
+        self.assertEqual(self.probes["_rowid_"], [[0]])
+
+    def test_rejects_an_integer_outside_64_bits(self):
+        """An INTEGER of SQLite has 64 bits: the table refuses a larger integer with an
+        EventError (before R2d, an OverflowError of sqlite3 at the insert), and holds
+        each integer of the range. A bool is 1 or 0."""
+        for name in ("2**63", "-2**63 - 1"):
+            self.refused(name, 0, ["n"], "event 1 of 1: the value of n is an integer outside "
+                                         "the 64 bits of an INTEGER of SQLite")
+        for name in ("2**63 - 1", "-2**63", "true"):
+            self.assertEqual(self.probes[name], [[0]], name)
+
 
 class SigmaEvalImportGuard(gatelib.GateCase):
     """The import guard of detections/sigma_eval.py. It is no script: it runs when a

@@ -316,6 +316,19 @@ def record_problem(source, doc):
     return None
 
 
+def table_problem(source, record):
+    """None when one event table of the rules (sigma_eval.EventTable) can hold the
+    flat record; else the problem, as text. The test is the test of the table
+    itself (sigma_eval.event_problem()): two keys of the record that differ only in
+    the letter case of their ASCII letters, a key that hides a row id that the
+    queries read, an integer outside 64 bits. Two records of a log whose keys differ
+    only in letter case are no problem: their keys share one column."""
+    problem = sigma_eval.event_problem(record)
+    if problem is None:
+        return None
+    return f"{RECORDS[source]['a']} that one event table cannot hold: {problem[1]}"
+
+
 def read_log(path, source):
     """(records, problems): the records of the log of `source` at `path`, flattened to
     the dotted field names of the rules (sigma_eval.flatten), and the problems.
@@ -328,8 +341,9 @@ def read_log(path, source):
     A problem is a line, or an item of a snapshot, that is not a record of the log:
     bytes that are not UTF-8, the byte order mark of UTF-8 at the start of line 1,
     JSON that the validator cannot read (too deep, or a number that is too long),
-    JSON that is not an object, a JSON object that is not a record of the log, and a
-    snapshot whose "items" is not a list. Each problem is (line, item, text): lines
+    JSON that is not an object, a JSON object that is not a record of the log, a
+    record that one event table cannot hold (table_problem()), and a snapshot whose
+    "items" is not a list. Each problem is (line, item, text): lines
     and items count from 1, and item is None for a line. A blank line, and a line
     that is not JSON (a line that was cut at the end of a capture), are no record and
     no problem. Raises LogError for a log that is a directory or cannot be read.
@@ -375,6 +389,8 @@ def read_log(path, source):
                             record = sigma_eval.flatten(value)
                         except RecursionError as e:
                             why = _cannot_read(e)
+                        else:
+                            why = table_problem(source, record)
                     if why is not None:
                         problems.append((n, item, why))
                         continue

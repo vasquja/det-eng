@@ -43,11 +43,13 @@ Case fields:
   why      one line: what the case proves.
   events   the event set, as the log source writes it (nested JSON is flattened
            the way the validators flatten it; flat auditd events stay flat). Each
-           event is a JSON object. The events of a case share one SQLite table, so
-           no two of their keys may differ only in letter case (`comm`, `Comm`), no
-           key may be `_rowid` in any letter case, and no two values of one event
-           may get one flat key (`{"a": {"b": 1}, "a.b": 2}`). Such a case is an
-           ERROR line that names the rule, the line and the case.
+           event is a JSON object. The events of a case share one SQLite table
+           (sigma_eval.EventTable), so no event may hold two keys that differ only
+           in the letter case of their ASCII letters (`comm`, `Comm`; in two events
+           they share one column), a key `_rowid` or `rowid` in any letter case, or
+           an integer outside 64 bits; and no two values of one event may get one
+           flat key (`{"a": {"b": 1}, "a.b": 2}`). Such a case is an ERROR line that
+           names the rule, the line and the case.
   source   optional provenance note ("synthetic: ..." or "recorded: ...").
 
 Usage:
@@ -169,10 +171,11 @@ def event_problem(events):
     run_case() flattens each event (sigma_eval.flatten) and puts all the events of
     the case in one SQLite table (sigma_eval.EventTable). So each event must be a
     JSON object; two values of an event must not get one flat key (flatten keeps the
-    last); no key may be the row id column of the table (`_rowid`, in any letter
-    case); and no two keys of the case may differ only in letter case, because the
-    column names of SQLite have no letter case."""
-    seen = {}
+    last); and the table must hold each flat event: sigma_eval.event_problem() is the
+    test of the table itself (no key that hides a row id that the queries read, no
+    two keys of one event that differ only in the letter case of their ASCII
+    letters, no integer outside 64 bits). Keys of that kind in two events of a case
+    share one column, as a rule field reads them."""
     for i, event in enumerate(events, 1):
         where = f"event {i} of {len(events)}"
         if not isinstance(event, dict):
@@ -184,15 +187,9 @@ def event_problem(events):
                 return (f"{where}: the keys {paths[flat]} and {path} both flatten to "
                         f"{flat!r}, and the flat event keeps only the last value")
             paths[flat] = path
-            if flat.lower() == sigma_eval._ROWID:
-                return (f"{where}: the key {flat!r} is the row id column of the event table "
-                        "of sigma_eval.py (in any letter case), so an event cannot hold it")
-            seen.setdefault(flat.lower(), set()).add(flat)
-    clashes = sorted(" / ".join(sorted(keys)) for keys in seen.values() if len(keys) > 1)
-    if clashes:
-        return ("event keys that differ only by case: " + "; ".join(clashes) + " (the events "
-                "of a case share one SQLite table, whose column names have no letter case, so "
-                "the case cannot be judged)")
+        problem = sigma_eval.event_problem(sigma_eval.flatten(event))
+        if problem:
+            return f"{where}: {problem[1]} (one event table cannot hold the event)"
     return None
 
 
