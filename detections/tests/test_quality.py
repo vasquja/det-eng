@@ -835,6 +835,38 @@ class NullSafety(gatelib.GateCase):
                                     r"time of the case as `timestamp`$", exit_code=1)
         self.assertEqual(len(found(result, r"^FAIL .*$")), 5, result.describe())
 
+    def test_rejects_case_that_spells_a_time_item_of_a_base_in_another_letter_case(self):
+        """Planted in a copy: the execveat base of the correlation of T1620 also reads
+        `timestamp` as an item field (`timestamp|startswith: '20'`), and a case spells
+        it `Timestamp` in its second record. The rule reads the field, so the FAIL has
+        the text of a field of the rule (`the rule reads `timestamp``), not the text
+        of the time that a rule does not write. (A gate that gave the time text to
+        each correlation said that the rule writes no time field, which is false
+        here.)"""
+        tree = self.tree()
+        rule = "detections/sigma/T1620/memfd_create_execveat.yml"
+        base = ("  execveat_syscall:\n"
+                "    type: SYSCALL\n"
+                "    syscall: execveat\n")
+        text = tree.read(rule)
+        self.assertEqual(text.count(base), 1)
+        tree.write(rule, text.replace(base, base + "    timestamp|startswith: '20'\n"))
+        sidecar = rule[:-4] + ".cases.jsonl"
+        first, second = tree.read_jsonl(sidecar)[0]["events"]
+        self.assertIn("timestamp", second)
+        second = {("Timestamp" if key == "timestamp" else key): value
+                  for key, value in second.items()}
+        tree.append(sidecar, json.dumps({
+            "name": "planted-Timestamp", "kind": "positive", "why": "planted",
+            "events": [first, second]}) + "\n")
+        result = tree.run(self.GATE, rule)
+        self.assert_rejects(result, r"^FAIL  T1620/memfd_create_execveat\.yml :: case positive "
+                                    r"planted-Timestamp: the rule reads `timestamp`, and the "
+                                    r"records carry `Timestamp`: SQLite matches column names",
+                            exit_code=1)
+        self.assertNotIn("The rule writes no time field", result.stdout)
+        self.assertEqual(len(found(result, r"^FAIL .*$")), 1, result.describe())
+
 
 # ----------------------------------------------------------------- check_variants.py
 
