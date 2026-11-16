@@ -246,7 +246,8 @@ def _base_sql(rule, ref, three_valued):
 
 
 def _event_sets(rule_path, fixtures):
-    """[(source, name, kind, flat events)]: sidecar cases, then cloud fixtures."""
+    """([(source, name, kind, flat events)], sidecar errors, fixture errors): sidecar
+    cases, then cloud fixtures. A fixture error is (name, kind, the loader's error)."""
     sets, errors = [], []
     path = rule_cases.cases_path(rule_path)
     if os.path.exists(path):
@@ -254,8 +255,13 @@ def _event_sets(rule_path, fixtures):
         for case in cases:
             sets.append(("case", case["name"], case["kind"],
                          [sigma_eval.flatten(e) for e in case["events"]]))
-    sets += fixtures.get(os.path.abspath(rule_path), [])
-    return sets, errors
+    unread = []
+    for source, name, kind, events in fixtures.get(os.path.abspath(rule_path), []):
+        if isinstance(events, Exception):
+            unread.append((name, kind, events))
+        else:
+            sets.append((source, name, kind, events))
+    return sets, errors, unread
 
 
 def check_rule(rule_path, fixtures, absent=False):
@@ -264,9 +270,11 @@ def check_rule(rule_path, fixtures, absent=False):
     rule = sigma_explain.load(rule_path)
     sql2 = sigma_eval.compile_rule(rule_path)
     sql3 = sigma_eval.compile_rule(rule_path, three_valued=True)
-    sets, errors = _event_sets(rule_path, fixtures)
+    sets, errors, unread = _event_sets(rule_path, fixtures)
     problems = [Problem(rel, "sidecar", "-", "-", f"sidecar error: {e}") for e in errors]
-    if not sets:
+    problems += [Problem(rel, "fixture", name, kind, "the loader of the cloud validator cannot "
+                         f"read the fixture: {e}") for name, kind, e in unread]
+    if not sets and not unread:
         problems.append(Problem(rel, "-", "-", "-", "no sidecar case and no cloud fixture: "
                                 "nothing shows that the rule is null-safe"))
     problems += [Problem(rel, "-", "-", "structure", issue) for issue in rule.null_guard_issues()]
@@ -386,13 +394,20 @@ def _absent_probe(rule, sets, sql2, sql3):
 
 
 def cloud_fixtures():
-    """{abs rule path: [(source, name, kind, flat events)]} from the cloud MANIFEST."""
+    """{abs rule path: [(source, name, kind, flat events)]} from the cloud MANIFEST.
+
+    For a fixture that the loader of the cloud validator cannot read (its
+    FixtureError), the entry holds the error in place of the events, and check_rule()
+    fails the rule with a line that names the fixture."""
     import validate_cloud_detections as cloud
     out = {}
     for _trr, folder, fname, attack, benign, *_ in cloud.MANIFEST:
         path = os.path.abspath(os.path.join(cloud.SIGMA, folder, fname))
         for kind, rel in (("attack", attack), ("benign", benign)):
-            events = cloud.load_fixture(os.path.join(cloud.FIX, rel))
+            try:
+                events = cloud.load_fixture(os.path.join(cloud.FIX, rel))
+            except cloud.FixtureError as e:
+                events = e
             out.setdefault(path, []).append(("fixture", rel, kind, events))
     return out
 

@@ -31,8 +31,9 @@ The loop this proves, for each rule:
 
 Both fixtures that MANIFEST names for a rule must be files, and the benign baseline
 must hold a record: a negative control that read no record cannot fail, so it proves
-nothing. A fixture that is missing gives an ERROR row, and a baseline without a
-record gives a FAIL row with `NEGATIVE CONTROL VACUOUS`. Each fails the run (exit 1),
+nothing. A fixture that is missing or that the loader cannot read (load_fixture())
+gives an ERROR row that names it, and a baseline without a record gives a FAIL row
+with `NEGATIVE CONTROL VACUOUS`. Each fails the run (exit 1),
 also with --report. The count is the number of records that load_fixture() returns,
 which is the set that the rule is run on (no filter stands between the file and the
 rule): `[]`, a file of zero bytes or of blank lines, and an envelope with an empty
@@ -296,38 +297,140 @@ MANIFEST = [
 FOLDERS = sorted({folder for _, folder, *_ in MANIFEST})
 
 
+class FixtureError(Exception):
+    """A fixture that the loader cannot read as records. The text names the fixture
+    (from the root of the repository) and, where there is one, the line or the
+    record (from 1)."""
+
+
+def _name(path):
+    """The path of a fixture as a message names it: from the root of the repository."""
+    full = os.path.abspath(path)
+    return os.path.relpath(full, REPO) if full.startswith(REPO + os.sep) else path
+
+
+def _kind(value):
+    """The JSON type of a value, for a message: an object, a list, a string, ..."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "null"
+    return {dict: "an object", list: "a list", str: "a string"}.get(type(value), "a number")
+
+
+def _cannot_read(error):
+    """The text of a problem of JSON that json.loads() or flatten() cannot read."""
+    text = str(error).split("\n")[0]
+    return (f"JSON that the validator cannot read ({type(error).__name__}: "
+            + (text if len(text) <= 100 else text[:100] + "...") + ")")
+
+
+def _text(path):
+    """The text of a fixture file; FixtureError for a file that the loader cannot read
+    as UTF-8 text."""
+    if os.path.isdir(path):
+        raise FixtureError(f"{_name(path)}: a directory, not a file")
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError as e:
+        raise FixtureError(f"{_name(path)}: cannot be read ({e.strerror or e})") from None
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as e:
+        line = data.count(b"\n", 0, e.start) + 1
+        column = len(data[data.rfind(b"\n", 0, e.start) + 1:e.start].decode("utf-8")) + 1
+        raise FixtureError(f"{_name(path)}, line {line}: bytes that are not UTF-8 (the byte "
+                           f"0x{data[e.start]:02x} at character {column} of the line)") from None
+    if text.startswith(chr(0xFEFF)):
+        raise FixtureError(f"{_name(path)}, line 1: the line starts with the byte order mark "
+                           "of UTF-8 (EF BB BF)")
+    return text
+
+
+def _records(path):
+    """(records, where): the records of a fixture, as the file holds them, and the
+    place of each in the file, as a message names it (`line 3`, `element 2 of the
+    array`). Raises FixtureError (load_records())."""
+    text = _text(path)
+    try:
+        doc = json.loads(text)
+    except json.JSONDecodeError as whole:
+        # Not one JSON document: JSON lines. When the first line is not JSON either,
+        # the file is one document with an error, and the error of the document names
+        # its place.
+        records, where = [], []
+        for n, line in enumerate(text.splitlines(), 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError as e:
+                e, n = (whole, whole.lineno) if not where else (e, n)
+                raise FixtureError(f"{_name(path)}, line {n}: not JSON ({e.msg}, at character "
+                                   f"{e.colno}); a fixture is a JSON array, a JSON object or "
+                                   "JSON lines") from None
+            except (ValueError, RecursionError) as e:
+                raise FixtureError(f"{_name(path)}, line {n}: {_cannot_read(e)}") from None
+            where.append(f"line {n}")
+    except (ValueError, RecursionError) as e:
+        raise FixtureError(f"{_name(path)}: {_cannot_read(e)}") from None
+    else:
+        if isinstance(doc, list):
+            records, where = doc, [f"element {n} of the array" for n in range(1, len(doc) + 1)]
+        elif not isinstance(doc, dict):
+            raise FixtureError(f"{_name(path)}: JSON that is not an array or an object "
+                               f"({_kind(doc)})")
+        else:
+            env = next((env for env in ("Records", "value", "items", "entries")
+                        if isinstance(doc.get(env), list)), None)
+            records = doc[env] if env else [doc]
+            where = ([f"element {n} of the list {env!r}" for n in range(1, len(records) + 1)]
+                     if env else ["the object of the file"])
+    for at, record in zip(where, records):
+        if not isinstance(record, dict):
+            raise FixtureError(f"{_name(path)}, {at}: a record that is not a JSON object "
+                               f"({_kind(record)})")
+    return records, where
+
+
 def load_records(path):
     """Load a fixture file to the list of its records, as the file holds them.
 
     Accepts a JSON array, a single JSON object, a common log envelope
     ({"Records"/"value"/"items"/"entries": [...]}), or JSON-lines.
+
+    Raises FixtureError, with a text that names the fixture, for a file that is a
+    directory or cannot be read; bytes that are not UTF-8; the byte order mark of
+    UTF-8 at its start; JSON that is not an array or an object (`null`, `1`); a line
+    of JSON lines that is not JSON; JSON that the loader cannot read (too deep, a
+    number with too many digits); and a record that is not a JSON object (`null`,
+    `[]`, `1`, `"x"`). The text names the line or the element where there is one.
     """
-    with open(path, encoding="utf-8") as fh:
-        text = fh.read()
-    records = None
-    try:
-        doc = json.loads(text)
-        if isinstance(doc, list):
-            records = doc
-        elif isinstance(doc, dict):
-            for env in ("Records", "value", "items", "entries"):
-                if isinstance(doc.get(env), list):
-                    records = doc[env]
-                    break
-            if records is None:
-                records = [doc]
-    except json.JSONDecodeError:
-        records = []
-        for line in text.splitlines():
-            line = line.strip()
-            if line:
-                records.append(json.loads(line))
-    return records
+    return _records(path)[0]
 
 
 def load_fixture(path):
-    """Load a fixture file to a list of flattened event dicts (load_records())."""
-    return [sigma_eval.flatten(r) for r in load_records(path)]
+    """Load a fixture file to a list of flattened event dicts (load_records()).
+
+    Also raises FixtureError for a record that is too deep to flatten, and for a
+    record that one event table cannot hold (sigma_eval.event_problem(): two keys
+    that differ only in the letter case of their ASCII letters, a key that hides a
+    row id that the queries read, an integer outside 64 bits). Keys of two records
+    that differ only in letter case are no problem: they share one column."""
+    events = []
+    for record, at in zip(*_records(path)):
+        try:
+            event = sigma_eval.flatten(record)
+        except RecursionError as e:
+            raise FixtureError(f"{_name(path)}, {at}: {_cannot_read(e)}") from None
+        problem = sigma_eval.event_problem(event)
+        if problem:
+            raise FixtureError(f"{_name(path)}, {at}: a record that one event table cannot "
+                               f"hold: {problem[1]}")
+        events.append(event)
+    return events
 
 
 # ---- failure explanations (sigma_explain) --------------------------------
@@ -543,8 +646,21 @@ def validate(args, report):
             results.append({"rule": f"{folder}/{fname}", "trr": trr, "provider": provider,
                             "status": "ERROR", "detail": why, "explanation": []})
             continue
-        attack = load_fixture(attack_path)
-        benign = load_fixture(benign_path)
+        fixtures, unread = {}, []
+        for kind, path in (("attack", attack_path), ("benign", benign_path)):
+            try:
+                fixtures[kind] = load_fixture(path)
+            except FixtureError as e:
+                unread.append(f"the {kind} fixture {e}")
+        if unread:
+            unproven += 1
+            why = ("; ".join(unread) + f". The loader cannot read {'them' if unread[1:] else 'it'}"
+                   ", so nothing proves the rule")
+            print(f"ERROR [{trr} {provider}] {fname}: {why} -- {note}")
+            results.append({"rule": f"{folder}/{fname}", "trr": trr, "provider": provider,
+                            "status": "ERROR", "detail": why, "explanation": []})
+            continue
+        attack, benign = fixtures["attack"], fixtures["benign"]
         q = queries[key]
         # sigma_eval.evaluate() == EventTable(...).hits(); the indices name the records.
         attack_idx = [hit[0] for hit in sigma_eval.EventTable(attack).hit_indices(q)]
@@ -614,9 +730,9 @@ def validate(args, report):
         return 1
     if unproven:
         print(f"FAILED: {unproven} rule(s) of MANIFEST have no proof: a fixture that MANIFEST "
-              "names is missing, or a benign baseline holds no record (see the ERROR rows "
-              "and the NEGATIVE CONTROL VACUOUS rows). --report does not make this "
-              "non-fatal.")
+              "names is missing or cannot be read, or a benign baseline holds no record (see "
+              "the ERROR rows and the NEGATIVE CONTROL VACUOUS rows). --report does not make "
+              "this non-fatal.")
     if fails and not args.report:
         print(f"FAILED: {fails} technique(s) did not satisfy attack-fires + "
               f"control-holds. (Use --report to treat as non-fatal.)")

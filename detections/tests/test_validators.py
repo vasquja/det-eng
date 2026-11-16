@@ -761,22 +761,19 @@ class CloudValidator(gatelib.GateCase):
             r"^(FAIL|ERROR)\s+\[TRR9012 AWS\] aws_leaked_access_key_recon\.yml: .*benign.*"
             r"(near-miss|filtered)")
 
-    @gatelib.known_gap(
-        "cloud-fixture-record-not-an-object",
-        gate="detections/validate_cloud_detections.py",
-        reason="A benign fixture that holds a record that is not a JSON object (a `null` "
-               "after its good records) ends the validator with an uncaught AttributeError "
-               "of sigma_eval.flatten. The validate-cloud job fails, but with a traceback: no "
-               "FAIL or ERROR row names the rule or the fixture, and the validator judges no "
-               "rule after it. A fixture whose JSON text is `null` ends the run in the same "
-               "way, with a TypeError of load_fixture.",
-        closes="R2d", today="crash")
-    def test_gap_fixture_record_that_is_not_an_object(self):
-        """WANTED: the validator names the rule and the fixture in an ERROR or FAIL row
-        that says that a record is not a JSON object, and does not stop with a
-        traceback. A loader that drops the record and says nothing is not the wanted
-        behaviour. The bad record is beside the good records of the baseline, so such
-        a loader gives a PASS, and the marker then reports a gap that changed shape."""
+    # The ERROR row of RULE for a fixture that the loader cannot read ({}: the end of
+    # the row, after the name of the fixture: where, and what).
+    UNREAD = (r"^ERROR " + ROW + r"the {} fixture detections/cloud/fixtures/trr9012/{}\.json{}"
+              r"\. The loader cannot read it, so nothing proves the rule -- ")
+
+    def test_rejects_fixture_record_that_is_not_an_object(self):
+        """A benign fixture whose last record is `null`, after its good records: the
+        validator names the rule, the fixture and the element in an ERROR row, also
+        with --report, and judges the other rules. A loader that drops the record and
+        says nothing would give a PASS: the records before it are the good baseline.
+        (This was the known gap cloud-fixture-record-not-an-object: the validator
+        ended with an AttributeError of sigma_eval.flatten and judged no rule after
+        it.)"""
         tree = self.tree()
         good = tree.read_json(self.BENIGN)
         tree.edit_json(self.BENIGN, lambda rows: rows + [None])
@@ -785,57 +782,238 @@ class CloudValidator(gatelib.GateCase):
         self.assertGreater(len(good), 0)
         self.assertTrue(all(isinstance(row, dict) for row in good))
         self.assertEqual(tree.read_json(self.BENIGN), good + [None])
-        # For the proof of the last sentence of the `reason`, below: a second copy,
-        # whose baseline is the JSON text `null` (no list, no object).
-        other = self.tree()
-        other.write(self.BENIGN, "null\n")
-        self.assertIsNone(other.read_json(self.BENIGN))
-        pending = other.start(self.GATE)
-        result = tree.run(self.GATE)
-        null = pending.result()
-        # The gate reached the rule (it compiled it), and it read the planted record:
-        # today the last line of the traceback names the type of that record. A gate
-        # that does not stop there prints a row for the rule, whatever its verdict.
-        # (The text of an exception is the text of the Python of the run. The test
-        # reads its type and the start of its message, and the name of a frame, with
-        # no end-of-line anchor: a later Python can add to the end of such a line.)
+        result = self.rejected_as_unproven(tree, self.UNREAD.format(
+            "benign", "benign", rf", element {len(good) + 1} of the array: a record that is "
+                                r"not a JSON object \(null\)"))
+        # The gate reached the rule (it compiled it), and it read the planted record.
         self.assert_saw(result, r"^OK \(compile\)  T1078\.004/aws_leaked_access_key_recon\.yml  "
                                 r"\[TRR9012\]$")
         self.assert_saw(result, r"^AttributeError: 'NoneType' object has no attribute 'items'|"
                                 r"^(PASS|FAIL|ERROR)\s+\[TRR9012[^\]]*\] "
                                 r"aws_leaked_access_key_recon\.yml: ")
-        if result.crashed:
-            # Today. The `reason` of the marker says what the run does after the
-            # traceback; prove it: the run printed a row for each MANIFEST entry
-            # before the rule, and no row for the rule or for an entry after it.
-            entries = in_source(tree, self.GATE,
-                                r'^\s+\("(TRR\d+)", "T[\d.]+", "([^"]+\.yml)",')
-            first = [name for _, name in entries].index(os.path.basename(self.RULE))
-            self.assertLess(first, len(entries) - 1, "no MANIFEST entry is after the rule")
-            before = [trr for trr, _ in entries[:first]]
-            self.assertEqual(re.findall(r"^(?:PASS|FAIL|ERROR)\s+\[(TRR\d+) ", result.stdout,
-                                        re.MULTILINE), before)
-            # The exception comes from sigma_eval.flatten, and no line names the fixture.
-            self.assertRegex(result.output, r'(?m)^  File ".*sigma_eval\.py", line \d+, in '
-                                            r'flatten\b', result.describe())
-            self.assertNotIn("trr9012/benign.json", result.output, result.describe())
-            # The last sentence of the `reason`: the baseline whose text is `null` ends
-            # the run in the same way (a traceback, and the same rows before it), with
-            # a TypeError that load_fixture raises.
-            self.assertTrue(null.crashed and null.returncode != 0,
-                            "a fixture whose JSON text is `null` does not end the run with a "
-                            "traceback any more: correct the `reason` of the marker\n"
-                            + null.describe())
-            self.assertRegex(null.output, r"(?m)^TypeError: 'NoneType' object is not iterable",
-                             null.describe())
-            self.assertRegex(null.output, r'(?m)^  File ".*validate_cloud_detections\.py", '
-                                          r'line \d+, in load_fixture\b', null.describe())
-            self.assertEqual(re.findall(r"^(?:PASS|FAIL|ERROR)\s+\[(TRR\d+) ", null.stdout,
-                                        re.MULTILINE), before)
+        # It judged every other rule of MANIFEST.
+        self.assertEqual(len(re.findall(r"^PASS  \[", result.stdout, re.MULTILINE)),
+                         len(self.manifest_rules(tree)) - 1, result.describe())
+        self.assertNotIn("Traceback", result.output)
         self.assert_rejects(
             result,
             r"^(FAIL|ERROR)\s+\[TRR9012[^\]]*\] aws_leaked_access_key_recon\.yml: "
-            r"(?=.*trr9012/benign\.json)(?=.*\bnot an? (JSON )?object\b)")
+            r"(?=.*trr9012/benign\.json)(?=.*\bnot an? (JSON )?object\b)", exit_code=1)
+
+    def unreadable_fixtures(self, good):
+        """[(label, kind, the bytes of the fixture, the end of its ERROR row after the
+        name of the fixture)] of test_rejects_fixtures_that_the_loader_cannot_read.
+        `good`: the records of the good benign fixture."""
+        n = len(good)
+        text = json.dumps(good, indent=2)
+        first = text.index('"eventName": "') + len('"eventName": "')
+        line, at = text.count("\n", 0, first) + 1, first - text.rfind("\n", 0, first)
+        nested = {}
+        for _ in range(1500):
+            nested = {"a": nested}
+        record = r"a record that is not a JSON object \({}\)"
+        table = r"a record that one event table cannot hold: "
+        return [
+            ("null", "benign", b"null\n",
+             r": JSON that is not an array or an object \(null\)"),
+            ("a number", "benign", b"7\n",
+             r": JSON that is not an array or an object \(a number\)"),
+            ("a string", "attack", b'"trr9012"\n',
+             r": JSON that is not an array or an object \(a string\)"),
+            ("a list in the list", "benign", json.dumps(good + [[]]).encode(),
+             rf", element {n + 1} of the array: " + record.format("a list")),
+            ("a number in the list", "attack", json.dumps([1]).encode(),
+             r", element 1 of the array: " + record.format("a number")),
+            ("null in an envelope", "benign", json.dumps({"Records": good + [None]}).encode(),
+             rf", element {n + 1} of the list 'Records': " + record.format("null")),
+            ("a string in JSON lines", "benign",
+             "".join(json.dumps(row) + "\n" for row in good + ["x"]).encode(),
+             rf", line {n + 1}: " + record.format("a string")),
+            ("a JSON line that is not JSON", "benign",
+             "".join(json.dumps(row) + "\n" for row in good).encode() + b'{"eventName": \n',
+             rf", line {n + 1}: not JSON \(Expecting value, at character 14\); a fixture is a "
+             r"JSON array, a JSON object or JSON lines"),
+            ("a document with an error", "benign", text.replace('"eventName":', '"eventName"', 1)
+             .encode(), rf", line {line}: not JSON \(Expecting ':' delimiter, at character "
+                        rf"{at - 2}\); a fixture is a JSON array, a JSON object or JSON lines"),
+            ("bytes that are not UTF-8", "benign",
+             text[:first].encode() + b"\xe9" + text[first:].encode(),
+             rf", line {line}: bytes that are not UTF-8 \(the byte 0xe9 at character {at} of "
+             r"the line\)"),
+            ("a byte order mark", "benign", b"\xef\xbb\xbf" + text.encode(),
+             r", line 1: the line starts with the byte order mark of UTF-8 \(EF BB BF\)"),
+            # Lists 100000 deep: Python 3.13 and older stop json.loads() at the limit of
+            # the recursion. From Python 3.14 the limit is the C stack of the thread, so
+            # with a large stack (the gate-tests job) json.loads() reads all the levels,
+            # and the one record is a list. The loader names the fixture either way.
+            ("JSON too deep to read", "benign", b"[" * 100000 + b"]" * 100000,
+             r"(?:: JSON that the validator cannot read \(RecursionError: [^)]*\)|, element 1 of "
+             r"the array: " + record.format("a list") + ")"),
+            ("a record too deep to flatten", "benign", json.dumps(good + [nested]).encode(),
+             rf", element {n + 1} of the array: JSON that the validator cannot read "
+             r"\(RecursionError: [^)]*\)"),
+            ("a JSON line with a number with too many digits", "benign",
+             "".join(json.dumps(row) + "\n" for row in good).encode() + b'{"n": 1'
+             + b"0" * 5000 + b"}\n",
+             rf", line {n + 1}: JSON that the validator cannot read \(ValueError: Exceeds the "
+             r"limit \(4300 digits\) for integer string conversion[^)]*\)"),
+            ("a number with too many digits", "benign",
+             text[:-2].encode() + b',\n  {"n": 1' + b"0" * 5000 + b"}\n]",
+             r": JSON that the validator cannot read \(ValueError: Exceeds the limit \(4300 "
+             r"digits\) for integer string conversion[^)]*\)"),
+            ("an integer outside 64 bits", "benign",
+             json.dumps(good + [dict(good[0], n=2 ** 64)]).encode(),
+             rf", element {n + 1} of the array: {table}the value of n is an integer outside "
+             r"the 64 bits of an INTEGER of SQLite"),
+            ("one record with keys that differ only in letter case", "benign",
+             json.dumps(good + [dict(good[0], EventName=good[0]["eventName"])]).encode(),
+             rf", element {n + 1} of the array: {table}keys that differ only by case: "
+             r"EventName / eventName, which SQLite reads as one column name"),
+            ("a key rowid", "attack", json.dumps([{"rowid": 1}]).encode(),
+             rf", element 1 of the array: {table}the key rowid is the name by which the "
+             r"correlation queries read the row id \(rowid, in any letter case of the ASCII "
+             r"letters\)")]
+
+    def test_rejects_fixtures_that_the_loader_cannot_read(self):
+        """A fixture that the loader cannot read as records is an ERROR row of the rule
+        that names the fixture, the line or the element, and the problem, also with
+        --report. No row comes from a traceback, and the run judges each other rule.
+        Before roadmap item R2d each of these fixtures ended the validator with a
+        traceback (the integer, the keys and the key rowid at the table of
+        sigma_eval.py; a key rowid without a traceback in a correlation), and so did
+        check_null_safety.py, check_sufficiency.py and check_variants.py, which read
+        the fixtures with the same loader."""
+        good = self.good().read_json(self.BENIGN)
+        self.assertTrue(all("eventName" in row for row in good))
+        runs = []
+        for label, kind, data, problem in self.unreadable_fixtures(good):
+            tree = self.tree()
+            with open(tree.path(self.ATTACK if kind == "attack" else self.BENIGN), "wb") as fh:
+                fh.write(data)
+            runs.append((label, kind, problem, tree, tree.start(self.GATE),
+                         tree.start(self.GATE, "--report")))
+        rules = len(self.manifest_rules(self.good()))
+        for label, kind, problem, tree, plain, report in runs:
+            for result in (plain.result(), report.result()):
+                with self.subTest(label, report="--report" in result.argv):
+                    self.assertNotIn("Traceback", result.output)
+                    self.assert_saw(result, self.NO_PROOF)
+                    self.assertEqual(len(re.findall(r"^PASS  \[", result.stdout, re.M)),
+                                     rules - 1, result.describe())
+                    self.assert_rejects(result, self.UNREAD.format(kind, kind, problem),
+                                        exit_code=1)
+
+    def test_rejects_unreadable_fixture_in_each_gate_that_reads_it(self):
+        """Three fixtures that the loader cannot read, each in a copy, in the three other
+        gates that read the cloud fixtures with the loader of the validator, for the
+        rule (the faster path of the same code): the benign fixture of
+        test_rejects_fixture_record_that_is_not_an_object (a `null` record after the
+        good baseline); an attack fixture whose last record holds `eventName` and
+        `EventName` (the loader reads it, and the event table cannot hold it); and a
+        benign fixture that is a directory (the validator gives it the ERROR row of a
+        fixture that is not a file). Each gate names the rule and the fixture, does
+        not stop with a traceback, and exits 1. A benign fixture that does not exist is
+        named in the same way by check_null_safety.py and check_variants.py
+        (check_sufficiency.py, and the validator, look for the file first). Before
+        roadmap item R2d each ended with a traceback, or (check_variants.py, on the
+        second) named the rule and the EventTable error and not the fixture."""
+        rule = "T1078.004/aws_leaked_access_key_recon.yml"
+        null_safety, variants, sufficiency = ("detections/check_null_safety.py",
+                                              "detections/check_variants.py",
+                                              "detections/check_sufficiency.py")
+        runs = []
+        for kind, label in (("benign", "null"), ("attack", "keys"), ("benign", "directory"),
+                            ("benign", "missing")):
+            tree = self.tree()
+            fixture = self.BENIGN if kind == "benign" else self.ATTACK
+            rows = tree.read_json(fixture)
+            if label == "missing":
+                tree.remove(fixture)
+                problem = (f"detections/cloud/fixtures/trr9012/{kind}.json: cannot be read (No "
+                           "such file or directory)")
+            elif label == "directory":
+                tree.remove(fixture)
+                os.mkdir(tree.path(fixture))
+                problem = f"detections/cloud/fixtures/trr9012/{kind}.json: a directory, not a file"
+            else:
+                if label == "null":
+                    bad = None
+                    problem = r"a record that is not a JSON object (null)"
+                else:
+                    bad = dict(rows[0], EventName=rows[0]["eventName"])
+                    problem = ("a record that one event table cannot hold: keys that differ "
+                               "only by case: EventName / eventName, which SQLite reads as one "
+                               "column name")
+                tree.edit_json(fixture, lambda doc: doc + [bad])
+                problem = (f"detections/cloud/fixtures/trr9012/{kind}.json, element "
+                           f"{len(rows) + 1} of the array: {problem}")
+            lines = {
+                null_safety: f"FAIL  {rule} :: fixture {kind} trr9012/{kind}.json: the "
+                                  f"loader of the cloud validator cannot read the fixture: "
+                                  f"{problem}",
+                variants: f"FAIL  {rule}: the loader of the cloud "
+                                                f"validator cannot read the {kind} fixture: "
+                                                f"{problem}",
+                sufficiency: f"  [{'R2' if kind == 'benign' else 'R4'}] {rule}: the loader "
+                                  f"of the cloud validator cannot read the {kind} fixture: "
+                                  f"{problem}"}
+            for script, arguments in ((null_safety, (self.RULE,)),
+                                      (variants, (self.RULE,)),
+                                      (sufficiency, ("--rule", self.RULE))):
+                if label == "missing" and script == sufficiency:
+                    continue
+                runs.append((label, script, lines[script], tree.start(script, *arguments)))
+        for label, script, line, pending in runs:
+            with self.subTest(label, gate=script):
+                result = pending.result()
+                self.assertNotIn("Traceback", result.output)
+                self.assert_rejects(result, "^" + re.escape(line) + "$", exit_code=1)
+
+    def test_rejects_two_fixtures_that_the_loader_cannot_read_in_one_row(self):
+        """The two fixtures of the rule cannot be read: one ERROR row names both, and
+        the --json report gives it as the ERROR of the rule. (The run with --json is a
+        variant: no workflow runs it.)"""
+        tree = self.tree()
+        tree.write(self.ATTACK, "null\n")
+        tree.write(self.BENIGN, "[1]\n")
+        result = tree.run(self.GATE, "--json", tree.out("cloud.json"))
+        why = ("the attack fixture detections/cloud/fixtures/trr9012/attack.json: JSON that is "
+               "not an array or an object (null); the benign fixture detections/cloud/fixtures/"
+               "trr9012/benign.json, element 1 of the array: a record that is not a JSON "
+               "object (a number). The loader cannot read them, so nothing proves the rule")
+        self.assert_rejects(result, r"^ERROR " + self.ROW + re.escape(why) + " -- ",
+                            exit_code=1)
+        with open(tree.out("cloud.json"), encoding="utf-8") as fh:
+            report = json.load(fh)
+        self.assertEqual(report["exit"], 1)
+        self.assertEqual([(r["status"], r["detail"]) for r in report["results"]
+                          if r["rule"] == "T1078.004/aws_leaked_access_key_recon.yml"],
+                         [("ERROR", why)])
+
+    def test_control_records_whose_keys_differ_only_in_letter_case(self):
+        """CONTROL of the loader and of the event table: a record of the baseline that
+        spells a key `EventName`, beside records that spell it `eventName`. No record
+        holds both, so the keys share one column, and the rule reads `EventName` as it
+        reads a field in SQLite. A copy of a benign record with that spelling keeps
+        the baseline clean; a copy of an attack record with that spelling is a benign
+        hit, and the rule fails for it. (Before roadmap item R2d the validator ended
+        with a ValueError of sigma_eval.EventTable on each.)"""
+        def respelled(row):
+            return {("EventName" if key == "eventName" else key): value
+                    for key, value in row.items()}
+        clean, hit = self.tree(), self.tree()
+        good = clean.read_json(self.BENIGN)
+        clean.write(self.BENIGN, json.dumps(good + [respelled(good[0])]))
+        attack = hit.read_json(self.ATTACK)
+        hit.write(self.BENIGN, json.dumps(good + [respelled(attack[0])]))
+        clean, hit = clean.start(self.GATE), hit.start(self.GATE)
+        self.assert_accepts(clean.result(), r"^All \d+ external-cloud detection\(s\) fired ")
+        self.assert_saw(clean.result(), rf"^PASS  {self.ROW}.* benign baseline clean "
+                                        rf"\({len(good) + 1} record\(s\)\) ")
+        self.assertNotIn("Traceback", hit.result().output)
+        self.assert_rejects(hit.result(), rf"^FAIL  {self.ROW}NEGATIVE CONTROL FAILED: rule "
+                                          r"fired on 1 benign record\(s\) ", exit_code=1)
+        self.assert_saw(hit.result(), rf"^          benign record #{len(good)}: ")
 
 
 class LinuxValidatorDryRun(gatelib.GateCase):

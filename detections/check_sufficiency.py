@@ -780,7 +780,20 @@ def _cloud_entry(module, entry):
     return {"attack": os.path.join(fix, attack) if attack else None,
             "benign": os.path.join(fix, benign) if benign else None,
             "gate": gate, "marker": marker,
-            "load": getattr(module, "load_fixture", None)}
+            "load": getattr(module, "load_fixture", None),
+            "unreadable": getattr(module, "FixtureError", ())}
+
+
+def _fixture(r, check, entry, which):
+    """The flat records of the attack or benign fixture of a cloud entry; None, after
+    a failure of `check` that names the fixture, when the loader of the cloud
+    validator cannot read it (its FixtureError: bytes that are not UTF-8, a record that
+    is not an object, a record that one event table cannot hold, ...)."""
+    try:
+        return entry["load"](entry[which])
+    except entry["unreadable"] as e:
+        r.fail(check, f"the loader of the cloud validator cannot read the {which} fixture: {e}")
+        return None
 
 
 CLOUD_PROVIDERS = ("aws", "azure", "gcp")
@@ -1518,7 +1531,7 @@ def _attack_units(rule, entry):
     that carries the entry's marker (each marker-carrying alert, for a correlation).
     Returns (the fixture's records, [(label, [records])])."""
     marker = entry["marker"]
-    attack = entry["load"](entry["attack"])
+    attack = entry["load"](entry["attack"])  # the caller read it once (_fixture())
 
     def carries(record):
         return any(marker["substr"] in str(record.get(f) or "") for f in marker["fields"])
@@ -1719,7 +1732,9 @@ def check_rule(path, positives, cloud, proven=None, atomics=None):
             r.warn("R2", f"benign fixture {benign and rel(benign)} is missing; its records "
                          "cannot count as negatives")
             continue
-        events = entry["load"](benign)
+        events = _fixture(r, "R2", entry, "benign")
+        if events is None:
+            continue
         verdicts = sigma_explain.judge_events(rule, events)
         for i, v in enumerate(verdicts):
             label = (_fixture_label(benign, events, i) if not rule.is_correlation
@@ -1903,6 +1918,9 @@ def check_names(r, rule, path, entries, atomics=()):
             no_attack.append(f"attack fixture {entry['attack'] and rel(entry['attack'])} "
                              "is missing")
             continue
+        if _fixture(r, "R4", entry, "attack") is None:
+            no_attack.append(f"attack fixture {rel(entry['attack'])} cannot be read")
+            continue
         records, units = _attack_units(rule, entry)
         attacks.append((entry, records))
         attack_units += units
@@ -1916,7 +1934,10 @@ def check_names(r, rule, path, entries, atomics=()):
         checked += [(f"renamed ({how}) {label}", rename_names(e, pattern, how=how))
                     for how in RENAMES for label, e in checked]
         if entry["benign"] and os.path.exists(entry["benign"]):
-            benign = entry["load"](entry["benign"])
+            try:
+                benign = entry["load"](entry["benign"])
+            except entry["unreadable"]:
+                benign = []  # R2 above named it
             checked += [(_fixture_label(entry["benign"], benign, i), e)
                         for i, e in enumerate(benign)]
         problem = _gate_disagreement(entry["gate"], entry["marker"], checked)
