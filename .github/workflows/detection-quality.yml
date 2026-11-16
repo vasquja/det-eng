@@ -32,7 +32,7 @@ name: detection-quality
 #                      one-item presence rule (PRESENCE in check_sufficiency.py, which
 #                      then only warns); and no rule may key on an emulation marker
 #                      (detections/check_sufficiency.py). Hard gate.
-#   sufficiency-ratchet  PULL REQUESTS ONLY. Three comparisons with the base branch,
+#   sufficiency-ratchet  PULL REQUESTS ONLY. Four comparisons with the base branch,
 #                      each failing this job so that a human decides (what that
 #                      failure holds: see the note below the list):
 #                      1. The base branch's own check_sufficiency.py reports the base
@@ -59,6 +59,16 @@ name: detection-quality
 #                      only): an entry that the base does not hold as it is on the head
 #                      fails, so the list of expected differences cannot grow without a
 #                      human. Skipped (success, with a notice) when the base has no file.
+#                      4. The head's check_mutants.py --base-tree reads the rule files
+#                      of the base tree as data and pairs each head rule with its base
+#                      rule (by id, then by path). It undoes each change to the logic
+#                      of a rule alone, and it fails when no sidecar case, cloud fixture
+#                      or benign corpus record of the head tells the undo apart from
+#                      the head rule (under the default run or a representation
+#                      variant), and when a change cannot be undone alone (a renamed
+#                      block, maps that moved). A new rule is report only. Its step
+#                      runs after comparison 1, also when the base has no
+#                      check_sufficiency.py.
 #                      Any other error, or an unreadable base scores.json, fails it.
 #   coverage-report    research/COVERAGE.md and the README coverage chart must match
 #                      what research/tools/coverage_report.py generates now. Hard gate.
@@ -544,6 +554,33 @@ jobs:
             cat /tmp/ratchet.out
             echo '```'
             echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+      - name: Fail on any change to the logic of a rule that the evidence of the head does not prove
+        # Runs even when a step above failed, so the summary shows each comparison,
+        # and also when the base has no check_sufficiency.py: the rule files of the
+        # base tree are data, and only the head's code runs.
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          if [ ! -e "$RUNNER_TEMP/base-tree/.git" ]; then
+            echo "::error title=sufficiency-ratchet::the base tree was not checked out"
+            exit 1
+          fi
+          pip install --quiet -r detections/requirements.txt
+          rc=0
+          python3 detections/check_mutants.py --base-tree "$RUNNER_TEMP/base-tree" \
+            > /tmp/mutants.out 2>&1 || rc=$?
+          cat /tmp/mutants.out
+          {
+            echo '## Change proof (vs the base branch)'
+            echo ''
+            echo 'Each change to the logic of a rule, undone alone, must change a verdict on a case, a fixture or a corpus record of the head.'
+            echo ''
+            echo '```'
+            cat /tmp/mutants.out
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
 
