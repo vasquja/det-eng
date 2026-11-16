@@ -553,8 +553,11 @@ class RuleCases(gatelib.GateCase):
         for _ in range(1500):
             nested = {"a": nested}
         bad = {
-            "JSON too deep": ('{"name": "deep", "x": ' + '{"a": ' * 100000 + "1" + "}" * 100000
-                              + "}\n",
+            # A whole case, so that a json that reads the line (Python 3.14) gets to the
+            # events and flatten().
+            "JSON too deep": ('{"name": "deep", "kind": "benign", "why": "planted", "events": '
+                              '[{"comm": "x", "x": ' + '{"a": ' * 100000 + "1" + "}" * 100000
+                              + "}]}\n",
                               r"(?:case 'deep': )?JSON that the gate cannot read \(RecursionError: "
                               r"[^)]*\)"),
             "an object too deep to flatten": (
