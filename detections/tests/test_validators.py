@@ -997,6 +997,20 @@ class CloudValidator(gatelib.GateCase):
              json.dumps({"value": good, "@odata.count": 2 ** 63}).encode(),
              r": an envelope \(the list 'value'\) whose page key '@odata\.count' is a number, "
              r"not an integer of 64 bits" + extra),
+            ("a count below 64 bits", "benign",
+             json.dumps({"value": good, "@odata.count": -2 ** 63 - 1}).encode(),
+             r": an envelope \(the list 'value'\) whose page key '@odata\.count' is a number, "
+             r"not an integer of 64 bits" + extra),
+            # Each link of Microsoft Graph is a string or null: a list of attack records
+            # under it is refused.
+            ("an @odata.deltaLink that holds a list of attack records", "benign",
+             json.dumps({"value": good, "@odata.deltaLink": attack[:1]}).encode(),
+             r": an envelope \(the list 'value'\) whose page key '@odata\.deltaLink' is a "
+             r"list, not a string or null" + extra),
+            ("an @odata.nextLink that holds a list of attack records", "benign",
+             json.dumps({"value": good, "@odata.nextLink": attack[:1]}).encode(),
+             r": an envelope \(the list 'value'\) whose page key '@odata\.nextLink' is a "
+             r"list, not a string or null" + extra),
             # A page key in another letter case is another key.
             ("a page key in another letter case", "benign",
              json.dumps({"value": good, "NextLink": "x"}).encode(),
@@ -1091,6 +1105,13 @@ class CloudValidator(gatelib.GateCase):
         null was one record, and a key rowid was a column."""
         good = self.good().read_json(self.BENIGN)
         self.assertTrue(all("eventName" in row for row in good))
+        # Each page key of the loader (PAGE_KEYS) has a row with a value of a wrong
+        # type: a key added later cannot go without a row.
+        keys = in_source(self.good(), self.GATE, r'^(?:PAGE_KEYS = \{| +)"([^"]+)": \("')
+        self.assertEqual(len(keys), 6, keys)
+        rows = "\n".join(problem for _, _, _, problem in self.unreadable_fixtures(good))
+        for key in keys:
+            self.assertIn(f"whose page key '{re.escape(key)}' is ", rows, key)
         runs = []
         for label, kind, data, problem in self.unreadable_fixtures(good):
             tree = self.tree()
@@ -1385,6 +1406,29 @@ class CloudValidator(gatelib.GateCase):
                  "trr9017/benign.json"),
                 (r"\[TRR9017 Azure\] entra_device_code_authentication\.yml",
                  "trr9017/benign_signin.json")):
+            self.assert_saw(result, rf"^PASS  {row}: .*benign baseline clean "
+                                    rf"\({counts[name]} record\(s\)\) ")
+
+    def test_control_counts_at_the_bounds_of_64_bits(self):
+        """CONTROL of the loader: `@odata.count` is an integer of 64 bits (with sign), so
+        the bounds -2**63 and 2**63 - 1 are counts. Two benign baselines as Graph pages,
+        each with a count at one bound: the run reads the records of each list, and the
+        baselines pass. (The rows "a count outside 64 bits" and "a count below 64 bits"
+        of the matrix give the numbers just outside.)"""
+        tree = self.tree()
+        counts = {}
+        for name, count in (("trr9017/benign.json", -2 ** 63),
+                            ("trr9013/benign.json", 2 ** 63 - 1)):
+            rel = "detections/cloud/fixtures/" + name
+            rows = tree.read_json(rel)
+            counts[name] = len(rows)
+            tree.write(rel, json.dumps({"@odata.count": count, "value": rows}))
+        result = tree.run(self.GATE)
+        self.assert_accepts(result, r"^All \d+ external-cloud detection\(s\) fired ")
+        for row, name in (
+                (r"\[TRR9017 Azure\] entra_illicit_oauth_consent_grant\.yml", "trr9017/benign.json"),
+                (r"\[TRR9013 Azure\] entra_app_federated_credential_backdoor\.yml",
+                 "trr9013/benign.json")):
             self.assert_saw(result, rf"^PASS  {row}: .*benign baseline clean "
                                     rf"\({counts[name]} record\(s\)\) ")
 
