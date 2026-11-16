@@ -451,12 +451,13 @@ class ScoreBenign(gatelib.GateCase):
         UTF-8, or whose audit event holds two keys that differ only in letter case (also
         in a nested object), or that holds JSON that the gate cannot read (too deep for
         json or for flatten(), a number with too many digits, in a line or in one
-        document), or whose line 2 is not JSON and is not the last line (NUL bytes
-        before an event, a cut line before other lines). Each is an ERROR line that
-        names the capture (and the line), the run exits 1, and no rule is scored on
-        the capture. Before roadmap item R2d the first three ended with a traceback,
-        the fourth lost line 1 without a word (and before the check of the
-        corrections, the mark at line 2 lost line 2), the key clashes ended with a
+        document), or whose line 2 or 3 is not JSON and is not a line that a capture
+        cut (NUL bytes before an event, also on the last line without a line feed; a
+        cut line before other lines, and as the last line with a line feed). Each is
+        an ERROR line that names the capture (and the line), the run exits 1, and no
+        rule is scored on the capture. Before roadmap item R2d the first three ended
+        with a traceback, the fourth lost line 1 without a word (and before the check
+        of the corrections, the mark at line 2 lost line 2), the key clashes ended with a
         ValueError of sigma_eval.EventTable, the JSON too deep or too long with a
         traceback, and the document was a capture of no event; before the second check
         of the corrections, a line that json refused was skipped as a cut line, and its
@@ -493,7 +494,7 @@ class ScoreBenign(gatelib.GateCase):
             "not UTF-8": lines[0] + inside,
             "a byte order mark": b"\xef\xbb\xbf" + b"".join(lines),
             # Two captures joined: the mark at the start of line 2. json refuses that
-            # line, and a line that is not JSON is skipped, so the event was lost.
+            # line (a reader that skipped each line that json refused lost the event).
             "a byte order mark at line 2": lines[0] + b"\xef\xbb\xbf" + lines[1],
             "two keys of one event": lines[0] + json.dumps(dict(events[1], Verb="get")).encode()
             + b"\n",
@@ -514,11 +515,15 @@ class ScoreBenign(gatelib.GateCase):
             "line separators in a string": lines[0]
             + json.dumps(separators, ensure_ascii=False).encode() + b"\n",
             # A capture can cut only its last line, at its end: NUL bytes before an
-            # event (a copytruncate rotation leaves them) and a cut line before other
-            # lines are errors. The last line, cut and without its line feed, is
-            # skipped (a control).
+            # event (a copytruncate rotation leaves them; also on the last line, which
+            # then does not start with "{"), a cut line before other lines and a cut
+            # line with a line feed are errors. The last line, cut and without its
+            # line feed, is skipped (a control).
             "NUL bytes before an event at line 2": lines[0] + b"\x00" * 8 + lines[1],
+            "NUL bytes before an event on the last line without a line feed": lines[0]
+            + lines[1] + b"\x00" * 8 + lines[1].rstrip(b"\n"),
             "a cut line before other lines": lines[0] + cut + b"\n" + lines[1],
+            "a cut last line with a line feed": lines[0] + lines[1] + cut + b"\n",
             "a cut last line": lines[0] + lines[1] + cut})
         cannot_read = {
             "an object too deep to flatten": r", line 2: JSON that the gate cannot read "
@@ -549,9 +554,14 @@ class ScoreBenign(gatelib.GateCase):
                                            "name",
             "NUL bytes before an event at line 2": ", line 2: not JSON (Expecting value, at "
                                                    "character 1)",
+            "NUL bytes before an event on the last line without a line feed":
+                ", line 3: not JSON (Expecting value, at character 1)",
             "a cut line before other lines": f", line 2: {cut_error}; a capture can cut only "
                                              "the last line of a log, and a cut line has no "
-                                             "line feed"}
+                                             "line feed",
+            "a cut last line with a line feed": f", line 3: {cut_error}; a capture can cut "
+                                                "only the last line of a log, and a cut line "
+                                                "has no line feed"}
         for label, (path, result) in runs.items():
             with self.subTest(label):
                 self.assertNotIn("Traceback", result.output)

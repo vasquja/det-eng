@@ -2797,9 +2797,10 @@ class K8sValidator(gatelib.GateCase):
         self.assert_rejects(result, LINES_NOT_RECORDS.format(2), exit_code=1)
 
     def test_rejects_a_log_that_starts_with_a_byte_order_mark(self):
-        """The log starts with the byte order mark of UTF-8. A reader that does not
-        name it loses the first record without a word: json.loads() refuses the
-        line, and a line that is not JSON is skipped."""
+        """The log starts with the byte order mark of UTF-8. json.loads() refuses the
+        line, so the first record is lost: the ERROR line names the mark, the cause.
+        (A reader that skipped each line that json refused lost the record without a
+        word.)"""
         good = self.good()
         records = write_log(good, self.LOG, self.CASES, *self.BENIGN)
         with open(good.tmp_path(self.LOG), "rb") as fh:
