@@ -407,13 +407,15 @@ class CaptureError(Exception):
 def load_extra(path, logsource, label):
     """A live capture as a slice with this logsource: JSONL raw events (or one JSON array).
 
-    A line ends at a line break of the file (U+2028 in a JSON string is a character of
-    the line). A capture can cut only its last line: the text after the last line feed
-    is skipped when json refuses it and it starts with "{" (the same rule as cut_line()
-    of the reader of the Kubernetes validators). Raises CaptureError for a capture that
-    is a directory or cannot be read, for the first line with bytes that are not UTF-8
-    or that starts with the byte order mark of UTF-8, for the first other line that
-    json refuses (NUL bytes or U+200B before an event, a cut line before other lines;
+    A line ends at a line break of the file: a line feed, or a carriage return alone
+    (U+2028 in a JSON string is a character of the line). A capture can cut only the
+    end of its last line: the text after the last line break is skipped when it is
+    cut JSON, also when the cut splits a character of UTF-8 at its end (_cut(): the
+    rule of cut_line() of the reader of the Kubernetes validators). Raises
+    CaptureError for a capture that is a directory or cannot be read, for the first
+    line with other bytes that are not UTF-8 or that starts with the byte order mark
+    of UTF-8, for the first other line that json refuses (NUL bytes or U+200B in an
+    event, an event with more text after it on its line, a cut line before other lines;
     when no line before it is JSON, the capture is one document, and the error of the
     document names its place), for JSON that the gate cannot read (too deep for json or for
     flatten(), a number with too many digits: the first such line, or the document),
@@ -433,11 +435,17 @@ def load_extra(path, logsource, label):
                            f"({e.strerror or e})") from None
     # A line ends at a line break of the file (the reader of the Kubernetes validators
     # reads the same capture so): str.splitlines() also ends one at U+0085, U+2028 and
-    # U+2029, which a JSON string may hold as they are.
+    # U+2029, which a JSON string may hold as they are. open() gives a carriage return
+    # alone, and with a line feed, as a line feed, so the last element of `lines` is
+    # the text after the last line break: the last line without its line end.
     lines = text.split("\n")
     for n, line in enumerate(lines, 1):
         bad = next((i for i, ch in enumerate(line) if 0xDC80 <= ord(ch) <= 0xDCFF), None)
         if bad is not None:
+            if n == len(lines) and _cut(line):
+                # A cut inside a character of UTF-8: the gate skips the line.
+                text, lines[-1] = text[:len(text) - len(line)], ""
+                break
             raise CaptureError(f"the live capture {path}, line {n}: bytes that are not UTF-8 "
                                f"(the byte 0x{ord(line[bad]) - 0xDC00:02x} at character "
                                f"{bad + 1} of the line)")
@@ -461,13 +469,13 @@ def load_extra(path, logsource, label):
                     raw.append(json.loads(line, object_pairs_hook=sigma_eval.pairs))
                     where.append(f"line {n}")
                 except json.JSONDecodeError as e:
-                    if n == len(lines) and line.startswith("{"):
+                    if n == len(lines) and _cut(line):
                         continue        # the last line, cut by the capture
                     if raw:
                         text = lines[n - 1]
                         at = e.colno + len(text) - len(text.lstrip())
                         raise CaptureError(f"the live capture {path}, line {n}: "
-                                           f"{_not_json(e, at, text)}") from None
+                                           f"{_not_json(e, at, text, n == len(lines))}") from None
                     # No line before it is JSON: the capture is one document with an
                     # error, and the error of the document names its place.
                     if isinstance(whole, json.JSONDecodeError):
@@ -511,13 +519,25 @@ def _cannot_read(error):
             + (text if len(text) <= 100 else text[:100] + "...") + ")")
 
 
-def _not_json(error, at, line=""):
+def _cut(line):
+    """True when `line`, the last line of a capture without its line end, is a line
+    that the capture cut: its text without blanks is cut JSON (sigma_eval.cut_json()),
+    after the start of a character of UTF-8 at its very end (sigma_eval.utf8_cut()).
+    This is the rule of cut_line() of the reader of the Kubernetes validators."""
+    line = sigma_eval.utf8_cut(line)
+    return line is not None and sigma_eval.cut_json(line.strip())
+
+
+def _not_json(error, at, line="", last=False):
     """The text of a line that json refuses (the words of the reader of the Kubernetes
     validators): `error` is the json.JSONDecodeError, `at` the character of the error
-    in its line (from 1), and `line` the line of a capture of JSON lines as the
-    capture holds it (empty for the error of one document)."""
+    in its line (from 1), `line` the line of a capture of JSON lines as the capture
+    holds it (empty for the error of one document), and `last` is True for the last
+    line, which has no line end."""
     why = f"not JSON ({error.msg}, at character {at})"
-    if line.lstrip().startswith("{"):
+    if line.lstrip().startswith("{") and last:
+        why += "; the line is not the start of one JSON object, so a capture did not cut it"
+    elif line.lstrip().startswith("{"):
         why += ("; a capture can cut only the last line of a log, and a cut line has no "
                 "line feed")
     return why

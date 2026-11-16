@@ -105,17 +105,18 @@ the reader of the Kubernetes validators (see
 [`../README.md`](../README.md#a-record-of-each-log)). It reads JSON lines or a file
 that is one JSON array, and logsources whose records have no definition there
 (`linux/auditd`), so it does not judge if an object is a record of its log. A line
-ends at a line break of the file, as the reader of the Kubernetes validators reads
-it: U+2028, U+2029 and U+0085 in a JSON string are characters of the line. A capture
-can cut only its last line, at its end: the text after the last line feed is skipped
-when json refuses it and it starts with `{`, as the reader of the Kubernetes
-validators skips it. Each of these ends the run with exit 1 and one `ERROR` line that
+ends at a line break of the file (a line feed, or a carriage return alone), as the
+reader of the Kubernetes validators reads it: U+2028, U+2029 and U+0085 in a JSON
+string are characters of the line. A capture can cut only its last line, at its end:
+the text after the last line break is skipped when it is cut JSON (the start of one
+JSON object without its end; also when the cut splits a character of UTF-8 at its
+end), as the reader of the Kubernetes validators skips it. Each of these ends the run with exit 1 and one `ERROR` line that
 names the capture (and the first such line, or element), and no rule is scored on
 the capture:
 
 - a capture that is a directory, or that the run cannot read;
-- another line that json refuses (NUL bytes or U+200B before an event, a cut line
-  before other lines). When no line before it is JSON, the capture is one document,
+- another line that json refuses (NUL bytes or U+200B in an event, an event with
+  more text after it on its line, a cut line before other lines or with a line end). When no line before it is JSON, the capture is one document,
   and the line names the place of the error of the document;
 - a line with bytes that are not UTF-8 (the line names the first such byte and its
   character in the line);

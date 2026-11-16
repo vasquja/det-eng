@@ -61,28 +61,30 @@ Logs:
                        the runner's auditd records.
 
     A record of each log (RECORDS): an audit event is a JSON object with "kind":
-    "Event" and an apiVersion of the group audit.k8s.io; a pod sandbox has an "id"
-    and a "metadata" object with a "name" (a snapshot of the CRI log holds them in
+    "Event" and an apiVersion of the group audit.k8s.io; a pod sandbox has an "id" and
+    a "metadata" object with a "name" (a snapshot of the CRI log holds them in
     "items", a list); a file event has a "TargetFilename" and an "Image". A blank
     line, and a line that a capture cut, are not records. A capture can cut only the
-    last line of a log: that line is skipped when json refuses it, it has no line
-    feed at its end, and it starts with "{" (cut_line()). Each other line, or item
-    of a snapshot, that is not a record fails every run that reads the log (a strict
-    run, --report and --expect-miss) after the logs are read, and no rule is judged:
-    a line that is not JSON (also NUL bytes or U+200B before a record), JSON that is
+    end of the last line of a log: that line is skipped when it has no line end (a
+    line feed, or a carriage return alone) and its text is the start of one JSON
+    object without its end, also when the cut splits a character of UTF-8
+    (cut_line()). Each other line, or item of a snapshot, that is not a record fails
+    every run that reads the log (a strict run, --report and --expect-miss) after the
+    logs are read, and no rule is judged: a line that is not JSON (also NUL bytes or
+    U+200B in a record, or a record with more text after it on its line), JSON that is
     not an object (`[]`), a JSON object that is not a record of the log (`{}`), a
     snapshot whose "items" is not a list, bytes that are not UTF-8, the byte order
     mark of UTF-8 at the start of a line, JSON that the validator cannot read (too
     deep, or a number that is too long), and an object that holds one key two times
-    (json keeps only the last value). One ERROR line names the log, the
-    line (and the item) and the problem (at most 10 for each log, then the number
-    of the others), and a FAILED line ends the run with exit 1. With --expect-miss
-    the failed control lines of the pre-emulation logs (a log that is not given, an
-    audit log without a record, and a CRI log or a file log without a record, with
-    the line of the CRI control or the file control) come before the FAILED line,
-    and the --json control of those logs says FAILED; --json gets `log_problems` (with
-    the same limit) when a log holds such a line. A log that is a directory, or
-    that the run cannot open, is an ERROR (exit 1) at once.
+    (json keeps only the last value). One ERROR line names the log, the line (and the
+    item) and the problem (at most 10 for each log, then the number of the others),
+    and a FAILED line ends the run with exit 1. With --expect-miss the failed control
+    lines of the pre-emulation logs (a log that is not given, an audit log without a
+    record, and a CRI log or a file log without a record, with the line of the CRI
+    control or the file control) come before the FAILED line, and the --json control
+    of those logs says FAILED; --json gets `log_problems` (with the same limit) when a
+    log holds such a line. A log that is a directory, or that the run cannot open, is
+    an ERROR (exit 1) at once.
 
 Modes:
     python3 detections/validate_staticpod_detections.py --dry-run
@@ -419,25 +421,42 @@ def table_problem(source, record):
     return f"{RECORDS[source]['a']} that one event table cannot hold: {problem[1]}"
 
 
+def open_end(text, n, last):
+    """True for line `n` (from 1) of a log of `last` lines when it is the last line
+    and has no line end. A line ends at a line feed, and at a carriage return alone:
+    the reader splits the lines at both (open() with newline="")."""
+    return n == last and not text.endswith(("\n", "\r"))
+
+
 def cut_line(text, n, last):
     """True for line `n` (from 1) of a log of `last` lines when a capture can have
-    cut it, so that json refuses it and it is no problem: the last line of the log,
-    without a line feed at its end, that starts with "{". CI copies each log with
-    `cat` while its writer adds one line for each record (the CRI sensor writes one
-    snapshot on each line), and the writer writes the line feed of a line last. So
-    only the last line can be cut, the cut removes its end, and its line feed is
-    not there. Each other line that json refuses (NUL bytes or U+200B before a
-    record, a cut line before other lines) is a problem."""
-    return n == last and not text.endswith("\n") and text.strip().startswith("{")
+    cut it, so that it is no problem. CI copies each log with `cat` while its writer
+    adds one line for each record (the CRI sensor writes one snapshot on each line),
+    and the writer writes the line feed of a line last. So only the last line can
+    be cut, the cut removes the end of that line, and the line has no line end
+    (open_end()). Its text without blanks (as json reads a record) must be cut JSON:
+    the start of one JSON object without its end (sigma_eval.cut_json()). The cut
+    can split a character of UTF-8: the start of a character at the very end of the
+    line is part of the cut (sigma_eval.utf8_cut()). Each other line that json
+    refuses is a problem: NUL bytes or U+200B in a record, a record with more text
+    after it on its line, a cut line before other lines or with a line end, and
+    each other byte that is not UTF-8."""
+    if not open_end(text, n, last):
+        return False
+    text = sigma_eval.utf8_cut(text)
+    return text is not None and sigma_eval.cut_json(text.strip())
 
 
-def _not_json(text, error):
+def _not_json(text, error, last):
     """The text of the problem of a line that json refuses: `error` is the
-    json.JSONDecodeError of the line without its blanks. The character counts from
-    1, in the line as the log holds it."""
+    json.JSONDecodeError of the line without its blanks, and `last` is True for the
+    last line without a line end (open_end()). The character counts from 1, in the
+    line as the log holds it."""
     at = error.colno + len(text) - len(text.lstrip())
     why = f"not JSON ({error.msg}, at character {at})"
-    if text.strip().startswith("{"):
+    if text.strip().startswith("{") and last:
+        why += "; the line is not the start of one JSON object, so a capture did not cut it"
+    elif text.strip().startswith("{"):
         why += ("; a capture can cut only the last line of a log, and a cut line has no "
                 "line feed")
     return why
@@ -454,7 +473,8 @@ def read_log(path, source):
 
     A problem is a line, or an item of a snapshot, that is not a record of the log:
     bytes that are not UTF-8, the byte order mark of UTF-8 at the start of a line,
-    a line that is not JSON (cut_line() tells the one exception), JSON that the
+    a line that is not JSON (cut_line() tells the one exception: the last line that
+    a capture cut, also inside a character of UTF-8), JSON that the
     validator cannot read (too deep, or a number that is too long), an object that
     holds one key two times (json keeps only the last value, so a record of the rule
     could hide under a second value of its key), JSON that is not an object, a JSON
@@ -481,9 +501,10 @@ def read_log(path, source):
             continue
         bad = next((i for i, ch in enumerate(text) if 0xDC80 <= ord(ch) <= 0xDCFF), None)
         if bad is not None:
-            problems.append((n, None, f"bytes that are not UTF-8 (the byte "
-                                      f"0x{ord(text[bad]) - 0xdc00:02x} at character "
-                                      f"{bad + 1} of the line)"))
+            if not cut_line(text, n, len(lines)):
+                problems.append((n, None, f"bytes that are not UTF-8 (the byte "
+                                          f"0x{ord(text[bad]) - 0xdc00:02x} at character "
+                                          f"{bad + 1} of the line)"))
             continue
         # json refuses a line that starts with the byte order mark: the mark is a
         # problem at the start of each line (two logs joined hold it at a later line
@@ -496,7 +517,7 @@ def read_log(path, source):
             doc = json.loads(line, object_pairs_hook=sigma_eval.pairs)
         except json.JSONDecodeError as e:
             if not cut_line(text, n, len(lines)):
-                problems.append((n, None, _not_json(text, e)))
+                problems.append((n, None, _not_json(text, e, open_end(text, n, len(lines)))))
             continue
         except (ValueError, RecursionError) as e:
             problems.append((n, None, _cannot_read(e)))

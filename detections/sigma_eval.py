@@ -355,6 +355,166 @@ def twice_text(key):
     return f"an object holds the key {key!r} two times (json keeps only the last value)"
 
 
+# ---- JSON that a capture cut ---------------------------------------------------
+#
+# A capture copies a log while its writer adds lines, so the last line of the copy
+# can be the start of a record. cut_json() tells such a line from a line that json
+# refuses for another reason (a record with more text after it, NUL bytes or
+# U+200B in a record): only a cut is no problem.
+
+_BLANKS = " \t\n\r"                         # the blanks of JSON
+_WORD_END = _BLANKS + ",]}:"                # the characters after a number or a literal
+_HEX = "0123456789abcdefABCDEF"
+_TAILS = ("", "0", "rue", "ue", "e", "alse", "lse", "se", "ull", "ll", "l")
+_AFTER = {"value": "null", "key": '"":null', "key_or_end": "", "colon": ":null",
+          "comma": "", "value_or_end": "", "done": ""}
+
+
+def cut_json(text):
+    """True when `text` is cut JSON: the start of one JSON object without its end.
+
+    _closing() writes the text that closes the open string, number, literal and
+    containers of `text`. `text` is cut only when that text is not empty (json does
+    not read `text` as it is) and json then reads `text` with it as ONE JSON object.
+    So json itself certifies each cut, and the scan of _closing() can only miss a cut,
+    never accept JSON that is not a cut: a complete record with more text after it
+    ('{...}{', '{...}x', '{...} {'), NUL bytes or U+200B in a record, a comma before
+    a "}", an escape that JSON does not have, a control character in a string. A cut
+    inside an escape (Go writes `\\u0026` in an audit event), a number, a literal or a
+    key is a cut. The time is linear in the length of `text`."""
+    rest = _closing(text)
+    if not rest:                            # None: no cut; "": complete, or not JSON
+        return False
+    try:
+        return isinstance(json.loads(text + rest), dict)
+    except (ValueError, RecursionError):
+        return False
+
+
+def _closing(text):
+    """The text that closes `text` to one JSON value, or None when the scan finds a
+    character that no JSON value can hold in its place. The scan follows the grammar
+    of JSON only as far as cut_json() needs it: json checks the result."""
+    stack, expect, i, n = [], "value", 0, len(text)
+    while i < n:
+        c = text[i]
+        if c in _BLANKS:
+            i += 1
+            continue
+        if expect == "done":
+            return None
+        if expect == "colon":
+            if c != ":":
+                return None
+            expect, i = "value", i + 1
+            continue
+        if expect == "comma":
+            if c == ",":
+                expect, i = ("key" if stack[-1] == "}" else "value"), i + 1
+            elif c == stack[-1]:
+                stack.pop()
+                expect, i = ("comma" if stack else "done"), i + 1
+            else:
+                return None
+            continue
+        if expect in ("key", "key_or_end"):
+            if c == "}" and expect == "key_or_end":
+                stack.pop()
+                expect, i = ("comma" if stack else "done"), i + 1
+                continue
+            if c != '"':
+                return None
+            end, tail = _string(text, i)
+            if end is None:
+                return tail + ":null" + "".join(reversed(stack))
+            expect, i = "colon", end
+            continue
+        # expect is "value" or "value_or_end"
+        if c == "]" and expect == "value_or_end":
+            stack.pop()
+            expect, i = ("comma" if stack else "done"), i + 1
+        elif c in "{[":
+            stack.append("}" if c == "{" else "]")
+            expect, i = ("key_or_end" if c == "{" else "value_or_end"), i + 1
+        elif c == '"':
+            end, tail = _string(text, i)
+            if end is None:
+                return tail + "".join(reversed(stack))
+            expect, i = ("comma" if stack else "done"), end
+        else:                               # a number or a literal
+            j = i
+            while j < n and text[j] not in _WORD_END:
+                j += 1
+            if j == n:                      # at the end of the text: it can be cut
+                tail = next((t for t in _TAILS if _scalar(text[i:] + t)), None)
+                return None if tail is None else tail + "".join(reversed(stack))
+            if not _scalar(text[i:j]):
+                return None
+            expect, i = ("comma" if stack else "done"), j
+    return _AFTER[expect] + "".join(reversed(stack))
+
+
+def _scalar(word):
+    """True when `word` is a JSON number or literal."""
+    if word in ("true", "false", "null"):
+        return True
+    try:
+        value = json.loads(word)
+    except ValueError:
+        return False
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _string(text, i):
+    """(end, None) for a string that starts at text[i] and ends in `text` (end is the
+    index after its quote), or (None, tail) for a string that `text` cuts: `tail`
+    closes it (it ends an escape that the cut opened)."""
+    j, n = i + 1, len(text)
+    while j < n:
+        c = text[j]
+        if c == '"':
+            return j + 1, None
+        if c != "\\":
+            j += 1
+            continue
+        if j + 1 == n:
+            return None, 'n"'
+        if text[j + 1] == "u":
+            digits = text[j + 2:j + 6]
+            if j + 2 + len(digits) == n and len(digits) < 4 and all(d in _HEX for d in digits):
+                return None, "0" * (4 - len(digits)) + '"'
+            j += 6
+        else:
+            j += 2
+    return None, '"'
+
+
+def utf8_cut(text):
+    """`text` without the start of a character of UTF-8 that a cut left at its very
+    end; `text` itself when it holds no byte that is not UTF-8; None when it holds
+    another byte that is not UTF-8.
+
+    `text` is decoded with errors="surrogateescape", so each byte that is not UTF-8
+    is a character U+DC80..U+DCFF. The start of a character is a lead byte (C2..F4)
+    with fewer continuation bytes than it needs, at the very end of the text. Each
+    other byte that is not UTF-8 is no cut: before the end, or at the end in a
+    sequence that UTF-8 does not have (E0 80, ED A0, a lone continuation byte, FF).
+    The decoder of UTF-8 stops at the first such byte: the text is a cut when that
+    error is "unexpected end of data" at the end of the text."""
+    try:
+        text.encode("utf-8")
+        return text
+    except UnicodeEncodeError:
+        pass
+    data = text.encode("utf-8", "surrogateescape")
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError as e:
+        if e.reason == "unexpected end of data" and e.end == len(data):
+            return data[:e.start].decode("utf-8")
+    return None
+
+
 def flatten(obj, prefix="", *, separators=None, sort_keys=False):
     """Nested dict -> {"a.b.c": value}, the dotted field names Sigma rules use.
 

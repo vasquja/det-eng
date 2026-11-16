@@ -1528,14 +1528,24 @@ removes the end of that line, and its line feed is not there. (The static pod jo
 joins the copies of the CRI sensor logs of its two nodes. It keeps only the complete
 lines of each copy, so the cut line of the first copy is not before other lines.) The
 reader skips a line that json refuses only when it is the last line of the log, has no
-line feed at its end, and starts with `{` (`cut_line()`). Each other line, or item of
-a snapshot, that is not a record is a problem:
+line end (a line feed, or a carriage return alone: the reader ends a line at both),
+and its text without blanks is cut JSON (`cut_line()`). Cut JSON is the start of one
+JSON object without its end: `sigma_eval.cut_json()` writes the text that closes the
+open string, number, literal and containers, and `json` must then read one object.
+So a cut inside an escape (`\u0026`, which Go writes for `&` in an audit event), a
+number, a literal or a key is a cut, and a complete record with more text after it
+on its line is not. A cut that splits a character of UTF-8 at the end of the line is
+a cut too (`sigma_eval.utf8_cut()`): the start of a character (a lead byte `C2` to
+`F4` with fewer continuation bytes than it needs) at the very end is dropped before
+the test. Each other line, or item of a snapshot, that is not a record is a problem:
 
 - a line that is not JSON (the message gives the error of `json` and its character
-  in the line): NUL bytes (a `copytruncate` rotation of a log leaves them) or U+200B
-  before a record, or a cut line before other lines. For a line that starts with `{`
-  the message adds that a capture can cut only the last line of a log, and that a
-  cut line has no line feed;
+  in the line, which counts the blanks before the text): NUL bytes (a `copytruncate`
+  rotation of a log leaves them) or U+200B in a record, a record with more text after
+  it on its line, or a cut line before other lines or with a line end. For a line
+  that starts with `{` the message adds that a capture can cut only the last line of
+  a log, and that a cut line has no line feed; for the last line without a line end,
+  that the line is not the start of one JSON object, so a capture did not cut it;
 - JSON that is not an object (`[]`, `"text"`, `1`, `true`, `null`);
 - a JSON object that is not a record of the log;
 - a snapshot whose `items` is not a list;

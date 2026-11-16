@@ -2976,6 +2976,96 @@ class K8sValidator(gatelib.GateCase):
         self.assertNotRegex(result.stdout, r"(?m)^ERROR")
         self.assert_accepts(result, r"^Negative control held")
 
+    # The end of the ERROR line of the last line without a line end that starts with
+    # "{" and that a capture did not cut.
+    NOT_CUT = "; the line is not the start of one JSON object, so a capture did not cut it$"
+
+    def last_line_runs(self, rows):
+        """Runs of the negative-control step, started together, each in a private copy:
+        the records of the control, then the bytes of a row (the last line of the log,
+        and so without a line feed unless the row holds one). {label: (records,
+        result)}."""
+        runs = {}
+        for label, data in rows.items():
+            tree = self.tree()
+            records = write_log(tree, self.LOG, self.CASES, *self.BENIGN)
+            with open(tree.tmp_path(self.LOG), "ab") as fh:
+                fh.write(data)
+            runs[label] = (records, tree.start_step(self.negative_control_step()))
+        return {label: (records, pending.result()) for label, (records, pending)
+                in runs.items()}
+
+    def test_rejects_a_last_line_that_a_capture_did_not_cut(self):
+        """The last line of the log, without a line end, is skipped only when it is cut
+        JSON: the start of one JSON object without its end (sigma_eval.cut_json()).
+        Six runs, started together: an emulation record of the rule followed by the
+        start of a record on the same line; that record with U+200B after its "{";
+        a cut record that ends with a carriage return alone (a line end: the reader
+        splits the lines at it); a cut record with the byte 0xe9 before its end; a cut
+        record with the byte 0xff at its end, which starts no character of UTF-8; and
+        a cut record with the bytes E0 80 at its end, which UTF-8 does not have. Each
+        is an ERROR line that names the last line, the negative control does not hold,
+        and no rule is judged. (Before, the reader skipped each last line without a
+        line feed that started with "{" and that json refused: in the first two runs
+        the negative control held on a log that holds a record on which the rule
+        fires. The last three were refused, but by a test of bytes before the test of
+        a cut line.)"""
+        (positive,) = case_events(self.good(), self.CASES, "exec-websocket-get-procA")
+        record = json.dumps(positive)
+        cut = self.CUT.encode()
+        runs = self.last_line_runs({
+            "a record and the start of a record": (record + '{"kind": "Ev').encode(),
+            "U+200B after the brace of a record": ("{\u200b" + record[1:]).encode(),
+            "a carriage return alone at the end": cut + b"\r",
+            "a byte that is not UTF-8 before the end": cut.replace(b"Event", b"Ev\xe9ent"),
+            "a byte that is not UTF-8 at the end": cut + b"\xff",
+            "a sequence that UTF-8 does not have at the end": cut + b"\xe0\x80"})
+        wanted = {
+            "a record and the start of a record":
+                rf"not JSON \(Extra data, at character {len(record) + 1}\)" + self.NOT_CUT,
+            "U+200B after the brace of a record":
+                r"not JSON \(Expecting property name enclosed in double quotes, at character "
+                r"2\)" + self.NOT_CUT,
+            "a carriage return alone at the end": self.not_json(self.CUT),
+            "a byte that is not UTF-8 before the end":
+                r"bytes that are not UTF-8 \(the byte 0xe9 at character 13 of the line\)$",
+            "a byte that is not UTF-8 at the end":
+                rf"bytes that are not UTF-8 \(the byte 0xff at character {len(cut) + 1} of "
+                r"the line\)$",
+            "a sequence that UTF-8 does not have at the end":
+                rf"bytes that are not UTF-8 \(the byte 0xe0 at character {len(cut) + 1} of "
+                r"the line\)$"}
+        for label, (records, result) in runs.items():
+            with self.subTest(label):
+                self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+                self.assertNotIn("Negative control held", result.stdout)
+                self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+                self.assert_saw(result, LINES_NOT_RECORDS.format(1))
+                self.assert_rejects(result, r"^ERROR: the audit log \S+/pre-emulation-audit\.log, "
+                                            rf"line {records + 1}: " + wanted[label],
+                                    exit_code=1)
+
+    def test_control_last_lines_that_a_capture_cut(self):
+        """CONTROL of the reader: three more forms of a last line that a capture cut,
+        each skipped (three runs, started together). The cut is inside the escape
+        \\u0026 that Go writes for "&" in an audit event; the line starts with a blank
+        before its "{" (json reads a record with such a blank too); the cut splits the
+        two bytes of the character U+00E9 in a string. The Loaded line counts the
+        records, no ERROR line is printed, and the negative control holds. (Before,
+        the third run was an ERROR line of bytes that are not UTF-8: a test of bytes
+        before the test of a cut line.)"""
+        escaped = json.dumps(dict(json.loads(self.CUT + 't"}'), userAgent="a&b")).replace(
+            "&", "\\u0026")
+        runs = self.last_line_runs({
+            "a cut inside an escape": escaped[:escaped.index("\\u0026") + 4].encode(),
+            "a blank before the brace": b" " + self.CUT.encode(),
+            "a cut inside a character of UTF-8": self.CUT.encode() + "\u00e9".encode()[:1]})
+        for label, (records, result) in runs.items():
+            with self.subTest(label):
+                self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+                self.assertNotRegex(result.stdout, r"(?m)^ERROR")
+                self.assert_accepts(result, r"^Negative control held")
+
     def test_rejects_json_that_the_validator_cannot_read(self):
         """Two lines of JSON that is too deep, and one with a number that is too long.
         Each is a named problem, not a traceback.
@@ -4781,6 +4871,135 @@ class LogReaderText(unittest.TestCase):
                                                  f"not the text of {first[0]}")
         self.assertEqual(tables["detections/validate_apiserver_detections.py"],
                          tables["detections/validate_staticpod_detections.py"])
+
+
+# sigma_eval.cut_json() and sigma_eval.utf8_cut() on fixed texts and on the prefixes
+# of fixed records and of records of a fixed seed. The snippet prints the answers as
+# JSON (class CutJson).
+CUT_JSON_PROBES = r"""
+import json, random, sys
+sys.path.insert(0, "detections")
+import sigma_eval
+
+RECORDS = [
+    {"kind": "Event", "apiVersion": "audit.k8s.io/v1", "requestURI": "/api/v1/x?a=1&b=<2>",
+     "user": {"username": "system:admin", "groups": ["a", "b"]}, "n": -12.5, "e": 1e-7,
+     "big": 12345678901234567890, "t": True, "f": False, "z": None,
+     "s": "caf\u00e9 \U0001F600 \"q\" \\ / \n\t", "empty": {}, "list": [],
+     "nested": [[1, [2, {"k": [None]}]], {"a": {"b": {"c": "d"}}}]},
+    {"items": [{"id": "abc", "metadata": {"name": "p", "uid": "u"}, "annotations": {}}]},
+]
+texts = []
+for record in RECORDS:
+    texts += [json.dumps(record), json.dumps(record, ensure_ascii=False),
+              json.dumps(record, separators=(",", ":")),
+              # Go writes &, < and > in an audit event as &, < and >.
+              json.dumps(record).replace("&", "\\u0026").replace("<", "\\u003c")]
+# Escapes of a surrogate pair and of each kind, numbers with an exponent, the literals.
+texts.append('{"a": -1.5E+10, "b": 2e-3, "c": -0, "d": 0.5, "s": "\\ud83d\\ude00 \\u00e9 '
+             '\\n \\t \\" \\\\ \\/ \\b \\f \\r", "l": [true, false, null, {}, []]}')
+rnd = random.Random(20261116)
+
+def value(depth=0):
+    kind = rnd.randrange(9 if depth < 4 else 6)
+    if kind == 0:
+        return rnd.choice([0, -1, 12, -3.5, 1e21, 2.5e-7, 10 ** 20, -0.0])
+    if kind == 1:
+        return rnd.choice([True, False, None])
+    if kind < 6:
+        return "".join(rnd.choice('ab"\\/\n\t\u00e9\U0001F600&<> x0')
+                       for _ in range(rnd.randrange(6)))
+    if kind < 8:
+        return {"".join(rnd.choice('k"\\\u00e9') for _ in range(rnd.randrange(4))):
+                value(depth + 1) for _ in range(rnd.randrange(4))}
+    return [value(depth + 1) for _ in range(rnd.randrange(4))]
+
+for _ in range(30):
+    record = {"kind": "Event", "x": value(), "y": value(), "z": value()}
+    texts += [json.dumps(record), json.dumps(record, ensure_ascii=False),
+              json.dumps(record, separators=(",", ":"))]
+missed, prefixes = [], 0
+for text in texts:
+    for end in range(1, len(text)):
+        prefixes += 1
+        if not sigma_eval.cut_json(text[:end]):
+            missed.append(text[:end])
+JUNK = ["x", "{", " {", "\x00", "\u200b", "t", '"', "1", "}", ",", "]"]
+REFUSED = ['{"a": 1 "b', '{\u200b"kind"', '{"a":1,}', '{"a": "x\\q', '{"a": "x\x01',
+           '{"a": "\\uZZZZ", "b', '{"a": 01', '{"a": tru e', '[{"a": 1', '"text',
+           '', '   ']
+UTF8 = {"\u00e9": b"a\xc3", "\u20ac": b"a\xe2\x82", "U+1F600": b"a\xf0\x9f\x98",
+        "ED 9F": b"a\xed\x9f", "FF": b"a\xff", "E0 80": b"a\xe0\x80", "ED A0": b"a\xed\xa0",
+        "F4 90": b"a\xf4\x90", "80": b"a\x80", "C1": b"a\xc1", "F5": b"a\xf5",
+        "C3 before the end": b"a\xc3b\xc3", "UTF-8": "a\u00e9".encode()}
+print(json.dumps({
+    "texts": len(texts), "prefixes": prefixes, "missed": missed[:5],
+    "complete": [text for text in texts if sigma_eval.cut_json(text)],
+    "junk": [text[-12:] + junk for text in texts for junk in JUNK
+             if sigma_eval.cut_json(text + junk)],
+    "refused": {text: sigma_eval.cut_json(text) for text in REFUSED},
+    "utf8": {name: sigma_eval.utf8_cut(data.decode("utf-8", "surrogateescape"))
+             for name, data in UTF8.items()}}))
+"""
+
+
+class CutJson(gatelib.GateCase):
+    """sigma_eval.cut_json(): the test of the readers of the Kubernetes validators and
+    of score_benign.py --extra-slice for the last line of a log, which a capture can
+    cut (roadmap item R2d). A cut keeps the start of one JSON object; the test
+    closes the open string, number, literal and containers, and json must then read
+    one object. sigma_eval.utf8_cut() gives the part of a cut that splits a character
+    of UTF-8. The tests run a snippet in the copy (CUT_JSON_PROBES)."""
+
+    PARTS = gatelib.DETECTIONS
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        result = cls.good().run_python(CUT_JSON_PROBES)
+        if result.returncode:
+            raise AssertionError(result.describe())
+        cls.probes = json.loads(result.stdout)
+
+    def test_each_proper_prefix_of_a_record_is_cut(self):
+        """Each proper prefix of the fixed records and of 30 records of a fixed seed,
+        in four forms of their text (also with the escapes \\u0026 and \\u003c of Go,
+        a surrogate pair, text that is not ASCII, numbers with an exponent, the
+        literals, nested objects and lists), is cut JSON: a capture can cut there."""
+        self.assertGreater(self.probes["prefixes"], 5000)
+        self.assertEqual(self.probes["missed"], [])
+
+    def test_complete_json_is_not_cut(self):
+        """A complete record is not cut: json reads it."""
+        self.assertGreater(self.probes["texts"], 90)
+        self.assertEqual(self.probes["complete"], [])
+
+    def test_complete_json_with_more_text_is_not_cut(self):
+        """A complete record followed by more text on its line is not cut, whatever
+        the text: a cut keeps a start of one record (`{...}{`, `{...}x`, `{...}` and a
+        NUL or U+200B, ...). A reader that skipped such a line hid the record."""
+        self.assertEqual(self.probes["junk"], [])
+
+    def test_text_that_no_record_starts_with_is_not_cut(self):
+        """Text that no JSON object starts with is not cut: a value without its comma,
+        U+200B after the brace, a comma before the brace, an escape that JSON does not
+        have (also \\u with letters that are not hex), a control character in a
+        string, a number with a leading zero, a literal with a blank in it, the start
+        of a list or of a string, and no text at all. json, not the scan, refuses the
+        escapes and the control character: the scan alone closes them."""
+        self.assertEqual(self.probes["refused"],
+                         {text: False for text in self.probes["refused"]})
+
+    def test_utf8_cut_drops_only_the_start_of_a_character_at_the_end(self):
+        """sigma_eval.utf8_cut(): the start of a character of 2, 3 and 4 bytes at the
+        end of a text is dropped (also ED 9F, the start of a character before the
+        surrogates). Each other byte that is not UTF-8 gives None: FF, E0 80, ED A0
+        (a surrogate), F4 90 (above U+10FFFF), a lone continuation byte, C1, F5, and
+        the start of a character before the end. Text of UTF-8 is kept."""
+        self.assertEqual(self.probes["utf8"], {
+            "\u00e9": "a", "\u20ac": "a", "U+1F600": "a", "ED 9F": "a", "FF": None,
+            "E0 80": None, "ED A0": None, "F4 90": None, "80": None, "C1": None, "F5": None,
+            "C3 before the end": None, "UTF-8": "a\u00e9"})
 
 
 class FileEventConverter(gatelib.GateCase):

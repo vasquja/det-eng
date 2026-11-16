@@ -516,7 +516,13 @@ class ScoreBenign(gatelib.GateCase):
         whose line holds U+2028, U+2029 and U+0085 in a string (before R2d
         str.splitlines() cut the line, and the event was lost without a word), and a
         capture whose last line is cut and has no line feed (the two events before it
-        are scored)."""
+        are scored). The last line without a line end is skipped only when it is cut
+        JSON, with the verdicts of the rows of K8sValidator for the same lines: an
+        event and the start of an event, U+200B after the brace, a carriage return
+        alone at the end, and a byte that is not UTF-8 before the end or at the end are
+        ERROR lines (before, the first two lost an event without a word); a cut inside
+        an escape, a blank before the brace and a cut inside a character of UTF-8 are
+        skipped (before, the last was an ERROR line)."""
         good = self.good()
         events = [event for case in
                   good.read_jsonl("detections/sigma/T1609/k8s_pod_exec_attach.cases.jsonl")
@@ -535,6 +541,9 @@ class ScoreBenign(gatelib.GateCase):
         separators = dict(events[1], userAgent="kubectl/v1.31 \u2028 \u2029 \u0085 x")
         cut = b'{"kind": "Event", "apiVersion": "audit.k8s.io/v1", "verb": "ge'
         twice = json.dumps(events[1])[:-1].encode() + b', "verb": "create"}'
+        event = lines[1].rstrip(b"\n")
+        escaped = json.dumps(dict(events[1], userAgent="a&b")).replace("&", "\\u0026").encode()
+        not_cut = "; the line is not the start of one JSON object, so a capture did not cut it"
         try:
             json.loads(cut)
         except json.JSONDecodeError as e:
@@ -580,7 +589,28 @@ class ScoreBenign(gatelib.GateCase):
             # the event that the gate scored was not the event of the line.
             "an event that holds a key two times": lines[0] + twice + b"\n",
             "an array with an event that holds a key two times": b"[" + lines[0].rstrip()
-            + b", " + twice + b"]\n"})
+            + b", " + twice + b"]\n",
+            # The last line without a line end is skipped only when it is cut JSON (the
+            # rows of K8sValidator, with the same verdicts): an event and the start of an
+            # event, U+200B after the brace, a carriage return alone at the end (a line
+            # end), a byte that is not UTF-8 before the end or that starts no character
+            # at the end are errors; a cut inside an escape of Go, a blank before the
+            # brace and a cut inside a character of UTF-8 are skipped.
+            "an event and the start of an event on the last line": lines[0] + lines[1]
+            + event + b'{"kind": "Ev',
+            "U+200B after the brace on the last line": lines[0] + lines[1] + b"{\xe2\x80\x8b"
+            + event[1:],
+            "a carriage return alone at the end of the last line": lines[0] + lines[1] + cut
+            + b"\r",
+            "a byte that is not UTF-8 before the end of the last line": lines[0] + lines[1]
+            + cut.replace(b"Event", b"Ev\xe9ent"),
+            "a byte that is not UTF-8 at the end of the last line": lines[0] + lines[1] + cut
+            + b"\xff",
+            "a cut inside an escape on the last line": lines[0] + lines[1]
+            + escaped[:escaped.index(b"\\u0026") + 4],
+            "a blank before the brace of a cut last line": lines[0] + lines[1] + b" " + cut,
+            "a cut inside a character of UTF-8 on the last line": lines[0] + lines[1] + cut
+            + b"\xc3"})
         cannot_read = {
             "an object too deep to flatten": r", line 2: JSON that the gate cannot read "
                                              r"\(RecursionError: [^)]*\)",
@@ -622,11 +652,27 @@ class ScoreBenign(gatelib.GateCase):
                                                    "times (json keeps only the last value)",
             "an array with an event that holds a key two times":
                 ", element 2 of the array: an object holds the key 'verb' two times (json keeps "
-                "only the last value)"}
+                "only the last value)",
+            "an event and the start of an event on the last line":
+                f", line 3: not JSON (Extra data, at character {len(event) + 1}){not_cut}",
+            "U+200B after the brace on the last line":
+                ", line 3: not JSON (Expecting property name enclosed in double quotes, at "
+                f"character 2){not_cut}",
+            "a carriage return alone at the end of the last line":
+                f", line 3: {cut_error}; a capture can cut only the last line of a log, and a "
+                "cut line has no line feed",
+            "a byte that is not UTF-8 before the end of the last line":
+                ", line 3: bytes that are not UTF-8 (the byte 0xe9 at character 13 of the line)",
+            "a byte that is not UTF-8 at the end of the last line":
+                f", line 3: bytes that are not UTF-8 (the byte 0xff at character {len(cut) + 1} "
+                "of the line)"}
         for label, (path, result) in runs.items():
             with self.subTest(label):
                 self.assertNotIn("Traceback", result.output)
-                if label in ("two events", "line separators in a string", "a cut last line"):
+                if label in ("two events", "line separators in a string", "a cut last line",
+                             "a cut inside an escape on the last line",
+                             "a blank before the brace of a cut last line",
+                             "a cut inside a character of UTF-8 on the last line"):
                     self.assert_accepts(result, r"^Live capture kind-live \(kubernetes/audit, 2 "
                                                 r"event\(s\)\) - shadow only")
                     continue
