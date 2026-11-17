@@ -727,9 +727,9 @@ class ScoreBenign(gatelib.GateCase):
             + deep_line + b"\xc3"})
         cannot_read = {
             "an object too deep to flatten": r", line 2: JSON that the gate cannot read "
-                                             r"\(RecursionError: [^)]*\)",
-            "JSON too deep": r", line 2: JSON that the gate cannot read \(RecursionError: "
-                             r"[^)]*\)",
+                                             + gatelib.RECURSION_ERROR,
+            "JSON too deep": r", line 2: JSON that the gate cannot read "
+                             + gatelib.RECURSION_ERROR,
             "a number with too many digits": r", line 2: JSON that the gate cannot read "
                                              r"\(ValueError: Exceeds the limit \(4300 digits\)"
                                              r"[^)]*\)",

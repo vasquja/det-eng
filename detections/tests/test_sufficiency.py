@@ -601,12 +601,12 @@ class RuleCases(gatelib.GateCase):
             "JSON too deep": ('{"name": "deep", "kind": "benign", "why": "planted", "events": '
                               '[{"comm": "x", "x": ' + '{"a": ' * 100000 + "1" + "}" * 100000
                               + "}]}\n",
-                              r"(?:case 'deep': )?JSON that the gate cannot read \(RecursionError: "
-                              r"[^)]*\)"),
+                              r"(?:case 'deep': )?JSON that the gate cannot read "
+                              + gatelib.RECURSION_ERROR),
             "an object too deep to flatten": (
                 json.dumps(dict(case, events=[dict(case["events"][0], x=nested)])) + "\n",
-                r"case 'packet-dgram-socket': JSON that the gate cannot read \(RecursionError: "
-                r"[^)]*\)"),
+                r"case 'packet-dgram-socket': JSON that the gate cannot read "
+                + gatelib.RECURSION_ERROR),
             "a number with too many digits": (
                 '{"name": "digits", "n": 1' + "0" * 5000 + "}\n",
                 r"JSON that the gate cannot read \(ValueError: Exceeds the limit \(4300 digits\) "

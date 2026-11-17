@@ -1161,19 +1161,19 @@ class CloudValidator(gatelib.GateCase):
             # and the one record is a list. The loader names the fixture either way.
             # json stops in line 1, so the loader names the line.
             ("JSON too deep to read", "benign", b"[" * 100000 + b"]" * 100000,
-             r"(?:, line 1: JSON that the validator cannot read \(RecursionError: [^)]*\)|, "
-             r"element 1 of the array: " + record.format("a list") + ")"),
+             r"(?:, line 1: JSON that the validator cannot read " + gatelib.RECURSION_ERROR
+             + r"|, element 1 of the array: " + record.format("a list") + ")"),
             # JSON lines whose first line is too deep: json stops in the first line of
             # the document, and the loader names it (with a large stack, Python 3.14
             # reads the line, a list).
             ("JSON lines whose first line is too deep", "benign",
              b"[" * 100000 + b"]" * 100000 + b"\n"
              + "".join(json.dumps(row) + "\n" for row in good).encode(),
-             r", line 1: (?:JSON that the validator cannot read \(RecursionError: [^)]*\)|"
-             + record.format("a list") + ")"),
+             r", line 1: (?:JSON that the validator cannot read " + gatelib.RECURSION_ERROR
+             + "|" + record.format("a list") + ")"),
             ("a record too deep to flatten", "benign", json.dumps(good + [nested]).encode(),
              rf", element {n + 1} of the array: JSON that the validator cannot read "
-             r"\(RecursionError: [^)]*\)"),
+             + gatelib.RECURSION_ERROR),
             ("a JSON line with a number with too many digits", "benign",
              "".join(json.dumps(row) + "\n" for row in good).encode() + b'{"n": 1'
              + b"0" * 5000 + b"}\n",
