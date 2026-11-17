@@ -43,11 +43,14 @@ Case fields:
   why      one line: what the case proves.
   events   the event set, as the log source writes it (nested JSON is flattened
            the way the validators flatten it; flat auditd events stay flat). Each
-           event is a JSON object. The events of a case share one SQLite table, so
-           no two of their keys may differ only in letter case (`comm`, `Comm`), no
-           key may be `_rowid` in any letter case, and no two values of one event
-           may get one flat key (`{"a": {"b": 1}, "a.b": 2}`). Such a case is an
-           ERROR line that names the rule, the line and the case.
+           event is a JSON object. The events of a case share one SQLite table
+           (sigma_eval.EventTable), so no event may hold two keys that differ only
+           in the letter case of their ASCII letters (`comm`, `Comm`; in two events
+           they share one column), a key `_rowid` or `rowid` in any letter case, or
+           a value that SQLite does not hold as it is (an integer outside 64 bits,
+           NaN, a lone surrogate); and no two keys of one event may give one
+           field (`{"a": {"b": 1}, "a.b": 2}`). Such a case is an ERROR line that
+           names the rule, the line and the case.
   source   optional provenance note ("synthetic: ..." or "recorded: ...").
 
 Usage:
@@ -82,27 +85,54 @@ def load_cases(path):
     A line that is not a well-formed case is an error that names the line (and the
     case, when the line has a name that is a string), and it is not judged: it is not
     JSON, or not a JSON object, it lacks a field, its name, kind, events or breaks has
-    the wrong type, or its events cannot be put in one event table (event_problem())."""
+    the wrong type, or its events cannot be put in one event table (event_problem()).
+    A line with bytes that are not UTF-8 is such an error too: it names the first such
+    byte and its character in the line; and so is a line with JSON that the gate
+    cannot read (too deep for json or for flatten(), a number with too many digits),
+    a line whose field outside the events holds a lone surrogate (no line of a
+    gate can print the name, the `why` or the atom that holds it), and a line with
+    an object that holds one key two times (json keeps only the last value, so an
+    event of the case would not be the event that the line shows). Such an object in
+    the events names the case; the case object itself names only the line (its name
+    can be one of the two values)."""
     cases, errors, names = [], [], set()
-    with open(path, encoding="utf-8") as fh:
-        for n, line in enumerate(fh, 1):
-            line = line.strip()
+    with open(path, encoding="utf-8", errors="surrogateescape") as fh:
+        for n, text in enumerate(fh, 1):
+            line = text.strip()
             if not line:
                 continue
+            bad = next((i for i, ch in enumerate(text) if 0xDC80 <= ord(ch) <= 0xDCFF), None)
+            if bad is not None:
+                errors.append(f"line {n}: bytes that are not UTF-8 (the byte "
+                              f"0x{ord(text[bad]) - 0xDC00:02x} at character {bad + 1} of the "
+                              "line)")
+                continue
             try:
-                case = json.loads(line)
+                case = json.loads(line, object_pairs_hook=sigma_eval.pairs)
             except json.JSONDecodeError as e:
                 errors.append(f"line {n}: not JSON ({e})")
+                continue
+            except (ValueError, RecursionError) as e:  # too deep, a number too long
+                errors.append(f"line {n}: {_cannot_read(e)}")
                 continue
             if not isinstance(case, dict):
                 errors.append(f"line {n}: not a JSON object ({_json_type(case)}): each line "
                               "of a sidecar is one case, an object")
+                continue
+            problem = _surrogate_problem(case)
+            if problem:
+                errors.append(f"line {n}: {problem}")
                 continue
             if "name" in case and not isinstance(case["name"], str):
                 errors.append(f"line {n}: the name is {_json_type(case['name'])}, not a string")
                 continue
             # From here, an error of a line that has a name names the case.
             of = f"case {case['name']!r}: " if "name" in case else ""
+            key = sigma_eval.key_twice(case)
+            if key is not None:
+                twice = sigma_eval.twice_text(key)
+                errors.append(f"line {n}: {'' if type(case) is sigma_eval.Twice else of}{twice}")
+                continue
             missing = [k for k in REQUIRED if k not in case]
             if missing:
                 errors.append(f"line {n}: {of}missing {', '.join(missing)}")
@@ -125,7 +155,10 @@ def load_cases(path):
                 errors.append(f"line {n}: {of}`breaks` must be an atom name or a list of atom "
                               "names (strings)")
                 continue
-            problem = event_problem(case["events"])
+            try:
+                problem = event_problem(case["events"])
+            except RecursionError as e:  # an object that json reads and flatten() cannot
+                problem = _cannot_read(e)
             if problem:
                 errors.append(f"line {n}: {of}{problem}")
                 continue
@@ -133,6 +166,38 @@ def load_cases(path):
             case["_line"] = n
             cases.append(case)
     return cases, errors
+
+
+def _surrogate_problem(case):
+    """The text of the first lone surrogate (U+D800 to U+DFFF) in a field of a case
+    outside its events (in a key or a string, at any depth), or None. A JSON escape such
+    as \\ud800 gives one. It is not text of UTF-8, so no line of a gate can print the
+    name, the `why` or the atom of `breaks` that holds it. event_problem() tests the
+    events."""
+    for field, value in case.items():
+        if field == "events":
+            continue
+        stack = [field, value]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, dict):
+                stack += [*node.keys(), *node.values()]
+            elif isinstance(node, list):
+                stack += node
+            elif isinstance(node, str):
+                ch = sigma_eval._surrogate(node)
+                if ch is not None:
+                    return (f"the field {field!r} holds the lone surrogate U+{ord(ch):04X}, "
+                            "which is not text of UTF-8, so no line of a gate can print it")
+    return None
+
+
+def _cannot_read(error):
+    """The text of a problem of JSON that json.loads() or flatten() cannot read (the
+    words of the reader of the Kubernetes validators)."""
+    text = str(error).split("\n")[0]
+    return (f"JSON that the gate cannot read ({type(error).__name__}: "
+            + (text if len(text) <= 100 else text[:100] + "...") + ")")
 
 
 def _json_type(value):
@@ -144,55 +209,27 @@ def _json_type(value):
     return {dict: "an object", list: "an array", str: "a string"}.get(type(value), "a number")
 
 
-def _flat_keys(event):
-    """[(flat key, path)] for each value of an event: the key that sigma_eval.flatten()
-    gives the value, and its path of keys in the event."""
-    out = []
-
-    def walk(obj, path):
-        for key, val in obj.items():
-            if isinstance(val, dict):       # flatten() goes into a nested object
-                walk(val, path + [key])
-                continue
-            one = 0
-            for k in reversed(path + [key]):
-                one = {k: one}
-            out.append((next(iter(sigma_eval.flatten(one))), path + [key]))
-
-    walk(event, [])
-    return out
-
-
 def event_problem(events):
     """Why the events of one case cannot be judged, or None.
 
     run_case() flattens each event (sigma_eval.flatten) and puts all the events of
     the case in one SQLite table (sigma_eval.EventTable). So each event must be a
-    JSON object; two values of an event must not get one flat key (flatten keeps the
-    last); no key may be the row id column of the table (`_rowid`, in any letter
-    case); and no two keys of the case may differ only in letter case, because the
-    column names of SQLite have no letter case."""
-    seen = {}
+    JSON object, and the table must hold each flat event: sigma_eval.event_problem()
+    is the test of the table itself (no two keys of the event that give one field,
+    as {"a.b": 1, "a": {"b": 2}} does: flatten keeps only one value; no key that
+    hides a row id that the queries read or that no column name can hold, no two keys
+    of one event that differ only in the letter case of their ASCII letters, no value
+    that SQLite does not hold as it is).
+    Keys of that kind in two events of a case share one column, as a rule field reads
+    them. Raises RecursionError for an event too deep to flatten."""
     for i, event in enumerate(events, 1):
         where = f"event {i} of {len(events)}"
         if not isinstance(event, dict):
             return (f"{where} is not a JSON object ({_json_type(event)}): an event is one "
                     "record of the log")
-        paths = {}
-        for flat, path in _flat_keys(event):
-            if flat in paths:
-                return (f"{where}: the keys {paths[flat]} and {path} both flatten to "
-                        f"{flat!r}, and the flat event keeps only the last value")
-            paths[flat] = path
-            if flat.lower() == sigma_eval._ROWID:
-                return (f"{where}: the key {flat!r} is the row id column of the event table "
-                        "of sigma_eval.py (in any letter case), so an event cannot hold it")
-            seen.setdefault(flat.lower(), set()).add(flat)
-    clashes = sorted(" / ".join(sorted(keys)) for keys in seen.values() if len(keys) > 1)
-    if clashes:
-        return ("event keys that differ only by case: " + "; ".join(clashes) + " (the events "
-                "of a case share one SQLite table, whose column names have no letter case, so "
-                "the case cannot be judged)")
+        problem = sigma_eval.event_problem(sigma_eval.flatten(event))
+        if problem:
+            return f"{where}: {problem[1]} (one event table cannot hold the event)"
     return None
 
 

@@ -239,7 +239,15 @@ def multi_truth(rule, raw_events):
             ids[name.lower()] = list(range(len(rows), len(rows) + len(values)))
             rows += [dict(scalars, **{name: v}) for v in values]
         element.append(ids)
-    table = sigma_eval.EventTable(rows)
+    try:
+        table = sigma_eval.EventTable(rows)
+    except sigma_eval.EventError as e:
+        # A row of this table is a record or one element of a list of a record: name
+        # the record.
+        record = max(i for i, first in enumerate(base) if first <= e.index)
+        raise sigma_eval.EventError(record, len(raw_events), e.keys, (
+            e.problem + (" (a value of an element of a list, as the multi-valued model "
+                         "holds it)" if e.index != base[record] else ""))) from None
     out = [dict() for _ in raw_events]
     list_fields = {name for ids in element for name in ids}
     for atom in rule.items:
@@ -576,25 +584,44 @@ class Problem:
 
 
 def cloud_fixtures():
-    """{abs rule path: [(source, name, kind, raw records)]} from the cloud MANIFEST."""
+    """{abs rule path: [(source, name, kind, raw records, None)]} from the cloud MANIFEST.
+
+    A fixture is read as the cloud validator reads it (load_fixture()), and its raw
+    records are given to the variants. For a fixture that the loader cannot read (its
+    FixtureError), the entry holds the error in place of the records, and check_rule()
+    fails the rule with a line that names the fixture."""
     import validate_cloud_detections as cloud
     out = {}
     for _trr, folder, fname, attack, benign, *_ in cloud.MANIFEST:
         path = os.path.abspath(os.path.join(cloud.SIGMA, folder, fname))
         for kind, rel in (("attack", attack), ("benign", benign)):
-            records = cloud.load_records(os.path.join(cloud.FIX, rel))
+            fixture = os.path.join(cloud.FIX, rel)
+            try:
+                cloud.load_fixture(fixture)
+                records = cloud.load_records(fixture)
+            except cloud.FixtureError as e:
+                records = e
             out.setdefault(path, []).append(("fixture", rel, kind, records, None))
     return out
 
 
 def event_sets(rule_path, fixtures):
-    """[(source, name, kind, raw events, case or None)]: sidecar cases, then fixtures."""
+    """([(source, name, kind, raw events, case or None)], errors): sidecar cases, then
+    fixtures. An error is the text of a problem row: a sidecar error, or a fixture that
+    the loader cannot read."""
     sets, errors = [], []
     path = rule_cases.cases_path(rule_path)
     if os.path.exists(path):
         cases, errors = rule_cases.load_cases(path)
+        errors = [f"sidecar error: {e}" for e in errors]
         sets += [("case", c["name"], c["kind"], c["events"], c) for c in cases]
-    return sets + fixtures.get(os.path.abspath(rule_path), []), errors
+    for entry in fixtures.get(os.path.abspath(rule_path), []):
+        if isinstance(entry[3], Exception):
+            errors.append(f"the loader of the cloud validator cannot read the {entry[2]} "
+                          f"fixture: {entry[3]}")
+        else:
+            sets.append(entry)
+    return sets, errors
 
 
 def platform_of(rule):
@@ -610,8 +637,8 @@ def check_rule(rule_path, fixtures, ctx, rule=None, sets=None):
     errors = []
     if sets is None:
         sets, errors = event_sets(rule_path, fixtures)
-    problems = [Problem(rel, f"sidecar error: {e}") for e in errors]
-    if not sets:
+    problems = [Problem(rel, e) for e in errors]
+    if not sets and not errors:
         problems.append(Problem(rel, "no sidecar case and no cloud fixture: nothing shows "
                                      "what the rule does under a variant"))
     differences, weakened = [], []

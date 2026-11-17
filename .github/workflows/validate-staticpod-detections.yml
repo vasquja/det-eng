@@ -459,10 +459,21 @@ jobs:
             echo "::notice title=collect::no trr9003-ghost mirror-create (code 404), or no trr9003-url mirror-create (code 201), in the audit log after 30 s; collecting the log as it is (the validator names what is missing)"
           fi
           echo "Collected $(wc -l < /tmp/kube-apiserver-audit.log) audit lines."
-          # Both nodes' sensor logs, concatenated (the validator dedups by sandbox id).
+          # Both nodes' sensor logs, joined (the validator dedups by sandbox id). The
+          # sensor of a node writes while `cat` copies its log, so a copy can end with
+          # a snapshot without its end and its line feed. The validator skips such a
+          # line only as the last line of its log; in the joined log the cut line of
+          # the first node is before other lines, and the run fails on it. So the
+          # joined log gets only the complete lines (each ends with a line feed) of
+          # each copy.
           : > /tmp/cri-pods.jsonl
           for NODE in "${CLUSTER_NAME}-control-plane" "${CLUSTER_NAME}-worker"; do
-            docker exec "${NODE}" cat /var/log/cri-pods.jsonl >> /tmp/cri-pods.jsonl || true
+            docker exec "${NODE}" cat /var/log/cri-pods.jsonl > /tmp/cri-node.jsonl || true
+            if [ -s /tmp/cri-node.jsonl ] && [ "$(tail -c 1 /tmp/cri-node.jsonl | wc -l)" -eq 0 ]; then
+              echo "::notice title=collect::the copy of the CRI sensor log of ${NODE} ends with a line without a line feed (a snapshot that the sensor was writing); the joined log does not hold that line"
+              sed -i '$d' /tmp/cri-node.jsonl
+            fi
+            cat /tmp/cri-node.jsonl >> /tmp/cri-pods.jsonl
           done
           echo "Collected $(wc -l < /tmp/cri-pods.jsonl) CRI sensor snapshots (both nodes)."
           # Second line of defence for the file sensor. Its step added the rule and saw

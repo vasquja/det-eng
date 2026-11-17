@@ -214,8 +214,34 @@ def budget_for(key, default, budgets):
     return b
 
 
+class SliceError(Exception):
+    """A slice whose events one event table cannot hold (sigma_eval.event_problem():
+    two keys of one event that give one field, two keys that differ only in the letter
+    case of their ASCII letters, a key that hides a row id that the queries read, a
+    value that SQLite does not hold as it is). The text names the slice, the event and
+    the keys."""
+
+
+def check_slices(slices):
+    """Raises SliceError for the first event of the slices that one event table cannot
+    hold (sigma_eval.event_problem(), the test of the table itself), also in a slice
+    that no rule reads. Keys of two events that differ only in letter case share one
+    column."""
+    for s in slices:
+        for i, event in enumerate(s.events):
+            problem = sigma_eval.event_problem(event)
+            if problem:
+                raise SliceError(f"the slice {s.id} v{s.version} "
+                                 f"({os.path.relpath(s.path, REPO)}), event {i + 1} of "
+                                 f"{len(s.events)}: {problem[1]}")
+
+
 def score(rules, slices):
-    """{rule key: score dict} over the given slices, plus a few example hits."""
+    """{rule key: score dict} over the given slices, plus a few example hits.
+
+    Raises SliceError for a slice that one event table cannot hold (check_slices()),
+    also when no rule reads it."""
+    check_slices(slices)
     scores, examples = {}, {}
     for s in slices:
         readers = [r for r in rules if reads(s.logsource, r["logsource"])]
@@ -374,34 +400,97 @@ def extra_logsource(text, rules):
 
 
 class CaptureError(Exception):
-    """A live capture (--extra-slice) whose events are not all JSON objects. The text
-    names the capture, and the line or the element of the array."""
+    """A live capture (--extra-slice) that the loader cannot read, or whose events
+    are not all events that one event table can hold. The text names the capture,
+    and the line or the element of the array when there is one."""
 
 
 def load_extra(path, logsource, label):
     """A live capture as a slice with this logsource: JSONL raw events (or one JSON array).
 
-    A line that is not JSON (a line that was cut at the end of a capture) is skipped.
-    Each other line, or element of the array, must be a JSON object: raises
-    CaptureError for one that is JSON and not an object (`[]` in a line of a log).
+    A line ends at a line break of the file: a line feed, or a carriage return alone
+    (U+2028 in a JSON string is a character of the line). A capture can cut only the
+    end of its last line: the text after the last line break is skipped when it is
+    cut JSON, also when the cut splits a character of UTF-8 at its end (_cut(): the
+    rule of cut_line() of the reader of the Kubernetes validators). Raises
+    CaptureError for a capture that is a directory or cannot be read, for the first
+    line with other bytes that are not UTF-8 or that starts with the byte order mark
+    of UTF-8, for the first other line that json refuses (NUL bytes or U+200B in an
+    event, an event with more text after it on its line, a cut line before other lines;
+    when no line before it is JSON, the capture is one document, and the error of the
+    document names its place), for JSON that the gate cannot read (too deep for json or for
+    flatten(), a number with too many digits: the first such line, or the document),
+    and for the first line, or element of the array, that is JSON and not an object
+    (`[]` in a line of a log), that holds an object with one key two times (json keeps
+    only the last value), or that is an event that one event table cannot hold
+    (sigma_eval.event_problem(): two keys that give one field, as {"a.b": 1, "a":
+    {"b": 2}} does, two keys that differ only in the letter case of their
+    ASCII letters, ...).
     """
-    with open(path, encoding="utf-8") as fh:
-        text = fh.read()
+    if os.path.isdir(path):
+        raise CaptureError(f"the live capture {path} is a directory, not a file")
     try:
-        doc = json.loads(text)
+        with open(path, encoding="utf-8", errors="surrogateescape") as fh:
+            text = fh.read()
+    except OSError as e:
+        raise CaptureError(f"the live capture {path} cannot be read "
+                           f"({e.strerror or e})") from None
+    # A line ends at a line break of the file (the reader of the Kubernetes validators
+    # reads the same capture so): str.splitlines() also ends one at U+0085, U+2028 and
+    # U+2029, which a JSON string may hold as they are. open() gives a carriage return
+    # alone, and with a line feed, as a line feed, so the last element of `lines` is
+    # the text after the last line break: the last line without its line end.
+    lines = text.split("\n")
+    for n, line in enumerate(lines, 1):
+        bad = next((i for i, ch in enumerate(line) if 0xDC80 <= ord(ch) <= 0xDCFF), None)
+        if bad is not None:
+            if n == len(lines) and _cut(line):
+                # A cut inside a character of UTF-8 at the very end of the capture: the
+                # gate drops only the bytes of that character, and then reads the
+                # capture as it reads a cut on another byte.
+                line = lines[-1] = sigma_eval.utf8_cut(line)
+                text = "\n".join(lines)
+            else:
+                raise CaptureError(f"the live capture {path}, line {n}: bytes that are not "
+                                   f"UTF-8 (the byte 0x{ord(line[bad]) - 0xDC00:02x} at "
+                                   f"character {bad + 1} of the line)")
+        # json refuses a line that starts with the byte order mark: the mark is an
+        # error at the start of each line (two captures joined hold it at a later line
+        # too), with a text that names it.
+        if line.strip().startswith("\ufeff"):
+            raise CaptureError(f"the live capture {path}, line {n}: the line starts with the "
+                               "byte order mark of UTF-8 (EF BB BF)")
+    try:
+        doc = json.loads(text, object_pairs_hook=sigma_eval.pairs)
         raw = doc if isinstance(doc, list) else [doc]
         where = ([f"element {n} of the array" for n in range(1, len(raw) + 1)]
                  if isinstance(doc, list) else ["line 1"])
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError) as whole:  # a JSONDecodeError is a ValueError
         raw, where = [], []
-        for n, line in enumerate(text.splitlines(), 1):
+        for n, line in enumerate(lines, 1):
             line = line.strip()
             if line:
                 try:
-                    raw.append(json.loads(line))
+                    raw.append(json.loads(line, object_pairs_hook=sigma_eval.pairs))
                     where.append(f"line {n}")
-                except json.JSONDecodeError:
-                    continue
+                except json.JSONDecodeError as e:
+                    if n == len(lines) and _cut(lines[n - 1]):
+                        continue        # the last line, cut by the capture
+                    if raw:
+                        text = lines[n - 1]
+                        at = e.colno + len(text) - len(text.lstrip())
+                        raise CaptureError(f"the live capture {path}, line {n}: "
+                                           f"{_not_json(e, at, text, n == len(lines))}") from None
+                    # No line before it is JSON: the capture is one document with an
+                    # error, and the error of the document names its place.
+                    if isinstance(whole, json.JSONDecodeError):
+                        raise CaptureError(f"the live capture {path}, line {whole.lineno}: "
+                                           f"{_not_json(whole, whole.colno)}") from None
+                    raise CaptureError(f"the live capture {path}: "
+                                       f"{_cannot_read(whole)}") from None
+                except (ValueError, RecursionError) as e:
+                    raise CaptureError(f"the live capture {path}, line {n}: "
+                                       f"{_cannot_read(e)}") from None
     bad = [(at, event) for at, event in zip(where, raw) if not isinstance(event, dict)]
     if bad:
         at, event = bad[0]
@@ -412,8 +501,52 @@ def load_extra(path, logsource, label):
                            f"({kind})"
                            + (f", and {len(bad) - 1} more event(s) that are not objects"
                               if len(bad) > 1 else ""))
+    for at, event in zip(where, raw):
+        key = sigma_eval.key_twice(event)
+        if key is not None:
+            raise CaptureError(f"the live capture {path}, {at}: {sigma_eval.twice_text(key)}")
+        try:
+            problem = sigma_eval.event_problem(sigma_eval.flatten(event))
+        except RecursionError as e:
+            raise CaptureError(f"the live capture {path}, {at}: {_cannot_read(e)}") from None
+        if problem:
+            raise CaptureError(f"the live capture {path}, {at}: an event that one event table "
+                               f"cannot hold: {problem[1]}")
     spec = {"id": label, "version": 0, "logsource": dict(logsource), "fidelity": "recorded"}
     return benign_corpus.Slice(spec, path, raw)
+
+
+def _cannot_read(error):
+    """The text of a problem of JSON that json.loads() or flatten() cannot read (the
+    words of the reader of the Kubernetes validators)."""
+    text = str(error).split("\n")[0]
+    return (f"JSON that the gate cannot read ({type(error).__name__}: "
+            + (text if len(text) <= 100 else text[:100] + "...") + ")")
+
+
+def _cut(line):
+    """True when `line`, the last line of a capture without its line end, is a line
+    that the capture cut: its text without the white space at its start is cut JSON
+    (sigma_eval.cut_json()), after the start of a character of UTF-8 at its very end
+    (sigma_eval.utf8_cut()). White space at its end stays. This is the rule of
+    cut_line() of the reader of the Kubernetes validators."""
+    line = sigma_eval.utf8_cut(line)
+    return line is not None and sigma_eval.cut_json(line.lstrip())
+
+
+def _not_json(error, at, line="", last=False):
+    """The text of a line that json refuses (the words of the reader of the Kubernetes
+    validators): `error` is the json.JSONDecodeError, `at` the character of the error
+    in its line (from 1), `line` the line of a capture of JSON lines as the capture
+    holds it (empty for the error of one document), and `last` is True for the last
+    line, which has no line end."""
+    why = f"not JSON ({error.msg}, at character {at})"
+    if line.lstrip().startswith("{") and last:
+        why += "; the line is not the start of one JSON object, so a capture did not cut it"
+    elif line.lstrip().startswith("{"):
+        why += ("; a capture can cut only the last line of a log, and a cut line has no "
+                "line feed")
+    return why
 
 
 # RFC 3339 date-time (section 5.6) with seconds and a zone; "T", "t" or a space between.
@@ -546,7 +679,11 @@ def main():
 
     rules = load_rules(args.rules or None)
     every = load_rules() if args.rules else rules
-    slices = benign_corpus.load_corpus()
+    try:
+        slices = benign_corpus.load_corpus()
+    except ValueError as exc:   # a slice that load_slice() refuses
+        print(f"ERROR: the benign corpus: {exc}. No rule is scored on the benign corpus.")
+        return 1
     default, budgets, exempt = load_budgets()
     unknown = sorted((set(budgets) | set(exempt)) - {r["key"] for r in every})
     if unknown:
@@ -561,7 +698,11 @@ def main():
     if bad_budgets:
         print("ERROR: budgets.json `rules` entries are malformed:\n  " + "\n  ".join(bad_budgets))
         return 1
-    scores, examples = score(rules, slices)
+    try:
+        scores, examples = score(rules, slices)
+    except SliceError as exc:
+        print(f"ERROR: {exc}. No rule is scored on the benign corpus.")
+        return 1
 
     print(f"Benign corpus: {len(slices)} slice(s), "
           f"{sum(len(s.events) for s in slices)} event(s), digest "
@@ -604,7 +745,11 @@ def main():
                                   else "NOT EXEMPT (no `unscored` entry in budgets.json)"))
 
     if args.reseeds:
-        most = reseed_max(rules, slices, args.reseeds)
+        try:
+            most = reseed_max(rules, slices, args.reseeds)
+        except SliceError as exc:
+            print(f"\nERROR: {exc} (a reseed). No rule is scored on the reseeds.")
+            return 1
         print(f"\nMost hits over the committed corpus and {args.reseeds} reseed(s) of every "
               "synthetic slice (set max_hits from this, not from one seed's count):")
         for r, sc, b, status in rows:

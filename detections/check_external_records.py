@@ -81,14 +81,15 @@ Exit codes:
      object that holds a key two times, the envelope {"Records": [...]} too, two keys
      that flatten to one field, NaN or Infinity), a key or a value that one SQLite
      table cannot hold (an integer outside 64 bits, of any length, a NUL, a lone
-     surrogate, the key _rowid, a number that is not finite), keys that differ only
-     in letter case, records of one log source with more than 1900 distinct keys, a
-     yml at the commit that does not agree with its entry (its path, techniques,
-     sourcetype, procedure label or a CVE of the label; --lint: a label in CVE form
-     that is not one of its CVEs), a cache entry that is not a regular file or
-     cannot be read or written, a rule that does not compile, or a run in which no
-     dataset was read. With --enforce, an UNAVAILABLE dataset, LICENSE or
-     syscall_64.tbl too.
+     surrogate, the key _rowid, a number that is not finite; in a routed record each
+     other problem of sigma_eval.event_problem(), the key rowid too), keys that differ
+     only in the letter case of their ASCII letters, records of one log source with
+     more than 1900 distinct keys, a yml at the commit that does not agree with its
+     entry (its path, techniques, sourcetype, procedure label or a CVE of the label;
+     --lint: a label in CVE form that is not one of its CVEs), a cache entry that is
+     not a regular file or cannot be read or written, a rule that does not compile,
+     or a run in which no dataset was read. With --enforce, an UNAVAILABLE dataset,
+     LICENSE or syscall_64.tbl too.
 
 Usage:
     python3 detections/check_external_records.py --lint      # offline: the two files

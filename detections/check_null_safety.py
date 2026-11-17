@@ -80,9 +80,11 @@ a real selection as a broken guard, write `sel_no_x or not filter` as
 `not (filter and not sel_no_x)`: it means the same and is not read as a guard. If
 it reads selections as a broken copy, write each `sel_x and not sel_no_x` as
 `not (sel_no_x or not sel_x)`.
-And the gate fails a rule field that a case's records carry only in another letter
-case: SQLite matches column names without regard to case, so every offline gate
-reads the record's field, but Lucene, Splunk and ES|QL do not.
+And the gate fails a rule field (of a correlation also a group-by field, the counted
+field and the time) that a record of a case carries in another letter case, also
+when another record of the case holds the field as the rule writes it: SQLite
+matches column names without regard to case, so every offline gate reads the
+record's field, but Lucene, Splunk and ES|QL do not.
 
 Three-valued logic can only lose hits, never add them: Kleene's AND, OR and NOT
 are monotone, and the COALESCE at each NOT only replaces a NULL with a definite
@@ -246,7 +248,8 @@ def _base_sql(rule, ref, three_valued):
 
 
 def _event_sets(rule_path, fixtures):
-    """[(source, name, kind, flat events)]: sidecar cases, then cloud fixtures."""
+    """([(source, name, kind, flat events)], sidecar errors, fixture errors): sidecar
+    cases, then cloud fixtures. A fixture error is (name, kind, the loader's error)."""
     sets, errors = [], []
     path = rule_cases.cases_path(rule_path)
     if os.path.exists(path):
@@ -254,8 +257,13 @@ def _event_sets(rule_path, fixtures):
         for case in cases:
             sets.append(("case", case["name"], case["kind"],
                          [sigma_eval.flatten(e) for e in case["events"]]))
-    sets += fixtures.get(os.path.abspath(rule_path), [])
-    return sets, errors
+    unread = []
+    for source, name, kind, events in fixtures.get(os.path.abspath(rule_path), []):
+        if isinstance(events, Exception):
+            unread.append((name, kind, events))
+        else:
+            sets.append((source, name, kind, events))
+    return sets, errors, unread
 
 
 def check_rule(rule_path, fixtures, absent=False):
@@ -264,9 +272,11 @@ def check_rule(rule_path, fixtures, absent=False):
     rule = sigma_explain.load(rule_path)
     sql2 = sigma_eval.compile_rule(rule_path)
     sql3 = sigma_eval.compile_rule(rule_path, three_valued=True)
-    sets, errors = _event_sets(rule_path, fixtures)
+    sets, errors, unread = _event_sets(rule_path, fixtures)
     problems = [Problem(rel, "sidecar", "-", "-", f"sidecar error: {e}") for e in errors]
-    if not sets:
+    problems += [Problem(rel, "fixture", name, kind, "the loader of the cloud validator cannot "
+                         f"read the fixture: {e}") for name, kind, e in unread]
+    if not sets and not unread:
         problems.append(Problem(rel, "-", "-", "-", "no sidecar case and no cloud fixture: "
                                 "nothing shows that the rule is null-safe"))
     problems += [Problem(rel, "-", "-", "structure", issue) for issue in rule.null_guard_issues()]
@@ -277,31 +287,64 @@ def check_rule(rule_path, fixtures, absent=False):
     return rel, len(sets), problems, found
 
 
-def _rule_fields(rule):
+def _item_fields(rule):
+    """The fields of the items of the rule (of each base of a correlation)."""
     parts = rule.bases.values() if rule.is_correlation else [rule]
-    return sorted({f for part in parts for f in part.item_field.values() if f})
+    return {f for part in parts for f in part.item_field.values() if f}
+
+
+def _rule_fields(rule):
+    """The fields that the compiled rule reads: the fields of its items (of each base
+    of a correlation), and of a correlation also the group-by fields, the counted
+    field and the time."""
+    fields = _item_fields(rule)
+    if rule.is_correlation:
+        fields.update(rule.group_by, [sigma_explain.TS_FIELD])
+        if rule.type == "value_count" and rule.threshold.get("field"):
+            fields.add(rule.threshold["field"])
+    return sorted(fields)
 
 
 def _field_case(rule, rel, sets):
-    """A rule field that a case's records carry only in another letter case. SQLite
-    matches column names without regard to case, so every offline gate reads the
-    record's field, but Lucene, Splunk and ES|QL do not: there the item never matches
-    (a guard on it always holds). One problem per field."""
+    """A rule field that a record of a case carries in another letter case. SQLite
+    reads a key as a field when the two differ only in the letter case of their ASCII
+    letters (sigma_eval.fold()), so every offline gate reads the record's key, but
+    Lucene, Splunk and ES|QL do not: there the item never matches that record (a guard
+    on it always holds). The test is for each record: an event set may hold the
+    field in one record and the other spelling in another (detections/SEMANTICS.md,
+    "Field names"), and a record holds one spelling at most. One problem per field. The
+    time of a correlation is no field of the rule, so its text says to write the time
+    of the case as the offline correlation reads it."""
     problems, seen = [], set()
     fields = _rule_fields(rule)
+    # The time of a correlation is no field of the rule: the offline correlation reads
+    # it from the key TS_FIELD (the timestamp field of the SQLite backend of pySigma),
+    # and each other backend reads its own time field.
+    time = (sigma_explain.TS_FIELD if rule.is_correlation
+            and sigma_explain.TS_FIELD not in _item_fields(rule) else None)
     for source, name, kind, events in sets:
         keys = {k for e in events for k in e}
         for field in fields:
-            if field in keys or field in seen:
+            if field in seen:
                 continue
-            other = sorted(k for k in keys if k.lower() == field.lower())
-            if other:
-                seen.add(field)
-                problems.append(Problem(
-                    rel, source, name, kind, f"the rule reads `{field}`, and the records carry "
-                    f"{', '.join(f'`{k}`' for k in other)}: SQLite matches column names without "
-                    "regard to case, so the offline gates read that field, but Lucene, Splunk "
-                    "and ES|QL do not. Write the field name as the log source writes it"))
+            want = sigma_eval.fold(field)
+            other = sorted(k for k in keys if k != field and sigma_eval.fold(k) == want)
+            if not other:
+                continue
+            seen.add(field)
+            spelled = ", ".join(f"`{k}`" for k in other)
+            if field == time:
+                text = (f"the records carry the time as {spelled}, and the offline correlation "
+                        f"reads the time from the key `{field}` (the timestamp field of the "
+                        "SQLite backend of pySigma): SQLite matches column names without regard "
+                        "to case, so it reads that key. The rule writes no time field, and each "
+                        f"other backend reads its own. Write the time of the case as `{field}`")
+            else:
+                text = (f"the rule reads `{field}`, and the records carry {spelled}: SQLite "
+                        "matches column names without regard to case, so the offline gates "
+                        "read that field, but Lucene, Splunk and ES|QL do not. Write the field "
+                        "name as the log source writes it")
+            problems.append(Problem(rel, source, name, kind, text))
     return problems
 
 
@@ -386,13 +429,20 @@ def _absent_probe(rule, sets, sql2, sql3):
 
 
 def cloud_fixtures():
-    """{abs rule path: [(source, name, kind, flat events)]} from the cloud MANIFEST."""
+    """{abs rule path: [(source, name, kind, flat events)]} from the cloud MANIFEST.
+
+    For a fixture that the loader of the cloud validator cannot read (its
+    FixtureError), the entry holds the error in place of the events, and check_rule()
+    fails the rule with a line that names the fixture."""
     import validate_cloud_detections as cloud
     out = {}
     for _trr, folder, fname, attack, benign, *_ in cloud.MANIFEST:
         path = os.path.abspath(os.path.join(cloud.SIGMA, folder, fname))
         for kind, rel in (("attack", attack), ("benign", benign)):
-            events = cloud.load_fixture(os.path.join(cloud.FIX, rel))
+            try:
+                events = cloud.load_fixture(os.path.join(cloud.FIX, rel))
+            except cloud.FixtureError as e:
+                events = e
             out.setdefault(path, []).append(("fixture", rel, kind, events))
     return out
 
@@ -588,6 +638,16 @@ _SELF_TEST = [
      {"sel": {"Verb": "delete"}, "condition": "sel"},
      [("positive", [{"verb": "delete"}])],
      "the rule reads `Verb`, and the records carry `verb`"),
+    ("a record that carries the field in another letter case beside one that holds it fails",
+     {"sel": {"verb": "delete"}, "condition": "sel"},
+     [("positive", [{"verb": "get"}, {"Verb": "delete"}])],
+     "the rule reads `verb`, and the records carry `Verb`"),
+    # SQLite folds only the ASCII letters: the Kelvin sign (U+212A) is not `k`
+    # (str.lower() folds it to `k`), so the key is another field, for SQLite too.
+    ("a key that differs from a field in a letter that is not ASCII is another field",
+     {"sel": {"kind": "Event"}, "condition": "sel"},
+     [("positive", [{"kind": "Event"}, {"\u212aind": "Event"}])],
+     None),
     ("a null-safe copy of a filter whose maps read different fields holds",
      {"sel": {"verb": "delete"},
       "filter": [{"uri|re": "dryRun=All"}, {"body|contains": "All"}],

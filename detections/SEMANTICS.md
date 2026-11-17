@@ -70,11 +70,48 @@ The default text of a list has these properties:
 - An empty list is the text `[]`, so the field exists. Probe `list-empty-exists`.
 - A name below a list is not a field. Probe `list-leaf-no-field`.
 
-Field names: SQLite compares column names without regard to letter case, so the item
-`Verb: create` reads the field `verb` (probe `field-name-case`). The oracle refuses an
-event set in which two keys differ in letter case and in nothing else (by hand:
-`ValueError`). [`check_null_safety.py`](check_null_safety.py) fails a rule that reads
-a field in a letter case that the records do not use.
+Field names: SQLite compares two column names with the 26 ASCII letters folded to one
+letter case, and with each other character as it is. So the item `Verb: create` reads
+the field `verb` (probe `field-name-case`), and `Ä` and `ä` are two fields. The oracle
+reads the keys of the records in the same way:
+
+- Two keys that differ only in the letter case of their ASCII letters, in two records
+  of one event set (`verb` in one record, `Verb` in another), are one column, and an
+  item reads both. The analysis of a correlation in the gates
+  ([`sigma_explain.py`](sigma_explain.py): its group-by fields, its time, its counted
+  field) reads such keys in the same way.
+- One record cannot hold two such keys: they would be two values in one column. The
+  oracle refuses such a record with `sigma_eval.EventError` (a `ValueError`) that
+  names the record and the keys.
+- One record cannot hold two keys that give one field: a key with a dot and the path
+  of a nested key (`{"a.b": 1, "a": {"b": 2}}` gives `a.b` two times). `flatten()`
+  keeps only one value, and a store that merges a dotted key with an object
+  (Elasticsearch) sees both, so the oracle refuses such a record (`event_problem()`).
+  A list is one field of JSON text (`flatten()`), so a dotted key beside a list of
+  objects (`{"a.b": 1, "a": [{"b": 2}]}`) gives two fields, and the oracle reads
+  both. A store that explodes the list into leaf fields is not modelled (section 4).
+- The oracle also refuses a key that SQLite reads as `_rowid` (the row id column of
+  its table) or `rowid` (the name by which the correlation queries read the row id),
+  a key that holds a NUL or a lone surrogate (no column name can hold it), and a
+  value that SQLite does not hold as it is: an integer outside 64 bits (an `INTEGER`
+  of SQLite), `NaN`, `Infinity` and `-Infinity` (Python's `json` reads them, JSON has
+  no such number, and SQLite stores `NaN` as NULL), and a text with a lone surrogate
+  (the JSON escape `\ud800` gives one, and UTF-8 cannot encode it). `oid` and
+  `_rowid_`, the other names of the row id, are ordinary keys: no query reads them.
+  So is `event_ids`, the name of the column of the evidence of a correlation: the hits
+  of a plain rule are the rows of the table.
+
+The gate tests `EventTableKeys` of
+[`tests/test_sufficiency.py`](tests/test_sufficiency.py) prove each statement of this
+list about the table on each run. Each loader of records asks the same test
+(`sigma_eval.event_problem()`) of each record before a table gets it, and names the
+log and the line, the fixture and the record, the slice and the event (of each slice
+of the benign corpus, also one that no rule reads), the rule and the case, or the
+dataset and the record (of the external-records gate, each record that a rule reads); the
+tests of each gate prove it. [`check_null_safety.py`](check_null_safety.py) fails a
+rule that reads a field that a record carries in another letter case (Lucene, Splunk
+and ES|QL do not read it), also when another record of the event set holds the field
+as the rule writes it.
 
 ## 3. Letter case
 
@@ -92,7 +129,7 @@ oracle does not obey the sentence about values.
 | `f\|cased: Val` | `f GLOB 'Val'` | case-sensitive | `cased-case` |
 | `f\|re: ...` | `f REGEXP '...'` | case-sensitive | `re-case` |
 | `f\|re\|i: ...` | `f REGEXP '(?i)...'` | folded, with the Unicode rules of Python | `re-i`, `re-i-non-ascii` |
-| a field name | a column name | not case-sensitive | `field-name-case` |
+| a field name | a column name | ASCII letters are folded (section 2, "Field names") | `field-name-case` |
 | the group-by fields of a correlation | `lower(...)` on a text value | folded | by hand: two records with `user` `Alice` and `alice` are one group |
 
 - "ASCII letters are folded": `name|contains: ÉTÉ` on `{"name": "été"}` is quiet

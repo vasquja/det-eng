@@ -1,0 +1,39 @@
+title: PLANTED known-bad artifact - one process sets two user ids (value_count)
+id: 4c7e2a91-5d38-4f0b-9a6e-1b8d3f20c457
+status: experimental
+description: |
+  PLANTED ARTIFACT of detections/tests. It is not a detection of this repository.
+  A value_count correlation that counts the field `user` of setuid events of one
+  process. Its cases spell the counted field `User`: SQLite reads that key as the
+  field `user`, so the offline gates count it, but Lucene, Splunk and ES|QL do not.
+  detections/check_null_safety.py must reject the cases (detections/tests/
+  test_quality.py, NullSafety).
+author: det-eng
+date: 2026/11/16
+correlation:
+  type: value_count
+  rules:
+    - planted_counted_field_setuid
+  group-by:
+    - pid
+  timespan: 10s
+  condition:
+    gte: 2
+    field: user
+level: low
+---
+title: PLANTED known-bad artifact - setuid base of the value_count
+id: 9e1f6b27-3a84-4d5c-8f02-7c6a5e4b3d19
+name: planted_counted_field_setuid
+status: experimental
+description: PLANTED ARTIFACT of detections/tests. The base rule of the value_count above.
+author: det-eng
+date: 2026/11/16
+logsource:
+  product: linux
+  service: auditd
+detection:
+  sel:
+    syscall: setuid
+  condition: sel
+level: informational

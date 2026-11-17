@@ -31,8 +31,9 @@ The loop this proves, for each rule:
 
 Both fixtures that MANIFEST names for a rule must be files, and the benign baseline
 must hold a record: a negative control that read no record cannot fail, so it proves
-nothing. A fixture that is missing gives an ERROR row, and a baseline without a
-record gives a FAIL row with `NEGATIVE CONTROL VACUOUS`. Each fails the run (exit 1),
+nothing. A fixture that is missing or that the loader cannot read (load_fixture())
+gives an ERROR row that names it, and a baseline without a record gives a FAIL row
+with `NEGATIVE CONTROL VACUOUS`. Each fails the run (exit 1),
 also with --report. The count is the number of records that load_fixture() returns,
 which is the set that the rule is run on (no filter stands between the file and the
 rule): `[]`, a file of zero bytes or of blank lines, and an envelope with an empty
@@ -338,38 +339,331 @@ MANIFEST = [
 FOLDERS = sorted({folder for _, folder, *_ in MANIFEST})
 
 
+class FixtureError(Exception):
+    """A fixture that the loader cannot read as records. The text names the fixture
+    (from the root of the repository) and, where there is one, the line or the
+    record (from 1)."""
+
+
+def _name(path):
+    """The path of a fixture as a message names it: from the root of the repository."""
+    full = os.path.abspath(path)
+    return os.path.relpath(full, REPO) if full.startswith(REPO + os.sep) else path
+
+
+def _kind(value):
+    """The JSON type of a value, for a message: an object, a list, a string, ..."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "null"
+    return {dict: "an object", list: "a list", str: "a string"}.get(type(value), "a number")
+
+
+def _cannot_read(error):
+    """The text of a problem of JSON that json.loads() or flatten() cannot read."""
+    text = str(error).split("\n")[0]
+    return (f"JSON that the validator cannot read ({type(error).__name__}: "
+            + (text if len(text) <= 100 else text[:100] + "...") + ")")
+
+
+def _text(path):
+    """The text of a fixture file; FixtureError for a file that the loader cannot read
+    as UTF-8 text."""
+    if os.path.isdir(path):
+        raise FixtureError(f"{_name(path)}: a directory, not a file")
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError as e:
+        raise FixtureError(f"{_name(path)}: cannot be read ({e.strerror or e})") from None
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as e:
+        line = data.count(b"\n", 0, e.start) + 1
+        column = len(data[data.rfind(b"\n", 0, e.start) + 1:e.start].decode("utf-8")) + 1
+        raise FixtureError(f"{_name(path)}, line {line}: bytes that are not UTF-8 (the byte "
+                           f"0x{data[e.start]:02x} at character {column} of the line)") from None
+    if text.startswith(chr(0xFEFF)):
+        raise FixtureError(f"{_name(path)}, line 1: the line starts with the byte order mark "
+                           "of UTF-8 (EF BB BF)")
+    return text
+
+
+ENVELOPES = ("Records", "value", "items", "entries")  # the keys of a list of records
+
+
+def _string_or_null(value):
+    return value is None or isinstance(value, str)
+
+
+def _integer(value):
+    """True for an integer of 64 bits (with sign), not a bool: a count."""
+    return (isinstance(value, int) and not isinstance(value, bool)
+            and -2 ** 63 <= value < 2 ** 63)
+
+
+# The keys that a page of a list API puts beside its list, each with the type of its
+# value: Azure REST (nextLink), Microsoft Graph (@odata.context, @odata.nextLink,
+# @odata.deltaLink, and @odata.count with $count=true), Cloud Logging entries.list
+# (nextPageToken). No value of such a type can hold a record. An envelope holds no
+# other key: the loader reads only its list, and would drop each other key without a
+# word. Another list page (Google Workspace Reports, a GCP compute list, a kubectl
+# List, Azure DevOps, the legacy Azure AD Graph) is written as a JSON array.
+PAGE_KEYS = {"nextLink": ("a string or null", _string_or_null),
+             "@odata.context": ("a string or null", _string_or_null),
+             "@odata.nextLink": ("a string or null", _string_or_null),
+             "@odata.deltaLink": ("a string or null", _string_or_null),
+             "@odata.count": ("an integer of 64 bits", _integer),
+             "nextPageToken": ("a string or null", _string_or_null)}
+
+
+def _page_keys():
+    """The page keys and their types, as a message names them: `nextLink, ... and
+    nextPageToken (each a string or null) and @odata.count (an integer of 64 bits)`."""
+    types = {}
+    for key, (kind, _) in PAGE_KEYS.items():
+        types.setdefault(kind, []).append(key)
+    return " and ".join(
+        (f"{', '.join(keys[:-1])} and {keys[-1]} (each {kind})" if len(keys) > 1
+         else f"{keys[0]} ({kind})") for kind, keys in types.items())
+
+
+class _LongInt:
+    """An integer of JSON that int() does not read: it has more digits than
+    sys.get_int_max_str_digits() allows (4300 by default). The loader keeps the error
+    in the place of the number and names the record that holds it."""
+
+    __slots__ = ("error",)
+
+    def __init__(self, error):
+        self.error = error
+
+
+def _unread(value):
+    """The text of the first part of a JSON value that the loader does not read, or
+    None: a number with too many digits (_LongInt), or an object that holds a key two
+    times (sigma_eval.Twice). The walk uses no recursion: the value can be deep."""
+    stack = [value]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, _LongInt):
+            return _cannot_read(node.error)
+        if isinstance(node, dict):
+            if type(node) is sigma_eval.Twice:
+                return sigma_eval.twice_text(node.key)
+            stack.extend(reversed(list(node.values())))
+        elif isinstance(node, list):
+            stack.extend(reversed(node))
+    return None
+
+
+def _key_names(keys, most=3):
+    """The keys of a message, sorted: at most `most` of them, then the count of the
+    others ('a', 'b', 'c' and 4 more). A long key is cut at 40 characters."""
+    names = [repr(key) if len(key) <= 40 else repr(key[:40]) + "..."
+             for key in sorted(keys)]
+    if len(names) > most:
+        return f"{', '.join(names[:most])} and {len(names) - most} more"
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def _envelope_keys(path, doc, env, at):
+    """Raise FixtureError when the envelope `doc` (its list is doc[env]) holds a key
+    other than its list and the page keys (PAGE_KEYS), or a page key whose value is
+    not of its type. A key is another key also when it differs from a page key only
+    in letter case. The loader reads only the list of an envelope, so it would drop
+    each other key without a word: the attack records of a benign baseline, each with
+    a list of benign records under an envelope key, would give a clean baseline. The
+    text names the other keys (sorted, at most 3 and the count of the others, each
+    cut at 40 characters), and else the first page key of a wrong type (sorted)."""
+    other = [key for key in doc if key != env and key not in PAGE_KEYS]
+    wrong = [key for key in doc if key in PAGE_KEYS and not PAGE_KEYS[key][1](doc[key])]
+    if not other and not wrong:
+        return
+    place = f"{_name(path)}{', ' + at if at else ''}"
+    if other:
+        what = (f"that also holds the key{'s' if len(other) > 1 else ''} "
+                f"{_key_names(other)}")
+    else:
+        key = sorted(wrong)[0]
+        what = f"whose page key {key!r} is {_kind(doc[key])}, not {PAGE_KEYS[key][0]}"
+    raise FixtureError(
+        f"{place}: an envelope (the list {env!r}) {what}: the loader reads only the list of "
+        f"an envelope, and beside the list an envelope holds only the page keys "
+        f"{_page_keys()}. Write the records in a JSON array")
+
+
+def _document(path, doc, at):
+    """(records, where) of one document of a fixture (the one document of the file, or
+    a line of JSON lines; `at` names the line, or is None): the list of an envelope,
+    the elements of an array, or the object as one record. A line of JSON lines is one
+    record or an envelope: a list on a line is a record that is not an object. An
+    envelope holds beside its list only page keys (PAGE_KEYS), each with a value of its
+    type (_envelope_keys())."""
+    if isinstance(doc, list) and at is None:
+        return doc, [f"element {n} of the array" for n in range(1, len(doc) + 1)]
+    if not isinstance(doc, dict):
+        if at is None:
+            raise FixtureError(f"{_name(path)}: JSON that is not an array or an object "
+                               f"({_kind(doc)})")
+        return [doc], [at]
+    if type(doc) is sigma_eval.Twice:
+        # json kept only the last value of the key: an envelope {"Records": <attack>,
+        # "Records": <benign>} would give the benign records only.
+        raise FixtureError(f"{_name(path)}{', ' + at if at else ''}: "
+                           f"{sigma_eval.twice_text(doc.key)}")
+    env = next((env for env in ENVELOPES if isinstance(doc.get(env), list)), None)
+    if env is None:
+        # An object that holds an envelope key is an envelope; when the key holds no
+        # list, the envelope holds no record, and the object is not one record either.
+        odd = next((env for env in ENVELOPES if env in doc), None)
+        if odd is not None:
+            raise FixtureError(
+                f"{_name(path)}{', ' + at if at else ''}: an object whose key {odd!r} is "
+                f"{_kind(doc[odd])}, not a list of records: the loader reads an object with "
+                f"the key {', '.join(ENVELOPES[:-1])} or {ENVELOPES[-1]} as an envelope of "
+                "records. Write one record that holds such a key in a JSON array ([{...}])")
+        return [doc], [at or "the object of the file"]
+    _envelope_keys(path, doc, env, at)
+    prefix = f"{at}, " if at else ""
+    return doc[env], [f"{prefix}element {n} of the list {env!r}"
+                      for n in range(1, len(doc[env]) + 1)]
+
+
+def _records(path):
+    """(records, where): the records of a fixture, as the file holds them, and the
+    place of each in the file, as a message names it (`line 3`, `element 2 of the
+    array`). Raises FixtureError (load_records())."""
+    text = _text(path)
+
+    def parse_int(digits):
+        try:
+            return int(digits)
+        except ValueError as e:
+            return _LongInt(e)
+
+    def loads(text):
+        return json.loads(text, parse_int=parse_int, object_pairs_hook=sigma_eval.pairs)
+
+    try:
+        records, where = _document(path, loads(text), None)
+    except json.JSONDecodeError as whole:
+        # Not one JSON document: JSON lines. When the first line is not JSON either,
+        # the file is one document with an error, and the error of the document names
+        # its place.
+        records, where, read = [], [], False
+        # A line ends at LF only: str.splitlines() also ends one at U+0085, U+2028 and
+        # U+2029, which a JSON string may hold as they are.
+        for n, line in enumerate(text.split("\n"), 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                doc = loads(line)
+            except json.JSONDecodeError as e:
+                e, n = (whole, whole.lineno) if not read else (e, n)
+                raise FixtureError(f"{_name(path)}, line {n}: not JSON ({e.msg}, at character "
+                                   f"{e.colno}); a fixture is a JSON array, a JSON object or "
+                                   "JSON lines") from None
+            except (ValueError, RecursionError) as e:
+                raise FixtureError(f"{_name(path)}, line {n}: {_cannot_read(e)}") from None
+            read = True
+            # Each line is read as the one object of a file is: an envelope on a line
+            # (CloudTrail writes each log file as one envelope on one line) gives the
+            # records of its list.
+            line_records, line_where = _document(path, doc, f"line {n}")
+            records += line_records
+            where += line_where
+    except RecursionError as e:
+        # json stops in the first JSON value of the text. When that value is the first
+        # line that is not blank (JSON lines, or one document on one line), the line
+        # is named; else only the fixture.
+        n, line = next((n, line) for n, line in enumerate(text.split("\n"), 1)
+                       if line.strip())
+        try:
+            loads(line)
+        except RecursionError:
+            raise FixtureError(f"{_name(path)}, line {n}: {_cannot_read(e)}") from None
+        except ValueError:
+            pass
+        raise FixtureError(f"{_name(path)}: {_cannot_read(e)}") from None
+    except ValueError as e:
+        raise FixtureError(f"{_name(path)}: {_cannot_read(e)}") from None
+    # Each number with too many digits, and each object that holds a key two times,
+    # is in a record here: beside its list an envelope holds only page keys, each with
+    # a string, null or an integer of 64 bits (_envelope_keys(): a number with too
+    # many digits is none of them), and _document() refuses an object of the file or
+    # of a line that holds a key two times (json keeps only one of the two values).
+    for at, record in zip(where, records):
+        if not isinstance(record, dict):
+            raise FixtureError(f"{_name(path)}, {at}: a record that is not a JSON object "
+                               f"({_kind(record)})")
+        problem = _unread(record)
+        if problem is not None:
+            raise FixtureError(f"{_name(path)}, {at}: {problem}")
+    return records, where
+
+
 def load_records(path):
     """Load a fixture file to the list of its records, as the file holds them.
 
-    Accepts a JSON array, a single JSON object, a common log envelope
-    ({"Records"/"value"/"items"/"entries": [...]}), or JSON-lines.
+    Accepts a JSON array, a single JSON object (one record), a common log envelope
+    ({"Records"/"value"/"items"/"entries": [...]}, ENVELOPES), or JSON-lines (a line
+    ends at LF). Each line of JSON lines is read as the single object of a file is: one
+    record, or an envelope, whose list gives the records. An object that holds an
+    envelope key is an envelope: a single record that holds such a key goes in a JSON
+    array. Beside its list, an envelope holds only the page keys (PAGE_KEYS): nextLink,
+    @odata.context, @odata.nextLink, @odata.deltaLink and nextPageToken, each a string
+    or null, and @odata.count, an integer of 64 bits; the loader reads only the list.
+    Another list page is written as a JSON array.
+
+    Raises FixtureError, with a text that names the fixture, for a file that is a
+    directory or cannot be read; bytes that are not UTF-8; the byte order mark of UTF-8
+    at its start; JSON that is not an array or an object (`null`, `1`); an object (the
+    file, or a line of JSON lines) whose envelope key is not a list (`{"Records":
+    null}`, `{"value": "x"}`); an envelope that holds another key beside its list (an
+    attack record with `"items": [...]`, a second envelope key, `"meta": 1`, also a page
+    key in another letter case), or a page key whose value is not of its type (a string
+    or null; an integer of 64 bits for @odata.count); an object that holds one key two
+    times (json keeps only the last value, so `{"Records": <attack records>, "Records":
+    <benign records>}` would give the benign records only); a line of JSON lines that is
+    not JSON; JSON that the loader cannot read (too deep, a number with too many
+    digits); and a record that is not a JSON object (`null`, `[]`, `1`, `"x"`). The text
+    names the line or the element where there is one. An object of the file or of a line
+    that holds a key two times is named by the fixture or the line, and such an object
+    in a record by its record. A number with too many digits is named by its record:
+    beside the list of an envelope, such a number is refused before, as the value of
+    another key or of a page key of another type, and so is an object that holds a key
+    two times. JSON that is too deep for json is named by its line in JSON lines or in a
+    document of one line; JSON of one document of more lines that is too deep for json
+    is named by the fixture only.
     """
-    with open(path, encoding="utf-8") as fh:
-        text = fh.read()
-    records = None
-    try:
-        doc = json.loads(text)
-        if isinstance(doc, list):
-            records = doc
-        elif isinstance(doc, dict):
-            for env in ("Records", "value", "items", "entries"):
-                if isinstance(doc.get(env), list):
-                    records = doc[env]
-                    break
-            if records is None:
-                records = [doc]
-    except json.JSONDecodeError:
-        records = []
-        for line in text.splitlines():
-            line = line.strip()
-            if line:
-                records.append(json.loads(line))
-    return records
+    return _records(path)[0]
 
 
 def load_fixture(path):
-    """Load a fixture file to a list of flattened event dicts (load_records())."""
-    return [sigma_eval.flatten(r) for r in load_records(path)]
+    """Load a fixture file to a list of flattened event dicts (load_records()).
+
+    Also raises FixtureError for a record that is too deep to flatten, and for a
+    record that one event table cannot hold (sigma_eval.event_problem(): two keys
+    of the record that give one field, as {"a.b": 1, "a": {"b": 2}} does, two keys
+    that differ only in the letter case of their ASCII letters, a key that hides a
+    row id that the queries read, a value that SQLite does not hold as it is). Keys of
+    two records that differ only in letter case are no problem: they share one
+    column."""
+    events = []
+    for record, at in zip(*_records(path)):
+        try:
+            event = sigma_eval.flatten(record)
+        except RecursionError as e:
+            raise FixtureError(f"{_name(path)}, {at}: {_cannot_read(e)}") from None
+        problem = sigma_eval.event_problem(event)
+        if problem:
+            raise FixtureError(f"{_name(path)}, {at}: a record that one event table cannot "
+                               f"hold: {problem[1]}")
+        events.append(event)
+    return events
 
 
 # ---- failure explanations (sigma_explain) --------------------------------
@@ -708,8 +1002,21 @@ def validate(args, report):
             results.append({"rule": f"{folder}/{fname}", "trr": trr, "provider": provider,
                             "status": "ERROR", "detail": why, "explanation": []})
             continue
-        attack = load_fixture(attack_path)
-        benign = load_fixture(benign_path)
+        fixtures, unread = {}, []
+        for kind, path in (("attack", attack_path), ("benign", benign_path)):
+            try:
+                fixtures[kind] = load_fixture(path)
+            except FixtureError as e:
+                unread.append(f"the {kind} fixture {e}")
+        if unread:
+            unproven += 1
+            why = ("; ".join(unread) + f". The loader cannot read {'them' if unread[1:] else 'it'}"
+                   ", so nothing proves the rule")
+            print(f"ERROR [{trr} {provider}] {fname}: {why} -- {note}")
+            results.append({"rule": f"{folder}/{fname}", "trr": trr, "provider": provider,
+                            "status": "ERROR", "detail": why, "explanation": []})
+            continue
+        attack, benign = fixtures["attack"], fixtures["benign"]
         q = queries[key]
         # sigma_eval.evaluate() == EventTable(...).hits(); the indices name the records.
         attack_idx = [hit[0] for hit in sigma_eval.EventTable(attack).hit_indices(q)]
@@ -809,9 +1116,10 @@ def validate(args, report):
         return 1
     if unproven:
         print(f"FAILED: {unproven} rule(s) of MANIFEST have no proof: a fixture that MANIFEST "
-              "names is missing, or a benign baseline holds no record, holds no hard record "
-              "or cannot be graded (see the ERROR rows and the NEGATIVE CONTROL VACUOUS, NOT "
-              "HARD and NOT GRADED rows). --report does not make this non-fatal.")
+              "names is missing or cannot be read, or a benign baseline holds no record, "
+              "holds no hard record or cannot be graded (see the ERROR rows and the NEGATIVE "
+              "CONTROL VACUOUS, NOT HARD and NOT GRADED rows). --report does not make this "
+              "non-fatal.")
     if fails and not args.report:
         print(f"FAILED: {fails} technique(s) did not satisfy attack-fires + "
               f"control-holds. (Use --report to treat as non-fatal.)")

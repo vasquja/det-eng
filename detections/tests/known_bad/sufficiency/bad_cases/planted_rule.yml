@@ -23,9 +23,9 @@ description: |
                                         of its events: it is not JSON.
     keys_differ_by_case.cases.jsonl     the event has the keys `comm` and `Comm`.
 
-  detections/rule_cases.py must reject each one but the first. It does not reject
-  the last one with a message today: it ends with a traceback (the known gap
-  rc-case-clash-is-a-traceback).
+  detections/rule_cases.py must reject each one but the first. One event of the
+  last one holds the two keys, so one event table cannot hold it (two events with
+  one key each share one column of the table).
 author: det-eng
 date: 2026/11/10
 tags:

@@ -42,6 +42,7 @@ import ipaddress
 import json
 import os
 import re
+import subprocess
 import sys
 import unittest
 
@@ -236,6 +237,10 @@ NOT_A_RECORD = {
                   r'"metadata" object with a "name"\)',
            "file": r'a JSON object that is not a file event \(a file event has a '
                    r'"TargetFilename" and an "Image"\)'}}
+# The start of the problem of a record that one event table cannot hold (two keys of
+# the record that differ only in the letter case of their ASCII letters, ...).
+ONE_EVENT_TABLE = {source: f"{a} that one event table cannot hold: " for source, a in (
+    ("audit", "an audit event"), ("cri", "a pod sandbox"), ("file", "a file event"))}
 # The FAILED line of a run whose logs hold lines that are not records ({}: their number).
 LINES_NOT_RECORDS = (r"^FAILED: {} line\(s\) of the logs are not records of their log \(see "
                      r"the ERROR lines above\)\. No rule is judged on a log that holds such a "
@@ -1049,22 +1054,26 @@ class CloudValidator(gatelib.GateCase):
                                 r"does not count: a correlation counts a near-miss set only on a "
                                 r"base atom")
 
-    @gatelib.known_gap(
-        "cloud-fixture-record-not-an-object",
-        gate="detections/validate_cloud_detections.py",
-        reason="A benign fixture that holds a record that is not a JSON object (a `null` "
-               "after its good records) ends the validator with an uncaught AttributeError "
-               "of sigma_eval.flatten. The validate-cloud job fails, but with a traceback: no "
-               "FAIL or ERROR row names the rule or the fixture, and the validator judges no "
-               "rule after it. A fixture whose JSON text is `null` ends the run in the same "
-               "way, with a TypeError of load_fixture.",
-        closes="R2d", today="crash")
-    def test_gap_fixture_record_that_is_not_an_object(self):
-        """WANTED: the validator names the rule and the fixture in an ERROR or FAIL row
-        that says that a record is not a JSON object, and does not stop with a
-        traceback. A loader that drops the record and says nothing is not the wanted
-        behaviour. The bad record is beside the good records of the baseline, so such
-        a loader gives a PASS, and the marker then reports a gap that changed shape."""
+    # The end of the text of an envelope that holds a key other than its list and the
+    # page keys, or a page key that is not a string or null.
+    EXTRA = (r": the loader reads only the list of an envelope, and beside the list an "
+             r"envelope holds only the page keys nextLink, @odata\.context, @odata\.nextLink, "
+             r"@odata\.deltaLink and nextPageToken \(each a string or null\) and @odata\.count "
+             r"\(an integer of 64 bits\)\. Write the records in a JSON array")
+
+    # The ERROR row of RULE for a fixture that the loader cannot read ({}: the end of
+    # the row, after the name of the fixture: where, and what).
+    UNREAD = (r"^ERROR " + ROW + r"the {} fixture detections/cloud/fixtures/trr9012/{}\.json{}"
+              r"\. The loader cannot read it, so nothing proves the rule -- ")
+
+    def test_rejects_fixture_record_that_is_not_an_object(self):
+        """A benign fixture whose last record is `null`, after its good records: the
+        validator names the rule, the fixture and the element in an ERROR row, also
+        with --report, and judges the other rules. A loader that drops the record and
+        says nothing would give a PASS: the records before it are the good baseline.
+        (This was the known gap cloud-fixture-record-not-an-object: the validator
+        ended with an AttributeError of sigma_eval.flatten and judged no rule after
+        it.)"""
         tree = self.tree()
         good = tree.read_json(self.BENIGN)
         tree.edit_json(self.BENIGN, lambda rows: rows + [None])
@@ -1073,57 +1082,700 @@ class CloudValidator(gatelib.GateCase):
         self.assertGreater(len(good), 0)
         self.assertTrue(all(isinstance(row, dict) for row in good))
         self.assertEqual(tree.read_json(self.BENIGN), good + [None])
-        # For the proof of the last sentence of the `reason`, below: a second copy,
-        # whose baseline is the JSON text `null` (no list, no object).
-        other = self.tree()
-        other.write(self.BENIGN, "null\n")
-        self.assertIsNone(other.read_json(self.BENIGN))
-        pending = other.start(self.GATE)
-        result = tree.run(self.GATE)
-        null = pending.result()
-        # The gate reached the rule (it compiled it), and it read the planted record:
-        # today the last line of the traceback names the type of that record. A gate
-        # that does not stop there prints a row for the rule, whatever its verdict.
-        # (The text of an exception is the text of the Python of the run. The test
-        # reads its type and the start of its message, and the name of a frame, with
-        # no end-of-line anchor: a later Python can add to the end of such a line.)
+        result = self.rejected_as_unproven(tree, self.UNREAD.format(
+            "benign", "benign", rf", element {len(good) + 1} of the array: a record that is "
+                                r"not a JSON object \(null\)"))
+        # The gate reached the rule (it compiled it), and it read the planted record.
         self.assert_saw(result, r"^OK \(compile\)  T1078\.004/aws_leaked_access_key_recon\.yml  "
                                 r"\[TRR9012\]$")
-        self.assert_saw(result, r"^AttributeError: 'NoneType' object has no attribute 'items'|"
-                                r"^(PASS|FAIL|ERROR)\s+\[TRR9012[^\]]*\] "
+        self.assert_saw(result, r"^(PASS|FAIL|ERROR)\s+\[TRR9012[^\]]*\] "
                                 r"aws_leaked_access_key_recon\.yml: ")
-        if result.crashed:
-            # Today. The `reason` of the marker says what the run does after the
-            # traceback; prove it: the run printed a row for each MANIFEST entry
-            # before the rule, and no row for the rule or for an entry after it.
-            entries = in_source(tree, self.GATE,
-                                r'^\s+\("(TRR\d+)", "T[\d.]+", "([^"]+\.yml)",')
-            first = [name for _, name in entries].index(os.path.basename(self.RULE))
-            self.assertLess(first, len(entries) - 1, "no MANIFEST entry is after the rule")
-            before = [trr for trr, _ in entries[:first]]
-            self.assertEqual(re.findall(r"^(?:PASS|FAIL|ERROR)\s+\[(TRR\d+) ", result.stdout,
-                                        re.MULTILINE), before)
-            # The exception comes from sigma_eval.flatten, and no line names the fixture.
-            self.assertRegex(result.output, r'(?m)^  File ".*sigma_eval\.py", line \d+, in '
-                                            r'flatten\b', result.describe())
-            self.assertNotIn("trr9012/benign.json", result.output, result.describe())
-            # The last sentence of the `reason`: the baseline whose text is `null` ends
-            # the run in the same way (a traceback, and the same rows before it), with
-            # a TypeError that load_fixture raises.
-            self.assertTrue(null.crashed and null.returncode != 0,
-                            "a fixture whose JSON text is `null` does not end the run with a "
-                            "traceback any more: correct the `reason` of the marker\n"
-                            + null.describe())
-            self.assertRegex(null.output, r"(?m)^TypeError: 'NoneType' object is not iterable",
-                             null.describe())
-            self.assertRegex(null.output, r'(?m)^  File ".*validate_cloud_detections\.py", '
-                                          r'line \d+, in load_fixture\b', null.describe())
-            self.assertEqual(re.findall(r"^(?:PASS|FAIL|ERROR)\s+\[(TRR\d+) ", null.stdout,
-                                        re.MULTILINE), before)
+        # It judged every other rule of MANIFEST.
+        self.assertEqual(len(re.findall(r"^PASS  \[", result.stdout, re.MULTILINE)),
+                         len(self.manifest_rules(tree)) - 1, result.describe())
+        self.assertNotIn("Traceback", result.output)
         self.assert_rejects(
             result,
             r"^(FAIL|ERROR)\s+\[TRR9012[^\]]*\] aws_leaked_access_key_recon\.yml: "
-            r"(?=.*trr9012/benign\.json)(?=.*\bnot an? (JSON )?object\b)")
+            r"(?=.*trr9012/benign\.json)(?=.*\bnot an? (JSON )?object\b)", exit_code=1)
+
+    def unreadable_fixtures(self, good):
+        """[(label, kind, the bytes of the fixture, the end of its ERROR row after the
+        name of the fixture)] of test_rejects_fixtures_that_the_loader_cannot_read.
+        `good`: the records of the good benign fixture."""
+        n = len(good)
+        text = json.dumps(good, indent=2)
+        first = text.index('"eventName": "') + len('"eventName": "')
+        line, at = text.count("\n", 0, first) + 1, first - text.rfind("\n", 0, first)
+        nested = {}
+        for _ in range(1500):
+            nested = {"a": nested}
+        record = r"a record that is not a JSON object \({}\)"
+        table = r"a record that one event table cannot hold: "
+        envelope = (r"not a list of records: the loader reads an object with the key Records, "
+                    r"value, items or entries as an envelope of records\. Write one record "
+                    r"that holds such a key in a JSON array \(\[\{\.\.\.\}\]\)")
+        extra = self.EXTRA
+        long = b"9" + b"9" * 4999     # a number of 5000 digits
+        attack = self.good().read_json(self.ATTACK)
+        twice = r"an object holds the key '{}' two times \(json keeps only the last value\)"
+        # An attack record whose type of identity is under a dotted key with the attack
+        # value, and in the nested object with a benign value: flatten() keeps the last.
+        identity = dict(attack[0]["userIdentity"], type="AssumedRole")
+        hidden = {"userIdentity.type": attack[0]["userIdentity"]["type"],
+                  **dict(attack[0], userIdentity=identity)}
+        keys = sorted(attack[0])
+        names = ", ".join(repr(key) for key in keys[:3]) + f" and {len(keys) - 3} more"
+        return [
+            ("null", "benign", b"null\n",
+             r": JSON that is not an array or an object \(null\)"),
+            ("a number", "benign", b"7\n",
+             r": JSON that is not an array or an object \(a number\)"),
+            ("a string", "attack", b'"trr9012"\n',
+             r": JSON that is not an array or an object \(a string\)"),
+            ("a list in the list", "benign", json.dumps(good + [[]]).encode(),
+             rf", element {n + 1} of the array: " + record.format("a list")),
+            ("a number in the list", "attack", json.dumps([1]).encode(),
+             r", element 1 of the array: " + record.format("a number")),
+            ("null in an envelope", "benign", json.dumps({"Records": good + [None]}).encode(),
+             rf", element {n + 1} of the list 'Records': " + record.format("null")),
+            ("a string in JSON lines", "benign",
+             "".join(json.dumps(row) + "\n" for row in good + ["x"]).encode(),
+             rf", line {n + 1}: " + record.format("a string")),
+            ("a JSON line that is not JSON", "benign",
+             "".join(json.dumps(row) + "\n" for row in good).encode() + b'{"eventName": \n',
+             rf", line {n + 1}: not JSON \(Expecting value, at character 14\); a fixture is a "
+             r"JSON array, a JSON object or JSON lines"),
+            ("a document with an error", "benign", text.replace('"eventName":', '"eventName"', 1)
+             .encode(), rf", line {line}: not JSON \(Expecting ':' delimiter, at character "
+                        rf"{at - 2}\); a fixture is a JSON array, a JSON object or JSON lines"),
+            ("bytes that are not UTF-8", "benign",
+             text[:first].encode() + b"\xe9" + text[first:].encode(),
+             rf", line {line}: bytes that are not UTF-8 \(the byte 0xe9 at character {at} of "
+             r"the line\)"),
+            ("a byte order mark", "benign", b"\xef\xbb\xbf" + text.encode(),
+             r", line 1: the line starts with the byte order mark of UTF-8 \(EF BB BF\)"),
+            # Lists 100000 deep: Python 3.13 and older stop json.loads() at the limit of
+            # the recursion. From Python 3.14 the limit is the C stack of the thread, so
+            # with a large stack (the gate-tests job) json.loads() reads all the levels,
+            # and the one record is a list. The loader names the fixture either way.
+            # json stops in line 1, so the loader names the line.
+            ("JSON too deep to read", "benign", b"[" * 100000 + b"]" * 100000,
+             r"(?:, line 1: JSON that the validator cannot read " + gatelib.RECURSION_ERROR
+             + r"|, element 1 of the array: " + record.format("a list") + ")"),
+            # JSON lines whose first line is too deep: json stops in the first line of
+            # the document, and the loader names it (with a large stack, Python 3.14
+            # reads the line, a list).
+            ("JSON lines whose first line is too deep", "benign",
+             b"[" * 100000 + b"]" * 100000 + b"\n"
+             + "".join(json.dumps(row) + "\n" for row in good).encode(),
+             r", line 1: (?:JSON that the validator cannot read " + gatelib.RECURSION_ERROR
+             + "|" + record.format("a list") + ")"),
+            ("a record too deep to flatten", "benign", json.dumps(good + [nested]).encode(),
+             rf", element {n + 1} of the array: JSON that the validator cannot read "
+             + gatelib.RECURSION_ERROR),
+            ("a JSON line with a number with too many digits", "benign",
+             "".join(json.dumps(row) + "\n" for row in good).encode() + b'{"n": 1'
+             + b"0" * 5000 + b"}\n",
+             rf", line {n + 1}: JSON that the validator cannot read \(ValueError: Exceeds the "
+             r"limit \(4300 digits\) for integer string conversion[^)]*\)"),
+            # A number with too many digits is named by its record, in each form of a
+            # fixture: an element of a document of many lines, line 1 of JSON lines, an
+            # element of an envelope.
+            ("a number with too many digits", "benign",
+             text[:-2].encode() + b',\n  {"n": 1' + b"0" * 5000 + b"}\n]",
+             rf", element {n + 1} of the array: JSON that the validator cannot read "
+             r"\(ValueError: Exceeds the limit \(4300 digits\) for integer string "
+             r"conversion[^)]*\)"),
+            ("JSON lines whose first line holds a number with too many digits", "benign",
+             b'{"n": 1' + b"0" * 5000 + b"}\n"
+             + "".join(json.dumps(row) + "\n" for row in good).encode(),
+             r", line 1: JSON that the validator cannot read \(ValueError: Exceeds the limit "
+             r"\(4300 digits\) for integer string conversion[^)]*\)"),
+            ("an envelope whose record holds a number with too many digits", "benign",
+             json.dumps({"Records": good})[:-2].encode() + b', {"n": {"m": [1' + b"0" * 5000
+             + b"]}}]}",
+             rf", element {n + 1} of the list 'Records': JSON that the validator cannot read "
+             r"\(ValueError: Exceeds the limit \(4300 digits\) for integer string "
+             r"conversion[^)]*\)"),
+            ("an integer outside 64 bits", "benign",
+             json.dumps(good + [dict(good[0], n=2 ** 64)]).encode(),
+             rf", element {n + 1} of the array: {table}the value of n is an integer outside "
+             r"the 64 bits of an INTEGER of SQLite"),
+            ("one record with keys that differ only in letter case", "benign",
+             json.dumps(good + [dict(good[0], EventName=good[0]["eventName"])]).encode(),
+             rf", element {n + 1} of the array: {table}keys that differ only by case: "
+             r"EventName / eventName, which SQLite reads as one column name"),
+            ("a key rowid", "attack", json.dumps([{"rowid": 1}]).encode(),
+             rf", element 1 of the array: {table}the key rowid is the name by which the "
+             r"correlation queries read the row id \(rowid, in any letter case of the ASCII "
+             r"letters\)"),
+            # The column of a byte that is not UTF-8 counts characters, not bytes: `é`
+            # before it is one character of two bytes.
+            ("a character of two bytes before a byte that is not UTF-8", "benign",
+             text[:first].encode() + "\u00e9".encode() + b"\xe9" + text[first:].encode(),
+             rf", line {line}: bytes that are not UTF-8 \(the byte 0xe9 at character {at + 1} "
+             r"of the line\)"),
+            ("one object of the file with keys that differ only in letter case", "benign",
+             json.dumps(dict(good[0], EventName=good[0]["eventName"])).encode(),
+             rf", the object of the file: {table}keys that differ only by case: EventName / "
+             r"eventName, which SQLite reads as one column name"),
+            # A line of JSON lines is a line of the file: a blank line counts.
+            ("JSON lines with a blank line before a record that is not an object", "benign",
+             "".join(json.dumps(row) + "\n" for row in good).encode() + b'\n"x"\n',
+             rf", line {n + 2}: " + record.format("a string")),
+            ("an envelope whose list is null", "benign", b'{"Records": null}\n',
+             r": an object whose key 'Records' is null, " + envelope),
+            ("an envelope whose list is a number", "benign", b'{"value": 5}\n',
+             r": an object whose key 'value' is a number, " + envelope),
+            # One record that holds an envelope key: the loader reads the object as an
+            # envelope, and the text says how to give the record.
+            ("the one object of the file with a key value that is a string", "benign",
+             json.dumps(dict(good[0], value="abc")).encode(),
+             r": an object whose key 'value' is a string, " + envelope),
+            # A line of JSON lines is read as the one object of a file is: an envelope
+            # whose list is null holds no record on a line too, and the records of the
+            # list of an envelope on a line are named by the line and the element.
+            ("JSON lines of envelopes whose list is null", "benign",
+             b'{"Records": null}\n{"Records": null}\n',
+             r", line 1: an object whose key 'Records' is null, " + envelope),
+            ("an envelope on a line of JSON lines with a record that is not an object", "benign",
+             "".join(json.dumps(row) + "\n" for row in good).encode()
+             + b'{"Records": [{"eventName": "x"}, null]}\n',
+             rf", line {n + 1}, element 2 of the list 'Records': " + record.format("null")),
+            # Beside its list an envelope holds only page keys (a string or null): the
+            # loader reads only the list, and would drop each other key without a word.
+            ("an envelope with an extra key", "benign",
+             json.dumps({"Records": good, "source": "x"}).encode(),
+             r": an envelope \(the list 'Records'\) that also holds the key 'source'" + extra),
+            ("two envelope keys that both hold lists", "benign",
+             json.dumps({"Records": good, "items": good[:1]}).encode(),
+             r": an envelope \(the list 'Records'\) that also holds the key 'items'" + extra),
+            ("a page key that holds an object", "benign",
+             json.dumps({"value": good, "nextLink": {"href": "x"}}).encode(),
+             r": an envelope \(the list 'value'\) whose page key 'nextLink' is an object, not "
+             r"a string or null" + extra),
+            ("a page key that holds a number with too many digits", "benign",
+             json.dumps({"value": good, "nextPageToken": 0})[:-2].encode() + long + b"}",
+             r": an envelope \(the list 'value'\) whose page key 'nextPageToken' is a number, "
+             r"not a string or null" + extra),
+            # A page key holds a value of its type, so it holds no record: a list of
+            # attack records, a small number, true; an @odata key with an object; a
+            # count that is true, a string, or a number outside 64 bits.
+            ("a page key that holds a list of attack records", "benign",
+             json.dumps({"Records": good, "nextPageToken": attack[:1]}).encode(),
+             r": an envelope \(the list 'Records'\) whose page key 'nextPageToken' is a list, "
+             r"not a string or null" + extra),
+            ("a page key that holds a small number", "benign",
+             json.dumps({"value": good, "nextLink": 7}).encode(),
+             r": an envelope \(the list 'value'\) whose page key 'nextLink' is a number, not a "
+             r"string or null" + extra),
+            ("a page key that holds true", "benign",
+             json.dumps({"value": good, "nextLink": True}).encode(),
+             r": an envelope \(the list 'value'\) whose page key 'nextLink' is true, not a "
+             r"string or null" + extra),
+            ("an @odata page key that holds an object", "benign",
+             json.dumps({"value": good, "@odata.context": {"x": 1}}).encode(),
+             r": an envelope \(the list 'value'\) whose page key '@odata\.context' is an object, "
+             r"not a string or null" + extra),
+            ("a count that is true", "benign",
+             json.dumps({"value": good, "@odata.count": True}).encode(),
+             r": an envelope \(the list 'value'\) whose page key '@odata\.count' is true, not an "
+             r"integer of 64 bits" + extra),
+            ("a count that is a string", "benign",
+             json.dumps({"value": good, "@odata.count": "3"}).encode(),
+             r": an envelope \(the list 'value'\) whose page key '@odata\.count' is a string, "
+             r"not an integer of 64 bits" + extra),
+            ("a count outside 64 bits", "benign",
+             json.dumps({"value": good, "@odata.count": 2 ** 63}).encode(),
+             r": an envelope \(the list 'value'\) whose page key '@odata\.count' is a number, "
+             r"not an integer of 64 bits" + extra),
+            ("a count below 64 bits", "benign",
+             json.dumps({"value": good, "@odata.count": -2 ** 63 - 1}).encode(),
+             r": an envelope \(the list 'value'\) whose page key '@odata\.count' is a number, "
+             r"not an integer of 64 bits" + extra),
+            # Each link of Microsoft Graph is a string or null: a list of attack records
+            # under it is refused.
+            ("an @odata.deltaLink that holds a list of attack records", "benign",
+             json.dumps({"value": good, "@odata.deltaLink": attack[:1]}).encode(),
+             r": an envelope \(the list 'value'\) whose page key '@odata\.deltaLink' is a "
+             r"list, not a string or null" + extra),
+            ("an @odata.nextLink that holds a list of attack records", "benign",
+             json.dumps({"value": good, "@odata.nextLink": attack[:1]}).encode(),
+             r": an envelope \(the list 'value'\) whose page key '@odata\.nextLink' is a "
+             r"list, not a string or null" + extra),
+            # A page key in another letter case is another key.
+            ("a page key in another letter case", "benign",
+             json.dumps({"value": good, "NextLink": "x"}).encode(),
+             r": an envelope \(the list 'value'\) that also holds the key 'NextLink'" + extra),
+            # An envelope whose list is empty holds no other key either: the JSON line
+            # of an attack record with `"items": []` lost the attack record.
+            ("a JSON line of an attack record with an empty list", "benign",
+             "".join(json.dumps(row) + "\n" for row in good).encode()
+             + json.dumps(dict(attack[0], items=[])).encode() + b"\n",
+             rf", line {n + 1}: an envelope \(the list 'items'\) that also holds the keys "
+             + re.escape(names) + extra),
+            # The text names the other keys, each cut at 40 characters, and names the
+            # other keys before a page key of a wrong type.
+            ("an envelope with a key of 60 characters", "benign",
+             json.dumps({"Records": good, "k" * 60: 1}).encode(),
+             r": an envelope \(the list 'Records'\) that also holds the key 'k{40}'\.\.\."
+             + extra),
+            ("an envelope with another key and a page key of a wrong type", "benign",
+             json.dumps({"Records": good, "nextLink": {}, "meta": 1}).encode(),
+             r": an envelope \(the list 'Records'\) that also holds the key 'meta'" + extra),
+            # A number with too many digits beside the list of an envelope is in no
+            # record: the envelope is refused for its other key, in each form.
+            ("an envelope that holds a number with too many digits beside its list", "benign",
+             json.dumps({"Records": good, "meta": 0})[:-2].encode() + long + b"}",
+             r": an envelope \(the list 'Records'\) that also holds the key 'meta'" + extra),
+            ("a JSON line of an envelope that holds a number with too many digits beside its "
+             "list", "benign",
+             "".join(json.dumps(row) + "\n" for row in good).encode()
+             + json.dumps({"Records": good[:1], "meta": 0})[:-2].encode() + long + b"}\n",
+             rf", line {n + 1}: an envelope \(the list 'Records'\) that also holds the key "
+             r"'meta'" + extra),
+            # An object that holds one key two times: json keeps only the last value, so
+            # the attack records (or an attack value) before it are lost without a word.
+            # The object of the file and of a line is named by the fixture and the line,
+            # an object in a record by its record.
+            ("an envelope that holds its list two times", "benign",
+             ('{"Records": ' + json.dumps(attack) + ', "Records": ' + json.dumps(good) + "}")
+             .encode(), r": " + twice.format("Records")),
+            ("a JSON line of an envelope that holds its list two times", "benign",
+             "".join(json.dumps(row) + "\n" for row in good).encode()
+             + ('{"Records": ' + json.dumps(attack) + ', "Records": []}\n').encode(),
+             rf", line {n + 1}: " + twice.format("Records")),
+            ("a record that holds a key two times", "benign",
+             (json.dumps(good)[:-1] + ", " + json.dumps(attack[0])[:-1] + ', "eventName": '
+              + json.dumps(good[0]["eventName"]) + "}]").encode(),
+             rf", element {n + 1} of the array: " + twice.format("eventName")),
+            # The page key two times, first with a number with too many digits: json
+            # drops the number with its key, so no record holds it.
+            ("a page key two times, first with a number with too many digits", "benign",
+             json.dumps({"Records": good})[:-1].encode() + b', "nextLink": ' + long
+             + b', "nextLink": null}',
+             r": " + twice.format("nextLink")),
+            # Values and keys that SQLite does not hold as they are. Python's json reads
+            # NaN and Infinity, which JSON does not have; SQLite stores NaN as NULL, so a
+            # `field: null` item would match a record that holds a value. The JSON escape
+            # of a lone surrogate gives a str that UTF-8 cannot encode, and no column name
+            # can hold a NUL.
+            ("NaN", "benign", json.dumps(good + [dict(good[0], n=float("nan"))]).encode(),
+             rf", element {n + 1} of the array: {table}the value of n is NaN, a number that "
+             r"JSON does not have \(SQLite stores it as NULL\)"),
+            ("-Infinity", "benign", json.dumps(good + [dict(good[0], n=float("-inf"))]).encode(),
+             rf", element {n + 1} of the array: {table}the value of n is -Infinity, a number "
+             r"that JSON does not have"),
+            ("a lone surrogate in a value", "benign",
+             json.dumps(good + [dict(good[0], s="x\ud800")]).encode(),
+             rf", element {n + 1} of the array: {table}the value of s holds the lone surrogate "
+             r"U\+D800, which is not text of UTF-8, so SQLite cannot hold it"),
+            ("a lone surrogate in a key", "benign",
+             json.dumps(good + [dict(good[0], **{"k\udc80": 1})]).encode(),
+             rf", element {n + 1} of the array: {table}the key 'k\\udc80' holds the lone "
+             r"surrogate U\+DC80, which is not text of UTF-8, so SQLite cannot hold it"),
+            ("a NUL in a key", "benign", json.dumps(good + [dict(good[0], **{"a\u0000b": 1})])
+             .encode(),
+             rf", element {n + 1} of the array: {table}the key 'a\\x00b' holds U\+0000 \(NUL\), "
+             r"which no column name of SQLite can hold"),
+            # Two keys of a record that give one field: the file shows the attack value
+            # under the dotted key, and the flat record holds only the benign value of
+            # the nested object. A store that merges a dotted key with an object (Elastic)
+            # sees both values, and the rule fires there.
+            ("a record that hides an attack value under a dotted key", "benign",
+             json.dumps(good + [hidden]).encode(),
+             rf", element {n + 1} of the array: {table}two keys of the record give the one "
+             r"field 'userIdentity\.type' \(sigma_eval\.flatten keeps only one value\)")]
+
+    def test_rejects_fixtures_that_the_loader_cannot_read(self):
+        """A fixture that the loader cannot read as records is an ERROR row of the rule
+        that names the fixture, the line or the element, and the problem, also with
+        --report. No row comes from a traceback, and the run judges each other rule.
+        Before roadmap item R2d most of these fixtures ended the validator with a
+        traceback, and the others gave the rule a verdict row (PASS or FAIL) in the
+        place of an ERROR row: SQLite stored NaN as NULL, an envelope whose list is
+        null was one record, and a key rowid was a column."""
+        good = self.good().read_json(self.BENIGN)
+        self.assertTrue(all("eventName" in row for row in good))
+        # Each page key of the loader (PAGE_KEYS) has a row with a value of a wrong
+        # type: a key added later cannot go without a row.
+        keys = in_source(self.good(), self.GATE, r'^(?:PAGE_KEYS = \{| +)"([^"]+)": \("')
+        self.assertEqual(len(keys), 6, keys)
+        rows = "\n".join(problem for _, _, _, problem in self.unreadable_fixtures(good))
+        for key in keys:
+            self.assertIn(f"whose page key '{re.escape(key)}' is ", rows, key)
+        runs = []
+        for label, kind, data, problem in self.unreadable_fixtures(good):
+            tree = self.tree()
+            with open(tree.path(self.ATTACK if kind == "attack" else self.BENIGN), "wb") as fh:
+                fh.write(data)
+            runs.append((label, kind, problem, tree, tree.start(self.GATE),
+                         tree.start(self.GATE, "--report")))
+        rules = len(self.manifest_rules(self.good()))
+        for label, kind, problem, tree, plain, report in runs:
+            for result in (plain.result(), report.result()):
+                with self.subTest(label, report="--report" in result.argv):
+                    self.assertNotIn("Traceback", result.output)
+                    self.assert_saw(result, self.NO_PROOF)
+                    self.assertEqual(len(re.findall(r"^PASS  \[", result.stdout, re.M)),
+                                     rules - 1, result.describe())
+                    self.assert_rejects(result, self.UNREAD.format(kind, kind, problem),
+                                        exit_code=1)
+
+    def test_rejects_unreadable_fixture_in_each_gate_that_reads_it(self):
+        """Three fixtures that the loader cannot read, each in a copy, in the three other
+        gates that read the cloud fixtures with the loader of the validator, for the
+        rule (the faster path of the same code): the benign fixture of
+        test_rejects_fixture_record_that_is_not_an_object (a `null` record after the
+        good baseline); an attack fixture whose last record holds `eventName` and
+        `EventName` (the loader reads it, and the event table cannot hold it); and a
+        benign fixture that is a directory (the validator gives it the ERROR row of a
+        fixture that is not a file). Each gate names the rule and the fixture, does
+        not stop with a traceback, and exits 1. A benign fixture that does not exist is
+        named in the same way by check_null_safety.py and check_variants.py
+        (check_sufficiency.py, and the validator, look for the file first). Before
+        roadmap item R2d some of these runs ended with a traceback, and the others
+        named the rule and an error of Python (`cannot check: AttributeError`,
+        `cannot check: ValueError`), not the fixture.
+
+        With an attack fixture that it cannot read, R4 of check_sufficiency.py also
+        says that the rename test ran on the sidecar positives only, and it does not
+        tell the author to add a positive case: the records of the fixture are the
+        units that carry the marker. TRR9023 has no sidecar: with its two fixtures
+        unreadable, check_null_safety.py and check_variants.py name the two
+        fixtures, and not "no sidecar case and no cloud fixture"."""
+        rule = "T1078.004/aws_leaked_access_key_recon.yml"
+        null_safety, variants, sufficiency = ("detections/check_null_safety.py",
+                                              "detections/check_variants.py",
+                                              "detections/check_sufficiency.py")
+        runs = []
+        for kind, label in (("benign", "null"), ("attack", "keys"), ("benign", "directory"),
+                            ("benign", "missing")):
+            tree = self.tree()
+            fixture = self.BENIGN if kind == "benign" else self.ATTACK
+            rows = tree.read_json(fixture)
+            if label == "missing":
+                tree.remove(fixture)
+                problem = (f"detections/cloud/fixtures/trr9012/{kind}.json: cannot be read (No "
+                           "such file or directory)")
+            elif label == "directory":
+                tree.remove(fixture)
+                os.mkdir(tree.path(fixture))
+                problem = f"detections/cloud/fixtures/trr9012/{kind}.json: a directory, not a file"
+            else:
+                if label == "null":
+                    bad = None
+                    problem = r"a record that is not a JSON object (null)"
+                else:
+                    bad = dict(rows[0], EventName=rows[0]["eventName"])
+                    problem = ("a record that one event table cannot hold: keys that differ "
+                               "only by case: EventName / eventName, which SQLite reads as one "
+                               "column name")
+                tree.edit_json(fixture, lambda doc: doc + [bad])
+                problem = (f"detections/cloud/fixtures/trr9012/{kind}.json, element "
+                           f"{len(rows) + 1} of the array: {problem}")
+            lines = {
+                null_safety: f"FAIL  {rule} :: fixture {kind} trr9012/{kind}.json: the "
+                                  f"loader of the cloud validator cannot read the fixture: "
+                                  f"{problem}",
+                variants: f"FAIL  {rule}: the loader of the cloud "
+                                                f"validator cannot read the {kind} fixture: "
+                                                f"{problem}",
+                sufficiency: f"  [{'R2' if kind == 'benign' else 'R4'}] {rule}: the loader "
+                                  f"of the cloud validator cannot read the {kind} fixture: "
+                                  f"{problem}"}
+            for script, arguments in ((null_safety, (self.RULE,)),
+                                      (variants, (self.RULE,)),
+                                      (sufficiency, ("--rule", self.RULE))):
+                if label == "missing" and script == sufficiency:
+                    continue
+                runs.append((label, script, lines[script], tree.start(script, *arguments)))
+        # TRR9023: a rule without a sidecar, and its two fixtures cannot be read.
+        entra = "T1078.004/entra_service_principal_federated_credential_signin.yml"
+        tree = self.tree()
+        self.assertTrue(tree.exists(f"detections/sigma/{entra}"))
+        self.assertFalse(tree.exists(f"detections/sigma/{entra[:-4]}.cases.jsonl"))
+        tree.write("detections/cloud/fixtures/trr9023/attack.json", "null\n")
+        tree.write("detections/cloud/fixtures/trr9023/benign.json", "[null]\n")
+        attack = ("detections/cloud/fixtures/trr9023/attack.json: JSON that is not an array or "
+                  "an object (null)")
+        benign = ("detections/cloud/fixtures/trr9023/benign.json, element 1 of the array: a "
+                  "record that is not a JSON object (null)")
+        alone = {
+            null_safety: [f"FAIL  {entra} :: fixture {kind} trr9023/{kind}.json: the loader of "
+                          f"the cloud validator cannot read the fixture: {problem}"
+                          for kind, problem in (("attack", attack), ("benign", benign))],
+            variants: [f"FAIL  {entra}: the loader of the cloud validator cannot read the "
+                       f"{kind} fixture: {problem}"
+                       for kind, problem in (("attack", attack), ("benign", benign))]}
+        started = [(script, tree.start(script, f"detections/sigma/{entra}")) for script in alone]
+        for label, script, line, pending in runs:
+            with self.subTest(label, gate=script):
+                result = pending.result()
+                self.assertNotIn("Traceback", result.output)
+                self.assert_rejects(result, "^" + re.escape(line) + "$", exit_code=1)
+                if label == "keys" and script == sufficiency:
+                    self.assert_saw(result, "^" + re.escape(
+                        f"  [R4] {rule}: attack fixture detections/cloud/fixtures/trr9012/"
+                        "attack.json cannot be read; the rename test ran on the sidecar "
+                        "positives only") + "$")
+                    self.assertNotIn("no positive unit carries an emulation identity",
+                                     result.stdout)
+        for script, pending in started:
+            with self.subTest("no sidecar, two fixtures", gate=script):
+                result = pending.result()
+                self.assertNotIn("Traceback", result.output)
+                for line in alone[script]:
+                    self.assert_rejects(result, "^" + re.escape(line) + "$", exit_code=1)
+                self.assertEqual(len(re.findall(r"^FAIL ", result.stdout, re.M)), 2,
+                                 result.describe())
+                self.assertNotIn("no sidecar case and no cloud fixture", result.stdout)
+
+    def test_rejects_nan_in_the_attack_fixture(self):
+        """Each record of the attack fixture holds `userIdentity.accessKeyId: NaN`
+        (Python's json reads it; JSON has no NaN). SQLite stores NaN as NULL, so the
+        item `userIdentity.accessKeyId: [null, '']` of the rule would match each record
+        that holds a value: before roadmap item R2d the validator gave the rule a PASS
+        on that fixture. The loader names the fixture and the record."""
+        tree = self.tree()
+        rows = tree.read_json(self.ATTACK)
+        self.assertTrue(all(row["userIdentity"].get("accessKeyId") for row in rows))
+        self.assertIn("accessKeyId", tree.read(self.RULE))
+
+        def nan(doc):
+            for row in doc:
+                row["userIdentity"]["accessKeyId"] = float("nan")
+            return doc
+        tree.edit_json(self.ATTACK, nan)
+        self.assertIn('"accessKeyId": NaN', tree.read(self.ATTACK))
+        result = self.rejected_as_unproven(tree, self.UNREAD.format(
+            "attack", "attack", r", element 1 of the array: a record that one event table "
+                                r"cannot hold: the value of userIdentity\.accessKeyId is NaN, "
+                                r"a number that JSON does not have \(SQLite stores it as NULL\)"))
+        self.assertNotRegex(result.stdout, r"(?m)^PASS +\[TRR9012\b")
+
+    def test_control_json_lines_with_line_separators_in_a_string(self):
+        """CONTROL of the loader: the benign fixture as JSON lines, one record on each
+        line, and a value of the second record holds U+2028, U+2029 and U+0085 as they
+        are (JSON allows them in a string). A line ends at LF only, so the run reads
+        each record (str.splitlines() would cut the line in three and refuse it)."""
+        tree = self.tree()
+        good = tree.read_json(self.BENIGN)
+        self.assertGreater(len(good), 1)
+        good[1]["userAgent"] = "aws-cli/2 \u2028 \u2029 \u0085 x"
+        text = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in good)
+        tree.write(self.BENIGN, text)
+        self.assertEqual(tree.read(self.BENIGN).count("\n"), len(good))
+        self.assertEqual(len(tree.read(self.BENIGN).splitlines()), len(good) + 3)
+        result = tree.run(self.GATE)
+        self.assert_accepts(result, r"^All \d+ external-cloud detection\(s\) fired ")
+        self.assert_saw(result, rf"^PASS  {self.ROW}.* benign baseline clean "
+                                rf"\({len(good)} record\(s\)\) ")
+
+    def test_control_json_lines_of_envelopes(self):
+        """CONTROL of the loader: each line of JSON lines is read as the one object of a
+        file is, and CloudTrail writes each log file as one envelope on one line. The
+        attack fixture as JSON lines of envelopes (two records in the first, one in
+        each other) and the benign fixture as an envelope on a line before a record on
+        a line: the run reads each record. A record that holds an envelope key as a
+        string goes in a JSON array, as the text of the loader says, and is read."""
+        tree, array = self.tree(), self.tree()
+        attack, good = tree.read_json(self.ATTACK), tree.read_json(self.BENIGN)
+        self.assertGreater(len(attack), 2)
+        self.assertGreater(len(good), 1)
+        tree.write(self.ATTACK, "".join(json.dumps({"Records": part}) + "\n"
+                                        for part in [attack[:2]] + [[r] for r in attack[2:]]))
+        tree.write(self.BENIGN, json.dumps({"Records": good[:-1]}) + "\n"
+                   + json.dumps(good[-1]) + "\n")
+        array.write(self.BENIGN, json.dumps(good[:-1] + [dict(good[-1], value="abc")]))
+        for result in (tree.run(self.GATE), array.run(self.GATE)):
+            self.assert_accepts(result, r"^All \d+ external-cloud detection\(s\) fired ")
+            self.assert_saw(result, rf"^PASS  {self.ROW}{len(attack)}/{len(attack)} attack "
+                                    rf"record\(s\) match; benign baseline clean "
+                                    rf"\({len(good)} record\(s\)\) ")
+
+    def test_rejects_attack_records_in_the_benign_baseline_as_json_lines_of_envelopes(self):
+        """Definition of done 2 (stays quiet): the benign baseline holds the attack
+        records, one CloudTrail envelope on each line. The loader reads the records of
+        each envelope, so the rule fires on the baseline and fails. (Before, the loader
+        read each line as one record, the envelope itself; the rule did not fire on it,
+        and the run gave `benign baseline clean`.) Each record of the baseline is an
+        attack record, so the baseline holds no hard record either (R2e): the row is
+        NOT HARD too, and the rule has no proof."""
+        tree = self.tree()
+        attack = tree.read_json(self.ATTACK)
+        tree.write(self.BENIGN, "".join(json.dumps({"Records": [r]}) + "\n" for r in attack))
+        self.assertEqual(len(tree.read(self.BENIGN).splitlines()), len(attack))
+        result = tree.run(self.GATE)
+        self.assertNotIn("Traceback", result.output)
+        self.assert_rejects(
+            result, rf"^FAIL  {self.ROW}NEGATIVE CONTROL FAILED: rule fired on {len(attack)} "
+                    r"benign record\(s\); NEGATIVE CONTROL NOT HARD: the benign baseline "
+                    + re.escape(self.BENIGN) + r" holds no near-miss or filtered record of "
+                    rf"the rule that differs from the attack in a discriminating field "
+                    rf"\({len(attack)} match\)", exit_code=1)
+        self.assert_saw(result, self.NO_PROOF)
+
+    def test_rejects_attack_records_with_a_list_of_benign_records_as_json_lines(self):
+        """Definition of done 2 (stays quiet): the benign baseline as JSON lines, each
+        line an attack record with an added `"items": [<a benign record>]`. The loader
+        reads only the list of an envelope, so it cannot read such a line as one
+        record or as an envelope: the row names the line, the list and the other keys.
+        (At f9891b2 the loader read the line as an envelope and dropped the attack
+        record without a word: the run gave `benign baseline clean`.)"""
+        tree = self.tree()
+        attack, good = tree.read_json(self.ATTACK), tree.read_json(self.BENIGN)
+        self.assertGreater(len(attack), 1)
+        self.assertTrue(all("items" not in row for row in attack))
+        tree.write(self.BENIGN, "".join(json.dumps(dict(row, items=[good[0]])) + "\n"
+                                        for row in attack))
+        keys = sorted(attack[0])
+        self.assertGreater(len(keys), 3)
+        names = ", ".join(repr(key) for key in keys[:3]) + f" and {len(keys) - 3} more"
+        result = self.rejected_as_unproven(tree, self.UNREAD.format(
+            "benign", "benign", r", line 1: an envelope \(the list 'items'\) that also holds "
+                                r"the keys " + re.escape(names) + self.EXTRA))
+        self.assertNotIn("Traceback", result.output)
+        self.assertNotRegex(result.stdout, rf"(?m)^PASS  {self.ROW}")
+
+    def test_rejects_attack_fields_with_a_list_of_benign_records_in_one_object(self):
+        """Definition of done 2 (stays quiet): the benign baseline as one object, the
+        fields of an attack record and `"value": [<the benign records>]`. The row names
+        the fixture, the list and the other keys. (On main 224119f and at f9891b2 the
+        loader read the object as an envelope and dropped the attack fields without a
+        word: the run gave `benign baseline clean`.)"""
+        tree = self.tree()
+        attack, good = tree.read_json(self.ATTACK), tree.read_json(self.BENIGN)
+        self.assertNotIn("value", attack[0])
+        tree.write(self.BENIGN, json.dumps(dict(attack[0], value=good)))
+        keys = sorted(attack[0])
+        names = ", ".join(repr(key) for key in keys[:3]) + f" and {len(keys) - 3} more"
+        result = self.rejected_as_unproven(tree, self.UNREAD.format(
+            "benign", "benign", r": an envelope \(the list 'value'\) that also holds the keys "
+                                + re.escape(names) + self.EXTRA))
+        self.assertNotIn("Traceback", result.output)
+        self.assertNotRegex(result.stdout, rf"(?m)^PASS  {self.ROW}")
+
+    def test_control_pages_of_list_apis(self):
+        """CONTROL of the loader: a page of a list API holds page keys beside its list.
+        Five benign baselines as pages: that of the managed-identity rule of TRR9013 as
+        an Azure page (`value`, a `nextLink` and an `@odata.context`), that of TRR9014
+        as a GCP page (`entries` and a `nextPageToken` of null), that of the Entra rule
+        of TRR9013 as a Microsoft Graph page (`@odata.context`, `@odata.nextLink`,
+        `value`), that of the consent rule of TRR9017 as a Graph page with $count=true
+        (`@odata.count`) and that of the device-code rule of TRR9017 as the last page of
+        a Graph delta query (`@odata.deltaLink`). The run reads the records of each
+        list, the baselines pass, and each row counts its records."""
+        tree = self.tree()
+        graph = "https://graph.microsoft.com/v1.0/"
+        pages = {
+            "trr9013/benign_mi.json": lambda rows: {
+                "value": rows, "nextLink": "https://management.example.com/next",
+                "@odata.context": "x"},
+            "trr9014/benign.json": lambda rows: {"entries": rows, "nextPageToken": None},
+            "trr9013/benign.json": lambda rows: {
+                "@odata.context": graph + "$metadata#auditLogs/directoryAudits",
+                "@odata.nextLink": graph + "auditLogs/directoryAudits?$skiptoken=x",
+                "value": rows},
+            "trr9017/benign.json": lambda rows: {
+                "@odata.context": graph + "$metadata#auditLogs/directoryAudits",
+                "@odata.count": len(rows), "value": rows},
+            "trr9017/benign_signin.json": lambda rows: {
+                "@odata.context": graph + "$metadata#auditLogs/signIns",
+                "value": rows, "@odata.deltaLink": graph + "auditLogs/signIns/delta?x=1"}}
+        counts = {}
+        for name, page in pages.items():
+            rel = "detections/cloud/fixtures/" + name
+            rows = tree.read_json(rel)
+            self.assertGreater(len(rows), 0)
+            counts[name] = len(rows)
+            tree.write(rel, json.dumps(page(rows)))
+        result = tree.run(self.GATE)
+        self.assert_accepts(result, r"^All \d+ external-cloud detection\(s\) fired ")
+        self.assertGreater(counts["trr9013/benign_mi.json"], 1)
+        self.assertGreater(counts["trr9014/benign.json"], 1)
+        for row, name in (
+                (r"\[TRR9013 Azure\] azure_managed_identity_federated_credential_backdoor\.yml",
+                 "trr9013/benign_mi.json"),
+                (r"\[TRR9014 GCP\] gcp_public_iam_member_grant\.yml", "trr9014/benign.json"),
+                (r"\[TRR9013 Azure\] entra_app_federated_credential_backdoor\.yml",
+                 "trr9013/benign.json"),
+                (r"\[TRR9017 Azure\] entra_illicit_oauth_consent_grant\.yml",
+                 "trr9017/benign.json"),
+                (r"\[TRR9017 Azure\] entra_device_code_authentication\.yml",
+                 "trr9017/benign_signin.json")):
+            self.assert_saw(result, rf"^PASS  {row}: .*benign baseline clean "
+                                    rf"\({counts[name]} record\(s\)\) ")
+
+    def test_control_counts_at_the_bounds_of_64_bits(self):
+        """CONTROL of the loader: `@odata.count` is an integer of 64 bits (with sign), so
+        the bounds -2**63 and 2**63 - 1 are counts. Two benign baselines as Graph pages,
+        each with a count at one bound: the run reads the records of each list, and the
+        baselines pass. (The rows "a count outside 64 bits" and "a count below 64 bits"
+        of the matrix give the numbers just outside.)"""
+        tree = self.tree()
+        counts = {}
+        for name, count in (("trr9017/benign.json", -2 ** 63),
+                            ("trr9013/benign.json", 2 ** 63 - 1)):
+            rel = "detections/cloud/fixtures/" + name
+            rows = tree.read_json(rel)
+            counts[name] = len(rows)
+            tree.write(rel, json.dumps({"@odata.count": count, "value": rows}))
+        result = tree.run(self.GATE)
+        self.assert_accepts(result, r"^All \d+ external-cloud detection\(s\) fired ")
+        for row, name in (
+                (r"\[TRR9017 Azure\] entra_illicit_oauth_consent_grant\.yml", "trr9017/benign.json"),
+                (r"\[TRR9013 Azure\] entra_app_federated_credential_backdoor\.yml",
+                 "trr9013/benign.json")):
+            self.assert_saw(result, rf"^PASS  {row}: .*benign baseline clean "
+                                    rf"\({counts[name]} record\(s\)\) ")
+
+    def test_rejects_two_fixtures_that_the_loader_cannot_read_in_one_row(self):
+        """The two fixtures of the rule cannot be read: one ERROR row names both, and
+        the --json report gives it as the ERROR of the rule. (The run with --json is a
+        variant: no workflow runs it.)"""
+        tree = self.tree()
+        tree.write(self.ATTACK, "null\n")
+        tree.write(self.BENIGN, "[1]\n")
+        result = tree.run(self.GATE, "--json", tree.out("cloud.json"))
+        why = ("the attack fixture detections/cloud/fixtures/trr9012/attack.json: JSON that is "
+               "not an array or an object (null); the benign fixture detections/cloud/fixtures/"
+               "trr9012/benign.json, element 1 of the array: a record that is not a JSON "
+               "object (a number). The loader cannot read them, so nothing proves the rule")
+        self.assert_rejects(result, r"^ERROR " + self.ROW + re.escape(why) + " -- ",
+                            exit_code=1)
+        with open(tree.out("cloud.json"), encoding="utf-8") as fh:
+            report = json.load(fh)
+        self.assertEqual(report["exit"], 1)
+        self.assertEqual([(r["status"], r["detail"]) for r in report["results"]
+                          if r["rule"] == "T1078.004/aws_leaked_access_key_recon.yml"],
+                         [("ERROR", why)])
+
+    def test_control_records_whose_keys_differ_only_in_letter_case(self):
+        """CONTROL of the loader and of the event table: a record of the baseline that
+        spells a key `EventName`, beside records that spell it `eventName`. No record
+        holds both, so the keys share one column, and the rule reads `EventName` as it
+        reads a field in SQLite. A copy of a benign record with that spelling keeps
+        the baseline clean; a copy of an attack record with that spelling is a benign
+        hit, and the rule fails for it. (Before roadmap item R2d the validator ended
+        with a ValueError of sigma_eval.EventTable on each.)"""
+        def respelled(row):
+            return {("EventName" if key == "eventName" else key): value
+                    for key, value in row.items()}
+        clean, hit = self.tree(), self.tree()
+        good = clean.read_json(self.BENIGN)
+        clean.write(self.BENIGN, json.dumps(good + [respelled(good[0])]))
+        attack = hit.read_json(self.ATTACK)
+        hit.write(self.BENIGN, json.dumps(good + [respelled(attack[0])]))
+        clean, hit = clean.start(self.GATE), hit.start(self.GATE)
+        self.assert_accepts(clean.result(), r"^All \d+ external-cloud detection\(s\) fired ")
+        self.assert_saw(clean.result(), rf"^PASS  {self.ROW}.* benign baseline clean "
+                                        rf"\({len(good) + 1} record\(s\)\) ")
+        self.assertNotIn("Traceback", hit.result().output)
+        self.assert_rejects(hit.result(), rf"^FAIL  {self.ROW}NEGATIVE CONTROL FAILED: rule "
+                                          r"fired on 1 benign record\(s\) ", exit_code=1)
+        self.assert_saw(hit.result(), rf"^          benign record #{len(good)}: ")
 
 
 class LinuxValidatorDryRun(gatelib.GateCase):
@@ -2334,13 +2986,22 @@ class K8sValidator(gatelib.GateCase):
             exit_code=1)
 
     def test_rejects_negative_control_on_a_log_of_blank_and_unparsable_lines(self):
-        """A log with bytes and without a record: the loader skips a blank line and a
-        line that is not JSON, so the rules get nothing to read. The message gives
-        the number of lines, which tells this log from an empty capture."""
+        """A log with bytes and without a record: the loader skips the blank lines, so
+        the rules get nothing to read. The message gives the number of lines, which
+        tells this log from an empty capture. The two lines that are not JSON are
+        named too: a capture can cut only the last line of a log, and the last line
+        here ends with a line feed. (Before, the loader skipped each line that json
+        refused, and named neither.)"""
         good = self.good()
         write_text_log(good, self.LOG, "\n   \nnot an audit event\n{\"kind\": \"Event\", \n")
         result = good.run_step(self.negative_control_step())
         self.assert_saw(result, r"^Loaded 0 audit event\(s\) from ")
+        log = r"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+        self.assert_saw(result, log + r"3: not JSON \(Expecting value, at character 1\)$")
+        self.assert_saw(result, log + r"4: not JSON \(Expecting property name enclosed in double "
+                                      r"quotes, at character 18\); a capture can cut only the "
+                                      r"last line of a log, and a cut line has no line feed$")
+        self.assert_saw(result, LINES_NOT_RECORDS.format(2))
         self.assert_rejects(
             result,
             r"^NEGATIVE CONTROL FAILED: the pre-emulation audit log \S+/pre-emulation-audit\.log "
@@ -2398,9 +3059,11 @@ class K8sValidator(gatelib.GateCase):
     def test_json_report_says_that_the_control_of_an_empty_log_failed(self):
         """The --json report holds the control of the pre-emulation log. For a log
         with records it says `held` and gives the count of the records (the log of
-        that run also holds one line that is not JSON, which is no record); for the
-        empty log and for a log that does not exist it says `FAILED` and names the
-        log. (The step with --json is a variant: no workflow runs it.)"""
+        that run also holds a last line that a capture cut, which is no record); for
+        a log whose last line is not JSON and ends with a line feed (a line that a
+        capture does not cut), for the empty log and for a log that does not exist it
+        says `FAILED` and names the log. (The step with --json is a variant: no
+        workflow runs it.)"""
         good = self.good()
         step = with_options(self, self.negative_control_step(), "--json /tmp/k8sneg.json")
 
@@ -2421,10 +3084,20 @@ class K8sValidator(gatelib.GateCase):
             return result, report["controls"][0]
 
         records = write_log(good, self.LOG, self.CASES, *self.BENIGN)
-        # One more line, which is not JSON: the log holds more lines than records,
-        # and the report gives the number of the records.
+        # One more line, which is not JSON and ends with a line feed: it is not a line
+        # that a capture cut, so the control fails and names the log. (Before, the
+        # reader skipped it, and the control held.)
         with open(good.tmp_path(self.LOG), "a", encoding="utf-8") as fh:
             fh.write("not an audit event\n")
+        result, entry = control(records)
+        self.assertEqual((result.returncode, entry["status"]), (1, "FAILED"), result.describe())
+        self.assertRegex(entry["detail"], r"^1 line\(s\) of the pre-emulation audit log "
+                                          r"\S+/pre-emulation-audit\.log are not audit events$")
+        # The last line cut by the capture (no line feed): the log holds more lines
+        # than records, and the report gives the number of the records.
+        records = write_log(good, self.LOG, self.CASES, *self.BENIGN)
+        with open(good.tmp_path(self.LOG), "a", encoding="utf-8") as fh:
+            fh.write('{"kind": "Event", "apiVersion": "audit.k8s.io/v1", "verb": "ge')
         result, entry = control(records)
         self.assertEqual((result.returncode, entry["status"], entry["detail"]),
                          (0, "held", f"{records} audit event(s)"))
@@ -2584,9 +3257,10 @@ class K8sValidator(gatelib.GateCase):
         self.assert_rejects(result, LINES_NOT_RECORDS.format(2), exit_code=1)
 
     def test_rejects_a_log_that_starts_with_a_byte_order_mark(self):
-        """The log starts with the byte order mark of UTF-8. A reader that does not
-        name it loses the first record without a word: json.loads() refuses the
-        line, and a line that is not JSON is skipped."""
+        """The log starts with the byte order mark of UTF-8. json.loads() refuses the
+        line, so the first record is lost: the ERROR line names the mark, the cause.
+        (A reader that skipped each line that json refused lost the record without a
+        word.)"""
         good = self.good()
         records = write_log(good, self.LOG, self.CASES, *self.BENIGN)
         with open(good.tmp_path(self.LOG), "rb") as fh:
@@ -2600,6 +3274,333 @@ class K8sValidator(gatelib.GateCase):
                                     r"the line starts with the byte order mark of UTF-8 "
                                     r"\(EF BB BF\)$", exit_code=1)
 
+    def test_rejects_a_byte_order_mark_at_the_start_of_a_later_line(self):
+        """After the records of the control, the log holds the byte order mark of UTF-8
+        and then an emulation record of the rule (two logs joined). json refuses the
+        line: before, the reader skipped it as a cut line, the record was lost without
+        a word, and the negative control held on a log that holds a record on which
+        the rule fires. Now the line is named with the mark, and the run fails."""
+        good = self.good()
+        (positive,) = case_events(good, self.CASES, "exec-websocket-get-procA")
+        records = self.log_with(good, b"\xef\xbb\xbf" + json.dumps(positive).encode())
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assertNotIn("Negative control held", result.stdout)
+        self.assert_rejects(result, rf"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+                                    rf"{records + 1}: the line starts with the byte order mark "
+                                    r"of UTF-8 \(EF BB BF\)$", exit_code=1)
+
+    def test_rejects_an_audit_event_that_holds_a_key_two_times(self):
+        """After the records of the control, a line of the log holds an emulation
+        record of the rule whose key `objectRef` comes two times: first the object of
+        the record, then the object of a benign record. json keeps only the last value,
+        so a reader that read the line got a benign record: the rule did not fire, and
+        the negative control held on a log that holds a record on which the rule fires.
+        Now the line is named with the key, and no rule is judged. (Before, the reader
+        read such a line without a word.)"""
+        good = self.good()
+        (positive,) = case_events(good, self.CASES, "exec-websocket-get-procA")
+        benign = case_events(good, self.CASES, self.BENIGN[0])[0]
+        self.assertNotEqual(positive["objectRef"], benign["objectRef"])
+        line = (json.dumps(positive)[:-1] + ', "objectRef": ' + json.dumps(benign["objectRef"])
+                + "}")
+        records = self.log_with(good, line)
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+        self.assertNotIn("Negative control held", result.stdout)
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_saw(result, LINES_NOT_RECORDS.format(1))
+        self.assert_rejects(result, rf"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+                                    rf"{records + 1}: an object holds the key 'objectRef' two "
+                                    r"times \(json keeps only the last value\)$", exit_code=1)
+
+    def test_rejects_an_audit_event_whose_two_keys_give_one_field(self):
+        """After the records of the control, a line of the log holds an emulation
+        record of the rule with the key `objectRef.subresource` (the value `exec` of
+        the emulation) before its object `objectRef`, whose `subresource` is the value
+        `log` of a benign record. Both keys give the field objectRef.subresource, and
+        sigma_eval.flatten() keeps only the last value: a reader that read the line got
+        a benign record, the rule did not fire, and the negative control held on a log
+        that holds a record on which the rule fires (a store that merges a dotted key
+        with an object sees `exec`). Now the line is named with the field, and no rule
+        is judged. (Before, the reader read such a line without a word.)"""
+        good = self.good()
+        (positive,) = case_events(good, self.CASES, "exec-websocket-get-procA")
+        benign = case_events(good, self.CASES, self.BENIGN[0])[0]
+        self.assertEqual((positive["objectRef"]["subresource"],
+                          benign["objectRef"]["subresource"]), ("exec", "log"))
+        hidden = {"objectRef.subresource": "exec",
+                  **dict(positive, objectRef=dict(positive["objectRef"], subresource="log"))}
+        records = self.log_with(good, json.dumps(hidden))
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+        self.assertNotIn("Negative control held", result.stdout)
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_saw(result, LINES_NOT_RECORDS.format(1))
+        self.assert_rejects(result, rf"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+                                    rf"{records + 1}: an audit event that one event table cannot "
+                                    r"hold: two keys of the record give the one field "
+                                    r"'objectRef\.subresource' \(sigma_eval\.flatten keeps only "
+                                    r"one value\)$", exit_code=1)
+
+    # A line that a capture can cut: an audit event without its end (and so without
+    # its line feed), as `cat` reads it while the writer adds the line.
+    CUT = '{"kind": "Event", "apiVersion": "audit.k8s.io/v1", "verb": "ge'
+
+    def not_json(self, line, blanks=0):
+        """The end of the ERROR line of `line`, a line that json refuses and that
+        starts with "{": its error, and the rule of a cut line. `blanks` blanks before
+        the line in the log count in the character of the error."""
+        try:
+            json.loads(line)
+        except json.JSONDecodeError as e:
+            return (rf"not JSON \({re.escape(e.msg)}, at character {e.colno + blanks}\); a "
+                    r"capture can cut only the last line of a log, and a cut line has no line "
+                    r"feed$")
+        raise AssertionError(f"json reads {line!r}")
+
+    def test_rejects_a_record_behind_bytes_that_json_refuses(self):
+        """After the records of the control, a line of the log holds an emulation
+        record of the rule behind 8 NUL bytes (a copytruncate rotation of a log leaves
+        them), or behind U+200B. json refuses the line at character 1. A capture can
+        cut only the last line of a log, and it cuts the end of that line, not its
+        start: so the line is named, the negative control does not hold, and no rule
+        is judged. Four runs, started together: each prefix on a line that ends with a
+        line feed, and the NUL bytes on the last line without a line feed (that line
+        does not start with "{"). (Before, the reader skipped each line that json
+        refused as a cut line: the record was lost without a word, and the step gave
+        `Negative control held`.)"""
+        (positive,) = case_events(self.good(), self.CASES, "exec-websocket-get-procA")
+        runs = []
+        for label, prefix, end in (("NUL bytes", "\x00" * 8, "\n"), ("U+200B", "\u200b", "\n"),
+                                   ("NUL bytes on the last line without a line feed",
+                                    "\x00" * 8, "")):
+            tree = self.tree()
+            records = write_log(tree, self.LOG, self.CASES, *self.BENIGN)
+            with open(tree.tmp_path(self.LOG), "a", encoding="utf-8") as fh:
+                fh.write(prefix + json.dumps(positive) + end)
+            runs.append((label, records, tree.start_step(self.negative_control_step())))
+        for label, records, pending in runs:
+            with self.subTest(label):
+                result = pending.result()
+                self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+                self.assertNotIn("Negative control held", result.stdout)
+                self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+                self.assert_saw(result, LINES_NOT_RECORDS.format(1))
+                self.assert_rejects(result, r"^ERROR: the audit log \S+/pre-emulation-audit\.log, "
+                                            rf"line {records + 1}: not JSON \(Expecting value, at "
+                                            r"character 1\)$", exit_code=1)
+
+    def test_rejects_a_cut_line_that_is_not_the_last_line_of_a_capture(self):
+        """A line that json refuses and that starts with "{" (an audit event without
+        its end) is named when a capture cannot have cut it. Three runs, started
+        together, after the records of the control: the line ends with a line feed
+        and a complete audit event follows it (the middle of the log); the line ends
+        with a line feed and is the last line; the line ends with a carriage return
+        alone and a complete audit event follows it (the reader keeps the end of each
+        line as the log holds it, so that line has no line feed and is not the last
+        line); and three blanks before the line in the middle of the log (the
+        character of the error counts the blanks: it is the place in the line as the
+        log holds it). In each run the ERROR line names the line and says that a
+        capture can cut only the last line, and no rule is judged. (Before, the reader
+        skipped each line that json refused.)"""
+        good = self.good()
+        after = json.dumps(case_events(good, self.CASES, self.BENIGN[0])[0])
+        runs = []
+        for label, text, loaded, blanks in (
+                ("the middle of the log", self.CUT + "\n" + after + "\n", 1, 0),
+                ("the last line with a line feed", self.CUT + "\n", 0, 0),
+                ("a carriage return alone, before a record", self.CUT + "\r" + after + "\n", 1,
+                 0),
+                ("three blanks before the line", "   " + self.CUT + "\n" + after + "\n", 1, 3)):
+            tree = self.tree()
+            records = write_log(tree, self.LOG, self.CASES, *self.BENIGN)
+            with open(tree.tmp_path(self.LOG), "a", encoding="utf-8", newline="") as fh:
+                fh.write(text)
+            runs.append((label, records, loaded, blanks,
+                         tree.start_step(self.negative_control_step())))
+        for label, records, loaded, blanks, pending in runs:
+            with self.subTest(label):
+                result = pending.result()
+                self.assert_saw(result, rf"^Loaded {records + loaded} audit event\(s\) from ")
+                self.assertNotIn("Negative control held", result.stdout)
+                self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+                self.assert_saw(result, LINES_NOT_RECORDS.format(1))
+                self.assert_rejects(result, r"^ERROR: the audit log \S+/pre-emulation-audit\.log, "
+                                            rf"line {records + 1}: "
+                                            + self.not_json(self.CUT, blanks), exit_code=1)
+
+    def test_control_the_last_line_cut_by_a_capture_is_skipped(self):
+        """CONTROL of the reader: CI copies the log with `cat` while the writer adds
+        one line for each record, so the last line can be an audit event without its
+        end and without its line feed. After the records of the control the log holds
+        such a line: the reader skips it, the Loaded line counts the records, and the
+        negative control holds."""
+        good = self.good()
+        records = write_log(good, self.LOG, self.CASES, *self.BENIGN)
+        with open(good.tmp_path(self.LOG), "a", encoding="utf-8") as fh:
+            fh.write(self.CUT)
+        with open(good.tmp_path(self.LOG), encoding="utf-8") as fh:
+            self.assertFalse(fh.read().endswith("\n"))
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^ERROR")
+        self.assert_accepts(result, r"^Negative control held")
+
+    # The end of the ERROR line of the last line without a line end that starts with
+    # "{" and that a capture did not cut.
+    NOT_CUT = "; the line is not the start of one JSON object, so a capture did not cut it$"
+    # Last lines without a line end that no capture cut, and that are a cut when the
+    # white space at their end is removed: a word or a number before a blank, and a
+    # raw VT at the end of a string (sigma_eval.cut_json() refuses each; the reader
+    # removes only the white space at the start of the line).
+    NOT_CUT_AT_THE_END = {
+        "a word before a blank at the end": '{"kind": "Event", "apiVersion": "audit.k8s.io/v1", '
+                                            '"stage": tru ',
+        "a number before a blank at the end": '{"kind": "Event", "apiVersion": '
+                                              '"audit.k8s.io/v1", "n": 1. ',
+        "a raw VT at the end of a string": '{"kind": "Event", "apiVersion": "audit.k8s.io/v1", '
+                                           '"verb": "cr\x0b'}
+
+    @staticmethod
+    def not_json_last(line):
+        """The end of the ERROR line of `line`, the last line without a line end, which
+        json refuses (without the white space at its ends) and which no capture cut."""
+        try:
+            json.loads(line.strip())
+        except json.JSONDecodeError as e:
+            at = e.colno + len(line) - len(line.lstrip())
+            return rf"not JSON \({re.escape(e.msg)}, at character {at}\)" + K8sValidator.NOT_CUT
+        raise AssertionError(f"json reads {line!r}")
+
+    def last_line_runs(self, rows):
+        """Runs of the negative-control step, started together, each in a private copy:
+        the records of the control, then the bytes of a row (the last line of the log,
+        and so without a line feed unless the row holds one). {label: (records,
+        result)}."""
+        runs = {}
+        for label, data in rows.items():
+            tree = self.tree()
+            records = write_log(tree, self.LOG, self.CASES, *self.BENIGN)
+            with open(tree.tmp_path(self.LOG), "ab") as fh:
+                fh.write(data)
+            runs[label] = (records, tree.start_step(self.negative_control_step()))
+        return {label: (records, pending.result()) for label, (records, pending)
+                in runs.items()}
+
+    def test_rejects_a_last_line_that_a_capture_did_not_cut(self):
+        """The last line of the log, without a line end, is skipped only when it is cut
+        JSON: the start of one JSON object without its end (sigma_eval.cut_json()).
+        Six runs, started together: an emulation record of the rule followed by the
+        start of a record on the same line; that record with U+200B after its "{";
+        a cut record that ends with a carriage return alone (a line end: the reader
+        splits the lines at it); a cut record with the byte 0xe9 before its end; a cut
+        record with the byte 0xff at its end, which starts no character of UTF-8; and
+        a cut record with the bytes E0 80 at its end, which UTF-8 does not have; and
+        three lines that are a cut only without the white space at their end (a word
+        and a number before a blank, a raw VT at the end of a string: the reader keeps
+        the end of the line). Each
+        is an ERROR line that names the last line, the negative control does not hold,
+        and no rule is judged. (Before, the reader skipped each last line without a
+        line feed that started with "{" and that json refused: in the first two runs
+        the negative control held on a log that holds a record on which the rule
+        fires. The last three were refused, but by a test of bytes before the test of
+        a cut line.)"""
+        (positive,) = case_events(self.good(), self.CASES, "exec-websocket-get-procA")
+        record = json.dumps(positive)
+        cut = self.CUT.encode()
+        runs = self.last_line_runs({
+            "a record and the start of a record": (record + '{"kind": "Ev').encode(),
+            "U+200B after the brace of a record": ("{\u200b" + record[1:]).encode(),
+            "a carriage return alone at the end": cut + b"\r",
+            "a byte that is not UTF-8 before the end": cut.replace(b"Event", b"Ev\xe9ent"),
+            "a byte that is not UTF-8 at the end": cut + b"\xff",
+            "a sequence that UTF-8 does not have at the end": cut + b"\xe0\x80",
+            **{label: line.encode() for label, line in self.NOT_CUT_AT_THE_END.items()}})
+        wanted = {
+            "a record and the start of a record":
+                rf"not JSON \(Extra data, at character {len(record) + 1}\)" + self.NOT_CUT,
+            "U+200B after the brace of a record":
+                r"not JSON \(Expecting property name enclosed in double quotes, at character "
+                r"2\)" + self.NOT_CUT,
+            "a carriage return alone at the end": self.not_json(self.CUT),
+            "a byte that is not UTF-8 before the end":
+                r"bytes that are not UTF-8 \(the byte 0xe9 at character 13 of the line\)$",
+            "a byte that is not UTF-8 at the end":
+                rf"bytes that are not UTF-8 \(the byte 0xff at character {len(cut) + 1} of "
+                r"the line\)$",
+            "a sequence that UTF-8 does not have at the end":
+                rf"bytes that are not UTF-8 \(the byte 0xe0 at character {len(cut) + 1} of "
+                r"the line\)$",
+            **{label: self.not_json_last(line) for label, line in self.NOT_CUT_AT_THE_END.items()}}
+        for label, (records, result) in runs.items():
+            with self.subTest(label):
+                self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+                self.assertNotIn("Negative control held", result.stdout)
+                self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+                self.assert_saw(result, LINES_NOT_RECORDS.format(1))
+                self.assert_rejects(result, r"^ERROR: the audit log \S+/pre-emulation-audit\.log, "
+                                            rf"line {records + 1}: " + wanted[label],
+                                    exit_code=1)
+
+    def test_control_last_lines_that_a_capture_cut(self):
+        """CONTROL of the reader: three more forms of a last line that a capture cut,
+        each skipped (three runs, started together). The cut is inside the escape
+        \\u0026 that Go writes for "&" in an audit event; the line starts with a blank
+        before its "{" (json reads a record with such a blank too); the cut splits the
+        two bytes of the character U+00E9 in a string; U+00A0 (white space that JSON does
+        not have) before the "{"; a tab after a comma at the end. The Loaded line counts
+        the records, no ERROR line is printed, and the negative control holds. (Before,
+        the third run was an ERROR line of bytes that are not UTF-8: a test of bytes
+        before the test of a cut line.)"""
+        escaped = json.dumps(dict(json.loads(self.CUT + 't"}'), userAgent="a&b")).replace(
+            "&", "\\u0026")
+        runs = self.last_line_runs({
+            "a cut inside an escape": escaped[:escaped.index("\\u0026") + 4].encode(),
+            "a blank before the brace": b" " + self.CUT.encode(),
+            "a cut inside a character of UTF-8": self.CUT.encode() + "\u00e9".encode()[:1],
+            # The reader removes the white space at the start of a line, as json reads a
+            # record: also U+00A0, which JSON does not have.
+            "U+00A0 before the brace": "\u00a0".encode() + self.CUT.encode(),
+            # A blank of JSON at the end of a cut is a cut: a tab after a comma.
+            "a tab at the end": b'{"kind": "Event", "apiVersion": "audit.k8s.io/v1",\t'})
+        for label, (records, result) in runs.items():
+            with self.subTest(label):
+                self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+                self.assertNotRegex(result.stdout, r"(?m)^ERROR")
+                self.assert_accepts(result, r"^Negative control held")
+
+    def test_rejects_a_last_line_too_deep_for_json_and_cut_inside_a_character(self):
+        """After the records of the control, the last line of the log, without a line
+        end: an audit event whose requestObject holds lists 2,000,000 deep, then the
+        first byte of U+00E9. The reader tests the line as a cut: sigma_eval.cut_json()
+        asks json to read the closed text, which is too deep for json (a
+        RecursionError). So the line is no cut, and it is a named problem (bytes that
+        are not UTF-8), not a traceback. Where json can read the closed text (a stack
+        of the process large enough for the depth, Python 3.14), the line is a cut, and
+        the reader skips it."""
+        good = self.good()
+        head = ('{"kind": "Event", "apiVersion": "audit.k8s.io/v1", "requestObject": '
+                + "[" * 2000000 + '"x')
+        readable = subprocess.run(
+            [sys.executable, "-c", "import json; json.loads('{\"a\": ' + '[' * 2000000 + "
+                                   "'\"\"' + ']' * 2000000 + '}')"],
+            capture_output=True).returncode == 0
+        records = write_log(good, self.LOG, self.CASES, *self.BENIGN)
+        with open(good.tmp_path(self.LOG), "ab") as fh:
+            fh.write(head.encode() + b"\xc3")
+        result = good.run_step(self.negative_control_step())
+        self.assertNotIn("Traceback", result.output)
+        self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+        if readable:
+            self.assert_accepts(result, r"^Negative control held")
+            return
+        self.assertNotIn("Negative control held", result.stdout)
+        self.assert_rejects(result, r"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+                                    rf"{records + 1}: bytes that are not UTF-8 \(the byte 0xc3 at "
+                                    rf"character {len(head) + 1} of the line\)$", exit_code=1)
+
     def test_rejects_json_that_the_validator_cannot_read(self):
         """Two lines of JSON that is too deep, and one with a number that is too long.
         Each is a named problem, not a traceback.
@@ -2608,10 +3609,9 @@ class K8sValidator(gatelib.GateCase):
           (a RecursionError of json.loads()). From Python 3.14 the limit is the C stack
           of the thread: with a large stack json.loads() reads the line, and it is a
           list, which is not an object. Either way the line is named. The lists are
-          closed: a line that is not JSON (a line that was cut at the end of a capture)
-          is no record and no problem, so an open `[` * 100000 is skipped where the
-          stack is large, and that proves nothing. Where the stack is large, this line
-          does not show that the reader catches a RecursionError of json.loads().
+          closed: where the stack is large, an open `[` * 100000 is a line that is not
+          JSON, and that does not show that the reader catches a RecursionError of
+          json.loads(). Where the stack is large, this line does not show it either.
         - An audit event whose requestObject holds objects 3000 deep: json.loads()
           reads it, and sigma_eval.flatten() stops at the limit of the recursion of
           Python (a RecursionError on each version).
@@ -2736,25 +3736,16 @@ class K8sValidator(gatelib.GateCase):
                 "requestReceivedTimestamp": f"2026-11-13T20:10:0{number}.000000Z",
                 "stageTimestamp": f"2026-11-13T20:10:0{number}.002000Z"}
 
-    @gatelib.known_gap(
-        "k8s-log-keys-differ-only-in-case",
-        gate="detections/validate_k8s_detections.py --expect-miss",
-        reason="A pre-emulation audit log of three audit events: an exec into the target "
-               "pod, which is an emulation record (so the negative control must fail on "
-               "its rule), and two ConfigMap creates at level RequestResponse whose data "
-               "keys differ only in letter case (`key` and `KEY`). Each line is a record, "
-               "and a live log at that level can hold such keys. The validator ends with an "
-               "uncaught ValueError of sigma_eval.EventTable (`event keys that differ only "
-               "by case cannot share one table`) before it judges a rule, so no line names "
-               "the rule that passed. validate_staticpod_detections.py and "
-               "validate_apiserver_detections.py end in the same way on the same log. The "
-               "correction belongs in sigma_eval.EventTable (a table that holds keys that "
-               "differ only in letter case), after roadmap item R7 (pull request 76, which "
-               "changes sigma_eval.py) merges; the log readers must not refuse a valid log.",
-        closes="R2d", today="crash")
-    def test_gap_log_whose_keys_differ_only_in_letter_case(self):
-        """WANTED: the validator judges each rule on a valid log whose keys differ only
-        in letter case, and the negative control fails on the rule that passed."""
+    def test_rejects_log_whose_keys_differ_only_in_letter_case(self):
+        """A pre-emulation audit log of three audit events: an exec into the target
+        pod, which is an emulation record (so the negative control must fail on its
+        rule), and two ConfigMap creates at level RequestResponse whose data keys
+        differ only in letter case (`key` and `KEY`). Each line is a record, and a
+        live log at that level can hold such keys: the two keys share one column of
+        the event table, and the validator judges each rule. (This was the known gap
+        k8s-log-keys-differ-only-in-case: the validator ended with a ValueError of
+        sigma_eval.EventTable before it judged a rule. The static pod and the API
+        server validator have tests of their own on the same kind of log.)"""
         good = self.good()
         exec_record = case_events(good, self.CASES, "exec-websocket-get-procA")
         self.assertEqual(len(exec_record), 1)
@@ -2767,11 +3758,6 @@ class K8sValidator(gatelib.GateCase):
         alone = self.tree()
         write_text_log(alone, self.LOG, json.dumps(exec_record[0]) + "\n")
         alone = alone.start_step(self.negative_control_step())
-        # For the proof of the last sentences of the `reason`, below: a strict run of
-        # the two other validators on the same log.
-        others = {script: good.start(script, "--audit-log", good.tmp_path(self.LOG))
-                  for script in ("detections/validate_staticpod_detections.py",
-                                 "detections/validate_apiserver_detections.py")}
         result = good.run_step(self.negative_control_step())
         passed = (r"^PASS  \[A/B/C\] k8s_pod_exec_attach\.yml: 1 emulation event\(s\) match$"
                   r"[\s\S]*^NEGATIVE CONTROL FAILED: 1 rule\(s\) passed on a log captured "
@@ -2785,19 +3771,68 @@ class K8sValidator(gatelib.GateCase):
         # The gate read the log: the reader counts the three records.
         self.assert_saw(result, r"^Loaded 3 audit event\(s\) from \S+/pre-emulation-audit\.log$")
         self.assertNotRegex(result.stdout, r"(?m)^ERROR: the audit log ")
-        if result.crashed:
-            # Today. Prove each sentence of the `reason`, so that the text cannot go
-            # out of date: the ValueError of sigma_eval.EventTable, no rule judged,
-            # and the same end of the other two validators.
-            clash = (r"(?m)^ValueError: event keys that differ only by case cannot share one "
-                     r"table: requestObject\.data\.KEY / requestObject\.data\.key")
-            for run in [result] + [pending.result() for pending in others.values()]:
-                self.assertTrue(run.crashed and run.returncode != 0, run.describe())
-                self.assertRegex(run.output, clash, run.describe())
-                self.assertRegex(run.output, r'(?m)^  File ".*sigma_eval\.py", line \d+, in '
-                                             r'__init__\b', run.describe())
-                self.assertNotRegex(run.stdout, r"(?m)^(PASS|MISS)  \[", run.describe())
+        self.assertNotIn("Traceback", result.output)
         self.assert_rejects(result, passed, exit_code=1)
+
+    def test_rejects_an_audit_event_whose_keys_differ_only_in_letter_case(self):
+        """One audit event whose data holds `key` and `KEY`: the API server accepts such
+        a ConfigMap, but one event table cannot hold the event (two values for one
+        column of SQLite). The reader names the log and the line, as it names a line
+        that is not a record, and the validator judges no rule. CONTROL: the same
+        event with one of the keys is a record."""
+        good = self.good()
+        records = write_log(good, self.LOG, self.CASES, *self.BENIGN)
+        event = self.configmap_create(1, "key")
+        event["requestObject"]["data"]["KEY"] = "off"
+        with open(good.tmp_path(self.LOG), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(self.configmap_create(2, "key")) + "\n" + json.dumps(event) + "\n")
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {records + 1} audit event\(s\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_saw(result, LINES_NOT_RECORDS.format(1))
+        self.assert_rejects(result, rf"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+                                    rf"{records + 2}: {ONE_EVENT_TABLE['audit']}"
+                                    r"keys that differ only by case: requestObject\.data\.KEY / "
+                                    r"requestObject\.data\.key, which SQLite reads as one column "
+                                    r"name$", exit_code=1)
+
+    def test_rejects_an_audit_event_that_sqlite_does_not_hold_as_it_is(self):
+        """Four audit events of a ConfigMap create, each with one value or key that
+        SQLite does not hold as it is: NaN and Infinity (json reads them; JSON has no
+        such number, and SQLite stores NaN as NULL), a lone surrogate (the escape
+        \\ud800: UTF-8 cannot encode it) and a key with a NUL (no column name holds
+        it). The reader names the log and each line, and the validator judges no rule.
+        Before roadmap item R2d the NaN was a missing value, and the other three ended
+        the run with a traceback (also with --report and --expect-miss)."""
+        good = self.good()
+        records = write_log(good, self.LOG, self.CASES, *self.BENIGN)
+        events = []
+        for number, (key, value) in enumerate((("x", float("nan")), ("x", float("inf")),
+                                               ("x", "on\ud800"), ("a\u0000b", "on")), 1):
+            event = self.configmap_create(number, "key")
+            event["requestObject"]["data"][key] = value
+            events.append(json.dumps(event))
+        self.assertIn('"x": NaN', events[0])
+        self.assertIn('"x": "on\\ud800"', events[2])
+        with open(good.tmp_path(self.LOG), "a", encoding="utf-8") as fh:
+            fh.write("".join(event + "\n" for event in events))
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {records} audit event\(s\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assertNotIn("Traceback", result.output)
+        surrogate = r"which is not text of UTF-8, so SQLite cannot hold it"
+        for line, problem in enumerate((
+                r"the value of requestObject\.data\.x is NaN, a number that JSON does not have "
+                r"\(SQLite stores it as NULL\)",
+                r"the value of requestObject\.data\.x is Infinity, a number that JSON does not "
+                r"have",
+                rf"the value of requestObject\.data\.x holds the lone surrogate U\+D800, {surrogate}",
+                r"the key 'requestObject\.data\.a\\x00b' holds U\+0000 \(NUL\), which no "
+                r"column name of SQLite can hold"), records + 1):
+            self.assert_rejects(result, rf"^ERROR: the audit log \S+/pre-emulation-audit\.log, "
+                                        rf"line {line}: {ONE_EVENT_TABLE['audit']}{problem}$",
+                                exit_code=1)
+        self.assert_rejects(result, LINES_NOT_RECORDS.format(4), exit_code=1)
 
     def test_rejects_a_ledger_window_that_starts_after_it_ends(self):
         """The validate step of CI (a strict run with --ledger) on the records of the
@@ -3056,19 +4091,85 @@ class StaticPodValidator(gatelib.GateCase):
 
     def test_rejects_negative_control_on_an_audit_log_of_unparsable_lines(self):
         """An audit log with bytes and without a record (two lines that are not JSON):
-        the loader skips them, so the audit rule gets nothing to read."""
+        the audit rule gets nothing to read, and the control of the audit log fails.
+        Each of the two lines is named too: a capture can cut only the last line of a
+        log, and the last line here ends with a line feed. (Before, the loader
+        skipped each line that json refused, named neither, and the run ended with
+        `FAILED: 1 control(s) failed.`)"""
         good = self.good()
         self.write_logs(good)
         write_text_log(good, self.AUDIT, "audit: no JSON here\n\n{\"kind\": \"Event\", \n")
         result = good.run_step(self.negative_control_step())
         self.assert_saw(result, r"^Loaded 0 audit event\(s\) from ")
-        self.assert_rejects(
+        log = r"^ERROR: the audit log \S+/pre-emulation-audit\.log, line "
+        self.assert_saw(result, log + r"1: not JSON \(Expecting value, at character 1\)$")
+        self.assert_saw(result, log + r"3: not JSON \(Expecting property name enclosed in double "
+                                      r"quotes, at character 18\); a capture can cut only the "
+                                      r"last line of a log, and a cut line has no line feed$")
+        self.assert_saw(
             result,
             r"^  CONTROL FAILED: no audit event in the pre-emulation audit log \S+/"
             r"pre-emulation-audit\.log \(0 records read from 2 non-blank line\(s\)\), so the "
-            r"negative control proves nothing for the audit rule$",
-            exit_code=1)
-        self.assert_saw(result, r"^FAILED: 1 control\(s\) failed\.$")
+            r"negative control proves nothing for the audit rule$")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_rejects(result, LINES_NOT_RECORDS.format(2), exit_code=1)
+
+    def cri_join_step(self):
+        """The lines of the collect step of the job validate that join the CRI sensor
+        logs of the two nodes in /tmp/cri-pods.jsonl, as a step of their own: from the
+        line that empties the joined log to the end of the loop after it. The other
+        lines of that step need a cluster and root."""
+        joined = ": > /tmp/cri-pods.jsonl"
+        step = gatelib.ci_step("validate-staticpod-detections.yml", "validate", joined)
+        lines = step.run.splitlines()
+        start = [n for n, line in enumerate(lines) if line.strip() == joined]
+        self.assertEqual(len(start), 1, f"the collect step holds `{joined}` {len(start)} time(s)")
+        end = next(n for n in range(start[0], len(lines)) if lines[n].strip() == "done")
+        self.assertIn("docker exec", "\n".join(lines[start[0]:end]))
+        return step._replace(run="\n".join(lines[start[0]:end + 1]) + "\n")
+
+    def test_control_the_joined_cri_log_holds_only_complete_lines(self):
+        """CONTROL of the collect step: it joins the copies of the CRI sensor logs of
+        the two nodes in /tmp/cri-pods.jsonl. The sensor of a node writes while `cat`
+        copies its log, so a copy can end with a snapshot without its end and its
+        line feed. The reader skips such a line only as the last line of its log: in
+        the joined log the cut line of the first node is before the lines of the
+        second node, and the run fails on it. (Before, the step joined the copies as
+        they were, and the reader skipped each line that json refused: the cut line,
+        which held the first snapshot of the second node, was lost without a word.)
+
+        The lines of the step run with a stub of `docker`: the copy of the control
+        plane ends with a cut snapshot, and the copy of the worker ends with a line
+        feed. The joined log holds the complete snapshot of each node, one notice
+        names the control plane, and the negative control reads the joined log with
+        no ERROR line, counts the two sandboxes and holds."""
+        good = self.good()
+        sidecar = self.FOLDER + "k8s_cri_static_pod_start.cases.jsonl"
+        cases = {case["name"]: case for case in good.read_jsonl(sidecar)}
+        snapshots = [json.dumps({"items": [cases[name]["events"][0]]}) + "\n"
+                     for name in ("api-scheduled-target-pod", "coredns-deployment-pod")]
+        write_text_log(good, "node-copies/kind-control-plane", snapshots[0] + '{"items": [{"id": "')
+        write_text_log(good, "node-copies/kind-worker", snapshots[1])
+        stub = ('test "$1 $3 $4" = "exec cat /var/log/cri-pods.jsonl" && '
+                'exec cat "$NODE_COPIES/$2"')
+        joined = good.run_step(self.cri_join_step(), programs={"docker": stub},
+                               env={"CLUSTER_NAME": "kind",
+                                    "NODE_COPIES": good.tmp_path("node-copies")})
+        self.assertEqual(joined.returncode, 0, joined.describe())
+        with open(good.tmp_path("cri-pods.jsonl"), encoding="utf-8", newline="") as fh:
+            self.assertEqual(fh.read(), "".join(snapshots))
+        notice = ("::notice title=collect::the copy of the CRI sensor log of {} ends with a "
+                  "line without a line feed")
+        self.assertIn(notice.format("kind-control-plane"), joined.stdout)
+        self.assertNotIn(notice.format("kind-worker"), joined.stdout)
+        self.write_logs(good)
+        with open(good.tmp_path("cri-pods.jsonl"), "rb") as src, \
+                open(good.tmp_path(self.CRI), "wb") as dst:
+            dst.write(src.read())
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, r"^Loaded 2 pod sandbox\(es\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^ERROR")
+        self.assert_accepts(result, r"^Negative control held")
 
     def test_rejects_negative_control_on_a_missing_audit_log(self):
         """The capture left no audit log (a private copy: the shared copy keeps the
@@ -3347,6 +4448,53 @@ class StaticPodValidator(gatelib.GateCase):
                                     rf"{files + 1}: bytes that are not UTF-8 \(the byte 0xe9 at "
                                     rf"character {at} of the line\)$",
                             exit_code=1)
+
+    def test_rejects_log_whose_keys_differ_only_in_letter_case(self):
+        """The log of K8sValidator.test_rejects_log_whose_keys_differ_only_in_letter_case
+        in the audit log of this validator: after the benign records, the mirror-pod
+        create of Procedure A (an emulation record) and two ConfigMap creates whose
+        data keys differ only in letter case (`key`, `KEY`). The keys share one column
+        of the event table: the validator judges its rules, and the negative control
+        fails on the rule that passed. (Before roadmap item R2d the validator ended
+        with a ValueError of sigma_eval.EventTable.)"""
+        good = self.good()
+        audit, _, _ = self.write_logs(good)
+        emulation = case_events(good, self.FOLDER + "k8s_static_pod_mirror_create.cases.jsonl",
+                                "mirror-create-procA")
+        self.assertEqual(len(emulation), 1)
+        keys = [K8sValidator.configmap_create(1, "key"), K8sValidator.configmap_create(2, "KEY")]
+        with open(good.tmp_path(self.AUDIT), "a", encoding="utf-8") as fh:
+            fh.write("".join(json.dumps(event) + "\n" for event in emulation + keys))
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {audit + 3} audit event\(s\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^ERROR: |^  CONTROL FAILED: ")
+        self.assertNotIn("Traceback", result.output)
+        self.assertEqual(len(re.findall(r"^PASS  \[", result.stdout, re.MULTILINE)), 1)
+        self.assert_rejects(
+            result,
+            r"^PASS  \[A/B\] k8s_static_pod_mirror_create\.yml: matched an emulation pod "
+            r"[\s\S]*^NEGATIVE CONTROL FAILED: 1 rule\(s\) passed on logs captured before "
+            r"the emulation ran \(a gate matched\)\.$",
+            exit_code=1)
+
+    def test_rejects_a_file_event_whose_keys_differ_only_in_letter_case(self):
+        """One line of the file log is a file event with the keys `Image` and `image`:
+        one event table cannot hold it. The reader names the log and the line, and the
+        validator judges no rule."""
+        good = self.good()
+        _, _, files = self.write_logs(good)
+        event = case_events(good, self.FOLDER + "linux_static_pod_manifest_write.cases.jsonl",
+                            "kubeadm-bootstrap-manifest")[0]
+        with open(good.tmp_path(self.FILE), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(dict(event, image=event["Image"])) + "\n")
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {files} file event\(s\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_saw(result, LINES_NOT_RECORDS.format(1))
+        self.assert_rejects(result, rf"^ERROR: the file log \S+/pre-emulation-file\.jsonl, line "
+                                    rf"{files + 1}: {ONE_EVENT_TABLE['file']}keys that differ only "
+                                    r"by case: Image / image, which SQLite reads as one column "
+                                    r"name$", exit_code=1)
 
     def test_rejects_negative_control_on_a_cri_log_that_is_a_directory(self):
         """The pre-emulation CRI log is a directory (a private copy); the audit log and
@@ -3982,6 +5130,52 @@ class ApiserverValidator(gatelib.GateCase):
                                     rf"character {at} of the line\)$",
                             exit_code=1)
 
+    def test_rejects_log_whose_keys_differ_only_in_letter_case(self):
+        """The log of K8sValidator.test_rejects_log_whose_keys_differ_only_in_letter_case
+        in the audit log of this validator: after the benign records, the
+        ClusterRoleBinding create of Procedure A of TRR9004 (an emulation record) and
+        two ConfigMap creates whose data keys differ only in letter case (`key`,
+        `KEY`). The keys share one column of the event table: the validator judges
+        its rules, and the negative control fails on the rule that passed. (Before
+        roadmap item R2d the validator ended with a ValueError of
+        sigma_eval.EventTable.)"""
+        good = self.good()
+        audit, _, _ = self.write_logs(good, "crb-create-view-procA")
+        keys = [K8sValidator.configmap_create(1, "key"), K8sValidator.configmap_create(2, "KEY")]
+        with open(good.tmp_path(self.AUDIT), "a", encoding="utf-8") as fh:
+            fh.write("".join(json.dumps(event) + "\n" for event in keys))
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {audit + 2} audit event\(s\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^ERROR: ")
+        self.assertNotIn("Traceback", result.output)
+        self.assert_rejects(
+            result,
+            r"^PASS  \[9004 A-E,G\] k8s_rbac_write\.yml: 1 emulation record\(s\) match$"
+            r"[\s\S]*^NEGATIVE CONTROL FAILED: 1 rule\(s\) passed on logs captured before "
+            r"the emulation ran\.$",
+            exit_code=1)
+
+    def test_rejects_a_sandbox_whose_keys_differ_only_in_letter_case(self):
+        """One snapshot of the CRI log holds a sandbox whose metadata has the keys
+        `name` and `Name`: one event table cannot hold it. The reader names the log,
+        the line and the item, and the validator judges no rule."""
+        good = self.good()
+        _, cri, _ = self.write_logs(good)
+        sandbox = {"id": "0" * 63 + "2", "state": "SANDBOX_READY",
+                   "metadata": {"name": "case-test-pod", "Name": "case-test-pod",
+                                "namespace": "default", "attempt": 0}}
+        with open(good.tmp_path(self.CRI), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"items": [sandbox]}) + "\n")
+        result = good.run_step(self.negative_control_step())
+        self.assert_saw(result, rf"^Loaded {cri} pod sandbox\(es\) from ")
+        self.assertNotRegex(result.stdout, r"(?m)^(PASS|MISS)  \[")
+        self.assert_saw(result, LINES_NOT_RECORDS.format(1))
+        self.assert_rejects(result, rf"^ERROR: the CRI log \S+/pre-emulation-cri\.jsonl, line "
+                                    rf"{cri + 1}, item 1 of the snapshot: {ONE_EVENT_TABLE['cri']}"
+                                    r"keys that differ only by case: metadata\.Name / "
+                                    r"metadata\.name, which SQLite reads as one column name$",
+                            exit_code=1)
+
     def test_rejects_a_line_that_is_not_a_record_beside_a_log_without_a_record(self):
         """Two defects in two logs, and the run names both: the audit log holds no
         record, and the CRI log holds a `[]` line after its sandboxes. (Each defect
@@ -4212,6 +5406,175 @@ class LogReaderText(unittest.TestCase):
                                                  f"not the text of {first[0]}")
         self.assertEqual(tables["detections/validate_apiserver_detections.py"],
                          tables["detections/validate_staticpod_detections.py"])
+
+
+# sigma_eval.cut_json() and sigma_eval.utf8_cut() on fixed texts and on the prefixes
+# of fixed records and of records of a fixed seed. The snippet prints the answers as
+# JSON (class CutJson).
+CUT_JSON_PROBES = r"""
+import json, random, sys, threading
+sys.path.insert(0, "detections")
+import sigma_eval
+
+RECORDS = [
+    {"kind": "Event", "apiVersion": "audit.k8s.io/v1", "requestURI": "/api/v1/x?a=1&b=<2>",
+     "user": {"username": "system:admin", "groups": ["a", "b"]}, "n": -12.5, "e": 1e-7,
+     "big": 12345678901234567890, "t": True, "f": False, "z": None,
+     "s": "caf\u00e9 \U0001F600 \"q\" \\ / \n\t", "empty": {}, "list": [],
+     "nested": [[1, [2, {"k": [None]}]], {"a": {"b": {"c": "d"}}}]},
+    {"items": [{"id": "abc", "metadata": {"name": "p", "uid": "u"}, "annotations": {}}]},
+]
+texts = []
+for record in RECORDS:
+    texts += [json.dumps(record), json.dumps(record, ensure_ascii=False),
+              json.dumps(record, separators=(",", ":")),
+              # Go writes &, < and > in an audit event as \u0026, \u003c and \u003e.
+              json.dumps(record).replace("&", "\\u0026").replace("<", "\\u003c")
+              .replace(">", "\\u003e"),
+              # A tab is a blank of JSON too: the blanks of the text are tabs.
+              json.dumps(record, indent="\t").replace("\n", "\t")]
+texts.append('{\t"a":\t1,\t"b":\t[\t]\t}')
+# Escapes of a surrogate pair and of each kind, numbers with an exponent, the literals.
+texts.append('{"a": -1.5E+10, "b": 2e-3, "c": -0, "d": 0.5, "s": "\\ud83d\\ude00 \\u00e9 '
+             '\\n \\t \\" \\\\ \\/ \\b \\f \\r", "l": [true, false, null, {}, []]}')
+rnd = random.Random(20261116)
+
+def value(depth=0):
+    kind = rnd.randrange(9 if depth < 4 else 6)
+    if kind == 0:
+        return rnd.choice([0, -1, 12, -3.5, 1e21, 2.5e-7, 10 ** 20, -0.0])
+    if kind == 1:
+        return rnd.choice([True, False, None])
+    if kind < 6:
+        return "".join(rnd.choice('ab"\\/\n\t\u00e9\U0001F600&<> x0')
+                       for _ in range(rnd.randrange(6)))
+    if kind < 8:
+        return {"".join(rnd.choice('k"\\\u00e9') for _ in range(rnd.randrange(4))):
+                value(depth + 1) for _ in range(rnd.randrange(4))}
+    return [value(depth + 1) for _ in range(rnd.randrange(4))]
+
+for _ in range(30):
+    record = {"kind": "Event", "x": value(), "y": value(), "z": value()}
+    texts += [json.dumps(record), json.dumps(record, ensure_ascii=False),
+              json.dumps(record, separators=(",", ":"))]
+missed, prefixes = [], 0
+for text in texts:
+    for end in range(1, len(text)):
+        prefixes += 1
+        if not sigma_eval.cut_json(text[:end]):
+            missed.append(text[:end])
+JUNK = ["x", "{", " {", "\x00", "\u200b", "t", '"', "1", "}", ",", "]"]
+REFUSED = ['{"a": 1 "b', '{\u200b"kind"', '{"a":1,}', '{"a": "x\\q', '{"a": "x\x01',
+           '{"a": "\\uZZZZ", "b', '{"a": 01', '{"a": tru e', '[{"a": 1', '"text',
+           '', '   ',
+           # NaN, Infinity and -Infinity are not JSON (Python's json reads them), also
+           # where the cut is after the word or inside it.
+           '{"a":NaN,"b":', '{"a":NaN', '{"a":Infinity', '{"a":-Infinity,"b":', '{"a":Na',
+           '{"a":Infin',
+           # A word or a number before a blank, an escape that JSON does not have before
+           # a blank, and a raw VT in a string: no cut ends so.
+           '{"a": tru ', '{"a": 1. ', '{"a": "x\\ ', '{"a": "x\x0b']
+# JSON too deep for json: the test that json reads the closed text ends with a
+# RecursionError, and the cut is refused. A thread with a stack of 16 MiB: the depth
+# that json reads does not then depend on the stack of the process (Python 3.14).
+DEEP = {"lists": '{"a":' + "[" * 2000000, "a string in lists": '{"a":' + "[" * 2000000 + '"x'}
+deep = {}
+
+def deep_cuts():
+    for name, text in DEEP.items():
+        try:
+            deep[name] = sigma_eval.cut_json(text)
+        except BaseException as e:  # noqa: BLE001 - an error is an answer of the probe
+            deep[name] = f"{type(e).__name__}: {str(e)[:80]}"
+
+threading.stack_size(16 << 20)
+thread = threading.Thread(target=deep_cuts)
+thread.start()
+thread.join()
+UTF8 = {"\u00e9": b"a\xc3", "\u20ac": b"a\xe2\x82", "U+1F600": b"a\xf0\x9f\x98",
+        "ED 9F": b"a\xed\x9f", "FF": b"a\xff", "E0 80": b"a\xe0\x80", "ED A0": b"a\xed\xa0",
+        "F4 90": b"a\xf4\x90", "80": b"a\x80", "C1": b"a\xc1", "F5": b"a\xf5",
+        "C3 before the end": b"a\xc3b\xc3", "UTF-8": "a\u00e9".encode()}
+print(json.dumps({
+    "texts": len(texts), "prefixes": prefixes, "missed": missed[:5],
+    "complete": [text for text in texts if sigma_eval.cut_json(text)],
+    "junk": [text[-12:] + junk for text in texts for junk in JUNK
+             if sigma_eval.cut_json(text + junk)],
+    "refused": {text: sigma_eval.cut_json(text) for text in REFUSED},
+    "deep": deep,
+    "utf8": {name: sigma_eval.utf8_cut(data.decode("utf-8", "surrogateescape"))
+             for name, data in UTF8.items()}}))
+"""
+
+
+class CutJson(gatelib.GateCase):
+    """sigma_eval.cut_json(): the test of the readers of the Kubernetes validators and
+    of score_benign.py --extra-slice for the last line of a log, which a capture can
+    cut (roadmap item R2d). A cut keeps the start of one JSON object; the test
+    closes the open string, number, literal and containers, and json must then read
+    one object. sigma_eval.utf8_cut() gives the part of a cut that splits a character
+    of UTF-8. The tests run a snippet in the copy (CUT_JSON_PROBES)."""
+
+    PARTS = gatelib.DETECTIONS
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        result = cls.good().run_python(CUT_JSON_PROBES)
+        if result.returncode:
+            raise AssertionError(result.describe())
+        cls.probes = json.loads(result.stdout)
+
+    def test_each_proper_prefix_of_a_record_is_cut(self):
+        """Each proper prefix of the fixed records and of 30 records of a fixed seed,
+        in four forms of their text and more (also with the escapes \\u0026, \\u003c and
+        \\u003e of Go, tabs as the blanks of JSON, a surrogate pair, text that is not
+        ASCII, numbers with an exponent, the literals, nested objects and lists), is cut
+        JSON: a capture can cut there."""
+        self.assertGreater(self.probes["prefixes"], 5000)
+        self.assertEqual(self.probes["missed"], [])
+
+    def test_complete_json_is_not_cut(self):
+        """A complete record is not cut: json reads it."""
+        self.assertGreater(self.probes["texts"], 90)
+        self.assertEqual(self.probes["complete"], [])
+
+    def test_complete_json_with_more_text_is_not_cut(self):
+        """A complete record followed by more text on its line is not cut, whatever
+        the text: a cut keeps a start of one record (`{...}{`, `{...}x`, `{...}` and a
+        NUL or U+200B, ...). A reader that skipped such a line hid the record."""
+        self.assertEqual(self.probes["junk"], [])
+
+    def test_text_that_no_record_starts_with_is_not_cut(self):
+        """Text that no JSON object starts with is not cut: a value without its comma,
+        U+200B after the brace, a comma before the brace, an escape that JSON does not
+        have (also \\u with letters that are not hex), a control character in a
+        string, a number with a leading zero, a literal with a blank in it, the start
+        of a list or of a string, and no text at all. json, not the scan, refuses the
+        escapes and the control character: the scan alone closes them. NaN, Infinity
+        and -Infinity are not JSON, after the word and inside it; and no cut ends with
+        a word or a number before a blank (`tru `, `1. `), an escape before a blank, or
+        a raw VT in a string."""
+        self.assertEqual(len(self.probes["refused"]), 22)
+        self.assertEqual(self.probes["refused"],
+                         {text: False for text in self.probes["refused"]})
+
+    def test_json_too_deep_for_json_is_not_cut(self):
+        """A cut 2,000,000 lists deep: the test that json reads the closed text ends with
+        a RecursionError, and cut_json() gives False, with no error (a list at the end
+        of the text, and a string in it)."""
+        self.assertEqual(self.probes["deep"], {"lists": False, "a string in lists": False})
+
+    def test_utf8_cut_drops_only_the_start_of_a_character_at_the_end(self):
+        """sigma_eval.utf8_cut(): the start of a character of 2, 3 and 4 bytes at the
+        end of a text is dropped (also ED 9F, the start of a character before the
+        surrogates). Each other byte that is not UTF-8 gives None: FF, E0 80, ED A0
+        (a surrogate), F4 90 (above U+10FFFF), a lone continuation byte, C1, F5, and
+        the start of a character before the end. Text of UTF-8 is kept."""
+        self.assertEqual(self.probes["utf8"], {
+            "\u00e9": "a", "\u20ac": "a", "U+1F600": "a", "ED 9F": "a", "FF": None,
+            "E0 80": None, "ED A0": None, "F4 90": None, "80": None, "C1": None, "F5": None,
+            "C3 before the end": None, "UTF-8": "a\u00e9"})
 
 
 class FileEventConverter(gatelib.GateCase):

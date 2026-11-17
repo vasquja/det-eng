@@ -33,6 +33,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import unittest
 
@@ -303,20 +304,12 @@ class ScoreBenign(gatelib.GateCase):
 
     PLANTED_SLICE = "detections/benign/slices/aws/planted-key-case-clash.json"
 
-    @gatelib.known_gap(
-        "sb-slice-keys-differ-by-case",
-        gate="detections/score_benign.py --check --enforce",
-        reason="A benign slice whose event has two keys that differ only in letter case "
-               "(`eventName` and `EventName`) ends score_benign.py --check --enforce with an "
-               "uncaught ValueError of sigma_eval.EventTable: no line names the slice (the "
-               "last line of the traceback names the two keys), and no rule is scored. The "
-               "benign-corpus job fails, but with a traceback. The loader of the corpus "
-               "(benign_corpus.py) does not check the keys of an event; rule_cases.py names "
-               "the same clash in a sidecar case with the rule, the line and the case.",
-        closes="R2d", today="crash")
-    def test_gap_slice_event_keys_that_differ_only_in_letter_case(self):
-        """WANTED: the gate names the slice and the two keys, and does not stop with a
-        traceback."""
+    def test_rejects_slice_event_keys_that_differ_only_in_letter_case(self):
+        """A benign slice whose event holds `eventName` and `EventName`: one event table
+        cannot hold it (two values for one column of SQLite). The gate names the slice,
+        the event and the two keys in one ERROR line, scores no rule and exits 1.
+        (This was the known gap sb-slice-keys-differ-by-case: the gate ended with a
+        ValueError of sigma_eval.EventTable, and no line named the slice.)"""
         tree = self.tree()
         tree.plant("quality/slice_keys_differ_by_case/planted-key-case-clash.json",
                    self.PLANTED_SLICE)
@@ -335,21 +328,503 @@ class ScoreBenign(gatelib.GateCase):
         self.assert_accepts(scored, r"^  planted-key-case-clash +v1 +synthetic +aws/cloudtrail "
                                     r"+1 event\(s\)$")
         result = self.run_ci(tree)
-        # The gate read the planted event: its output names the two keys (today in
-        # the last line of the traceback).
+        # The gate read the planted event: its output names the two keys.
         self.assert_saw(result, r"differ only by case.*\bEventName / eventName\b")
-        if result.crashed:
-            # Today. Prove the sentences of the `reason`: the error of EventTable,
-            # raised where the gate scores the slices, is the last line, and it names
-            # the two keys; no line names the slice.
-            self.assertRegex(result.stderr, r'(?m)^  File ".*score_benign\.py", line \d+, in '
-                                            r'score\b', result.describe())
-            self.assertRegex(result.stderr.rstrip("\n").splitlines()[-1],
-                             r'^ValueError: event keys that differ only by case cannot share '
-                             r'one table: EventName / eventName \(', result.describe())
-            self.assertNotIn("planted-key-case-clash", result.output, result.describe())
-        self.assert_rejects(result, r"planted-key-case-clash.*\bEventName\b.*\beventName\b"
-                                    r"|\beventName\b.*\bEventName\b.*planted-key-case-clash")
+        self.assertNotIn("Traceback", result.output)
+        self.assertNotRegex(result.stdout, r"(?m)^Benign corpus: ")
+        self.assert_rejects(result, r"^ERROR: the slice planted-key-case-clash v1 \(detections/"
+                                    r"benign/slices/aws/planted-key-case-clash\.json\), event 1 "
+                                    r"of 1: keys that differ only by case: EventName / eventName, "
+                                    r"which SQLite reads as one column name\. No rule is scored on "
+                                    r"the benign corpus\.$", exit_code=1)
+
+    def test_rejects_slice_that_no_rule_reads_whose_event_keys_differ_only_in_letter_case(self):
+        """The planted slice of the test above with a log source that no rule reads
+        (okta/system), as a sequence of two steps: the first event holds `eventName`
+        only, the second `eventName` and `EventName`. The gate tests each event of each
+        slice before it scores, also of a slice that no rule reads: the ERROR line names
+        the slice, the second event and the two keys, with --update and with --check
+        --enforce."""
+        tree = self.tree()
+        tree.plant("quality/slice_keys_differ_by_case/planted-key-case-clash.json",
+                   self.PLANTED_SLICE)
+
+        def unread_two_steps(doc):
+            event = doc["templates"][0].pop("event")
+            first = {key: value for key, value in event.items() if key != "EventName"}
+            doc["templates"][0]["events"] = [{"event": first}, {"event": event}]
+            doc["logsource"] = {"product": "okta", "service": "system"}
+            return doc
+        tree.edit_json(self.PLANTED_SLICE, unread_two_steps)
+        steps = tree.read_json(self.PLANTED_SLICE)["templates"][0]["events"]
+        self.assertEqual([sorted(step["event"]) for step in steps],
+                         [["eventName", "eventSource"],
+                          ["EventName", "eventName", "eventSource"]])
+        self.assertNotRegex("\n".join(tree.read(rel) for rel in
+                                       tree.glob("detections/sigma/*/*.yml")),
+                            r"(?m)^\s*product: *okta\b")
+        update = tree.start(self.GATE, "--update")
+        line = (r"^ERROR: the slice planted-key-case-clash v1 \(detections/benign/slices/aws/"
+                r"planted-key-case-clash\.json\), event 2 of 2: keys that differ only by case: "
+                r"EventName / eventName, which SQLite reads as one column name\. No rule is "
+                r"scored on the benign corpus\.$")
+        for result in (self.run_ci(tree), update.result()):
+            with self.subTest(result.argv[-1]):
+                self.assertNotIn("Traceback", result.output)
+                self.assert_rejects(result, line, exit_code=1)
+        self.assertEqual(tree.read("detections/benign/scores.json"),
+                         self.good().read("detections/benign/scores.json"))
+
+    def test_control_slice_events_whose_keys_differ_only_in_letter_case(self):
+        """CONTROL of the test above: two events of the planted slice, one with the key
+        `eventName` and one with `EventName` (a sequence of two steps). No event holds
+        both, so the two keys share one column, and the gate scores the slice."""
+        tree = self.tree()
+        tree.plant("quality/slice_keys_differ_by_case/planted-key-case-clash.json",
+                   self.PLANTED_SLICE)
+
+        def two_events(doc):
+            event = doc["templates"][0].pop("event")
+            first = {key: value for key, value in event.items() if key != "EventName"}
+            second = {key: value for key, value in event.items() if key != "eventName"}
+            doc["templates"][0]["events"] = [{"event": first}, {"event": second}]
+            return doc
+        tree.edit_json(self.PLANTED_SLICE, two_events)
+        steps = tree.read_json(self.PLANTED_SLICE)["templates"][0]["events"]
+        self.assertEqual([sorted(step["event"]) for step in steps],
+                         [["eventName", "eventSource"], ["EventName", "eventSource"]])
+        result = tree.run(self.GATE, "--examples", "0")
+        self.assertNotIn("Traceback", result.output)
+        self.assert_accepts(result, r"^  planted-key-case-clash +v1 +synthetic +aws/cloudtrail "
+                                    r"+2 event\(s\)$")
+
+    def test_rejects_reseed_whose_event_keys_differ_only_in_letter_case(self):
+        """--reseeds expands each synthetic slice again at later versions. The planted
+        slice draws one of two objects for a field: at its version 7 the object
+        `{"x": "1"}`, at version 8 `{"x": "1", "X": "2"}`, whose two keys differ only in
+        letter case. The committed corpus scores, and the reseed at version 8 is an
+        ERROR line that names the slice, its version, the event and the keys."""
+        tree = self.tree()
+        tree.write("detections/benign/slices/aws/planted-reseed-key-case.json", json.dumps({
+            "id": "planted-reseed-key-case", "version": 7,
+            "logsource": {"product": "aws", "service": "cloudtrail"}, "fidelity": "synthetic",
+            "represents": "PLANTED DEFECT of detections/tests: a reseed draws an object whose "
+                          "two keys differ only in letter case",
+            "provenance": "synthetic: planted artifact of detections/tests (test_quality.py)",
+            "count": 1, "vars": {"obj": [{"x": "1"}, {"x": "1", "X": "2"}]},
+            "templates": [{"weight": 1, "event": {
+                "eventSource": "sts.amazonaws.com", "eventName": "GetCallerIdentity",
+                "detail": "{{obj}}"}}]}, indent=2) + "\n")
+        result = tree.run(self.GATE, "--reseeds", "1", "--examples", "0")
+        self.assert_saw(result, r"^  planted-reseed-key-case +v7 +synthetic +aws/cloudtrail +1 "
+                                r"event\(s\)$")
+        self.assertNotIn("Traceback", result.output)
+        self.assertNotRegex(result.stdout, r"(?m)^Most hits over ")
+        self.assert_rejects(result, r"^ERROR: the slice planted-reseed-key-case v8 \(detections/"
+                                    r"benign/slices/aws/planted-reseed-key-case\.json\), event 1 "
+                                    r"of 1: keys that differ only by case: detail\.X / detail\.x, "
+                                    r"which SQLite reads as one column name \(a reseed\)\. No rule "
+                                    r"is scored on the reseeds\.$", exit_code=1)
+
+    def test_rejects_slice_with_an_object_that_holds_a_key_two_times(self):
+        """A slice of the benign corpus whose file holds an object with one key two
+        times: json keeps only the last value, so the gate would score events that the
+        files do not show. Two plants, each in a copy: a synthetic slice whose template
+        event holds `eventName` two times, and a recorded slice whose data line 2
+        holds `verb` two times. Each is an ERROR line that names the file (and the
+        line), the run scores no rule and exits 1. (Before, the gate read each object
+        without a word.)"""
+        spec = {"id": "planted-twice", "version": 1,
+                "logsource": {"product": "aws", "service": "cloudtrail"},
+                "fidelity": "synthetic",
+                "represents": "PLANTED DEFECT of detections/tests: a key two times",
+                "provenance": "synthetic: planted artifact of detections/tests (test_quality.py)",
+                "count": 1, "templates": [{"weight": 1, "event": {
+                    "eventSource": "sts.amazonaws.com", "eventName": "GetCallerIdentity"}}]}
+        synthetic = json.dumps(spec).replace('"eventName": "GetCallerIdentity"',
+                                             '"eventName": "AssumeRole", "eventName": '
+                                             '"GetCallerIdentity"')
+        recorded = dict(spec, fidelity="recorded", data="planted-twice.jsonl",
+                        provenance="recorded: planted artifact of detections/tests "
+                                   "(test_quality.py)",
+                        logsource={"product": "kubernetes", "service": "audit"})
+        for key in ("count", "templates"):
+            recorded.pop(key)
+        event = {"kind": "Event", "apiVersion": "audit.k8s.io/v1", "verb": "get"}
+        data = (json.dumps(event) + "\n" + json.dumps(event)[:-1] + ', "verb": "list"}\n')
+        plants = {
+            "synthetic": ({"detections/benign/slices/aws/planted-twice.json": synthetic},
+                          r"detections/benign/slices/aws/planted-twice\.json: an object holds "
+                          r"the key 'eventName' two times"),
+            "recorded": ({"detections/benign/slices/kubernetes/planted-twice.json":
+                          json.dumps(recorded),
+                          "detections/benign/slices/kubernetes/planted-twice.jsonl": data},
+                         r"detections/benign/slices/kubernetes/planted-twice\.jsonl, line 2: an "
+                         r"object holds the key 'verb' two times")}
+        runs = []
+        for label, (files, problem) in plants.items():
+            tree = self.tree()
+            for rel, text in files.items():
+                tree.write(rel, text)
+            runs.append((label, problem, tree.start(self.GATE, "--check", "--enforce")))
+        for label, problem, pending in runs:
+            with self.subTest(label):
+                result = pending.result()
+                self.assertNotIn("Traceback", result.output)
+                self.assertNotRegex(result.stdout, r"(?m)^Benign corpus: ")
+                self.assert_rejects(result, r"^ERROR: the benign corpus: " + problem
+                                    + r" \(json keeps only the last value\)\. No rule is "
+                                      r"scored on the benign corpus\.$", exit_code=1)
+
+    def test_rejects_slice_whose_event_has_two_keys_that_give_one_field(self):
+        """A synthetic slice of the benign corpus whose template event holds the key
+        `userIdentity.type` with the value IAMUser and the object `userIdentity` with
+        the type AssumedRole. Both give the field userIdentity.type, and
+        sigma_eval.flatten() keeps only the last value: the gate would score an event
+        that the file does not show (a store that merges a dotted key with an object
+        sees IAMUser). The ERROR line names the slice, the event and the field, the run
+        scores no rule and exits 1. Control: without the dotted key, the gate scores
+        the slice. (Before, the gate scored the slice without a word.)"""
+        rel = "detections/benign/slices/aws/planted-one-field.json"
+        event = {"eventSource": "sts.amazonaws.com", "eventName": "GetCallerIdentity",
+                 "userIdentity.type": "IAMUser", "userIdentity": {"type": "AssumedRole"}}
+        spec = {"id": "planted-one-field", "version": 1,
+                "logsource": {"product": "aws", "service": "cloudtrail"},
+                "fidelity": "synthetic",
+                "represents": "PLANTED DEFECT of detections/tests: two keys that give one "
+                              "field",
+                "provenance": "synthetic: planted artifact of detections/tests (test_quality.py)",
+                "count": 1, "templates": [{"weight": 1, "event": event}]}
+        tree, sound = self.tree(), self.tree()
+        tree.write(rel, json.dumps(spec))
+        event = dict(event)
+        del event["userIdentity.type"]
+        sound.write(rel, json.dumps(dict(spec, templates=[{"weight": 1, "event": event}])))
+        pending = tree.start(self.GATE, "--check", "--enforce")
+        scored = sound.run(self.GATE, "--examples", "0")
+        self.assert_accepts(scored, r"^  planted-one-field +v1 +synthetic +aws/cloudtrail "
+                                    r"+1 event\(s\)$")
+        result = pending.result()
+        self.assertNotIn("Traceback", result.output)
+        self.assertNotRegex(result.stdout, r"(?m)^Benign corpus: ")
+        self.assert_rejects(result, r"^ERROR: the slice planted-one-field v1 \(detections/"
+                                    r"benign/slices/aws/planted-one-field\.json\), event 1 of 1: "
+                                    r"two keys of the record give the one field "
+                                    r"'userIdentity\.type' \(sigma_eval\.flatten keeps only one "
+                                    r"value\)\. No rule is scored on the benign corpus\.$",
+                            exit_code=1)
+
+    def extra_slice_runs(self, captures):
+        """Runs of --extra-slice with the options of the shadow step, started together:
+        {label: (capture path, result)}. `captures`: {label: the bytes of the capture,
+        None for a directory, or False for a path that does not exist}."""
+        good = self.good()
+        runs = {}
+        for n, (label, data) in enumerate(captures.items()):
+            path = good.tmp_path(f"capture-{n}.log")
+            if data is None:
+                os.makedirs(path, exist_ok=True)
+            elif data is False:
+                self.assertFalse(os.path.lexists(path))
+            else:
+                with open(path, "wb") as fh:
+                    fh.write(data)
+            runs[label] = (path, good.start(self.GATE, "--extra-slice", path,
+                                            "--extra-logsource", "kubernetes/audit",
+                                            "--extra-label", "kind-live", "--examples", "0"))
+        return {label: (path, pending.result()) for label, (path, pending) in runs.items()}
+
+    def test_rejects_extra_slice_that_the_loader_cannot_read(self):
+        """--extra-slice on a capture that is a directory or does not exist, that holds a
+        byte that is not UTF-8, whose line 1 or line 2 starts with the byte order mark of
+        UTF-8, or whose audit event holds two keys that differ only in letter case (also
+        in a nested object), or that holds JSON that the gate cannot read (too deep for
+        json or for flatten(), a number with too many digits, in a line or in one
+        document), or whose line 2 or 3 is not JSON and is not a line that a capture
+        cut (NUL bytes before an event, also on the last line without a line feed; a
+        cut line before other lines, and as the last line with a line feed). Each is
+        an ERROR line that names the capture (and the line), the run exits 1, and no
+        rule is scored on the capture. Before roadmap item R2d the first three ended
+        with a traceback, the fourth lost line 1 without a word (and before the check
+        of the corrections, the mark at line 2 lost line 2), the key clashes ended with a
+        ValueError of sigma_eval.EventTable, the JSON too deep or too long with a
+        traceback, and the document was a capture of no event; before the second check
+        of the corrections, a line that json refused was skipped as a cut line, and its
+        event was lost without a word. Controls: a capture whose two events hold the
+        keys `verb` and `Verb` (no event holds both) is scored, and so is a capture
+        whose line holds U+2028, U+2029 and U+0085 in a string (before R2d
+        str.splitlines() cut the line, and the event was lost without a word), and a
+        capture whose last line is cut and has no line feed (the two events before it
+        are scored). The last line without a line end is skipped only when it is cut
+        JSON, with the verdicts of the rows of K8sValidator for the same lines: an
+        event and the start of an event, U+200B after the brace, a carriage return
+        alone at the end, and a byte that is not UTF-8 before the end or at the end are
+        ERROR lines (before, the first two lost an event without a word); a cut inside
+        an escape, a blank before the brace and a cut inside a character of UTF-8 are
+        skipped (before, the last was an ERROR line). The character of an error counts
+        the blanks before the line (three blanks before a cut line before other lines),
+        and the error of a document of many lines names the line of the error (a NUL
+        at line 3). Also: the start of a character of UTF-8 at the end of a middle line
+        is a byte that is not UTF-8; U+00A0 before the brace of a cut last line is
+        skipped (also with a cut inside a character), and a word or a number before a
+        blank at the end of the last line is no cut (the gate removes only the white
+        space at the start of the line); one JSON document (an array on one line, an
+        object of many lines) before a cut last line is refused, with the same text for
+        a cut on an ASCII byte and inside a character of UTF-8 (before, the second was
+        read as the document); a last line too deep for json and cut inside a
+        character is a byte that is not UTF-8, not a traceback."""
+        good = self.good()
+        events = [event for case in
+                  good.read_jsonl("detections/sigma/T1609/k8s_pod_exec_attach.cases.jsonl")
+                  if case["name"] in ("pod-logs-read", "pod-get-describe")
+                  for event in case["events"]]
+        lines = [json.dumps(event).encode() + b"\n" for event in events]
+        inside = lines[1].replace(b'"verb": "', b'"verb": "\xe9', 1)
+        self.assertNotEqual(inside, lines[1])
+        at = inside.index(b"\xe9") + 1      # the character of the byte, from 1
+        respelled = {("Verb" if key == "verb" else key): value for key, value in events[1].items()}
+        nested = json.loads(lines[1])
+        nested["objectRef"]["Name"] = nested["objectRef"]["name"]
+        deep = {}
+        for _ in range(1500):
+            deep = {"a": deep}
+        separators = dict(events[1], userAgent="kubectl/v1.31 \u2028 \u2029 \u0085 x")
+        cut = b'{"kind": "Event", "apiVersion": "audit.k8s.io/v1", "verb": "ge'
+        twice = json.dumps(events[1])[:-1].encode() + b', "verb": "create"}'
+        # The key objectRef.name before the object objectRef: two keys that give one
+        # field, and flatten() keeps only the last value.
+        one_field = json.dumps({"objectRef.name": "trr9002-other", **events[1]}).encode()
+        self.assertIn("name", events[1]["objectRef"])
+        event = lines[1].rstrip(b"\n")
+        escaped = json.dumps(dict(events[1], userAgent="a&b")).replace("&", "\\u0026").encode()
+        not_cut = "; the line is not the start of one JSON object, so a capture did not cut it"
+        # Last lines that are a cut only without the white space at their end (the rows
+        # of K8sValidator): the gate keeps the end of the line.
+        word = b'{"kind": "Event", "apiVersion": "audit.k8s.io/v1", "stage": tru '
+        number = b'{"kind": "Event", "apiVersion": "audit.k8s.io/v1", "n": 1. '
+        at_the_end = {}
+        for name, data in (("word", word), ("number", number)):
+            try:
+                json.loads(data.strip())
+            except json.JSONDecodeError as e:
+                at_the_end[name] = f"not JSON ({e.msg}, at character {e.colno}){not_cut}"
+        # One JSON document before a cut last line: a JSON array on one line, and an
+        # object of many lines. The capture is refused, with the same text for a cut on
+        # an ASCII byte and for a cut inside a character of UTF-8.
+        array = b"[" + lines[0].rstrip() + b", " + lines[1].rstrip() + b"]\n"
+        pretty = json.dumps(events[0], indent=2).encode() + b"\n"
+        try:
+            json.loads(pretty + cut)
+        except json.JSONDecodeError as e:
+            pretty_error = f", line {e.lineno}: not JSON ({e.msg}, at character {e.colno})"
+        after = pretty.count(b"\n") + 1      # the line of the cut, after the document
+        self.assertEqual(pretty_error, f", line {after}: not JSON (Extra data, at character 1)")
+        # A last line too deep for json, cut inside a character of UTF-8: the test of a
+        # cut ends with a RecursionError of json (unless the stack of the process is
+        # large enough for json to read it: then the line is a cut).
+        deep_line = b'{"kind": "Event", "requestObject": ' + b"[" * 2000000 + b'"x'
+        readable = subprocess.run(
+            [sys.executable, "-c", "import json; json.loads('[' * 2000000 + ']' * 2000000)"],
+            capture_output=True).returncode == 0
+        try:
+            json.loads(cut)
+        except json.JSONDecodeError as e:
+            cut_error = f"not JSON ({e.msg}, at character {e.colno})"
+            blanks_error = f"not JSON ({e.msg}, at character {e.colno + 3})"
+        runs = self.extra_slice_runs({
+            "a directory": None,
+            "a path that does not exist": False,
+            "not UTF-8": lines[0] + inside,
+            "a byte order mark": b"\xef\xbb\xbf" + b"".join(lines),
+            # Two captures joined: the mark at the start of line 2. json refuses that
+            # line (a reader that skipped each line that json refused lost the event).
+            "a byte order mark at line 2": lines[0] + b"\xef\xbb\xbf" + lines[1],
+            "two keys of one event": lines[0] + json.dumps(dict(events[1], Verb="get")).encode()
+            + b"\n",
+            "two events": lines[0] + json.dumps(respelled).encode() + b"\n",
+            "two keys of a nested object": lines[0] + json.dumps(nested).encode() + b"\n",
+            "an object too deep to flatten": lines[0]
+            + json.dumps(dict(events[1], deep=deep)).encode() + b"\n",
+            # Python 3.13 and older stop json.loads() at the limit of the recursion; from
+            # Python 3.14 (with a large stack) json reads it, and flatten() stops.
+            "JSON too deep": lines[0] + b'{"a": ' * 100000 + b"1" + b"}" * 100000 + b"\n",
+            "a number with too many digits": lines[0] + b'{"n": 1' + b"0" * 5000 + b"}\n",
+            # No line of the document is JSON alone: the line `2, 1000...0]` is the
+            # number 2 and more, so json does not read the long number there.
+            "one document with a number with too many digits": b"[1,\n2, 1" + b"0" * 5000
+            + b"]\n",
+            # A line of the capture ends at a line break of the file: U+2028, U+2029 and
+            # U+0085 in a JSON string are characters of the line.
+            "line separators in a string": lines[0]
+            + json.dumps(separators, ensure_ascii=False).encode() + b"\n",
+            # A capture can cut only its last line, at its end: NUL bytes before an
+            # event (a copytruncate rotation leaves them; also on the last line, which
+            # then does not start with "{"), a cut line before other lines and a cut
+            # line with a line feed are errors. The last line, cut and without its
+            # line feed, is skipped (a control).
+            "NUL bytes before an event at line 2": lines[0] + b"\x00" * 8 + lines[1],
+            "NUL bytes before an event on the last line without a line feed": lines[0]
+            + lines[1] + b"\x00" * 8 + lines[1].rstrip(b"\n"),
+            "a cut line before other lines": lines[0] + cut + b"\n" + lines[1],
+            # The character of the error counts from 1 in the line as the capture holds
+            # it: with the three blanks before the "{".
+            "three blanks before a cut line before other lines": lines[0] + b"   " + cut
+            + b"\n" + lines[1],
+            # A document of many lines whose error is at line 3: no line before it is
+            # JSON, so the error of the document names its line and its character.
+            "a document with an error at line 3": b"[\n" + lines[0].rstrip() + b",\n\x00"
+            + lines[1].rstrip() + b"\n]\n",
+            "a cut last line with a line feed": lines[0] + lines[1] + cut + b"\n",
+            "a cut last line": lines[0] + lines[1] + cut,
+            # json keeps only the last value of a key that an object holds two times, so
+            # the event that the gate scored was not the event of the line.
+            "an event that holds a key two times": lines[0] + twice + b"\n",
+            "an array with an event that holds a key two times": b"[" + lines[0].rstrip()
+            + b", " + twice + b"]\n",
+            "an event whose two keys give one field": lines[0] + one_field + b"\n",
+            # The last line without a line end is skipped only when it is cut JSON (the
+            # rows of K8sValidator, with the same verdicts): an event and the start of an
+            # event, U+200B after the brace, a carriage return alone at the end (a line
+            # end), a byte that is not UTF-8 before the end or that starts no character
+            # at the end are errors; a cut inside an escape of Go, a blank before the
+            # brace and a cut inside a character of UTF-8 are skipped.
+            "an event and the start of an event on the last line": lines[0] + lines[1]
+            + event + b'{"kind": "Ev',
+            "U+200B after the brace on the last line": lines[0] + lines[1] + b"{\xe2\x80\x8b"
+            + event[1:],
+            "a carriage return alone at the end of the last line": lines[0] + lines[1] + cut
+            + b"\r",
+            "a byte that is not UTF-8 before the end of the last line": lines[0] + lines[1]
+            + cut.replace(b"Event", b"Ev\xe9ent"),
+            "a byte that is not UTF-8 at the end of the last line": lines[0] + lines[1] + cut
+            + b"\xff",
+            "a cut inside an escape on the last line": lines[0] + lines[1]
+            + escaped[:escaped.index(b"\\u0026") + 4],
+            "a blank before the brace of a cut last line": lines[0] + lines[1] + b" " + cut,
+            "a cut inside a character of UTF-8 on the last line": lines[0] + lines[1] + cut
+            + b"\xc3",
+            # The start of a character of UTF-8 at the end of a line before the last line
+            # is a byte that is not UTF-8: only the last line can be cut.
+            "a cut inside a character of UTF-8 at the end of a middle line": lines[0] + cut
+            + b"\xc3\n" + lines[1],
+            # The gate removes the white space at the start of the last line, as json
+            # reads a record: also U+00A0, which JSON does not have (with a cut on an
+            # ASCII byte, and inside a character of UTF-8).
+            "U+00A0 before the brace of a cut last line": lines[0] + lines[1] + b"\xc2\xa0"
+            + cut,
+            "U+00A0 before the brace of a last line cut inside a character": lines[0] + lines[1]
+            + b"\xc2\xa0" + cut + b"\xc3",
+            # It keeps the end of the line: a word or a number before a blank is no cut.
+            "a word before a blank at the end of the last line": lines[0] + lines[1] + word,
+            "a number before a blank at the end of the last line": lines[0] + lines[1] + number,
+            "a JSON array on one line, then a cut last line": array + cut,
+            "a JSON array on one line, then a last line cut inside a character": array + cut
+            + b"\xc3",
+            "an object of many lines, then a cut last line": pretty + cut,
+            "an object of many lines, then a last line cut inside a character": pretty + cut
+            + b"\xc3",
+            "a last line too deep for json, cut inside a character": lines[0] + lines[1]
+            + deep_line + b"\xc3"})
+        cannot_read = {
+            "an object too deep to flatten": r", line 2: JSON that the gate cannot read "
+                                             + gatelib.RECURSION_ERROR,
+            "JSON too deep": r", line 2: JSON that the gate cannot read "
+                             + gatelib.RECURSION_ERROR,
+            "a number with too many digits": r", line 2: JSON that the gate cannot read "
+                                             r"\(ValueError: Exceeds the limit \(4300 digits\)"
+                                             r"[^)]*\)",
+            "one document with a number with too many digits":
+                r": JSON that the gate cannot read \(ValueError: Exceeds the limit \(4300 "
+                r"digits\)[^)]*\)"}
+        wanted = {
+            "a directory": " is a directory, not a file",
+            "a path that does not exist": " cannot be read (No such file or directory)",
+            "not UTF-8": f", line 2: bytes that are not UTF-8 (the byte 0xe9 at character "
+                         f"{at} of the line)",
+            "a byte order mark": ", line 1: the line starts with the byte order mark of UTF-8 "
+                                 "(EF BB BF)",
+            "a byte order mark at line 2": ", line 2: the line starts with the byte order mark "
+                                           "of UTF-8 (EF BB BF)",
+            "two keys of one event": ", line 2: an event that one event table cannot hold: keys "
+                                     "that differ only by case: Verb / verb, which SQLite reads "
+                                     "as one column name",
+            "two keys of a nested object": ", line 2: an event that one event table cannot "
+                                           "hold: keys that differ only by case: objectRef.Name "
+                                           "/ objectRef.name, which SQLite reads as one column "
+                                           "name",
+            "NUL bytes before an event at line 2": ", line 2: not JSON (Expecting value, at "
+                                                   "character 1)",
+            "NUL bytes before an event on the last line without a line feed":
+                ", line 3: not JSON (Expecting value, at character 1)",
+            "a cut line before other lines": f", line 2: {cut_error}; a capture can cut only "
+                                             "the last line of a log, and a cut line has no "
+                                             "line feed",
+            "three blanks before a cut line before other lines":
+                f", line 2: {blanks_error}; a capture can cut only the last line of a log, and a "
+                "cut line has no line feed",
+            "a document with an error at line 3": ", line 3: not JSON (Expecting value, at "
+                                                  "character 1)",
+            "a cut last line with a line feed": f", line 3: {cut_error}; a capture can cut "
+                                                "only the last line of a log, and a cut line "
+                                                "has no line feed",
+            "an event that holds a key two times": ", line 2: an object holds the key 'verb' two "
+                                                   "times (json keeps only the last value)",
+            "an array with an event that holds a key two times":
+                ", element 2 of the array: an object holds the key 'verb' two times (json keeps "
+                "only the last value)",
+            "an event whose two keys give one field":
+                ", line 2: an event that one event table cannot hold: two keys of the record "
+                "give the one field 'objectRef.name' (sigma_eval.flatten keeps only one value)",
+            "an event and the start of an event on the last line":
+                f", line 3: not JSON (Extra data, at character {len(event) + 1}){not_cut}",
+            "U+200B after the brace on the last line":
+                ", line 3: not JSON (Expecting property name enclosed in double quotes, at "
+                f"character 2){not_cut}",
+            "a carriage return alone at the end of the last line":
+                f", line 3: {cut_error}; a capture can cut only the last line of a log, and a "
+                "cut line has no line feed",
+            "a byte that is not UTF-8 before the end of the last line":
+                ", line 3: bytes that are not UTF-8 (the byte 0xe9 at character 13 of the line)",
+            "a byte that is not UTF-8 at the end of the last line":
+                f", line 3: bytes that are not UTF-8 (the byte 0xff at character {len(cut) + 1} "
+                "of the line)",
+            "a cut inside a character of UTF-8 at the end of a middle line":
+                f", line 2: bytes that are not UTF-8 (the byte 0xc3 at character {len(cut) + 1} "
+                "of the line)",
+            "a word before a blank at the end of the last line": ", line 3: " + at_the_end["word"],
+            "a number before a blank at the end of the last line":
+                ", line 3: " + at_the_end["number"],
+            "a JSON array on one line, then a cut last line":
+                ", line 1: JSON that is not an object (a list)",
+            "a JSON array on one line, then a last line cut inside a character":
+                ", line 1: JSON that is not an object (a list)",
+            "an object of many lines, then a cut last line": pretty_error,
+            "an object of many lines, then a last line cut inside a character": pretty_error,
+            "a last line too deep for json, cut inside a character":
+                f", line 3: bytes that are not UTF-8 (the byte 0xc3 at character {len(deep_line) + 1} "
+                "of the line)"}
+        accepted = ["two events", "line separators in a string", "a cut last line",
+                    "a cut inside an escape on the last line",
+                    "a blank before the brace of a cut last line",
+                    "a cut inside a character of UTF-8 on the last line",
+                    "U+00A0 before the brace of a cut last line",
+                    "U+00A0 before the brace of a last line cut inside a character"]
+        if readable:
+            accepted.append("a last line too deep for json, cut inside a character")
+        for label, (path, result) in runs.items():
+            with self.subTest(label):
+                self.assertNotIn("Traceback", result.output)
+                if label in accepted:
+                    self.assert_accepts(result, r"^Live capture kind-live \(kubernetes/audit, 2 "
+                                                r"event\(s\)\) - shadow only")
+                    continue
+                self.assertNotRegex(result.stdout, r"(?m)^Live capture ")
+                self.assertEqual(len(re.findall(r"^ERROR", result.stdout, re.M)), 1,
+                                 result.describe())
+                problem = cannot_read.get(label) or re.escape(wanted[label])
+                self.assert_rejects(result, "^ERROR: the live capture " + re.escape(path)
+                                    + problem + r"\. No rule is scored on the live capture\.$",
+                                    exit_code=1)
 
 
 class BenignRatchet(gatelib.GateCase):
@@ -533,6 +1008,156 @@ class NullSafety(gatelib.GateCase):
             exit_code=1)
         self.assertEqual(len(found(result, r"^FAIL .*$")), 1, result.describe())
         self.assertIn(f"\nFAILED: 1 of 1 rule(s) are not null-safe: {self.IMDS}.\n", result.stdout)
+
+    def test_rejects_case_whose_one_record_spells_a_field_in_another_letter_case(self):
+        """Planted cases. In T1609, a case of two records: a quiet record that holds
+        `objectRef.resource` (its subresource is `log`) and the exec record with
+        `ObjectRef` in the place of `objectRef`. The rule fires only on the second
+        record, through SQLite, which reads `ObjectRef.resource` as the field. The test
+        is for each record: the first record has the field, and the second does not.
+        In T1620 (a correlation), the execveat event spells its group-by key `PID` in
+        one case and its time `Timestamp` in another: the compiled correlation reads
+        each as the key that it reads, Lucene, Splunk and ES|QL do not. A planted
+        value_count rule (known_bad/quality/counted_field_case) whose cases spell its
+        counted field `User`. Each is a FAIL that names the case, the field and the key;
+        the time has its own text, because the rule writes no time field. (Before
+        roadmap item R2d the table refused each case; the first R2d text read the keys
+        of the whole case and skipped the first case, and read no field of a
+        correlation that is not a field of an item.)"""
+        tree = self.tree()
+        exec_rel = "detections/sigma/T1609/k8s_pod_exec_attach.cases.jsonl"
+        exec_case = next(c for c in tree.read_jsonl(exec_rel)
+                         if c["name"] == "exec-websocket-get-procA")
+        (record,) = exec_case["events"]
+        self.assertEqual(record["objectRef"]["subresource"], "exec")
+        quiet = json.loads(json.dumps(record))
+        quiet["objectRef"]["subresource"] = "log"
+        respelled = {("ObjectRef" if key == "objectRef" else key): value
+                     for key, value in record.items()}
+        tree.append(exec_rel, json.dumps({
+            "name": "planted-ObjectRef-with-decoy", "kind": "positive", "why": "planted",
+            "events": [quiet, respelled]}) + "\n")
+        memfd_rel = "detections/sigma/T1620/memfd_create_execveat.cases.jsonl"
+        memfd_case = tree.read_jsonl(memfd_rel)[0]
+        first, second = memfd_case["events"]
+        self.assertEqual(memfd_case["kind"], "positive")
+        self.assertEqual(first["pid"], second["pid"])
+        second = {("PID" if key == "pid" else key): value for key, value in second.items()}
+        tree.append(memfd_rel, json.dumps({
+            "name": "planted-group-by-PID", "kind": "positive", "why": "planted",
+            "events": [first, second]}) + "\n")
+        _, second = memfd_case["events"]
+        self.assertIn("timestamp", second)
+        second = {("Timestamp" if key == "timestamp" else key): value
+                  for key, value in second.items()}
+        tree.append(memfd_rel, json.dumps({
+            "name": "planted-time-Timestamp", "kind": "positive", "why": "planted",
+            "events": [first, second]}) + "\n")
+        tree.plant("quality/counted_field_case", "detections/sigma/T9999")
+        counted = "detections/sigma/T9999/planted_counted_field.yml"
+        self.assertTrue(all("User" in event and "user" not in event
+                            for case in tree.read_jsonl(counted[:-4] + ".cases.jsonl")
+                            for event in case["events"]))
+        # The oracle judges the cases: each positive fires, and the near-miss of the
+        # planted rule is a near-miss on threshold.
+        cases = tree.run("detections/rule_cases.py", "detections/sigma/T1609/k8s_pod_exec_attach.yml",
+                         "detections/sigma/T1620/memfd_create_execveat.yml", counted)
+        self.assert_accepts(cases, r"^All cases hold \(3 rule file\(s\)\)\.$")
+        self.assert_saw(cases, r"^ok    T1609/k8s_pod_exec_attach\.yml :: positive   "
+                               r"planted-ObjectRef-with-decoy: fires$")
+        for name in ("planted-group-by-PID", "planted-time-Timestamp"):
+            self.assert_saw(cases, r"^ok    T1620/memfd_create_execveat\.yml :: positive   "
+                                   rf"{name}: fires$")
+        self.assert_saw(cases, r"^ok    T9999/planted_counted_field\.yml :: near-miss  "
+                               r"one-user-twice-spelled-User: near-miss on threshold$")
+        result = tree.run(self.GATE, "detections/sigma/T1609/k8s_pod_exec_attach.yml",
+                          "detections/sigma/T1620/memfd_create_execveat.yml", counted)
+        for rule, field, key, case in (
+                ("T1609/k8s_pod_exec_attach.yml", "objectRef.resource", "ObjectRef.resource",
+                 "positive planted-ObjectRef-with-decoy"),
+                ("T1609/k8s_pod_exec_attach.yml", "objectRef.subresource",
+                 "ObjectRef.subresource", "positive planted-ObjectRef-with-decoy"),
+                ("T1620/memfd_create_execveat.yml", "pid", "PID", "positive planted-group-by-PID"),
+                ("T9999/planted_counted_field.yml", "user", "User",
+                 "positive two-users-spelled-User")):
+            self.assert_rejects(result, rf"^FAIL  {re.escape(rule)} :: case {case}: the rule reads "
+                                        rf"`{re.escape(field)}`, and the records carry "
+                                        rf"`{re.escape(key)}`: SQLite matches column names",
+                                exit_code=1)
+        self.assert_rejects(result, r"^FAIL  T1620/memfd_create_execveat\.yml :: case positive "
+                                    r"planted-time-Timestamp: the records carry the time as "
+                                    r"`Timestamp`, and the offline correlation reads the time from "
+                                    r"the key `timestamp` \(the timestamp field of the SQLite "
+                                    r"backend of pySigma\): SQLite matches column names without "
+                                    r"regard to case, so it reads that key\. The rule writes no "
+                                    r"time field, and each other backend reads its own\. Write the "
+                                    r"time of the case as `timestamp`$", exit_code=1)
+        self.assertEqual(len(found(result, r"^FAIL .*$")), 5, result.describe())
+
+    def test_rejects_case_that_spells_a_time_item_of_a_base_in_another_letter_case(self):
+        """Planted in a copy, in two runs (each in its own copy, started together): one
+        base of the correlation of T1620 also reads `timestamp` as an item field
+        (`timestamp|startswith: '20'`), and a case spells it `Timestamp` in the record
+        of that base. The base is the memfd_create base (the first base, and the first
+        record) or the execveat base (the last base, and the second record). The rule
+        reads the field, so the FAIL has the text of a field of the rule (`the rule
+        reads `timestamp``), not the text of the time that a rule does not write. (A
+        gate that gave the time text to each correlation, or that read the item fields
+        of one base only, said that the rule writes no time field, which is false
+        here.)"""
+        rule = "detections/sigma/T1620/memfd_create_execveat.yml"
+        sidecar = rule[:-4] + ".cases.jsonl"
+        bases = {"the first base": ("  memfd_create_syscall:\n"
+                                    "    type: SYSCALL\n"
+                                    "    syscall: memfd_create\n", 0),
+                 "the last base": ("  execveat_syscall:\n"
+                                   "    type: SYSCALL\n"
+                                   "    syscall: execveat\n", 1)}
+        runs = []
+        for label, (base, index) in bases.items():
+            tree = self.tree()
+            text = tree.read(rule)
+            self.assertEqual(text.count(base), 1)
+            tree.write(rule, text.replace(base, base + "    timestamp|startswith: '20'\n"))
+            events = tree.read_jsonl(sidecar)[0]["events"]
+            self.assertEqual(len(events), 2)
+            self.assertIn("timestamp", events[index])
+            events[index] = {("Timestamp" if key == "timestamp" else key): value
+                             for key, value in events[index].items()}
+            tree.append(sidecar, json.dumps({
+                "name": "planted-Timestamp", "kind": "positive", "why": "planted",
+                "events": events}) + "\n")
+            runs.append((label, tree.start(self.GATE, rule)))
+        for label, pending in runs:
+            with self.subTest(label):
+                result = pending.result()
+                self.assert_rejects(result, r"^FAIL  T1620/memfd_create_execveat\.yml :: case "
+                                            r"positive planted-Timestamp: the rule reads "
+                                            r"`timestamp`, and the records carry `Timestamp`: "
+                                            r"SQLite matches column names", exit_code=1)
+                self.assertNotIn("The rule writes no time field", result.stdout)
+                self.assertEqual(len(found(result, r"^FAIL .*$")), 1, result.describe())
+
+    def test_rejects_case_whose_records_spell_a_field_in_two_other_ways(self):
+        """A case of T1609 (in a copy) whose two records spell `objectRef` as
+        `ObjectRef` and as `OBJECTREF`. The FAIL of each field of the rule under it
+        names both spellings that the records carry, sorted. (A gate that named one
+        spelling only hid the other.)"""
+        tree = self.tree()
+        sidecar = "detections/sigma/T1609/k8s_pod_exec_attach.cases.jsonl"
+        (record,) = next(case for case in tree.read_jsonl(sidecar)
+                         if case["name"] == "exec-websocket-get-procA")["events"]
+        self.assertIn("objectRef", record)
+        spelled = [{(name if key == "objectRef" else key): value
+                    for key, value in record.items()} for name in ("ObjectRef", "OBJECTREF")]
+        tree.append(sidecar, json.dumps({"name": "planted-two-spellings", "kind": "positive",
+                                         "why": "planted", "events": spelled}) + "\n")
+        result = tree.run(self.GATE, "detections/sigma/T1609/k8s_pod_exec_attach.yml")
+        self.assert_rejects(result, r"^FAIL  T1609/k8s_pod_exec_attach\.yml :: case positive "
+                                    r"planted-two-spellings: the rule reads "
+                                    r"`objectRef\.resource`, and the records carry "
+                                    r"`OBJECTREF\.resource`, `ObjectRef\.resource`: SQLite "
+                                    r"matches column names", exit_code=1)
 
 
 # ----------------------------------------------------------------- check_variants.py
@@ -1069,6 +1694,41 @@ class Variants(gatelib.GateCase):
     def add_entry(doc):
         doc["expected"].append(dict(doc["expected"][0], name="one-more-case"))
 
+    def test_rejects_sidecar_line_and_fixture_list_that_it_cannot_check(self):
+        """Two planted problems, each named with its source. A sidecar line of T1609 that
+        is not JSON: the FAIL line says `sidecar error:` and names the line. A record of
+        the benign fixture of TRR9012 whose list holds an integer outside 64 bits: the
+        default text of the list holds it (the validator passes the tree), and the
+        multi-valued model, which holds each element as a value, cannot. The record is
+        the third of the fixture: before it, the first record and a copy of it whose
+        list of two values gives two more rows of the table of that model. The FAIL line
+        names the record of the fixture, and not a row of that table (the first text of
+        roadmap item R2d named the row) or another record."""
+        tree = self.tree()
+        sidecar = "detections/sigma/T1609/k8s_pod_exec_attach.cases.jsonl"
+        line = len(tree.read_jsonl(sidecar)) + 1
+        tree.append(sidecar, "{not json\n")
+        benign = "detections/cloud/fixtures/trr9012/benign.json"
+        rows = tree.read_json(benign)
+        tree.edit_json(benign, lambda doc: doc[:1] + [dict(rows[0], y=["a", "b"]),
+                                                      dict(rows[0], x=[1, 2 ** 64])] + doc[1:])
+        self.assertGreater(len(rows), 1)
+        cloud = tree.start("detections/validate_cloud_detections.py")
+        result = tree.run(self.GATE, "detections/sigma/T1609/k8s_pod_exec_attach.yml",
+                          "detections/sigma/T1078.004/aws_leaked_access_key_recon.yml",
+                          *self.ci_arguments)
+        self.assert_saw(cloud.result(), r"^PASS  \[TRR9012 AWS\] aws_leaked_access_key_recon\.yml: "
+                                        rf".* benign baseline clean \({len(rows) + 2} record\(s\)\)")
+        self.assertNotIn("Traceback", result.output)
+        self.assert_rejects(result, rf"^FAIL  T1609/k8s_pod_exec_attach\.yml: sidecar error: line "
+                                    rf"{line}: not JSON \(", exit_code=1)
+        self.assert_rejects(result, r"^FAIL  T1078\.004/aws_leaked_access_key_recon\.yml: fixture "
+                                    r"benign trr9012/benign\.json: \[multi\] cannot check: "
+                                    rf"EventError: event 3 of {len(rows) + 2}: the "
+                                    r"value of x is an integer outside the 64 bits of an INTEGER "
+                                    r"of SQLite \(a value of an element of a list, as the "
+                                    r"multi-valued model holds it\)$", exit_code=1)
+
     def test_control_ratchet_accepts_the_list_of_the_base(self):
         """CONTROL of the ratchet: the list of the copy against a copy of itself, and
         against a list that holds one entry more (the list of the head lost one)."""
@@ -1341,8 +2001,9 @@ class ProviderMappings(gatelib.GateCase):
         """The ERROR line for the planted case: the rule, the line and the case."""
         line = len(self.good().read_jsonl(self.CLASH_CASES)) + 1
         return (rf"^ERROR {re.escape(self.CLASH_RULE)}: sidecar error: line {line}: case "
-                r"'planted-two-verb-keys': event keys that differ only by case: Verb / verb "
-                r"\(the events of a case share one SQLite table")
+                r"'planted-two-verb-keys': event 1 of 1: keys that differ only by case: Verb / "
+                r"verb, which SQLite reads as one column name \(one event table cannot hold the "
+                r"event\)$")
 
     def test_rejects_sidecar_case_that_one_table_cannot_hold(self):
         """pm-sidecar-case-clash (planted in setUpClass), with the command line of the
@@ -1368,6 +2029,26 @@ class ProviderMappings(gatelib.GateCase):
                       "a sidecar error were not checked\n", result.stdout)
         results = "detections/pipelines/mapping_results.json"
         self.assertEqual(self.clash_write.read(results), self.good().read(results))
+
+    def test_rejects_anchor_with_an_object_that_holds_a_key_two_times(self):
+        """An anchor of GKE whose object holds the key `provenance` two times, first
+        with no source. json keeps only the last value, so the check would read
+        another anchor than the file shows. The anchor is FAILED with the key, and the
+        run fails (the rule-path form checks the anchors too). (Before, the gate read
+        the anchor without a word.)"""
+        tree = self.tree()
+        rel = "detections/pipelines/anchors/gke/method-and-resource-names.json"
+        text = tree.read(rel)
+        self.assertTrue(text.startswith("{"))
+        self.assertIn('"provenance"', text)
+        tree.write(rel, '{"provenance": {}, ' + text[1:])
+        result = tree.run(self.GATE, "detections/sigma/" + self.REAL)
+        self.assertNotIn("Traceback", result.output)
+        self.assert_saw(result, r"^\[gke\] ANCHOR FAILED anchors/gke/method-and-resource-names"
+                                r"\.json$")
+        self.assert_rejects(result, r"^ +an object holds the key 'provenance' two times \(json "
+                                    r"keeps only the last value\)$", exit_code=1)
+        self.assertIn("\nFAILED: 1 problem(s).\n", result.stdout)
 
     def test_rejects_match_on_one_json_serialisation_by_rule_path(self):
         """The same pair with the rule-path form, which skips the results file: the

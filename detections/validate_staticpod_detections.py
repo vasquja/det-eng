@@ -61,25 +61,30 @@ Logs:
                        the runner's auditd records.
 
     A record of each log (RECORDS): an audit event is a JSON object with "kind":
-    "Event" and an apiVersion of the group audit.k8s.io; a pod sandbox has an "id"
-    and a "metadata" object with a "name" (a snapshot of the CRI log holds them in
+    "Event" and an apiVersion of the group audit.k8s.io; a pod sandbox has an "id" and
+    a "metadata" object with a "name" (a snapshot of the CRI log holds them in
     "items", a list); a file event has a "TargetFilename" and an "Image". A blank
-    line, and a line that is not JSON (a line that was cut at the end of a
-    capture), are not records. Each other line, or item of a snapshot, that is not
-    a record fails every run that reads the log (a strict run, --report and
-    --expect-miss) after the logs are read, and no rule is judged: JSON that is not
-    an object (`[]`), a JSON object that is not a record of the log (`{}`), a
+    line, and a line that a capture cut, are not records. A capture can cut only the
+    end of the last line of a log: that line is skipped when it has no line end (a
+    line feed, or a carriage return alone) and its text is the start of one JSON
+    object without its end, also when the cut splits a character of UTF-8
+    (cut_line()). Each other line, or item of a snapshot, that is not a record fails
+    every run that reads the log (a strict run, --report and --expect-miss) after the
+    logs are read, and no rule is judged: a line that is not JSON (also NUL bytes or
+    U+200B in a record, or a record with more text after it on its line), JSON that is
+    not an object (`[]`), a JSON object that is not a record of the log (`{}`), a
     snapshot whose "items" is not a list, bytes that are not UTF-8, the byte order
-    mark of UTF-8 at the start of line 1, and JSON that the validator cannot read
-    (too deep, or a number that is too long). One ERROR line names the log, the
-    line (and the item) and the problem (at most 10 for each log, then the number
-    of the others), and a FAILED line ends the run with exit 1. With --expect-miss
-    the failed control lines of the pre-emulation logs (a log that is not given, an
-    audit log without a record, and a CRI log or a file log without a record, with
-    the line of the CRI control or the file control) come before the FAILED line,
-    and the --json control of those logs says FAILED; --json gets `log_problems` (with
-    the same limit) when a log holds such a line. A log that is a directory, or
-    that the run cannot open, is an ERROR (exit 1) at once.
+    mark of UTF-8 at the start of a line, JSON that the validator cannot read (too
+    deep, or a number that is too long), and an object that holds one key two times
+    (json keeps only the last value). One ERROR line names the log, the line (and the
+    item) and the problem (at most 10 for each log, then the number of the others),
+    and a FAILED line ends the run with exit 1. With --expect-miss the failed control
+    lines of the pre-emulation logs (a log that is not given, an audit log without a
+    record, and a CRI log or a file log without a record, with the line of the CRI
+    control or the file control) come before the FAILED line, and the --json control
+    of those logs says FAILED; --json gets `log_problems` (with the same limit) when a
+    log holds such a line. A log that is a directory, or that the run cannot open, is
+    an ERROR (exit 1) at once.
 
 Modes:
     python3 detections/validate_staticpod_detections.py --dry-run
@@ -401,6 +406,71 @@ def record_problem(source, doc):
     return None
 
 
+def table_problem(source, record):
+    """None when one event table of the rules (sigma_eval.EventTable) can hold the
+    flat record; else the problem, as text. The test is the test of the table
+    itself (sigma_eval.event_problem()): two keys of the record that give one field
+    ({"objectRef.subresource": "exec", "objectRef": {"subresource": "log"}}: the
+    flat record keeps only one value), two keys that differ only in
+    the letter case of their ASCII letters, a key that hides a row id that the
+    queries read or that no column name can hold, a value that SQLite does not hold
+    as it is (an integer outside 64 bits, NaN, a lone surrogate). Two records of a
+    log whose keys differ only in letter case are no problem: their keys share one
+    column."""
+    problem = sigma_eval.event_problem(record)
+    if problem is None:
+        return None
+    return f"{RECORDS[source]['a']} that one event table cannot hold: {problem[1]}"
+
+
+def open_end(text, n, last):
+    """True for line `n` (from 1) of a log of `last` lines when it is the last line
+    and has no line end. A line ends at a line feed, and at a carriage return alone:
+    the reader splits the lines at both (open() with newline="")."""
+    return n == last and not text.endswith(("\n", "\r"))
+
+
+def cut_line(text, n, last):
+    """True for line `n` (from 1) of a log of `last` lines when a capture can have
+    cut it, so that it is no problem. CI copies each log with `cat` while its writer
+    adds one line for each record (the CRI sensor writes one snapshot on each line),
+    and the writer writes the line feed of a line last. So only the last line can
+    be cut, the cut removes the end of that line, and the line has no line end
+    (open_end()). Its text without the white space at its start (as json reads a
+    record) must be cut JSON: the start of one JSON object without its end
+    (sigma_eval.cut_json()). The reader removes nothing at the end of the line.
+    Outside a string, no cut ends with white space that JSON does not have (VT, FF,
+    NEL, U+00A0) or with a word or a number before a blank ('{"a": tru '). Inside an
+    open string, each character that a JSON string holds is a cut (NEL and U+00A0
+    too), and a raw control character (U+0000 to U+001F) is not. The cut can split a
+    character of UTF-8: the start of a character at the very end of the line is part
+    of the cut (sigma_eval.utf8_cut()). Each other line that json refuses is a
+    problem: NUL bytes or U+200B in a record, a record with more text after it on its
+    line, a cut line before other lines or with a line end, and each other byte that
+    is not UTF-8. A cut line of a CRI log is one snapshot: it can hold complete
+    sandboxes before the cut, and the reader does not read them (the sensor writes a
+    snapshot each second, so the next one holds them)."""
+    if not open_end(text, n, last):
+        return False
+    text = sigma_eval.utf8_cut(text)
+    return text is not None and sigma_eval.cut_json(text.lstrip())
+
+
+def _not_json(text, error, last):
+    """The text of the problem of a line that json refuses: `error` is the
+    json.JSONDecodeError of the line without its blanks, and `last` is True for the
+    last line without a line end (open_end()). The character counts from 1, in the
+    line as the log holds it."""
+    at = error.colno + len(text) - len(text.lstrip())
+    why = f"not JSON ({error.msg}, at character {at})"
+    if text.strip().startswith("{") and last:
+        why += "; the line is not the start of one JSON object, so a capture did not cut it"
+    elif text.strip().startswith("{"):
+        why += ("; a capture can cut only the last line of a log, and a cut line has no "
+                "line feed")
+    return why
+
+
 def read_log(path, source):
     """(records, problems): the records of the log of `source` at `path`, flattened to
     the dotted field names of the rules (sigma_eval.flatten), and the problems.
@@ -411,65 +481,84 @@ def read_log(path, source):
     holds its id.
 
     A problem is a line, or an item of a snapshot, that is not a record of the log:
-    bytes that are not UTF-8, the byte order mark of UTF-8 at the start of line 1,
-    JSON that the validator cannot read (too deep, or a number that is too long),
-    JSON that is not an object, a JSON object that is not a record of the log, and a
-    snapshot whose "items" is not a list. Each problem is (line, item, text): lines
-    and items count from 1, and item is None for a line. A blank line, and a line
-    that is not JSON (a line that was cut at the end of a capture), are no record and
-    no problem. Raises LogError for a log that is a directory or cannot be read.
+    bytes that are not UTF-8, the byte order mark of UTF-8 at the start of a line,
+    a line that is not JSON (cut_line() tells the one exception: the last line that
+    a capture cut, also inside a character of UTF-8), JSON that the
+    validator cannot read (too deep, or a number that is too long), an object that
+    holds one key two times (json keeps only the last value, so a record of the rule
+    could hide under a second value of its key), JSON that is not an object, a JSON
+    object that is not a record of the log, a record that one event table cannot hold
+    (table_problem()), and a snapshot whose "items" is not a list. Each problem is
+    (line, item, text): lines and items count from 1, and item is None for a line.
+    A blank line, and a line that a capture cut (cut_line()), are no record and no
+    problem. Raises LogError for a log that is a directory or cannot be read.
     """
     spec = RECORDS[source]
     if os.path.isdir(path):
         raise LogError(f"the {spec['log']} {path} is a directory, not a file")
     records, problems, seen = [], [], set()
     try:
-        with open(path, encoding="utf-8", errors="surrogateescape") as fh:
-            for n, text in enumerate(fh, 1):
-                line = text.strip()
-                if not line:
-                    continue
-                bad = next((i for i, ch in enumerate(text) if 0xDC80 <= ord(ch) <= 0xDCFF), None)
-                if bad is not None:
-                    problems.append((n, None, f"bytes that are not UTF-8 (the byte "
-                                              f"0x{ord(text[bad]) - 0xdc00:02x} at character "
-                                              f"{bad + 1} of the line)"))
-                    continue
-                if n == 1 and text.startswith(BYTE_ORDER_MARK):
-                    problems.append((n, None, "the line starts with the byte order mark of "
-                                              "UTF-8 (EF BB BF)"))
-                    continue
-                try:
-                    doc = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                except (ValueError, RecursionError) as e:
-                    problems.append((n, None, _cannot_read(e)))
-                    continue
-                items = [(None, doc)]
-                if spec["snapshot"] and isinstance(doc, dict) and "items" in doc:
-                    if not isinstance(doc["items"], list):
-                        problems.append((n, None, 'a snapshot whose "items" is not a list '
-                                                  f"({_kind(doc['items'])})"))
-                        continue
-                    items = list(enumerate(doc["items"], 1))
-                for item, value in items:
-                    why = record_problem(source, value)
-                    if why is None:
-                        try:
-                            record = sigma_eval.flatten(value)
-                        except RecursionError as e:
-                            why = _cannot_read(e)
-                    if why is not None:
-                        problems.append((n, item, why))
-                        continue
-                    if spec["once_by"]:
-                        if value[spec["once_by"]] in seen:
-                            continue
-                        seen.add(value[spec["once_by"]])
-                    records.append(record)
+        # newline="": each line keeps its end as the log holds it, so cut_line() can
+        # tell a line that ends with a line feed.
+        with open(path, encoding="utf-8", errors="surrogateescape", newline="") as fh:
+            lines = fh.readlines()
     except OSError as e:
         raise LogError(f"the {spec['log']} {path} cannot be read ({e.strerror or e})") from None
+    for n, text in enumerate(lines, 1):
+        line = text.strip()
+        if not line:
+            continue
+        bad = next((i for i, ch in enumerate(text) if 0xDC80 <= ord(ch) <= 0xDCFF), None)
+        if bad is not None:
+            if not cut_line(text, n, len(lines)):
+                problems.append((n, None, f"bytes that are not UTF-8 (the byte "
+                                          f"0x{ord(text[bad]) - 0xdc00:02x} at character "
+                                          f"{bad + 1} of the line)"))
+            continue
+        # json refuses a line that starts with the byte order mark: the mark is a
+        # problem at the start of each line (two logs joined hold it at a later line
+        # too), with a text that names it.
+        if line.startswith(BYTE_ORDER_MARK):
+            problems.append((n, None, "the line starts with the byte order mark of "
+                                      "UTF-8 (EF BB BF)"))
+            continue
+        try:
+            doc = json.loads(line, object_pairs_hook=sigma_eval.pairs)
+        except json.JSONDecodeError as e:
+            if not cut_line(text, n, len(lines)):
+                problems.append((n, None, _not_json(text, e, open_end(text, n, len(lines)))))
+            continue
+        except (ValueError, RecursionError) as e:
+            problems.append((n, None, _cannot_read(e)))
+            continue
+        key = sigma_eval.key_twice(doc)
+        if key is not None:
+            problems.append((n, None, sigma_eval.twice_text(key)))
+            continue
+        items = [(None, doc)]
+        if spec["snapshot"] and isinstance(doc, dict) and "items" in doc:
+            if not isinstance(doc["items"], list):
+                problems.append((n, None, 'a snapshot whose "items" is not a list '
+                                          f"({_kind(doc['items'])})"))
+                continue
+            items = list(enumerate(doc["items"], 1))
+        for item, value in items:
+            why = record_problem(source, value)
+            if why is None:
+                try:
+                    record = sigma_eval.flatten(value)
+                except RecursionError as e:
+                    why = _cannot_read(e)
+                else:
+                    why = table_problem(source, record)
+            if why is not None:
+                problems.append((n, item, why))
+                continue
+            if spec["once_by"]:
+                if value[spec["once_by"]] in seen:
+                    continue
+                seen.add(value[spec["once_by"]])
+            records.append(record)
     return records, problems
 
 

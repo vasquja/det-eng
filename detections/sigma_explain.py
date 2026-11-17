@@ -997,9 +997,31 @@ class CorrelationRule:
             return list(range(1, max(int(cond["eq"]), 2)))
         return None
 
+    def _respelled(self, events):
+        """The events, with each key that the compiled correlation reads as a field
+        that this analysis reads and writes in Python (a group-by field, the time, the
+        counted field) written as the rule writes that field. SQLite reads a key that
+        differs from the field only in the letter case of its ASCII letters
+        (sigma_eval.fold()) as the field, and two events of a set may spell it in two
+        ways (detections/SEMANTICS.md, "Field names"); an event holds one spelling at
+        most (sigma_eval.event_problem())."""
+        names = list(self.group_by) + [TS_FIELD]
+        if self.type == "value_count" and self.threshold.get("field"):
+            names.append(self.threshold["field"])
+        want = {}
+        for name in names:
+            want.setdefault(sigma_eval.fold(name), name)
+        out = []
+        for event in events:
+            spelled = {key: want.get(sigma_eval.fold(key), key) for key in event}
+            out.append(event if all(k == v for k, v in spelled.items())
+                       else {spelled[key]: value for key, value in event.items()})
+        return out
+
     def verdict_set(self, events, table=None):
         """Judge an event set as one unit (the correlation's own unit)."""
         table = table or sigma_eval.EventTable(events)
+        events = self._respelled(events)
         fired = bool(table.hit_indices(self.sql)) if self.sql else False
         matched = {}
         lines = []
@@ -1240,8 +1262,8 @@ def _base(name, syscall, rule_id=None):
     return doc
 
 
-def _correlation(kind, rules, bases, timespan="5s", condition=None):
-    spec = {"type": kind, "rules": rules, "group-by": ["pid"], "timespan": timespan}
+def _correlation(kind, rules, bases, timespan="5s", condition=None, group_by=("pid",)):
+    spec = {"type": kind, "rules": rules, "group-by": list(group_by), "timespan": timespan}
     if condition:
         spec["condition"] = condition
     return from_docs([{"title": f"self-test {kind}", "correlation": spec, "level": "high"}]
@@ -1355,6 +1377,34 @@ def _test_correlation(check):
           f"got {v.kind} {v.atoms}")
     v = distinct.verdict_set([_ev("add_key", 1, s, a0=f"k{s}") for s in (0, 1, 2)])
     check("value_count: three distinct values fire", v.kind == "match", v.kind)
+    # SQLite reads a key that differs from a field only in the letter case of its ASCII
+    # letters as the field (sigma_eval.fold()), and so does the analysis: the counted
+    # field spelled `A0` is the field a0.
+    v = distinct.verdict_set([_ev("add_key", 1, s, A0="x") for s in (0, 1, 2)])
+    check("value_count: the counted field spelled A0, one value -> near-miss on threshold",
+          v.kind == "near-miss" and "threshold" in v.atoms and "timespan" not in v.atoms,
+          f"got {v.kind} {v.atoms}")
+    v = distinct.verdict_set([_ev("add_key", 1, s, A0=f"k{s}") for s in (0, 1, 2)])
+    check("value_count: the counted field spelled A0, three distinct values fire",
+          v.kind == "match", v.kind)
+
+    # The group-by field `kind` spelled in another letter case of its ASCII letters is
+    # the field; spelled with the Kelvin sign (U+212A, which str.lower() maps to `k`)
+    # it is another column for SQLite, so the second event has no group-by value.
+    by_kind = _correlation("temporal", ["g_pipe", "g_splice"],
+                           [_base("g_pipe", "pipe"), _base("g_splice", "splice")],
+                           group_by=("kind",))
+    for name, key, seconds, kind, atoms in [
+            ("`Kind`, 200ms apart", "Kind", 0.2, "match", []),
+            ("`Kind`, 30s later", "Kind", 30, "near-miss", ["timespan"]),
+            ("the Kelvin sign, 30s later", "\u212aind", 30, "distant", [])]:
+        events = [_ev("pipe", 1, 0, kind="x"), _ev("splice", 1, seconds, **{key: "x"})]
+        v = by_kind.verdict_set(events)
+        check(f"temporal by kind: {name} -> {kind} {atoms}",
+              v.kind == kind and v.atoms == atoms, f"got {v.kind} {v.atoms}")
+    repaired = [_ev("pipe", 1, 0, kind="x"), _ev("splice", 1, 0.2, **{"\u212aind": "x"})]
+    check("temporal by kind: the Kelvin sign is no group-by value of SQLite (the time "
+          "repaired does not fire)", not sigma_eval.evaluate(by_kind.sql, repaired))
 
     ordered = _correlation("temporal_ordered", ["o_pipe", "o_splice"],
                            [_base("o_pipe", "pipe"), _base("o_splice", "splice")])

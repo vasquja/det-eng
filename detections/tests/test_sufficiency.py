@@ -337,25 +337,95 @@ class RuleCases(gatelib.GateCase):
         self.assert_rejects(
             result,
             r"^ERROR T9999/planted_rule\.yml: line 1: case 'packet-raw-socket-two-comm-keys': "
-            r"event keys that differ only by case: Comm / comm \(the events of a case share "
-            r"one SQLite table, whose column names have no letter case, so the case cannot be "
-            r"judged\)$", exit_code=1)
+            r"event 1 of 1: keys that differ only by case: Comm / comm, which SQLite reads as "
+            r"one column name \(one event table cannot hold the event\)$", exit_code=1)
         self.assertIn("\nFAILED: 1 case problem(s).\n", result.stdout)
+
+    def test_control_keys_that_differ_only_in_letter_case_in_two_events(self):
+        """CONTROL of the test above: `comm` in one event of a case and `Comm` in the
+        other. No event holds both, so the keys share one column of the table, and the
+        rule reads `Comm` as it reads a field in SQLite (detections/SEMANTICS.md, "Field
+        names"). The planted filtered case holds an openat() by `cat` (key `comm`) and
+        the socket of tcpdump with the key `Comm`: the filter `allow.comm` reads
+        `tcpdump`, so the case is filtered on that item. Before roadmap item R2d the
+        gate refused the case (`event keys that differ only by case: Comm / comm`).
+        Keys that differ in the letter case of a letter that is not ASCII (`Ä`, `ä`)
+        are two columns, also in one event, as SQLite reads them."""
+        tree = self.plant_bad_cases("sound")
+        cases = tree.read_jsonl(self.PLANTED_CASES)
+        file_open, tcpdump = cases[3]["events"][0], cases[2]["events"][0]
+        self.assertEqual((file_open["comm"], tcpdump["comm"]), ("cat", "tcpdump"))
+        spelled = {("Comm" if key == "comm" else key): value for key, value in tcpdump.items()}
+        cases.append(dict(cases[2], name="tcpdump-allowlisted-two-spellings",
+                          events=[file_open, spelled]))
+        cases.append(dict(cases[0], name="packet-raw-socket-non-ascii-keys",
+                          events=[dict(cases[0]["events"][0], **{"\u00c4": "1", "\u00e4": "2"})]))
+        tree.write_jsonl(self.PLANTED_CASES, cases)
+        result = tree.run(self.GATE, self.PLANTED_RULE)
+        self.assert_accepts(result, r"^All cases hold \(1 rule file\(s\)\)\.$")
+        self.assertIn("ok    T9999/planted_rule.yml :: filtered   tcpdump-allowlisted-two-"
+                      "spellings: filtered on allow.comm\n", result.stdout)
+        self.assertIn("ok    T9999/planted_rule.yml :: positive   packet-raw-socket-non-ascii-"
+                      "keys: fires\n", result.stdout)
+
+    def test_correlation_reads_keys_of_two_events_that_differ_only_in_letter_case(self):
+        """The correlation of T1620 (memfd_create, then execveat of the same pid within
+        10 s) groups by `pid` and reads the time in `timestamp`. Three planted cases
+        whose execveat event spells one of the two keys in another letter case. The
+        compiled correlation reads the key as the field (SQLite), and so must the
+        analysis of the gate, which grades a case in Python: the execveat 30 s later
+        with `Timestamp` is a near-miss on the timespan, the execveat of another pid
+        with `PID` is a near-miss on group-by, and with `PID` of the same pid the case
+        fires. (Before, the analysis read only the exact key: the gate ended with a
+        traceback of EventTable on the first, and graded the second distant, `no
+        group-by value for pid`.)"""
+        tree = self.tree()
+        rule = "detections/sigma/T1620/memfd_create_execveat.yml"
+        sidecar = rule[:-len(".yml")] + ".cases.jsonl"
+        self.assertIn("group-by:", tree.read(rule))
+        first, second = tree.read_jsonl(sidecar)[0]["events"]
+        self.assertEqual((first["syscall"], second["syscall"]), ("memfd_create", "execveat"))
+        self.assertEqual(first["pid"], second["pid"])
+
+        def respelled(event, key, new, value=None):
+            return {(new if k == key else k): (v if k != key or value is None else value)
+                    for k, v in event.items()}
+        planted = [
+            {"name": "planted-too-late-Timestamp", "kind": "near-miss", "breaks": ["timespan"],
+             "why": "planted", "events": [first, respelled(second, "timestamp", "Timestamp",
+                                                           "2026-10-12 13:00:30.000")]},
+            {"name": "planted-two-pids-PID", "kind": "near-miss", "breaks": ["group-by"],
+             "why": "planted", "events": [first, respelled(second, "pid", "PID",
+                                                           first["pid"] + 1)]},
+            {"name": "planted-same-pid-PID", "kind": "positive", "why": "planted",
+             "events": [first, respelled(second, "pid", "PID")]}]
+        self.assertEqual(first["timestamp"][:17], "2026-10-12 13:00:")
+        tree.append(sidecar, "".join(json.dumps(case) + "\n" for case in planted))
+        result = tree.run(self.GATE, rule)
+        self.assertNotIn("Traceback", result.output)
+        self.assert_accepts(result, r"^All cases hold \(1 rule file\(s\)\)\.$")
+        for line in ("near-miss  planted-too-late-Timestamp: near-miss on timespan",
+                     "near-miss  planted-two-pids-PID: near-miss on group-by",
+                     "positive   planted-same-pid-PID: fires"):
+            self.assertIn(f"\nok    T1620/memfd_create_execveat.yml :: {line}\n", result.stdout)
 
     # One changed near-miss (the second line of the sound sidecar), whose events
     # cannot be put in one event table, and the words of the gate for it. Without
-    # the check, a clash ends the gate with a traceback of EventTable, an event that
-    # is not an object (null, a number, an array, a string) with one of flatten() and
-    # `_ROWID` with one of sqlite3; `_rowid` and the two keys that flatten to one
-    # pass, and the gate judges an event that lost a value.
+    # the check, an event that is not an object (null, a number, an array, a string)
+    # ends the gate with a traceback of flatten(), and each event that the table
+    # refuses (a clash, `_rowid` or `rowid` in any letter case, an integer outside 64
+    # bits) with a traceback of the EventError of sigma_eval.EventTable; the two keys
+    # that flatten to one pass, and the gate judges an event that lost a value. (Before
+    # R2d, `_rowid` and `rowid` passed too, and an integer outside 64 bits ended the
+    # gate with an OverflowError of sqlite3.) Each problem of the table is the text of
+    # sigma_eval.event_problem(), the test of the table itself.
+    TABLE = r" \(one event table cannot hold the event\)$"
     BAD_EVENTS = (
-        # `comm` in the first event and `Comm` in the second: no event holds both.
-        ("keys of two events", lambda event: [event, dict(
-            {key: value for key, value in event.items() if key != "comm"}, Comm="sniffer")],
-         r"event keys that differ only by case: Comm / comm \(the events of a case share "),
+        # One event holds `proc.Comm` and `proc.comm`.
         ("flat keys of one event", lambda event: [dict(event, proc={"Comm": "x"},
                                                        **{"proc.comm": "x"})],
-         r"event keys that differ only by case: proc\.Comm / proc\.comm \("),
+         r"event 1 of 1: keys that differ only by case: proc\.Comm / proc\.comm, which "
+         r"SQLite reads as one column name" + TABLE),
         ("an event that is null", lambda event: [event, None],
          r"event 2 of 2 is not a JSON object \(null\): an event is one record of the log$"),
         ("an event that is a number", lambda event: [event, 7],
@@ -365,13 +435,42 @@ class RuleCases(gatelib.GateCase):
         ("an event that is a string", lambda event: [event, "comm=sniffer"],
          r"event 2 of 2 is not a JSON object \(a string\): an event is one record of the log$"),
         ("the key _ROWID", lambda event: [dict(event, _ROWID=1)],
-         r"event 1 of 1: the key '_ROWID' is the row id column of the event table of "
-         r"sigma_eval\.py \(in any letter case\), so an event cannot hold it$"),
-        ("the key _rowid", lambda event: [dict(event, _rowid=1)],
-         r"event 1 of 1: the key '_rowid' is the row id column of the event table "),
+         r"event 1 of 1: the key _ROWID is the name of the row id column of the table "
+         r"\(_rowid, in any letter case of the ASCII letters\)" + TABLE),
+        ("the key _rowid", lambda event: [event, dict(event, _rowid=1)],
+         r"event 2 of 2: the key _rowid is the name of the row id column of the table "),
+        ("the key RowId", lambda event: [dict(event, RowId=7)],
+         r"event 1 of 1: the key RowId is the name by which the correlation queries read "
+         r"the row id \(rowid, in any letter case of the ASCII letters\)" + TABLE),
+        ("an integer outside 64 bits", lambda event: [dict(event, pid=2 ** 63)],
+         r"event 1 of 1: the value of pid is an integer outside the 64 bits of an INTEGER "
+         r"of SQLite" + TABLE),
+        # Two keys that give one field: flatten() keeps only the last value, so a case
+        # could hide the value that its line shows (the test of the table itself).
         ("two keys that flatten to one", lambda event: [dict(event, a={"b": 1}, **{"a.b": 2})],
-         r"event 1 of 1: the keys \['a', 'b'\] and \['a\.b'\] both flatten to 'a\.b', and "
-         r"the flat event keeps only the last value$"),
+         r"event 1 of 1: two keys of the record give the one field 'a\.b' "
+         r"\(sigma_eval\.flatten keeps only one value\)" + TABLE),
+        ("a dotted key before a nested object, in the second event",
+         lambda event: [event, {"proc.exe.path": "/tmp/x", **dict(event, proc={"exe": {
+             "path": "/usr/bin/true"}})}],
+         r"event 2 of 2: two keys of the record give the one field 'proc\.exe\.path' "
+         r"\(sigma_eval\.flatten keeps only one value\)" + TABLE),
+        # Values and keys that SQLite does not hold as they are (json.dumps writes NaN,
+        # Infinity and the escapes \ud800 and \u0000, and json.loads reads them).
+        ("NaN", lambda event: [dict(event, pid=float("nan"))],
+         r"event 1 of 1: the value of pid is NaN, a number that JSON does not have \(SQLite "
+         r"stores it as NULL\)" + TABLE),
+        ("Infinity", lambda event: [event, dict(event, pid=float("inf"))],
+         r"event 2 of 2: the value of pid is Infinity, a number that JSON does not have" + TABLE),
+        ("a lone surrogate in a value", lambda event: [dict(event, comm="x\ud800")],
+         r"event 1 of 1: the value of comm holds the lone surrogate U\+D800, which is not text "
+         r"of UTF-8, so SQLite cannot hold it" + TABLE),
+        ("a lone surrogate in a key", lambda event: [dict(event, **{"k\udc80": 1})],
+         r"event 1 of 1: the key 'k\\udc80' holds the lone surrogate U\+DC80, which is not "
+         r"text of UTF-8, so SQLite cannot hold it" + TABLE),
+        ("a NUL in a key", lambda event: [dict(event, **{"a\u0000b": 1})],
+         r"event 1 of 1: the key 'a\\x00b' holds U\+0000 \(NUL\), which no column name of "
+         r"SQLite can hold" + TABLE),
     )
 
     def test_rejects_events_that_one_table_cannot_hold_and_judges_the_other_cases(self):
@@ -413,6 +512,392 @@ class RuleCases(gatelib.GateCase):
                                             r"case, an object$", exit_code=1)
                 self.assertIn("\nFAILED: 1 case problem(s).\n", result.stdout)
                 self.assertIn(self.POSITIVE_FIRES, result.stdout)
+
+    def test_rejects_sidecar_line_with_an_object_that_holds_a_key_two_times(self):
+        """json keeps only the last value of a key that an object holds two times, so
+        the gate judged a case that the line does not show. The second line of the
+        sound sidecar, in three forms: an event whose key `comm` comes two times (the
+        line names the case: the error is in its events), the case object with its
+        `kind` two times, and with its `name` two times (the line names no case: its
+        name can be one of two values). Each is an ERROR line that names the rule, the
+        line and the key, and the gate judges the other cases. (Before, the gate read
+        each line without a word.)"""
+        tree = self.plant_bad_cases("sound")
+        lines = tree.read(self.PLANTED_CASES).splitlines(keepends=True)
+        case = json.loads(lines[1])
+        self.assertEqual(case["name"], "packet-dgram-socket")
+        self.assertIn("comm", case["events"][0])
+        event = json.dumps(case["events"][0])[:-1] + ', "comm": "x"}'
+        bad = {
+            "a key of an event": (json.dumps(dict(case, events=["@"])).replace('"@"', event),
+                                  "case 'packet-dgram-socket': ", "comm"),
+            "the kind of the case": ('{"kind": "positive", ' + json.dumps(case)[1:], "", "kind"),
+            "the name of the case": ('{"name": "x", ' + json.dumps(case)[1:], "", "name")}
+        names = [json.loads(line)["name"] for line in lines]
+        for label, (text, of, key) in bad.items():
+            with self.subTest(label):
+                tree.write(self.PLANTED_CASES, "".join(lines[:1] + [text + "\n"] + lines[2:]))
+                result = tree.run(self.GATE, self.PLANTED_RULE)
+                self.assertNotIn("Traceback", result.output)
+                self.assert_rejects(result, r"^ERROR T9999/planted_rule\.yml: line 2: "
+                                            + re.escape(of) + rf"an object holds the key '{key}' "
+                                            r"two times \(json keeps only the last value\)$",
+                                    exit_code=1)
+                self.assertIn("\nFAILED: 1 case problem(s).\n", result.stdout)
+                self.assertEqual(re.findall(r"(?m)^ok    T9999/planted_rule\.yml :: \S+ +(\S+): ",
+                                            result.stdout), names[:1] + names[2:])
+
+    def test_rejects_sidecar_line_that_is_not_utf8(self):
+        """Two lines of the sound sidecar, each with one byte that is not UTF-8: the
+        byte 0xe9 in a string of the near-miss (the line is JSON with the byte), and
+        the byte 0xff after two blanks before the filtered case (the line is then not
+        JSON). Each is an ERROR line that names the rule, the line, the byte and its
+        character in the line (from 1, the blanks too), and the gate judges the other
+        cases. Before roadmap item R2d the gate ended
+        with a UnicodeDecodeError (and so did each gate that reads the sidecars with
+        its loader)."""
+        tree = self.plant_bad_cases("sound")
+        lines = tree.read(self.PLANTED_CASES).encode("utf-8").splitlines(keepends=True)
+        inside = lines[1].replace(b'"comm": "', b'"comm": "\xe9', 1)
+        self.assertNotEqual(inside, lines[1])
+        at = inside.index(b"\xe9") + 1
+        # A fifth line holds the lone byte 0x80 (a continuation byte without its lead).
+        with open(tree.path(self.PLANTED_CASES), "wb") as fh:
+            fh.write(b"".join([lines[0], inside, b"  \xff" + lines[2], lines[3],
+                               b'{"name": "x\x80"}\n']))
+        result = tree.run(self.GATE, self.PLANTED_RULE)
+        self.assert_saw(result, r"^ERROR T9999/planted_rule\.yml: line 5: bytes that are not "
+                                r"UTF-8 \(the byte 0x80 at character 12 of the line\)$")
+        self.assert_saw(result, r"^ERROR T9999/planted_rule\.yml: line 3: bytes that are not "
+                                r"UTF-8 \(the byte 0xff at character 3 of the line\)$")
+        self.assertIn(self.POSITIVE_FIRES, result.stdout)
+        self.assertIn("ok    T9999/planted_rule.yml :: benign     file-open: ", result.stdout)
+        self.assertNotIn("Traceback", result.output)
+        self.assert_rejects(result, r"^ERROR T9999/planted_rule\.yml: line 2: bytes that are not "
+                                    rf"UTF-8 \(the byte 0xe9 at character {at} of the line\)$",
+                            exit_code=1)
+        self.assertIn("\nFAILED: 3 case problem(s).\n", result.stdout)
+
+    def test_rejects_sidecar_line_with_json_that_the_gate_cannot_read(self):
+        """The second line of the sound sidecar holds JSON that json or flatten() cannot
+        read: an object 100000 levels deep (Python 3.13 and older stop json.loads(); from
+        Python 3.14, with a large stack, json reads it and flatten() stops), an event
+        with an object 1500 levels deep (json reads it, and flatten() stops), and a
+        number with 5000 digits. Each is an ERROR line that names the rule and the line
+        (and the case, when json read the line), and the gate judges the other cases.
+        Before roadmap item R2d each ended rule_cases.py (and check_provider_mappings.py
+        and k8s_policy_coverage.py, which read the sidecars with its loader) with a
+        traceback."""
+        tree = self.plant_bad_cases("sound")
+        lines = tree.read(self.PLANTED_CASES).splitlines(keepends=True)
+        case = json.loads(lines[1])
+        self.assertEqual(case["name"], "packet-dgram-socket")
+        nested = {}
+        for _ in range(1500):
+            nested = {"a": nested}
+        bad = {
+            # A whole case, so that a json that reads the line (Python 3.14) gets to the
+            # events and flatten().
+            "JSON too deep": ('{"name": "deep", "kind": "benign", "why": "planted", "events": '
+                              '[{"comm": "x", "x": ' + '{"a": ' * 100000 + "1" + "}" * 100000
+                              + "}]}\n",
+                              r"(?:case 'deep': )?JSON that the gate cannot read "
+                              + gatelib.RECURSION_ERROR),
+            "an object too deep to flatten": (
+                json.dumps(dict(case, events=[dict(case["events"][0], x=nested)])) + "\n",
+                r"case 'packet-dgram-socket': JSON that the gate cannot read "
+                + gatelib.RECURSION_ERROR),
+            "a number with too many digits": (
+                '{"name": "digits", "n": 1' + "0" * 5000 + "}\n",
+                r"JSON that the gate cannot read \(ValueError: Exceeds the limit \(4300 digits\) "
+                r"for integer string conversion[^)]*\)")}
+        names = [json.loads(line)["name"] for line in lines]
+        for label, (text, message) in bad.items():
+            with self.subTest(label):
+                tree.write(self.PLANTED_CASES, "".join(lines[:1] + [text] + lines[2:]))
+                result = tree.run(self.GATE, self.PLANTED_RULE)
+                self.assertNotIn("Traceback", result.output)
+                self.assert_rejects(result, r"^ERROR T9999/planted_rule\.yml: line 2: " + message
+                                    + "$", exit_code=1)
+                self.assertIn("\nFAILED: 1 case problem(s).\n", result.stdout)
+                self.assertEqual(re.findall(r"(?m)^ok    T9999/planted_rule\.yml :: \S+ +(\S+): ",
+                                            result.stdout), names[:1] + names[2:])
+
+    def test_rejects_sidecar_line_with_a_lone_surrogate_outside_the_events(self):
+        """The second case of the sound sidecar with a lone surrogate (the JSON escape
+        \\ud800) in its name, in an atom of its `breaks`, or in its `why`. UTF-8 cannot
+        encode it, so no line of a gate can print it: each is an ERROR line that names
+        the rule, the line and the field, and the gate judges the other cases.
+        check_provider_mappings.py reads the sidecars with the same loader: a case of
+        the Kubernetes rule T1609 with such a name is its ERROR line too. (Before, both
+        gates ended with a UnicodeEncodeError at the print of the name.)"""
+        tree = self.plant_bad_cases("sound")
+        lines = tree.read(self.PLANTED_CASES).splitlines(keepends=True)
+        case = json.loads(lines[1])
+        self.assertEqual((case["name"], case["kind"]), ("packet-dgram-socket", "near-miss"))
+        names = [json.loads(line)["name"] for line in lines]
+        breaks = case["breaks"] if isinstance(case["breaks"], list) else [case["breaks"]]
+        bad = {"name": dict(case, name="packet-dgram-socket-\ud800"),
+               "breaks": dict(case, breaks=breaks + ["sel.\udc80"]),
+               "why": dict(case, why="planted \ud800")}
+        surrogate = {"name": "D800", "breaks": "DC80", "why": "D800"}
+        for field, planted in bad.items():
+            with self.subTest(field):
+                text = json.dumps(planted) + "\n"
+                self.assertIn("\\ud", text.lower())
+                tree.write(self.PLANTED_CASES, "".join(lines[:1] + [text] + lines[2:]))
+                result = tree.run(self.GATE, self.PLANTED_RULE)
+                self.assertNotIn("Traceback", result.output)
+                self.assert_rejects(
+                    result, rf"^ERROR T9999/planted_rule\.yml: line 2: the field '{field}' holds "
+                            rf"the lone surrogate U\+{surrogate[field]}, which is not text of "
+                            r"UTF-8, so no line of a gate can print it$", exit_code=1)
+                self.assertIn("\nFAILED: 1 case problem(s).\n", result.stdout)
+                self.assertEqual(re.findall(r"(?m)^ok    T9999/planted_rule\.yml :: \S+ +(\S+): ",
+                                            result.stdout), names[:1] + names[2:])
+        k8s = self.tree("detections", ".github/scripts")   # the gate loads check_sigma_regex.py
+        sidecar = "detections/sigma/T1609/k8s_pod_exec_attach.cases.jsonl"
+        good = k8s.read_jsonl(sidecar)
+        k8s.write(sidecar, k8s.read(sidecar) + json.dumps(
+            dict(good[0], name="planted-\ud800")) + "\n")
+        result = k8s.run("detections/check_provider_mappings.py",
+                         "detections/sigma/T1609/k8s_pod_exec_attach.yml")
+        self.assertNotIn("Traceback", result.output)
+        self.assert_rejects(
+            result, rf"^ERROR T1609/k8s_pod_exec_attach\.yml: sidecar error: line {len(good) + 1}: "
+                    r"the field 'name' holds the lone surrogate U\+D800, which is not text of "
+                    r"UTF-8, so no line of a gate can print it$", exit_code=1)
+
+
+# What sigma_eval.EventTable does with keys that differ only in letter case, with
+# names that SQLite reads as the row id, and with integers outside 64 bits. The
+# snippet compiles one item (`field: value`) with the backend of the oracle, and
+# prints the hits of each probe, or the EventError of the table.
+EVENT_TABLE_PROBES = r'''
+import json, sys
+sys.path.insert(0, "detections")
+import sigma_eval
+from sigma.collection import SigmaCollection
+
+def item(field, value):
+    rule = {"title": "t", "logsource": {"product": "p"}, "detection": {
+        "sel": {field: value}, "condition": "sel"}}
+    return sigma_eval.backend().convert(SigmaCollection.from_dicts([rule]))[0]
+
+def probe(events, field, value, sql=None):
+    try:
+        table = sigma_eval.EventTable(events)
+        return table.hit_indices(sql or item(field, value))
+    except sigma_eval.EventError as e:
+        return {"error": str(e), "index": e.index, "keys": list(e.keys),
+                "value_error": isinstance(e, ValueError)}
+    except Exception as e:  # noqa: BLE001 - another error is an answer of the probe too
+        return {"other error": f"{type(e).__name__}: {e}"}
+
+big = 2 ** 63
+print(json.dumps({
+    "two events": probe([{"verb": "get"}, {"Verb": "create"}], "verb", "create"),
+    "two events, the other spelling": probe([{"verb": "get"}, {"Verb": "create"}], "VERB",
+                                            "get"),
+    "three spellings in three events": probe([{"key": "a"}, {"KEY": "b"}, {"Key": "c"}],
+                                             "kEy", "c"),
+    # The same keys in two orders: each value goes in the column of its key.
+    "two key orders": probe([{"a": "x", "b": "y"}, {"b": "x", "a": "y"}], "a", "y"),
+    "one event": probe([{"a": 1}, {"key": "x", "KEY": "y", "Key": "z"}], "key", "x"),
+    "not ASCII, one event": probe([{"\u00c4": "x", "\u00e4": "y"}], "\u00c4", "y"),
+    "not ASCII, two events": probe([{"\u00c4": "x"}, {"\u00e4": "y"}], "\u00c4", "y"),
+    "the Kelvin sign": probe([{"k": "x", "\u212a": "y"}], "k", "y"),
+    "the Kelvin sign, two events": probe([{"k": "x"}, {"\u212a": "y"}], "k", "y"),
+    "_rowid": probe([{"a": 1}, {"_rowid": 5}], "a", 1),
+    "_ROWID": probe([{"_ROWID": 5}], "a", 1),
+    "rowid": probe([{"rowid": 7}], "a", 1),
+    "RowId": probe([{"RowId": 7}], "a", 1),
+    "oid": probe([{"oid": 3}, {"oid": 4}], "oid", 4),
+    "_rowid_": probe([{"_rowid_": 3}], "_rowid_", 3),
+    "2**63": probe([{"n": big}], "n", 1),
+    "-2**63 - 1": probe([{"n": -big - 1}], "n", 1),
+    # (pySigma writes the value 2**63 - 1 of an item as a float: a raw query here.)
+    "2**63 - 1": probe([{"n": big - 1}], "n", None,
+                       f"SELECT * FROM logs WHERE n = {big - 1}"),
+    "-2**63": probe([{"n": -big}], "n", -big),
+    "true": probe([{"n": True}], "n", 1),
+    "NaN": probe([{"n": 1.5}, {"n": float("nan")}], "n", 1.5),
+    "-Infinity": probe([{"n": float("-inf")}], "n", 1.5),
+    "finite floats": probe([{"n": 1.5}, {"n": -2.0}], "n", 1.5),
+    "a lone surrogate in a value": probe([{"a": "x"}, {"a": "\ud800"}], "a", "x"),
+    "a lone surrogate in a key": probe([{"\udc80": 1}], "a", 1),
+    "a NUL in a key": probe([{"a": 1}, {"a\x00b": 1}], "a", 1),
+    # A key event_ids, the name of the column of the evidence of a correlation.
+    "event_ids": probe([{"action": "login", "event_ids": '["x:1"]'},
+                        {"action": "x", "event_ids": '["x:0"]'},
+                        {"action": "sudo", "event_ids": '["x:0"]'}], "action", "sudo"),
+    "event_ids, one event": probe([{"action": "sudo", "event_ids": '["x:5"]'},
+                                   {"action": "sudo"}], "action", "sudo"),
+    # Two keys of a record that give one field (sigma_eval.flatten()): a dotted key and
+    # the path of a nested key, in each order and deeper; and a dotted key beside an
+    # object that gives another field.
+    "one field from two keys": probe([{"a": 1}, sigma_eval.flatten(
+        {"a.b": "x", "a": {"b": "y"}})], "a.b", "x"),
+    "one field from two keys, nested first": probe([sigma_eval.flatten(
+        {"a": {"b": {"c": "y"}}, "a.b.c": "x"})], "a.b.c", "x"),
+    "one field from two keys, inside an object": probe([sigma_eval.flatten(
+        {"a": {"b.c": "x", "b": {"c": "y"}}})], "a.b.c", "x"),
+    "one field from two keys, the later a list": probe([sigma_eval.flatten(
+        {"a": {"b": "x"}, "a.b": ["y"]})], "a.b", "x"),
+    "one field from two keys, the nested later a list": probe([sigma_eval.flatten(
+        {"a.b": "x", "a": {"b": ["y"]}})], "a.b", "x"),
+    "two fields from two keys each": probe([sigma_eval.flatten(
+        {"a.b": 1, "a": {"b": 2}, "c.d": 1, "c": {"d": 2}})], "a.b", 1),
+    "two fields from two keys each, the dotted keys later": probe([sigma_eval.flatten(
+        {"a": {"b": 1}, "a.b": 2, "c": {"d": 1}, "c.d": 2})], "a.b", 1),
+    "a dotted key and another field": probe([sigma_eval.flatten(
+        {"a.b": "x", "a": {"c": "y"}})], "a.b", "x"),
+    "the flat fields of a dotted key and another field": sigma_eval.flatten(
+        {"a.b": "x", "a": {"c": "y"}}),
+}))
+'''
+
+
+class EventTableKeys(gatelib.GateCase):
+    """sigma_eval.EventTable (the table of every gate and validator) with keys that
+    differ only in letter case, names of the row id, and large integers (roadmap item
+    R2d). The tests run a snippet in the copy (EVENT_TABLE_PROBES); the gates that
+    read records name an event that the table refuses (the tests of each gate)."""
+
+    PARTS = gatelib.DETECTIONS
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        result = cls.good().run_python(EVENT_TABLE_PROBES)
+        if result.returncode:
+            raise AssertionError(result.describe())
+        cls.probes = json.loads(result.stdout)
+
+    def refused(self, name, index, keys, text):
+        self.assertEqual(self.probes[name], {"error": text, "index": index, "keys": keys,
+                                             "value_error": True}, name)
+
+    def test_rejects_an_event_whose_two_keys_give_one_field(self):
+        """sigma_eval.flatten() writes the key `a.b` and the key `b` of the object `a` to
+        one field a.b, and keeps only the last value: a record could hide a value under
+        the other key. The flat event names the field (a FieldTwice), and the table
+        refuses it with an EventError that names the event and the field: in each order
+        of the two keys, in a nested object, and when the later value is a list. With
+        two such fields, it names the first. A dotted key beside an object that
+        gives another field is no problem: the table reads both fields."""
+        text = "two keys of the record give the one field {!r} (sigma_eval.flatten keeps " \
+               "only one value)"
+        self.refused("one field from two keys", 1, ["a.b"],
+                     "event 2 of 2: " + text.format("a.b"))
+        self.refused("one field from two keys, nested first", 0, ["a.b.c"],
+                     "event 1 of 1: " + text.format("a.b.c"))
+        self.refused("one field from two keys, inside an object", 0, ["a.b.c"],
+                     "event 1 of 1: " + text.format("a.b.c"))
+        # A list value is one field of JSON text: as the later key, and in the object.
+        for name in ("one field from two keys, the later a list",
+                     "one field from two keys, the nested later a list"):
+            self.refused(name, 0, ["a.b"], "event 1 of 1: " + text.format("a.b"))
+        # Two such fields in one record: the text names the first (FieldTwice.field).
+        for name in ("two fields from two keys each",
+                     "two fields from two keys each, the dotted keys later"):
+            self.refused(name, 0, ["a.b"], "event 1 of 1: " + text.format("a.b"))
+        self.assertEqual(self.probes["a dotted key and another field"], [[0]])
+        self.assertEqual(self.probes["the flat fields of a dotted key and another field"],
+                         {"a.b": "x", "a.c": "y"})
+
+    def test_keys_of_two_events_that_differ_only_in_letter_case_share_one_column(self):
+        """SQLite reads a rule field as it reads a column name: with the ASCII letters
+        folded (detections/SEMANTICS.md, "Field names"). So `verb` in one event and
+        `Verb` in another are one column, and the item reads both. Before R2d the
+        table refused the event set."""
+        self.assertEqual(self.probes["two events"], [[1]])
+        self.assertEqual(self.probes["two events, the other spelling"], [[0]])
+        self.assertEqual(self.probes["three spellings in three events"], [[2]])
+
+    def test_events_with_the_same_keys_in_another_order(self):
+        """The table writes each event with the INSERT of the order of its keys: two
+        events with the same keys in two orders put each value in the column of its
+        key, so `a: y` matches only the second event."""
+        self.assertEqual(self.probes["two key orders"], [[1]])
+
+    def test_rejects_one_event_with_keys_that_differ_only_in_letter_case(self):
+        """One event that holds `key`, `KEY` and `Key` has three values for one
+        column: the table refuses it with an EventError (a ValueError) that names the
+        event (from 1) and the keys, and carries the index (from 0) and the keys."""
+        self.refused("one event", 1, ["KEY", "Key", "key"],
+                     "event 2 of 2: keys that differ only by case: KEY / Key / key, which "
+                     "SQLite reads as one column name")
+
+    def test_keys_that_differ_in_a_letter_that_is_not_ascii_are_two_columns(self):
+        """SQLite folds only the 26 ASCII letters. `Ä` and `ä` are two columns, in one
+        event and in two, and an item on `Ä` reads only its own key; so are `k` and the
+        Kelvin sign (U+212A), which str.lower() would fold to one."""
+        for name in ("not ASCII, one event", "not ASCII, two events", "the Kelvin sign",
+                     "the Kelvin sign, two events"):
+            self.assertEqual(self.probes[name], [], name)
+
+    def test_rejects_a_key_that_hides_a_row_id_that_the_queries_read(self):
+        """`_rowid` is the row id column of the table (before R2d the table dropped a
+        key of that name without a word), and `rowid` is the name by which the
+        correlation queries of pySigma read the row id (a column of that name gives
+        a correlation the indices of another event). Each, in any letter case of the
+        ASCII letters, is refused with the event and the key. `oid` and `_rowid_`, the
+        other names of the row id in SQLite, are ordinary columns: no query reads
+        them."""
+        rowid = "is the name of the row id column of the table (_rowid, in any letter case " \
+                "of the ASCII letters)"
+        self.refused("_rowid", 1, ["_rowid"], f"event 2 of 2: the key _rowid {rowid}")
+        self.refused("_ROWID", 0, ["_ROWID"], f"event 1 of 1: the key _ROWID {rowid}")
+        for key in ("rowid", "RowId"):
+            self.refused(key, 0, [key], f"event 1 of 1: the key {key} is the name by which the "
+                                        "correlation queries read the row id (rowid, in any "
+                                        "letter case of the ASCII letters)")
+        self.assertEqual(self.probes["oid"], [[1]])
+        self.assertEqual(self.probes["_rowid_"], [[0]])
+
+    def test_rejects_an_integer_outside_64_bits(self):
+        """An INTEGER of SQLite has 64 bits: the table refuses a larger integer with an
+        EventError (before R2d, an OverflowError of sqlite3 at the insert), and holds
+        each integer of the range. A bool is 1 or 0."""
+        for name in ("2**63", "-2**63 - 1"):
+            self.refused(name, 0, ["n"], "event 1 of 1: the value of n is an integer outside "
+                                         "the 64 bits of an INTEGER of SQLite")
+        for name in ("2**63 - 1", "-2**63", "true"):
+            self.assertEqual(self.probes[name], [[0]], name)
+
+
+    def test_rejects_values_and_keys_that_sqlite_does_not_hold_as_they_are(self):
+        """SQLite stores NaN as NULL (a `field: null` item would match a record that
+        holds a value), JSON has no NaN or Infinity, UTF-8 cannot encode a lone
+        surrogate (a JSON escape such as \\ud800 gives one), and no column name can
+        hold a NUL. The table refuses each with an EventError that names the event and
+        the key (before, NaN was NULL without a word, and the others ended the table
+        with an error of Python or of sqlite3). A finite float is held as it is."""
+        self.refused("NaN", 1, ["n"], "event 2 of 2: the value of n is NaN, a number that "
+                                      "JSON does not have (SQLite stores it as NULL)")
+        self.refused("-Infinity", 0, ["n"], "event 1 of 1: the value of n is -Infinity, a "
+                                            "number that JSON does not have")
+        self.assertEqual(self.probes["finite floats"], [[0]])
+        surrogate = "which is not text of UTF-8, so SQLite cannot hold it"
+        self.refused("a lone surrogate in a value", 1, ["a"],
+                     f"event 2 of 2: the value of a holds the lone surrogate U+D800, {surrogate}")
+        self.refused("a lone surrogate in a key", 0, ["\udc80"],
+                     f"event 1 of 1: the key '\\udc80' holds the lone surrogate U+DC80, "
+                     f"{surrogate}")
+        self.refused("a NUL in a key", 1, ["a\x00b"],
+                     "event 2 of 2: the key 'a\\x00b' holds U+0000 (NUL), which no column name "
+                     "of SQLite can hold")
+
+    def test_a_key_event_ids_is_an_ordinary_column(self):
+        """`event_ids` is the column of the evidence of a correlation. A plain rule
+        selects every column of the table, so an event key `event_ids` is a column of
+        its rows too: the hits are the rows of the table (the column `_rowid`), not the
+        text of that column (before, the hit named the event of that text, or the run
+        ended with a TypeError when the matching event did not hold the key)."""
+        self.assertEqual(self.probes["event_ids"], [[2]])
+        self.assertEqual(self.probes["event_ids, one event"], [[0], [1]])
+
 
 class SigmaEvalImportGuard(gatelib.GateCase):
     """The import guard of detections/sigma_eval.py. It is no script: it runs when a
@@ -661,7 +1146,8 @@ class CheckSufficiency(gatelib.StartedTogether):
             "emulation_name", "name_keyed", "fixture_constant", "self_added_waiver",
             "keyed_good", "keyed_aws_organization", "keyed_azure_subscription", "keyed_entra_tenant",
             "keyed_gcp_project_number", "keyed_gcp_project_id", "keyed_k8s_node_name",
-            "keyed_k8s_node_uid", "keyed_together", "constant_table", "constant_probe")
+            "keyed_k8s_node_uid", "keyed_together", "constant_table", "constant_probe",
+            "sidecar_not_utf8")
 
     @classmethod
     def start_gate(cls, tree):
@@ -868,6 +1354,32 @@ class CheckSufficiency(gatelib.StartedTogether):
             rf"line {line}\) fails: expected a match, got near-miss ",
             exit_code=1)
         self.assert_one_rule_fails(tree, result, "R3")
+
+    @classmethod
+    def begin_sidecar_not_utf8(cls, tree):
+        # The first line of the real sidecar gets one byte that is not UTF-8, in the
+        # `why` of its case (the line stays JSON with the byte).
+        with open(tree.path(AFINET_CASES), "rb") as fh:
+            data = fh.read()
+        with open(tree.path(AFINET_CASES), "wb") as fh:
+            fh.write(data.replace(b'"why": "', b'"why": "\xe9', 1))
+        return cls.start_gate(tree)
+
+    def test_rejects_sidecar_line_that_is_not_utf8(self):
+        """R3: the gate reads the sidecars with the loader of rule_cases.py, so it names
+        a line with bytes that are not UTF-8 as rule_cases.py does: the sidecar, the
+        line, the byte and its character. Before roadmap item R2d the loader ended
+        with a UnicodeDecodeError, and this gate gave the error with no line."""
+        tree, result = self.started("sidecar_not_utf8")
+        with open(tree.path(AFINET_CASES), "rb") as fh:
+            first = fh.readline()
+        at = first.index(b"\xe9") + 1
+        self.assert_rejects(
+            result,
+            r"^  \[R3\] T1040/afinet_raw_socket\.yml: `detections/sigma/T1040/afinet_raw_socket"
+            rf"\.cases\.jsonl` line 1: bytes that are not UTF-8 \(the byte 0xe9 at character "
+            rf"{at} of the line\)$", exit_code=1)
+        self.assertNotIn("Traceback", result.output)
 
     # ---- R4: not keyed on the emulation's names -------------------------------------
 

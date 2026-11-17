@@ -558,7 +558,7 @@ class ChangeProofFaults(gatelib.GateCase):
         tree.append(AFINET_CASES, "not a JSON object\n")
         result = tree.run(GATE, "--base-tree", self.good().root)
         self.assert_rejects(result, r"^ERROR: detections/sigma/T1040/afinet_raw_socket\.yml: "
-                                    r"sidecar error: ", exit_code=2)
+                                    r"sidecar error: (?!sidecar error)", exit_code=2)
 
     def test_fault_when_there_is_no_base_tree(self):
         good = self.good()

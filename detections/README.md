@@ -306,16 +306,30 @@ it declares. An unrelated event cannot pass as a near-miss.
 
 A sidecar line that `rule_cases.py` cannot judge is an `ERROR` line that names the
 rule and the line, and the case when the line has a name (a string). The gate judges
-the other cases of the file, and fails. Such a line is not JSON, or not a JSON object;
-it lacks a field, or its name, kind, events or breaks has the wrong type; or one event
-table cannot hold the events of its case. All the events of a case go in one SQLite table, so each event must be a
-JSON object, no key may be `_rowid` in any letter case, no two values of an event may
-get one flat key (`{"a": {"b": 1}, "a.b": 2}`), and no two keys of the events may
-differ only in letter case (`comm`, `Comm`): the column names of SQLite have no letter
-case. Two cases of one file can have such keys. `check_sufficiency.py` (R3),
+the other cases of the file, and fails. Such a line holds bytes that are not UTF-8
+(the line names the first such byte and its character in the line); is not JSON, or
+not a JSON object; holds JSON that the gate cannot read (nesting too deep for `json`
+or for `flatten()`, a number with too many digits); lacks a field, or its name, kind,
+events or breaks has the wrong type; holds a lone surrogate (the JSON escape `\ud800`)
+in a field outside the events, such as its name, `why` or an atom of `breaks`, which no
+line of a gate can print; holds an object with one key two times (`json` keeps only
+the last value, so the gate would judge another case than the line shows; the line
+names the case only when the object is in its events); or one event table cannot hold
+the events of its case. All the events of a case go in one SQLite table, so each event must be a JSON
+object, and the table must hold each event: no two keys of an event may give one
+field (`{"a": {"b": 1}, "a.b": 2}`: `flatten()` keeps only one value), and no event
+may hold two keys that differ only in
+the letter case of their ASCII letters (`comm`, `Comm`), a key that SQLite reads as
+`_rowid` or `rowid`, a key with a NUL or a lone surrogate, or a value that SQLite
+does not hold as it is (an integer outside 64 bits, `NaN` or `Infinity`, a text with
+a lone surrogate). The test is the test of the table itself
+(`sigma_eval.event_problem()`; see "Field names" in
+[`SEMANTICS.md`](SEMANTICS.md#2-the-record)). `comm` in one event of a case and `Comm`
+in another share one column, and the rule reads both; the analysis of a correlation
+(its group-by fields, its time) reads them in the same way. `check_sufficiency.py` (R3),
 `check_null_safety.py`, `k8s_policy_coverage.py` and `check_provider_mappings.py` read
-the sidecars with the same loader, so they name such a case too. The same keys in a
-slice of the benign corpus still end `score_benign.py` with a traceback (see
+the sidecars with the same loader, so they name such a line too. A slice of the
+benign corpus is named in the same way (see
 [The benign corpus](#the-benign-corpus-false-positive-scores)).
 
 `check_sufficiency.py` is the gate on top. It fails a rule that:
@@ -746,9 +760,11 @@ pySigma 1.5.1 (`pySigma-backend-elasticsearch` 2.1.1) and Lucene 10.1 found thes
   applies); a guard on a field that only some maps of its filter read (it holds where a
   map on another field holds, so it changes the rule); a guard on several fields whose
   filter it does not keep from NULL; a copy that does not repeat its filter's maps
-  exactly, or that tests a field that no guard of its term covers; and a rule field that
-  a case's records carry only in another letter case (SQLite matches column names
-  without regard to case, so there every offline gate reads the record's field). A
+  exactly, or that tests a field that no guard of its term covers; and a rule field (of
+  a correlation also a group-by field, the counted field and the time) that a record of
+  a case carries in another letter case, also beside a record that holds the field
+  (SQLite matches column names without regard to case, so there every offline gate
+  reads the record's field). A
   `field: null` block ORed with a `not` on other fields is an ordinary selection
   (`sel_no_mfa or not filter_sso`), and so are `<block> and not <null block>` terms
   when no block ANDed with them has maps with the same keys. If the check reads a real
@@ -1002,10 +1018,17 @@ pass). The kind cluster's
 pre-emulation audit log and a live Ubuntu-runner workload are scored in CI too, in
 shadow mode. A hit that a rule defect explains is tracked in
 [`RULE_DEFECTS.md`](RULE_DEFECTS.md). The gate puts the events of each slice in one
-SQLite table, so a slice whose events hold two keys that differ only in letter case
-(`eventName`, `EventName`) ends it with a traceback, and no line names the slice (the
-last line of the traceback names the two keys): the known gap
-`sb-slice-keys-differ-by-case` of the gate tests, which roadmap item R2d closes.
+SQLite table. Keys of two events that differ only in letter case (`eventName` in one
+event, `EventName` in another) share one column. The gate tests each event of each
+slice before it scores, also of a slice that no rule reads. An event that one table
+cannot hold (it holds both keys, a key `rowid` or `_rowid`, or a value that SQLite
+does not hold as it is; see "Field names" in [`SEMANTICS.md`](SEMANTICS.md#2-the-record))
+ends the run with exit 1 and one `ERROR` line that names the slice, the event and the
+keys, and no rule is scored:
+
+```text
+ERROR: the slice planted-key-case-clash v1 (detections/benign/slices/aws/planted-key-case-clash.json), event 1 of 1: keys that differ only by case: EventName / eventName, which SQLite reads as one column name. No rule is scored on the benign corpus.
+```
 
 ```
 python3 detections/score_benign.py                  # report
@@ -1498,18 +1521,64 @@ is the smallest identity that the code that reads the log needs:
 | CRI log | A pod sandbox: a JSON object with a string `id` that is not empty, and a `metadata` object with a string `name` that is not empty. A line is one snapshot of `crictl pods -o json` (`{"items": [...]}`, each item a sandbox), or one sandbox. A sandbox counts once, at the first line that holds its `id`. `{"items": []}` is a snapshot without a sandbox. | `{}`; a snapshot whose `items` is not a list (`{"items": null}`, `{"items": {}}`); an item without an `id` or without `metadata.name`. |
 | file log | A file event: a JSON object with a `TargetFilename` and an `Image`, strings that are not empty. `k8s/auditd_file_events.py` writes both in each event. | `{}`. |
 
-A blank line, and a line that is not JSON (a line that was cut at the end of a
-capture), are no record and no problem. Each other line, or item of a snapshot, that
-is not a record is a problem:
+A blank line, and a line that a capture cut, are no record and no problem. CI copies
+each log with `cat` while its writer adds one line for each record (the CRI sensor
+`k8s/cri-pod-sensor.sh` writes one snapshot on each line), and the writer writes the
+line feed of a line last. So a capture can cut only the last line of a log, the cut
+removes the end of that line, and its line feed is not there. (The static pod job
+joins the copies of the CRI sensor logs of its two nodes. It keeps only the complete
+lines of each copy, so the cut line of the first copy is not before other lines.) The
+reader skips a line that json refuses only when it is the last line of the log, has no
+line end (a line feed, or a carriage return alone: the reader ends a line at both),
+and its text without the white space at its start (as `json` reads a record) is cut
+JSON (`cut_line()`). Cut JSON is the start of one
+JSON object without its end: `sigma_eval.cut_json()` writes the text that closes the
+open string, number, literal and containers, and `json` must then read one object.
+So a cut inside an escape (`\u0026`, which Go writes for `&` in an audit event), a
+number, a literal or a key is a cut, and a complete record with more text after it
+on its line is not. The end of the line stays as the log holds it: outside a string, a
+word or a number before a blank (`{"a": tru `, `{"a": 1. `) and white space that JSON
+does not have (a raw VT, FF, NEL or U+00A0) are no cut. Inside an open string, each
+character that a JSON string holds is a cut (NEL and U+00A0 too), and a raw control
+character (U+0000 to U+001F) is not. `NaN`, `Infinity` and `-Infinity` are not JSON
+(Python's `json` reads them), so a line that holds one is no cut. A cut that splits a
+character of UTF-8 at the end of the line is a cut too (`sigma_eval.utf8_cut()`): the start of a character (a lead byte `C2` to
+`F4` with fewer continuation bytes than it needs) at the very end is dropped before
+the test. A cut line of a CRI log is one snapshot, and it can hold complete sandboxes
+before the cut: the reader does not read them (the sensor writes a snapshot each
+second, so the next snapshot holds them). Each other line, or item of a snapshot, that is not a record is a problem:
 
+- a line that is not JSON (the message gives the error of `json` and its character
+  in the line, which counts the blanks before the text): NUL bytes (a `copytruncate`
+  rotation of a log leaves them) or U+200B in a record, a record with more text after
+  it on its line, or a cut line before other lines or with a line end. For a line
+  that starts with `{` the message adds that a capture can cut only the last line of
+  a log, and that a cut line has no line feed; for the last line without a line end,
+  that the line is not the start of one JSON object, so a capture did not cut it;
 - JSON that is not an object (`[]`, `"text"`, `1`, `true`, `null`);
 - a JSON object that is not a record of the log;
 - a snapshot whose `items` is not a list;
 - bytes that are not UTF-8 (the message names the first such byte and its character
   in the line);
-- the byte order mark of UTF-8 (`EF BB BF`) at the start of line 1;
+- the byte order mark of UTF-8 (`EF BB BF`) at the start of a line (json refuses such
+  a line, and the message names the mark: two logs joined hold the mark at the start
+  of a later line);
 - JSON that the validator cannot read: nesting that is too deep (a `RecursionError`),
-  or a number with more digits than Python reads (a `ValueError`).
+  or a number with more digits than Python reads (a `ValueError`);
+- an object that holds one key two times (`json` keeps only the last value, so an
+  event of the emulation could hide under a second value of its key);
+- a record that one event table cannot hold: two keys of the record that give one
+  field (`{"objectRef.subresource": "exec", "objectRef": {"subresource": "log"}}`:
+  `flatten()` keeps only one value, so a record on which a rule fires could hide
+  under the other key), two keys of the record that differ only
+  in the letter case of their ASCII letters (a ConfigMap whose `data` holds `key` and
+  `KEY`), a key that SQLite reads as `rowid` or `_rowid`, a key with a NUL or a lone
+  surrogate, or a value that SQLite does not hold as it is (an integer outside 64
+  bits, `NaN` or `Infinity`, a text with a lone surrogate, which the JSON escape
+  `\ud800` gives). The test is the test of the table of `sigma_eval.py` (see "Field names" in
+  [`SEMANTICS.md`](SEMANTICS.md#2-the-record)). Two records of a log whose keys differ
+  only in letter case are no problem: their keys share one column, and the validator
+  judges each rule.
 
 A problem fails each run that reads the log: a strict run, `--report` and
 `--expect-miss`. The validator reads its logs, prints one `ERROR` line for each
@@ -1542,13 +1611,15 @@ It is not a log that was not found: a strict run does not print `SKIP` for it.
 Only the kind jobs show that each line of a real capture is a record by these
 definitions: the log of a healthy job holds no `ERROR` line of the reader.
 
-Not covered: two audit events of one log whose keys differ only in letter case
-(`requestObject.data.key` of one ConfigMap and `requestObject.data.KEY` of another,
-in a log at level `RequestResponse`) are records, and each Kubernetes validator ends
-with a `ValueError` of the event table of `sigma_eval.py` before it judges a rule.
-The reader must not refuse a valid log, so the correction belongs in `sigma_eval.py`.
-The known gap `k8s-log-keys-differ-only-in-case` of the gate tests holds the case
-(see the note for R2d in [`docs/ROADMAP.md`](../docs/ROADMAP.md)).
+Not covered: one audit event of a log at level `RequestResponse` can hold keys that
+differ only in letter case (a ConfigMap whose `data` holds `key` and `KEY`), and the
+API server accepts it. The reader names such a line as a problem, because the event
+table of the offline oracle cannot hold it, and the run judges no rule. Only a store
+that keeps the letter case of a field name holds such an event. Also not covered: the
+procedure gates of the validators are Python, and read a key only as the API server
+writes it (`verb`). A record that spells it `Verb` matches a rule (SQLite reads the
+key as the field) and no gate, so the run calls the match unrelated, also with
+`--expect-miss`. The API server writes no such key.
 
 ### Node runtime sensor (TRR9003 Strategy 1)
 
@@ -2068,11 +2139,68 @@ must hold a record, because a negative control that read no record cannot fail:
 - A rule whose attack or benign fixture is missing gets an `ERROR` row that names the
   file. There is no state for a fixture that comes later: list a rule in `MANIFEST`
   in the change that adds its two fixtures.
+- The loader reads a JSON array of records, one JSON object (one record), an
+  envelope (an object with the key `Records`, `value`, `items` or `entries`, whose
+  list holds the records), or JSON lines (a line ends at LF). It reads each line of
+  JSON lines as it reads the one object of a file: CloudTrail writes each log file
+  as one envelope on one line. An object that holds an envelope key is an envelope,
+  so one record that holds such a key goes in a JSON array (`[{...}]`). The loader
+  reads only the list of an envelope. Beside its list, an envelope holds only these
+  page keys, each with a value of its type: `nextLink` (Azure REST), `@odata.context`,
+  `@odata.nextLink` and `@odata.deltaLink` (Microsoft Graph) and `nextPageToken`
+  (Cloud Logging `entries.list`), each a string or null, and `@odata.count` (Graph
+  with `$count=true`), an integer of 64 bits. A key in another letter case is another
+  key. No value of these types can hold a record. Write any other list page as a JSON
+  array of its records: a page of Google Workspace Reports (`kind`, `etag`), of a GCP
+  compute list (`kind`, `id`, `selfLink`), a kubectl `List`, a list of Azure DevOps
+  (`count`) or of the legacy Azure AD Graph (`odata.metadata`, `odata.nextLink`).
+- A rule whose fixture the loader (`load_fixture()`) cannot read as records gets an
+  `ERROR` row that names the fixture, and the line or the element (from 1) where
+  there is one. Such a fixture holds bytes that are not UTF-8 (the row names the
+  first such byte and its character in the line) or starts with the byte order mark
+  of UTF-8; is JSON that is not an array or an object (`null`, `7`), or an object (the
+  file, or a line of JSON lines) whose envelope key holds no list
+  (`{"Records": null}`, `{"value": "x"}`); is an envelope that holds another key beside
+  its list (an attack record with `"items": [...]`, also `"items": []`, a second
+  envelope key, `"meta": 1`, a page key in another letter case) or a page key whose
+  value is not of its type (a list, a number or `true` in `nextLink`, an object in
+  `@odata.context`, `true` in `@odata.count`), which the row names with the list and
+  the other keys (sorted, at most 3 and the number of the others, each cut at 40
+  characters), or else with the page key; holds an object with one key two times (`json` keeps only the last
+  value, so `{"Records": <attack records>, "Records": <benign records>}` would give
+  the benign records only), which the row names by the fixture or the line for the
+  object of the file or of a line, and else by its record; holds a line that is not
+  JSON (JSON lines), or JSON that the loader cannot read (a number with too many
+  digits, which the row names by its record: such a number beside the list of an
+  envelope, as the value of another key or of a page key, and an object with a key
+  two times are refused first; nesting too deep for `json`, which the row names by its line
+  in JSON lines or in a document of one line, and else by the fixture only; nesting
+  too deep to flatten, which the row names by its record); or holds a record that is
+  not a JSON object (`null`, `[]`, `1`, `"x"`) or that one event table cannot hold (two
+  keys of the record that give one field, as `{"a": {"b": 1}, "a.b": 2}` does:
+  `flatten()` keeps only one value, so a benign baseline could hide an attack value
+  under the other key; two
+  keys of the record that differ only in letter case, a key `rowid` or `_rowid`, a
+  key with a NUL or a lone surrogate, a value that SQLite does not hold as it is:
+  an integer outside 64 bits, `NaN` or `Infinity`, a text with a lone surrogate; see
+  "Field names" in [`SEMANTICS.md`](SEMANTICS.md#2-the-record)). Keys of two records
+  that differ only in letter case are no problem: they share one column. A fixture
+  that is a directory gets the row of a missing fixture above. For example:
+
+  ```text
+  ERROR [TRR9012 AWS] aws_leaked_access_key_recon.yml: the benign fixture detections/cloud/fixtures/trr9012/benign.json, element 4 of the array: a record that is not a JSON object (null). The loader cannot read it, so nothing proves the rule -- leaked long-term access-key orientation + enumeration
+  ```
+
+  `check_null_safety.py`, `check_sufficiency.py` (R2 for the benign fixture, R4 for
+  the attack fixture) and `check_variants.py` read the fixtures with the same loader.
+  Each fails the rule with a line that names the fixture (the loader names a
+  directory as such), and exits 1.
 - A rule whose benign baseline holds no record gets a `FAIL` row with `NEGATIVE
   CONTROL VACUOUS`. The count is the number of records that the loader returns, which
   is the set that the rule is run on: `[]`, a file of zero bytes or of blank lines,
   and an envelope with an empty list (`{"Records": []}`) hold no record.
-- Each of the two fails the run (exit 1), and `--report` does not waive them.
+- Each of these fails the run (exit 1), and `--report` does not waive them. The
+  `--json` report gives the `ERROR` row of the rule too.
   `--report` makes only a miss non-fatal: a rule that did not fire on a marked
   record of its attack fixture, or that fired on a benign record.
 
@@ -2249,7 +2377,10 @@ declaration for a rule or a dataset that does not exist, a `HASH MISMATCH` (a ca
 file of other bytes is deleted), a record count that is not the pin, a line that is
 not a record of its format, a key or a value that one SQLite table cannot hold (an
 integer outside 64 bits, a NUL character, a lone surrogate, the key `_rowid`, a number
-that is not finite), keys that differ only in letter case, records of one log source
+that is not finite, and in a record that a rule reads each other problem of the test of
+the table, `sigma_eval.event_problem()`, such as the key `rowid`), keys that differ only
+in the letter case of their ASCII letters (as SQLite reads a column name: `Ét` and `ét`
+are two keys), records of one log source
 with more than 1900 distinct keys (a table holds 2000 columns, less the row id and the
 fields that the rules add), a yml at the commit that does not agree with its entry
 (also its procedure label and CVEs), a cache entry that is not a regular file or

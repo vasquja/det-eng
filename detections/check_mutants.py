@@ -1123,7 +1123,7 @@ def evidence_of(rule_path, logsource, fixtures, corpus):
     slices that it reads. A sidecar error is a fault."""
     sets, errors = check_variants.event_sets(rule_path, fixtures)
     if errors:
-        raise Fault(f"{os.path.relpath(rule_path, REPO)}: sidecar error: {errors[0]}"
+        raise Fault(f"{os.path.relpath(rule_path, REPO)}: {errors[0]}"
                     + (f" (and {len(errors) - 1} more)" if len(errors) > 1 else ""))
     out = [Evidence(source, name, kind, raw) for source, name, kind, raw, _ in sets]
     out += [Evidence("corpus", s.id, "benign", s.raw) for s in corpus

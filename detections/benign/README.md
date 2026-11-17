@@ -20,7 +20,11 @@ layer that measures that.
 Each slice is one JSON spec under [`slices/<family>/`](slices/). Its `logsource`
 must match a rule's `logsource`, and the rule is then scored against every event in
 the slice. The full spec format is documented in
-[`../benign_corpus.py`](../benign_corpus.py).
+[`../benign_corpus.py`](../benign_corpus.py). A spec, or a line of the JSONL of a
+`recorded` slice, with an object that holds one key two times is an `ERROR` line
+that names the file (and the line), and `score_benign.py` scores no rule: `json`
+keeps only the last value, so the slice would not hold the events that its files
+show.
 
 Slices come in two fidelities:
 
@@ -101,19 +105,46 @@ the reader of the Kubernetes validators (see
 [`../README.md`](../README.md#a-record-of-each-log)). It reads JSON lines or a file
 that is one JSON array, and logsources whose records have no definition there
 (`linux/auditd`), so it does not judge if an object is a record of its log. A line
-that is not JSON (a line that was cut at the end of a capture) is skipped. A line, or
-an element of the array, that is JSON and not an object (`[]`) ends the run with exit
-1 and one `ERROR` line that names the capture and the first such line (or element),
-and no rule is scored on the capture:
+ends at a line break of the file (a line feed, or a carriage return alone), as the
+reader of the Kubernetes validators reads it: U+2028, U+2029 and U+0085 in a JSON
+string are characters of the line. A capture can cut only its last line, at its end:
+the text after the last line break is skipped when it is cut JSON (the start of one
+JSON object without its end, after the white space at the start of the line; also
+when the cut splits a character of UTF-8 at its end: the gate drops only the bytes of
+that character, and then reads the capture as it reads a cut on another byte), as the
+reader of the Kubernetes validators skips it. Each of these ends the run with exit 1 and one `ERROR` line that
+names the capture (and the first such line, or element), and no rule is scored on
+the capture:
+
+- a capture that is a directory, or that the run cannot read;
+- another line that json refuses (NUL bytes or U+200B in an event, an event with
+  more text after it on its line, a cut line before other lines or with a line end). When no line before it is JSON, the capture is one document,
+  and the line names the place of the error of the document;
+- a line with bytes that are not UTF-8 (the line names the first such byte and its
+  character in the line);
+- the byte order mark of UTF-8 (`EF BB BF`) at the start of a line;
+- a line, or an element of the array, that is JSON and not an object (`[]`);
+- a line, or an element of the array, with an object that holds one key two times
+  (`json` keeps only the last value, so the gate would score another event than the
+  capture shows);
+- JSON that the gate cannot read: nesting too deep for `json` or for `flatten()`, or a
+  number with more digits than Python reads, in a line or in a file that is one JSON
+  document;
+- an event that one event table cannot hold: two keys of the event that give one
+  field (`{"a": {"b": 1}, "a.b": 2}`: `flatten()` keeps only one value), two keys of
+  the event that differ only in the letter case of their ASCII letters (`verb`, `Verb`), a key that SQLite reads
+  as `rowid` or `_rowid`, a key with a NUL or a lone surrogate, or a value that SQLite
+  does not hold as it is (an integer outside 64 bits, `NaN` or `Infinity`, a text with
+  a lone surrogate; see "Field names" in
+  [`../SEMANTICS.md`](../SEMANTICS.md#2-the-record)). Two events whose keys differ
+  only in letter case are no problem: their keys share one column.
 
 ```text
 ERROR: the live capture /tmp/pre-emulation-audit.log, line 429: JSON that is not an object (a list). No rule is scored on the live capture.
 ```
 
 The shadow step of the API server lab fails no job; the negative control of that job
-reads the same log and names such a line too. Not covered: a capture that is a
-directory or holds bytes that are not UTF-8 ends the run with a traceback, and the
-loader skips line 1 when it starts with the byte order mark of UTF-8.
+reads the same log and names such a line too.
 
 ## What is measured
 
@@ -202,9 +233,12 @@ reads. Both rules fire on routine reads there; the rule defects are tracked as
 A slice can hold real multi-event behaviour as a **sequence** template, sharing one
 draw of the variables with per-step delays: runc's memfd re-exec, or a namespace
 deletion and its controller's cleanup. Events drawn independently almost never line
-up inside a correlation window. Keys that differ only by case (`requestId` and
-`RequestID`) cannot share one slice, because SQLite folds column case; split such
-records across slices.
+up inside a correlation window. SQLite folds the ASCII letters of a column name, so
+keys that differ only in letter case (`requestId` and `RequestID`) are one column of
+the table of a slice: two events of a slice can hold them, and a rule reads both. One
+event cannot hold both: `score_benign.py` tests each event of each slice before it
+scores (also of a slice that no rule reads), names the slice, the event and the two
+keys, and scores no rule.
 
 The three synthetic `kubernetes/audit` slices (`k8s-audit-control-plane`,
 `k8s-audit-gitops-ci`, `k8s-audit-human-operators`) say that their levels follow

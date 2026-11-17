@@ -969,7 +969,7 @@ class ExternalRecords(gatelib.StartedTogether):
     @classmethod
     def begin_unstorable_value(cls, tree):
         # An integer that one SQLite table cannot hold (above 2**63 - 1): the table of
-        # sigma_eval.py stops with OverflowError when the gate does not refuse it first.
+        # sigma_eval.py refuses it with an EventError when the gate does not refuse it first.
         record = case(tree, "snapshot", SET["snapshot"][4])["events"][0]
         record["planted"] = 2 ** 70
         cls.standard(tree, snapshot=jsonl([record]))
@@ -1597,6 +1597,30 @@ class ExternalLoaders(gatelib.GateCase):
          r": line 1: the key 'pid' holds an integer outside the signed 64-bit range"),
         ("rowid_key", "cloudtrail-json", line_of(ct(_ROWID=1)),
          r": line 1: the key '_ROWID' is the name of the row id of the table"),
+        # A key `rowid` hides the row id that the correlation queries read: the test of
+        # the table itself (sigma_eval.event_problem()) refuses it in a routed record and
+        # names the record. A record that no rule reads goes in no table.
+        ("rowid_name_of_the_queries", "cloudtrail-json", line_of(ct(RowID=1)),
+         r": line 1: a record that one event table cannot hold: the key RowID is the name by "
+         r"which the correlation queries read the row id \(rowid, in any letter case of the "
+         r"ASCII letters\)$"),
+        ("rowid_not_routed", "azure-monitor-json",
+         line_of(dict(azure("MicrosoftGraphActivityLogs"), rowid=1)), [("line 1", None)]),
+        # Keys of two records that differ only in the letter case of their ASCII letters:
+        # SQLite reads them as one column, so a rule would match a key that a
+        # case-sensitive SIEM keeps apart. Keys that differ in another letter (`Ét`,
+        # `ét`; the Kelvin sign and `k`) are two columns for SQLite and for the SIEM.
+        ("case_two_records", "cloudtrail-json", line_of(ct(Planted=1)) + line_of(ct(planted=2)),
+         r": keys that differ only in letter case: 'Planted' \(line 1\) / 'planted' \(line 2\)\. "
+         r"SQLite reads them as one column name, so a rule would match a key that a "
+         r"case-sensitive SIEM keeps apart \(and one table cannot hold a record that holds two "
+         r"of them\): exclude the dataset in SOURCES\.json, or split it in a change to the gate$"),
+        ("case_not_ascii", "cloudtrail-json",
+         line_of(ct(**{"\u00c9t": 1})) + line_of(ct(**{"\u00e9t": 2})),
+         [("line 1", "aws/cloudtrail"), ("line 2", "aws/cloudtrail")]),
+        ("case_kelvin_sign", "cloudtrail-json",
+         line_of(ct(**{"\u212aey": 1})) + line_of(ct(key=2)),
+         [("line 1", "aws/cloudtrail"), ("line 2", "aws/cloudtrail")]),
         ("nul_key", "cloudtrail-json", line_of(ct(**{"planted\x00": 1})),
          r": line 1: the key 'planted\\x00' holds a NUL character \(SQLite refuses it in a "
          r"column name\)$"),
@@ -1936,7 +1960,7 @@ class ExternalLoaders(gatelib.GateCase):
         self.assertGreater(out["rules"], 1)
         self.assertEqual(out["errors"], [
             "T1537/probe/cloudtrail: the aws/cloudtrail records cannot go into one table "
-            "(OverflowError); the loader must refuse such a record by its line (a fault of the "
+            "(EventError); the loader must refuse such a record by its line (a fault of the "
             "gate)"])
         self.assertEqual(out["pairs"], [])
 

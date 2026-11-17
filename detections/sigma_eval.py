@@ -134,6 +134,143 @@ except ImportError:
 
 _ROWID = "_rowid"  # INTEGER PRIMARY KEY, so it aliases SQLite's rowid
 
+# SQLite compares two identifiers (two column names) with the 26 ASCII letters folded
+# to one letter case, and every other character as it is: `"A"` and `"a"` are one
+# column name, `"Ä"` and `"ä"` are two (str.lower() folds both pairs, and also maps
+# the Kelvin sign U+212A to `k`). fold() is that comparison.
+_ASCII_FOLD = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+_FOLDED = {}  # key -> fold(key): the keys of a log repeat in each event
+
+
+def fold(name):
+    """A column name as SQLite compares it: the ASCII letters in lower case, each
+    other character as it is."""
+    folded = _FOLDED.get(name)
+    if folded is None:
+        folded = _FOLDED[name] = name.translate(_ASCII_FOLD)
+    return folded
+
+
+# The names that SQLite reads as the row id of the table and that the queries on the
+# table read. A key with such a name (in any letter case of its ASCII letters) would
+# be a column that hides the row id: `_rowid` is the row id column of the table, which
+# hit_indices() reads; `rowid` is the name by which the correlation queries of pySigma
+# read the row id (its backend option event_id_field). SQLite has two more names of
+# the row id, `oid` and `_rowid_`; no query reads them, so a key with such a name is
+# an ordinary column.
+RESERVED = {
+    _ROWID: "is the name of the row id column of the table",
+    "rowid": "is the name by which the correlation queries read the row id",
+}
+_INT64 = (-(1 << 63), (1 << 63) - 1)  # the range of an INTEGER of SQLite
+_FINITE = (-float("inf"), float("inf"))
+
+
+def _surrogate(text):
+    """The first lone surrogate of a str (U+D800 to U+DFFF), or None. UTF-8 cannot
+    encode it, so SQLite cannot hold such a text: a JSON escape such as \\ud800 gives
+    one."""
+    if text.isascii():
+        return None
+    return next((ch for ch in text if "\ud800" <= ch <= "\udfff"), None)
+
+
+def _key_problem(key):
+    """The text of a problem of one key that no column name of SQLite can be, or None:
+    a key that holds U+0000 (NUL) or a lone surrogate."""
+    if "\x00" in key:
+        return f"the key {key!r} holds U+0000 (NUL), which no column name of SQLite can hold"
+    ch = _surrogate(key)
+    if ch is not None:
+        return (f"the key {key!r} holds the lone surrogate U+{ord(ch):04X}, which is not "
+                "text of UTF-8, so SQLite cannot hold it")
+    return None
+
+
+class EventError(ValueError):
+    """An event that one EventTable cannot hold (event_problem()). `index` is the
+    position of the event in the list (from 0), `keys` the keys of the problem, and
+    `problem` its text. The message names the event (from 1) and the keys."""
+
+    def __init__(self, index, count, keys, problem):
+        self.index, self.keys, self.problem = index, tuple(keys), problem
+        super().__init__(f"event {index + 1} of {count}: {problem}")
+
+
+def key_clashes(event):
+    """The groups of keys of one flat event that differ only in the letter case of
+    their ASCII letters (fold()): SQLite reads the keys of each group as one column
+    name, so one row cannot hold a value for each. Each group is a sorted tuple of two
+    keys or more; the groups are sorted. Keys of this kind in DIFFERENT events share
+    one column of the table, as a rule field reads them (detections/SEMANTICS.md,
+    "Field names")."""
+    if len({fold(key) for key in event}) == len(event):
+        return []
+    groups = {}
+    for key in event:
+        groups.setdefault(fold(key), []).append(key)
+    return sorted(tuple(sorted(keys)) for keys in groups.values() if len(keys) > 1)
+
+
+def event_problem(event):
+    """None when one EventTable can hold the flat event (a dict, as flatten() gives
+    it); else (keys, text) of its first problem:
+
+      - a key that SQLite reads as a name of the row id that the queries read
+        (RESERVED: _rowid, rowid, in any letter case of the ASCII letters);
+      - a key that holds U+0000 (NUL) or a lone surrogate (no column name of SQLite
+        can hold it);
+      - keys that differ only in the letter case of their ASCII letters
+        (key_clashes());
+      - two keys of the record that give one field (a FieldTwice of flatten():
+        {"a.b": X, "a": {"b": Y}}): the flat event holds only one of the two values;
+      - a value that SQLite does not hold as it is: an integer outside 64 bits (an
+        INTEGER of SQLite), a number that is not finite (NaN, Infinity: JSON has no
+        such number, and SQLite stores NaN as NULL), a text with a lone surrogate.
+
+    Each loader of records asks this of each event before an EventTable gets it, and
+    EventTable refuses an event with a problem (EventError): the loaders and the
+    table refuse the same events."""
+    if type(event) is FieldTwice:
+        return (event.field,), field_twice_text(event.field)
+    names = {fold(key) for key in event}
+    if not names.isdisjoint(RESERVED):
+        key = min(key for key in event if fold(key) in RESERVED)
+        return (key,), (f"the key {key} {RESERVED[fold(key)]} ({fold(key)}, in any letter "
+                        "case of the ASCII letters)")
+    for key in event:
+        problem = _key_problem(key)
+        if problem:
+            return (key,), problem
+    if len(names) != len(event):
+        keys = key_clashes(event)[0]
+        return keys, ("keys that differ only by case: " + " / ".join(keys)
+                      + ", which SQLite reads as one column name")
+    low, high = _INT64
+    for key, value in event.items():
+        kind = type(value)  # a bool is not of the type int
+        if kind is int:
+            if not low <= value <= high:
+                return (key,), (f"the value of {key} is an integer outside the 64 bits of an "
+                                "INTEGER of SQLite")
+        elif kind is float:
+            if not _FINITE[0] < value < _FINITE[1]:  # NaN compares false
+                return (key,), (f"the value of {key} is {_json_number(value)}, a number that "
+                                "JSON does not have"
+                                + (" (SQLite stores it as NULL)" if value != value else ""))
+        elif kind is str:
+            ch = _surrogate(value)
+            if ch is not None:
+                return (key,), (f"the value of {key} holds the lone surrogate "
+                                f"U+{ord(ch):04X}, which is not text of UTF-8, so SQLite "
+                                "cannot hold it")
+    return None
+
+
+def _json_number(value):
+    """NaN, Infinity or -Infinity: a float that is not finite, as json.dumps writes it."""
+    return "NaN" if value != value else ("Infinity" if value > 0 else "-Infinity")
+
 
 class ThreeValuedSqliteBackend(sqliteBackend):
     """pySigma's SQLite backend with SQL's own three-valued NOT (check_null_safety.py).
@@ -172,6 +309,244 @@ def compile_rule(path, three_valued=False):
     return queries[0]
 
 
+# ---- JSON that a loader reads: a key two times ---------------------------------
+
+
+class Twice(dict):
+    """A JSON object that holds one key two times: pairs() gives it in the place of
+    the dict. `key` is the first key that the object holds two times. json keeps only
+    the last value of such a key, so a loader that reads the object loses the first
+    value without a word (an attack record under {"Records": <attack>, "Records":
+    <benign>}). Each loader of records or cases refuses it (key_twice())."""
+
+    __slots__ = ("key",)
+
+
+def pairs(items):
+    """The object_pairs_hook of the loaders of records and cases: the dict of
+    `items`, or a Twice when two of the items have one key."""
+    out = dict(items)
+    if len(out) == len(items):
+        return out
+    seen = set()
+    for key, _ in items:
+        if key in seen:
+            break
+        seen.add(key)
+    twice = Twice(out)
+    twice.key = key
+    return twice
+
+
+def key_twice(value):
+    """The key of the first object in the JSON value `value` (read with pairs()) that
+    holds a key two times, or None. The walk uses no recursion: the value can be
+    deep."""
+    stack = [value]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if type(node) is Twice:
+                return node.key
+            stack.extend(reversed(list(node.values())))
+        elif isinstance(node, list):
+            stack.extend(reversed(node))
+    return None
+
+
+def twice_text(key):
+    """The text of the problem of an object that holds `key` two times."""
+    return f"an object holds the key {key!r} two times (json keeps only the last value)"
+
+
+# ---- JSON that a capture cut ---------------------------------------------------
+#
+# A capture copies a log while its writer adds lines, so the last line of the copy
+# can be the start of a record. cut_json() tells such a line from a line that json
+# refuses for another reason (a record with more text after it, NUL bytes or
+# U+200B in a record): only a cut is no problem.
+
+_BLANKS = " \t\n\r"                         # the blanks of JSON
+_WORD_END = _BLANKS + ",]}:"                # the characters after a number or a literal
+_HEX = "0123456789abcdefABCDEF"
+_TAILS = ("", "0", "rue", "ue", "e", "alse", "lse", "se", "ull", "ll", "l")
+_AFTER = {"value": "null", "key": '"":null', "key_or_end": "", "colon": ":null",
+          "comma": "", "value_or_end": "", "done": ""}
+
+
+def cut_json(text):
+    """True when `text` is cut JSON: the start of one JSON object without its end.
+
+    _closing() writes the text that closes the open string, number, literal and
+    containers of `text`. `text` is cut only when that text is not empty (json does
+    not read `text` as it is) and json then reads `text` with it as ONE JSON object.
+    So json itself certifies each cut, and the scan of _closing() can only miss a cut,
+    never accept JSON that is not a cut: a complete record with more text after it
+    ('{...}{', '{...}x', '{...} {'), NUL bytes or U+200B in a record, a comma before
+    a "}", an escape that JSON does not have, a control character in a string. A cut
+    inside an escape (Go writes `\\u0026` in an audit event), a number, a literal or a
+    key is a cut. NaN, Infinity and -Infinity are not JSON (Python's json reads them):
+    a text that holds one is no cut, also when the cut is inside the word. A blank at
+    the start or at the end of `text` is a blank of JSON (a space, a tab, a line feed,
+    a carriage return); the caller removes other white space at the start, as json
+    reads a record, and none at the end. JSON too deep for json is no cut. The time is
+    linear in the length of `text`."""
+    rest = _closing(text)
+    if not rest:                            # None: no cut; "": complete, or not JSON
+        return False
+    try:
+        return isinstance(json.loads(text + rest, parse_constant=_constant), dict)
+    except (ValueError, RecursionError):
+        return False
+
+
+def _constant(name):
+    """The parse_constant of json in cut_json(): NaN, Infinity and -Infinity are not
+    JSON."""
+    raise ValueError(f"{name} is not JSON")
+
+
+def _closing(text):
+    """The text that closes `text` to one JSON value, or None when the scan finds a
+    character that no JSON value can hold in its place. The scan follows the grammar
+    of JSON only as far as cut_json() needs it: json checks the result."""
+    stack, expect, i, n = [], "value", 0, len(text)
+    while i < n:
+        c = text[i]
+        if c in _BLANKS:
+            i += 1
+            continue
+        if expect == "done":
+            return None
+        if expect == "colon":
+            if c != ":":
+                return None
+            expect, i = "value", i + 1
+            continue
+        if expect == "comma":
+            if c == ",":
+                expect, i = ("key" if stack[-1] == "}" else "value"), i + 1
+            elif c == stack[-1]:
+                stack.pop()
+                expect, i = ("comma" if stack else "done"), i + 1
+            else:
+                return None
+            continue
+        if expect in ("key", "key_or_end"):
+            if c == "}" and expect == "key_or_end":
+                stack.pop()
+                expect, i = ("comma" if stack else "done"), i + 1
+                continue
+            if c != '"':
+                return None
+            end, tail = _string(text, i)
+            if end is None:
+                return tail + ":null" + "".join(reversed(stack))
+            expect, i = "colon", end
+            continue
+        # expect is "value" or "value_or_end"
+        if c == "]" and expect == "value_or_end":
+            stack.pop()
+            expect, i = ("comma" if stack else "done"), i + 1
+        elif c in "{[":
+            stack.append("}" if c == "{" else "]")
+            expect, i = ("key_or_end" if c == "{" else "value_or_end"), i + 1
+        elif c == '"':
+            end, tail = _string(text, i)
+            if end is None:
+                return tail + "".join(reversed(stack))
+            expect, i = ("comma" if stack else "done"), end
+        else:                               # a number or a literal
+            j = i
+            while j < n and text[j] not in _WORD_END:
+                j += 1
+            if j == n:                      # at the end of the text: it can be cut
+                tail = next((t for t in _TAILS if _scalar(text[i:] + t)), None)
+                return None if tail is None else tail + "".join(reversed(stack))
+            if not _scalar(text[i:j]):
+                return None
+            expect, i = ("comma" if stack else "done"), j
+    return _AFTER[expect] + "".join(reversed(stack))
+
+
+def _scalar(word):
+    """True when `word` is a JSON number or literal (not NaN or Infinity)."""
+    if word in ("true", "false", "null"):
+        return True
+    try:
+        value = json.loads(word, parse_constant=_constant)
+    except ValueError:
+        return False
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _string(text, i):
+    """(end, None) for a string that starts at text[i] and ends in `text` (end is the
+    index after its quote), or (None, tail) for a string that `text` cuts: `tail`
+    closes it (it ends an escape that the cut opened)."""
+    j, n = i + 1, len(text)
+    while j < n:
+        c = text[j]
+        if c == '"':
+            return j + 1, None
+        if c != "\\":
+            j += 1
+            continue
+        if j + 1 == n:
+            return None, 'n"'
+        if text[j + 1] == "u":
+            digits = text[j + 2:j + 6]
+            if j + 2 + len(digits) == n and len(digits) < 4 and all(d in _HEX for d in digits):
+                return None, "0" * (4 - len(digits)) + '"'
+            j += 6
+        else:
+            j += 2
+    return None, '"'
+
+
+def utf8_cut(text):
+    """`text` without the start of a character of UTF-8 that a cut left at its very
+    end; `text` itself when it holds no byte that is not UTF-8; None when it holds
+    another byte that is not UTF-8.
+
+    `text` is decoded with errors="surrogateescape", so each byte that is not UTF-8
+    is a character U+DC80..U+DCFF. The start of a character is a lead byte (C2..F4)
+    with fewer continuation bytes than it needs, at the very end of the text. Each
+    other byte that is not UTF-8 is no cut: before the end, or at the end in a
+    sequence that UTF-8 does not have (E0 80, ED A0, a lone continuation byte, FF).
+    The decoder of UTF-8 stops at the first such byte: the text is a cut when that
+    error is "unexpected end of data" at the end of the text."""
+    try:
+        text.encode("utf-8")
+        return text
+    except UnicodeEncodeError:
+        pass
+    data = text.encode("utf-8", "surrogateescape")
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError as e:
+        if e.reason == "unexpected end of data" and e.end == len(data):
+            return data[:e.start].decode("utf-8")
+    return None
+
+
+class FieldTwice(dict):
+    """A flat event (flatten()) in which two keys of the record give one field: a key
+    with a dot and the path of a nested key ({"a.b": X, "a": {"b": Y}} gives the field
+    a.b two times). The flat event holds only the last value, so a record could hide a
+    value under the other key: a store that merges a dotted key with an object (Elastic)
+    sees both values. `field` is the first such field. event_problem() names it, so
+    each loader and EventTable refuse the event."""
+
+    __slots__ = ("field",)
+
+
+def field_twice_text(field):
+    """The text of the problem of a record whose two keys give the one field `field`."""
+    return (f"two keys of the record give the one field {field!r} (sigma_eval.flatten "
+            "keeps only one value)")
+
+
 def flatten(obj, prefix="", *, separators=None, sort_keys=False):
     """Nested dict -> {"a.b.c": value}, the dotted field names Sigma rules use.
 
@@ -180,17 +555,38 @@ def flatten(obj, prefix="", *, separators=None, sort_keys=False):
     of the record. separators and sort_keys are those of json.dumps, for a store
     that writes the text in another way (check_variants.py): separators=(",", ":")
     is the text without blanks, sort_keys=True sorts the keys of each object.
+
+    When two keys of the record give one field (a key with a dot and the path of a
+    nested key), the flat event keeps the last value, and it is a FieldTwice that names
+    the field: event_problem() refuses it.
     """
     out = {}
+    field = _flatten(obj, prefix, out, separators, sort_keys)
+    if field is None:
+        return out
+    twice = FieldTwice(out)
+    twice.field = field
+    return twice
+
+
+def _flatten(obj, prefix, out, separators, sort_keys):
+    """Write the fields of `obj` to `out`. Returns the first field that two keys give,
+    or None."""
+    twice = None
     for key, val in obj.items():
         name = f"{prefix}{key}"
         if isinstance(val, dict):
-            out.update(flatten(val, f"{name}.", separators=separators, sort_keys=sort_keys))
-        elif isinstance(val, list):
+            inner = _flatten(val, f"{name}.", out, separators, sort_keys)
+            if twice is None:
+                twice = inner
+            continue
+        if twice is None and name in out:
+            twice = name
+        if isinstance(val, list):
             out[name] = json.dumps(val, separators=separators, sort_keys=sort_keys)
         else:
             out[name] = val
-    return out
+    return twice
 
 
 def _quote(col):
@@ -241,27 +637,57 @@ class EventTable:
             self.db.create_function(
                 "regexp", 2,
                 lambda pattern, value: 1 if value is not None and search(pattern, str(value)) else 0)
-        columns = sorted({k for e in events for k in e} - {_ROWID})
-        # SQLite column names are case-insensitive: 'level' and 'Level' would be one
-        # column (a cryptic "duplicate column name" error), and a rule field would
-        # match an event key that differs only by case, which a case-sensitive SIEM
-        # would not. Refuse the collision plainly instead.
-        folded = {}
-        for col in columns:
-            folded.setdefault(col.lower(), []).append(col)
-        clashes = [names for names in folded.values() if len(names) > 1]
-        if clashes:
-            raise ValueError("event keys that differ only by case cannot share one table: "
-                             + "; ".join(" / ".join(n) for n in clashes)
-                             + " (score or evaluate these log shapes separately)")
+        # SQLite reads two column names that differ only in the letter case of their
+        # ASCII letters as one name (fold()), and so it reads a rule field: the item
+        # `Verb: create` reads the key `verb` (detections/SEMANTICS.md, "Field names").
+        # So keys of that kind in different events share one column, named as the
+        # first key of the group in sorted order. The table refuses an event that it
+        # cannot hold (event_problem(), EventError): one event that holds two such keys
+        # (two values for one column), an event whose two keys give one field (a
+        # FieldTwice of flatten()), a key that hides a row id that the queries read or
+        # that no column name can hold, and a value that SQLite does not hold as it is.
+        # The keys are tested once for each distinct key, and each event only when a
+        # key or a FieldTwice gives cause; the values at the insert.
+        keys = set().union(*events)
+        group = {}  # fold(key) -> the keys of the events
+        for key in keys:
+            group.setdefault(fold(key), []).append(key)
+        joined = "".join(keys)
+        if (len(group) != len(keys) or not RESERVED.keys().isdisjoint(group)
+                or "\x00" in joined or not joined.isascii() and any(map(_surrogate, keys))
+                or any(type(event) is FieldTwice for event in events)):
+            for index, event in enumerate(events):
+                problem = event_problem(event)
+                if problem:
+                    raise EventError(index, len(events), *problem)
+        column = {key: min(names) for names in group.values() for key in names}
         self.db.execute(f"CREATE TABLE logs ({_ROWID} INTEGER PRIMARY KEY"
-                        + "".join(f", {_quote(c)}" for c in columns) + ")")
+                        + "".join(f", {_quote(c)}" for c in sorted(set(column.values())))
+                        + ")")
+        inserts = {}  # the keys of an event, in its order -> the INSERT of such an event
         for rowid, event in enumerate(events):
-            cols = [c for c in columns if c in event]
-            self.db.execute(
-                f"INSERT INTO logs ({_ROWID}{''.join(', ' + _quote(c) for c in cols)}) "
-                f"VALUES (?{', ?' * len(cols)})",
-                [rowid] + [event[c] for c in cols])
+            shape = tuple(event)
+            sql = inserts.get(shape)
+            if sql is None:
+                names = "".join(", " + _quote(column[k]) for k in shape)
+                sql = inserts[shape] = (f"INSERT INTO logs ({_ROWID}{names}) "
+                                        f"VALUES (?{', ?' * len(shape)})")
+            values = [rowid, *event.values()]
+            # SQLite stores NaN as NULL without an error, so the floats are tested here;
+            # an integer outside 64 bits and a lone surrogate fail the insert.
+            problem = None
+            if float in map(type, values) and not all(
+                    _FINITE[0] < v < _FINITE[1] for v in values if type(v) is float):
+                problem = event_problem(event)
+            if problem is None:
+                try:
+                    self.db.execute(sql, values)
+                except (OverflowError, UnicodeEncodeError):
+                    problem = event_problem(event)
+                    if problem is None:
+                        raise
+            if problem:
+                raise EventError(rowid, len(events), *problem)
 
     def _execute(self, sql):
         while True:
@@ -278,12 +704,14 @@ class EventTable:
         cur = self._execute(sql)
         names = [d[0] for d in cur.description]
         rows = cur.fetchall()
-        if "event_ids" in names:  # correlation alert rows
-            idx = names.index("event_ids")
-            return [[int(eid.rsplit(":", 1)[1]) for eid in json.loads(row[idx])]
-                    for row in rows]
-        idx = names.index(_ROWID)
-        return [[row[idx]] for row in rows]
+        if _ROWID in names:  # a plain rule: SELECT * FROM logs, the rows of the table
+            idx = names.index(_ROWID)
+            return [[row[idx]] for row in rows]
+        # A correlation rule: its alert rows name the events in event_ids (and have no
+        # column _rowid). An event may hold a key event_ids: it is only a column of a row.
+        idx = names.index("event_ids")
+        return [[int(eid.rsplit(":", 1)[1]) for eid in json.loads(row[idx])]
+                for row in rows]
 
     def hits(self, sql):
         return [[self.events[i] for i in hit] for hit in self.hit_indices(sql)]
