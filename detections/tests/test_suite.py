@@ -791,7 +791,8 @@ class ValidatorSelection(gatelib.GateCase):
     2. Each git command of a changes job that lists changed files passes
        --no-renames. Without it, a rule moved out of a listed folder gives only its
        new path, and the validator is skipped. A test runs each changes step in a
-       constructed git repository to show that.
+       constructed git repository to show that, and to show that a step whose git
+       diff fails writes true.
     3. The `if:` of each validator job runs it unless the changes job succeeded and
        said `false`: it runs when the changes job failed (or ended in another way, or
        wrote no output), and not when the run is cancelled (`!cancelled()`, not
@@ -1365,7 +1366,9 @@ class ValidatorSelection(gatelib.GateCase):
         a rule out of a folder of the step's list to detections/sigma/T9999/: the
         output is true. CONTROLs: a head that changes only README.md gives false, and
         the same step without --no-renames gives false on the moved rule (so git in
-        this test detects renames, and --no-renames is what selects the validator)."""
+        this test detects renames, and --no-renames is what selects the validator).
+        The step also fails safe: with a BASE_SHA that names no commit of the
+        repository, its git diff fails, and the output is true."""
         gatelib.require_program("git", "the changes steps run git diff")
         for workflow, jobs in self.JOBS.items():
             doc = self.docs()[workflow]
@@ -1406,14 +1409,23 @@ class ValidatorSelection(gatelib.GateCase):
                     step = gatelib.Step(workflow, "changes", step_id, "bash", run)
                     renames = step._replace(run=run.replace("--no-renames ", ""))
                     self.assertNotEqual(renames.run, run)
-                    for case, ran, head, wanted in (("moved rule", step, moved, "true"),
-                                                    ("README.md only", step, readme, "false"),
-                                                    ("moved rule, without --no-renames",
-                                                     renames, moved, "false")):
+                    # A commit id that is not in the repository: the listing of the
+                    # step fails (CONTROL), so the step must take its fail-safe way.
+                    lost = "1" * 40
+                    listing = tree.run_command(["git", "diff", "--no-renames", "--name-only",
+                                                f"{lost}...{moved}"], env=env)
+                    self.assertNotEqual(listing.returncode, 0,
+                                        f"git diff of {lost}...{moved} did not fail")
+                    for case, ran, start, head, wanted in (
+                            ("moved rule", step, base, moved, "true"),
+                            ("README.md only", step, base, readme, "false"),
+                            ("moved rule, without --no-renames", renames, base, moved, "false"),
+                            ("the git listing fails (BASE_SHA names no commit)", step, lost,
+                             moved, "true")):
                         out = tree.out("github/github_output")
                         open(out, "w", encoding="utf-8").close()
                         result = tree.run_step(ran, env={
-                            **env, "BASE_SHA": base, "HEAD_SHA": head,
+                            **env, "BASE_SHA": start, "HEAD_SHA": head,
                             "EVENT_NAME": "pull_request"})
                         self.assertEqual(result.returncode, 0, f"{case}: {result.stderr}")
                         with open(out, encoding="utf-8") as fh:
