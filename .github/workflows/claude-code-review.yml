@@ -17,6 +17,10 @@ on:
 jobs:
   review:
     runs-on: ubuntu-latest
+    # The inputs below set no time limit for the review action, and a review takes
+    # about a minute. This timeout stops a review that hangs. Its check run then ends
+    # without success, so automerge's rail 6 holds the PR.
+    timeout-minutes: 30
     permissions:
       contents: read
       pull-requests: read

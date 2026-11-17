@@ -241,6 +241,7 @@ jobs:
   resolve:
     name: automerge-resolve
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
@@ -299,6 +300,11 @@ jobs:
     needs: resolve
     if: needs.resolve.outputs.prs != '' && needs.resolve.outputs.prs != '[]'
     runs-on: ubuntu-latest
+    # A job that does not end holds the concurrency group of its PR (below), and each
+    # later evaluation of that PR waits for it. A run takes seconds. A job that GitHub
+    # stops at this timeout holds no PR (rail 6 ignores this workflow's own check
+    # runs), and the next evaluation reads the whole state again.
+    timeout-minutes: 10
     permissions:
       contents: write
       pull-requests: write

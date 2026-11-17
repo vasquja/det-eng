@@ -24,6 +24,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -77,6 +78,7 @@ jobs:
     # portable regex subset (detections/README.md, "Portable regular
     # expressions"), compiling each value with Python re and RE2.
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -141,6 +143,7 @@ jobs:
     # detections/k8s/PLATFORMS.md (standard library only; check_md_links.py
     # checks paths only).
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
