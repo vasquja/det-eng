@@ -1096,6 +1096,19 @@ class Runner(unittest.TestCase):
             exit_code=1)
         self.assertRegex(skipped.stdout, r"(?m)^1 test\(s\) skipped: test_skipped\.Skipped \(1\)$")
         tree.remove("detections/tests/test_skipped.py")
+        # A class that fails: the run does not say that the test of a gap did not run
+        # (the class that failed can hold it), and it still names the gaps that no
+        # class collects.
+        tree.write("detections/tests/test_failing.py",
+                   "import unittest\n\n\n"
+                   "class Failing(unittest.TestCase):\n"
+                   "    def test_f(self):\n        self.fail('planted failure')\n")
+        failing = tree.run("detections/tests/gatelib.py", "--run")
+        gatelib.assert_rejects(failing, r"^FAILED: 1 test class\(es\): test_failing\.Failing$",
+                               exit_code=1, crash_ok=True)
+        self.assertRegex(failing.stdout, "(?m)^" + re.escape(not_collected(gaps)) + "$")
+        self.assertNotIn("did not run", failing.stdout)
+        tree.remove("detections/tests/test_failing.py")
         # A class filter runs a part of the suite: a gap that did not run, or that no
         # class collects, is no failure.
         gatelib.assert_accepts(tree.run("detections/tests/gatelib.py", "--run", "test_one"),
