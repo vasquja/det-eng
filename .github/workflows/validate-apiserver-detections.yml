@@ -199,16 +199,22 @@ jobs:
   changes:
     name: changes-apiserver
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Each step has a timeout. A step that hangs fails at its timeout, so the job
+    # ends as a failure, not as a cancel, and the validator that needs this job runs
+    # (the fail-safe condition of the validator jobs). The timeout of the job cancels
+    # the job; it is larger than the sum of the timeouts of the steps.
+    timeout-minutes: 15
     outputs:
       relevant: ${{ steps.f.outputs.relevant }}
       recommended: ${{ steps.r.outputs.recommended }}
     steps:
       - uses: actions/checkout@v4
+        timeout-minutes: 5
         with:
           fetch-depth: 0
       - id: f
         shell: bash
+        timeout-minutes: 3
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -304,6 +310,7 @@ jobs:
       # dispatch, always (that job skips a dispatch with a node_image input).
       - id: r
         shell: bash
+        timeout-minutes: 3
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -403,11 +410,12 @@ jobs:
     # passed. !cancelled() (not always()) lets a cancelled run stop here.
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.relevant != 'false') }}
     runs-on: ubuntu-latest
-    # The bounded waits of the job (kind, kubectl wait, the retries of the pre-pull,
-    # the 15 minutes of the benign step, the waits of the emulation scripts) add up
-    # to about 50 minutes, and a run takes 5 to 6 minutes. So a slow run ends on its
-    # own, with its summary and its logs, and this timeout stops a run that hangs. It
-    # is the timeout of validate-recommended too.
+    # The time limits of the job's waits (kind, kubectl wait, the retries of the
+    # pre-pull, the 15 minutes of the benign step, the waits of the emulation
+    # scripts) add up to about 50 minutes when each wait runs once. Some waits of
+    # the emulations repeat for each CRD and each procedure, and some poll loops
+    # have no request timeout. A run takes 5 to 6 minutes. This timeout stops a run
+    # that hangs. It is the timeout of validate-recommended too.
     timeout-minutes: 60
     env: &apiserver-job-env
       # Each emulation appends one line per procedure (window + exit status) here; the

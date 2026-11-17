@@ -116,15 +116,21 @@ jobs:
   changes:
     name: changes-staticpod
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Each step has a timeout. A step that hangs fails at its timeout, so the job
+    # ends as a failure, not as a cancel, and the validator that needs this job runs
+    # (the fail-safe condition of the validator jobs). The timeout of the job cancels
+    # the job; it is larger than the sum of the timeouts of the steps.
+    timeout-minutes: 15
     outputs:
       relevant: ${{ steps.f.outputs.relevant }}
     steps:
       - uses: actions/checkout@v4
+        timeout-minutes: 5
         with:
           fetch-depth: 0
       - id: f
         shell: bash
+        timeout-minutes: 3
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -184,7 +190,7 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.relevant != 'false') }}
     runs-on: ubuntu-latest
     # The bounded waits of the job (kind, kubectl wait, the retries of the pre-pull,
-    # the polls of the emulation) add up to about 20 minutes. A run takes 2 to 3
+    # the polls of the emulation) add up to about 20 minutes. A run takes about 2
     # minutes.
     timeout-minutes: 30
     env:
