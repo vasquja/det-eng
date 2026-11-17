@@ -13,6 +13,7 @@ import ast
 import glob
 import json
 import os
+import re
 import select
 import shutil
 import subprocess
@@ -1102,10 +1103,255 @@ class Runner(unittest.TestCase):
     def test_options_of_the_run_need_run(self):
         tree = self.suite()
         for option in (("--no-skips",), ("--class-timeout", "5"), ("--jobs", "2"),
-                       ("--summary", tree.out("summary.md")), ("test_one",)):
+                       ("--summary", tree.out("summary.md")), ("test_one",), ("--shard", "1/2")):
             result = tree.run("detections/tests/gatelib.py", "--gaps", *option)
             self.assertEqual(result.returncode, 2, result.describe())
             self.assertIn("need --run", result.stderr)
+
+
+class Shards(unittest.TestCase):
+    """`gatelib.py --run --shard K/N` on a constructed suite of five classes and a
+    constructed table of class weights. A run of shard K runs exactly the classes of
+    shard K, the heaviest first, and prints them in the order of discovery. It counts
+    the known gaps whose test is in shard K, and those whose test is in no class of
+    the suite; a gap in another shard does not fail it."""
+
+    # Each class writes its name into the file $SHARD_ORDER when it starts.
+    RECORDED = (
+        "import os, unittest\n\n\n"
+        "class Recorded(unittest.TestCase):\n"
+        "    @classmethod\n"
+        "    def setUpClass(cls):\n"
+        "        with open(os.environ['SHARD_ORDER'], 'a', encoding='utf-8') as fh:\n"
+        "            fh.write(cls.__module__ + '.' + cls.__name__ + '\\n')\n")
+    GAPPY = (
+        "import os, sys, unittest\n"
+        "sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))\n"
+        "import gatelib\n"
+        "from recorded import Recorded\n\n\n"
+        "def accepted(case):\n"
+        "    tree = gatelib.Tree(())\n"
+        "    case.addCleanup(tree.cleanup)\n"
+        "    tree.write('gate.py', 'print(1)')\n"
+        "    return tree.run('gate.py')\n\n\n"
+        "class Collected(Recorded):\n"
+        "    def test_a(self):\n        pass\n\n"
+        "    @gatelib.known_gap('gap-on-a-method-that-is-no-test', gate='gate.py', closes='R7',\n"
+        "                       reason='A constructed gate accepts every artifact.')\n"
+        "    def check_gap_never_collected(self):\n"
+        "        gatelib.assert_rejects(accepted(self), r'FAIL')\n")
+    # The weights: shard 1 of 2 holds Heavy and Collected (10 + 3), shard 2 Good,
+    # AlsoGood and Light (6 + 5 + 1). Of equal weights, the shards would differ.
+    SECONDS = {"test_two.Heavy": 10, "test_one.Good": 6, "test_one.AlsoGood": 5.0,
+               "test_gappy.Collected": 3, "test_two.Light": 1}
+    FIRST = ["test_gappy.Collected", "test_two.Heavy"]
+    SECOND = ["test_one.AlsoGood", "test_one.Good", "test_two.Light"]
+
+    def suite(self, seconds=None):
+        tree = gatelib.Tree(("detections/tests/gatelib.py",))
+        self.addCleanup(tree.cleanup)
+        tree.write("detections/tests/recorded.py", self.RECORDED)
+        tree.write("detections/tests/test_one.py",
+                   "from recorded import Recorded\n\n\n"
+                   "class Good(Recorded):\n"
+                   "    def test_a(self):\n        pass\n\n"
+                   "    def test_b(self):\n        pass\n\n\n"
+                   "class AlsoGood(Recorded):\n"
+                   "    def test_c(self):\n        pass\n")
+        tree.write("detections/tests/test_two.py",
+                   "from recorded import Recorded\n\n\n"
+                   "class Heavy(Recorded):\n"
+                   "    def test_d(self):\n        pass\n\n\n"
+                   "class Light(Recorded):\n"
+                   "    def test_e(self):\n        pass\n")
+        tree.write("detections/tests/test_gappy.py", self.GAPPY)
+        self.table(tree, {"about": "Constructed.",
+                          "seconds": self.SECONDS if seconds is None else seconds})
+        return tree
+
+    @staticmethod
+    def table(tree, doc):
+        tree.write("detections/tests/class_seconds.json",
+                   doc if isinstance(doc, str) else json.dumps(doc))
+
+    def run_shard(self, tree, shard, *options):
+        """(result, the classes in the order they started) of a run of one shard."""
+        order = tree.out("order.txt")
+        open(order, "w", encoding="utf-8").close()
+        result = tree.run("detections/tests/gatelib.py", "--run", "--shard", shard, *options,
+                          env={"SHARD_ORDER": order})
+        with open(order, encoding="utf-8") as fh:
+            return result, fh.read().split()
+
+    @staticmethod
+    def printed(result):
+        return re.findall(r"(?m)^===== (\S+): ", result.stdout)
+
+    def test_the_shards_hold_each_class_one_time_by_their_weights(self):
+        self.assertEqual(gatelib.shard_classes(
+            ["test_gappy.Collected", "test_one.AlsoGood", "test_one.Good", "test_two.Heavy",
+             "test_two.Light"], self.SECONDS, 2), [self.FIRST, self.SECOND])
+        # Two classes of the same weight in the order of their names; of two shards
+        # with the same weight, the one with the lower number.
+        self.assertEqual(gatelib.shard_classes(["d", "b", "a", "c"], {}, 2), [["a", "c"], ["d", "b"]])
+        self.assertEqual(gatelib.shard_classes(["d", "b", "a", "c"], {}, 3), [["d", "a"], ["b"], ["c"]])
+        # A class that the table does not hold weighs the median of the table (5.5
+        # here, not 1, not 0): Light then goes to shard 2 before AlsoGood.
+        without = {name: seconds for name, seconds in self.SECONDS.items() if name != "test_two.Light"}
+        self.assertEqual(gatelib.shard_classes(sorted(self.SECONDS), without, 2),
+                         [["test_one.AlsoGood", "test_two.Heavy"],
+                          ["test_gappy.Collected", "test_one.Good", "test_two.Light"]])
+        # The median (2), not the mean (11) and not 1: x and b weigh the same.
+        self.assertEqual(gatelib.shard_classes(["a", "b", "c", "x"], {"a": 1, "b": 2, "c": 30}, 3),
+                         [["c"], ["a", "b"], ["x"]])
+        # Each shard in the order of the names given; the same sets in each order.
+        names = sorted(self.SECONDS)
+        for count in (1, 2, 3, 5, 7):
+            shards = gatelib.shard_classes(names, self.SECONDS, count)
+            self.assertEqual(len(shards), count)
+            self.assertEqual(sorted(name for shard in shards for name in shard), names)
+            self.assertEqual([sorted(shard) for shard in gatelib.shard_classes(
+                names[::-1], self.SECONDS, count)], [sorted(shard) for shard in shards])
+            for shard in shards:
+                self.assertEqual(shard, [name for name in names if name in shard])
+
+    def test_a_shard_runs_its_classes_heaviest_first(self):
+        tree = self.suite()
+        tree.write("detections/tests/test_gappy.py", self.GAPPY.replace(
+            "def check_gap_never_collected(", "def test_gap_collected("))
+        summary = tree.out("summary.md")
+        result, started = self.run_shard(tree, "2/2", "--jobs", "1", "--summary", summary)
+        gatelib.assert_accepts(result, r"^shard 2/2: 3 of 5 test class\(es\), 4 test\(s\), "
+                                       r"1 at a time, ")
+        self.assertEqual(started, ["test_one.Good", "test_one.AlsoGood", "test_two.Light"])
+        self.assertEqual(self.printed(result), self.SECOND)
+        self.assertRegex(result.stdout, r"(?m)^classes of shard 2/2: test_one\.AlsoGood, "
+                                        r"test_one\.Good, test_two\.Light$")
+        self.assertRegex(result.stdout, r"(?m)^OK$")
+        # The gap of shard 1 did not run here, and that is no failure.
+        self.assertIn("\n  gap-on-a-method-that-is-no-test\n", result.stdout)
+        self.assertIn("      state:  in shard 1/2, not in this run\n", result.stdout)
+        with open(summary, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertRegex(text, r"(?m)^## Gate tests, shard 2/2: passed$")
+        self.assertIn("1 known gap(s), 0 of them in this shard, 0 seen open in this run.", text)
+        self.assertIn("- classes of shard 2/2: test_one.AlsoGood, test_one.Good, test_two.Light\n",
+                      text)
+        self.assertIn("| `gap-on-a-method-that-is-no-test` | `gate.py` | accepts | R7 | "
+                      "in shard 1/2 | ", text)
+        # Shard 1 runs the test of the gap and sees it open.
+        result, started = self.run_shard(tree, "1/2", "--jobs", "1")
+        gatelib.assert_accepts(result, r"^shard 1/2: 2 of 5 test class\(es\), 3 test\(s\), ")
+        self.assertEqual(started, ["test_two.Heavy", "test_gappy.Collected"])
+        self.assertEqual(self.printed(result), self.FIRST)
+        self.assertIn("      state:  open in this run\n", result.stdout)
+        # CONTROL: without --shard, each class, in the order of discovery.
+        order = tree.out("order.txt")
+        open(order, "w", encoding="utf-8").close()
+        whole = tree.run("detections/tests/gatelib.py", "--run", "--jobs", "1",
+                         env={"SHARD_ORDER": order})
+        gatelib.assert_accepts(whole, r"^5 test class\(es\), 7 test\(s\), 1 at a time, ")
+        with open(order, encoding="utf-8") as fh:
+            self.assertEqual(fh.read().split(), sorted(self.FIRST + self.SECOND))
+        self.assertEqual(self.printed(whole), sorted(self.FIRST + self.SECOND))
+        # Of equal weights (an empty table) the shards differ: the table is read.
+        self.table(tree, {"about": "Constructed.", "seconds": {}})
+        result, started = self.run_shard(tree, "1/2", "--jobs", "1")
+        self.assertEqual(self.printed(result),
+                         ["test_gappy.Collected", "test_one.Good", "test_two.Light"])
+
+    def test_a_known_gap_of_the_shard_whose_test_did_not_run_fails_only_that_shard(self):
+        tree = self.suite()
+        summary = tree.out("summary.md")
+        result, _started = self.run_shard(tree, "1/2", "--summary", summary)
+        gatelib.assert_rejects(result, r"^FAILED: the test of these known gap\(s\) did not run: "
+                                       r"gap-on-a-method-that-is-no-test$", exit_code=1)
+        self.assertEqual(self.printed(result), self.FIRST)
+        with open(summary, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertRegex(text, r"(?m)^## Gate tests, shard 1/2: FAILED$")
+        self.assertIn("1 known gap(s), 1 of them in this shard, 0 seen open in this run.", text)
+        gatelib.assert_accepts(self.run_shard(tree, "2/2")[0], r"^OK$")
+        # A gap whose test is in no class of the suite (a class that is no TestCase):
+        # no shard runs it, so each shard fails.
+        tree.append("detections/tests/test_gappy.py",
+                    "\n\nclass Mixin:\n"
+                    "    @gatelib.known_gap('gap-in-a-class-that-is-no-testcase', gate='gate.py',\n"
+                    "                       closes='R7', reason='A constructed gate accepts every "
+                    "artifact.')\n"
+                    "    def test_gap_never_loaded(self):\n"
+                    "        gatelib.assert_rejects(accepted(self), r'FAIL')\n")
+        tree.replace("detections/tests/test_gappy.py", "def check_gap_never_collected(",
+                     "def test_gap_collected(")
+        for shard in ("1/2", "2/2"):
+            gatelib.assert_rejects(self.run_shard(tree, shard)[0],
+                                   r"^FAILED: the test of these known gap\(s\) did not run: "
+                                   r"gap-in-a-class-that-is-no-testcase$", exit_code=1)
+
+    def test_a_wrong_shard_is_refused(self):
+        tree = self.suite()
+        tree.replace("detections/tests/test_gappy.py", "def check_gap_never_collected(",
+                     "def test_gap_collected(")
+        for shard in ("0/3", "4/3", "1/0", "0/0", "junk", "1/3/4", "1/ 3", " 1/3", "1/3 ", "+1/3",
+                      "-1/3", "1.0/3", "01/3", "1/03", "\u0661/\u0663", "1/3\n", "3", "1/", ""):
+            with self.subTest(shard=shard):
+                result = tree.run("detections/tests/gatelib.py", "--run", "--shard=" + shard)
+                self.assertEqual(result.returncode, 2, result.describe())
+                self.assertRegex(result.stderr, r"argument --shard: .* give K/N, two whole "
+                                                r"numbers with 1 <= K <= N")
+        named = tree.run("detections/tests/gatelib.py", "--run", "--shard", "1/2", "test_one")
+        self.assertEqual(named.returncode, 2, named.describe())
+        self.assertIn("--shard runs the classes of one shard: give no class names with it",
+                      named.stderr)
+        # CONTROL: values in the form K/N with 1 <= K <= N are taken (5/5: one class).
+        for shard, classes in (("1/1", 5), ("2/2", 3), ("5/5", 1)):
+            gatelib.assert_accepts(tree.run("detections/tests/gatelib.py", "--run",
+                                            "--shard", shard, env={"SHARD_ORDER": os.devnull}),
+                                   rf"^shard {shard}: {classes} of 5 test class\(es\), ")
+        empty = tree.run("detections/tests/gatelib.py", "--run", "--shard", "6/6",
+                         env={"SHARD_ORDER": os.devnull})
+        gatelib.assert_rejects(empty, r"^shard 6/6 holds no test class: the suite has 5 test "
+                                      r"class\(es\)$", exit_code=1)
+
+    def test_a_table_that_cannot_be_used_fails_the_run(self):
+        tree = self.suite()
+        summary = tree.out("summary.md")
+        good = json.dumps({"about": "Constructed.", "seconds": self.SECONDS})
+        for doc, reason in (
+                ({"about": "x", "seconds": {"test_two.Heavy": 0}}, r"Heavy are 0, not a number above 0"),
+                ({"about": "x", "seconds": {"test_two.Heavy": -1}}, r"Heavy are -1, not a number"),
+                ({"about": "x", "seconds": {"test_two.Heavy": "5"}}, r"Heavy are '5', not a number"),
+                ({"about": "x", "seconds": {"test_two.Heavy": True}}, r"Heavy are True, not a number"),
+                ({"about": "x", "seconds": {"test_two.Heavy": None}}, r"Heavy are None, not a number"),
+                ('{"about": "x", "seconds": {"test_two.Heavy": NaN}}', r"Heavy are nan, not a number"),
+                ('{"about": "x", "seconds": {"test_two.Heavy": Infinity}}', r"Heavy are inf, not a"),
+                ('{"about": "x", "seconds": {"a.B": 1, "a.B": 2}}', r"holds the key 'a\.B' two times"),
+                ('{"about": "x", "about": "y", "seconds": {}}', r"holds the key 'about' two times"),
+                ({"seconds": {}}, r"not an object with the keys `about` \(a text\) and `seconds`"),
+                ({"about": "x", "seconds": {}, "more": 1}, r"not an object with the keys `about`"),
+                ({"about": 1, "seconds": {}}, r"not an object with the keys `about`"),
+                ({"about": "x", "seconds": [1]}, r"not an object with the keys `about`"),
+                ([], r"not an object with the keys `about`"),
+                ("{", r"Expecting property name"),
+                (None, r"No such file or directory")):
+            with self.subTest(reason=reason):
+                if doc is None:
+                    tree.remove("detections/tests/class_seconds.json")
+                else:
+                    self.table(tree, doc)
+                open(summary, "w", encoding="utf-8").close()
+                result, started = self.run_shard(tree, "1/2", "--summary", summary)
+                gatelib.assert_rejects(result, r"^--shard: the table of class weights cannot be "
+                                               r"used: .*" + reason, exit_code=1)
+                self.assertEqual((started, self.printed(result)), ([], []))
+                with open(summary, encoding="utf-8") as fh:
+                    self.assertEqual(fh.read(), "## Gate tests, shard 1/2: FAILED\n\nThe table of "
+                                     "class weights cannot be used, so no test ran. The log of "
+                                     "the step holds the error.\n")
+                self.table(tree, good)
+        # CONTROL: the good table again, and a whole number of seconds.
+        self.table(tree, {"about": "x", "seconds": {**self.SECONDS, "test_one.AlsoGood": 5}})
+        gatelib.assert_accepts(self.run_shard(tree, "2/2")[0], r"^shard 2/2: 3 of 5 ")
 
 
 class GateCaseGuards(unittest.TestCase):
