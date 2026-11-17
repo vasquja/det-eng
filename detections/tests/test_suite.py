@@ -25,7 +25,9 @@ Gate tests, group `suite`: rules that hold for the gates and the suite as a whol
                       reads the `if:` of a job)
     JobTimeouts       every job of every workflow has an integer `timeout-minutes`
                       that is larger than the sum of the timeouts of its steps, but
-                      a job that calls a reusable workflow (the class lists it)
+                      a job that calls a reusable workflow (the class lists it); each
+                      step of the `changes` job of the four validator workflows has
+                      an integer `timeout-minutes` more than 0
     KnownGapList      every @known_gap names an item of section 1 of docs/ROADMAP.md,
                       and no open gap names an item that is `done`
     PlantedArtifacts  every file under known_bad/ is planted by a test, and none has
@@ -1500,15 +1502,31 @@ class JobTimeouts(unittest.TestCase):
 
     A job that calls a reusable workflow (`uses:` on the job) cannot have
     `timeout-minutes`: the jobs of the called workflow have their own. Such a job
-    must be in CALLS_A_WORKFLOW, by its workflow file and its id.
+    must be in CALLS_A_WORKFLOW, by its workflow file and its id, and each entry of
+    CALLS_A_WORKFLOW must be such a job.
+
+    A step that gets to its `timeout-minutes` fails, so its job ends as a failure. A
+    job that gets to its `timeout-minutes` is cancelled. The `changes` job of each
+    workflow in SELECTORS tells the validator job of its workflow if it must run, and
+    the fail-safe condition of the validator job runs it when the `changes` job
+    fails. So each step of such a `changes` job has an integer `timeout-minutes` more
+    than 0: a step that hangs then fails the job, and the timeout of the job does not
+    cancel it.
 
     The rule reads the YAML. It does not see whether a value is large enough for a
     slow run, or too large: the pull request that sets a value says how it was
-    measured, and a comment beside a value gives the reason when it is not plain."""
+    measured, and a comment beside a value gives the reason when it is not plain.
+    The class reads the files with PyYAML, which applies merge keys (`<<:`) and keeps
+    the last of two equal keys; the parser of GitHub does not accept these forms, and
+    a workflow that GitHub rejects does not run (a required check then blocks the
+    merge)."""
 
     LIMIT = 360     # minutes: GitHub stops each job of a GitHub-hosted runner here
     # (workflow file, job id) of each job that calls a reusable workflow. None today.
     CALLS_A_WORKFLOW = []
+    # The workflows whose job `changes` tells the validator job if it must run.
+    SELECTORS = ("validate-cloud-detections.yml", "validate-k8s-detections.yml",
+                 "validate-staticpod-detections.yml", "validate-apiserver-detections.yml")
 
     @classmethod
     def faults(cls, workflow, doc, callers=None):
@@ -1550,14 +1568,56 @@ class JobTimeouts(unittest.TestCase):
                               f"sum of the timeouts of its steps ({sum(steps)})")
         return faults
 
+    @classmethod
+    def stale_callers(cls, workflows, callers=None):
+        """Each entry of `callers` (default CALLS_A_WORKFLOW) that is not a job that
+        calls a reusable workflow in `workflows` ({file name: parsed YAML}), or that
+        the list holds two times, as one sentence per entry (empty: nothing)."""
+        callers = cls.CALLS_A_WORKFLOW if callers is None else callers
+        faults = []
+        for number, (workflow, job_id) in enumerate(callers):
+            job = ((workflows.get(workflow) or {}).get("jobs") or {}).get(job_id)
+            if (workflow, job_id) in callers[:number]:
+                faults.append(f"JobTimeouts.CALLS_A_WORKFLOW names {workflow}, job {job_id}, "
+                              "two times")
+            elif not (isinstance(job, dict) and "uses" in job):
+                faults.append(f"JobTimeouts.CALLS_A_WORKFLOW names {workflow}, job {job_id}, "
+                              "which is not a job that calls a reusable workflow")
+        return faults
+
+    @classmethod
+    def changes_step_faults(cls, workflows):
+        """Each step of the job `changes` of each workflow in SELECTORS that has no
+        integer `timeout-minutes` more than 0, as one sentence per step (empty:
+        nothing). `workflows` is {file name: parsed YAML}. A workflow of SELECTORS
+        that is not in `workflows`, or whose job `changes` has no steps, is a fault
+        too: the rule then checks nothing."""
+        faults = []
+        for workflow in cls.SELECTORS:
+            job = ((workflows.get(workflow) or {}).get("jobs") or {}).get("changes")
+            steps = job.get("steps") if isinstance(job, dict) else None
+            if not isinstance(steps, list) or not steps:
+                faults.append(f"{workflow} has no job changes with steps")
+                continue
+            for number, step in enumerate(steps, 1):
+                step = step if isinstance(step, dict) else {}
+                minutes = step.get("timeout-minutes")
+                if type(minutes) is not int or minutes <= 0:
+                    label = step.get("id") or step.get("name") or step.get("uses") or "?"
+                    faults.append(f"{workflow}, job changes, step {number} ({label}): "
+                                  f"timeout-minutes is {minutes!r}, not an integer more than "
+                                  "0 (the timeout of the job then cancels the job, and a "
+                                  "cancel does not fail it)")
+        return faults
+
     @staticmethod
-    def workflows():
-        """{file name: parsed YAML} of each workflow under .github/workflows/."""
+    def workflows(root=gatelib.REPO):
+        """{file name: parsed YAML} of each workflow under <root>/.github/workflows/."""
         import glob
         import yaml     # PyYAML: in detections/requirements.txt
 
         found = {}
-        for path in sorted(glob.glob(os.path.join(gatelib.REPO, ".github", "workflows", "*.y*ml"))):
+        for path in sorted(glob.glob(os.path.join(root, ".github", "workflows", "*.y*ml"))):
             with open(path, encoding="utf-8") as fh:
                 found[os.path.basename(path)] = yaml.safe_load(fh) or {}
         return found
@@ -1585,18 +1645,88 @@ class JobTimeouts(unittest.TestCase):
             "      - run: 'true'\n        timeout-minutes: 5\n"
             "  step-expression:\n    runs-on: ubuntu-latest\n    timeout-minutes: 15\n"
             "    steps:\n      - run: 'true'\n        timeout-minutes: ${{ 5 }}\n"
+            "  step-null:\n    runs-on: ubuntu-latest\n    timeout-minutes: 15\n"
+            "    steps:\n      - run: 'true'\n        timeout-minutes:\n"
+            "  null-job:\n"
             "  listed-caller:\n    uses: ./.github/workflows/called.yml\n"
             "  caller:\n    uses: ./.github/workflows/called.yml\n")
         faults = self.faults("w.yml", doc, callers=[("w.yml", "listed-caller")])
         named = [re.match(r"w\.yml, job ([\w-]+)", fault).group(1) for fault in faults]
         self.assertEqual(named, ["none", "expression", "text", "fraction", "boolean", "zero",
-                                 "default", "steps-fill-it", "step-expression", "caller"])
+                                 "default", "steps-fill-it", "step-expression", "step-null",
+                                 "null-job", "caller"])
         self.assertIn("has no timeout-minutes", faults[0])
+        # A value of 0 is out of range; the sum rule (0 steps, 0 >= 0) is not the reason.
+        self.assertIn("timeout-minutes is 0, not more than 0 and less than 360", faults[5])
         self.assertIn("not larger than the sum of the timeouts of its steps (15)", faults[7])
+        self.assertIn("a step has timeout-minutes None, not an integer", faults[9])
+        self.assertIn("w.yml, job null-job is not a mapping", faults[10])
         self.assertIn("calls a reusable workflow and is not in", faults[-1])
         # Without the list, the listed caller is a fault too.
         self.assertIn("w.yml, job listed-caller calls a reusable workflow",
                       " / ".join(self.faults("w.yml", doc)))
+        # An entry of the list that is not a job that calls a reusable workflow is stale,
+        # and an entry that the list holds two times is a fault.
+        stale = self.stale_callers({"w.yml": doc}, callers=[
+            ("w.yml", "listed-caller"), ("w.yml", "good"), ("w.yml", "null-job"),
+            ("gone.yml", "caller"), ("w.yml", "listed-caller")])
+        self.assertEqual(stale, [
+            f"JobTimeouts.CALLS_A_WORKFLOW names {name}, job {job_id}, which is not a job "
+            "that calls a reusable workflow"
+            for name, job_id in (("w.yml", "good"), ("w.yml", "null-job"), ("gone.yml", "caller"))]
+            + ["JobTimeouts.CALLS_A_WORKFLOW names w.yml, job listed-caller, two times"])
+        self.assertEqual(self.stale_callers({"w.yml": doc}, callers=[("w.yml", "caller")]), [])
+
+    def test_the_rule_finds_a_step_of_a_changes_job_without_a_timeout(self):
+        """CONTROL of the rule on the steps of the job `changes`, on constructed
+        workflows: it names each step whose timeout is missing or wrong, each
+        workflow of SELECTORS without such a job, and no other step."""
+        import yaml     # PyYAML: in detections/requirements.txt
+
+        def changes(*steps):
+            return yaml.safe_load("jobs:\n  changes:\n    runs-on: ubuntu-latest\n"
+                                  "    timeout-minutes: 15\n    steps:\n" + "".join(steps))
+
+        good = ("      - uses: actions/checkout@v4\n        timeout-minutes: 5\n"
+                "      - id: f\n        run: 'true'\n        timeout-minutes: 3\n")
+        cloud, k8s, staticpod, apiserver = JobTimeouts.SELECTORS
+        workflows = {
+            cloud: changes("      - uses: actions/checkout@v4\n        timeout-minutes: 5\n",
+                           "      - id: f\n        run: 'true'\n"),
+            k8s: changes(good),
+            staticpod: changes("      - id: a\n        run: 'true'\n        timeout-minutes:\n",
+                               "      - id: b\n        run: 'true'\n        timeout-minutes: 0\n",
+                               "      - id: c\n        run: 'true'\n        timeout-minutes: true\n",
+                               "      - id: d\n        run: 'true'\n        timeout-minutes: '3'\n",
+                               "      - id: e\n        run: 'true'\n        timeout-minutes: 1\n"),
+            # Not a workflow of SELECTORS: its job changes is not checked.
+            "other.yml": changes("      - id: f\n        run: 'true'\n"),
+        }
+        faults = self.changes_step_faults(workflows)
+        self.assertEqual([fault.split(":")[0] for fault in faults], [
+            f"{cloud}, job changes, step 2 (f)",
+            f"{staticpod}, job changes, step 1 (a)", f"{staticpod}, job changes, step 2 (b)",
+            f"{staticpod}, job changes, step 3 (c)", f"{staticpod}, job changes, step 4 (d)",
+            f"{apiserver} has no job changes with steps"])
+        self.assertIn("timeout-minutes is None, not an integer more than 0", faults[0])
+        # Each workflow of SELECTORS with a good job changes: no fault.
+        self.assertEqual(self.changes_step_faults(dict.fromkeys(JobTimeouts.SELECTORS,
+                                                                changes(good))), [])
+
+    def test_workflows_reads_each_yml_and_yaml_file(self):
+        """CONTROL of workflows(): it reads a `.yml` and a `.yaml` file under
+        <root>/.github/workflows/, and no other file."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as root:
+            folder = os.path.join(root, ".github", "workflows")
+            os.makedirs(folder)
+            for name in ("a.yml", "b.yaml", "c.txt"):
+                with open(os.path.join(folder, name), "w", encoding="utf-8") as fh:
+                    fh.write("jobs:\n  j:\n    runs-on: ubuntu-latest\n")
+            found = self.workflows(root)
+        self.assertEqual(sorted(found), ["a.yml", "b.yaml"])
+        self.assertEqual(found["b.yaml"], {"jobs": {"j": {"runs-on": "ubuntu-latest"}}})
 
     def test_every_job_has_a_timeout(self):
         workflows = self.workflows()
@@ -1613,12 +1743,12 @@ class JobTimeouts(unittest.TestCase):
             "give each of these jobs a `timeout-minutes` (an integer of minutes) that is "
             "larger than the sum of the timeouts of its steps; GitHub stops a job without "
             "one after 360 minutes")
-        callers = sorted((name, job_id) for name, doc in workflows.items()
-                         for job_id, job in (doc.get("jobs") or {}).items()
-                         if isinstance(job, dict) and "uses" in job)
-        self.assertEqual(callers, sorted(self.CALLS_A_WORKFLOW),
-                         "JobTimeouts.CALLS_A_WORKFLOW must name exactly the jobs that "
-                         "call a reusable workflow")
+        self.assertEqual(self.stale_callers(workflows), [],
+                         "JobTimeouts.CALLS_A_WORKFLOW must name only jobs that call a "
+                         "reusable workflow")
+        self.assertEqual(self.changes_step_faults(workflows), [],
+                         "give each step of these jobs `changes` a `timeout-minutes` (an "
+                         "integer of minutes): a step that gets to its timeout fails its job")
 
 
 class KnownGapList(unittest.TestCase):
