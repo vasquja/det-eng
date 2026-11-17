@@ -419,6 +419,9 @@ jobs:
     # that hangs. It is the timeout of validate-recommended too.
     timeout-minutes: 60
     env: &apiserver-job-env
+      # pip's cache (setup-python `cache: pip`): revalidate each index page that the
+      # cache holds (the pip cache note at the top of detection-quality.yml).
+      PIP_REFRESH_PACKAGE: ':all:'
       # Each emulation appends one line per procedure (window + exit status) here; the
       # validator binds each procedure gate to its window with --ledger (C1-3).
       DETENG_LEDGER: /tmp/emulation-ledger.jsonl
@@ -436,6 +439,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+          cache: pip
+          cache-dependency-path: detections/requirements.txt
 
       - &apiserver-requirements
         name: Install validator requirements

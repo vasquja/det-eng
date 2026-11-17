@@ -195,6 +195,9 @@ jobs:
     # minutes.
     timeout-minutes: 30
     env:
+      # pip's cache (setup-python `cache: pip`): revalidate each index page that the
+      # cache holds (the pip cache note at the top of detection-quality.yml).
+      PIP_REFRESH_PACKAGE: ':all:'
       # Each emulated procedure appends one line (its window + exit status); the
       # validator binds each procedure gate to its window (--ledger). Job-level so
       # the emulate and validate steps share it; the version pins stay in the
@@ -216,6 +219,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+          cache: pip
+          cache-dependency-path: detections/requirements.txt
 
       - name: Install validator requirements
         run: pip install --quiet -r detections/requirements.txt

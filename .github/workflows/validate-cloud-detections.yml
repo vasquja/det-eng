@@ -156,12 +156,18 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.relevant != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      # pip's cache (setup-python `cache: pip`): revalidate each index page that the
+      # cache holds (the pip cache note at the top of detection-quality.yml).
+      PIP_REFRESH_PACKAGE: ':all:'
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+          cache: pip
+          cache-dependency-path: detections/requirements.txt
 
       - name: Install validator requirements
         run: pip install --quiet -r detections/requirements.txt
