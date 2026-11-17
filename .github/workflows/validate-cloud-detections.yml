@@ -66,14 +66,22 @@ jobs:
   changes:
     name: changes-cloud
     runs-on: ubuntu-latest
+    # Each step has a timeout. A step that hangs fails at its timeout, so the job
+    # ends as a failure, not as a cancel, and the validator that needs this job runs
+    # (the fail-safe condition of the validator jobs). The timeout of the job cancels
+    # the job; it is larger than the sum of the timeouts of the steps, with the post
+    # step of actions/checkout, which runs with the 5 minutes of its step too.
+    timeout-minutes: 15
     outputs:
       relevant: ${{ steps.f.outputs.relevant }}
     steps:
       - uses: actions/checkout@v4
+        timeout-minutes: 5
         with:
           fetch-depth: 0
       - id: f
         shell: bash
+        timeout-minutes: 3
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -147,12 +155,19 @@ jobs:
     # passed. !cancelled() (not always()) lets a cancelled run stop here.
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.relevant != 'false') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # pip's cache (setup-python `cache: pip`): revalidate each index page that the
+      # cache holds (the pip cache note at the top of detection-quality.yml).
+      PIP_REFRESH_PACKAGE: ':all:'
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+          cache: pip
+          cache-dependency-path: detections/requirements.txt
 
       - name: Install validator requirements
         run: pip install --quiet -r detections/requirements.txt

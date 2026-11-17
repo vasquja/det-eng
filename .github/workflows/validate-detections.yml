@@ -24,9 +24,14 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
+      # No pip cache in this job. The jobs with a pip cache get it through
+      # setup-python only, and a setup-python step puts its own python3 first on
+      # PATH, so the venv below would not be on the system Python. An actions/cache
+      # step on ~/.cache/pip would keep PATH; that is a separate change.
       - name: Install audit, build tools and validator requirements
         run: |
           bash .github/scripts/apt_install.sh auditd gcc python3-venv
@@ -77,6 +82,7 @@ jobs:
     # portable regex subset (detections/README.md, "Portable regular
     # expressions"), compiling each value with Python re and RE2.
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -85,6 +91,8 @@ jobs:
           # google-re2 ships wheels up to cp314; '3.x' now resolves to 3.15,
           # where pip falls back to a Bazel source build that fails.
           python-version: '3.14'
+          # No pip cache on 3.14 (the pip cache note at the top of
+          # detection-quality.yml): each package here has a wheel for 3.14.
 
       - name: Install sigma-cli
         run: |
@@ -141,6 +149,7 @@ jobs:
     # detections/k8s/PLATFORMS.md (standard library only; check_md_links.py
     # checks paths only).
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
