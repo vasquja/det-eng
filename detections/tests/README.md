@@ -28,11 +28,12 @@ python3 -B detections/tests/gatelib.py --gaps                                   
 
 `gatelib.py --run` runs the same tests as `unittest discover`, with one Python
 process for each test class, as many at a time as the machine has CPUs. Then it
-prints the known gaps. On a GitHub runner (four CPUs) it took six to eight minutes
-on 2026-11-17 (347 and 460 s), so CI runs it in three shards (`--shard`, below)
-on three runners. On a development machine with four CPUs the whole run took
-339 s, and the three shards 143, 113 and 111 s (with the split by wall seconds:
-130, 162 and 80 s). The tests in sequence take much longer. It fails:
+prints the known gaps. On a GitHub runner (four CPUs) it took about six to eight
+minutes on 2026-11-17 (347 and 460 s), so CI runs it in three shards (`--shard`,
+below) on three runners. On a development machine with four CPUs the whole run
+took about 330 s, and each of the three shards 108 to 124 s (in two runs; with
+the split by wall seconds: 130, 162 and 80 s). The tests in sequence take much
+longer. It fails:
 
 - when a class fails;
 - when a class did not run all of its tests;
@@ -267,9 +268,9 @@ class RuleCases(gatelib.GateCase):
 - **Stay fast.** Each shard of CI must run in less than four minutes on a CI
   runner (with the split by wall seconds the legs took 225, 239 and 110 s on
   2026-11-17; the legs with the split by CPU seconds are still to be measured).
-  No class can be in two shards, so the slowest class
-  (`test_quality.ScoreBenign`, two to four minutes on a runner) is the least time
-  of its shard: keep each class well below that.
+  No class can be in two shards, so the heaviest class
+  (`test_validators.CloudValidator`: 238 s in a leg on 2026-11-17, and 248 s of
+  CPU) is the least time of its shard: keep each class well below that.
   Give each gate its own test class: `gatelib.py --run` runs the classes at the
   same time. For a gate that needs several seconds for one run, start the runs
   of the class together (see below).
@@ -445,9 +446,9 @@ took about 1.75 times their seconds in the table, in leg 3 about 0.8 times. By
 the CPU seconds of each class alone, the classes of the three legs needed 452,
 533 and 286 s of CPU. Thus the table now holds CPU seconds, and the split by CPU
 seconds gives each shard 424 s of CPU. The leg times with this split are still to
-be measured. Each shard starts its heaviest class first. The slowest class is
-the least time of its shard: `test_quality.ScoreBenign` took 224 s in leg 1, and
-80 s alone on a machine with four CPUs.
+be measured. Each shard starts its heaviest class first. The heaviest class is
+the least time of its shard: `test_validators.CloudValidator` took 238 s in leg 2,
+and 99 s alone on a machine with four CPUs (248 s of CPU).
 `test_suite.py` pins the command, the matrix and the name of the job with the
 same number of shards (`GateTestsJob`), and proves on the real suite that the
 shards hold each class one time, that a class collects the test of each known

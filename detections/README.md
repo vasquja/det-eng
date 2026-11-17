@@ -1071,7 +1071,7 @@ check then still passes. [`tests/`](tests/README.md) holds a test suite for them
   known gaps, each with the roadmap item that closes it.
 
 ```bash
-python3 -B detections/tests/gatelib.py --run                 # all tests, in parallel (six to eight minutes on one runner)
+python3 -B detections/tests/gatelib.py --run                 # all tests, in parallel (about six to eight minutes on one runner)
 python3 -B detections/tests/gatelib.py --run --shard 2/3     # one shard of three
 ```
 

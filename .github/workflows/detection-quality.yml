@@ -1079,8 +1079,8 @@ jobs:
     # (detections/tests/README.md, "CI"). Each leg of the matrix runs one shard of the
     # test classes (gatelib.py --shard K/3), and each class is in one shard. The
     # shards split the classes by their CPU seconds
-    # (detections/tests/class_seconds.json). One runner needed six to eight minutes
-    # for all the tests (347 and 460 s, measured). A split by wall seconds gave legs
+    # (detections/tests/class_seconds.json). One runner needed about six to eight
+    # minutes for all the tests (347 and 460 s, measured). A split by wall seconds gave legs
     # of 225, 239 and 110 s (run 44187275891, measured): heavy classes use several
     # CPUs, and a class takes longer when heavy classes run beside it. The leg times
     # with the split by CPU seconds are still to be measured.
