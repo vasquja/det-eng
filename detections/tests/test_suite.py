@@ -622,7 +622,18 @@ class JobCondition:
     is not cancelled and each job of `needs` ended in success, failure() when one of
     them failed, cancelled() when the run is cancelled, always() always; `&&` and
     `||` give one of their operands; `==` compares text without letter case, and
-    values of two types as numbers; '', 0, null and false are false."""
+    values of two types as numbers; '', 0, null and false are false.
+
+    One of these rules is an assumption that no run on GitHub has shown: at the
+    level of a job, cancelled() is true only when the whole run is cancelled (the
+    GitHub docs: "Returns true if the workflow was canceled"). It is not verified
+    for a job of `needs` that its own job-level `timeout-minutes` stops. That job
+    ends as "cancelled", and if cancelled() is then true in a job that needs it,
+    `!cancelled()` skips that job. A step that hits its step-level
+    `timeout-minutes` fails (the runner logs "The action has timed out." and marks
+    the step as failed). Thus a changes job whose steps all have a step timeout
+    ends a hang as a failure, and for a failure the `if:` of each validator job
+    runs the validator."""
 
     TOKEN = re.compile(r"\s*(?:(?P<text>'(?:[^']|'')*')|(?P<number>\d+(?:\.\d+)?)"
                        r"|(?P<op>==|!=|&&|\|\||[!().])|(?P<name>[A-Za-z_][\w-]*))")
@@ -799,7 +810,9 @@ class ValidatorSelection(gatelib.GateCase):
        `always()`). The test evaluates the `if:` with JobCondition for each case of
        CASES, so an `if:` of another spelling with the same truth table passes, and
        a form that JobCondition does not read fails. The job keeps its required
-       check name and `needs: changes`.
+       check name and `needs: changes`. The rows of CASES for a changes job that
+       ended as cancelled while the run goes on use an assumption about
+       cancelled(): the JobCondition docstring records it.
     4. The list of each validator job covers what it reads (job_inputs()): each rule
        file of the validator's MANIFEST and MISS_MANIFEST (check_sufficiency.py reads
        their paths), the atomics folder of each rule folder, each local Python
