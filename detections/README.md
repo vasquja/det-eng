@@ -1536,11 +1536,13 @@ JSON object without its end: `sigma_eval.cut_json()` writes the text that closes
 open string, number, literal and containers, and `json` must then read one object.
 So a cut inside an escape (`\u0026`, which Go writes for `&` in an audit event), a
 number, a literal or a key is a cut, and a complete record with more text after it
-on its line is not. The end of the line stays as the log holds it: a word or a number
-before a blank (`{"a": tru `, `{"a": 1. `) and white space that JSON does not have
-(a raw VT, FF or NEL) are no cut. `NaN`, `Infinity` and `-Infinity` are not JSON
-(Python's `json` reads them), so a line that holds one is no cut. A cut that splits a character of UTF-8 at the end of the line is
-a cut too (`sigma_eval.utf8_cut()`): the start of a character (a lead byte `C2` to
+on its line is not. The end of the line stays as the log holds it: outside a string, a
+word or a number before a blank (`{"a": tru `, `{"a": 1. `) and white space that JSON
+does not have (a raw VT, FF, NEL or U+00A0) are no cut. Inside an open string, each
+character that a JSON string holds is a cut (NEL and U+00A0 too), and a raw control
+character (U+0000 to U+001F) is not. `NaN`, `Infinity` and `-Infinity` are not JSON
+(Python's `json` reads them), so a line that holds one is no cut. A cut that splits a
+character of UTF-8 at the end of the line is a cut too (`sigma_eval.utf8_cut()`): the start of a character (a lead byte `C2` to
 `F4` with fewer continuation bytes than it needs) at the very end is dropped before
 the test. A cut line of a CRI log is one snapshot, and it can hold complete sandboxes
 before the cut: the reader does not read them (the sensor writes a snapshot each

@@ -353,16 +353,18 @@ def cut_line(text, n, last):
     be cut, the cut removes the end of that line, and the line has no line end
     (open_end()). Its text without the white space at its start (as json reads a
     record) must be cut JSON: the start of one JSON object without its end
-    (sigma_eval.cut_json()). White space at its end other than the blanks of JSON
-    stays: no cut ends with it, and no cut ends inside a word or a number before a
-    blank ('{"a": tru '). The cut can split a character of UTF-8: the start of a
-    character at the very end of the line is part of the cut (sigma_eval.utf8_cut()).
-    Each other line that json refuses is a problem: NUL bytes or U+200B in a record, a
-    record with more text after it on its line, a cut line before other lines or with
-    a line end, and each other byte that is not UTF-8. A cut line of a CRI log is one
-    snapshot: it can hold complete sandboxes before the cut, and the reader does not
-    read them (the sensor writes a snapshot each second, so the next one holds
-    them)."""
+    (sigma_eval.cut_json()). The reader removes nothing at the end of the line.
+    Outside a string, no cut ends with white space that JSON does not have (VT, FF,
+    NEL, U+00A0) or with a word or a number before a blank ('{"a": tru '). Inside an
+    open string, each character that a JSON string holds is a cut (NEL and U+00A0
+    too), and a raw control character (U+0000 to U+001F) is not. The cut can split a
+    character of UTF-8: the start of a character at the very end of the line is part
+    of the cut (sigma_eval.utf8_cut()). Each other line that json refuses is a
+    problem: NUL bytes or U+200B in a record, a record with more text after it on its
+    line, a cut line before other lines or with a line end, and each other byte that
+    is not UTF-8. A cut line of a CRI log is one snapshot: it can hold complete
+    sandboxes before the cut, and the reader does not read them (the sensor writes a
+    snapshot each second, so the next one holds them)."""
     if not open_end(text, n, last):
         return False
     text = sigma_eval.utf8_cut(text)

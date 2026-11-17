@@ -216,9 +216,10 @@ def budget_for(key, default, budgets):
 
 class SliceError(Exception):
     """A slice whose events one event table cannot hold (sigma_eval.event_problem():
-    two keys of one event that give one field, two keys that differ only in the letter case of their ASCII letters,
-    a key that hides a row id that the queries read, a value that SQLite does not hold
-    as it is). The text names the slice, the event and the keys."""
+    two keys of one event that give one field, two keys that differ only in the letter
+    case of their ASCII letters, a key that hides a row id that the queries read, a
+    value that SQLite does not hold as it is). The text names the slice, the event and
+    the keys."""
 
 
 def check_slices(slices):

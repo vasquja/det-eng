@@ -87,6 +87,9 @@ reads the keys of the records in the same way:
   of a nested key (`{"a.b": 1, "a": {"b": 2}}` gives `a.b` two times). `flatten()`
   keeps only one value, and a store that merges a dotted key with an object
   (Elasticsearch) sees both, so the oracle refuses such a record (`event_problem()`).
+  A list is one field of JSON text (`flatten()`), so a dotted key beside a list of
+  objects (`{"a.b": 1, "a": [{"b": 2}]}`) gives two fields, and the oracle reads
+  both. A store that explodes the list into leaf fields is not modelled (section 4).
 - The oracle also refuses a key that SQLite reads as `_rowid` (the row id column of
   its table) or `rowid` (the name by which the correlation queries read the row id),
   a key that holds a NUL or a lone surrogate (no column name can hold it), and a
