@@ -1227,6 +1227,14 @@ class Shards(unittest.TestCase):
                                        r"[0-9.]+ in this run, 12\.0 in class_seconds\.json$")
         self.assertEqual(started, ["test_one.Good", "test_one.AlsoGood", "test_two.Light"])
         self.assertEqual(self.printed(result), self.SECOND)
+        # The seconds of the classes in this run: the sum of the seconds of the lines
+        # of the classes (each rounded to 0.1 s), and more than 0.
+        each = [float(seconds) for seconds in
+                re.findall(r"(?m)^===== \S+: ok, \d+ test\(s\), ([0-9.]+) s$", result.stdout)]
+        spent = float(re.search(r"(?m)classes: ([0-9.]+) in this run, ", result.stdout).group(1))
+        self.assertEqual(len(each), 3)
+        self.assertGreater(spent, 0)
+        self.assertAlmostEqual(spent, sum(each), delta=0.2)
         self.assertRegex(result.stdout, r"(?m)^classes of shard 2/2: test_one\.AlsoGood, "
                                         r"test_one\.Good, test_two\.Light$")
         self.assertRegex(result.stdout, r"(?m)^OK$")
