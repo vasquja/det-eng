@@ -351,10 +351,17 @@ Design 4.3 gives 39, 18, 12, 112 and 6; these numbers match none of these bases.
 | T7 | **The backlog as issues** (design 5), ranked by a script, with the GO or NO-GO result in each issue. | not started | L3 | Each candidate is an issue with its vet result. |
 | T8 | **The builder workflow**: the agent opens its pull requests from GitHub Actions. | blocked | owner | Waits for the identity gate (`docs/setup/agent-identity.md`, step A5). Then: a workflow that takes one backlog issue and opens one pull request as the agent's identity, with the off switch and a turn limit. |
 
-CI decisions of 2026-11-17 (owner): `gate-tests` runs on 3 runners (this change:
-each runner runs one shard of the gate tests, `gatelib.py --shard K/3`;
-`detections/tests/README.md`, "CI"); `validate-apiserver-recommended` stays on
+CI decisions of 2026-11-17 (owner): `gate-tests` on 2 or 3 runners; it runs on 3,
+one shard of the gate tests each (`gatelib.py --shard K/3`;
+`detections/tests/README.md`, "CI"). `validate-apiserver-recommended` stays on
 pull requests; `automerge.yml` stays as it is.
+
+If `gate-tests` becomes a required check (design 9, days 25 to 30), add a job with
+the name `gate-tests` that `needs:` the matrix job, runs with `if: always()`, and
+fails unless the result of the matrix job is `success`. Require that one name, and
+not the checks of the legs (`gate-tests (shard 1/3)` to `gate-tests (shard 3/3)`):
+no check has the name `gate-tests` now, and a ruleset that names the legs must
+change when the number of shards changes.
 
 ## 3. The life of a detection after it merges
 
